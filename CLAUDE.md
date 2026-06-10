@@ -19,7 +19,9 @@ just down                  # Stop containers
 just dev-back              # cargo watch -x run (from backend/)
 just check                 # bacon (background type checker, from backend/)
 just db-shell              # psql into the running database
-just test                  # cargo test --workspace
+just migrate-add <name>    # Create a migration file in adapter-pg
+just db-reset              # Drop the DB volume, bring up fresh PostgreSQL
+just test                  # cargo test --workspace (integration tests need a container runtime socket, not `just up`)
 just setup                 # First-time setup: copy .env, install tools
 ```
 
@@ -51,11 +53,11 @@ Conventions: Rust edition 2024; workspace-level dependency versions in root `Car
 
 Loaded by figment in `api`: `backend/config/{profile}.toml` first, then `ZURFUR_*` environment variables (env wins). Profile selected by `ZURFUR_ENV` (default `dev`).
 
-Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config). `DATABASE_URL` is used by Docker tooling and will be consumed by `adapter-pg`.
+Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config), `DATABASE_URL` (deliberately unprefixed — sqlx tooling reads this exact name).
 
 ## Database
 
-PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). Schema and migrations arrive with `adapter-pg`.
+PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). The binary builds a connection pool from `DATABASE_URL` at boot and fails fast if the database is unreachable. Migrations live in `backend/crates/adapter-pg/migrations/`, are embedded via `sqlx::migrate!`, and run automatically on every boot. `GET /health` reports database reachability (200 up / 503 down).
 
 ## Branch Strategy (GitFlow)
 
