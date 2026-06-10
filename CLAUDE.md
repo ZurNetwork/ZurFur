@@ -4,100 +4,61 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Zurfur is an AT Protocol-native art commission platform built in Rust. It uses Bluesky OAuth for authentication and is designed as a headless backend with a future frontend.
+Zurfur is an AT Protocol-native art commission platform built in Rust.
+
+**All design lives in Confluence — it is the single source of truth.** The DESIGN space (https://zurnetwork.atlassian.net/wiki/spaces/DESIGN) holds the glossary (per-entity pages: User, Account, Character, Commission, Golem, Plugin, …), the architecture ("Domains and Applications"), and scope ("Project MVP"). Work is tracked in the Jira project ZMVP. Do not create local design documents; consult and update Confluence instead.
 
 ## Commands
 
-All commands use `just` (Justfile at repo root). The Justfile has `dotenv-load` enabled.
+All commands use `just` (Justfile at repo root, `dotenv-load` enabled).
 
 ```bash
-just dev                   # Start everything: Docker, DB migrations, backend + auth frontend
-just up                    # Start PostgreSQL via Docker Compose (Nginx proxy available via --profile proxy)
+just dev                   # Start everything: Docker, backend + auth frontend
+just up                    # Start PostgreSQL via Docker Compose
 just down                  # Stop containers
 just dev-back              # cargo watch -x run (from backend/)
-just dev-auth              # Vite dev server for frontend/auth
 just check                 # bacon (background type checker, from backend/)
 just db-shell              # psql into the running database
-just migrate-add <name>    # Create new migration pair
-just migrate-run           # Run pending migrations
-just db-reset              # Drop, recreate, and migrate database
-just setup                 # First-time setup: copy .env, install tools, yarn install
+just test                  # cargo test --workspace
+just setup                 # First-time setup: copy .env, install tools
 ```
 
 Building and running directly:
 ```bash
-cd backend && cargo build            # Build all crates
-cd backend && cargo run -p api       # Run the API server
-cd backend && cargo test             # Run all tests
-cd backend && cargo test -p domain   # Test a single crate
+cargo build                          # Build all crates (workspace root)
+cargo run -p api                     # Run the API server
+cargo test --workspace               # Run all tests
 ```
 
 ## Architecture
 
-Layered DDD with strict dependency direction: `api` -> `application` + `persistence` -> `domain` + `shared`.
+Ports and adapters, per the Confluence page "Domains and Applications":
 
 ```
 backend/crates/
-  domain/        # Pure entities, repository traits, errors (no I/O, no dependencies)
-  shared/        # JWT utilities, config structs
-  persistence/   # SQLx PostgreSQL implementations of domain traits, migrations
-  application/   # Use-case orchestrators (AuthService, login flow)
-  api/           # Axum HTTP handlers, middleware, routing
+  domain/            # Pure domain elements (Account, User, Golem, Character, Commission, …); will define ports (traits) named by role
+  adapter-pg/        # Private data boundary: PostgreSQL (app-owned rows, UUIDv7 keys, transactions)
+  adapter-atproto/   # Public data boundary: the user's PDS (user-owned records, AT-URI via DID)
+  adapter-mem/       # Both boundaries faked in-process; core development runs against this
+  api/               # Composition root: config, tracing, HTTP; the only crate that knows which adapter is live
 ```
 
-**Key conventions:**
-- Repository traits live in `domain/`, implementations in `persistence/`
-- Application services receive repositories as trait objects (`Arc<dyn Trait>`)
-- All error types use `thiserror`
-- Rust edition 2024 across all crates
-- Workspace-level dependency versions in root `Cargo.toml`
+**Dependency rule:** adapters depend on domain crates, never the reverse; `api` composes. The single `domain` crate is transitional — it splits into per-domain crates (`identity`, `gallery`, `workflow`, `plugin`) as those namespaces get built.
 
-## Authentication Flow
+Conventions: Rust edition 2024; workspace-level dependency versions in root `Cargo.toml` (add a dependency there only when a crate actually consumes it).
 
-AT Protocol OAuth (not password-based):
-1. `POST /auth/start` - resolves handle/DID, initiates OAuth with PAR + PKCE + DPoP
-2. `POST /auth/callback` - frontend-mediated; exchanges code for AT Protocol tokens, creates/finds user, issues Zurfur JWT + refresh token
-3. `POST /auth/refresh` - single-use rotation (old token deleted, new pair issued)
-4. `POST /auth/logout` - deletes all refresh tokens + AT Protocol session
+## Configuration
 
-Zurfur refresh tokens are SHA-256 hashed before storage. JWTs are HS256 with 15-min default TTL.
+Loaded by figment in `api`: `backend/config/{profile}.toml` first, then `ZURFUR_*` environment variables (env wins). Profile selected by `ZURFUR_ENV` (default `dev`).
+
+Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config). `DATABASE_URL` is used by Docker tooling and will be consumed by `adapter-pg`.
 
 ## Database
 
-PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). Migrations live in `backend/crates/persistence/migrations/` and auto-run on startup. Uses soft deletes (`deleted_at`) for users.
+PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). Schema and migrations arrive with `adapter-pg`.
 
-## Environment Variables
+## Branch Strategy (GitFlow)
 
-Required: `DATABASE_URL`, `JWT_SECRET`, `OAUTH_CLIENT_ID`, `OAUTH_REDIRECT_URI`, `OAUTH_PRIVATE_KEY` (base64 P256 key).
-
-Optional with defaults: `JWT_ACCESS_EXPIRY_SECS` (900), `JWT_REFRESH_EXPIRY_SECS` (2592000).
-
-## Design Documents
-
-- `design/design_document.md` - Full platform architecture and feature specs
-- `design/features/OVERVIEW.md` - Feature dependency map and build order
-- `diagrams/auth/login.mermaid` - OAuth login sequence diagram
-
-## Parallel Work
-
-Work is orchestrated via `WORKBOARD.md`. Each unit of work has a self-contained design doc.
-
-**Branch strategy (GitFlow):**
-- `main` — stable, only receives merges from `develop` at phase gates
+- `main` — stable; only receives merges from `develop`; **never push directly to `main`**
 - `develop` — integration branch, all feature PRs target this
 - `feature/*` — individual units of work
-
-**When assigned a unit of work:**
-1. Create a worktree: `git worktree add ../zurfur-<unit-name> -b feature/<branch-name> develop`
-2. Read the design doc specified in `WORKBOARD.md`
-3. Implement commit by commit, run tests after each
-4. PR to `develop` when done — **never push directly to `main`**
-5. Clean up: `git worktree remove ../zurfur-<unit-name>`
-
-**Design docs live in:**
-- `design/infrastructure/` — cross-cutting (entity interfaces, OpenAPI, testing)
-- `design/features/` — feature-specific (characters, TOS, commissions)
-
-## Retrospectives
-
-Read `docs/retrospectives.md` before starting any feature work. Contains shared guidance on branching, testing, commit discipline, automated reviewer patterns, common pitfalls, and per-feature lessons learned.

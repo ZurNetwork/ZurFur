@@ -8,7 +8,6 @@ default:
 dev:
     just up
     just _wait-for-db
-    just migrate-run
     just dev-back & just dev-auth & wait
 
 dev-back:
@@ -33,29 +32,11 @@ logs:
 db-shell:
     docker compose exec db psql -U admin -d zurfur
 
-migrate-add name:
-    cd backend/crates/persistence && sqlx migrate add -r {{ name }}
-
-migrate-run:
-    cd backend/crates/persistence && sqlx migrate run
-
-migrate-revert:
-    cd backend/crates/persistence && sqlx migrate revert
-
-db-reset:
-    cd backend/crates/persistence && sqlx database drop -y
-    cd backend/crates/persistence && sqlx database create
-    cd backend/crates/persistence && sqlx migrate run
-
 # --- Testing ---
 
 # Run all tests (unit + integration). Requires: just up
 test:
     cargo test --workspace
-
-# Run only persistence integration tests against PostgreSQL. Requires: just up
-test-integration:
-    cargo test -p persistence
 
 # --- Code quality ---
 
@@ -68,7 +49,7 @@ setup:
     @echo "Copying .env.example to .env (edit values before running)..."
     @cp -n .env.example .env || true
     @echo "Installing tools..."
-    cargo install just cargo-watch sqlx-cli bacon
+    cargo install just cargo-watch bacon
     cd frontend/auth && yarn install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
