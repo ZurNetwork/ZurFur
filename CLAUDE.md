@@ -59,8 +59,7 @@ Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml 
 
 PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). The binary builds a connection pool from `DATABASE_URL` at boot and fails fast if the database is unreachable. Migrations live in `backend/crates/adapter-pg/migrations/`, are embedded via `sqlx::migrate!`, and run automatically on every boot. `GET /health` reports database reachability (200 up / 503 down).
 
-## Branch Strategy (GitFlow)
+## Branch Strategy
 
-- `main` — stable; only receives merges from `develop`; **never push directly to `main`**
-- `develop` — integration branch, all feature PRs target this
-- `feature/*` — individual units of work
+- `main` — stable; all feature PRs target this; **never push directly to `main`**
+- `feature/*` — individual units of work, branched from `main`

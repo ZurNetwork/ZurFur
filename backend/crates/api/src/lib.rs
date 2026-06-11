@@ -1,12 +1,7 @@
 use std::net::SocketAddr;
 
 use adapter_pg::PgPool;
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    routing::get,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
@@ -35,7 +30,7 @@ fn default_http_addr() -> SocketAddr {
 }
 
 impl Config {
-    pub fn load() -> Result<Self, figment::Error> {
+    pub fn load() -> Result<Self, Box<figment::Error>> {
         let profile = std::env::var("ZURFUR_ENV").unwrap_or_else(|_| "dev".into());
 
         Figment::new()
@@ -43,6 +38,7 @@ impl Config {
             .merge(Env::raw().only(&["DATABASE_URL"]))
             .merge(Env::prefixed("ZURFUR_"))
             .extract()
+            .map_err(Box::new)
     }
 }
 
