@@ -1,53 +1,65 @@
-pub mod error;
-pub mod middleware;
-pub mod openapi;
-mod routes;
-pub mod state;
-#[cfg(test)]
-mod tests;
+use std::net::SocketAddr;
 
-pub use state::{AppState, SharedState};
+use adapter_pg::PgPool;
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::get,
+};
+use figment::{
+    Figment,
+    providers::{Env, Format, Toml},
+};
+use serde::Deserialize;
+use serde_json::json;
 
-use axum::http::{HeaderValue, Method, header};
-use axum::routing::get;
-use tower_http::cors::CorsLayer;
-use utoipa::OpenApi;
-use utoipa_scalar::{Scalar, Servable};
+#[derive(Debug, Deserialize)]
+pub enum Environment {
+    DEV,
+    STG,
+    PROD,
+}
 
-use crate::openapi::ApiDoc;
+#[derive(Deserialize)]
+pub struct Config {
+    pub env: Environment,
+    #[serde(default = "default_http_addr")]
+    pub http_addr: SocketAddr,
+    pub database_url: String,
+    pub log_level: String,
+}
 
-/// Build the top-level Axum router with CORS and all route modules.
-pub fn router(state: AppState) -> axum::Router {
-    // Derive tunnel origin from OAUTH_CLIENT_ID so CORS works through cloudflared.
-    // The client_id is a URL like "https://tunnel.trycloudflare.com/client-metadata.json"
-    // — we extract the origin (scheme + host).
-    // TODO(review): CORS origins are hardcoded; should be configurable via env var for different deployments
-    let mut origins: Vec<HeaderValue> = vec![
-        "http://localhost:5173".parse().unwrap(),
-        "https://auth.zurfur.app".parse().unwrap(),
-        "https://zurfur.app".parse().unwrap(),
-    ];
+fn default_http_addr() -> SocketAddr {
+    "127.0.0.1:3621".parse().unwrap()
+}
 
-    // OAUTH_CLIENT_ID is validated on startup in main.rs (panics if missing).
-    // This is a best-effort CORS origin addition — in tests it's simply absent.
-    if let Ok(client_id) = std::env::var("OAUTH_CLIENT_ID") {
-        // Extract origin (scheme + host) from URL like "https://host.com/path"
-        if let Some(rest) = client_id.strip_prefix("https://") {
-            let host = rest.split('/').next().unwrap_or_default();
-            if let Ok(hv) = format!("https://{host}").parse::<HeaderValue>() {
-                origins.push(hv);
-            }
-        }
+impl Config {
+    pub fn load() -> Result<Self, figment::Error> {
+        let profile = std::env::var("ZURFUR_ENV").unwrap_or_else(|_| "dev".into());
+
+        Figment::new()
+            .merge(Toml::file(format!("config/{profile}.toml")))
+            .merge(Env::raw().only(&["DATABASE_URL"]))
+            .merge(Env::prefixed("ZURFUR_"))
+            .extract()
     }
+}
 
-    let cors = CorsLayer::new()
-        .allow_origin(origins)
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+pub fn app(pool: PgPool) -> Router {
+    Router::new().route("/health", get(health)).with_state(pool)
+}
 
-    routes::router()
-        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
-        .route("/api/docs/openapi.json", get(openapi::openapi_json))
-        .with_state(std::sync::Arc::new(state))
-        .layer(cors)
+async fn health(State(pool): State<PgPool>) -> (StatusCode, Json<serde_json::Value>) {
+    if adapter_pg::is_reachable(&pool).await {
+        (
+            StatusCode::OK,
+            Json(json!({ "status": "ok", "database": "up" })),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "degraded", "database": "down" })),
+        )
+    }
 }

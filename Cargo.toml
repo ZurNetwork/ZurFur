@@ -4,26 +4,28 @@ resolver = "2"
 members = ["backend/crates/*"]
 
 
-exclude = ["frontend", "node_modules", "dist", ".next"]
+exclude = [
+  "frontend",
+  "node_modules",
+  "dist",
+  ".next",
+]
 
 [workspace.dependencies]
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
-uuid = { version = "1.20.0", features = ["v4", "serde"] }
-thiserror = { version = "2.0.18" }
-tonic = { version = "0.14.3" }
-prost = { version = "0.14.3" }
-tonic-prost = { version = "0.14.3" }
-prost-types = { version = "0.14.3" }
+uuid = { version = "1.20.0", features = ["v7", "serde"] }
 axum = { version = "0.8.8" }
-tonic-prost-build = { version = "0.14.3" }
-async-trait = { version = "0.1.89" }
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "uuid", "chrono"] }
-jsonwebtoken = "9"
 chrono = { version = "0.4", features = ["serde"] }
-serde_json = { version = "1.0" }
-tower-http = { version = "0.6", features = ["cors"] }
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "runtime-tokio",
+  "postgres",
+  "migrate",
+  "macros",
+] }
+serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-scalar = { version = "0.3", features = ["axum"] }
+figment = { version = "0.10.19", features = ["env", "toml"] }
+dotenvy = { version = "0.15.7" }
+anyhow = "1.0.102"
