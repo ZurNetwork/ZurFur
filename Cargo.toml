@@ -22,7 +22,15 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "postgres",
   "migrate",
   "macros",
+  "time",
 ] }
+# Facade (axum layer + Session extractor) for the composition root; the adapter
+# implements the traits from -core directly, so it needn't pull the axum layer.
+tower-sessions = { version = "0.15" }
+tower-sessions-core = { version = "0.15", features = ["deletion-task"] }
+time = { version = "0.3" }
+rmp-serde = { version = "1" }
+async-trait = { version = "0.1" }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+jacquard = { version = "0.12.0", features = ["loopback", "derive"] }
+jacquard-oauth = { version = "0.12.0" }
+fluent-uri = { version = "0.4.1", features = ["std"] }
+smol_str = "0.3.6"
+# Supplies the concrete HttpClient for the resolver and the TLS backend jacquard
+# leaves to the consumer (jacquard-common enables only json/charset on reqwest).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
