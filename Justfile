@@ -11,7 +11,7 @@ dev:
     just dev-back & just dev-auth & wait
 
 dev-back:
-    cd backend && cargo watch -x run
+    cargo watch -C backend -x run
 
 dev-auth:
     cd frontend/auth && yarn dev

@@ -1,13 +1,18 @@
+//! Exercises the session-gated greeting route against a real server with the
+//! session layer installed. The signed-in path needs a live PDS (covered by
+//! manual end-to-end verification); what we can assert automatically is that an
+//! anonymous visitor to `/me` is bounced back to the sign-in page rather than
+//! shown a session that doesn't exist. Requires a container runtime socket.
 use std::sync::Arc;
 
 use api::{AppState, Config, Environment};
 use jacquard::oauth::client::OAuthClient;
+use reqwest::redirect::Policy;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
+use tower_sessions::{MemoryStore, SessionManagerLayer};
 
-/// Boots the app against a throwaway PostgreSQL container and expects a green
-/// /health. Requires a container runtime socket (DOCKER_HOST honored).
 #[tokio::test]
-async fn health_is_green_against_fresh_postgres() {
+async fn me_redirects_anonymous_visitor_to_sign_in() {
     let container = Postgres::default()
         .start()
         .await
@@ -17,7 +22,6 @@ async fn health_is_green_against_fresh_postgres() {
         .await
         .expect("mapped postgres port");
     let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-
     let pool = adapter_pg::connect(&database_url)
         .await
         .expect("pool connects");
@@ -38,17 +42,28 @@ async fn health_is_green_against_fresh_postgres() {
         pool,
         oauth: Arc::new(OAuthClient::with_memory_store()),
     };
-    let app = api::app(state);
+    // The store backing this test is irrelevant — PgSessionStore is exercised in
+    // adapter-pg's own tests; here we only need the layer present so the `Session`
+    // extractor resolves. An in-memory store keeps the test about the route.
+    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let response = reqwest::get(format!("http://{addr}/health"))
+    let client = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .build()
+        .expect("client builds");
+    let response = client
+        .get(format!("http://{addr}/me"))
+        .send()
         .await
-        .expect("GET /health");
+        .expect("GET /me");
 
-    assert_eq!(response.status(), 200);
-    let body: serde_json::Value = response.json().await.expect("JSON body");
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["database"], "up");
+    assert_eq!(response.status(), 303, "anonymous /me should redirect");
+    assert_eq!(
+        response.headers()["location"],
+        "/",
+        "redirect should target the sign-in page"
+    );
 }

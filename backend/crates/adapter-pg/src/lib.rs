@@ -4,6 +4,9 @@ use sqlx::postgres::PgPoolOptions;
 
 pub use sqlx::PgPool;
 
+mod session_store;
+pub use session_store::PgSessionStore;
+
 /// Eagerly connects so the binary fails fast at boot when the database is
 /// unreachable — migrations must run before serving anyway.
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {

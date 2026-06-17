@@ -6,3 +6,11 @@ edition = "2024"
 [dependencies]
 sqlx = { workspace = true }
 tokio = { workspace = true }
+tower-sessions-core = { workspace = true }
+time = { workspace = true }
+rmp-serde = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+serde_json = { workspace = true }

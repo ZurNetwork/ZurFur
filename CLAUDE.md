@@ -45,7 +45,9 @@ backend/crates/
   api/               # Composition root: config, tracing, HTTP; the only crate that knows which adapter is live
 ```
 
-**Dependency rule:** adapters depend on domain crates, never the reverse; `api` composes. The single `domain` crate is transitional — it splits into per-domain crates (`identity`, `gallery`, `workflow`, `plugin`) as those namespaces get built.
+**Dependency rule:** adapters depend on domain crates, never the reverse; `api` composes. Ports are named by role (`PrivateStore`, `PublicRecords`, per-domain repos); crates are named by tech — so a second backend never makes a name a lie. The single `domain` crate is transitional — it splits into per-domain crates (`identity`, `gallery`, `workflow`, `plugin`; `plugin` serves the public `plugin-api`) as those namespaces get built.
+
+**No cross-store transactions:** anything touching both boundaries (e.g. lock private facts in PostgreSQL + publish an atproto record) is a dual write, run as a separate retryable step (outbox-style), never one unit of work.
 
 Conventions: Rust edition 2024; workspace-level dependency versions in root `Cargo.toml` (add a dependency there only when a crate actually consumes it).
 
@@ -53,7 +55,7 @@ Conventions: Rust edition 2024; workspace-level dependency versions in root `Car
 
 Loaded by figment in `api`: `backend/config/{profile}.toml` first, then `ZURFUR_*` environment variables (env wins). Profile selected by `ZURFUR_ENV` (default `dev`).
 
-Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config), `DATABASE_URL` (deliberately unprefixed — sqlx tooling reads this exact name).
+Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `ZURFUR_PUBLIC_URL` (config key `public_url`; externally-visible origin — scheme + host + port — used to build OAuth redirect URIs, dev sets `http://127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config), `DATABASE_URL` (deliberately unprefixed — sqlx tooling reads this exact name).
 
 ## Database
 
