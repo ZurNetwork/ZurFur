@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+domain = { path = "../domain" }
 adapter-pg = { path = "../adapter-pg" }
 axum = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 figment = { workspace = true }
@@ -14,10 +16,10 @@ dotenvy = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-jacquard = { version = "0.12.0", features = ["derive"] }
 adapter-atproto = { path = "../adapter-atproto/" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 tower-sessions = { workspace = true }
 [dev-dependencies]
+adapter-mem = { path = "../adapter-mem" }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }

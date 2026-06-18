@@ -45,8 +45,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state = AppState {
         config,
+        auth: std::sync::Arc::new(adapter_atproto::AtprotoAuthenticator::new(redirect_uri)),
+        user_repo: std::sync::Arc::new(adapter_pg::PgUserRepo::new(pool.clone())),
         pool,
-        oauth: adapter_atproto::build_oauth(redirect_uri),
     };
     let app = api::app(app_state).layer(session_layer);
 

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+domain = { path = "../domain" }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
 jacquard = { version = "0.12.0", features = ["loopback", "derive"] }
 jacquard-oauth = { version = "0.12.0" }
 fluent-uri = { version = "0.4.1", features = ["std"] }

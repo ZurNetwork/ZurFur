@@ -23,6 +23,9 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "migrate",
   "macros",
   "time",
+  "uuid",
+  "chrono",
+  "sqlx-toml",
 ] }
 # Facade (axum layer + Session extractor) for the composition root; the adapter
 # implements the traits from -core directly, so it needn't pull the axum layer.
