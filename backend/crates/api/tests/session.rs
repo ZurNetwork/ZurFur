@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use api::{AppState, Config, Environment};
-use jacquard::oauth::client::OAuthClient;
+use domain::elements::did::Did;
 use reqwest::redirect::Policy;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -40,7 +40,11 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             log_level: "info".to_string(),
         },
         pool,
-        oauth: Arc::new(OAuthClient::with_memory_store()),
+        // An anonymous /me reaches neither PDS nor repo; the mem adapters suffice.
+        auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::new(
+            "did:plc:test".to_string(),
+        ))),
+        user_repo: Arc::new(adapter_mem::MemUserRepo::new()),
     };
     // The store backing this test is irrelevant — PgSessionStore is exercised in
     // adapter-pg's own tests; here we only need the layer present so the `Session`

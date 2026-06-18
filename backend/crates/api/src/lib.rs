@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
-use adapter_atproto::{complete_callback, get_oauth_url};
 use adapter_pg::PgPool;
 use axum::{
     Form, Json, Router,
@@ -9,6 +9,10 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use domain::{
+    elements::user::UserId,
+    ports::{Authenticator, UserRepo},
+};
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
@@ -16,13 +20,12 @@ use figment::{
 use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
+use uuid::Uuid;
 
-// The OAuth client type is owned by the adapter (it names jacquard's resolver +
-// store); the composition root re-exports it rather than restating those types.
-pub use adapter_atproto::Oauth;
-
-/// Session key under which the signed-in visitor's DID is stored.
-const SESSION_DID_KEY: &str = "did";
+/// Session key under which the recognized visitor's `UserId` is stored. The
+/// session carries our own key, not the DID: subsequent requests resolve
+/// session → User through the repo, never re-asking the PDS (ZMVP-9 Criterion 3).
+const SESSION_USER_KEY: &str = "user_id";
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum Environment {
@@ -90,7 +93,12 @@ struct CallbackQuery {
 pub struct AppState {
     pub config: Config,
     pub pool: PgPool,
-    pub oauth: Oauth,
+    /// Authenticates visitors against their PDS. A trait object so the composition
+    /// root chooses the live adapter (atproto in `main`, a fake PDS in e2e tests).
+    pub auth: Arc<dyn Authenticator>,
+    /// Zurfur's record of recognized visitors. A trait object so the composition
+    /// root chooses the live adapter (pg in `main`, mem in tests).
+    pub user_repo: Arc<dyn UserRepo>,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -151,7 +159,7 @@ async fn signin(
     State(state): State<AppState>,
     Form(f): Form<SigninForm>,
 ) -> Result<Redirect, (StatusCode, Html<String>)> {
-    match get_oauth_url(&state.oauth, &f.handle).await {
+    match state.auth.start(&f.handle).await {
         Ok(url) => Ok(Redirect::to(&url)),
         // An unknown or malformed handle fails politely back on the sign-in page.
         // The underlying error can be noisy/internal, so show a steady message.
@@ -189,7 +197,7 @@ async fn signin_callback(
             .into_response();
     };
 
-    let did = match complete_callback(&state.oauth, code, q.state, q.iss).await {
+    let did = match state.auth.complete(code, q.state, q.iss).await {
         Ok(did) => did,
         Err(_) => {
             return (
@@ -202,9 +210,26 @@ async fn signin_callback(
         }
     };
 
-    // "Signed in" at this ticket's scope means a session holding the DID exists.
-    // Persist it, then hand off to the greeting route; the cookie now survives reload.
-    if session.insert(SESSION_DID_KEY, did).await.is_err() {
+    // First contact recognizes rather than registers: provisioning mints a User on
+    // the first sign-in for this DID and returns the existing one on every repeat
+    // (idempotent — one DID, one User, forever). The human fills out nothing.
+    let user = match state.user_repo.provision(&did).await {
+        Ok(user) => user,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                sign_in_page(Some(
+                    "Your sign-in succeeded but your account couldn't be set up. Please try again.",
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    // The session carries our own UserId, not the DID, so later requests resolve
+    // to the User through the repo without re-asking the PDS. The cookie now
+    // survives reload; hand off to the greeting route.
+    if session.insert(SESSION_USER_KEY, *user.id).await.is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             sign_in_page(Some(
@@ -216,11 +241,15 @@ async fn signin_callback(
     Redirect::to("/me").into_response()
 }
 
-/// Greets the signed-in visitor by the DID held in their session. An anonymous
-/// visitor — no session, or one that expired — is sent back to the sign-in page.
-async fn me(session: Session) -> Response {
-    match session.get::<String>(SESSION_DID_KEY).await {
-        Ok(Some(did)) => Html(format!("Signed in as {}", escape(&did))).into_response(),
+/// Greets the signed-in visitor, resolving their session's `UserId` to a User via
+/// the repo (no PDS round trip). An anonymous visitor — no session, an expired one,
+/// or one whose User no longer exists — is sent back to the sign-in page.
+async fn me(State(state): State<AppState>, session: Session) -> Response {
+    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return Redirect::to("/").into_response();
+    };
+    match state.user_repo.find(UserId::new(id)).await {
+        Ok(Some(user)) => Html(format!("Signed in as {}", escape(&user.did))).into_response(),
         _ => Redirect::to("/").into_response(),
     }
 }

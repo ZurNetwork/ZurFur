@@ -1,19 +1,63 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use domain::{elements::did::Did, ports::Authenticator};
 use fluent_uri::Uri;
 use jacquard::identity::JacquardResolver;
 use jacquard_oauth::{
     atproto::AtprotoClientMetadata,
     authstore::MemoryAuthStore,
     client::OAuthClient,
-    error::OAuthError,
     scopes::Scopes,
     session::ClientData,
     types::{AuthorizeOptions, CallbackParams},
 };
 use smol_str::SmolStr;
 
-pub type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, MemoryAuthStore>>;
+type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, MemoryAuthStore>>;
+
+/// The real [`Authenticator`]: an OAuth client that talks to the visitor's PDS.
+/// Holds jacquard's concrete client so nothing protocol-shaped leaks past this
+/// crate — the rest of the system depends only on the `Authenticator` port.
+pub struct AtprotoAuthenticator {
+    oauth: Oauth,
+}
+
+impl AtprotoAuthenticator {
+    /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
+    /// registered redirect target (see [`build_oauth`] for why that is fixed here).
+    pub fn new(redirect_uri: Uri<String>) -> Self {
+        Self {
+            oauth: build_oauth(redirect_uri),
+        }
+    }
+}
+
+#[async_trait]
+impl Authenticator for AtprotoAuthenticator {
+    async fn start(&self, handle: &str) -> anyhow::Result<String> {
+        Ok(self
+            .oauth
+            .start_auth(handle, AuthorizeOptions::<jacquard::DefaultStr>::default())
+            .await?)
+    }
+
+    async fn complete(
+        &self,
+        code: String,
+        state: Option<String>,
+        iss: Option<String>,
+    ) -> anyhow::Result<Did> {
+        let params = CallbackParams {
+            code: code.into(),
+            state: state.map(Into::into),
+            iss: iss.map(Into::into),
+        };
+        let session = self.oauth.callback(params).await?;
+        let did = session.data.read().await.account_did.clone();
+        Ok(Did::new(did.to_string()))
+    }
+}
 
 /// OAuth scopes requested at sign-in. `atproto` is the base AT Protocol scope; the
 /// transitional `transition:generic` grant covers the legacy XRPC surface still in use.
@@ -26,7 +70,7 @@ const OAUTH_SCOPES: &str = "atproto transition:generic";
 /// jacquard sends `redirect_uris[0]` in the PAR request and derives the loopback
 /// `client_id` from this list, so the URI registered here is the one the PDS actually
 /// redirects back to — there is no per-request override.
-pub fn build_oauth(redirect_uri: Uri<String>) -> Oauth {
+fn build_oauth(redirect_uri: Uri<String>) -> Oauth {
     let scopes = Scopes::new(SmolStr::new_static(OAUTH_SCOPES))
         .expect("valid scopes")
         .convert();
@@ -52,31 +96,4 @@ pub fn build_oauth(redirect_uri: Uri<String>) -> Oauth {
         },
         reqwest::Client::new(),
     ))
-}
-
-pub async fn get_oauth_url(oauth: &Oauth, handle: &str) -> Result<String, OAuthError> {
-    oauth
-        .start_auth(handle, AuthorizeOptions::<jacquard::DefaultStr>::default())
-        .await
-}
-
-/// Completes the OAuth callback and returns the authenticated visitor's DID as a
-/// plain string. Takes the neutral query fields rather than jacquard's
-/// `CallbackParams` so the protocol library stays quarantined behind this port; the
-/// caller never touches a jacquard type.
-pub async fn complete_callback(
-    oauth: &Oauth,
-    code: String,
-    state: Option<String>,
-    iss: Option<String>,
-) -> Result<String, OAuthError> {
-    let params = CallbackParams {
-        code: code.into(),
-        state: state.map(Into::into),
-        iss: iss.map(Into::into),
-    };
-    let session = oauth.callback(params).await?;
-    let did = session.data.read().await.account_did.clone();
-
-    Ok(did.to_string())
 }

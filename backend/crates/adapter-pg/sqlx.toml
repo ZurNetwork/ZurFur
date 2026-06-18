@@ -1,0 +1,8 @@
+# Both the `time` and `chrono` sqlx features are enabled in this workspace:
+# `session_store` binds `time::OffsetDateTime` through the runtime query API,
+# while the domain standardizes on `chrono::DateTime<Utc>`. The `query!` macros
+# need one preferred crate to map date/time columns unambiguously — we pick
+# chrono so generated code lines up with the domain. `session_store` is
+# unaffected: it uses the runtime API, which this setting does not govern.
+[macros.preferred-crates]
+date-time = "chrono"

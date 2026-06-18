@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use api::{AppState, Config, Environment};
-use jacquard::oauth::client::OAuthClient;
+use domain::elements::did::Did;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
 /// Boots the app against a throwaway PostgreSQL container and expects a green
@@ -36,7 +36,12 @@ async fn health_is_green_against_fresh_postgres() {
             log_level: "info".to_string(),
         },
         pool,
-        oauth: Arc::new(OAuthClient::with_memory_store()),
+        // /health touches neither the PDS nor the repo; the mem adapters keep both
+        // out of the test.
+        auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::new(
+            "did:plc:test".to_string(),
+        ))),
+        user_repo: Arc::new(adapter_mem::MemUserRepo::new()),
     };
     let app = api::app(state);
     tokio::spawn(async move {
