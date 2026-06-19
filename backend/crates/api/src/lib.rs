@@ -112,6 +112,7 @@ pub fn app(state: AppState) -> Router {
         .route("/signin", post(signin))
         .route("/signin-callback", get(signin_callback))
         .route("/me", get(me))
+        .route("/logout", post(logout))
         .with_state(state)
 }
 
@@ -260,6 +261,24 @@ async fn me(State(state): State<AppState>, session: Session) -> Response {
     Html(render_me(&user.did, profile.as_ref())).into_response()
 }
 
+/// The exit door (ZMVP-11). Destroys the session server-side: `flush` removes the
+/// Postgres row through the store and drops the cookie, so a stolen cookie dies
+/// with the session rather than merely being cleared on the client. A second
+/// sign-out from a stale tab carries a session id whose row is already gone — the
+/// `DELETE` matches nothing and still succeeds — so the visitor lands back on the
+/// sign-in page, not an error (Criterion 2). On the rare store failure we report it
+/// honestly rather than claim a sign-out that didn't reach the server.
+async fn logout(session: Session) -> Response {
+    if session.flush().await.is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            sign_in_page(Some("Sign-out couldn't be completed. Please try again.")),
+        )
+            .into_response();
+    }
+    Redirect::to("/").into_response()
+}
+
 /// Read-through resolution of a visitor's profile: a fresh cache hit is served
 /// without waking the PDS (ZMVP-10 criterion 2); a miss reads the PDS and caches
 /// the result; a PDS failure degrades to `None` rather than erroring (criterion 3).
@@ -281,11 +300,17 @@ async fn resolve_profile(
     }
 }
 
+/// The sign-out control (ZMVP-11). A POST so the exit door is a deliberate action,
+/// not something a prefetch or a stray GET can trip.
+const SIGN_OUT_FORM: &str =
+    r#"<form method="post" action="/logout"><button>Sign out</button></form>"#;
+
 /// Renders the signed-in greeting. With a profile, shows the avatar (if any) and
 /// the handle plus display name. Without one — an unreachable PDS and nothing
-/// cached — the DID still proves who is signed in; absence is not an error.
+/// cached — the DID still proves who is signed in; absence is not an error. Either
+/// way the greeting carries the sign-out control.
 fn render_me(did: &Did, profile: Option<&Profile>) -> String {
-    match profile {
+    let greeting = match profile {
         Some(p) => {
             let display = p.display_name.as_deref().unwrap_or(&p.handle);
             let avatar = match &p.avatar_url {
@@ -299,5 +324,6 @@ fn render_me(did: &Did, profile: Option<&Profile>) -> String {
             )
         }
         None => format!("<p>Signed in as {}</p>", escape(did)),
-    }
+    };
+    format!("{greeting}{SIGN_OUT_FORM}")
 }
