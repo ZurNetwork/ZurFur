@@ -14,6 +14,9 @@ use jacquard_oauth::{
 };
 use smol_str::SmolStr;
 
+mod profile;
+pub use profile::AtprotoProfileSource;
+
 type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, MemoryAuthStore>>;
 
 /// The real [`Authenticator`]: an OAuth client that talks to the visitor's PDS.

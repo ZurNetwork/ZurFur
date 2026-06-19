@@ -3,14 +3,16 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
     did::Did,
+    profile::Profile,
     user::{User, UserId},
 };
-use domain::ports::{Authenticator, UserRepo};
+use domain::ports::{Authenticator, ProfileCache, ProfileSource, UserRepo};
 
 /// In-memory [`UserRepo`]. Keyed by DID so `provision` is idempotent — the same
 /// DID always resolves to the User minted on its first sign-in.
@@ -72,6 +74,79 @@ impl Authenticator for MemAuthenticator {
         _iss: Option<String>,
     ) -> anyhow::Result<Did> {
         Ok(self.did.clone())
+    }
+}
+
+/// In-memory [`ProfileSource`]: stands in for the PDS read so the profile flow
+/// can be exercised without a network. Returns a fixed profile, counts its calls
+/// (so a test can prove a cache hit avoided a second fetch), and can be flipped
+/// to "unreachable" to drive graceful-degradation tests.
+pub struct MemProfileSource {
+    // `None` simulates an unreachable PDS — `fetch` errors instead of returning.
+    profile: Mutex<Option<Profile>>,
+    fetches: AtomicUsize,
+}
+
+impl MemProfileSource {
+    /// A source that returns `profile` for every DID.
+    pub fn new(profile: Profile) -> Self {
+        Self {
+            profile: Mutex::new(Some(profile)),
+            fetches: AtomicUsize::new(0),
+        }
+    }
+
+    /// Flip the fake PDS to unreachable; subsequent `fetch` calls error.
+    pub fn set_unreachable(&self) {
+        *self
+            .profile
+            .lock()
+            .expect("MemProfileSource mutex poisoned") = None;
+    }
+
+    /// How many times `fetch` has been called — lets a test assert the cache
+    /// served a repeat view without a second source read.
+    pub fn fetch_count(&self) -> usize {
+        self.fetches.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl ProfileSource for MemProfileSource {
+    async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        self.profile
+            .lock()
+            .expect("MemProfileSource mutex poisoned")
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("PDS unreachable (fake)"))
+    }
+}
+
+/// In-memory [`ProfileCache`]: a plain DID-keyed map. Never expires — TTL is the
+/// real (pg) cache's policy; tests control freshness by what they put in.
+#[derive(Default)]
+pub struct MemProfileCache {
+    by_did: Mutex<HashMap<Did, Profile>>,
+}
+
+impl MemProfileCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl ProfileCache for MemProfileCache {
+    async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>> {
+        let by_did = self.by_did.lock().expect("MemProfileCache mutex poisoned");
+        Ok(by_did.get(did).cloned())
+    }
+
+    async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
+        let mut by_did = self.by_did.lock().expect("MemProfileCache mutex poisoned");
+        by_did.insert(profile.did.clone(), profile.clone());
+        Ok(())
     }
 }
 

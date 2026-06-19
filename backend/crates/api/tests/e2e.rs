@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use adapter_mem::{MemAuthenticator, MemUserRepo};
 use api::{AppState, Config, Environment};
-use domain::{elements::did::Did, ports::UserRepo};
+use domain::{
+    elements::{did::Did, profile::Profile},
+    ports::UserRepo,
+};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
@@ -37,6 +40,13 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
         user_repo: repo.clone(),
+        profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
+            did: Did::new(did.to_string()),
+            handle: "e2ealice.bsky.social".to_string(),
+            display_name: None,
+            avatar_url: None,
+        })),
+        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
@@ -76,7 +86,8 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     );
 
     // 3. A subsequent request resolves the session back to the provisioned User —
-    //    greeted by the DID the PDS authenticated, with no second PDS round-trip.
+    //    greeted as that user (by their profile handle), with no PDS round-trip
+    //    for the identity itself. (Profile rendering is covered in profile.rs.)
     let res = client
         .get(format!("{base}/me"))
         .send()
@@ -85,8 +96,8 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     assert_eq!(res.status(), 200, "the signed-in visitor sees the greeting");
     let body = res.text().await.expect("body");
     assert!(
-        body.contains(did),
-        "/me should greet the provisioned DID, got: {body}"
+        body.contains("e2ealice.bsky.social"),
+        "/me should greet the signed-in visitor, got: {body}"
     );
 
     // Exactly one User exists for that DID after a successful sign-in.

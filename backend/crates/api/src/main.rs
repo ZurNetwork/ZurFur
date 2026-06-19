@@ -47,6 +47,12 @@ async fn main() -> anyhow::Result<()> {
         config,
         auth: std::sync::Arc::new(adapter_atproto::AtprotoAuthenticator::new(redirect_uri)),
         user_repo: std::sync::Arc::new(adapter_pg::PgUserRepo::new(pool.clone())),
+        profile_source: std::sync::Arc::new(adapter_atproto::AtprotoProfileSource::new()),
+        // Cache profiles for an hour; a staler entry is refetched from the PDS.
+        profile_cache: std::sync::Arc::new(adapter_pg::PgProfileCache::new(
+            pool.clone(),
+            std::time::Duration::from_secs(60 * 60),
+        )),
         pool,
     };
     let app = api::app(app_state).layer(session_layer);
