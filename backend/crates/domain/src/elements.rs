@@ -6,6 +6,7 @@ pub mod commission;
 pub mod did;
 pub mod golem;
 pub mod markdown;
+pub mod profile;
 pub mod role;
 pub mod user;
 pub mod user_account;

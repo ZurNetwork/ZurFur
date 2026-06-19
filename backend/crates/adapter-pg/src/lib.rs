@@ -4,8 +4,10 @@ use sqlx::postgres::PgPoolOptions;
 
 pub use sqlx::PgPool;
 
+mod profile;
 mod session_store;
 mod user;
+pub use profile::PgProfileCache;
 pub use session_store::PgSessionStore;
 pub use user::PgUserRepo;
 

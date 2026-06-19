@@ -7,6 +7,7 @@ use async_trait::async_trait;
 
 use crate::elements::{
     did::Did,
+    profile::Profile,
     user::{User, UserId},
 };
 
@@ -43,4 +44,25 @@ pub trait Authenticator: Send + Sync {
         state: Option<String>,
         iss: Option<String>,
     ) -> anyhow::Result<Did>;
+}
+
+/// Reads a visitor's public profile from its source of truth — the user's PDS.
+/// A public-boundary read (see DESIGN/"Domains and Applications"): async,
+/// fallible, indexed reads may lag. The real adapter talks to the PDS; the mem
+/// adapter fakes it. (ZMVP-10 criterion 1.)
+#[async_trait]
+pub trait ProfileSource: Send + Sync {
+    /// Fetch the profile for a DID. The handle always resolves; `display_name`
+    /// and `avatar_url` may be absent. Errors when the PDS is unreachable, so
+    /// callers can degrade gracefully rather than fail the page.
+    async fn fetch(&self, did: &Did) -> anyhow::Result<Profile>;
+}
+
+/// A private-side read-through cache of public profiles, so repeat views don't
+/// need the PDS awake (ZMVP-10 criterion 2). Freshness/TTL policy lives in the
+/// implementation; a caller treats a miss — absent or stale — as `None`.
+#[async_trait]
+pub trait ProfileCache: Send + Sync {
+    async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>>;
+    async fn put(&self, profile: &Profile) -> anyhow::Result<()>;
 }

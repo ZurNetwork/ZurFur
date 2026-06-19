@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use api::{AppState, Config, Environment};
-use domain::elements::did::Did;
+use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -45,6 +45,14 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             "did:plc:test".to_string(),
         ))),
         user_repo: Arc::new(adapter_mem::MemUserRepo::new()),
+        // An anonymous /me never reaches the profile ports; mem fakes suffice.
+        profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
+            did: Did::new("did:plc:test".to_string()),
+            handle: "test.bsky.social".to_string(),
+            display_name: None,
+            avatar_url: None,
+        })),
+        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
     };
     // The store backing this test is irrelevant — PgSessionStore is exercised in
     // adapter-pg's own tests; here we only need the layer present so the `Session`

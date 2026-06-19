@@ -10,8 +10,8 @@ use axum::{
     routing::{get, post},
 };
 use domain::{
-    elements::user::UserId,
-    ports::{Authenticator, UserRepo},
+    elements::{did::Did, profile::Profile, user::UserId},
+    ports::{Authenticator, ProfileCache, ProfileSource, UserRepo},
 };
 use figment::{
     Figment,
@@ -99,6 +99,10 @@ pub struct AppState {
     /// Zurfur's record of recognized visitors. A trait object so the composition
     /// root chooses the live adapter (pg in `main`, mem in tests).
     pub user_repo: Arc<dyn UserRepo>,
+    /// Reads public profiles from the PDS (atproto in `main`, a fake in tests).
+    pub profile_source: Arc<dyn ProfileSource>,
+    /// Private read-through cache of those profiles (pg in `main`, mem in tests).
+    pub profile_cache: Arc<dyn ProfileCache>,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -248,8 +252,52 @@ async fn me(State(state): State<AppState>, session: Session) -> Response {
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Redirect::to("/").into_response();
     };
-    match state.user_repo.find(UserId::new(id)).await {
-        Ok(Some(user)) => Html(format!("Signed in as {}", escape(&user.did))).into_response(),
-        _ => Redirect::to("/").into_response(),
+    let user = match state.user_repo.find(UserId::new(id)).await {
+        Ok(Some(user)) => user,
+        _ => return Redirect::to("/").into_response(),
+    };
+    let profile = resolve_profile(&*state.profile_cache, &*state.profile_source, &user.did).await;
+    Html(render_me(&user.did, profile.as_ref())).into_response()
+}
+
+/// Read-through resolution of a visitor's profile: a fresh cache hit is served
+/// without waking the PDS (ZMVP-10 criterion 2); a miss reads the PDS and caches
+/// the result; a PDS failure degrades to `None` rather than erroring (criterion 3).
+async fn resolve_profile(
+    cache: &dyn ProfileCache,
+    source: &dyn ProfileSource,
+    did: &Did,
+) -> Option<Profile> {
+    if let Ok(Some(profile)) = cache.get(did).await {
+        return Some(profile);
+    }
+    match source.fetch(did).await {
+        Ok(profile) => {
+            // Best-effort cache write: a cache failure must not fail the page.
+            let _ = cache.put(&profile).await;
+            Some(profile)
+        }
+        Err(_) => None,
+    }
+}
+
+/// Renders the signed-in greeting. With a profile, shows the avatar (if any) and
+/// the handle plus display name. Without one — an unreachable PDS and nothing
+/// cached — the DID still proves who is signed in; absence is not an error.
+fn render_me(did: &Did, profile: Option<&Profile>) -> String {
+    match profile {
+        Some(p) => {
+            let display = p.display_name.as_deref().unwrap_or(&p.handle);
+            let avatar = match &p.avatar_url {
+                Some(url) => format!(r#"<img src="{}" alt="avatar" width="80">"#, escape(url)),
+                None => String::new(),
+            };
+            format!(
+                "{avatar}<p>Signed in as @{} ({})</p>",
+                escape(&p.handle),
+                escape(display),
+            )
+        }
+        None => format!("<p>Signed in as {}</p>", escape(did)),
     }
 }
