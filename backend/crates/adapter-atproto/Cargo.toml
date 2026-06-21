@@ -9,8 +9,21 @@ async-trait = { workspace = true }
 anyhow = { workspace = true }
 jacquard = { version = "0.12.0", features = ["loopback", "derive"] }
 jacquard-oauth = { version = "0.12.0" }
+jacquard-common = { version = "0.12.0" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 smol_str = "0.3.6"
+# Persists OAuth state (the ClientAuthStore impl) to the private boundary. This
+# crate uses the pool as a plain DB client; api injects it from adapter-pg.
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 # Supplies the concrete HttpClient for the resolver and the TLS backend jacquard
 # leaves to the consumer (jacquard-common enables only json/charset on reqwest).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+# Boots a throwaway Postgres so the store round-trips against the real migration.
+# adapter-pg (test-only) supplies connect + migrate; this is not a runtime edge.
+adapter-pg = { path = "../adapter-pg" }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+tokio = { workspace = true }

@@ -6,14 +6,21 @@ version = 4
 name = "adapter-atproto"
 version = "0.1.0"
 dependencies = [
+ "adapter-pg",
  "anyhow",
  "async-trait",
  "domain",
  "fluent-uri",
  "jacquard",
+ "jacquard-common",
  "jacquard-oauth",
  "reqwest 0.12.28",
+ "serde",
+ "serde_json",
  "smol_str",
+ "sqlx",
+ "testcontainers-modules",
+ "tokio",
 ]
 
 [[package]]
