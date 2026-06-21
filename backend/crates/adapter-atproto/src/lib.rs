@@ -6,18 +6,20 @@ use fluent_uri::Uri;
 use jacquard::identity::JacquardResolver;
 use jacquard_oauth::{
     atproto::AtprotoClientMetadata,
-    authstore::MemoryAuthStore,
     client::OAuthClient,
     scopes::Scopes,
     session::ClientData,
     types::{AuthorizeOptions, CallbackParams},
 };
 use smol_str::SmolStr;
+use sqlx::PgPool;
 
+mod auth_store;
 mod profile;
+pub use auth_store::AtprotoAuthStore;
 pub use profile::AtprotoProfileSource;
 
-type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, MemoryAuthStore>>;
+type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, AtprotoAuthStore>>;
 
 /// The real [`Authenticator`]: an OAuth client that talks to the visitor's PDS.
 /// Holds jacquard's concrete client so nothing protocol-shaped leaks past this
@@ -29,9 +31,10 @@ pub struct AtprotoAuthenticator {
 impl AtprotoAuthenticator {
     /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
     /// registered redirect target (see [`build_oauth`] for why that is fixed here).
-    pub fn new(redirect_uri: Uri<String>) -> Self {
+    /// `pool` backs the persistent [`AtprotoAuthStore`] and is injected by `api`.
+    pub fn new(redirect_uri: Uri<String>, pool: PgPool) -> Self {
         Self {
-            oauth: build_oauth(redirect_uri),
+            oauth: build_oauth(redirect_uri, AtprotoAuthStore::new(pool)),
         }
     }
 }
@@ -73,26 +76,19 @@ const OAUTH_SCOPES: &str = "atproto transition:generic";
 /// jacquard sends `redirect_uris[0]` in the PAR request and derives the loopback
 /// `client_id` from this list, so the URI registered here is the one the PDS actually
 /// redirects back to — there is no per-request override.
-fn build_oauth(redirect_uri: Uri<String>) -> Oauth {
+fn build_oauth(redirect_uri: Uri<String>, store: AtprotoAuthStore) -> Oauth {
     let scopes = Scopes::new(SmolStr::new_static(OAUTH_SCOPES))
         .expect("valid scopes")
         .convert();
     let config = AtprotoClientMetadata::new_localhost(Some(vec![redirect_uri]), Some(scopes));
-    // MemoryAuthStore is a deliberate, scoped choice for ZMVP-8 (see the ticket's
-    // item G). It holds two tiers of OAuth state in-process: the in-flight auth
-    // request (PKCE verifier + DPoP key, keyed by `state`) and, post-callback, the
-    // session token set. ZMVP-8 only needs the DID out of `callback()` — it makes no
-    // authenticated PDS calls — and "survives a reload" is satisfied by our own
-    // tower-sessions Postgres session, not by this store. The in-flight tier lives
-    // only for the seconds of one sign-in round-trip within a single process, which
-    // a dev binary handles fine.
-    //
-    // A persistent `ClientAuthStore` (Postgres) becomes REQUIRED before either: the
-    // first authenticated PDS write (needs the token set + DPoP key to survive), or
-    // running more than one replica (a /signin and /signin-callback handled by
-    // different processes miss each other here, identical to a restart).
+    // The OAuth store holds two tiers of state: the in-flight auth request (PKCE
+    // verifier + DPoP key, keyed by `state`) and, post-callback, the session token
+    // set + DPoP key. Backing it with Postgres (`AtprotoAuthStore`) instead of an
+    // in-process map is what lets a grant survive a restart, lets `/signin` and
+    // `/signin-callback` land on different replicas, and gives jacquard's refresh
+    // machinery a durable place to write rotated tokens (ZMVP-12).
     Arc::new(OAuthClient::new(
-        MemoryAuthStore::new(),
+        store,
         ClientData {
             keyset: None,
             config,
