@@ -15,8 +15,10 @@ use smol_str::SmolStr;
 use sqlx::PgPool;
 
 mod auth_store;
+mod did_minter;
 mod profile;
 pub use auth_store::AtprotoAuthStore;
+pub use did_minter::StubDidMinter;
 pub use profile::AtprotoProfileSource;
 
 type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, AtprotoAuthStore>>;

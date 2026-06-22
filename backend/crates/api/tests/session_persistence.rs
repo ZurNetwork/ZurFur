@@ -34,6 +34,8 @@ async fn serve(pool: PgPool, did: &str, user_repo: Arc<MemUserRepo>) -> String {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
     let state = AppState {
+        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
             http_addr: addr,

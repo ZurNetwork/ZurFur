@@ -4,14 +4,19 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use axum::{
     Form, Json, Router,
-    extract::{Query, State},
+    extract::{Query, State, rejection::JsonRejection},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use domain::{
-    elements::{did::Did, profile::Profile, user::UserId},
-    ports::{Authenticator, ProfileCache, ProfileSource, UserRepo},
+    elements::{
+        account::{Account, AccountName},
+        did::Did,
+        profile::Profile,
+        user::UserId,
+    },
+    ports::{AccountRepo, Authenticator, DidMinter, ProfileCache, ProfileSource, UserRepo},
 };
 use figment::{
     Figment,
@@ -103,6 +108,14 @@ pub struct AppState {
     pub profile_source: Arc<dyn ProfileSource>,
     /// Private read-through cache of those profiles (pg in `main`, mem in tests).
     pub profile_cache: Arc<dyn ProfileCache>,
+    /// Zurfur's record of accounts and their owners (pg in `main`, mem in tests).
+    /// An account and its founder's Owner membership are persisted together here
+    /// (ZMVP-14).
+    pub account_repo: Arc<dyn AccountRepo>,
+    /// Mints a sovereign `did:plc` for a newly founded account. The live adapter
+    /// is the floor stub (`StubDidMinter`); dressing it for real minting is an
+    /// adapter swap, invisible to this handler layer.
+    pub did_minter: Arc<dyn DidMinter>,
 }
 
 pub fn app(state: AppState) -> Router {
@@ -112,6 +125,7 @@ pub fn app(state: AppState) -> Router {
         .route("/signin", post(signin))
         .route("/signin-callback", get(signin_callback))
         .route("/me", get(me))
+        .route("/accounts", post(create_account))
         .route("/logout", post(logout))
         .with_state(state)
 }
@@ -259,6 +273,116 @@ async fn me(State(state): State<AppState>, session: Session) -> Response {
     };
     let profile = resolve_profile(&*state.profile_cache, &*state.profile_source, &user.did).await;
     Html(render_me(&user.did, profile.as_ref())).into_response()
+}
+
+/// The body of `POST /accounts`. Founding takes real input, not a bare click.
+///
+/// Example: `{ "name": "Acme Studio" }`.
+#[derive(Deserialize)]
+struct CreateAccountBody {
+    name: String,
+}
+
+/// Founds a new Account for the signed-in visitor and makes them its Owner
+/// (ZMVP-14: "User creates an Account and becomes its Owner"). Onboarding
+/// *sequencing* — when to prompt, how to nudge a user who has none — is a frontend
+/// concern; this endpoint is the capability the frontend calls. An account is a
+/// sovereign entity, so founding first mints the account's own `did:plc` (the floor
+/// `StubDidMinter`; the real PLC directory write lands later as an adapter swap).
+/// That mint is kept off the sign-in critical path precisely because it is a
+/// fallible network step. The account and the founder's Owner membership are then
+/// persisted together in one private-store transaction — never a cross-store dual
+/// write. Per DESIGN/Account a user may own several accounts, so this founds a fresh
+/// one on every call rather than being idempotent.
+///
+/// The caller must supply a name (the anti-spam gate). Examples:
+/// - `{ "name": "Acme Studio" }` → `201 { "id", "did", "name" }`
+/// - `{ "name": "   " }` or no body → `422 { "error" }`, nothing minted
+async fn create_account(
+    State(state): State<AppState>,
+    session: Session,
+    body: Result<Json<CreateAccountBody>, JsonRejection>,
+) -> Response {
+    // Founding is a write, so it requires a recognized visitor (DESIGN/Account: "a
+    // user without any accounts must create one before any write"). No session, an
+    // expired one, or a vanished User → 401 JSON, not a redirect: this is an API
+    // endpoint the frontend calls, not a page.
+    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return unauthorized();
+    };
+    let user = match state.user_repo.find(UserId::new(id)).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized(),
+    };
+
+    // A missing/malformed body, or a name that fails validation, is rejected before
+    // anything is minted. Both map to 422 — the request was understood but unusable.
+    let Ok(Json(body)) = body else {
+        return unprocessable("Provide a name for the account, e.g. {\"name\": \"Acme Studio\"}.");
+    };
+    let name = match AccountName::try_new(body.name) {
+        Ok(name) => name,
+        Err(err) => return unprocessable(&err.to_string()),
+    };
+
+    // Mint the account's sovereign DID before touching the private store. A mint
+    // failure (the real adapter writes to the PLC directory) aborts with nothing
+    // persisted; the client may retry.
+    let did = match state.did_minter.mint().await {
+        Ok(did) => did,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": "We couldn't mint an identity for the account. Please try again."
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // The founding invariant: the account and the creator's Owner membership are
+    // minted together (`Account::open`) and persisted atomically.
+    let (account, owner) = Account::open(user.id, did, name, chrono::Utc::now());
+    if state.account_repo.create(&account, &owner).await.is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "The account couldn't be created. Please try again."
+            })),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "id": account.id.to_string(),
+            "did": account.did.as_str(),
+            "name": account.name.as_str(),
+        })),
+    )
+        .into_response()
+}
+
+/// The 422 a write endpoint returns when the request is understood but its data
+/// won't do — a blank name, say. Carries a human-readable reason.
+fn unprocessable(reason: &str) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({ "error": reason })),
+    )
+        .into_response()
+}
+
+/// The 401 a write endpoint returns to a visitor we don't recognize — JSON, not a
+/// redirect, since these endpoints are called by the frontend, not browsed to.
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "You must be signed in to create an account." })),
+    )
+        .into_response()
 }
 
 /// The exit door (ZMVP-11). Destroys the session server-side: `flush` removes the
