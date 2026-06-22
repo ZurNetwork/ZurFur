@@ -56,6 +56,11 @@ async fn main() -> anyhow::Result<()> {
             pool.clone(),
             std::time::Duration::from_secs(60 * 60),
         )),
+        // The live DID minter is the ZMVP-14 floor stub; the real minter lands as
+        // an adapter swap here ("dress when The Who closes").
+        did_minter: std::sync::Arc::new(adapter_atproto::StubDidMinter::new()),
+        // Accounts and their Owner memberships persist atomically via the pg adapter.
+        account_repo: std::sync::Arc::new(adapter_pg::PgAccountRepo::new(pool.clone())),
         pool,
     };
     let app = api::app(app_state).layer(session_layer);

@@ -56,6 +56,8 @@ async fn me_shows_profile_then_serves_it_from_cache() {
         avatar_url: Some("https://pds.example/avatar/alice.jpg".to_string()),
     }));
     let state = AppState {
+        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
@@ -143,6 +145,8 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
     });
     source.set_unreachable();
     let state = AppState {
+        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),

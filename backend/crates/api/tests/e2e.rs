@@ -28,6 +28,8 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     // unsizing coercion to `Arc<dyn UserRepo>` happens at the field assignment.
     let repo = Arc::new(MemUserRepo::new());
     let state = AppState {
+        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
             http_addr: addr,
