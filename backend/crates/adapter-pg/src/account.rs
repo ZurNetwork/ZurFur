@@ -128,4 +128,21 @@ impl AccountRepo for PgAccountRepo {
         .await?;
         Ok(())
     }
+
+    async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        // Remove the membership — the inverse of `grant_role`. A DELETE that matches
+        // no row affects nothing and still succeeds, so revoking a non-member is a
+        // harmless no-op (the handler decides whether that's a 404 for the caller).
+        query!(
+            r#"
+        DELETE FROM account_members
+        WHERE user_id = $1 AND account_id = $2
+        "#,
+            *user,
+            *account,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }

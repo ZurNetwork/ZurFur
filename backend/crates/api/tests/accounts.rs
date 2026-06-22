@@ -375,3 +375,159 @@ async fn anonymous_visitor_cannot_found_an_account() {
         .expect("find");
     assert!(found.is_none());
 }
+
+/// Seats a member by granting them a role — the setup step for the revoke tests.
+async fn grant_role(client: &reqwest::Client, base: &str, account_id: &str, did: &str, role: &str) {
+    let res = client
+        .post(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": did, "role": role }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    assert_eq!(res.status(), 200, "granting the setup role succeeds");
+}
+
+// ZMVP-16 — the heart: an Owner revokes a member and they hold no role afterward.
+// The Owner is left untouched, and a second revoke finds no membership (the user
+// still exists but is no longer a member).
+#[tokio::test]
+async fn owner_revokes_a_member_and_unseats_them() {
+    let did = "did:plc:e2erevoker";
+    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account_id = found_account(&client, &base, "Acme Studio").await;
+
+    let member_did = "did:plc:e2erevokee";
+    grant_role(&client, &base, &account_id, member_did, "admin").await;
+
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": member_did }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members");
+    assert_eq!(res.status(), 200, "an Owner's revoke succeeds");
+    let body: serde_json::Value = res.json().await.expect("json body");
+    assert_eq!(
+        body["user"], member_did,
+        "the response echoes the revoked member"
+    );
+
+    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let member = user_repo
+        .provision(&Did::new(member_did.to_string()))
+        .await
+        .expect("provision the member");
+    let role = account_repo
+        .role_of(member.id, account)
+        .await
+        .expect("role_of");
+    assert_eq!(role, None, "the revoked member holds no role");
+
+    // The Owner is unaffected by revoking someone else.
+    let owner = user_repo
+        .provision(&Did::new(did.to_string()))
+        .await
+        .expect("provision the owner");
+    let owner_role = account_repo
+        .role_of(owner.id, account)
+        .await
+        .expect("role_of");
+    assert_eq!(
+        owner_role,
+        Some(Role::Owner(None)),
+        "the Owner is left untouched"
+    );
+
+    // A second revoke: the user still exists but is no longer a member → 404.
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": member_did }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members (again)");
+    assert_eq!(res.status(), 404, "a second revoke finds no membership");
+}
+
+// An Owner is never revocable through this seam — no one outranks them. Keeps a
+// sole Owner safe; ownership only leaves via the separate transfer seam.
+#[tokio::test]
+async fn the_owner_cannot_be_revoked() {
+    let did = "did:plc:e2eownersafe";
+    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account_id = found_account(&client, &base, "Acme Studio").await;
+
+    // The Owner targets their own DID.
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": did }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members");
+    assert_eq!(res.status(), 403, "an Owner cannot be revoked here");
+
+    let owner = user_repo
+        .provision(&Did::new(did.to_string()))
+        .await
+        .expect("provision the owner");
+    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let role = account_repo
+        .role_of(owner.id, account)
+        .await
+        .expect("role_of");
+    assert_eq!(role, Some(Role::Owner(None)), "the Owner keeps their role");
+}
+
+// Revoking someone who isn't a member is a 404 — and resolving them must not mint a
+// User as a side effect (revoke uses a read-only DID lookup, not provision).
+#[tokio::test]
+async fn revoking_a_non_member_is_not_found() {
+    let did = "did:plc:e2erevnonmember";
+    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account_id = found_account(&client, &base, "Acme Studio").await;
+
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": "did:plc:stranger" }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members");
+    assert_eq!(res.status(), 404, "revoking a non-member is 404");
+}
+
+// A revoke addressed to an account that doesn't exist is a 404.
+#[tokio::test]
+async fn revoking_on_a_missing_account_is_not_found() {
+    let did = "did:plc:e2erevnoacct";
+    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let missing = Uuid::now_v7();
+    let res = client
+        .delete(format!("{base}/accounts/{missing}/members"))
+        .json(&serde_json::json!({ "user": "did:plc:whoever" }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members");
+    assert_eq!(res.status(), 404, "revoking on a missing account is 404");
+}
+
+// An anonymous visitor cannot revoke — turned away at 401 before any lookup.
+#[tokio::test]
+async fn anonymous_visitor_cannot_revoke_a_role() {
+    let (base, _user_repo, _account_repo) = spawn_app("did:plc:nobody").await;
+
+    let res = client()
+        .delete(format!("{base}/accounts/{}/members", Uuid::now_v7()))
+        .json(&serde_json::json!({ "user": "did:plc:whoever" }))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members");
+    assert_eq!(res.status(), 401, "an unrecognized visitor cannot revoke");
+}

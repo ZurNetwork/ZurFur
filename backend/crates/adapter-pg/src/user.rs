@@ -72,4 +72,28 @@ impl UserRepo for PgUserRepo {
             created_at: row.created_at,
         }))
     }
+
+    async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
+        // Read-only lookup by the unique `did` — no INSERT, so an unknown DID
+        // resolves to None rather than recognizing a new visitor.
+        let row = query!(
+            r#"
+            SELECT
+                id          AS "id!",
+                did         AS "did!",
+                created_at  AS "created_at!: chrono::DateTime<chrono::Utc>"
+            FROM users
+            WHERE did = $1
+            "#,
+            did.as_str(),
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| User {
+            id: UserId::new(row.id),
+            did: Did::new(row.did),
+            created_at: row.created_at,
+        }))
+    }
 }
