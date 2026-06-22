@@ -128,7 +128,10 @@ pub fn app(state: AppState) -> Router {
         .route("/signin-callback", get(signin_callback))
         .route("/me", get(me))
         .route("/accounts", post(create_account))
-        .route("/accounts/{id}/members", post(grant_role))
+        .route(
+            "/accounts/{id}/members",
+            post(grant_role).delete(revoke_role),
+        )
         .route("/logout", post(logout))
         .with_state(state)
 }
@@ -389,22 +392,33 @@ fn unauthorized() -> Response {
 }
 
 /// The 403 a write endpoint returns when the visitor is recognized but lacks the
-/// authority for the action — here, granting a role without being the account's
-/// Owner (the floor rule; DESIGN/Roles).
+/// authority for the action — e.g. acting on a member whose rank the actor may not
+/// change, or not being a member at all (the floor rule; DESIGN/Roles). Shared by
+/// grant and revoke, so the wording stays action-neutral.
 fn forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
-        Json(json!({ "error": "You don't have permission to grant that role on this account." })),
+        Json(json!({ "error": "You don't have permission to change roles on this account." })),
     )
         .into_response()
 }
 
 /// The 404 a write endpoint returns when the addressed account doesn't exist (or
-/// has been soft-deleted) — the target of the grant isn't there to act on.
+/// has been soft-deleted) — there's nothing there to act on.
 fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
         Json(json!({ "error": "No such account." })),
+    )
+        .into_response()
+}
+
+/// The 404 a revoke returns when the addressed user holds no membership in the
+/// account — there's no role to remove. Distinct message from a missing account.
+fn member_not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": "That user is not a member of this account." })),
     )
         .into_response()
 }
@@ -517,6 +531,104 @@ async fn grant_role(
             "account": account.to_string(),
             "user": grantee.did.as_str(),
             "role": member.get_role().as_str(),
+        })),
+    )
+        .into_response()
+}
+
+/// The body of `DELETE /accounts/{id}/members`. The member to revoke is named by
+/// their public `did` — the same identity convention as the grant. No role: a
+/// revoke removes the membership whatever role it holds.
+///
+/// Example: `{ "user": "did:plc:abc123" }`.
+#[derive(Deserialize)]
+struct RevokeRoleBody {
+    user: String,
+}
+
+/// Revokes a user's role on an account — removes their membership, the inverse of
+/// `grant_role` (ZMVP-16). Authorization reuses the same seam: an actor may revoke a
+/// member only if `can_grant` would let them act on that member's *current* rank — so
+/// an Owner revokes Admin/Manager/Member, an Admin revokes Manager/Member (never a
+/// peer Admin), and an Owner is never revocable here. That last point keeps a sole
+/// Owner safe for free: ownership only leaves via the separate transfer seam.
+///
+/// Outcomes:
+/// - `200 { "account", "user" }` — the member was revoked
+/// - `401` — not signed in
+/// - `403` — signed in but not allowed to revoke that member
+/// - `404` — no such account, or the user is not a member of it
+/// - `422` — malformed body
+async fn revoke_role(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+    body: Result<Json<RevokeRoleBody>, JsonRejection>,
+) -> Response {
+    // Revoking is a write — it requires a recognized visitor, the acting authority.
+    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return unauthorized();
+    };
+    let actor = match state.user_repo.find(UserId::new(id)).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized(),
+    };
+
+    let Ok(Json(body)) = body else {
+        return unprocessable("Provide a member to revoke, e.g. {\"user\": \"did:plc:…\"}.");
+    };
+
+    // The revoke must address a real, live account.
+    let account = AccountId::new(account_id);
+    match state.account_repo.find(account).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
+    }
+
+    // The actor's standing in this account decides what they may do; a non-member
+    // has none.
+    let actor_role = match state.account_repo.role_of(actor.id, account).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return forbidden(),
+        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
+    };
+
+    // Resolve the target by DID *without minting* — unlike a grant, a revoke must not
+    // recognize a brand-new visitor as a side effect. An unknown DID is not a member.
+    let target = match state.user_repo.find_by_did(&Did::new(body.user)).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return member_not_found(),
+        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
+    };
+
+    // The member's *current* rank is what the actor must be allowed to act on — the
+    // same predicate as grant. An Owner outranks everyone, so they're never revocable
+    // here; an Admin can't revoke a peer Admin. Someone with no role isn't a member.
+    let target_role = match state.account_repo.role_of(target.id, account).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return member_not_found(),
+        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
+    };
+    if !actor_role.can_grant(&target_role) {
+        return forbidden();
+    }
+
+    // Settle the revoke: remove the membership.
+    if state
+        .account_repo
+        .revoke_role(target.id, account)
+        .await
+        .is_err()
+    {
+        return internal_error("The revoke couldn't be completed. Please try again.");
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "account": account.to_string(),
+            "user": target.did.as_str(),
         })),
     )
         .into_response()

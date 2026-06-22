@@ -45,6 +45,12 @@ impl UserRepo for MemUserRepo {
         let by_did = self.by_did.lock().expect("MemUserRepo mutex poisoned");
         Ok(by_did.values().find(|u| u.id == id).cloned())
     }
+
+    async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
+        // Read-only — a miss returns None rather than minting, unlike `provision`.
+        let by_did = self.by_did.lock().expect("MemUserRepo mutex poisoned");
+        Ok(by_did.get(did).cloned())
+    }
 }
 
 /// In-memory [`Authenticator`]: stands in for the PDS so the full sign-in flow can
@@ -243,6 +249,17 @@ impl AccountRepo for MemAccountRepo {
             .lock()
             .expect("MemAccountRepo mutex poisoned");
         memberships.insert((*account_id, *user), role.clone());
+        Ok(())
+    }
+
+    async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        // Remove the membership — inverse of `grant_role`. Removing one that isn't
+        // there is a no-op, mirroring the pg adapter's DELETE.
+        let mut memberships = self
+            .memberships
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        memberships.remove(&(account, user));
         Ok(())
     }
 }

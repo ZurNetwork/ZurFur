@@ -26,6 +26,12 @@ pub trait UserRepo: Send + Sync {
     /// Resolve a session's stored UserId back to its User, without touching the
     /// PDS. Returns None if no such User exists. (Criterion 3.)
     async fn find(&self, id: UserId) -> anyhow::Result<Option<User>>;
+
+    /// Resolve a DID to its User *without minting one* — the read-only counterpart
+    /// to `provision`. Returns None if no User has ever been recognized for that
+    /// DID. Lets a caller act on an existing member by their public id (e.g. revoke
+    /// a role) without the side effect of recognizing a brand-new visitor.
+    async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>>;
 }
 
 /// Authenticates a visitor against their PDS, yielding the DID they already own
@@ -98,6 +104,13 @@ pub trait AccountRepo: Send + Sync {
     /// rows live in the private store, so this is one private-side write, never a
     /// cross-store dual write (ZMVP-15, DESIGN/Roles).
     async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()>;
+
+    /// Remove a user's membership in an account — the inverse of `grant_role`.
+    /// Idempotent: removing a membership that isn't there is a no-op, not an error.
+    /// Authorization (who may revoke whom) is the caller's concern, settled before
+    /// this is reached; the store only performs the removal. A private-side write,
+    /// never a cross-store dual write (ZMVP-16, DESIGN/Roles).
+    async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is
