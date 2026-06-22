@@ -1,3 +1,22 @@
+//! The composition root and HTTP surface of the Zurfur backend.
+//!
+//! This crate is the one place that knows which adapters are live. It owns
+//! [`Config`] (figment-loaded), the shared [`AppState`] (a bag of trait
+//! objects, one per port), the axum [`app`] router, and every HTTP handler.
+//! Domain logic lives in `domain`; persistence and the PDS live behind the
+//! `adapter-*` crates; this crate only wires them together and translates
+//! between HTTP and those ports.
+//!
+//! Two shapes of endpoint coexist here. The browser-facing sign-in flow
+//! (`/`, `/signin`, `/signin-callback`, `/me`, `/logout`) speaks HTML and
+//! redirects — an unrecognized visitor lands back on the sign-in page. The
+//! account/membership API (`POST /accounts`, `.../members`) speaks JSON and
+//! returns status codes — an unrecognized caller gets a `401`, never a
+//! redirect, because the frontend calls these rather than browsing to them.
+//!
+//! References: DESIGN "Domains and Applications" (ports and adapters);
+//! DESIGN/Account, DESIGN/Roles; ZMVP-8 through ZMVP-16.
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -34,29 +53,83 @@ use uuid::Uuid;
 /// session → User through the repo, never re-asking the PDS (ZMVP-9 Criterion 3).
 const SESSION_USER_KEY: &str = "user_id";
 
+/// The deployment profile, selected by `ZURFUR_ENV` (`dev` → [`DEV`]). The only
+/// behavioral fork it drives today is cookie security: [`STG`] and [`PROD`] set
+/// the session cookie `Secure` (HTTPS-only) in `main`, while [`DEV`] leaves it
+/// off so loopback HTTP doesn't drop the cookie.
+///
+/// Caveats: deserialized from config/env, so the spelling must match a variant
+/// exactly (`DEV`/`STG`/`PROD`). New environments are an enum change, not config.
+///
+/// [`DEV`]: Environment::DEV
+/// [`STG`]: Environment::STG
+/// [`PROD`]: Environment::PROD
 #[derive(Clone, Debug, Deserialize)]
 pub enum Environment {
+    /// Local development: plain HTTP on loopback, non-`Secure` cookies.
     DEV,
+    /// Staging: HTTPS, `Secure` cookies — a production-shaped environment.
     STG,
+    /// Production: HTTPS, `Secure` cookies.
     PROD,
 }
 
+/// The fully-resolved runtime configuration, produced by [`Config::load`] and
+/// then moved into [`AppState`]. Every field is required at boot except
+/// [`http_addr`], which defaults to `127.0.0.1:3621`.
+///
+/// Caveats: figment layers config/{profile}.toml first, then `DATABASE_URL`,
+/// then `ZURFUR_*` env (env wins); a missing required key fails the load.
+/// [`database_url`] is read from the unprefixed `DATABASE_URL` on purpose — sqlx
+/// tooling reads that exact name. [`public_url`] is the externally-visible
+/// origin and must be a parseable URI: `main` builds the OAuth redirect URI from
+/// it and aborts boot if it can't.
+///
+/// References: CLAUDE.md "Configuration"; [`Config::load`].
+///
+/// [`http_addr`]: Config::http_addr
+/// [`database_url`]: Config::database_url
+/// [`public_url`]: Config::public_url
 #[derive(Clone, Deserialize)]
 pub struct Config {
+    /// The deployment profile; see [`Environment`].
     pub env: Environment,
+    /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`
+    /// (`default_http_addr`); dev.toml overrides to `127.0.0.1:8080`.
     #[serde(default = "default_http_addr")]
     pub http_addr: SocketAddr,
     /// Externally-visible origin (scheme + host + port) used to build OAuth redirect URIs.
     pub public_url: String,
+    /// Postgres connection string for the pool built at boot. Read from the
+    /// unprefixed `DATABASE_URL` (the name sqlx tooling expects), not `ZURFUR_*`.
     pub database_url: String,
+    /// Default tracing filter, applied when `RUST_LOG` is unset (see `main`).
     pub log_level: String,
 }
 
+/// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`. The literal is a
+/// known-valid socket, so the parse can't fail.
 fn default_http_addr() -> SocketAddr {
     "127.0.0.1:3621".parse().unwrap()
 }
 
 impl Config {
+    /// Loads and validates the runtime [`Config`] from the layered figment
+    /// sources, selecting the profile from `ZURFUR_ENV` (default `dev`).
+    ///
+    /// Layering, lowest precedence first: `config/{profile}.toml`, then the
+    /// unprefixed `DATABASE_URL`, then all `ZURFUR_*` env vars — so environment
+    /// always wins over the file. The config directory is anchored to
+    /// `CARGO_MANIFEST_DIR` (overridable via `ZURFUR_CONFIG_DIR`) because cargo,
+    /// cargo-watch, and `just` each run from a different CWD.
+    ///
+    /// Caveats: returns a boxed [`figment::Error`] if a required key is missing
+    /// or a value fails to deserialize (e.g. a malformed `http_addr`, or an
+    /// `env` that isn't one of [`Environment`]'s variants). The TOML file is
+    /// optional — env alone can satisfy every required key — but the keys
+    /// themselves are not.
+    ///
+    /// References: CLAUDE.md "Configuration".
     pub fn load() -> Result<Self, Box<figment::Error>> {
         let profile = std::env::var("ZURFUR_ENV").unwrap_or_else(|_| "dev".into());
 
@@ -76,6 +149,10 @@ impl Config {
             .map_err(Box::new)
     }
 }
+/// The form body of `POST /signin`: the visitor's AT Protocol `handle` (e.g.
+/// `you.bsky.social`), the only thing sign-in needs. It is handed straight to
+/// the [`Authenticator`] to resolve into the PDS authorization URL; an unknown
+/// or malformed handle fails politely back on the sign-in page (ZMVP-8).
 #[derive(Deserialize)]
 struct SigninForm {
     handle: String,
@@ -96,30 +173,71 @@ struct CallbackQuery {
     error_description: Option<String>,
 }
 
+/// The shared application state every handler receives via axum's [`State`]
+/// extractor — the composition root's bag of dependencies. It is `Clone` (the
+/// pool and every port are cheaply clonable, behind [`PgPool`]/[`Arc`]), so axum
+/// can hand each request its own copy.
+///
+/// Each port is an `Arc<dyn Trait>` precisely so the wiring picks the live
+/// adapter once, in `main`, and the handlers stay ignorant of it: pg/atproto in
+/// production, the in-process fakes (mem + a fake PDS) in the e2e tests. Adding a
+/// capability is adding a field here plus a line in `main` — never a handler
+/// rewrite.
+///
+/// References: DESIGN "Domains and Applications"; [`app`].
 #[derive(Clone)]
 pub struct AppState {
+    /// The resolved runtime [`Config`]. Kept whole so handlers and `main` read
+    /// the same values (e.g. cookie security keys off [`Config::env`]).
     pub config: Config,
+    /// The Postgres connection pool. Shared directly (not behind a port) because
+    /// it backs both the adapters built over it and the `health` probe.
     pub pool: PgPool,
-    /// Authenticates visitors against their PDS. A trait object so the composition
-    /// root chooses the live adapter (atproto in `main`, a fake PDS in e2e tests).
+    /// The [`Authenticator`] port: drives the OAuth handshake with a visitor's
+    /// PDS — `start` yields the authorization URL, `complete` exchanges the
+    /// callback for a DID. A trait object so the composition root chooses the
+    /// live adapter (atproto's `AtprotoAuthenticator` in `main`, a fake PDS in
+    /// e2e tests). Used by the `signin` and `signin_callback` handlers.
     pub auth: Arc<dyn Authenticator>,
-    /// Zurfur's record of recognized visitors. A trait object so the composition
-    /// root chooses the live adapter (pg in `main`, mem in tests).
+    /// The [`UserRepo`] port: Zurfur's record of recognized visitors, keyed by
+    /// DID. `provision` mints-or-returns one User per DID (idempotent); `find`
+    /// resolves a session's id. pg in `main`, mem in tests.
     pub user_repo: Arc<dyn UserRepo>,
-    /// Reads public profiles from the PDS (atproto in `main`, a fake in tests).
+    /// The [`ProfileSource`] port: reads public profiles from the PDS. atproto
+    /// in `main`, a fake in tests. A failure here degrades the `me` page to the
+    /// DID rather than erroring.
     pub profile_source: Arc<dyn ProfileSource>,
-    /// Private read-through cache of those profiles (pg in `main`, mem in tests).
+    /// The [`ProfileCache`] port: private read-through cache fronting
+    /// [`profile_source`](AppState::profile_source). pg in `main` (entries
+    /// expire after an hour, set in `main`), mem in tests. See
+    /// `resolve_profile`.
     pub profile_cache: Arc<dyn ProfileCache>,
-    /// Zurfur's record of accounts and their owners (pg in `main`, mem in tests).
-    /// An account and its founder's Owner membership are persisted together here
-    /// (ZMVP-14).
+    /// The [`AccountRepo`] port: Zurfur's record of accounts and their
+    /// memberships. `create` persists an account and its founder's Owner
+    /// membership in one transaction (ZMVP-14); `role_of`/`grant_role`/
+    /// `revoke_role` back the membership API. pg in `main`, mem in tests.
     pub account_repo: Arc<dyn AccountRepo>,
-    /// Mints a sovereign `did:plc` for a newly founded account. The live adapter
-    /// is the floor stub (`StubDidMinter`); dressing it for real minting is an
-    /// adapter swap, invisible to this handler layer.
+    /// The [`DidMinter`] port: mints a sovereign `did:plc` for a newly founded
+    /// account. The live adapter is the floor stub (`StubDidMinter`); the real
+    /// PLC-directory write lands later as an adapter swap, invisible to the
+    /// handler layer. Used by the `create_account` handler.
     pub did_minter: Arc<dyn DidMinter>,
 }
 
+/// Builds the axum [`Router`] over an [`AppState`], wiring every route to its
+/// handler. This is the canonical route table; the e2e tests and `main` both
+/// mount it. `main` additionally layers the session middleware (the [`Session`]
+/// extractor handlers rely on comes from that layer, applied outside this fn).
+///
+/// Routes: `GET /health`, `GET /` and `POST /signin` and
+/// `GET /signin-callback` (the sign-in flow), `GET /me`, `POST /accounts`,
+/// `POST`/`DELETE /accounts/{id}/members`, `POST /logout`.
+///
+/// References: [`AppState`]; the per-handler docs below.
+///
+/// ```ignore
+/// let router = api::app(state).layer(session_layer);
+/// ```
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -136,6 +254,19 @@ pub fn app(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Liveness/readiness probe (`GET /health`). Reports `200` with the database
+/// `up` when the pool can reach Postgres, `503 degraded` when it can't — the one
+/// endpoint that intentionally fails when a dependency is down, so an
+/// orchestrator can gate traffic. No auth.
+///
+/// Caveats: only the database is probed; a healthy `200` doesn't certify the PDS
+/// or any other adapter. References: CLAUDE.md "Database"; [`adapter_pg::is_reachable`].
+///
+/// ```text
+/// GET /health
+/// → 200 { "status": "ok",       "database": "up"   }
+/// → 503 { "status": "degraded", "database": "down" }
+/// ```
 async fn health(state: State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     if adapter_pg::is_reachable(&state.pool).await {
         (
@@ -176,10 +307,36 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// The sign-in landing page (`GET /`): the bare form with no error banner. No
+/// auth; this is where an anonymous visitor — or one bounced from [`me`] or
+/// [`logout`] — begins. See [`sign_in_page`].
+///
+/// ```text
+/// GET /
+/// → 200 (HTML: the sign-in form)
+/// ```
 async fn form() -> Html<String> {
     sign_in_page(None)
 }
 
+/// Begins sign-in (`POST /signin`): hands the submitted [`SigninForm`] handle to
+/// the [`Authenticator`] and redirects the browser to the PDS authorization URL
+/// it returns (ZMVP-8). The visitor returns to [`signin_callback`].
+///
+/// Caveats: no auth (this is how a visitor becomes recognized). An unknown or
+/// malformed handle is a `400` rendering the sign-in page with a steady message
+/// — the underlying error can be noisy/internal, so it is not echoed. Expects a
+/// form-encoded body, not JSON.
+///
+/// References: [`SigninForm`], [`Authenticator`], [`signin_callback`].
+///
+/// ```text
+/// POST /signin   (form)   handle=you.bsky.social
+/// → 303 Location: https://pds.example/oauth/authorize?...
+///
+/// POST /signin   (form)   handle=not a handle
+/// → 400 (HTML: sign-in page with an error banner)
+/// ```
 async fn signin(
     State(state): State<AppState>,
     Form(f): Form<SigninForm>,
@@ -197,6 +354,30 @@ async fn signin(
     }
 }
 
+/// The OAuth redirect target (`GET /signin-callback`): completes sign-in and
+/// establishes the session. On success it exchanges the [`CallbackQuery`] `code`
+/// for a DID via the [`Authenticator`], provisions the [`UserRepo`] User for that
+/// DID (mint-or-return; first contact *recognizes*, it doesn't register —
+/// ZMVP-9), stores the User's id under [`SESSION_USER_KEY`], and redirects to
+/// [`me`]. The session carries our own id, never the DID, so later requests
+/// resolve without re-asking the PDS.
+///
+/// Caveats / failure modes: a denied authorization arrives with `error` and no
+/// `code` — handled as `200` back on the sign-in page, not a crash (this is why
+/// [`CallbackQuery`] is a lax struct, not jacquard's strict params). A missing
+/// `code` with no `error` is a `400`. A failed code exchange is `400`. A
+/// provision or session-insert failure is `500`, each rendering the sign-in page
+/// with a steady message. No prior auth required (this *creates* the session).
+///
+/// References: [`Authenticator`], [`UserRepo`], [`me`], [`SESSION_USER_KEY`].
+///
+/// ```text
+/// GET /signin-callback?code=abc&state=xyz&iss=https://pds.example
+/// → 303 Location: /me   (Set-Cookie: zurfur.sid=...)
+///
+/// GET /signin-callback?error=access_denied&error_description=...
+/// → 200 (HTML: sign-in page, "Sign-in was not completed: ...")
+/// ```
 async fn signin_callback(
     State(state): State<AppState>,
     session: Session,
@@ -266,9 +447,24 @@ async fn signin_callback(
     Redirect::to("/me").into_response()
 }
 
-/// Greets the signed-in visitor, resolving their session's `UserId` to a User via
-/// the repo (no PDS round trip). An anonymous visitor — no session, an expired one,
-/// or one whose User no longer exists — is sent back to the sign-in page.
+/// The signed-in greeting (`GET /me`): resolves the session's [`UserId`] to a
+/// User via the [`UserRepo`] (no PDS round trip — ZMVP-9 Criterion 3), then
+/// renders the handle and avatar via [`resolve_profile`]/[`render_me`] (ZMVP-10).
+///
+/// Caveats: an anonymous visitor — no session, an expired one, or one whose User
+/// no longer exists — is redirected to [`form`], not erred. A page, not an API:
+/// it redirects rather than returning `401`. An unreachable PDS with nothing
+/// cached still renders, falling back to the DID (absence is not an error).
+///
+/// References: [`UserRepo`], [`resolve_profile`], [`render_me`].
+///
+/// ```text
+/// GET /me   (Cookie: zurfur.sid=...)
+/// → 200 (HTML: "Signed in as @you (You)" + sign-out control)
+///
+/// GET /me   (no/expired session)
+/// → 303 Location: /
+/// ```
 async fn me(State(state): State<AppState>, session: Session) -> Response {
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Redirect::to("/").into_response();

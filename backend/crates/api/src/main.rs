@@ -1,3 +1,14 @@
+//! The Zurfur backend binary: the boot sequence and the live adapter wiring.
+//!
+//! This is the only place that names the production adapters. [`main`] loads
+//! [`Config`], stands up the Postgres pool, runs migrations, builds the session
+//! middleware, assembles the [`AppState`] from the pg/atproto adapters, mounts
+//! the [`api::app`] router under that layer, and serves. The rest of the crate
+//! is adapter-agnostic; swapping an implementation is a change here, nowhere
+//! else.
+//!
+//! References: CLAUDE.md "Architecture"/"Configuration"/"Database".
+
 use api::{AppState, Config, Environment};
 use fluent_uri::Uri;
 use tower_sessions::{
@@ -6,6 +17,18 @@ use tower_sessions::{
 };
 use tracing_subscriber::EnvFilter;
 
+/// Boots the server, in order: load `.env`, load [`Config`], init tracing
+/// (`RUST_LOG` overrides [`Config::log_level`]), connect the pool, run
+/// migrations, bind the listener, build the redirect URI and session layer,
+/// assemble [`AppState`] from the live adapters, then `axum::serve` forever.
+///
+/// Fails fast — returns `Err` and exits before serving — if the config won't
+/// load, the database is unreachable, a migration fails, the bind fails, or
+/// [`Config::public_url`] won't parse into a redirect URI. The redirect URI is
+/// fixed at client-construction time (jacquard sends it in the PAR request), so
+/// it is registered once here from the public origin, not per request. Cookie
+/// `Secure` is on only in [`Environment::STG`]/[`Environment::PROD`]; profiles
+/// are cached for one hour.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();

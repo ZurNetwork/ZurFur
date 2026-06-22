@@ -1,12 +1,42 @@
+//! [`Role`] — a member's rank inside an account, and the rule for who may grant
+//! what.
+//!
+//! DESIGN/Roles is the source of truth. There are four ranks (Owner is highest,
+//! Member lowest); only Owner and Admin may change roles; granting a role is how
+//! a user joins, revoking it is how they leave. The grant rule lives in
+//! [`Role::can_grant`] — the reusable authority seam ZMVP-15/16 are built on.
+
+/// A member's rank inside one account.
+///
+/// Ordered Owner < Admin < Manager < Member by the derived [`Ord`], so a *lower*
+/// numeric position means *higher* authority — [`can_grant`](Role::can_grant)
+/// leans on this, so keep the variants in rank order, top to bottom.
+///
+/// Each variant carries an `Option<String>` parent slot for the future role
+/// hierarchy tree. On the floor it is always `None` (only Owner exists, and an
+/// Owner never has a parent — even when transferred). Be aware the derived
+/// [`Ord`] also weighs that `Option<String>`; that is why parented-role compares
+/// are deferred dressing (see the note on [`can_grant`](Role::can_grant)).
+///
+/// References: [`UnknownRole`], [`crate::elements::user_account::UserAccount`],
+/// [`crate::ports::AccountRepo::grant_role`], DESIGN/Roles.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
+    /// The account's founder/highest authority; never has a parent (DESIGN/Roles).
     Owner(Option<String>),
+    /// May change roles below Admin; cannot mint a peer Admin or an Owner.
     Admin(Option<String>),
+    /// A member with elevated standing but no authority to change roles.
     Manager(Option<String>),
+    /// The base membership rank; grants nothing.
     Member(Option<String>),
 }
 
 /// A stored role discriminant that isn't one of the four known roles.
+///
+/// The error returned by [`Role::try_from`] when a persisted string doesn't map
+/// to a [`Role`] — a schema/data drift signal, not a user input error. Carries
+/// the offending value for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownRole(pub String);
 
@@ -70,6 +100,9 @@ impl Role {
         matches!(self, Role::Owner(_) | Role::Admin(_)) && target > self
     }
 
+    /// The lowercase discriminant (`owner` | `admin` | `manager` | `member`),
+    /// the value persisted by the store and the inverse of [`Role::try_from`].
+    /// Drops the parent slot — only the rank is encoded here.
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Owner(_) => "owner",

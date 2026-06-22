@@ -1,3 +1,7 @@
+//! [`ProfileCache`] over PostgreSQL: a TTL'd read-through cache of public PDS
+//! profiles in the `profile_cache` table, so repeat views don't need the PDS
+//! awake. See ZMVP-10 and DESIGN/"Domains and Applications".
+
 use chrono::{Duration, Utc};
 use domain::{
     elements::{did::Did, profile::Profile},
@@ -26,6 +30,10 @@ impl PgProfileCache {
 
 #[async_trait::async_trait]
 impl ProfileCache for PgProfileCache {
+    /// The [`ttl`](PgProfileCache::new) is applied as a `fetched_at > cutoff`
+    /// predicate, so a stale entry returns `None` (a cache miss) and the caller
+    /// refetches — it is never served. The cutoff is computed app-side to keep
+    /// the freshness window explicit and testable.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>> {
         // Apply the TTL as a query predicate: an entry past it simply isn't
         // returned, so the caller sees a miss and refetches. Cutoff computed
@@ -55,6 +63,9 @@ impl ProfileCache for PgProfileCache {
         }))
     }
 
+    /// `INSERT ... ON CONFLICT (did) DO UPDATE`: a refetch overwrites the prior
+    /// copy in one round trip and stamps `fetched_at = now()`, restarting the TTL
+    /// window read by [`get`](PgProfileCache::get).
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         query!(
             r#"

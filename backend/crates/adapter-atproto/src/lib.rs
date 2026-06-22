@@ -1,3 +1,28 @@
+//! `adapter-atproto` — the **public data boundary** of Zurfur.
+//!
+//! This crate is the only place that knows about the AT Protocol and the OAuth
+//! handshake: it talks to the visitor's PDS to sign them in, mint identity, and
+//! read public profile records, and it implements the domain port traits
+//! ([`Authenticator`], [`ProfileSource`](domain::ports::ProfileSource),
+//! [`DidMinter`](domain::ports::DidMinter)) so the rest of the system depends
+//! only on roles, never on a protocol type. The jacquard library
+//! (the AT Proto / OAuth client) is quarantined here — nothing protocol-shaped
+//! leaks past this crate's surface (see DESIGN/"Domains and Applications").
+//!
+//! Surface (re-exported below):
+//! - [`AtprotoAuthenticator`] — the real OAuth client ([`Authenticator`]).
+//! - [`AtprotoProfileSource`] — public profile reads from the user's PDS
+//!   ([`ProfileSource`](domain::ports::ProfileSource)).
+//! - [`StubDidMinter`] — the ZMVP-14 *floor stub*
+//!   [`DidMinter`](domain::ports::DidMinter); it returns a synthetic `did:plc`,
+//!   not a real one.
+//! - [`AtprotoAuthStore`] — Postgres-backed persistence for in-flight and
+//!   established OAuth state, so a grant survives a restart or a replica move
+//!   (ZMVP-12).
+//!
+//! `api` is the composition root and the only crate that decides which adapter
+//! (this one, or `adapter-mem`) is live.
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -21,6 +46,11 @@ pub use auth_store::AtprotoAuthStore;
 pub use did_minter::StubDidMinter;
 pub use profile::AtprotoProfileSource;
 
+/// The fully-applied jacquard OAuth client this crate drives: a
+/// [`JacquardResolver`] (handle/DID resolution over `reqwest`) paired with the
+/// Postgres-backed [`AtprotoAuthStore`], wrapped in `Arc` so the authenticator
+/// is cheap to share. Kept as a private alias so this concrete protocol type
+/// never appears in the crate's public signatures.
 type Oauth = Arc<OAuthClient<JacquardResolver<reqwest::Client>, AtprotoAuthStore>>;
 
 /// The real [`Authenticator`]: an OAuth client that talks to the visitor's PDS.
@@ -32,7 +62,7 @@ pub struct AtprotoAuthenticator {
 
 impl AtprotoAuthenticator {
     /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
-    /// registered redirect target (see [`build_oauth`] for why that is fixed here).
+    /// registered redirect target (see `build_oauth` for why that is fixed here).
     /// `pool` backs the persistent [`AtprotoAuthStore`] and is injected by `api`.
     pub fn new(redirect_uri: Uri<String>, pool: PgPool) -> Self {
         Self {
@@ -43,6 +73,11 @@ impl AtprotoAuthenticator {
 
 #[async_trait]
 impl Authenticator for AtprotoAuthenticator {
+    /// Resolves `handle` to its PDS, performs a Pushed Authorization Request
+    /// (PAR) — minting and persisting the PKCE verifier + DPoP key into
+    /// [`AtprotoAuthStore`] keyed by `state` — and returns the PDS authorization
+    /// URL. Errors if the handle can't be resolved or the PDS is unreachable;
+    /// the returned `Err` is jacquard's, surfaced as `anyhow`.
     async fn start(&self, handle: &str) -> anyhow::Result<String> {
         Ok(self
             .oauth
@@ -50,6 +85,15 @@ impl Authenticator for AtprotoAuthenticator {
             .await?)
     }
 
+    /// Exchanges the callback params (`code`/`state`/`iss`) for tokens: jacquard
+    /// looks up the in-flight request by `state`, runs the DPoP-bound token
+    /// exchange against the PDS, persists the established session into
+    /// [`AtprotoAuthStore`], and hands back the session. We read the verified
+    /// `account_did` off that session and return it as a domain [`Did`].
+    ///
+    /// Errors if `state` doesn't match a saved request (expired/unknown/CSRF),
+    /// the `iss` check fails, or the token exchange round-trip fails. The
+    /// neutral param types keep protocol library types out of the port.
     async fn complete(
         &self,
         code: String,

@@ -1,3 +1,10 @@
+//! Postgres persistence for jacquard's OAuth state — see [`AtprotoAuthStore`].
+//!
+//! This module implements jacquard's [`ClientAuthStore`] trait against the
+//! `atproto_oauth` Postgres schema so the OAuth grant for a visitor outlives a
+//! single process. It holds no protocol logic: jacquard owns refresh, expiry
+//! skew, and the single-flight lock; this is just durable storage (ZMVP-12).
+
 use jacquard_common::{bos::BosStr, session::SessionStoreError, types::did::Did};
 use jacquard_oauth::{
     authstore::ClientAuthStore,
@@ -30,19 +37,27 @@ pub struct AtprotoAuthStore {
 }
 
 impl AtprotoAuthStore {
+    /// Wrap a connection `pool` (injected by `api`) as an OAuth store. The
+    /// `atproto_oauth` tables it reads/writes are created by adapter-pg's
+    /// migrations, which own all DDL; this type never touches the schema.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
+/// JSON-encode a stored value. JSON, not MessagePack: both jacquard record types
+/// use `#[serde(flatten)]`, which rmp can't round-trip (see [`AtprotoAuthStore`]).
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, SessionStoreError> {
     Ok(serde_json::to_vec(value)?)
 }
 
+/// Decode a stored JSON value, the inverse of [`encode`].
 fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T, SessionStoreError> {
     Ok(serde_json::from_slice(data)?)
 }
 
+/// Map a sqlx error into jacquard's [`SessionStoreError`] so a database fault
+/// surfaces as a store error rather than being misread as "no session".
 fn backend(e: sqlx::Error) -> SessionStoreError {
     SessionStoreError::Other(Box::new(e))
 }
@@ -65,6 +80,10 @@ impl ClientAuthStore for AtprotoAuthStore {
         row.map(|(data,)| decode(&data)).transpose()
     }
 
+    /// Insert-or-replace the session keyed by (DID, session id). The upsert is
+    /// what makes jacquard's refresh durable: every rotated token set overwrites
+    /// the prior row (`updated_at` bumped), so a later request on any replica
+    /// reads the freshest grant (ZMVP-12).
     async fn upsert_session(&self, session: ClientSessionData) -> Result<(), SessionStoreError> {
         let data = encode(&session)?;
         sqlx::query(
