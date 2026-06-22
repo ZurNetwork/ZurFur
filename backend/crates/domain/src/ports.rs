@@ -88,6 +88,16 @@ pub trait AccountRepo: Send + Sync {
     /// The role a user holds in an account, or None if they are not a member.
     /// Lets callers verify membership/authority without loading every member.
     async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>>;
+
+    /// Set the role a user holds in an account, seating them if they aren't yet a
+    /// member. On this platform granting a role *is* how a user joins an account
+    /// (DESIGN/Roles), so this is an upsert: a brand-new member is inserted, an
+    /// existing one's role is replaced. Idempotent — re-granting the held role is
+    /// a no-op write. Authorization (who may grant what) is decided by the caller
+    /// before this is reached; the store only persists the settled grant. Both
+    /// rows live in the private store, so this is one private-side write, never a
+    /// cross-store dual write (ZMVP-15, DESIGN/Roles).
+    async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is

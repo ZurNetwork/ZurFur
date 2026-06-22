@@ -231,6 +231,20 @@ impl AccountRepo for MemAccountRepo {
             .expect("MemAccountRepo mutex poisoned");
         Ok(memberships.get(&(account, user)).cloned())
     }
+
+    async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
+        // Upsert into the (account, user) -> role map: a fresh member is seated, an
+        // existing one's role replaced — the in-memory mirror of the pg adapter's
+        // `ON CONFLICT ... DO UPDATE`. Granting a role is how a user joins an
+        // account (DESIGN/Roles); the role tree (`parent`) is deferred on the floor.
+        let UserAccount(user, account_id, role) = member;
+        let mut memberships = self
+            .memberships
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        memberships.insert((*account_id, *user), role.clone());
+        Ok(())
+    }
 }
 
 /// In-memory [`DidMinter`] test fake: hands back a deterministic, unique-per-call
