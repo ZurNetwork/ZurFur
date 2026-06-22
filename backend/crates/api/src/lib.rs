@@ -4,17 +4,19 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use axum::{
     Form, Json, Router,
-    extract::{Query, State, rejection::JsonRejection},
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use domain::{
     elements::{
-        account::{Account, AccountName},
+        account::{Account, AccountId, AccountName},
         did::Did,
         profile::Profile,
+        role::Role,
         user::UserId,
+        user_account::UserAccount,
     },
     ports::{AccountRepo, Authenticator, DidMinter, ProfileCache, ProfileSource, UserRepo},
 };
@@ -126,6 +128,7 @@ pub fn app(state: AppState) -> Router {
         .route("/signin-callback", get(signin_callback))
         .route("/me", get(me))
         .route("/accounts", post(create_account))
+        .route("/accounts/{id}/members", post(grant_role))
         .route("/logout", post(logout))
         .with_state(state)
 }
@@ -380,7 +383,151 @@ fn unprocessable(reason: &str) -> Response {
 fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "You must be signed in to create an account." })),
+        Json(json!({ "error": "You must be signed in to do that." })),
+    )
+        .into_response()
+}
+
+/// The 403 a write endpoint returns when the visitor is recognized but lacks the
+/// authority for the action — here, granting a role without being the account's
+/// Owner (the floor rule; DESIGN/Roles).
+fn forbidden() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": "You don't have permission to grant that role on this account." })),
+    )
+        .into_response()
+}
+
+/// The 404 a write endpoint returns when the addressed account doesn't exist (or
+/// has been soft-deleted) — the target of the grant isn't there to act on.
+fn not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": "No such account." })),
+    )
+        .into_response()
+}
+
+/// The body of `POST /accounts/{id}/members`. The grantee is named by their public
+/// `did` (identity precedes us — we recognize by DID, never by our internal id),
+/// and `role` is the discriminant to grant: `"admin" | "manager" | "member"`.
+/// `"owner"` is understood but never grantable through this seam.
+///
+/// Example: `{ "user": "did:plc:abc123", "role": "admin" }`.
+#[derive(Deserialize)]
+struct GrantRoleBody {
+    user: String,
+    role: String,
+}
+
+/// Grants a role to a user on an account, seating them as a member if they aren't
+/// one yet (ZMVP-15: "Owner grants a role on their Account" — on this platform a
+/// grant *is* how a user joins, DESIGN/Roles). This is the seam where reusable role
+/// checks are born: the authority decision lives in `Role::can_grant`, so every
+/// later role-gated action consults the same rule rather than reinventing it.
+///
+/// The floor enforces only what DESIGN/Roles settles for now — an Owner may grant
+/// Admin/Manager/Member, and Owner is never grantable here (transfer is its own
+/// seam). The richer rules (Admin granting up to its rank, the parent/child tree)
+/// are deferred dressing and intentionally absent.
+///
+/// Outcomes:
+/// - `200 { "account", "user", "role" }` — the grant settled (created or changed)
+/// - `401` — not signed in
+/// - `403` — signed in but not allowed to grant that role
+/// - `404` — no such account
+/// - `422` — malformed body or an unknown role discriminant
+async fn grant_role(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+    body: Result<Json<GrantRoleBody>, JsonRejection>,
+) -> Response {
+    // Granting is a write, so it requires a recognized visitor — the actor whose
+    // authority we are about to check.
+    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return unauthorized();
+    };
+    let actor = match state.user_repo.find(UserId::new(id)).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized(),
+    };
+
+    // A missing/malformed body, or a role string that isn't one of the four known
+    // discriminants, is rejected before anything is touched — understood but unusable.
+    let Ok(Json(body)) = body else {
+        return unprocessable(
+            "Provide a member to grant, e.g. {\"user\": \"did:plc:…\", \"role\": \"admin\"}.",
+        );
+    };
+    let new_role = match Role::try_from(body.role) {
+        Ok(role) => role,
+        Err(err) => return unprocessable(&err.to_string()),
+    };
+
+    // The grant must address a real, live account. A soft-deleted or unknown id is
+    // a 404 — there's nothing to act on — kept distinct from "you may not" (403).
+    let account = AccountId::new(account_id);
+    match state.account_repo.find(account).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
+    }
+
+    // Authorization, at the seam: the actor's standing in *this* account decides
+    // whether the grant is allowed. A non-member has no role and so no authority.
+    let actor_role = match state.account_repo.role_of(actor.id, account).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return forbidden(),
+        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
+    };
+    if !actor_role.can_grant(&new_role) {
+        return forbidden();
+    }
+
+    // Recognize the grantee by their DID (idempotent — mints them on first contact,
+    // returns the existing User otherwise). Granting a role to someone who has never
+    // signed in is how an Owner adds them; they resolve to the same User when they do.
+    let grantee = match state.user_repo.provision(&Did::new(body.user)).await {
+        Ok(user) => user,
+        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
+    };
+
+    // The guard above bounds the role being *granted*; this bounds the *grantee*.
+    // An account's Owner is never demoted through a grant — ownership only moves via
+    // the separate transfer seam ("an Owner never has a parent, even when
+    // transferred", DESIGN/Roles). Without this, an Admin could grant Manager to the
+    // Owner's DID and quietly unseat them.
+    match state.account_repo.role_of(grantee.id, account).await {
+        Ok(Some(Role::Owner(_))) => return forbidden(),
+        Ok(_) => {}
+        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
+    }
+
+    // Settle the grant: upsert the membership in the private store.
+    let member = UserAccount(grantee.id, account, new_role);
+    if state.account_repo.grant_role(&member).await.is_err() {
+        return internal_error("The grant couldn't be completed. Please try again.");
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "account": account.to_string(),
+            "user": grantee.did.as_str(),
+            "role": member.get_role().as_str(),
+        })),
+    )
+        .into_response()
+}
+
+/// The 500 a write endpoint returns when a dependency (the store, the recognizer)
+/// fails — the request was fine, our side wasn't. Carries a steady, retryable message.
+fn internal_error(reason: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": reason })),
     )
         .into_response()
 }

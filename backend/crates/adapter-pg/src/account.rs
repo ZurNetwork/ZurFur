@@ -107,4 +107,25 @@ impl AccountRepo for PgAccountRepo {
 
         Ok(row.map(|m| Role::try_from(m.role)).transpose()?)
     }
+
+    async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
+        // Upsert: granting a role seats a new member or replaces an existing one's
+        // role (DESIGN/Roles — a grant is how a user joins). `parent` is left to
+        // its default NULL: the role-hierarchy tree is deferred ("dress when The
+        // Who closes"), same as the founder row written by `create`.
+        query!(
+            r#"
+        INSERT INTO account_members (account_id, user_id, role)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (account_id, user_id) DO UPDATE
+            SET role = EXCLUDED.role
+        "#,
+            *member.get_account_id(),
+            *member.get_user_id(),
+            member.get_role().as_str()
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
