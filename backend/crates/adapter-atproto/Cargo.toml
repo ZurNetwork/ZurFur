@@ -12,6 +12,8 @@ jacquard-oauth = { version = "0.12.0" }
 jacquard-common = { version = "0.12.0" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 smol_str = "0.3.6"
+# Randomness for the ZMVP-14 floor stub DID minter (synthetic did:plc values).
+rand = { workspace = true }
 # Persists OAuth state (the ClientAuthStore impl) to the private boundary. This
 # crate uses the pool as a plain DB client; api injects it from adapter-pg.
 sqlx = { workspace = true }

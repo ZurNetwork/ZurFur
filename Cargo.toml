@@ -40,3 +40,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = { version = "0.15.7" }
 anyhow = "1.0.102"
+rand = { version = "0.8" }
