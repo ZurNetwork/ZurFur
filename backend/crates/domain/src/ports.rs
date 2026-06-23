@@ -72,7 +72,14 @@ pub trait ProfileSource: Send + Sync {
 /// implementation; a caller treats a miss — absent or stale — as `None`.
 #[async_trait]
 pub trait ProfileCache: Send + Sync {
+    /// Return the cached profile for a DID, or `None` on a miss — which the
+    /// caller treats the same whether the entry is absent or judged stale. The
+    /// `Result` is for store errors (e.g. the cache backend is down), not misses.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>>;
+
+    /// Store (or refresh) a profile after a [`ProfileSource::fetch`], keyed by
+    /// its DID. Idempotent: writing the same profile twice just refreshes the
+    /// entry.
     async fn put(&self, profile: &Profile) -> anyhow::Result<()>;
 }
 

@@ -1,3 +1,12 @@
+//! The ZMVP-14 floor-stub account DID minter — see [`StubDidMinter`].
+//!
+//! [`DidMinter`] mints a sovereign `did:plc` for a platform-custodied entity
+//! (an Account; see DESIGN/Account). The real minter — keypair generation, PLC
+//! genesis operation, signing, directory submission, PDS slot, key custody — is
+//! deferred; this module returns a synthetic, structurally-shaped value so the
+//! account-creation flow can be built against the port now and the adapter
+//! swapped later without touching handlers.
+
 use async_trait::async_trait;
 use domain::{elements::did::Did, ports::DidMinter};
 use rand::Rng;
@@ -19,6 +28,8 @@ const PLC_BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 pub struct StubDidMinter;
 
 impl StubDidMinter {
+    /// Construct the stub. It is stateless ([`Default`] does the same); `new`
+    /// exists for symmetry with the real adapters.
     pub fn new() -> Self {
         Self
     }
@@ -26,6 +37,10 @@ impl StubDidMinter {
 
 #[async_trait]
 impl DidMinter for StubDidMinter {
+    /// Returns `did:plc:` + 24 random lowercase base32 chars. Purely local: no
+    /// network, no keypair, no PLC directory write — so unlike the real minter
+    /// it never actually fails (the `Result` matches the port). The value is
+    /// well-formed but **not** registered anywhere; resolving it will not work.
     async fn mint(&self) -> anyhow::Result<Did> {
         let mut rng = rand::thread_rng();
         let suffix: String = (0..24)

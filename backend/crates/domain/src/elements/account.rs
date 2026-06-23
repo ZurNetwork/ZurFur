@@ -1,3 +1,13 @@
+//! The [`Account`] — a platform-custodied entity that is its own sovereign
+//! identity (DESIGN/Account).
+//!
+//! An account holds a minted `did:plc` of its own (unlike a visitor's DID, which
+//! precedes us), a validated human name, and soft-delete timestamps. It is
+//! founded together with its founder's Owner membership in a single act,
+//! [`Account::open`] — the ZMVP-14 invariant "the creating User becomes Owner."
+//! Persisting the pair is one private-side transaction
+//! ([`crate::ports::AccountRepo::create`]).
+
 use std::ops::Deref;
 
 use crate::{
@@ -5,6 +15,11 @@ use crate::{
     elements::{did::Did, role::Role, user::UserId, user_account::UserAccount},
 };
 
+/// The app-private, stable handle for an [`Account`].
+///
+/// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::user::UserId`].
+/// The account's *public* identity is its [`Did`]; this id is the private key
+/// used for foreign keys and lookups. Deref exposes the inner UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AccountId(uuid::Uuid);
 
@@ -93,13 +108,27 @@ impl AccountName {
     }
 }
 
+/// A founded account: its sovereign [`Did`], its app-private [`AccountId`], a
+/// validated [`AccountName`], and lifecycle timestamps.
+///
+/// Build one with [`Account::open`], which also mints the founder's Owner
+/// membership — the two are never created apart. `deleted_at` is the soft-delete
+/// marker: a deleted account keeps its row but
+/// [`crate::ports::AccountRepo::find`] returns `None` for it. The struct holds no
+/// member list; membership is queried through the repo.
+///
+/// References: [`Account::open`], [`crate::ports::AccountRepo`],
+/// [`crate::ports::DidMinter`] (which mints `did`), DESIGN/Account, ZMVP-14.
 pub struct Account {
     pub id: AccountId,
     pub did: Did,
     /// The name the founder gave the account. See [`AccountName`].
     pub name: AccountName,
+    /// When the account was founded; equals `updated_at` at creation.
     pub created_at: DateTimeUtc,
+    /// When the account was last changed.
     pub updated_at: DateTimeUtc,
+    /// Soft-delete marker: `Some(when)` once deleted, else `None`.
     pub deleted_at: Option<DateTimeUtc>,
 }
 
@@ -149,6 +178,11 @@ impl Account {
     }
 }
 
+/// An account's public-facing profile: its [`Did`] and a display name.
+///
+/// The account analogue of a visitor's [`crate::elements::profile::Profile`] —
+/// the public projection of an [`Account`], distinct from the private [`Account`]
+/// row. See DESIGN/Account.
 pub struct AccountProfile {
     pub did: Did,
     pub display_name: String,

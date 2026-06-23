@@ -1,3 +1,6 @@
+//! [`UserRepo`] over PostgreSQL: Zurfur's record of recognized visitors in the
+//! `users` table, keyed by their sovereign `did`. See ZMVP-9 and DESIGN/User.
+
 use domain::{
     elements::{
         did::Did,
@@ -7,11 +10,15 @@ use domain::{
 };
 use sqlx::{PgPool, query};
 
+/// PostgreSQL implementation of [`UserRepo`]. Recognizes visitors by their `did`
+/// (unique) — it never mints a DID, only the internal `UserId`. See DESIGN/User.
 pub struct PgUserRepo {
     pool: PgPool,
 }
 
 impl PgUserRepo {
+    /// Wraps a [`PgPool`] as a [`UserRepo`]. Clones the pool handle (an `Arc`),
+    /// leaving the caller's intact.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -19,6 +26,11 @@ impl PgUserRepo {
 
 #[async_trait::async_trait]
 impl UserRepo for PgUserRepo {
+    /// `INSERT ... ON CONFLICT (did) DO UPDATE ... RETURNING`: idempotent and
+    /// race-safe in one round trip. The candidate id/created_at minted up front
+    /// are discarded on a repeat sign-in, when `RETURNING` hands back the
+    /// existing row. The unique `did` constraint — not a check-then-insert — is
+    /// the arbiter under concurrent first sign-ins.
     async fn provision(&self, did: &Did) -> anyhow::Result<User> {
         // Mint a candidate up front. On a repeat sign-in the INSERT collides on
         // the unique `did`, the no-op DO UPDATE lets RETURNING hand back the
@@ -73,6 +85,9 @@ impl UserRepo for PgUserRepo {
         }))
     }
 
+    /// Read-only lookup by the unique `did` — no INSERT, so an unknown DID
+    /// resolves to `None` rather than recognizing a new visitor (the no-mint
+    /// counterpart to [`provision`](PgUserRepo::provision)).
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         // Read-only lookup by the unique `did` — no INSERT, so an unknown DID
         // resolves to None rather than recognizing a new visitor.

@@ -1,3 +1,10 @@
+//! The [`Profile`] — a visitor's public, PDS-owned profile.
+//!
+//! Profile data sits on the public boundary (the user's PDS), so the domain
+//! reads and caches it but never owns it (DESIGN/"Domains and Applications").
+//! It is fetched via [`crate::ports::ProfileSource`] and cached behind
+//! [`crate::ports::ProfileCache`] (ZMVP-10).
+
 use crate::elements::did::Did;
 
 /// A visitor's public profile, read from their PDS. Handle, display name, and

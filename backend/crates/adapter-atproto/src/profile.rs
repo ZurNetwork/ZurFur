@@ -1,3 +1,10 @@
+//! Public profile reads from the visitor's own PDS — see [`AtprotoProfileSource`].
+//!
+//! Implements [`ProfileSource`] the decentralized way: resolve the DID document
+//! for handle + PDS endpoint, then read the `app.bsky.actor.profile` record
+//! straight from that PDS — no Bluesky appview, no CDN. Unauthenticated, because
+//! profiles are public (ZMVP-10).
+
 use async_trait::async_trait;
 use domain::{
     elements::{did::Did, profile::Profile},
@@ -25,6 +32,8 @@ impl Default for AtprotoProfileSource {
 }
 
 impl AtprotoProfileSource {
+    /// Build the source with a fresh unauthenticated jacquard client. Stateless
+    /// apart from that client; [`Default`] calls this.
     pub fn new() -> Self {
         // Default unauthenticated client: did:plc documents resolve through the PLC
         // directory and the record is read from the user's own PDS — no appview.
@@ -36,6 +45,21 @@ impl AtprotoProfileSource {
 
 #[async_trait]
 impl ProfileSource for AtprotoProfileSource {
+    /// Two hops, both fallible network reads:
+    ///
+    /// 1. Resolve the DID document (handle from `alsoKnownAs`, PDS endpoint).
+    ///    Errors if the DID is malformed, the document can't be resolved, or it
+    ///    carries no handle / no PDS endpoint.
+    /// 2. Read `app.bsky.actor.profile/self` from that PDS. The error mapping is
+    ///    deliberate: a `RecordNotFound` is **not** an error — the visitor just
+    ///    has no display name/avatar yet, so we return a handle-only [`Profile`]
+    ///    the caller may safely cache. Any *other* response error (auth, server,
+    ///    decode) and any failure to reach the PDS are propagated as `Err`, so a
+    ///    transient fault never gets cached as a stripped profile pinned for the
+    ///    TTL (ZMVP-10 criterion 1).
+    ///
+    /// The avatar URL is built against the user's own PDS
+    /// (`com.atproto.sync.getBlob`), keeping the read on the decentralized path.
     async fn fetch(&self, did: &Did) -> anyhow::Result<Profile> {
         let at_did: AtDid = AtDid::new_owned(did.as_str())
             .map_err(|e| anyhow::anyhow!("invalid DID {}: {e:?}", did.as_str()))?;

@@ -1,5 +1,27 @@
 //! In-process fakes of the domain ports. Core development and tests run against
 //! these so neither needs a database or a PDS (see CLAUDE.md, "adapter-mem").
+//!
+//! Each `Mem*` type implements one port from [`domain::ports`] entirely in
+//! process: the private-store repos ([`MemUserRepo`], [`MemAccountRepo`],
+//! [`MemProfileCache`]) back onto `HashMap`s behind a [`Mutex`]; the
+//! public-boundary fakes ([`MemAuthenticator`], [`MemProfileSource`]) stand in
+//! for the user's PDS; and [`MemDidMinter`] hands out synthetic account DIDs.
+//! Together they let the `api` composition root wire a fully working backend
+//! with no Docker, no network, and no PLC directory.
+//!
+//! **Fidelity, not realism.** A fake reproduces the *contract* a handler depends
+//! on (idempotent recognition, soft-delete invisibility, cache hits) but skips
+//! everything operational — TTLs, transactions, real keypairs. Where behavior
+//! intentionally diverges from production it is called out on the item.
+//!
+//! **Locking discipline.** Mutable state sits behind a `std::sync::Mutex`, not a
+//! `tokio::sync::Mutex`, because no `.await` is ever held across a guard: each
+//! method takes the lock, does synchronous map work, and drops it before
+//! returning. A poisoned lock is unrecoverable here, so every `.lock()` simply
+//! `.expect()`s. Call counters use an [`AtomicUsize`] and need no lock.
+//!
+//! References: DESIGN/"Domains and Applications"; the per-port detail lives on
+//! the trait docs in [`domain::ports`].
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -21,10 +43,14 @@ use domain::ports::{AccountRepo, Authenticator, DidMinter, ProfileCache, Profile
 /// DID always resolves to the User minted on its first sign-in.
 #[derive(Default)]
 pub struct MemUserRepo {
+    /// Every recognized visitor, keyed by their DID. The DID — not the
+    /// [`UserId`] — is the natural key, which is what makes `provision`
+    /// idempotent; `find` scans the values to resolve a [`UserId`].
     by_did: Mutex<HashMap<Did, User>>,
 }
 
 impl MemUserRepo {
+    /// An empty repo — no visitors recognized yet.
     pub fn new() -> Self {
         Self::default()
     }
@@ -32,6 +58,9 @@ impl MemUserRepo {
 
 #[async_trait]
 impl UserRepo for MemUserRepo {
+    /// Idempotent per DID: the first call mints (via [`User::recognize`]) and
+    /// inserts; later calls return the stored `User` untouched. `or_insert_with`
+    /// makes the mint-or-return one atomic map operation under the lock.
     async fn provision(&self, did: &Did) -> anyhow::Result<User> {
         // No await is held across the lock, so the std Mutex is fine here.
         let mut by_did = self.by_did.lock().expect("MemUserRepo mutex poisoned");
@@ -46,6 +75,8 @@ impl UserRepo for MemUserRepo {
         Ok(by_did.values().find(|u| u.id == id).cloned())
     }
 
+    /// Read-only counterpart to `provision`: a miss returns `None` rather than
+    /// minting a new `User`.
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         // Read-only — a miss returns None rather than minting, unlike `provision`.
         let by_did = self.by_did.lock().expect("MemUserRepo mutex poisoned");
@@ -58,6 +89,8 @@ impl UserRepo for MemUserRepo {
 /// `complete` always yields the configured DID — i.e. "the PDS authenticated this
 /// visitor" — letting an e2e test exercise everything downstream of the handshake.
 pub struct MemAuthenticator {
+    /// The DID every `complete` resolves to — the visitor this fake pretends the
+    /// PDS just authenticated. Fixed at construction.
     did: Did,
 }
 
@@ -91,8 +124,15 @@ impl Authenticator for MemAuthenticator {
 /// (so a test can prove a cache hit avoided a second fetch), and can be flipped
 /// to "unreachable" to drive graceful-degradation tests.
 pub struct MemProfileSource {
+    /// The profile handed back for any DID. `Some` while the fake PDS is
+    /// reachable; `None` after [`MemProfileSource::set_unreachable`], which makes
+    /// `fetch` error. Behind a [`Mutex`] only so `set_unreachable` can flip it
+    /// through a shared `&self`.
     // `None` simulates an unreachable PDS — `fetch` errors instead of returning.
     profile: Mutex<Option<Profile>>,
+    /// Count of `fetch` calls, read via [`MemProfileSource::fetch_count`] to
+    /// prove a cache hit avoided a second source read. [`AtomicUsize`] so it
+    /// needs no lock.
     fetches: AtomicUsize,
 }
 
@@ -122,6 +162,9 @@ impl MemProfileSource {
 
 #[async_trait]
 impl ProfileSource for MemProfileSource {
+    /// Returns the configured profile and bumps the call counter; errors instead
+    /// once the fake has been flipped unreachable. The DID is ignored — one
+    /// profile stands in for all.
     async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
         self.fetches.fetch_add(1, Ordering::SeqCst);
         self.profile
@@ -136,10 +179,13 @@ impl ProfileSource for MemProfileSource {
 /// real (pg) cache's policy; tests control freshness by what they put in.
 #[derive(Default)]
 pub struct MemProfileCache {
+    /// Cached profiles keyed by DID. Entries never expire here — see the
+    /// struct note on freshness.
     by_did: Mutex<HashMap<Did, Profile>>,
 }
 
 impl MemProfileCache {
+    /// An empty cache.
     pub fn new() -> Self {
         Self::default()
     }
@@ -163,10 +209,17 @@ impl ProfileCache for MemProfileCache {
 /// (an aggregate root, not a value), so we store its parts and rebuild a fresh
 /// `Account` on every `find` rather than clone the original.
 struct StoredAccount {
+    /// The account's sovereign `did:plc` (minted by [`MemDidMinter`] in the
+    /// real founding flow).
     did: Did,
+    /// The account's display name.
     name: AccountName,
+    /// When the account was founded.
     created_at: domain::datetime::DateTimeUtc,
+    /// When the account was last modified.
     updated_at: domain::datetime::DateTimeUtc,
+    /// Soft-delete tombstone: `Some` hides the account from `find`, mirroring the
+    /// pg adapter's `deleted_at IS NULL` filter. The row is kept, not dropped.
     deleted_at: Option<domain::datetime::DateTimeUtc>,
 }
 
@@ -175,13 +228,18 @@ struct StoredAccount {
 /// for the single private-store transaction the real (pg) adapter runs.
 #[derive(Default)]
 pub struct MemAccountRepo {
-    // Account fields, keyed by id. Stored as parts because `Account` isn't `Clone`.
+    /// [`StoredAccount`] parts keyed by [`AccountId`]. Stored as parts because
+    /// [`Account`] isn't `Clone`; `find` rebuilds a fresh `Account` from them.
     accounts: Mutex<HashMap<AccountId, StoredAccount>>,
-    // Memberships keyed by (account, user) — the role a user holds in an account.
+    /// The [`Role`] each user holds in each account, keyed by `(account, user)`.
+    /// A missing key means non-membership — that's what `role_of` returns as
+    /// `None`. A separate map from `accounts`, so the two locks are independent;
+    /// `create` takes them in turn (accounts, then memberships).
     memberships: Mutex<HashMap<(AccountId, UserId), Role>>,
 }
 
 impl MemAccountRepo {
+    /// An empty repo — no accounts, no memberships.
     pub fn new() -> Self {
         Self::default()
     }
@@ -189,6 +247,10 @@ impl MemAccountRepo {
 
 #[async_trait]
 impl AccountRepo for MemAccountRepo {
+    /// Inserts the account and the owner's membership in turn. The two `HashMap`s
+    /// sit behind separate locks, so this isn't truly atomic — it stands in for
+    /// the real pg adapter's single private-store transaction, which tests don't
+    /// stress for partial failure.
     async fn create(&self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         // No await is held across either lock, so std Mutexes are fine here.
         let mut accounts = self.accounts.lock().expect("MemAccountRepo mutex poisoned");
@@ -212,6 +274,9 @@ impl AccountRepo for MemAccountRepo {
         Ok(())
     }
 
+    /// Rebuilds an [`Account`] from its stored parts (it isn't `Clone`). A
+    /// soft-deleted account resolves to `None`, the same as one that never
+    /// existed.
     async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>> {
         let accounts = self.accounts.lock().expect("MemAccountRepo mutex poisoned");
         Ok(accounts.get(&id).and_then(|stored| {
@@ -270,10 +335,13 @@ impl AccountRepo for MemAccountRepo {
 /// downstream of minting to run without infrastructure.
 #[derive(Default)]
 pub struct MemDidMinter {
+    /// Monotonic counter feeding the next DID's suffix; starts at 0, so the first
+    /// mint is `did:plc:mem000000`. [`AtomicUsize`] keeps minting lock-free.
     next: AtomicUsize,
 }
 
 impl MemDidMinter {
+    /// A minter whose first DID is `did:plc:mem000000`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -281,6 +349,10 @@ impl MemDidMinter {
 
 #[async_trait]
 impl DidMinter for MemDidMinter {
+    /// Hands back the next deterministic, unique synthetic DID
+    /// (`did:plc:mem<n>`, zero-padded to six digits) and never fails — no
+    /// keypair, PLC genesis, or directory write. Distinct from a *visitor's*
+    /// recognized DID; this one is created on an account's behalf.
     async fn mint(&self) -> anyhow::Result<Did> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::new(format!("did:plc:mem{n:06}")))
