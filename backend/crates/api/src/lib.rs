@@ -233,6 +233,17 @@ pub struct AppState {
 /// `GET /signin-callback` (the sign-in flow), `GET /me`, `POST /accounts`,
 /// `POST`/`DELETE /accounts/{id}/members`, `POST /logout`.
 ///
+/// Cross-persona unlinkability (ZMVP-17): this table is the public surface, and
+/// no route on it may correlate one person's separate handles — join one
+/// handle's User/Account graph to another's *as the same human*. The separation
+/// holds by construction (separate handles → separate Users → separate DIDs/
+/// logins); the only sanctioned correlation, opt-in User-Linking ("alts"), is
+/// post-MVP. Before adding a read route that enumerates Users or returns the set
+/// of handles/accounts tied to a person, weigh it against that invariant — a
+/// single-account member roster (DESIGN/1DD decision 5) is fine, a person-level
+/// "their other personas" surface is not. Guarded by
+/// `tests/cross_persona_unlinkability.rs`.
+///
 /// References: [`AppState`]; the per-handler docs below.
 ///
 /// ```ignore
