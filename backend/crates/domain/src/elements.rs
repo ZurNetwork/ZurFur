@@ -13,6 +13,8 @@
 //! - [`role`] — a member's rank inside an account and the grant rule
 //!   (ZMVP-15/16, DESIGN/Roles).
 //! - [`user_account`] — the membership tuple binding a user, an account, and a role.
+//! - [`invitation`] — a pending offer of membership, issued then accepted/revoked
+//!   (ZMVP-32/ZMVP-20, DESIGN/Roles).
 //! - [`did`] — a decentralized identifier, the AT Protocol identity primitive.
 //! - [`profile`] — a visitor's public, PDS-owned profile (ZMVP-10).
 //!
@@ -27,6 +29,7 @@ pub mod character;
 pub mod commission;
 pub mod did;
 pub mod golem;
+pub mod invitation;
 pub mod markdown;
 pub mod profile;
 pub mod role;
