@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use crate::elements::{
     account::{Account, AccountId},
     did::Did,
+    invitation::{Invitation, InvitationId},
     profile::Profile,
     role::Role,
     user::{User, UserId},
@@ -118,6 +119,38 @@ pub trait AccountRepo: Send + Sync {
     /// this is reached; the store only performs the removal. A private-side write,
     /// never a cross-store dual write (ZMVP-16, DESIGN/Roles).
     async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+
+    /// Persist a freshly issued, pending [`Invitation`] (ZMVP-32 — the issuing
+    /// half of invite-then-accept). At most one *pending* invitation may exist per
+    /// (account, invited user): if one already does, this is a no-op rather than a
+    /// second row — the store-level backstop for the idempotent re-invite the
+    /// caller also guards by checking `find_pending_invitation` first. Authority
+    /// (the inviter being Owner/Admin, the offered role below their rank) is the
+    /// caller's check via `Role::can_grant`, settled before this is reached. A
+    /// private-side write, never a cross-store dual write (DESIGN/Roles).
+    async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()>;
+
+    /// The pending invitation for `(account, invited_user)`, or `None` if there
+    /// isn't one. Underpins the idempotent re-invite (a hit means "already
+    /// invited", so ping rather than issue a duplicate). Only ever returns a
+    /// pending offer — accepted/revoked invitations are history, not live offers.
+    async fn find_pending_invitation(
+        &self,
+        account: AccountId,
+        invited_user: UserId,
+    ) -> anyhow::Result<Option<Invitation>>;
+
+    /// Resolve an [`InvitationId`] to its [`Invitation`] in any state, or `None`.
+    /// Lets the revoke path load the offer to check the inviter's authority and
+    /// its current state before transitioning it.
+    async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>>;
+
+    /// Transition a pending invitation to revoked, so it can no longer be accepted
+    /// (ZMVP-32). Idempotent on a non-pending or absent invitation — a no-op, not
+    /// an error; the caller decides whether absence/already-revoked is a 404/409.
+    /// *Who* may revoke (the issuing member) is the caller's authority check. A
+    /// private-side write, never a cross-store dual write (DESIGN/Roles).
+    async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is

@@ -28,10 +28,12 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use chrono::Utc;
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
+        invitation::Invitation,
         profile::Profile,
         role::Role,
         user::UserId,
@@ -260,6 +262,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/accounts/{id}/members",
             post(grant_role).delete(revoke_role),
+        )
+        .route(
+            "/accounts/{id}/invitations",
+            post(invite_user_to_account).delete(revoke_invitation_to_account),
         )
         .route("/logout", post(logout))
         .with_state(state)
@@ -630,6 +636,14 @@ fn member_not_found() -> Response {
         .into_response()
 }
 
+/// The 409 an invitation returns when the request collides with the account's
+/// current state rather than being malformed (422) or unauthorized (403) — most
+/// notably inviting someone who is already a member, where there is nothing to
+/// invite them to. Carries a human-readable reason.
+fn conflict(reason: &str) -> Response {
+    (StatusCode::CONFLICT, Json(json!({ "error": reason }))).into_response()
+}
+
 /// The body of `POST /accounts/{id}/members`. The grantee is named by their public
 /// `did` (identity precedes us — we recognize by DID, never by our internal id),
 /// and `role` is the discriminant to grant: `"admin" | "manager" | "member"`.
@@ -642,6 +656,252 @@ struct GrantRoleBody {
     role: String,
 }
 
+/// The body of `POST /accounts/{id}/invitations`. The invitee is named by their
+/// public `did` (identity precedes us — we recognize by DID, never by our internal
+/// id), and `role` is the discriminant to offer: `"admin" | "manager" | "member"`.
+/// `"owner"` is understood but never offerable by invitation (that would be a
+/// transfer, not an invite).
+///
+/// Example: `{ "user": "did:plc:abc123", "role": "member" }`.
+#[derive(Deserialize)]
+struct InviteUserToAccountBody {
+    user: String,
+    role: String,
+}
+
+/// Issues a pending invitation for a User to join an account (ZMVP-32 — the
+/// issuing half of invite-then-accept; acceptance is ZMVP-20). Authority reuses the
+/// grant rule: only an Owner/Admin may invite, and the offered role must sit
+/// strictly below the inviter's own rank (`Role::can_grant`) — the same seam as
+/// [`grant_role`].
+///
+/// The invitee is provisioned by DID (idempotent, like a grant) so the offer can
+/// reference a real `UserId` even for someone who has never visited. Inviting an
+/// existing member is a `409` (there's nothing to invite them to); re-inviting an
+/// already-pending User is idempotent — the existing offer is returned (`200`),
+/// never a second row (handler check plus the partial-unique-index backstop).
+/// Otherwise a fresh pending offer is created (`201`).
+async fn invite_user_to_account(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+    body: Result<Json<InviteUserToAccountBody>, JsonRejection>,
+) -> Response {
+    let Ok(Some(inviting_user_id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return unauthorized();
+    };
+
+    let actor = match state.user_repo.find(UserId::new(inviting_user_id)).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized(),
+    };
+    let Ok(Json(body)) = body else {
+        return unprocessable(
+            "Provide a user to invite and a role, e.g. {\"invited_user\": \"did:plc:…\", \"with_role\": \"member\"}.",
+        );
+    };
+    let role = match Role::try_from(body.role) {
+        Ok(role) => role,
+        Err(err) => return unprocessable(&err.to_string()),
+    };
+
+    let account = match state.account_repo.find(AccountId::new(account_id)).await {
+        Ok(Some(account)) => account,
+        _ => return not_found(),
+    };
+    let inviting_user_role = match state.account_repo.role_of(actor.id, account.id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return forbidden(),
+        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
+    };
+
+    if !inviting_user_role.can_grant(&role) {
+        return forbidden();
+    }
+
+    let invited = match state.user_repo.provision(&Did::new(body.user)).await {
+        Ok(user) => user,
+        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
+    };
+
+    // An invitation is the path *to* membership; someone who already holds a role has
+    // nowhere to be invited. This is a state conflict (409), not an authority failure
+    // (403) or a malformed request (422) — the actor may invite, just not this person.
+    match state.account_repo.role_of(invited.id, account.id).await {
+        Ok(Some(_)) => return conflict("That user is already a member of this account."),
+        Ok(None) => {}
+        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
+    }
+
+    match state
+        .account_repo
+        .find_pending_invitation(account.id, invited.id)
+        .await
+    {
+        Ok(Some(existing_invitation)) => {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "id": existing_invitation.id.to_string(),
+                    "account": account.id.to_string(),
+                    "user": invited.did.as_str(),
+                    "role": existing_invitation.role.as_str(),
+                    "state": existing_invitation.state.as_str()
+
+                })),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return internal_error(
+                "Could not check if an existing invitation was issued already. Please try again.",
+            );
+        }
+    }
+
+    let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
+
+    if state
+        .account_repo
+        .create_invitation(&invitation)
+        .await
+        .is_err()
+    {
+        return internal_error("Could not create the invitation. Please try again.");
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "id": invitation.id.to_string(),
+            "account": account.id.to_string(),
+            "user": invited.did.as_str(),
+            "role": invitation.role.as_str(),
+            "state": invitation.state.as_str()
+
+        })),
+    )
+        .into_response()
+}
+
+/// The body of `DELETE /accounts/{id}/invitations`. The invitation is addressed by
+/// the invited User's `did` (not an invitation id): there is at most one pending
+/// offer per (account, user), so the pair identifies it — keeping revoke symmetric
+/// with issue and with [`revoke_role`].
+///
+/// Example: `{ "user": "did:plc:abc123" }`.
+#[derive(Deserialize)]
+struct RevokeInvitationBody {
+    user: String,
+}
+
+/// Revokes a pending invitation so it can no longer be accepted (ZMVP-32). The
+/// invited User is named by DID in the body and resolved *without minting* (like
+/// [`revoke_role`], a revoke must not recognize a brand-new visitor as a side
+/// effect). Authority is the issuing seam again — the actor must be able to
+/// `can_grant` the offered role.
+///
+/// Idempotent: an unknown DID, or no pending offer, is a `200` no-op rather than a
+/// 404. Every path — success or no-op — echoes `{ account, user }` (the
+/// always-available request inputs), since the no-op paths have no invitation row
+/// to report an id or state from.
+async fn revoke_invitation_to_account(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+    body: Result<Json<RevokeInvitationBody>, JsonRejection>,
+) -> Response {
+    let Ok(Some(actor_id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
+        return unauthorized();
+    };
+
+    let actor = match state.user_repo.find(UserId::new(actor_id)).await {
+        Ok(Some(user)) => user,
+        _ => return unauthorized(),
+    };
+
+    let Ok(Json(body)) = body else {
+        return unprocessable(
+            "Provide the invited user to revoke, e.g. {\"user\": \"did:plc:…\"}.",
+        );
+    };
+    // Keep the invited DID by value: the response echoes it on every path (mirroring
+    // `revoke_role`), including the idempotent no-ops where no invitation row — and so
+    // no id/state — is available to report.
+    let invited_did = body.user;
+
+    let account = match state.account_repo.find(AccountId::new(account_id)).await {
+        Ok(Some(account)) => account,
+        _ => return not_found(),
+    };
+
+    // The actor's standing in this account decides what they may do; a non-member has
+    // none. We keep the role to apply the authority rule once the invitation is loaded.
+    let actor_role = match state.account_repo.role_of(actor.id, account.id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return forbidden(),
+        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
+    };
+
+    // Resolve the invited user by DID *without minting* — like revoke_role, a revoke
+    // must not recognize a brand-new visitor as a side effect. An unknown DID was never
+    // invited, so there is nothing pending to revoke (idempotent no-op).
+    let revoked = || {
+        (
+            StatusCode::OK,
+            Json(json!({
+                "account": account.id.to_string(),
+                "user": invited_did.as_str(),
+            })),
+        )
+            .into_response()
+    };
+
+    let invited_user = match state
+        .user_repo
+        .find_by_did(&Did::new(invited_did.clone()))
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => return revoked(),
+        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
+    };
+
+    let mut invitation = match state
+        .account_repo
+        .find_pending_invitation(account.id, invited_user.id)
+        .await
+    {
+        Ok(Some(invitation)) => invitation,
+        Ok(None) => return revoked(),
+        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
+    };
+
+    // Authority, the same seam as issuing/granting: an actor may revoke only an
+    // invitation they could have issued — Owner/Admin, the offered role strictly below
+    // their own rank (`can_grant`). A non-member was already turned away above.
+    if !actor_role.can_grant(&invitation.role) {
+        return forbidden();
+    }
+
+    // Run the domain transition first as a guard — it enforces the pending → revoked
+    // rule (the offer is pending by construction here, the lookup filtered on state),
+    // keeping the state machine the single arbiter of legality — then persist it.
+    if invitation.revoke(Utc::now()).is_err() {
+        return internal_error("Could not revoke invitation. Please try again.");
+    }
+    if state
+        .account_repo
+        .revoke_invitation(invitation.id)
+        .await
+        .is_err()
+    {
+        return internal_error("Could not revoke invitation. Please try again.");
+    }
+
+    revoked()
+}
 /// Grants a role to a user on an account, seating them as a member if they aren't
 /// one yet (ZMVP-15: "Owner grants a role on their Account" — on this platform a
 /// grant *is* how a user joins, DESIGN/Roles). This is the seam where reusable role
