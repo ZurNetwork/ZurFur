@@ -1,0 +1,261 @@
+//! The JSON API's one error shape: an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)
+//! problem document, served as `application/problem+json` (ZMVP-35; DESIGN "API
+//! Response Shape & Error Model").
+//!
+//! Success responses stay bare resources and the HTTP status line carries the
+//! outcome; this type standardizes the *error* half. Every [`Problem`] carries a
+//! stable [`type`](Problem::kind) URN (`urn:zurfur:error:<slug>` — an identifier,
+//! not a docs URL), our own terse [`code`](Problem::code) for machine branching, a
+//! stable [`title`], a specific [`detail`], and the [`status`]. Handlers return
+//! `Result<_, Problem>` and lean on `?`; [`Problem`]'s [`IntoResponse`] renders the
+//! body and sets the `application/problem+json` content type.
+//!
+//! [`title`]: Problem::title
+//! [`detail`]: Problem::detail
+//! [`status`]: Problem::status
+
+use axum::{
+    Json,
+    http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
+};
+use serde::Serialize;
+
+/// An RFC 9457 problem document — the JSON API's single error representation.
+///
+/// Constructed through the named constructors (one per entry in the error
+/// registry, e.g. [`Problem::forbidden`], [`Problem::already_member`]), never field
+/// by field, so the `type`/`code`/`title`/`status` of a given kind stay consistent
+/// across every call-site. `detail` is the only per-occurrence part.
+#[derive(Debug, Serialize)]
+pub struct Problem {
+    /// Stable problem-type identifier: a non-dereferenceable `urn:zurfur:error:*`
+    /// URN. An identity to look up in our error docs, **not** a live URL — nothing
+    /// to host, nothing to 404. Serialized as `type` (the RFC 9457 member name).
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    /// Our own terse, machine-branchable code (e.g. `already_member`) — never a
+    /// leaked PostgreSQL or internal error code. An RFC 9457 extension member.
+    pub code: &'static str,
+    /// Short, stable, human-readable summary of the problem *type* (same for every
+    /// occurrence of a given `code`).
+    pub title: &'static str,
+    /// Specific, human-readable explanation of *this* occurrence.
+    pub detail: String,
+    /// The HTTP status code, duplicated in the body per RFC 9457 so it survives
+    /// proxies and logs that drop the status line.
+    pub status: u16,
+}
+
+impl Problem {
+    /// The shared constructor — every registry entry funnels through here so the
+    /// shape stays uniform.
+    fn new(
+        kind: &'static str,
+        code: &'static str,
+        title: &'static str,
+        status: u16,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            code,
+            title,
+            detail: detail.into(),
+            status,
+        }
+    }
+
+    /// `401` — no (or unreadable) session on an endpoint that requires one.
+    pub fn not_authenticated() -> Self {
+        Self::new(
+            "urn:zurfur:error:not-authenticated",
+            "not_authenticated",
+            "Not authenticated",
+            401,
+            "You must be signed in to do that.",
+        )
+    }
+
+    /// `403` — a recognized caller who lacks the authority for the action (the
+    /// shared role floor; DESIGN/Roles). Action-neutral, like the grant/revoke seam.
+    pub fn forbidden() -> Self {
+        Self::new(
+            "urn:zurfur:error:forbidden",
+            "forbidden",
+            "Forbidden",
+            403,
+            "You don't have permission to perform this action on this account.",
+        )
+    }
+
+    /// `404` — the addressed account doesn't exist (or is soft-deleted).
+    pub fn account_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:account-not-found",
+            "account_not_found",
+            "Account not found",
+            404,
+            "No such account.",
+        )
+    }
+
+    /// `404` — the addressed user holds no membership in the account.
+    pub fn member_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:member-not-found",
+            "member_not_found",
+            "Member not found",
+            404,
+            "That user is not a member of this account.",
+        )
+    }
+
+    /// `409` — inviting a user who is already a member (a state conflict, not an
+    /// authority failure). `detail` names the specific collision.
+    pub fn already_member(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:already-member",
+            "already_member",
+            "Already a member",
+            409,
+            detail,
+        )
+    }
+
+    /// `422` — the request is understood but its data won't do. `detail` says why.
+    /// Specific cases get their own `code` via [`name_required`](Problem::name_required)
+    /// / [`unknown_role`](Problem::unknown_role) under the same `type`.
+    pub fn invalid_request(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:invalid-request",
+            "invalid_request",
+            "Invalid request",
+            422,
+            detail,
+        )
+    }
+
+    /// `422`, code `name_required` — a blank/missing account name.
+    pub fn name_required() -> Self {
+        Self::new(
+            "urn:zurfur:error:invalid-request",
+            "name_required",
+            "Invalid request",
+            422,
+            "An account name is required.",
+        )
+    }
+
+    /// `422`, code `unknown_role` — a role discriminant that isn't one we grant.
+    pub fn unknown_role(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:invalid-request",
+            "unknown_role",
+            "Invalid request",
+            422,
+            detail,
+        )
+    }
+
+    /// `500` — a dependency (store, recognizer) failed; the request was fine.
+    pub fn internal_error(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:internal",
+            "internal_error",
+            "Internal error",
+            500,
+            detail,
+        )
+    }
+
+    /// `503` — a dependency is unavailable (e.g. the DID minter), so the request
+    /// can't be served right now; the caller may retry.
+    pub fn service_unavailable(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:service-unavailable",
+            "service_unavailable",
+            "Service unavailable",
+            503,
+            detail,
+        )
+    }
+}
+
+impl From<anyhow::Error> for Problem {
+    /// Any failure bubbling up from a port (the store, the recognizer) is an
+    /// internal error: the request was well-formed, our side couldn't complete it.
+    /// This lets handlers lean on `?` instead of mapping every port call by hand.
+    fn from(_: anyhow::Error) -> Self {
+        Problem::internal_error("The request couldn't be completed. Please try again.")
+    }
+}
+
+impl IntoResponse for Problem {
+    /// Renders the document as JSON and **overrides** the content type to
+    /// `application/problem+json` (axum's [`Json`] sets `application/json`, so the
+    /// header is replaced after the body is built), with the matching HTTP status.
+    fn into_response(self) -> Response {
+        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let mut response = (status, Json(self)).into_response();
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // AC1/AC3 — a Problem serializes to exactly the five RFC 9457 members we
+    // promise, with our URN `type` and terse `code`.
+    #[test]
+    fn serializes_to_the_rfc9457_members() {
+        let value = serde_json::to_value(Problem::already_member(
+            "did:plc:abc already holds a role on account 0192.",
+        ))
+        .expect("serializes");
+
+        assert_eq!(value["type"], "urn:zurfur:error:already-member");
+        assert_eq!(value["code"], "already_member");
+        assert_eq!(value["title"], "Already a member");
+        assert_eq!(
+            value["detail"],
+            "did:plc:abc already holds a role on account 0192."
+        );
+        assert_eq!(value["status"], 409);
+        // No stray `error` key from the old shape.
+        assert!(value.get("error").is_none(), "the old shape is gone");
+    }
+
+    // AC4 — the response sets the problem+json content type (not application/json)
+    // and the HTTP status matching the body's `status`.
+    #[test]
+    fn into_response_sets_problem_json_content_type_and_status() {
+        let response = Problem::forbidden().into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .expect("content-type is set"),
+            "application/problem+json"
+        );
+    }
+
+    // The 422 specifics share the invalid-request type but carry their own code.
+    #[test]
+    fn invalid_request_specifics_share_the_type_but_vary_the_code() {
+        assert_eq!(Problem::name_required().code, "name_required");
+        assert_eq!(Problem::unknown_role("bad").code, "unknown_role");
+        assert_eq!(
+            Problem::name_required().kind,
+            "urn:zurfur:error:invalid-request"
+        );
+        assert_eq!(Problem::name_required().status, 422);
+    }
+}
