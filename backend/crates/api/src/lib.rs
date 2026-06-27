@@ -36,7 +36,7 @@ use domain::{
         invitation::Invitation,
         profile::Profile,
         role::Role,
-        user::UserId,
+        user::{User, UserId},
         user_account::UserAccount,
     },
     ports::{AccountRepo, Authenticator, DidMinter, ProfileCache, ProfileSource, UserRepo},
@@ -49,6 +49,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
+
+mod problem;
+use problem::Problem;
 
 /// Session key under which the recognized visitor's `UserId` is stored. The
 /// session carries our own key, not the DID: subsequent requests resolve
@@ -502,6 +505,58 @@ struct CreateAccountBody {
     name: String,
 }
 
+/// Resolve the session to the acting [`User`], or `401` — the shared opening of
+/// every JSON write endpoint. Both an absent/unreadable session and a vanished User
+/// are "not authenticated": these endpoints are called by the frontend, so an
+/// unrecognized caller gets a problem+json `401`, never a redirect.
+async fn require_user(state: &AppState, session: &Session) -> Result<User, Problem> {
+    let id = session
+        .get::<Uuid>(SESSION_USER_KEY)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(Problem::not_authenticated)?;
+    state
+        .user_repo
+        .find(UserId::new(id))
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(Problem::not_authenticated)
+}
+
+/// Load a live account by id, or `404` — a soft-deleted/unknown id has nothing to
+/// act on. A store error becomes a `500` via the `?`/`From<anyhow::Error>` seam.
+async fn load_account(state: &AppState, id: AccountId) -> Result<Account, Problem> {
+    state
+        .account_repo
+        .find(id)
+        .await?
+        .ok_or_else(Problem::account_not_found)
+}
+
+/// The actor's role in an account, or `403` — a non-member has no authority. The
+/// authority *floor* shared by grant/revoke/invite (DESIGN/Roles); the per-action
+/// rank rule (`Role::can_grant`) is the caller's. A store error is a `500`.
+async fn actor_role(state: &AppState, user: UserId, account: AccountId) -> Result<Role, Problem> {
+    state
+        .account_repo
+        .role_of(user, account)
+        .await?
+        .ok_or_else(Problem::forbidden)
+}
+
+/// `200 OK` carrying a bare JSON resource body (success bodies are not enveloped;
+/// see the RFC 9457 response-shape decision).
+fn ok_json(body: serde_json::Value) -> Response {
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// `201 Created` carrying a bare JSON resource body.
+fn created_json(body: serde_json::Value) -> Response {
+    (StatusCode::CREATED, Json(body)).into_response()
+}
+
 /// Founds a new Account for the signed-in visitor and makes them its Owner
 /// (ZMVP-14: "User creates an Account and becomes its Owner"). Onboarding
 /// *sequencing* — when to prompt, how to nudge a user who has none — is a frontend
@@ -516,132 +571,42 @@ struct CreateAccountBody {
 ///
 /// The caller must supply a name (the anti-spam gate). Examples:
 /// - `{ "name": "Acme Studio" }` → `201 { "id", "did", "name" }`
-/// - `{ "name": "   " }` or no body → `422 { "error" }`, nothing minted
+/// - `{ "name": "   " }` or no body → `422` problem+json (`invalid_request` /
+///   `name_required`), nothing minted
 async fn create_account(
     State(state): State<AppState>,
     session: Session,
     body: Result<Json<CreateAccountBody>, JsonRejection>,
-) -> Response {
+) -> Result<Response, Problem> {
     // Founding is a write, so it requires a recognized visitor (DESIGN/Account: "a
-    // user without any accounts must create one before any write"). No session, an
-    // expired one, or a vanished User → 401 JSON, not a redirect: this is an API
-    // endpoint the frontend calls, not a page.
-    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return unauthorized();
-    };
-    let user = match state.user_repo.find(UserId::new(id)).await {
-        Ok(Some(user)) => user,
-        _ => return unauthorized(),
-    };
+    // user without any accounts must create one before any write").
+    let user = require_user(&state, &session).await?;
 
     // A missing/malformed body, or a name that fails validation, is rejected before
     // anything is minted. Both map to 422 — the request was understood but unusable.
-    let Ok(Json(body)) = body else {
-        return unprocessable("Provide a name for the account, e.g. {\"name\": \"Acme Studio\"}.");
-    };
-    let name = match AccountName::try_new(body.name) {
-        Ok(name) => name,
-        Err(err) => return unprocessable(&err.to_string()),
-    };
+    let Json(body) = body.map_err(|_| Problem::name_required())?;
+    let name =
+        AccountName::try_new(body.name).map_err(|err| Problem::invalid_request(err.to_string()))?;
 
     // Mint the account's sovereign DID before touching the private store. A mint
     // failure (the real adapter writes to the PLC directory) aborts with nothing
     // persisted; the client may retry.
-    let did = match state.did_minter.mint().await {
-        Ok(did) => did,
-        Err(_) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "error": "We couldn't mint an identity for the account. Please try again."
-                })),
-            )
-                .into_response();
-        }
-    };
+    let did = state.did_minter.mint().await.map_err(|_| {
+        Problem::service_unavailable(
+            "We couldn't mint an identity for the account. Please try again.",
+        )
+    })?;
 
     // The founding invariant: the account and the creator's Owner membership are
     // minted together (`Account::open`) and persisted atomically.
     let (account, owner) = Account::open(user.id, did, name, chrono::Utc::now());
-    if state.account_repo.create(&account, &owner).await.is_err() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": "The account couldn't be created. Please try again."
-            })),
-        )
-            .into_response();
-    }
+    state.account_repo.create(&account, &owner).await?;
 
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": account.id.to_string(),
-            "did": account.did.as_str(),
-            "name": account.name.as_str(),
-        })),
-    )
-        .into_response()
-}
-
-/// The 422 a write endpoint returns when the request is understood but its data
-/// won't do — a blank name, say. Carries a human-readable reason.
-fn unprocessable(reason: &str) -> Response {
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        Json(json!({ "error": reason })),
-    )
-        .into_response()
-}
-
-/// The 401 a write endpoint returns to a visitor we don't recognize — JSON, not a
-/// redirect, since these endpoints are called by the frontend, not browsed to.
-fn unauthorized() -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "You must be signed in to do that." })),
-    )
-        .into_response()
-}
-
-/// The 403 a write endpoint returns when the visitor is recognized but lacks the
-/// authority for the action — e.g. acting on a member whose rank the actor may not
-/// change, or not being a member at all (the floor rule; DESIGN/Roles). Shared by
-/// grant and revoke, so the wording stays action-neutral.
-fn forbidden() -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "You don't have permission to change roles on this account." })),
-    )
-        .into_response()
-}
-
-/// The 404 a write endpoint returns when the addressed account doesn't exist (or
-/// has been soft-deleted) — there's nothing there to act on.
-fn not_found() -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "No such account." })),
-    )
-        .into_response()
-}
-
-/// The 404 a revoke returns when the addressed user holds no membership in the
-/// account — there's no role to remove. Distinct message from a missing account.
-fn member_not_found() -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "That user is not a member of this account." })),
-    )
-        .into_response()
-}
-
-/// The 409 an invitation returns when the request collides with the account's
-/// current state rather than being malformed (422) or unauthorized (403) — most
-/// notably inviting someone who is already a member, where there is nothing to
-/// invite them to. Carries a human-readable reason.
-fn conflict(reason: &str) -> Response {
-    (StatusCode::CONFLICT, Json(json!({ "error": reason }))).into_response()
+    Ok(created_json(json!({
+        "id": account.id.to_string(),
+        "did": account.did.as_str(),
+        "name": account.name.as_str(),
+    })))
 }
 
 /// The body of `POST /accounts/{id}/members`. The grantee is named by their public
@@ -686,103 +651,64 @@ async fn invite_user_to_account(
     session: Session,
     Path(account_id): Path<Uuid>,
     body: Result<Json<InviteUserToAccountBody>, JsonRejection>,
-) -> Response {
-    let Ok(Some(inviting_user_id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return unauthorized();
-    };
+) -> Result<Response, Problem> {
+    let actor = require_user(&state, &session).await?;
 
-    let actor = match state.user_repo.find(UserId::new(inviting_user_id)).await {
-        Ok(Some(user)) => user,
-        _ => return unauthorized(),
-    };
-    let Ok(Json(body)) = body else {
-        return unprocessable(
-            "Provide a user to invite and a role, e.g. {\"invited_user\": \"did:plc:…\", \"with_role\": \"member\"}.",
-        );
-    };
-    let role = match Role::try_from(body.role) {
-        Ok(role) => role,
-        Err(err) => return unprocessable(&err.to_string()),
-    };
+    let Json(body) = body.map_err(|_| {
+        Problem::invalid_request(
+            "Provide a user to invite and a role, e.g. {\"user\": \"did:plc:…\", \"role\": \"member\"}.",
+        )
+    })?;
+    let role = Role::try_from(body.role).map_err(|err| Problem::unknown_role(err.to_string()))?;
 
-    let account = match state.account_repo.find(AccountId::new(account_id)).await {
-        Ok(Some(account)) => account,
-        _ => return not_found(),
-    };
-    let inviting_user_role = match state.account_repo.role_of(actor.id, account.id).await {
-        Ok(Some(role)) => role,
-        Ok(None) => return forbidden(),
-        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
-    };
+    let account = load_account(&state, AccountId::new(account_id)).await?;
+    let inviting_user_role = actor_role(&state, actor.id, account.id).await?;
 
     if !inviting_user_role.can_grant(&role) {
-        return forbidden();
+        return Err(Problem::forbidden());
     }
 
-    let invited = match state.user_repo.provision(&Did::new(body.user)).await {
-        Ok(user) => user,
-        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
-    };
+    let invited = state.user_repo.provision(&Did::new(body.user)).await?;
 
     // An invitation is the path *to* membership; someone who already holds a role has
     // nowhere to be invited. This is a state conflict (409), not an authority failure
     // (403) or a malformed request (422) — the actor may invite, just not this person.
-    match state.account_repo.role_of(invited.id, account.id).await {
-        Ok(Some(_)) => return conflict("That user is already a member of this account."),
-        Ok(None) => {}
-        Err(_) => return internal_error("The invitation couldn't be completed. Please try again."),
+    if state
+        .account_repo
+        .role_of(invited.id, account.id)
+        .await?
+        .is_some()
+    {
+        return Err(Problem::already_member(
+            "That user is already a member of this account.",
+        ));
     }
 
-    match state
+    // Idempotent re-invite: an existing pending offer is returned, not a second row.
+    if let Some(existing_invitation) = state
         .account_repo
         .find_pending_invitation(account.id, invited.id)
-        .await
+        .await?
     {
-        Ok(Some(existing_invitation)) => {
-            return (
-                StatusCode::OK,
-                Json(json!({
-                    "id": existing_invitation.id.to_string(),
-                    "account": account.id.to_string(),
-                    "user": invited.did.as_str(),
-                    "role": existing_invitation.role.as_str(),
-                    "state": existing_invitation.state.as_str()
-
-                })),
-            )
-                .into_response();
-        }
-        Ok(None) => {}
-        Err(_) => {
-            return internal_error(
-                "Could not check if an existing invitation was issued already. Please try again.",
-            );
-        }
+        return Ok(ok_json(json!({
+            "id": existing_invitation.id.to_string(),
+            "account": account.id.to_string(),
+            "user": invited.did.as_str(),
+            "role": existing_invitation.role.as_str(),
+            "state": existing_invitation.state.as_str()
+        })));
     }
 
     let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
+    state.account_repo.create_invitation(&invitation).await?;
 
-    if state
-        .account_repo
-        .create_invitation(&invitation)
-        .await
-        .is_err()
-    {
-        return internal_error("Could not create the invitation. Please try again.");
-    }
-
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": invitation.id.to_string(),
-            "account": account.id.to_string(),
-            "user": invited.did.as_str(),
-            "role": invitation.role.as_str(),
-            "state": invitation.state.as_str()
-
-        })),
-    )
-        .into_response()
+    Ok(created_json(json!({
+        "id": invitation.id.to_string(),
+        "account": account.id.to_string(),
+        "user": invited.did.as_str(),
+        "role": invitation.role.as_str(),
+        "state": invitation.state.as_str()
+    })))
 }
 
 /// The body of `DELETE /accounts/{id}/invitations`. The invitation is addressed by
@@ -811,38 +737,24 @@ async fn revoke_invitation_to_account(
     session: Session,
     Path(account_id): Path<Uuid>,
     body: Result<Json<RevokeInvitationBody>, JsonRejection>,
-) -> Response {
-    let Ok(Some(actor_id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return unauthorized();
-    };
+) -> Result<Response, Problem> {
+    let actor = require_user(&state, &session).await?;
 
-    let actor = match state.user_repo.find(UserId::new(actor_id)).await {
-        Ok(Some(user)) => user,
-        _ => return unauthorized(),
-    };
-
-    let Ok(Json(body)) = body else {
-        return unprocessable(
+    let Json(body) = body.map_err(|_| {
+        Problem::invalid_request(
             "Provide the invited user to revoke, e.g. {\"user\": \"did:plc:…\"}.",
-        );
-    };
+        )
+    })?;
     // Keep the invited DID by value: the response echoes it on every path (mirroring
     // `revoke_role`), including the idempotent no-ops where no invitation row — and so
     // no id/state — is available to report.
     let invited_did = body.user;
 
-    let account = match state.account_repo.find(AccountId::new(account_id)).await {
-        Ok(Some(account)) => account,
-        _ => return not_found(),
-    };
+    let account = load_account(&state, AccountId::new(account_id)).await?;
 
     // The actor's standing in this account decides what they may do; a non-member has
     // none. We keep the role to apply the authority rule once the invitation is loaded.
-    let actor_role = match state.account_repo.role_of(actor.id, account.id).await {
-        Ok(Some(role)) => role,
-        Ok(None) => return forbidden(),
-        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
-    };
+    let actor_role = actor_role(&state, actor.id, account.id).await?;
 
     // Resolve the invited user by DID *without minting* — like revoke_role, a revoke
     // must not recognize a brand-new visitor as a side effect. An unknown DID was never
@@ -861,46 +773,39 @@ async fn revoke_invitation_to_account(
     let invited_user = match state
         .user_repo
         .find_by_did(&Did::new(invited_did.clone()))
-        .await
+        .await?
     {
-        Ok(Some(user)) => user,
-        Ok(None) => return revoked(),
-        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
+        Some(user) => user,
+        None => return Ok(revoked()),
     };
 
     let mut invitation = match state
         .account_repo
         .find_pending_invitation(account.id, invited_user.id)
-        .await
+        .await?
     {
-        Ok(Some(invitation)) => invitation,
-        Ok(None) => return revoked(),
-        Err(_) => return internal_error("Could not revoke invitation. Please try again."),
+        Some(invitation) => invitation,
+        None => return Ok(revoked()),
     };
 
     // Authority, the same seam as issuing/granting: an actor may revoke only an
     // invitation they could have issued — Owner/Admin, the offered role strictly below
     // their own rank (`can_grant`). A non-member was already turned away above.
     if !actor_role.can_grant(&invitation.role) {
-        return forbidden();
+        return Err(Problem::forbidden());
     }
 
     // Run the domain transition first as a guard — it enforces the pending → revoked
     // rule (the offer is pending by construction here, the lookup filtered on state),
     // keeping the state machine the single arbiter of legality — then persist it.
     if invitation.revoke(Utc::now()).is_err() {
-        return internal_error("Could not revoke invitation. Please try again.");
+        return Err(Problem::internal_error(
+            "Could not revoke invitation. Please try again.",
+        ));
     }
-    if state
-        .account_repo
-        .revoke_invitation(invitation.id)
-        .await
-        .is_err()
-    {
-        return internal_error("Could not revoke invitation. Please try again.");
-    }
+    state.account_repo.revoke_invitation(invitation.id).await?;
 
-    revoked()
+    Ok(revoked())
 }
 /// Grants a role to a user on an account, seating them as a member if they aren't
 /// one yet (ZMVP-15: "Owner grants a role on their Account" — on this platform a
@@ -924,83 +829,55 @@ async fn grant_role(
     session: Session,
     Path(account_id): Path<Uuid>,
     body: Result<Json<GrantRoleBody>, JsonRejection>,
-) -> Response {
+) -> Result<Response, Problem> {
     // Granting is a write, so it requires a recognized visitor — the actor whose
     // authority we are about to check.
-    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return unauthorized();
-    };
-    let actor = match state.user_repo.find(UserId::new(id)).await {
-        Ok(Some(user)) => user,
-        _ => return unauthorized(),
-    };
+    let actor = require_user(&state, &session).await?;
 
     // A missing/malformed body, or a role string that isn't one of the four known
     // discriminants, is rejected before anything is touched — understood but unusable.
-    let Ok(Json(body)) = body else {
-        return unprocessable(
+    let Json(body) = body.map_err(|_| {
+        Problem::invalid_request(
             "Provide a member to grant, e.g. {\"user\": \"did:plc:…\", \"role\": \"admin\"}.",
-        );
-    };
-    let new_role = match Role::try_from(body.role) {
-        Ok(role) => role,
-        Err(err) => return unprocessable(&err.to_string()),
-    };
+        )
+    })?;
+    let new_role =
+        Role::try_from(body.role).map_err(|err| Problem::unknown_role(err.to_string()))?;
 
     // The grant must address a real, live account. A soft-deleted or unknown id is
     // a 404 — there's nothing to act on — kept distinct from "you may not" (403).
-    let account = AccountId::new(account_id);
-    match state.account_repo.find(account).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
-    }
+    let account = load_account(&state, AccountId::new(account_id)).await?;
 
     // Authorization, at the seam: the actor's standing in *this* account decides
     // whether the grant is allowed. A non-member has no role and so no authority.
-    let actor_role = match state.account_repo.role_of(actor.id, account).await {
-        Ok(Some(role)) => role,
-        Ok(None) => return forbidden(),
-        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
-    };
+    let actor_role = actor_role(&state, actor.id, account.id).await?;
     if !actor_role.can_grant(&new_role) {
-        return forbidden();
+        return Err(Problem::forbidden());
     }
 
     // Recognize the grantee by their DID (idempotent — mints them on first contact,
     // returns the existing User otherwise). Granting a role to someone who has never
     // signed in is how an Owner adds them; they resolve to the same User when they do.
-    let grantee = match state.user_repo.provision(&Did::new(body.user)).await {
-        Ok(user) => user,
-        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
-    };
+    let grantee = state.user_repo.provision(&Did::new(body.user)).await?;
 
     // The guard above bounds the role being *granted*; this bounds the *grantee*.
     // An account's Owner is never demoted through a grant — ownership only moves via
     // the separate transfer seam ("an Owner never has a parent, even when
     // transferred", DESIGN/Roles). Without this, an Admin could grant Manager to the
     // Owner's DID and quietly unseat them.
-    match state.account_repo.role_of(grantee.id, account).await {
-        Ok(Some(Role::Owner(_))) => return forbidden(),
-        Ok(_) => {}
-        Err(_) => return internal_error("The grant couldn't be completed. Please try again."),
+    if let Some(Role::Owner(_)) = state.account_repo.role_of(grantee.id, account.id).await? {
+        return Err(Problem::forbidden());
     }
 
     // Settle the grant: upsert the membership in the private store.
-    let member = UserAccount(grantee.id, account, new_role);
-    if state.account_repo.grant_role(&member).await.is_err() {
-        return internal_error("The grant couldn't be completed. Please try again.");
-    }
+    let member = UserAccount(grantee.id, account.id, new_role);
+    state.account_repo.grant_role(&member).await?;
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "account": account.to_string(),
-            "user": grantee.did.as_str(),
-            "role": member.get_role().as_str(),
-        })),
-    )
-        .into_response()
+    Ok(ok_json(json!({
+        "account": account.id.to_string(),
+        "user": grantee.did.as_str(),
+        "role": member.get_role().as_str(),
+    })))
 }
 
 /// The body of `DELETE /accounts/{id}/members`. The member to revoke is named by
@@ -1031,84 +908,51 @@ async fn revoke_role(
     session: Session,
     Path(account_id): Path<Uuid>,
     body: Result<Json<RevokeRoleBody>, JsonRejection>,
-) -> Response {
+) -> Result<Response, Problem> {
     // Revoking is a write — it requires a recognized visitor, the acting authority.
-    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return unauthorized();
-    };
-    let actor = match state.user_repo.find(UserId::new(id)).await {
-        Ok(Some(user)) => user,
-        _ => return unauthorized(),
-    };
+    let actor = require_user(&state, &session).await?;
 
-    let Ok(Json(body)) = body else {
-        return unprocessable("Provide a member to revoke, e.g. {\"user\": \"did:plc:…\"}.");
-    };
+    let Json(body) = body.map_err(|_| {
+        Problem::invalid_request("Provide a member to revoke, e.g. {\"user\": \"did:plc:…\"}.")
+    })?;
 
     // The revoke must address a real, live account.
-    let account = AccountId::new(account_id);
-    match state.account_repo.find(account).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
-    }
+    let account = load_account(&state, AccountId::new(account_id)).await?;
 
     // The actor's standing in this account decides what they may do; a non-member
     // has none.
-    let actor_role = match state.account_repo.role_of(actor.id, account).await {
-        Ok(Some(role)) => role,
-        Ok(None) => return forbidden(),
-        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
-    };
+    let actor_role = actor_role(&state, actor.id, account.id).await?;
 
     // Resolve the target by DID *without minting* — unlike a grant, a revoke must not
     // recognize a brand-new visitor as a side effect. An unknown DID is not a member.
-    let target = match state.user_repo.find_by_did(&Did::new(body.user)).await {
-        Ok(Some(user)) => user,
-        Ok(None) => return member_not_found(),
-        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
-    };
+    let target = state
+        .user_repo
+        .find_by_did(&Did::new(body.user))
+        .await?
+        .ok_or_else(Problem::member_not_found)?;
 
     // The member's *current* rank is what the actor must be allowed to act on — the
     // same predicate as grant. An Owner outranks everyone, so they're never revocable
     // here; an Admin can't revoke a peer Admin. Someone with no role isn't a member.
-    let target_role = match state.account_repo.role_of(target.id, account).await {
-        Ok(Some(role)) => role,
-        Ok(None) => return member_not_found(),
-        Err(_) => return internal_error("The revoke couldn't be completed. Please try again."),
-    };
+    let target_role = state
+        .account_repo
+        .role_of(target.id, account.id)
+        .await?
+        .ok_or_else(Problem::member_not_found)?;
     if !actor_role.can_grant(&target_role) {
-        return forbidden();
+        return Err(Problem::forbidden());
     }
 
     // Settle the revoke: remove the membership.
-    if state
+    state
         .account_repo
-        .revoke_role(target.id, account)
-        .await
-        .is_err()
-    {
-        return internal_error("The revoke couldn't be completed. Please try again.");
-    }
+        .revoke_role(target.id, account.id)
+        .await?;
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "account": account.to_string(),
-            "user": target.did.as_str(),
-        })),
-    )
-        .into_response()
-}
-
-/// The 500 a write endpoint returns when a dependency (the store, the recognizer)
-/// fails — the request was fine, our side wasn't. Carries a steady, retryable message.
-fn internal_error(reason: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": reason })),
-    )
-        .into_response()
+    Ok(ok_json(json!({
+        "account": account.id.to_string(),
+        "user": target.did.as_str(),
+    })))
 }
 
 /// The exit door (ZMVP-11). Destroys the session server-side: `flush` removes the
