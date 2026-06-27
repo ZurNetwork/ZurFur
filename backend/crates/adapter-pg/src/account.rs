@@ -173,46 +173,12 @@ impl AccountRepo for PgAccountRepo {
         Ok(())
     }
 
-    // ── ZMVP-32 invitations: ENGINEER HAND-OFF (not yet implemented) ──────────────
-    //
-    // These four methods are stubbed so the trait is satisfied and the workspace
-    // compiles; the mem adapter (`adapter-mem`) carries the full, tested contract,
-    // and `api/tests/invitations.rs` pins the HTTP behaviour. The pg versions are
-    // intentionally left for the engineer because they need a schema decision.
-    //
-    // 1. ADD A MIGRATION  `…_create_account_invitations.sql`:
-    //
-    //      CREATE TABLE account_invitations (
-    //          id           uuid        PRIMARY KEY,
-    //          account_id   uuid        NOT NULL REFERENCES accounts (id),
-    //          invited_user uuid        NOT NULL REFERENCES users (id),
-    //          role         text        NOT NULL,   -- Role::as_str discriminant
-    //          inviter      uuid        NOT NULL REFERENCES users (id),
-    //          state        text        NOT NULL,   -- InvitationState::as_str
-    //          created_at   timestamptz NOT NULL,
-    //          updated_at   timestamptz NOT NULL
-    //      );
-    //      -- The idempotency invariant (AC5): at most one *pending* offer per pair.
-    //      -- A partial unique index, so accepted/revoked history doesn't block re-invite.
-    //      CREATE UNIQUE INDEX one_pending_invitation_per_account_user
-    //          ON account_invitations (account_id, invited_user)
-    //          WHERE state = 'pending';
-    //
-    // 2. IMPLEMENT, mirroring grant/revoke above (compile-time `query!`, so the
-    //    migration must be applied to DATABASE_URL before this typechecks):
-    //    - create_invitation       INSERT … ON CONFLICT (account_id, invited_user)
-    //                              WHERE state = 'pending' DO NOTHING  (the backstop)
-    //    - find_pending_invitation SELECT … WHERE account_id=$1 AND invited_user=$2
-    //                              AND state = 'pending'   → rebuild Invitation
-    //    - find_invitation         SELECT … WHERE id = $1  (any state)
-    //    - revoke_invitation       UPDATE … SET state='revoked', updated_at=now()
-    //                              WHERE id = $1 AND state = 'pending'  (guarded)
-    //    Parse `role` via Role::try_from and `state` via InvitationState::try_from,
-    //    same as `role_of` re-validates a stored role.
-    //
-    // 3. ADD a pg round-trip test in `tests/` mirroring the adapter-mem suite
-    //    (create→find_pending, duplicate is no-op, revoke flips state).
-
+    /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
+    /// DO NOTHING`: the partial unique index (see the migration) enforces at most
+    /// one pending offer per (account, invited user), so a duplicate issue is
+    /// silently dropped rather than becoming a second row — the store-level backstop
+    /// for the idempotent re-invite the handler also guards by checking
+    /// [`find_pending_invitation`](PgAccountRepo::find_pending_invitation) first.
     async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()> {
         query!(r#"
             INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)
@@ -234,6 +200,11 @@ impl AccountRepo for PgAccountRepo {
         Ok(())
     }
 
+    /// Selects the lone `state = 'pending'` offer for `(account, invited_user)`, or
+    /// `None`. Accepted and revoked invitations are history, not live offers, so
+    /// they never match. The stored `role`/`state` discriminants are re-validated
+    /// through `Role::try_from`/`InvitationState::try_from` on the way out — an
+    /// `Err` on row tampering, never a panic, exactly as `role_of` does for a role.
     async fn find_pending_invitation(
         &self,
         account: AccountId,
@@ -269,6 +240,9 @@ impl AccountRepo for PgAccountRepo {
             .transpose()
     }
 
+    /// Loads the invitation for `id` in whatever state it holds (the revoke path
+    /// reads it back to weigh authority and current state), or `None`. Stored
+    /// discriminants are re-validated on read — an `Err` on tampering, never a panic.
     async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>> {
         let invitation = query!(
             r#"
@@ -298,8 +272,12 @@ impl AccountRepo for PgAccountRepo {
             .transpose()
     }
 
+    /// A guarded `UPDATE ... SET state = 'revoked' WHERE id = $1 AND state =
+    /// 'pending'`: only a pending offer flips, and an `UPDATE` matching no row still
+    /// succeeds — so revoking an absent or already-terminal invitation is a harmless
+    /// no-op, not an error (the handler decides whether that's a 404/409). Mirrors
+    /// [`revoke_role`](PgAccountRepo::revoke_role)'s no-op-on-no-match shape.
     async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()> {
-        // IDEMPOTENT!
         let now = Utc::now();
         query!(
             r#"

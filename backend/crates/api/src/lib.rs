@@ -656,12 +656,31 @@ struct GrantRoleBody {
     role: String,
 }
 
+/// The body of `POST /accounts/{id}/invitations`. The invitee is named by their
+/// public `did` (identity precedes us — we recognize by DID, never by our internal
+/// id), and `role` is the discriminant to offer: `"admin" | "manager" | "member"`.
+/// `"owner"` is understood but never offerable by invitation (that would be a
+/// transfer, not an invite).
+///
+/// Example: `{ "user": "did:plc:abc123", "role": "member" }`.
 #[derive(Deserialize)]
 struct InviteUserToAccountBody {
     user: String,
     role: String,
 }
 
+/// Issues a pending invitation for a User to join an account (ZMVP-32 — the
+/// issuing half of invite-then-accept; acceptance is ZMVP-20). Authority reuses the
+/// grant rule: only an Owner/Admin may invite, and the offered role must sit
+/// strictly below the inviter's own rank (`Role::can_grant`) — the same seam as
+/// [`grant_role`].
+///
+/// The invitee is provisioned by DID (idempotent, like a grant) so the offer can
+/// reference a real `UserId` even for someone who has never visited. Inviting an
+/// existing member is a `409` (there's nothing to invite them to); re-inviting an
+/// already-pending User is idempotent — the existing offer is returned (`200`),
+/// never a second row (handler check plus the partial-unique-index backstop).
+/// Otherwise a fresh pending offer is created (`201`).
 async fn invite_user_to_account(
     State(state): State<AppState>,
     session: Session,
@@ -766,11 +785,27 @@ async fn invite_user_to_account(
         .into_response()
 }
 
+/// The body of `DELETE /accounts/{id}/invitations`. The invitation is addressed by
+/// the invited User's `did` (not an invitation id): there is at most one pending
+/// offer per (account, user), so the pair identifies it — keeping revoke symmetric
+/// with issue and with [`revoke_role`].
+///
+/// Example: `{ "user": "did:plc:abc123" }`.
 #[derive(Deserialize)]
 struct RevokeInvitationBody {
     user: String,
 }
 
+/// Revokes a pending invitation so it can no longer be accepted (ZMVP-32). The
+/// invited User is named by DID in the body and resolved *without minting* (like
+/// [`revoke_role`], a revoke must not recognize a brand-new visitor as a side
+/// effect). Authority is the issuing seam again — the actor must be able to
+/// `can_grant` the offered role.
+///
+/// Idempotent: an unknown DID, or no pending offer, is a `200` no-op rather than a
+/// 404. Every path — success or no-op — echoes `{ account, user }` (the
+/// always-available request inputs), since the no-op paths have no invitation row
+/// to report an id or state from.
 async fn revoke_invitation_to_account(
     State(state): State<AppState>,
     session: Session,
