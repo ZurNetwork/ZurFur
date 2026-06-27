@@ -47,6 +47,8 @@ use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use uuid::Uuid;
 
+mod common;
+
 /// Boots the app with everything faked in-process, returning the base URL plus
 /// typed handles to the repos so a test can introspect them after the flow.
 async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>) {
@@ -350,11 +352,7 @@ async fn inviting_an_existing_member_is_a_conflict() {
         .send()
         .await
         .expect("POST /accounts/{id}/invitations");
-    assert_eq!(
-        res.status(),
-        409,
-        "an existing member can't be invited — there's nowhere to invite them"
-    );
+    common::assert_problem(res, 409, "already_member").await;
 
     let invitee = user_repo
         .provision(&Did::new(invitee_did.to_string()))
@@ -382,5 +380,5 @@ async fn anonymous_visitor_cannot_invite() {
         .send()
         .await
         .expect("POST /accounts/{id}/invitations");
-    assert_eq!(res.status(), 401, "an unrecognized visitor cannot invite");
+    common::assert_problem(res, 401, "not_authenticated").await;
 }

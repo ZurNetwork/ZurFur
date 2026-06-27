@@ -16,6 +16,8 @@ use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use uuid::Uuid;
 
+mod common;
+
 /// Boots the app with everything faked in-process and returns the base URL plus
 /// typed handles to the repos, so a test can introspect them after the flow. The
 /// unsizing to the `Arc<dyn …>` fields happens at assignment.
@@ -155,7 +157,7 @@ async fn founding_requires_a_name() {
         .send()
         .await
         .expect("POST /accounts");
-    assert_eq!(res.status(), 422, "a blank name is rejected");
+    common::assert_problem(res, 422, "invalid_request").await;
 
     // The rejected attempt minted nothing: the next, valid founding gets the very
     // first DID from the deterministic mem minter (`did:plc:mem000000`). Had the
@@ -315,7 +317,7 @@ async fn granting_an_unknown_role_is_rejected() {
         .send()
         .await
         .expect("POST /accounts/{id}/members");
-    assert_eq!(res.status(), 422, "an unknown role is rejected");
+    common::assert_problem(res, 422, "unknown_role").await;
 }
 
 // A grant addressed to an account that doesn't exist is a 404 — there's nothing to
