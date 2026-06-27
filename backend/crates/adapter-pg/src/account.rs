@@ -1,10 +1,12 @@
 //! [`AccountRepo`] over PostgreSQL: accounts and their memberships in the
 //! `accounts` / `account_members` tables. See ZMVP-14 and DESIGN/Account.
 
+use chrono::Utc;
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
+        invitation::{Invitation, InvitationId, InvitationState},
         role::Role,
         user::UserId,
         user_account::UserAccount,
@@ -168,6 +170,151 @@ impl AccountRepo for PgAccountRepo {
         )
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    // ── ZMVP-32 invitations: ENGINEER HAND-OFF (not yet implemented) ──────────────
+    //
+    // These four methods are stubbed so the trait is satisfied and the workspace
+    // compiles; the mem adapter (`adapter-mem`) carries the full, tested contract,
+    // and `api/tests/invitations.rs` pins the HTTP behaviour. The pg versions are
+    // intentionally left for the engineer because they need a schema decision.
+    //
+    // 1. ADD A MIGRATION  `…_create_account_invitations.sql`:
+    //
+    //      CREATE TABLE account_invitations (
+    //          id           uuid        PRIMARY KEY,
+    //          account_id   uuid        NOT NULL REFERENCES accounts (id),
+    //          invited_user uuid        NOT NULL REFERENCES users (id),
+    //          role         text        NOT NULL,   -- Role::as_str discriminant
+    //          inviter      uuid        NOT NULL REFERENCES users (id),
+    //          state        text        NOT NULL,   -- InvitationState::as_str
+    //          created_at   timestamptz NOT NULL,
+    //          updated_at   timestamptz NOT NULL
+    //      );
+    //      -- The idempotency invariant (AC5): at most one *pending* offer per pair.
+    //      -- A partial unique index, so accepted/revoked history doesn't block re-invite.
+    //      CREATE UNIQUE INDEX one_pending_invitation_per_account_user
+    //          ON account_invitations (account_id, invited_user)
+    //          WHERE state = 'pending';
+    //
+    // 2. IMPLEMENT, mirroring grant/revoke above (compile-time `query!`, so the
+    //    migration must be applied to DATABASE_URL before this typechecks):
+    //    - create_invitation       INSERT … ON CONFLICT (account_id, invited_user)
+    //                              WHERE state = 'pending' DO NOTHING  (the backstop)
+    //    - find_pending_invitation SELECT … WHERE account_id=$1 AND invited_user=$2
+    //                              AND state = 'pending'   → rebuild Invitation
+    //    - find_invitation         SELECT … WHERE id = $1  (any state)
+    //    - revoke_invitation       UPDATE … SET state='revoked', updated_at=now()
+    //                              WHERE id = $1 AND state = 'pending'  (guarded)
+    //    Parse `role` via Role::try_from and `state` via InvitationState::try_from,
+    //    same as `role_of` re-validates a stored role.
+    //
+    // 3. ADD a pg round-trip test in `tests/` mirroring the adapter-mem suite
+    //    (create→find_pending, duplicate is no-op, revoke flips state).
+
+    async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()> {
+        query!(r#"
+            INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
+            DO NOTHING
+        "#,
+            *invitation.id,
+            *invitation.account,
+            *invitation.invited_user,
+            invitation.role.as_str(),
+            *invitation.inviter,
+            invitation.state.as_str(),
+            invitation.created_at,
+            invitation.updated_at
+        )
+            .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn find_pending_invitation(
+        &self,
+        account: AccountId,
+        invited_user: UserId,
+    ) -> anyhow::Result<Option<Invitation>> {
+        let invitation = query!(
+            r#"
+            SELECT id, account_id, invited_user, role, inviter, state, created_at, updated_at
+            FROM account_invitations
+            WHERE account_id = $1 AND invited_user = $2 AND state = $3
+            LIMIT 1
+        "#,
+            *account,
+            *invited_user,
+            InvitationState::Pending.as_str()
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        invitation
+            .map(|i| {
+                Ok(Invitation {
+                    id: InvitationId::new(i.id),
+                    account: AccountId::new(i.account_id),
+                    invited_user: UserId::new(i.invited_user),
+                    role: Role::try_from(i.role)?,
+                    inviter: UserId::new(i.inviter),
+                    state: InvitationState::try_from(i.state)?,
+                    created_at: i.created_at,
+                    updated_at: i.updated_at,
+                })
+            })
+            .transpose()
+    }
+
+    async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>> {
+        let invitation = query!(
+            r#"
+        SELECT id, account_id, invited_user, role, inviter, state, created_at, updated_at
+        FROM account_invitations
+        WHERE id = $1
+        LIMIT 1
+        "#,
+            *id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        invitation
+            .map(|i| {
+                Ok(Invitation {
+                    id: InvitationId::new(i.id),
+                    account: AccountId::new(i.account_id),
+                    invited_user: UserId::new(i.invited_user),
+                    role: Role::try_from(i.role)?,
+                    inviter: UserId::new(i.inviter),
+                    state: InvitationState::try_from(i.state)?,
+                    created_at: i.created_at,
+                    updated_at: i.updated_at,
+                })
+            })
+            .transpose()
+    }
+
+    async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()> {
+        // IDEMPOTENT!
+        let now = Utc::now();
+        query!(
+            r#"
+            UPDATE account_invitations
+            SET state = $1, updated_at = $2
+            WHERE id = $3 AND state = $4
+            "#,
+            InvitationState::Revoked.as_str(),
+            now,
+            *id,
+            InvitationState::Pending.as_str(),
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 }

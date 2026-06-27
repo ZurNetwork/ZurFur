@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)\n                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            ON CONFLICT (account_id, invited_user) WHERE state = 'pending'\n            DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65c531c91a194108a298b8947ed0437cace9a9f6820fbf58e5ae03fe6794d37d"
+}
