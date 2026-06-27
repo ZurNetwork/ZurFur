@@ -32,6 +32,7 @@ use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
+    invitation::{Invitation, InvitationId, InvitationState},
     profile::Profile,
     role::Role,
     user::{User, UserId},
@@ -223,6 +224,27 @@ struct StoredAccount {
     deleted_at: Option<domain::datetime::DateTimeUtc>,
 }
 
+/// The fields of an [`Invitation`] we keep behind the lock. Like [`Account`],
+/// `Invitation` isn't `Clone` (an entity with a lifecycle, not a value), so we
+/// store its parts and rebuild a fresh `Invitation` on read.
+struct StoredInvitation {
+    /// The account membership is being offered of.
+    account: AccountId,
+    /// The User being invited.
+    invited_user: UserId,
+    /// The offered rank.
+    role: Role,
+    /// The member who issued the offer (becomes the new member's Parent on
+    /// acceptance — DESIGN/Roles rule 4a).
+    inviter: UserId,
+    /// Where the offer sits in its lifecycle. [`InvitationState`] is `Copy`.
+    state: InvitationState,
+    /// When the invitation was issued.
+    created_at: domain::datetime::DateTimeUtc,
+    /// When the invitation last changed state.
+    updated_at: domain::datetime::DateTimeUtc,
+}
+
 /// In-memory [`AccountRepo`]. An account and its founder's Owner membership are
 /// minted together (ZMVP-14); `create` inserts both under one lock, standing in
 /// for the single private-store transaction the real (pg) adapter runs.
@@ -236,6 +258,11 @@ pub struct MemAccountRepo {
     /// `None`. A separate map from `accounts`, so the two locks are independent;
     /// `create` takes them in turn (accounts, then memberships).
     memberships: Mutex<HashMap<(AccountId, UserId), Role>>,
+    /// [`StoredInvitation`] parts keyed by [`InvitationId`] (ZMVP-32). A separate
+    /// lock again; the at-most-one-*pending*-per-(account, user) rule the pg
+    /// adapter enforces with a partial unique index is enforced here by scanning
+    /// for an existing pending offer before inserting.
+    invitations: Mutex<HashMap<InvitationId, StoredInvitation>>,
 }
 
 impl MemAccountRepo {
@@ -326,6 +353,104 @@ impl AccountRepo for MemAccountRepo {
             .expect("MemAccountRepo mutex poisoned");
         memberships.remove(&(account, user));
         Ok(())
+    }
+
+    /// Inserts the pending invitation, unless one is already pending for the same
+    /// `(account, invited_user)` — in which case this is a no-op, the in-memory
+    /// mirror of the pg adapter's partial unique index (`... WHERE state =
+    /// 'pending'`). The handler also checks `find_pending_invitation` first, so
+    /// this is the belt-and-suspenders backstop, not the only guard.
+    async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()> {
+        let mut invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        let already_pending = invitations.values().any(|stored| {
+            stored.account == invitation.account
+                && stored.invited_user == invitation.invited_user
+                && stored.state == InvitationState::Pending
+        });
+        if already_pending {
+            // At most one pending offer per (account, user): a second issue is a
+            // no-op, not a second row.
+            return Ok(());
+        }
+        invitations.insert(
+            invitation.id,
+            StoredInvitation {
+                account: invitation.account,
+                invited_user: invitation.invited_user,
+                role: invitation.role.clone(),
+                inviter: invitation.inviter,
+                state: invitation.state,
+                created_at: invitation.created_at,
+                updated_at: invitation.updated_at,
+            },
+        );
+        Ok(())
+    }
+
+    /// Scans for the lone pending offer for `(account, invited_user)`, rebuilding
+    /// an [`Invitation`] from its parts (it isn't `Clone`). Accepted/revoked
+    /// invitations are history, not live offers, so they never match.
+    async fn find_pending_invitation(
+        &self,
+        account: AccountId,
+        invited_user: UserId,
+    ) -> anyhow::Result<Option<Invitation>> {
+        let invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        Ok(invitations.iter().find_map(|(id, stored)| {
+            (stored.account == account
+                && stored.invited_user == invited_user
+                && stored.state == InvitationState::Pending)
+                .then(|| rebuild_invitation(*id, stored))
+        }))
+    }
+
+    /// Rebuilds the [`Invitation`] for `id` in whatever state it holds, or `None`.
+    async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>> {
+        let invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        Ok(invitations
+            .get(&id)
+            .map(|stored| rebuild_invitation(id, stored)))
+    }
+
+    /// Flips a pending invitation to revoked and stamps `updated_at`. A non-pending
+    /// or absent invitation is left untouched — a no-op, not an error (the handler
+    /// decides whether that's a 404/409), mirroring the pg adapter's guarded UPDATE.
+    async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()> {
+        let mut invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        if let Some(stored) = invitations.get_mut(&id)
+            && stored.state == InvitationState::Pending
+        {
+            stored.state = InvitationState::Revoked;
+            stored.updated_at = Utc::now();
+        }
+        Ok(())
+    }
+}
+
+/// Rebuilds an [`Invitation`] from its stored parts (it isn't `Clone`), the
+/// invitation analogue of how `find` rebuilds an [`Account`].
+fn rebuild_invitation(id: InvitationId, stored: &StoredInvitation) -> Invitation {
+    Invitation {
+        id,
+        account: stored.account,
+        invited_user: stored.invited_user,
+        role: stored.role.clone(),
+        inviter: stored.inviter,
+        state: stored.state,
+        created_at: stored.created_at,
+        updated_at: stored.updated_at,
     }
 }
 
@@ -494,5 +619,111 @@ mod tests {
         let second = minter.mint().await.unwrap();
 
         assert_ne!(first, second);
+    }
+
+    fn account_id() -> AccountId {
+        AccountId::new(uuid::Uuid::now_v7())
+    }
+
+    // AC3 (store layer) — a freshly issued pending invitation round-trips: it is the
+    // pending offer found for its (account, invited_user) pair, with every fact intact.
+    #[tokio::test]
+    async fn create_then_find_pending_returns_the_invitation() {
+        let repo = MemAccountRepo::new();
+        let (account, invited, inviter) = (account_id(), user_id(), user_id());
+        let invitation =
+            Invitation::issue(account, invited, Role::Admin(None), inviter, Utc::now());
+        let id = invitation.id;
+
+        repo.create_invitation(&invitation).await.unwrap();
+
+        let found = repo
+            .find_pending_invitation(account, invited)
+            .await
+            .unwrap()
+            .expect("the pending invitation is found");
+        assert_eq!(found.id, id);
+        assert_eq!(found.role, Role::Admin(None));
+        assert_eq!(found.inviter, inviter);
+        assert_eq!(found.state, InvitationState::Pending);
+    }
+
+    // AC5 (store layer) — at most one pending per (account, user): a second issue for
+    // the same pair while one is pending creates no second row.
+    #[tokio::test]
+    async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
+        let repo = MemAccountRepo::new();
+        let (account, invited) = (account_id(), user_id());
+        let first = Invitation::issue(account, invited, Role::Member(None), user_id(), Utc::now());
+        let second = Invitation::issue(account, invited, Role::Admin(None), user_id(), Utc::now());
+
+        repo.create_invitation(&first).await.unwrap();
+        repo.create_invitation(&second).await.unwrap();
+
+        // The original survives; the duplicate was a no-op (not a second row).
+        let found = repo
+            .find_pending_invitation(account, invited)
+            .await
+            .unwrap()
+            .expect("a pending invitation remains");
+        assert_eq!(
+            found.id, first.id,
+            "the first pending offer is the one kept"
+        );
+        assert!(
+            repo.find_invitation(second.id).await.unwrap().is_none(),
+            "the duplicate issue stored nothing"
+        );
+    }
+
+    // AC4 (store layer) — revoking flips the offer to revoked: it is no longer the
+    // pending offer for its pair, and a re-issue may now seat a fresh one.
+    #[tokio::test]
+    async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
+        let repo = MemAccountRepo::new();
+        let (account, invited) = (account_id(), user_id());
+        let invitation =
+            Invitation::issue(account, invited, Role::Member(None), user_id(), Utc::now());
+        let id = invitation.id;
+        repo.create_invitation(&invitation).await.unwrap();
+
+        repo.revoke_invitation(id).await.unwrap();
+
+        assert_eq!(
+            repo.find_invitation(id).await.unwrap().map(|i| i.state),
+            Some(InvitationState::Revoked),
+            "the invitation reads back revoked"
+        );
+        assert!(
+            repo.find_pending_invitation(account, invited)
+                .await
+                .unwrap()
+                .is_none(),
+            "a revoked invitation is no longer a live pending offer"
+        );
+
+        // With the prior offer revoked, a fresh invitation to the same pair is seated.
+        let reissued =
+            Invitation::issue(account, invited, Role::Admin(None), user_id(), Utc::now());
+        repo.create_invitation(&reissued).await.unwrap();
+        assert_eq!(
+            repo.find_pending_invitation(account, invited)
+                .await
+                .unwrap()
+                .map(|i| i.id),
+            Some(reissued.id),
+            "re-inviting after a revoke seats a new pending offer"
+        );
+    }
+
+    // An invitation id we never stored resolves to nothing.
+    #[tokio::test]
+    async fn find_unknown_invitation_returns_none() {
+        let repo = MemAccountRepo::new();
+        let found = repo
+            .find_invitation(InvitationId::new(uuid::Uuid::now_v7()))
+            .await
+            .unwrap();
+        assert!(found.is_none());
     }
 }
