@@ -270,6 +270,11 @@ pub fn app(state: AppState) -> Router {
             "/accounts/{id}/invitations",
             post(invite_user_to_account).delete(revoke_invitation_to_account),
         )
+        .route(
+            "/accounts/{id}/invitations/decline",
+            post(decline_invitation),
+        )
+        .route("/accounts/{id}/invitations/accept", post(accept_invitation))
         .route("/logout", post(logout))
         .with_state(state)
 }
@@ -465,6 +470,52 @@ async fn signin_callback(
             .into_response();
     }
     Redirect::to("/me").into_response()
+}
+
+/// The accept-invitation request body: the invitee's choice of whether this new
+/// membership is shown on their public profile (`account_members.listed_on_profile`).
+#[derive(Deserialize)]
+struct AcceptInvitationBody {
+    pub listed_on_profile: bool,
+}
+
+/// Accepts a pending invitation (ZMVP-20): the invited User takes up their own offer
+/// and becomes a member. Symmetric with [`decline_invitation`] — keyed by the session
+/// User, not a DID in the body, so authority is implicit: we only ever look up the
+/// signed-in User's own pending invitation, so no one can accept another's.
+///
+/// Flipping the offer to accepted and seating the member (with `parent = inviter`,
+/// DESIGN/Roles rule 4a, and the body's `listed_on_profile` choice) happen in one
+/// private-store transaction inside [`AccountRepo::accept_invitation`]; a revoke or
+/// accept that wins the race there seats no member ("a revoked invitation yields no
+/// membership"). With no pending offer to accept this is a `404`
+/// (`no_pending_invitation`); a malformed body is a `400`.
+async fn accept_invitation(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+    session: Session,
+    body: Result<Json<AcceptInvitationBody>, JsonRejection>,
+) -> Result<Response, Problem> {
+    let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed JSON"))?;
+    let invited_user = require_user(&state, &session).await?;
+
+    // The invitee accepts their own offer; an absent/spent one is a 404.
+    let invitation = state
+        .account_repo
+        .find_pending_invitation(AccountId::new(account_id), invited_user.id)
+        .await?
+        .ok_or_else(Problem::no_pending_invitation)?;
+
+    let accepted = state
+        .account_repo
+        .accept_invitation(invitation, body.listed_on_profile)
+        .await?;
+
+    Ok(ok_json(json!({
+        "account": accepted.account_id.to_string(),
+        "user": invited_user.did.as_str(),
+        "role": accepted.role.as_str(),
+    })))
 }
 
 /// The signed-in greeting (`GET /me`): resolves the session's [`UserId`] to a
@@ -807,6 +858,45 @@ async fn revoke_invitation_to_account(
 
     Ok(revoked())
 }
+
+/// Declines a pending invitation (ZMVP-20). The invitee actively kills their *own*
+/// offer — symmetric with the issuer's revoke, but keyed by the session User rather
+/// than a DID in the body, so authority is implicit: we only ever look up the
+/// signed-in User's own pending invitation. Reuses the `pending → revoked`
+/// transition (a declined offer is a dead offer; re-invite stays possible).
+///
+/// Declining when there is no pending offer is a `404` (`no_pending_invitation`) —
+/// there is nothing for this User to decline.
+async fn decline_invitation(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+) -> Result<Response, Problem> {
+    let actor = require_user(&state, &session).await?;
+    let account = load_account(&state, AccountId::new(account_id)).await?;
+
+    // The invitee declines their own offer; an absent/spent one is a 404.
+    let mut invitation = state
+        .account_repo
+        .find_pending_invitation(account.id, actor.id)
+        .await?
+        .ok_or_else(Problem::no_pending_invitation)?;
+
+    // Reuse the pending → revoked transition (pending by construction here), then
+    // persist it — exactly the issuer-revoke path, just initiated by the invitee.
+    if invitation.revoke(Utc::now()).is_err() {
+        return Err(Problem::internal_error(
+            "Could not decline the invitation. Please try again.",
+        ));
+    }
+    state.account_repo.revoke_invitation(invitation.id).await?;
+
+    Ok(ok_json(json!({
+        "account": account.id.to_string(),
+        "user": actor.did.as_str(),
+    })))
+}
+
 /// Grants a role to a user on an account, seating them as a member if they aren't
 /// one yet (ZMVP-15: "Owner grants a role on their Account" — on this platform a
 /// grant *is* how a user joins, DESIGN/Roles). This is the seam where reusable role
@@ -870,13 +960,17 @@ async fn grant_role(
     }
 
     // Settle the grant: upsert the membership in the private store.
-    let member = UserAccount(grantee.id, account.id, new_role);
+    let member = UserAccount {
+        user_id: grantee.id,
+        account_id: account.id,
+        role: new_role,
+    };
     state.account_repo.grant_role(&member).await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
         "user": grantee.did.as_str(),
-        "role": member.get_role().as_str(),
+        "role": member.role.as_str(),
     })))
 }
 
