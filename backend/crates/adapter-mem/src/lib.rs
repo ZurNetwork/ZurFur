@@ -292,12 +292,16 @@ impl AccountRepo for MemAccountRepo {
             },
         );
 
-        let UserAccount(user, account_id, role) = owner;
+        let UserAccount {
+            user_id,
+            account_id,
+            role,
+        } = owner;
         let mut memberships = self
             .memberships
             .lock()
             .expect("MemAccountRepo mutex poisoned");
-        memberships.insert((*account_id, *user), role.clone());
+        memberships.insert((*account_id, *user_id), role.clone());
         Ok(())
     }
 
@@ -335,7 +339,11 @@ impl AccountRepo for MemAccountRepo {
         // existing one's role replaced — the in-memory mirror of the pg adapter's
         // `ON CONFLICT ... DO UPDATE`. Granting a role is how a user joins an
         // account (DESIGN/Roles); the role tree (`parent`) is deferred on the floor.
-        let UserAccount(user, account_id, role) = member;
+        let UserAccount {
+            user_id: user,
+            account_id,
+            role,
+        } = member;
         let mut memberships = self
             .memberships
             .lock()
@@ -436,6 +444,61 @@ impl AccountRepo for MemAccountRepo {
             stored.updated_at = Utc::now();
         }
         Ok(())
+    }
+
+    /// Flips the pending invitation to Accepted and seats the invited User as a
+    /// member — the in-memory mirror of the pg adapter's single transaction, where
+    /// the accepted state and the membership land together or not at all. The
+    /// stored offer must still be pending; if it was accepted or revoked in the
+    /// meantime (a lost race against the handler's `Invitation::accept` guard) this
+    /// seats nothing and errors, honoring "a revoked invitation yields no
+    /// membership". Like the pg guarded UPDATE, the *store's* state is what's
+    /// checked — not the passed `invitation`, which the handler has already flipped.
+    ///
+    /// `parent` (the inviter, DESIGN/Roles rule 4a) and `listed_on_profile` are
+    /// deferred on the floor here, exactly as the role tree is in `grant_role`: the
+    /// pg adapter persists them in dedicated columns, but no port reads either back
+    /// (`role_of` returns only the role), so the in-memory map keeps only the role.
+    async fn accept_invitation(
+        &self,
+        invitation: Invitation,
+        _listed_on_profile: bool,
+    ) -> anyhow::Result<UserAccount> {
+        {
+            // The pending guard is the atomic backstop: matching no pending offer
+            // means it was accepted or revoked since, so seat no member.
+            let mut invitations = self
+                .invitations
+                .lock()
+                .expect("MemAccountRepo mutex poisoned");
+            match invitations.get_mut(&invitation.id) {
+                Some(stored) if stored.state == InvitationState::Pending => {
+                    stored.state = InvitationState::Accepted;
+                    stored.updated_at = Utc::now();
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "invitation {} is no longer pending; no membership minted",
+                        *invitation.id
+                    ));
+                }
+            }
+        }
+
+        let mut memberships = self
+            .memberships
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        memberships.insert(
+            (invitation.account, invitation.invited_user),
+            invitation.role.clone(),
+        );
+
+        Ok(UserAccount {
+            account_id: invitation.account,
+            user_id: invitation.invited_user,
+            role: invitation.role,
+        })
     }
 }
 
@@ -569,7 +632,11 @@ mod tests {
         let account = live_account("did:plc:acct");
         let (id, account_did, account_name) =
             (account.id, account.did.clone(), account.name.clone());
-        let owner = UserAccount(user_id(), account.id, Role::Owner(None));
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id: account.id,
+            role: Role::Owner(None),
+        };
 
         repo.create(&account, &owner).await.unwrap();
         let found = repo.find(id).await.unwrap().expect("account present");
@@ -587,7 +654,11 @@ mod tests {
         let repo = MemAccountRepo::new();
         let account = live_account("did:plc:acct");
         let owner_id = user_id();
-        let owner = UserAccount(owner_id, account.id, Role::Owner(None));
+        let owner = UserAccount {
+            user_id: owner_id,
+            account_id: account.id,
+            role: Role::Owner(None),
+        };
         let account_id = account.id;
 
         repo.create(&account, &owner).await.unwrap();
@@ -601,7 +672,11 @@ mod tests {
     async fn find_unknown_account_returns_none() {
         let repo = MemAccountRepo::new();
         let account = live_account("did:plc:acct");
-        let owner = UserAccount(user_id(), account.id, Role::Owner(None));
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id: account.id,
+            role: Role::Owner(None),
+        };
         repo.create(&account, &owner).await.unwrap();
 
         let other = live_account("did:plc:other");

@@ -7,31 +7,16 @@
 
 use crate::elements::{account::AccountId, role::Role, user::UserId};
 
-/// A user's membership in an account, as the `(user, account, role)` tuple.
+/// A user's membership in an account: the `(user_id, account_id, role)` triple.
 ///
-/// A positional tuple struct rather than named fields — read it through the
-/// accessors below ([`get_user_id`](UserAccount::get_user_id),
-/// [`get_account_id`](UserAccount::get_account_id),
-/// [`get_role`](UserAccount::get_role)). One user may be a member of many
-/// accounts, so a [`UserId`] is unique only together with its [`AccountId`].
+/// Plain public named fields — `user_id`, `account_id`, and `role`. One user may
+/// be a member of many accounts, so a [`UserId`] is unique only together with its
+/// [`AccountId`].
 ///
 /// References: [`Role`], [`crate::elements::account::Account::open`] (which mints
 /// the founder's `UserAccount`), [`crate::ports::AccountRepo`].
-pub struct UserAccount(pub UserId, pub AccountId, pub Role);
-
-impl UserAccount {
-    /// The member.
-    pub fn get_user_id(&self) -> UserId {
-        self.0
-    }
-
-    /// The account they are a member of.
-    pub fn get_account_id(&self) -> AccountId {
-        self.1
-    }
-
-    /// The role they hold (cloned, since [`Role`] carries an owned parent slot).
-    pub fn get_role(&self) -> Role {
-        self.2.clone()
-    }
+pub struct UserAccount {
+    pub user_id: UserId,
+    pub account_id: AccountId,
+    pub role: Role,
 }

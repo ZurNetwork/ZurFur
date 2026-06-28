@@ -151,6 +151,21 @@ pub trait AccountRepo: Send + Sync {
     /// *Who* may revoke (the issuing member) is the caller's authority check. A
     /// private-side write, never a cross-store dual write (DESIGN/Roles).
     async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()>;
+
+    /// Accept a pending invitation: in ONE private-store transaction (the same unit
+    /// of work as `create`, never a cross-store dual write) flip the invitation to
+    /// Accepted AND seat the invited User as a member, with `parent = inviter`
+    /// (DESIGN/Roles rule 4a — the first real write of `account_members.parent`) and
+    /// the invitee's `listed_on_profile` choice (new column, default true). The
+    /// implementation owns the guard: it flips only an offer that is *still* pending
+    /// in the store, so a lost race (already accepted/revoked) seats no member — the
+    /// guard is atomic with the seat, not a caller pre-check. Authority is the
+    /// caller's, settled before this is reached (ZMVP-20).
+    async fn accept_invitation(
+        &self,
+        invitation: Invitation,
+        listed_on_profile: bool,
+    ) -> anyhow::Result<UserAccount>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is

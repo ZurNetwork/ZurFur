@@ -137,9 +137,9 @@ impl Account {
     /// "the creating User becomes Owner".
     ///
     /// Mints the account (`AccountId::new(Uuid::now_v7())`, `created_at ==
-    /// updated_at == now`) and pairs it with `UserAccount(owner, id,
-    /// Role::Owner(None))`. The role's parent is `None`: an Owner never has one
-    /// (DESIGN/Roles). The `name` is already validated (see [`AccountName`]); the
+    /// updated_at == now`) and pairs it with `UserAccount { user_id: owner,
+    /// account_id: id, role: Role::Owner(None) }` — the founder seated as Owner
+    /// with no role alias. The `name` is already validated (see [`AccountName`]); the
     /// `did` is minted upstream by a `DidMinter`.
     ///
     /// Named `open` ("open an account"), not `found`, to dodge the past tense of
@@ -156,7 +156,7 @@ impl Account {
     ///     AccountName::try_new("Acme Studio").unwrap(),
     ///     Utc::now(),
     /// );
-    /// assert_eq!(membership.get_role(), Role::Owner(None)); // founder is Owner
+    /// assert_eq!(membership.role, Role::Owner(None)); // founder is Owner
     /// assert_eq!(account.created_at, account.updated_at);   // stamped once
     /// ```
     pub fn open(
@@ -173,7 +173,11 @@ impl Account {
             updated_at: now,
             deleted_at: None,
         };
-        let membership = UserAccount(owner, new_account.id, Role::Owner(None));
+        let membership = UserAccount {
+            user_id: owner,
+            account_id: new_account.id,
+            role: Role::Owner(None),
+        };
         (new_account, membership)
     }
 }

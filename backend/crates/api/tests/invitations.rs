@@ -1,38 +1,6 @@
-//! End-to-end invitation issuing & revocation (ZMVP-32) — the issuing half of
-//! invite-then-accept (acceptance is ZMVP-20). Same in-process fakes as the other
+//! End-to-end invitation flow: issuing and issuer-revocation (ZMVP-32), and the
+//! invitee-side accept and decline (ZMVP-20). Same in-process fakes as the other
 //! account e2e suites: no network, no database.
-//!
-//! ⚠️ ENGINEER HAND-OFF — these tests are RED until the invitation handler lands.
-//! Per the /understand §5 ownership bands, the domain element, the `AccountRepo`
-//! ports, and the `adapter-mem` implementation are done and green; the HTTP
-//! handler is engineer-owned (the authority policy is a real judgment call — see
-//! the OPEN QUESTION below). These tests are the executable contract that handler
-//! must satisfy.
-//!
-//! INTENDED HANDLER (mirror `grant_role` / `revoke_role` in `api/src/lib.rs`):
-//!   Routes on `app()`:
-//!     POST   /accounts/{id}/invitations                 → issue_invitation
-//!     DELETE /accounts/{id}/invitations/{invitation_id} → revoke_invitation
-//!
-//!   issue_invitation(account_id, { user: DID, role }):
-//!     401 no session · 422 bad body / unknown role · 404 missing account
-//!     load actor's role (403 if non-member) · 403 unless actor.can_grant(offered)
-//!     provision invitee by DID (idempotent, like grant)
-//!     409 if invitee is already a member (role_of is Some)
-//!     find_pending_invitation(account, invitee):
-//!        Some(existing) → idempotent: return it (the "ping", AC5), 2xx, no 2nd row
-//!        None           → Invitation::issue(...) → create_invitation → 201
-//!     body: { "id", "account", "user", "role", "state": "pending" }
-//!
-//!   revoke_invitation(account_id, invitation_id):
-//!     401 · 404 missing account · 404 unknown invitation
-//!     load invitation; 403 unless actor is the inviter (see OPEN QUESTION)
-//!     invitation.revoke(now) → 409 if not pending; else revoke_invitation(id) → 200
-//!
-//! OPEN QUESTION (decide before implementing): the AC says "the *issuing member*
-//! may revoke." These tests assert the inviter can. Whether a higher-ranked
-//! Owner/Admin may *also* revoke another member's pending invitation is
-//! unspecified — confirm the policy, then add/relax a test accordingly.
 use std::sync::Arc;
 
 use adapter_mem::{
@@ -40,7 +8,14 @@ use adapter_mem::{
 };
 use api::{AppState, Config, Environment};
 use domain::{
-    elements::{account::AccountId, did::Did, invitation::InvitationState, profile::Profile},
+    elements::{
+        account::{Account, AccountId, AccountName},
+        did::Did,
+        invitation::{Invitation, InvitationState},
+        profile::Profile,
+        role::Role,
+        user::UserId,
+    },
     ports::{AccountRepo, UserRepo},
 };
 use reqwest::redirect::Policy;
@@ -381,4 +356,154 @@ async fn anonymous_visitor_cannot_invite() {
         .await
         .expect("POST /accounts/{id}/invitations");
     common::assert_problem(res, 401, "not_authenticated").await;
+}
+
+/// Seeds an account (founded by a fresh owner) plus a pending invitation for
+/// `invitee_did`, directly via the repos. The invitee-side actions (accept/decline)
+/// run with the *invitee* as the session user, so the issuing — which needs the
+/// owner's session — is set up out-of-band here. Returns (account, invitee, owner).
+async fn seed_pending_invite(
+    user_repo: &MemUserRepo,
+    account_repo: &MemAccountRepo,
+    invitee_did: &str,
+) -> (AccountId, UserId, UserId) {
+    let owner = user_repo
+        .provision(&Did::new("did:plc:seedowner".to_string()))
+        .await
+        .expect("provision owner");
+    let invitee = user_repo
+        .provision(&Did::new(invitee_did.to_string()))
+        .await
+        .expect("provision invitee");
+    let (account, owner_membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:seedacct".to_string()),
+        AccountName::try_new("Acme Studio".to_string()).expect("account name"),
+        chrono::Utc::now(),
+    );
+    account_repo
+        .create(&account, &owner_membership)
+        .await
+        .expect("found the account");
+    let invitation = Invitation::issue(
+        account.id,
+        invitee.id,
+        Role::Member(None),
+        owner.id,
+        chrono::Utc::now(),
+    );
+    account_repo
+        .create_invitation(&invitation)
+        .await
+        .expect("issue the pending invitation");
+    (account.id, invitee.id, owner.id)
+}
+
+// AC1/AC4 — the invitee actively declines their own pending offer: 200, the offer is
+// no longer pending, and they hold no membership.
+#[tokio::test]
+async fn invitee_declines_a_pending_invitation() {
+    let invitee_did = "did:plc:e2edecliner";
+    let (base, user_repo, account_repo) = spawn_app(invitee_did).await;
+    let (account_id, invitee_id, _owner) =
+        seed_pending_invite(&user_repo, &account_repo, invitee_did).await;
+
+    let client = client();
+    sign_in(&client, &base).await;
+    let res = client
+        .post(format!(
+            "{base}/accounts/{}/invitations/decline",
+            *account_id
+        ))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/invitations/decline");
+    assert_eq!(
+        res.status(),
+        200,
+        "the invitee declines their pending invitation"
+    );
+
+    assert!(
+        account_repo
+            .find_pending_invitation(account_id, invitee_id)
+            .await
+            .expect("find_pending_invitation")
+            .is_none(),
+        "a declined invitation is no longer a live pending offer"
+    );
+    assert!(
+        account_repo
+            .role_of(invitee_id, account_id)
+            .await
+            .expect("role_of")
+            .is_none(),
+        "declining mints no membership"
+    );
+}
+
+// AC1 — declining when there is no pending offer for the signed-in user is a 404
+// problem+json; there is nothing for them to decline.
+#[tokio::test]
+async fn declining_with_no_pending_invitation_is_not_found() {
+    let did = "did:plc:e2enopending";
+    let (base, user_repo, account_repo) = spawn_app(did).await;
+    // An account exists, but the signed-in user holds no invitation to it.
+    let owner = user_repo
+        .provision(&Did::new("did:plc:seedowner".to_string()))
+        .await
+        .expect("provision owner");
+    let (account, owner_membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:seedacct".to_string()),
+        AccountName::try_new("Acme Studio".to_string()).expect("account name"),
+        chrono::Utc::now(),
+    );
+    account_repo
+        .create(&account, &owner_membership)
+        .await
+        .expect("found the account");
+
+    let client = client();
+    sign_in(&client, &base).await;
+    let res = client
+        .post(format!(
+            "{base}/accounts/{}/invitations/decline",
+            *account.id
+        ))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/invitations/decline");
+    common::assert_problem(res, 404, "no_pending_invitation").await;
+}
+
+#[tokio::test]
+async fn invitee_accepts_and_becomes_a_member() {
+    let invitee_did = "did:plc:e2eaccepter";
+    let (base, user_repo, account_repo) = spawn_app(invitee_did).await;
+    let (account_id, invitee_id, _owner) =
+        seed_pending_invite(&user_repo, &account_repo, invitee_did).await;
+
+    let client = client();
+    sign_in(&client, &base).await;
+    let res = client
+        .post(format!(
+            "{base}/accounts/{}/invitations/accept",
+            *account_id
+        ))
+        .json(&serde_json::json!({ "listed_on_profile": true }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/invitations/accept");
+    assert_eq!(res.status(), 200, "the invitee accepts and joins");
+
+    // The invitee is now a member at the offered role.
+    let role = account_repo
+        .role_of(invitee_id, account_id)
+        .await
+        .expect("role_of");
+    assert!(
+        matches!(role, Some(Role::Member(_))),
+        "accepting mints a Member membership at the offered role"
+    );
 }

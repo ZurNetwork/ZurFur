@@ -111,6 +111,19 @@ impl Problem {
         )
     }
 
+    /// `404` — the signed-in User has no pending invitation to act on (accept or
+    /// decline) for this account. Distinct from `account_not_found`: the account
+    /// exists, there's just no live offer for them.
+    pub fn no_pending_invitation() -> Self {
+        Self::new(
+            "urn:zurfur:error:no-pending-invitation",
+            "no_pending_invitation",
+            "No pending invitation",
+            404,
+            "You have no pending invitation for this account.",
+        )
+    }
+
     /// `409` — inviting a user who is already a member (a state conflict, not an
     /// authority failure). `detail` names the specific collision.
     pub fn already_member(detail: impl Into<String>) -> Self {

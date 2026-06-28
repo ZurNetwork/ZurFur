@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE account_invitations\n        SET state = $1, updated_at = $2\n        WHERE id = $3 AND state = $4\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "71afdf2932995d980146332702a3aed035ab19e2d5f74fa7d67767234062df73"
+}

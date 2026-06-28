@@ -60,9 +60,9 @@ impl AccountRepo for PgAccountRepo {
         INSERT INTO account_members (account_id, user_id, role)
         VALUES ($1, $2, $3)
         "#,
-            *owner.get_account_id(),
-            *owner.get_user_id(),
-            owner.get_role().as_str()
+            *owner.account_id,
+            *owner.user_id,
+            owner.role.as_str()
         )
         .execute(&mut *tx)
         .await?;
@@ -145,9 +145,9 @@ impl AccountRepo for PgAccountRepo {
         ON CONFLICT (account_id, user_id) DO UPDATE
             SET role = EXCLUDED.role
         "#,
-            *member.get_account_id(),
-            *member.get_user_id(),
-            member.get_role().as_str()
+            *member.account_id,
+            *member.user_id,
+            member.role.as_str()
         )
         .execute(&self.pool)
         .await?;
@@ -294,5 +294,72 @@ impl AccountRepo for PgAccountRepo {
         .await?;
 
         Ok(())
+    }
+
+    /// Flips the pending invitation to Accepted and seats the invited User as a
+    /// member in ONE transaction, so the accepted state and the membership commit
+    /// together or not at all — the same unit of work as
+    /// [`create`](PgAccountRepo::create), never a cross-store dual write. The
+    /// `UPDATE` is guarded on `state = 'pending'`; if it matches no row the offer was
+    /// already accepted or revoked (a lost race against the handler's in-memory
+    /// `Invitation::accept` guard), so the whole transaction rolls back and no
+    /// membership is minted — honoring "a revoked invitation yields no membership".
+    /// The new member's `parent` is the `inviter` (DESIGN/Roles rule 4a) and
+    /// `listed_on_profile` records the invitee's opt-in.
+    async fn accept_invitation(
+        &self,
+        invitation: Invitation,
+        listed_on_profile: bool,
+    ) -> anyhow::Result<UserAccount> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await?;
+
+        let accepted = query!(
+            r#"
+        UPDATE account_invitations
+        SET state = $1, updated_at = $2
+        WHERE id = $3 AND state = $4
+        "#,
+            InvitationState::Accepted.as_str(),
+            now,
+            *invitation.id,
+            InvitationState::Pending.as_str(),
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // The guarded UPDATE is the atomic backstop for the handler's in-memory
+        // `Invitation::accept` check: matching no pending row means the offer was
+        // accepted or revoked in the meantime. Roll back (drop `tx`) rather than seat
+        // a member from a spent invitation.
+        if accepted.rows_affected() == 0 {
+            return Err(anyhow::anyhow!(
+                "invitation {} is no longer pending; no membership minted",
+                *invitation.id
+            ));
+        }
+
+        let new_member = query!(
+            r#"
+                INSERT INTO account_members (account_id, user_id, parent, "role", listed_on_profile)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING account_id, user_id, "role"
+        "#,
+            *invitation.account,
+            *invitation.invited_user,
+            *invitation.inviter,
+            invitation.role.as_str(),
+            listed_on_profile
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(UserAccount {
+            account_id: AccountId::new(new_member.account_id),
+            user_id: UserId::new(new_member.user_id),
+            role: Role::try_from(new_member.role)?,
+        })
     }
 }
