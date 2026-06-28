@@ -6,30 +6,38 @@
 //! a user joins, revoking it is how they leave. The grant rule lives in
 //! [`Role::can_grant`] — the reusable authority seam ZMVP-15/16 are built on.
 
+/// The optional alias a member's role carries — the `Option<String>` slot on each
+/// [`Role`] variant, named so the four variants read uniformly. `None` on the floor
+/// (see [`Role`]). A `Some` is a free-form label for the rank (e.g. an Owner aliased
+/// "Studio Head"), not a second authority axis: [`can_grant`](Role::can_grant) ranks
+/// by variant, not by alias. Distinct from a member's *parent* — that is the
+/// inviting member, stored in a separate `account_members.parent` column, never here.
+pub type RoleAlias = Option<String>;
+
 /// A member's rank inside one account.
 ///
 /// Ordered Owner < Admin < Manager < Member by the derived [`Ord`], so a *lower*
 /// numeric position means *higher* authority — [`can_grant`](Role::can_grant)
 /// leans on this, so keep the variants in rank order, top to bottom.
 ///
-/// Each variant carries an `Option<String>` parent slot for the future role
-/// hierarchy tree. On the floor it is always `None` (only Owner exists, and an
-/// Owner never has a parent — even when transferred). Be aware the derived
-/// [`Ord`] also weighs that `Option<String>`; that is why parented-role compares
-/// are deferred dressing (see the note on [`can_grant`](Role::can_grant)).
+/// Each variant carries an optional [`RoleAlias`] — a free-form label for the rank,
+/// not the member's parent (that is a separate `account_members.parent` column). On
+/// the floor it is always `None`. Be aware the derived [`Ord`] also weighs that
+/// `Option<String>`; that is why aliased-role compares are deferred dressing (see
+/// the note on [`can_grant`](Role::can_grant)).
 ///
 /// References: [`UnknownRole`], [`crate::elements::user_account::UserAccount`],
 /// [`crate::ports::AccountRepo::grant_role`], DESIGN/Roles.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     /// The account's founder/highest authority; never has a parent (DESIGN/Roles).
-    Owner(Option<String>),
+    Owner(RoleAlias),
     /// May change roles below Admin; cannot mint a peer Admin or an Owner.
-    Admin(Option<String>),
+    Admin(RoleAlias),
     /// A member with elevated standing but no authority to change roles.
-    Manager(Option<String>),
+    Manager(RoleAlias),
     /// The base membership rank; grants nothing.
-    Member(Option<String>),
+    Member(RoleAlias),
 }
 
 /// A stored role discriminant that isn't one of the four known roles.
@@ -52,10 +60,9 @@ impl TryFrom<String> for Role {
     type Error = UnknownRole;
 
     /// Parse a stored role discriminant (`owner` | `admin` | `manager` | `member`)
-    /// back into a `Role`. The parent slot is `None`: the discriminant alone can't
-    /// carry it — the parent is a separate column, and is always NULL on the floor
-    /// (only Owner exists). When the role tree lands, reconstruct the parent
-    /// alongside, e.g. via a `TryFrom<(String, Option<String>)>`.
+    /// back into a `Role`. The [`RoleAlias`] is `None`: the discriminant alone can't
+    /// carry it, and it is always NULL on the floor. When aliases land, reconstruct
+    /// the alias alongside, e.g. via a `TryFrom<(String, Option<String>)>`.
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "owner" => Ok(Role::Owner(None)),
@@ -94,15 +101,15 @@ impl Role {
         // granted role must sit strictly below the actor's — with the derived Ord
         // (Owner < Admin < Manager < Member) "below" is the greater value, hence
         // `target > self`. Authority therefore rides on the variant order above:
-        // keep it Owner→Member, top to bottom. (When the role tree populates the
-        // parent slot, switch to a discriminant-only compare — Ord also weighs that
-        // `Option<String>`, which would reopen the peer-Admin gap for parented roles.)
+        // keep it Owner→Member, top to bottom. (When aliases start getting populated,
+        // switch to a discriminant-only compare — Ord also weighs that `Option<String>`
+        // alias, which would otherwise reopen the peer-Admin gap for aliased roles.)
         matches!(self, Role::Owner(_) | Role::Admin(_)) && target > self
     }
 
     /// The lowercase discriminant (`owner` | `admin` | `manager` | `member`),
     /// the value persisted by the store and the inverse of [`Role::try_from`].
-    /// Drops the parent slot — only the rank is encoded here.
+    /// Drops the alias — only the rank is encoded here.
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Owner(_) => "owner",
