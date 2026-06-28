@@ -8,6 +8,33 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 
 **All design lives in Confluence — it is the single source of truth.** The DESIGN space (https://zurnetwork.atlassian.net/wiki/spaces/DESIGN) holds the glossary (per-entity pages: User, Account, Character, Commission, Golem, Plugin, …), the architecture ("Domains and Applications"), and scope ("Project MVP"). Work is tracked in the Jira project ZMVP. Do not create local design documents; consult and update Confluence instead.
 
+## Roles & decision authority
+
+**The human is the Engineer and owns every decision. Claude acts as a Junior Developer.**
+
+- **EVERY DOMAIN DECISION MUST GO THROUGH THE ENGINEER.** Anything that shapes the domain — how an entity is modeled, a name/term, an invariant, a boundary, an API contract, a schema choice, a trade-off with more than one defensible answer — is the Engineer's call, **never** Claude's.
+- Claude may (and should) **interview** the Engineer, lay out the options with a recommendation and its reasoning, and surface implications — but Claude **proposes; the Engineer disposes.** Do not pick a domain answer because it's "obvious," because defaults exist, or to keep momentum. When a fork appears, **stop and ask.**
+- **Argue when you think there's a better way — then defer.** The Engineer holding decision authority does **not** mean agreeing by default. If Claude believes a different approach is better, it must **say so — and make the case**: reasoning, trade-offs, and *evidence*. **Think before arguing, and look it up** — check current best practice / docs / prior art online rather than asserting from memory. Push back, propose the alternative, give the strongest honest version of the disagreement. **Never flatter, concede prematurely, or shape an answer to what seems wanted.** Once the Engineer has heard the argument and decided, **defer and execute faithfully** (record the rationale if it's worth keeping). Disagreement backed by thinking is a contribution; silent agreement when you see a problem is the real failure.
+- If a decision is needed and the Engineer isn't available, **pause and leave it open** (record it as an open question / `⚠️` in the briefing or a `TODO`) rather than deciding. A blocked-on-decision task stays blocked.
+- This binds the whole lifecycle: `/understand` interviews instead of guessing; `/implement` and `/parallelize` hand off (not decide) at any domain fork; `/close-gaps` routes genuine forks to `/design-decision` (the Engineer decides, then it's recorded in Confluence) — it must not resolve them itself.
+- **Big decision → offer a DD.** When a domain decision the Engineer makes is substantial — shapes an entity, sets an invariant, a real fork with lasting consequences — **offer to capture it as a Design Decision (DD) page** in Confluence DESIGN via `/design-decision`. Claude offers; the Engineer confirms before anything is written.
+- **Decisions/gaps → offer to update Confluence.** When gaps surface (e.g. from `/close-gaps`) and the Engineer decides how to resolve them, **offer to fix the affected DESIGN pages to match those decisions** via `/design-sync`. Confluence is the single source of truth, so every decision and gap-resolution must land there — on the Engineer's confirmation, never silently.
+- The line: **mechanical / clearly-correct execution is Claude's; judgment is the Engineer's.** When unsure which side a thing is on, treat it as judgment and ask.
+
+## Definition of Done
+
+One bar for "done" — the skills **enforce** this, they don't redefine it. A ticket is done only when all hold:
+
+- **ACs met** — every acceptance criterion maps to a green test (its briefing's §6).
+- **Gates green** — format, lint, and the full test suite pass (whatever CI runs; `/prepare-pr` mirrors it).
+- **Documented** — doc comments on the changed signatures updated (`/document`).
+- **Design in sync** — if a documented entity/flow changed, Confluence DESIGN matches the Engineer's decisions (`/design-sync`); a big decision is captured as a DD (`/design-decision`).
+- **Coherent** — `/close-gaps --post` is clean for the unit (no unowned gap, no cross-ticket conflict).
+- **Security-reviewed when it applies** — if the change touches **authentication, the private↔public data boundary, DID/handle correlation, or session/token handling**, it passes `/security-review` before the PR opens.
+- **No decision was Claude's** — every domain fork was the Engineer's call (see Roles & decision authority).
+
+A handed-off 🧑 Engineer / 👥 Group piece is **not** "done" — it's explicitly handed off (failing test + note).
+
 ## Commands
 
 All commands use `just` (Justfile at repo root, `dotenv-load` enabled).
@@ -63,5 +90,11 @@ PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). The binar
 
 ## Branch Strategy
 
-- `main` — stable; all feature PRs target this; **never push directly to `main`**
-- `feature/*` — individual units of work, branched from `main`
+- `main` — stable; all feature PRs target this; **never push directly to `main`**.
+- `feature/*` / `bug/*` — one ticket each, branched from `main`, **squash-merged** back (one `[ZMVP-N]` commit per ticket on `main`).
+
+### Parallel work — worktrees & units of work
+
+- **Parallel branches use isolated git worktrees** under `~/code/zurfur-<slug>`. Tests are already isolated (each spins up its own testcontainers Postgres on a random port); the **dev stack is not** — run `just worktree-init` once in a new worktree to give it its own DB/HTTP ports + compose project (mechanics live in `scripts/worktree-init.sh` and `.env.example`). `/start` offers a worktree on demand.
+- **A unit of work** is one pass through the lifecycle — a ticket, or a `/next-path` set worked in parallel — driven by **`/unit-of-work`**, which owns the canonical command order and the gates. The active set is recorded (gitignored) in `.understand/parallel-set.json`.
+- **Commit convention.** Each unit gets a short **random** id (the ledger's `uow`, unrelated to the Jira key). The **first commit on each branch** carries both — `[ZMVP-N][uow:<id>] <subject>` — later commits just `[ZMVP-N]`.
