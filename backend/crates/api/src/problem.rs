@@ -89,6 +89,20 @@ impl Problem {
         )
     }
 
+    /// `403` — a state-changing request arrived with an `Origin` that isn't our
+    /// first-party origin: defense-in-depth CSRF, layered on the session cookie's
+    /// `SameSite=Lax` (ZMVP-23; DESIGN "Auth Surfaces, the Plugin Trust Boundary &
+    /// CSRF"). A non-browser client (no `Origin`) is never rejected here.
+    pub fn cross_origin() -> Self {
+        Self::new(
+            "urn:zurfur:error:cross-origin",
+            "cross_origin",
+            "Cross-origin request blocked",
+            403,
+            "This state-changing request came from an untrusted origin.",
+        )
+    }
+
     /// `404` — the addressed account doesn't exist (or is soft-deleted).
     pub fn account_not_found() -> Self {
         Self::new(

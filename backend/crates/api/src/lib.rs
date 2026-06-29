@@ -23,8 +23,9 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use axum::{
     Form, Json, Router,
-    extract::{Path, Query, State, rejection::JsonRejection},
-    http::StatusCode,
+    extract::{Path, Query, Request, State, rejection::JsonRejection},
+    http::{Method, StatusCode, header::ORIGIN},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{delete, get, post},
 };
@@ -232,7 +233,9 @@ pub struct AppState {
 /// Builds the axum [`Router`] over an [`AppState`], wiring every route to its
 /// handler. This is the canonical route table; the e2e tests and `main` both
 /// mount it. `main` additionally layers the session middleware (the [`Session`]
-/// extractor handlers rely on comes from that layer, applied outside this fn).
+/// extractor handlers rely on comes from that layer, applied outside this fn). This
+/// fn applies the defense-in-depth CSRF [`require_first_party_origin`] guard over
+/// every route — a state-changing request from a foreign `Origin` is refused.
 ///
 /// Routes: `GET /health`, `GET /` and `POST /signin` and
 /// `GET /signin-callback` (the sign-in flow), `GET /me`, `POST /accounts`,
@@ -277,7 +280,42 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/accounts/{id}/invitations/accept", post(accept_invitation))
         .route("/logout", post(logout))
+        // Defense-in-depth CSRF: reject cross-origin state-changing requests on the
+        // cookie surface (ZMVP-23). Wraps every route; safe methods and missing-Origin
+        // (non-browser) clients pass. The bearer public API (`/plugin/v1`) is exempt by
+        // construction and is not mounted under this layer.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_first_party_origin,
+        ))
         .with_state(state)
+}
+
+/// CSRF defense-in-depth on the cookie surface (ZMVP-23): on a state-changing
+/// method, reject a request whose `Origin` header is present and is **not** our
+/// first-party origin ([`Config::public_url`]). A missing `Origin` — a non-browser
+/// client, which carries no ambient cookie and so cannot be CSRF'd — passes, as do
+/// safe methods (`GET`/`HEAD`/…). This layers on top of the session cookie's
+/// `SameSite=Lax`; together they keep a forged cross-site request from acting with
+/// the user's session. The bearer public API (`/plugin/v1`) is exempt by
+/// construction (no ambient cookie) and is not mounted under this layer — see
+/// DESIGN "Auth Surfaces, the Plugin Trust Boundary & CSRF".
+async fn require_first_party_origin(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let state_changing = matches!(
+        *request.method(),
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    );
+    if state_changing
+        && let Some(origin) = request.headers().get(ORIGIN)
+        && origin.as_bytes() != state.config.public_url.trim_end_matches('/').as_bytes()
+    {
+        return Problem::cross_origin().into_response();
+    }
+    next.run(request).await
 }
 
 /// Liveness/readiness probe (`GET /health`). Reports `200` with the database
