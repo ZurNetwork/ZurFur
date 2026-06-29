@@ -136,6 +136,19 @@ impl Problem {
         )
     }
 
+    /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
+    /// nowhere to re-home its members, so leaving is refused as a state conflict (not
+    /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.
+    pub fn owner_cannot_leave() -> Self {
+        Self::new(
+            "urn:zurfur:error:owner-cannot-leave",
+            "owner_cannot_leave",
+            "Owner cannot leave",
+            409,
+            "You can't leave an account you own. Transfer ownership or delete the account first.",
+        )
+    }
+
     /// `422` — the request is understood but its data won't do. `detail` says why.
     /// Specific cases get their own `code` via [`name_required`](Problem::name_required)
     /// / [`unknown_role`](Problem::unknown_role) under the same `type`.

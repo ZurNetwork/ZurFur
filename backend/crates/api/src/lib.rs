@@ -26,7 +26,7 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use chrono::Utc;
 use domain::{
@@ -266,6 +266,7 @@ pub fn app(state: AppState) -> Router {
             "/accounts/{id}/members",
             post(grant_role).delete(revoke_role),
         )
+        .route("/accounts/{id}/members/me", delete(leave_account))
         .route(
             "/accounts/{id}/invitations",
             post(invite_user_to_account).delete(revoke_invitation_to_account),
@@ -524,6 +525,34 @@ async fn accept_invitation(
         "user": invited_user.did.as_str(),
         "role": accepted.role.as_str(),
     })))
+}
+
+/// `DELETE /accounts/{id}/members/me` — the signed-in member leaves the account on
+/// their own action (ZMVP-21). Self-removal needs no authority check (you're acting
+/// on your own membership), but two preconditions gate it, resolved handler-side like
+/// grant/revoke so the outcomes are problem+json rather than `500`s: you must be a
+/// member (else `404`), and the `Owner` can't walk out while still `Owner` (`409` —
+/// the sole-Owner root has nowhere to re-home its members; transfer or delete first).
+/// On success the repo re-homes the leaver's children, deletes the membership, and
+/// revokes the leaver's pending issued invitations in one transaction, and we return
+/// `204 No Content`.
+async fn leave_account(
+    State(state): State<AppState>,
+    Path(account_id): Path<Uuid>,
+    session: Session,
+) -> Result<Response, Problem> {
+    let leaving_user = require_user(&state, &session).await?;
+    let account = AccountId::new(account_id);
+
+    match state.account_repo.role_of(leaving_user.id, account).await? {
+        None => return Err(Problem::member_not_found()),
+        Some(Role::Owner(_)) => return Err(Problem::owner_cannot_leave()),
+        Some(_) => {}
+    }
+
+    state.account_repo.leave(leaving_user.id, account).await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// The signed-in greeting (`GET /me`): resolves the session's [`UserId`] to a
