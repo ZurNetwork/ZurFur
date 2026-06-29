@@ -120,6 +120,21 @@ pub trait AccountRepo: Send + Sync {
     /// never a cross-store dual write (ZMVP-16, DESIGN/Roles).
     async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
 
+    /// A member **leaves** their own account on their own action (ZMVP-21). Unlike
+    /// [`revoke_role`](AccountRepo::revoke_role) — which an `Owner`/`Admin` invokes on
+    /// *someone else*, an authority action gated by rank — `leave` is **self-initiated**:
+    /// it is the consent-symmetric counterpart to accepting an invitation (ZMVP-20)
+    /// — joining took the user's yes, so does leaving — so it needs no rank check on
+    /// the actor. In one transaction it re-homes the leaver's role-tree children to the
+    /// leaver's own parent (DESIGN/Roles rule 3), deletes the membership, and revokes
+    /// the leaver's still-pending *issued* invitations, so none can later seat a member
+    /// under a non-member (DD "Invitation Validity & Issuer Departure", ZMVP-40). The
+    /// caller settles the preconditions first — a non-member is turned away and the
+    /// `Owner` cannot leave while still `Owner` — so this assumes a valid, non-`Owner`
+    /// member; a vanished membership (a concurrent removal) is a no-op, not an error. A
+    /// private-side write, never a cross-store dual write.
+    async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+
     /// Persist a freshly issued, pending [`Invitation`] (ZMVP-32 — the issuing
     /// half of invite-then-accept). At most one *pending* invitation may exist per
     /// (account, invited user): if one already does, this is a no-op rather than a

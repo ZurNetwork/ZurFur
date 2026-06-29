@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE account_members SET parent = $1 WHERE account_id = $2 AND parent = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "293ea512aa07341fd58a87db654ca9f715c098c4b063042ec184a68bf86f306f"
+}

@@ -8,7 +8,7 @@ use adapter_pg::{PgAccountRepo, PgPool, PgUserRepo};
 use chrono::Utc;
 use domain::{
     elements::{
-        account::{Account, AccountName},
+        account::{Account, AccountId, AccountName},
         did::Did,
         invitation::{Invitation, InvitationState},
         role::Role,
@@ -319,5 +319,240 @@ async fn find_unknown_invitation_is_none() {
     assert!(
         found.is_none(),
         "an invitation we never stored resolves to nothing"
+    );
+}
+
+// --- ZMVP-21: leaving an account ---
+
+/// Reads `account_members.parent` directly — no port exposes it, and the re-homing
+/// tests need to assert the role-tree edge. Unchecked (runtime) query, so it needs
+/// no offline cache entry.
+async fn parent_of(pool: &PgPool, account: AccountId, user: UserId) -> Option<uuid::Uuid> {
+    sqlx::query_scalar::<_, Option<uuid::Uuid>>(
+        "SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2",
+    )
+    .bind(*account)
+    .bind(*user)
+    .fetch_one(pool)
+    .await
+    .expect("read parent")
+}
+
+/// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
+/// accepting an invitation — the only path that writes `account_members.parent`.
+async fn seat_under(
+    accounts: &PgAccountRepo,
+    account: AccountId,
+    invited: UserId,
+    inviter: UserId,
+) {
+    let invitation = Invitation::issue(account, invited, Role::Member(None), inviter, Utc::now());
+    accounts
+        .create_invitation(&invitation)
+        .await
+        .expect("persist invitation");
+    accounts
+        .accept_invitation(invitation, true)
+        .await
+        .expect("accept seats the member under the inviter");
+}
+
+// AC3 — when a leaving member has children in the role tree, those children re-home
+// to the leaver's Parent (DESIGN/Roles rule 3), and the leaver holds no role after.
+#[tokio::test]
+async fn leave_rehomes_children_to_the_leavers_parent() {
+    let (pool, _container) = fresh_pool().await;
+    let users = PgUserRepo::new(pool.clone());
+    let accounts = PgAccountRepo::new(pool.clone());
+
+    let owner = users
+        .provision(&Did::new("did:plc:rehome-o".to_string()))
+        .await
+        .expect("owner");
+    let a = users
+        .provision(&Did::new("did:plc:rehome-a".to_string()))
+        .await
+        .expect("a");
+    let b = users
+        .provision(&Did::new("did:plc:rehome-b".to_string()))
+        .await
+        .expect("b");
+    let c = users
+        .provision(&Did::new("did:plc:rehome-c".to_string()))
+        .await
+        .expect("c");
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:rehome-acct".to_string()),
+        AccountName::try_new("Tree").unwrap(),
+        Utc::now(),
+    );
+    accounts.create(&account, &membership).await.expect("found");
+    seat_under(&accounts, account.id, a.id, owner.id).await; // A's parent is the Owner
+    seat_under(&accounts, account.id, b.id, a.id).await; // B's parent is A
+    seat_under(&accounts, account.id, c.id, a.id).await; // C's parent is A
+
+    accounts.leave(a.id, account.id).await.expect("A leaves");
+
+    assert_eq!(
+        parent_of(&pool, account.id, b.id).await,
+        Some(*owner.id),
+        "B re-homes to A's parent (the Owner)"
+    );
+    assert_eq!(
+        parent_of(&pool, account.id, c.id).await,
+        Some(*owner.id),
+        "C re-homes to A's parent (the Owner)"
+    );
+    assert_eq!(
+        accounts.role_of(a.id, account.id).await.expect("role_of"),
+        None,
+        "after leaving, the member holds no role"
+    );
+}
+
+// Bug guard — re-homing is scoped to the account being left. `parent` is a
+// `users(id)`, so a member who parents children in two accounts must only have the
+// left account's tree touched.
+#[tokio::test]
+async fn leave_is_scoped_to_the_account_being_left() {
+    let (pool, _container) = fresh_pool().await;
+    let users = PgUserRepo::new(pool.clone());
+    let accounts = PgAccountRepo::new(pool.clone());
+
+    let o1 = users
+        .provision(&Did::new("did:plc:scope-o1".to_string()))
+        .await
+        .expect("o1");
+    let o2 = users
+        .provision(&Did::new("did:plc:scope-o2".to_string()))
+        .await
+        .expect("o2");
+    let a = users
+        .provision(&Did::new("did:plc:scope-a".to_string()))
+        .await
+        .expect("a");
+    let b = users
+        .provision(&Did::new("did:plc:scope-b".to_string()))
+        .await
+        .expect("b");
+    let d = users
+        .provision(&Did::new("did:plc:scope-d".to_string()))
+        .await
+        .expect("d");
+
+    let (acct1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:scope-acct1".to_string()),
+        AccountName::try_new("One").unwrap(),
+        Utc::now(),
+    );
+    accounts.create(&acct1, &m1).await.expect("found acct1");
+    let (acct2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:scope-acct2".to_string()),
+        AccountName::try_new("Two").unwrap(),
+        Utc::now(),
+    );
+    accounts.create(&acct2, &m2).await.expect("found acct2");
+
+    // A parents B in acct1 and D in acct2.
+    seat_under(&accounts, acct1.id, a.id, o1.id).await;
+    seat_under(&accounts, acct1.id, b.id, a.id).await;
+    seat_under(&accounts, acct2.id, a.id, o2.id).await;
+    seat_under(&accounts, acct2.id, d.id, a.id).await;
+
+    accounts
+        .leave(a.id, acct1.id)
+        .await
+        .expect("A leaves acct1");
+
+    assert_eq!(
+        parent_of(&pool, acct1.id, b.id).await,
+        Some(*o1.id),
+        "B re-homes in the left account"
+    );
+    assert_eq!(
+        parent_of(&pool, acct2.id, d.id).await,
+        Some(*a.id),
+        "D in the other account is untouched — leaving is account-scoped"
+    );
+    assert!(
+        accounts
+            .role_of(a.id, acct2.id)
+            .await
+            .expect("role_of")
+            .is_some(),
+        "A is still a member of the account they didn't leave"
+    );
+}
+
+// ZMVP-40 — leaving revokes the leaver's still-pending *issued* invitations (so none
+// later seats a member under a non-member), and only those.
+#[tokio::test]
+async fn leave_revokes_the_leavers_pending_issued_invitations() {
+    let (pool, _container) = fresh_pool().await;
+    let users = PgUserRepo::new(pool.clone());
+    let accounts = PgAccountRepo::new(pool.clone());
+
+    let owner = users
+        .provision(&Did::new("did:plc:rev-o".to_string()))
+        .await
+        .expect("owner");
+    let a = users
+        .provision(&Did::new("did:plc:rev-a".to_string()))
+        .await
+        .expect("a");
+    let x = users
+        .provision(&Did::new("did:plc:rev-x".to_string()))
+        .await
+        .expect("x");
+    let y = users
+        .provision(&Did::new("did:plc:rev-y".to_string()))
+        .await
+        .expect("y");
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:rev-acct".to_string()),
+        AccountName::try_new("Studio").unwrap(),
+        Utc::now(),
+    );
+    accounts.create(&account, &membership).await.expect("found");
+    seat_under(&accounts, account.id, a.id, owner.id).await;
+
+    // A (leaving) has a pending offer out to X; the Owner (staying) has one out to Y.
+    let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
+    accounts
+        .create_invitation(&a_invites_x)
+        .await
+        .expect("A's invite");
+    let owner_invites_y =
+        Invitation::issue(account.id, y.id, Role::Member(None), owner.id, Utc::now());
+    accounts
+        .create_invitation(&owner_invites_y)
+        .await
+        .expect("Owner's invite");
+
+    accounts.leave(a.id, account.id).await.expect("A leaves");
+
+    let a_offer = accounts
+        .find_invitation(a_invites_x.id)
+        .await
+        .expect("find")
+        .expect("A's offer still exists as a record");
+    assert_eq!(
+        a_offer.state,
+        InvitationState::Revoked,
+        "the leaver's issued offer is revoked, not deleted"
+    );
+    assert!(
+        accounts
+            .find_pending_invitation(account.id, y.id)
+            .await
+            .expect("find pending")
+            .is_some(),
+        "an offer issued by someone still present stays pending"
     );
 }

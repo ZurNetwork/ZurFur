@@ -363,6 +363,33 @@ impl AccountRepo for MemAccountRepo {
         Ok(())
     }
 
+    async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        // The mem fake doesn't model the role tree's `parent` (see `grant_role`), so
+        // there are no children to re-home here — the pg adapter carries the rule-3
+        // re-homing (ZMVP-21). Removal + invitation revocation is what the handler-level
+        // tests need. Preconditions (membership exists, not Owner) are the caller's.
+        self.memberships
+            .lock()
+            .expect("MemAccountRepo mutex poisoned")
+            .remove(&(account, user));
+
+        // Revoke the leaver's still-pending issued invitations (ZMVP-40): mirror the pg
+        // adapter's UPDATE ... SET state = 'revoked' WHERE inviter = leaver.
+        let mut invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        for invitation in invitations.values_mut() {
+            if invitation.account == account
+                && invitation.inviter == user
+                && matches!(invitation.state, InvitationState::Pending)
+            {
+                invitation.state = InvitationState::Revoked;
+            }
+        }
+        Ok(())
+    }
+
     /// Inserts the pending invitation, unless one is already pending for the same
     /// `(account, invited_user)` — in which case this is a no-op, the in-memory
     /// mirror of the pg adapter's partial unique index (`... WHERE state =

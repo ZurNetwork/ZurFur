@@ -173,6 +173,66 @@ impl AccountRepo for PgAccountRepo {
         Ok(())
     }
 
+    /// Settle a member leaving the account in one transaction (ZMVP-21): re-home the
+    /// leaver's children to the leaver's parent, delete the membership, and revoke the
+    /// leaver's still-pending issued invitations. Preconditions (must be a member, can't
+    /// be the `Owner`) are the caller's; a membership that vanished under a concurrent
+    /// removal is a no-op. See the [`leave`](AccountRepo::leave) port doc.
+    async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        // The leaver's parent is where their children re-home (DESIGN/Roles rule 3).
+        // If the membership is already gone, there is nothing to settle.
+        let Some(membership) = query!(
+            r#"SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2"#,
+            *account,
+            *user,
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            return Ok(());
+        };
+
+        // Re-home the leaver's children to the leaver's parent — scoped to THIS account,
+        // since `parent` is a `users(id)` and the same user may be a parent elsewhere.
+        query!(
+            r#"UPDATE account_members SET parent = $1 WHERE account_id = $2 AND parent = $3"#,
+            membership.parent,
+            *account,
+            *user,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // The membership itself is removed.
+        query!(
+            r#"DELETE FROM account_members WHERE account_id = $1 AND user_id = $2"#,
+            *account,
+            *user,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Revoke the leaver's still-pending *issued* invitations, so none can later seat
+        // a member under a non-member (DD "Invitation Validity & Issuer Departure",
+        // ZMVP-40). Reuses the `Revoked` terminal state — never a hard delete.
+        query!(
+            r#"UPDATE account_invitations SET state = $1, updated_at = $2
+               WHERE account_id = $3 AND inviter = $4 AND state = $5"#,
+            InvitationState::Revoked.as_str(),
+            Utc::now(),
+            *account,
+            *user,
+            InvitationState::Pending.as_str(),
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
     /// DO NOTHING`: the partial unique index (see the migration) enforces at most
     /// one pending offer per (account, invited user), so a duplicate issue is

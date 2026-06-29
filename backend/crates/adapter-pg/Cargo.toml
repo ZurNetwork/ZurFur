@@ -17,3 +17,5 @@ anyhow = { workspace = true }
 [dev-dependencies]
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
 serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
