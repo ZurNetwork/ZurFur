@@ -51,6 +51,7 @@ dependencies = [
  "time",
  "tokio",
  "tower-sessions-core",
+ "uuid",
 ]
 
 [[package]]
