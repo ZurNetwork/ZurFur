@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE account_invitations SET state = $1, updated_at = $2\n               WHERE account_id = $3 AND inviter = $4 AND state = $5",
+  "query": "UPDATE account_invitations SET state = $1, updated_at = $2\n           WHERE account_id = $3 AND inviter = $4 AND state = $5",
   "describe": {
     "columns": [],
     "parameters": {
@@ -14,5 +14,5 @@
     },
     "nullable": []
   },
-  "hash": "68387ac9fb6eb2350d5f8c372313b6eb8f796aa9f10dcb2d6fc254ee6949b4c9"
+  "hash": "2601fe5a48741220a74cb9736e1c52353bb17d6086bf202756ed10ed5e26af06"
 }

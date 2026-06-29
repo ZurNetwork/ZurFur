@@ -270,6 +270,30 @@ impl MemAccountRepo {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Shared store effects of a member departing (`leave` / `revoke_role`): remove
+    /// the membership and revoke the member's still-pending issued invitations. The
+    /// mem fake doesn't model the role tree's `parent` (see `grant_role`), so there
+    /// are no children to re-home — the pg adapter carries rule-3 re-homing.
+    fn settle_member_departure(&self, user: UserId, account: AccountId) {
+        self.memberships
+            .lock()
+            .expect("MemAccountRepo mutex poisoned")
+            .remove(&(account, user));
+
+        let mut invitations = self
+            .invitations
+            .lock()
+            .expect("MemAccountRepo mutex poisoned");
+        for invitation in invitations.values_mut() {
+            if invitation.account == account
+                && invitation.inviter == user
+                && matches!(invitation.state, InvitationState::Pending)
+            {
+                invitation.state = InvitationState::Revoked;
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -353,40 +377,17 @@ impl AccountRepo for MemAccountRepo {
     }
 
     async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        // Remove the membership — inverse of `grant_role`. Removing one that isn't
-        // there is a no-op, mirroring the pg adapter's DELETE.
-        let mut memberships = self
-            .memberships
-            .lock()
-            .expect("MemAccountRepo mutex poisoned");
-        memberships.remove(&(account, user));
+        // A revoke is a member-departure event, identical to `leave` at the store
+        // level (the caller settles authority): remove the membership and revoke the
+        // member's pending issued invitations.
+        self.settle_member_departure(user, account);
         Ok(())
     }
 
     async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        // The mem fake doesn't model the role tree's `parent` (see `grant_role`), so
-        // there are no children to re-home here — the pg adapter carries the rule-3
-        // re-homing (ZMVP-21). Removal + invitation revocation is what the handler-level
-        // tests need. Preconditions (membership exists, not Owner) are the caller's.
-        self.memberships
-            .lock()
-            .expect("MemAccountRepo mutex poisoned")
-            .remove(&(account, user));
-
-        // Revoke the leaver's still-pending issued invitations (ZMVP-40): mirror the pg
-        // adapter's UPDATE ... SET state = 'revoked' WHERE inviter = leaver.
-        let mut invitations = self
-            .invitations
-            .lock()
-            .expect("MemAccountRepo mutex poisoned");
-        for invitation in invitations.values_mut() {
-            if invitation.account == account
-                && invitation.inviter == user
-                && matches!(invitation.state, InvitationState::Pending)
-            {
-                invitation.state = InvitationState::Revoked;
-            }
-        }
+        // Self-removal (ZMVP-21); preconditions (membership exists, not Owner) are
+        // the caller's. Same store effects as `revoke_role`.
+        self.settle_member_departure(user, account);
         Ok(())
     }
 

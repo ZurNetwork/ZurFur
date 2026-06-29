@@ -556,3 +556,75 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         "an offer issued by someone still present stays pending"
     );
 }
+
+// ZMVP-40 + Roles rule 3 — `revoke_role` is a member-departure event with the same
+// store effects as `leave`: it re-homes the removed member's children to their
+// parent AND revokes the member's pending issued invitations (they share
+// `settle_member_departure`).
+#[tokio::test]
+async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
+    let (pool, _container) = fresh_pool().await;
+    let users = PgUserRepo::new(pool.clone());
+    let accounts = PgAccountRepo::new(pool.clone());
+
+    let owner = users
+        .provision(&Did::new("did:plc:rv-o".to_string()))
+        .await
+        .expect("owner");
+    let a = users
+        .provision(&Did::new("did:plc:rv-a".to_string()))
+        .await
+        .expect("a");
+    let b = users
+        .provision(&Did::new("did:plc:rv-b".to_string()))
+        .await
+        .expect("b");
+    let x = users
+        .provision(&Did::new("did:plc:rv-x".to_string()))
+        .await
+        .expect("x");
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:rv-acct".to_string()),
+        AccountName::try_new("Studio").unwrap(),
+        Utc::now(),
+    );
+    accounts.create(&account, &membership).await.expect("found");
+    seat_under(&accounts, account.id, a.id, owner.id).await; // A under the Owner
+    seat_under(&accounts, account.id, b.id, a.id).await; // B under A
+
+    // A has a pending offer out to X.
+    let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
+    accounts
+        .create_invitation(&a_invites_x)
+        .await
+        .expect("A's invite");
+
+    // An Owner/Admin revokes A's role (authority is the handler's; the store settles).
+    accounts
+        .revoke_role(a.id, account.id)
+        .await
+        .expect("revoke A");
+
+    assert_eq!(
+        parent_of(&pool, account.id, b.id).await,
+        Some(*owner.id),
+        "B re-homes to A's parent (rule 3)"
+    );
+    assert_eq!(
+        accounts.role_of(a.id, account.id).await.expect("role_of"),
+        None,
+        "the revoked member holds no role"
+    );
+    let offer = accounts
+        .find_invitation(a_invites_x.id)
+        .await
+        .expect("find")
+        .expect("the offer still exists as a record");
+    assert_eq!(
+        offer.state,
+        InvitationState::Revoked,
+        "the revoked member's issued offer is revoked, not deleted"
+    );
+}

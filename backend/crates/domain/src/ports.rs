@@ -113,11 +113,14 @@ pub trait AccountRepo: Send + Sync {
     /// cross-store dual write (ZMVP-15, DESIGN/Roles).
     async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()>;
 
-    /// Remove a user's membership in an account — the inverse of `grant_role`.
-    /// Idempotent: removing a membership that isn't there is a no-op, not an error.
-    /// Authorization (who may revoke whom) is the caller's concern, settled before
-    /// this is reached; the store only performs the removal. A private-side write,
-    /// never a cross-store dual write (ZMVP-16, DESIGN/Roles).
+    /// Remove a user's membership in an account — an `Owner`/`Admin` removing someone
+    /// (ZMVP-16). A member-departure event with the **same store effects as**
+    /// [`leave`](AccountRepo::leave): in one transaction it re-homes the member's
+    /// children to their parent (DESIGN/Roles rule 3), deletes the membership, and
+    /// revokes the member's still-pending *issued* invitations (ZMVP-40 — so none can
+    /// later seat a member under a non-member). Idempotent: removing a non-member is a
+    /// no-op. Authorization (who may revoke whom) is the caller's concern, settled
+    /// before this is reached. A private-side write, never a cross-store dual write.
     async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
 
     /// A member **leaves** their own account on their own action (ZMVP-21). Unlike

@@ -13,7 +13,7 @@ use domain::{
     },
     ports::AccountRepo,
 };
-use sqlx::{PgPool, query};
+use sqlx::{PgConnection, PgPool, query};
 
 /// PostgreSQL implementation of [`AccountRepo`] — accounts and their memberships
 /// across the `accounts` and `account_members` tables. Soft deletes are honored
@@ -30,6 +30,69 @@ impl PgAccountRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+}
+
+/// Settle a member's departure from `account` on an open transaction — shared by
+/// [`leave`](AccountRepo::leave) and [`revoke_role`](AccountRepo::revoke_role),
+/// which both remove a member with identical store effects and differ only in the
+/// caller's preconditions. Re-homes the member's children to their parent
+/// (DESIGN/Roles rule 3, scoped to this account), deletes the membership, and
+/// revokes the member's still-pending *issued* invitations so none can later seat a
+/// member under a non-member (DD "Auth Surfaces, the Plugin Trust Boundary & CSRF" /
+/// ZMVP-40 — the `Revoked` terminal state, never a hard delete). A membership that
+/// vanished under a concurrent removal is a no-op.
+async fn settle_member_departure(
+    conn: &mut PgConnection,
+    user: UserId,
+    account: AccountId,
+) -> anyhow::Result<()> {
+    // The member's parent is where their children re-home. If the membership is
+    // already gone, there is nothing to settle.
+    let Some(membership) = query!(
+        r#"SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2"#,
+        *account,
+        *user,
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(());
+    };
+
+    // Re-home the member's children to the member's parent — scoped to THIS account
+    // (`parent` is a `users(id)`, so the same user may be a parent elsewhere).
+    query!(
+        r#"UPDATE account_members SET parent = $1 WHERE account_id = $2 AND parent = $3"#,
+        membership.parent,
+        *account,
+        *user,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // The membership itself is removed.
+    query!(
+        r#"DELETE FROM account_members WHERE account_id = $1 AND user_id = $2"#,
+        *account,
+        *user,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // Revoke the member's still-pending issued invitations.
+    query!(
+        r#"UPDATE account_invitations SET state = $1, updated_at = $2
+           WHERE account_id = $3 AND inviter = $4 AND state = $5"#,
+        InvitationState::Revoked.as_str(),
+        Utc::now(),
+        *account,
+        *user,
+        InvitationState::Pending.as_str(),
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -157,19 +220,14 @@ impl AccountRepo for PgAccountRepo {
     /// A `DELETE` that matches no row still succeeds, so revoking a non-member is
     /// a harmless no-op (the handler decides whether absence is a 404).
     async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        // Remove the membership — the inverse of `grant_role`. A DELETE that matches
-        // no row affects nothing and still succeeds, so revoking a non-member is a
-        // harmless no-op (the handler decides whether that's a 404 for the caller).
-        query!(
-            r#"
-        DELETE FROM account_members
-        WHERE user_id = $1 AND account_id = $2
-        "#,
-            *user,
-            *account,
-        )
-        .execute(&self.pool)
-        .await?;
+        // A revoke is a member-departure event with the same store effects as
+        // `leave` (the caller settles authority first): re-home children to the
+        // member's parent (DESIGN/Roles rule 3), delete the membership, and revoke
+        // the member's pending issued invitations — atomically. Revoking a non-member
+        // is a harmless no-op.
+        let mut tx = self.pool.begin().await?;
+        settle_member_departure(&mut tx, user, account).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -180,55 +238,7 @@ impl AccountRepo for PgAccountRepo {
     /// removal is a no-op. See the [`leave`](AccountRepo::leave) port doc.
     async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
-
-        // The leaver's parent is where their children re-home (DESIGN/Roles rule 3).
-        // If the membership is already gone, there is nothing to settle.
-        let Some(membership) = query!(
-            r#"SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2"#,
-            *account,
-            *user,
-        )
-        .fetch_optional(&mut *tx)
-        .await?
-        else {
-            return Ok(());
-        };
-
-        // Re-home the leaver's children to the leaver's parent — scoped to THIS account,
-        // since `parent` is a `users(id)` and the same user may be a parent elsewhere.
-        query!(
-            r#"UPDATE account_members SET parent = $1 WHERE account_id = $2 AND parent = $3"#,
-            membership.parent,
-            *account,
-            *user,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        // The membership itself is removed.
-        query!(
-            r#"DELETE FROM account_members WHERE account_id = $1 AND user_id = $2"#,
-            *account,
-            *user,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        // Revoke the leaver's still-pending *issued* invitations, so none can later seat
-        // a member under a non-member (DD "Invitation Validity & Issuer Departure",
-        // ZMVP-40). Reuses the `Revoked` terminal state — never a hard delete.
-        query!(
-            r#"UPDATE account_invitations SET state = $1, updated_at = $2
-               WHERE account_id = $3 AND inviter = $4 AND state = $5"#,
-            InvitationState::Revoked.as_str(),
-            Utc::now(),
-            *account,
-            *user,
-            InvitationState::Pending.as_str(),
-        )
-        .execute(&mut *tx)
-        .await?;
-
+        settle_member_departure(&mut tx, user, account).await?;
         tx.commit().await?;
         Ok(())
     }
