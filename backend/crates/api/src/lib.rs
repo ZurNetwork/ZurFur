@@ -383,15 +383,17 @@ async fn signin(
 /// establishes the session. On success it exchanges the [`CallbackQuery`] `code`
 /// for a DID via the [`Authenticator`], provisions the [`UserRepo`] User for that
 /// DID (mint-or-return; first contact *recognizes*, it doesn't register —
-/// ZMVP-9), stores the User's id under [`SESSION_USER_KEY`], and redirects to
-/// [`me`]. The session carries our own id, never the DID, so later requests
-/// resolve without re-asking the PDS.
+/// ZMVP-9), rotates the session id so a pre-auth id cannot carry into the
+/// authenticated session (session-fixation hardening — ZMVP-24), stores the
+/// User's id under [`SESSION_USER_KEY`], and redirects to [`me`]. The session
+/// carries our own id, never the DID, so later requests resolve without
+/// re-asking the PDS.
 ///
 /// Caveats / failure modes: a denied authorization arrives with `error` and no
 /// `code` — handled as `200` back on the sign-in page, not a crash (this is why
 /// [`CallbackQuery`] is a lax struct, not jacquard's strict params). A missing
 /// `code` with no `error` is a `400`. A failed code exchange is `400`. A
-/// provision or session-insert failure is `500`, each rendering the sign-in page
+/// provision, session-rotation, or session-insert failure is `500`, each rendering the sign-in page
 /// with a steady message. No prior auth required (this *creates* the session).
 ///
 /// References: [`Authenticator`], [`UserRepo`], [`me`], [`SESSION_USER_KEY`].
@@ -457,10 +459,16 @@ async fn signin_callback(
         }
     };
 
-    // The session carries our own UserId, not the DID, so later requests resolve
-    // to the User through the repo without re-asking the PDS. The cookie now
-    // survives reload; hand off to the greeting route.
-    if session.insert(SESSION_USER_KEY, *user.id).await.is_err() {
+    // Rotate the session id at this privilege change, then store the identity.
+    // `cycle_id` mints a fresh id (preserving session data) so a pre-auth id — one
+    // an attacker may have fixed in the victim's browser — cannot carry into the
+    // authenticated session (session-fixation hardening, ZMVP-24). The session then
+    // carries our own UserId, not the DID, so later requests resolve to the User
+    // through the repo without re-asking the PDS. The cookie now survives reload;
+    // hand off to the greeting route.
+    if session.cycle_id().await.is_err()
+        || session.insert(SESSION_USER_KEY, *user.id).await.is_err()
+    {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             sign_in_page(Some(
