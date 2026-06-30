@@ -324,7 +324,13 @@ components:
             - Forbidden
         detail:
           type: string
-          description: Human-readable explanation of this specific occurrence.
+          description: >-
+            Human-readable explanation of this specific occurrence. The example
+            `detail` strings in this document are illustrative; the normative
+            parts of an error are `type`, `code`, and `status`. The exact
+            plugin-surface `detail` copy is finalized when the `/plugin/v1`
+            handlers land — today's core registry strings (`problem.rs`) are
+            written for the first-party account surface.
         status:
           type: integer
           format: int32
@@ -347,7 +353,7 @@ components:
             type: urn:zurfur:error:not-authenticated
             code: not_authenticated
             title: Not authenticated
-            detail: You must be signed in to do that.
+            detail: A valid plugin token is required.
             status: 401
 
     Forbidden:
@@ -363,7 +369,7 @@ components:
             type: urn:zurfur:error:forbidden
             code: forbidden
             title: Forbidden
-            detail: You don't have permission to perform this action.
+            detail: Your grant doesn't permit this action on this commission.
             status: 403
 
     CommissionNotFound:
