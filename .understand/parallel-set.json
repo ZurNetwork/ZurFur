@@ -1,0 +1,83 @@
+{
+  "uow": null,
+  "_note": "uow is minted by /parallelize when it records the set. This file currently holds a PLANNED next unit (planning + decisions complete, no build started). Resume via the logbook handoff.",
+  "logbook": ".understand/logbooks/handoff-20260628.md",
+  "previous_unit": "7ff9c7 — COMPLETE: ZMVP-24/21/23/40 merged (#68-71); ZMVP-36/39 deferred. DD 'Auth Surfaces & CSRF' (24543244); ZMVP-41/42/43 spun out.",
+  "summary": "PLANNING COMPLETE (2026-06-28). Approved next set: ZMVP-26 (OpenAPI /plugin/v1 spec) ∥ ZMVP-38 (Collection lexicon) — both unblocked. All apparent blockers from the briefings were stale and overturned by a Confluence audit (plugin-surface forks already DECIDED in DD 24543244/23592962; Lens pinned on 10453000). Two genuine decisions settled & recorded: (1) Referenceable v1 = Account+User only (on Collection DD 24182787); (2) default Account handle is user-chosen at onboarding → DD 24870914 'The Default Account's Handle', which re-scoped ZMVP-30 and spun out ZMVP-44 (handle infra). NEXT ACTION: /parallelize ZMVP-26 ZMVP-38.",
+  "next_action": "/parallelize ZMVP-26 ZMVP-38 (reuse cached briefings via /remember; do NOT re-run /next-path; the briefings' 'defer' verdicts are SUPERSEDED).",
+  "tickets": [
+    {
+      "key": "ZMVP-26",
+      "summary": "Author the OpenAPI spec for the Plugin REST surface (/plugin/v1)",
+      "owner": "claude",
+      "phase": "planned",
+      "next_action": "/start ZMVP-26 (worktree) → /remember → author spec. All forks settled (REST/OpenAPI, app_key bearer, RFC 9457, CSRF-exempt, versioning). STUB Commission resource bodies as $refs pending ZMVP-19.",
+      "snapshot": ".understand/20260628-232209_ZMVP-26_plugin-v1-openapi-spec.md",
+      "notes": "Disjoint footprint (new spec file). No collision with parked ZMVP-39/36. Briefing's 'triple-blocked' verdict is STALE/superseded.",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-38",
+      "summary": "Author the Lexicon for the generic Collection record",
+      "owner": "claude",
+      "phase": "planned",
+      "next_action": "/start ZMVP-38 (worktree) → /remember → author lexicon, Referenceable v1 = Account + User only.",
+      "snapshot": ".understand/20260628-232342_ZMVP-38_collection-lexicon.md",
+      "notes": "First-of-kind lexicon (no lexicons/ dir yet — convention is part of the work). Decision settled: Referenceable v1 = Account+User. Disjoint from ZMVP-26. Briefing's 'defer' verdict superseded.",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-30",
+      "summary": "First sign-in provisions a default Account",
+      "owner": "claude",
+      "phase": "deferred",
+      "next_action": "Follow-on unit. Re-scoped by DD 24870914 (interactive handle choice + hard write-gate). Infra split to ZMVP-44. Collides with account.rs/signin + parked refactors.",
+      "snapshot": ".understand/20260628-232316_ZMVP-30_default-account-provisioning.md",
+      "notes": "DD 24870914 recorded; ZMVP-30 commented (re-scope); ZMVP-44 created + linked.",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-44",
+      "summary": "Zurfur handle issuance & resolution for *.zurfur.app (DNS/well-known + DID alsoKnownAs)",
+      "owner": "unassigned",
+      "phase": "planned",
+      "next_action": "New ticket (this session). Infra half of the handle DD; relates ZMVP-30. Not in the immediate ZMVP-26∥ZMVP-38 set.",
+      "notes": "Created from DD 24870914. https://zurnetwork.atlassian.net/browse/ZMVP-44",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-37",
+      "summary": "Private (Index-resident) Collections",
+      "owner": "claude",
+      "phase": "deferred",
+      "next_action": "Out of v1 scope per Collection DD 24182787 (Decision 7). Revisit post-v1.",
+      "snapshot": ".understand/20260628-232318_ZMVP-37_private-index-collections.md",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-34",
+      "summary": "Owner deletes an Account",
+      "owner": "claude",
+      "phase": "deferred",
+      "next_action": "Design-complete (DD 23003138) but heavy atproto/Group execution + account.rs/refactor collisions. Not a parallel fit now.",
+      "snapshot": ".understand/20260628-232445_ZMVP-34_owner-deletes-account.md",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-39",
+      "summary": "Split the flat api router into nested sub-routers",
+      "owner": "claude",
+      "phase": "deferred",
+      "next_action": "UNBLOCKED now (colliding tickets 21/23/24 merged). Mechanical, high-leverage solo unit — unblocks route-adding for the feature backlog. Candidate for a near-future unit.",
+      "updated": "2026-06-28"
+    },
+    {
+      "key": "ZMVP-36",
+      "summary": "Adopt a compile-enforced Unit of Work for private-store writes",
+      "owner": "claude",
+      "phase": "deferred",
+      "next_action": "Blocked on Engineer fork: cross-aggregate vs per-aggregate UoW granularity. Decide, then it's a mechanical sweep. Can run parallel to ZMVP-39 (disjoint: adapter-pg vs api router).",
+      "updated": "2026-06-28"
+    }
+  ]
+}

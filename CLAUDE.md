@@ -10,6 +10,12 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 
 **Fetch before guessing.** Many decisions live only in Confluence, not in code. When unsure whether something is already decided/defined and it sounds familiar, **fetch the relevant DESIGN page before asking or asserting from memory.** A local pointer index of every DESIGN page (titles + page IDs + fetch coordinates) is maintained at @docs/confluence-design-index.md — match the topic there, then fetch the page id with `getConfluencePage`. Only ask once the page doesn't resolve it, or when a genuinely new decision is needed (route through `/design-decision`).
 
+## Memory & references
+
+- **References, not copies.** Confluence is the source of truth; memory and every `CLAUDE.md` hold **pointers** (page Title + ID/URL), never copied page bodies. When in doubt, **fetch** the page (via the index above) rather than assert from memory.
+- **Check memory per directory when a question arises.** Project memory lives under `.claude/projects/<cwd-slug>/memory/` (slug = launch path). Before answering or asserting a fact about an area, **check the relevant memories first.** A folder may carry its own `CLAUDE.md` that points at the memories/DDs specific to it — honor that pointer.
+- Tend this layer with `/optimize-memory`; file a single reference with `/save-reference`.
+
 ## Roles & decision authority
 
 **The human is the Engineer and owns every decision. Claude acts as a Junior Developer.**
