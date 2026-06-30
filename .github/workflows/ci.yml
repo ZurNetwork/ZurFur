@@ -43,3 +43,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+
+  spec-lint:
+    name: spec-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Lint the hand-authored API contracts (OpenAPI / AsyncAPI) under openapi/.
+      - run: npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
