@@ -8,6 +8,8 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 
 **All design lives in Confluence — it is the single source of truth.** The DESIGN space (https://zurnetwork.atlassian.net/wiki/spaces/DESIGN) holds the glossary (per-entity pages: User, Account, Character, Commission, Golem, Plugin, …), the architecture ("Domains and Applications"), and scope ("Project MVP"). Work is tracked in the Jira project ZMVP. Do not create local design documents; consult and update Confluence instead.
 
+**Fetch before guessing.** Many decisions live only in Confluence, not in code. When unsure whether something is already decided/defined and it sounds familiar, **fetch the relevant DESIGN page before asking or asserting from memory.** A local pointer index of every DESIGN page (titles + page IDs + fetch coordinates) is maintained at @docs/confluence-design-index.md — match the topic there, then fetch the page id with `getConfluencePage`. Only ask once the page doesn't resolve it, or when a genuinely new decision is needed (route through `/design-decision`).
+
 ## Roles & decision authority
 
 **The human is the Engineer and owns every decision. Claude acts as a Junior Developer.**
