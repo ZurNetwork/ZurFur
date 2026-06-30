@@ -1,0 +1,24 @@
+{
+  "lexicon": 1,
+  "id": "app.zurfur.graph.defs",
+  "defs": {
+    "lens": {
+      "type": "object",
+      "description": "PLACEHOLDER / STUB. A Lens is a saved query — a specification, not code — evaluated live to derive membership; conceptually { source, filter, sort } (DESIGN: Lens, 10453000). This stub exists only so app.zurfur.graph.collection#dynamic can structurally reference a Lens. The concrete, normative Lens schema is deferred to a future Lens-lexicon DD. The fields below are NON-NORMATIVE, optional placeholders — do not treat them as the final shape.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "PLACEHOLDER. The candidate set the Lens draws from (e.g. all Posts, a creator's Posts, another Collection/Lens). Final encoding TBD by the Lens DD."
+        },
+        "filter": {
+          "type": "string",
+          "description": "PLACEHOLDER. The predicates that decide membership (tags, kind, rating, status, dates). Final encoding TBD by the Lens DD."
+        },
+        "sort": {
+          "type": "string",
+          "description": "PLACEHOLDER. The ordering rule (newest, oldest, weighted). Final encoding TBD by the Lens DD."
+        }
+      }
+    }
+  }
+}
