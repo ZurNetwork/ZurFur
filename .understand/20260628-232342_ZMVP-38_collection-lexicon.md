@@ -116,3 +116,27 @@ app.zurfur.graph.collection   (NSID TBD — graph? actor? new ns?)
 5. **Sequencing note:** ZMVP-38 is **upstream of ZMVP-37** (Private Collections), which is explicitly "pulled when the generic Collection primitive's public variant ships." No file collision between them.
 
 **Open questions (blocking):** Referenceable v1 coverage · Lens spec shape (own DD?) · NSID + lexicon convention · home of the generic Collection primitive.
+
+---
+
+## ➕ Addendum (built 2026-06-30, uow b722f9) — forks settled, lexicon authored
+
+§8's "decision session before authoring" verdict is **superseded** — the Engineer settled all four forks. Authored per those decisions:
+
+- **NSID:** `app.zurfur.graph.collection` (new `graph` namespace, mirroring `app.bsky.graph.list`; precedent: membership/relationship records live under `app.zurfur.graph.*`).
+- **Files:** `lexicons/app.zurfur.graph.collection.json` (record) + `lexicons/app.zurfur.graph.defs.json` (`#lens` **stub**). First Zurfur lexicons; created the `lexicons/` dir convention (one JSON per NSID).
+- **JSON-only, no Rust codegen.** Generic `Collection`/`Referenceable` Rust primitive explicitly out of scope.
+- **memberType** = open `knownValues: [account, user]` (NOT a closed `enum`) — faithful to the DD's "additive enum value adds without breaking." Character/Post deferred.
+- **Typed-ref union** `#didRef {did: did}` | `#indexRef {id: string}`; **membership union** `#static {members[]}` | `#dynamic {lens → app.zurfur.graph.defs#lens}`.
+- **Lens** is a placeholder stub (non-normative `{source, filter, sort}` strings), pending a future Lens-lexicon DD.
+
+**Validated** with the real atproto `@atproto/lexicon` `Lexicons.add()` meta-schema + cross-ref resolution + DD-invariant assertions: ALL PASSED.
+
+### design-sync owed (orchestrator / Engineer — do NOT edit Confluence here)
+Lexicon page **10354710**, table "A. Record lexicons" needs a new row:
+
+| NSID | Purpose | Key fields (draft) | Status |
+| --- | --- | --- | --- |
+| `app.zurfur.graph.collection` | Public, homogeneous Collection of Referenceable members (Static explicit / Dynamic Lens). See Collection-as-Referenceable DD (24182787). | `name`, `description?`, `memberType` (account\|user), `membership` (static\|dynamic), `createdAt` | Drafted (ZMVP-38) |
+
+Plus a "Shared defs / tokens" entry: `app.zurfur.graph.defs#lens` — **stub**, Lens spec shape pending a dedicated Lens-lexicon DD.

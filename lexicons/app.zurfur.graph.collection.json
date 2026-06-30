@@ -1,0 +1,97 @@
+{
+  "lexicon": 1,
+  "id": "app.zurfur.graph.collection",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "description": "A public, homogeneous Collection of Referenceable members. Membership/relationship records live under app.zurfur.graph.* (mirroring app.bsky.graph.list). A Collection is a typed bag of references (\"a reference, not a label\"): either Static (an explicit hand-curated bag) or Dynamic (a Lens query evaluated live). Versioned in place — additive, optional-tolerant. See DESIGN: Collection-as-Referenceable DD (24182787), Collections (8912899), Lens (10453000), Lexicon (10354710).",
+      "record": {
+        "type": "object",
+        "required": ["name", "memberType", "membership", "createdAt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name of the collection (e.g. \"Favorite artists\").",
+            "maxGraphemes": 64,
+            "maxLength": 640
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional free-text description of the collection.",
+            "maxGraphemes": 300,
+            "maxLength": 3000
+          },
+          "memberType": {
+            "type": "string",
+            "description": "The single Referenceable kind this collection holds; every member is of this kind (homogeneous). Open set (knownValues, not a closed enum) so additional kinds — e.g. character, post — can be added in a later backward-compatible revision without breaking existing records. v1 coverage: account, user.",
+            "knownValues": ["account", "user"]
+          },
+          "membership": {
+            "type": "union",
+            "description": "Exactly one of Static (an explicit member list) or Dynamic (a Lens spec). Open union (closed=false) so the version-in-place convention can add a membership mode additively.",
+            "refs": ["#static", "#dynamic"],
+            "closed": false
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Record creation timestamp."
+          }
+        }
+      }
+    },
+    "static": {
+      "type": "object",
+      "description": "Static membership: an explicit, hand-curated bag of typed member references. Order belongs to the surface, not this record. References are live — a member silently drops if it is privatized or deleted.",
+      "required": ["members"],
+      "properties": {
+        "members": {
+          "type": "array",
+          "description": "The explicit member references. Each is of the collection's memberType (homogeneous).",
+          "items": {
+            "type": "union",
+            "description": "A typed member reference: a DID for DID-anchored members, or an internal id for Index-local members. Open union (closed=false) so further reference forms can be added additively.",
+            "refs": ["#didRef", "#indexRef"],
+            "closed": false
+          }
+        }
+      }
+    },
+    "dynamic": {
+      "type": "object",
+      "description": "Dynamic membership: a Lens spec evaluated live to derive the bag. The Lens decides membership only; per-viewer visibility and order are applied by the surface/Engine, never stored here.",
+      "required": ["lens"],
+      "properties": {
+        "lens": {
+          "type": "ref",
+          "ref": "app.zurfur.graph.defs#lens",
+          "description": "The Lens specification ({ source, filter, sort }). Shape is a placeholder pending a dedicated Lens-lexicon DD."
+        }
+      }
+    },
+    "didRef": {
+      "type": "object",
+      "description": "A reference to a DID-anchored Referenceable member (e.g. an Account or User; later a Character). Addressed by its did:plc.",
+      "required": ["did"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "format": "did",
+          "description": "The member's DID."
+        }
+      }
+    },
+    "indexRef": {
+      "type": "object",
+      "description": "A reference to an Index-local Referenceable member that is not DID-anchored (e.g. a Post). Addressed by its internal Index id. No v1 memberType uses this form, but it is authored so the typed-reference union is faithful to the DD.",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The member's internal Index id."
+        }
+      }
+    }
+  }
+}
