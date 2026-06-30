@@ -6,19 +6,25 @@
 //! read stores ([`MemUserStore`], [`MemAccountStore`], [`MemProfileCache`]) read
 //! them off `&self`, and the *write* views are reachable only on a
 //! [`MemUnitOfWork`] vended by [`MemDatabase`]. The maps live behind
-//! `Arc<Mutex<…>>` shared by every store and view, so a write issued through the
-//! unit of work is immediately visible to a later read — the whole point of the
-//! shared seam. The public-boundary fakes ([`MemAuthenticator`],
-//! [`MemProfileSource`]) stand in for the user's PDS, and [`MemDidMinter`] hands
-//! out synthetic account DIDs.
+//! `Arc<Mutex<…>>` shared by every store and view. The public-boundary fakes
+//! ([`MemAuthenticator`], [`MemProfileSource`]) stand in for the user's PDS, and
+//! [`MemDidMinter`] hands out synthetic account DIDs.
 //!
 //! **Fidelity, not realism.** A fake reproduces the *contract* a handler depends
 //! on (idempotent recognition, soft-delete invisibility, cache hits) but skips
-//! everything operational — TTLs, real transactions, real keypairs. In
-//! particular the unit of work is a **no-op envelope**: writes apply to the shared
-//! maps the moment they are called and `commit` does nothing, so the mem seam does
-//! *not* model rollback-on-drop (that atomicity is a pg-only assertion). Where
-//! behavior intentionally diverges from production it is called out on the item.
+//! everything operational — TTLs, real keypairs. The unit of work, though, *does*
+//! model transactional rollback (DD `24150017`): [`MemDatabase::begin`] snapshots
+//! the domain maps into a private staging copy, the write views mutate only that
+//! copy, and [`MemUnitOfWork::commit`] applies it back to the shared store —
+//! **dropping the handle without committing discards the staged writes**, exactly
+//! like pg's drop = rollback. So a forgotten `commit()` leaves nothing behind in
+//! mem either (exercised by [`tests`], mirroring the pg rollback assertion), and an
+//! uncommitted unit's writes are invisible to the shared read stores — as in pg,
+//! where a pool read can't see another connection's open transaction. The
+//! read-through profile cache is the one exception: its best-effort fill writes
+//! straight to the shared store (a documented Unit-of-Work exemption), so it is
+//! neither staged nor rolled back. Where behavior intentionally diverges from
+//! production it is called out on the item.
 //!
 //! **Locking discipline.** Mutable state sits behind a `std::sync::Mutex`, not a
 //! `tokio::sync::Mutex`, because no `.await` is ever held across a guard: each
@@ -100,6 +106,81 @@ impl MemBackend {
     /// The [`Database`] write factory over this backend's shared state.
     pub fn database(&self) -> Arc<dyn Database> {
         Arc::new(MemDatabase(self.clone()))
+    }
+
+    /// Snapshot the **domain** maps into a fresh staging backend for a unit of work
+    /// (DD `24150017`): the user/account/membership/invitation maps are *deep*-copied
+    /// into new `Arc<Mutex<…>>`, so writes through the unit mutate only the copy until
+    /// [`MemUnitOfWork::commit`] applies it back. The profile cache map is *shared*
+    /// (its `Arc` is cloned, not copied) — the cache fill is a documented Unit-of-Work
+    /// exemption that writes straight through, so a unit must neither stage nor clobber
+    /// it. Dropping the staged backend without applying it is the mem mirror of pg's
+    /// rollback-on-drop.
+    fn stage(&self) -> MemBackend {
+        MemBackend {
+            users: Arc::new(Mutex::new(
+                self.users
+                    .lock()
+                    .expect("MemBackend users mutex poisoned")
+                    .clone(),
+            )),
+            accounts: Arc::new(Mutex::new(
+                self.accounts
+                    .lock()
+                    .expect("MemBackend accounts mutex poisoned")
+                    .clone(),
+            )),
+            memberships: Arc::new(Mutex::new(
+                self.memberships
+                    .lock()
+                    .expect("MemBackend memberships mutex poisoned")
+                    .clone(),
+            )),
+            invitations: Arc::new(Mutex::new(
+                self.invitations
+                    .lock()
+                    .expect("MemBackend invitations mutex poisoned")
+                    .clone(),
+            )),
+            // Shared, not copied: the profile cache is a Unit-of-Work exemption.
+            profiles: self.profiles.clone(),
+        }
+    }
+
+    /// Apply a staged unit's domain maps onto this (shared) backend, replacing their
+    /// contents wholesale — the mem mirror of a pg `COMMIT`. The profile map is left
+    /// untouched (it was never staged). Only [`MemUnitOfWork::commit`] calls this; a
+    /// dropped, un-applied unit leaves the shared store exactly as it was.
+    fn apply(&self, staged: &MemBackend) {
+        *self.users.lock().expect("MemBackend users mutex poisoned") = staged
+            .users
+            .lock()
+            .expect("MemBackend users mutex poisoned")
+            .clone();
+        *self
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned") = staged
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned")
+            .clone();
+        *self
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned") = staged
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .clone();
+        *self
+            .invitations
+            .lock()
+            .expect("MemBackend invitations mutex poisoned") = staged
+            .invitations
+            .lock()
+            .expect("MemBackend invitations mutex poisoned")
+            .clone();
     }
 
     // --- Convenience seed/inspection helpers for tests. These operate directly on
@@ -329,7 +410,10 @@ impl ProfileCache for MemProfileCache {
 
 /// The fields of an [`Account`] we keep behind the lock. `Account` is not `Clone`
 /// (an aggregate root, not a value), so we store its parts and rebuild a fresh
-/// `Account` on every `find` rather than clone the original.
+/// `Account` on every `find` rather than clone the original. `Clone` so a unit of
+/// work can deep-copy the accounts map into its staging snapshot (see
+/// [`MemBackend::stage`]).
+#[derive(Clone)]
 struct StoredAccount {
     /// The account's sovereign `did:plc` (minted by [`MemDidMinter`] in the
     /// real founding flow).
@@ -347,7 +431,10 @@ struct StoredAccount {
 
 /// The fields of an [`Invitation`] we keep behind the lock. Like [`Account`],
 /// `Invitation` isn't `Clone` (an entity with a lifecycle, not a value), so we
-/// store its parts and rebuild a fresh `Invitation` on read.
+/// store its parts and rebuild a fresh `Invitation` on read. `Clone` so a unit of
+/// work can deep-copy the invitations map into its staging snapshot (see
+/// [`MemBackend::stage`]).
+#[derive(Clone)]
 struct StoredInvitation {
     /// The account membership is being offered of.
     account: AccountId,
@@ -439,9 +526,11 @@ impl AccountStore for MemAccountStore {
     }
 }
 
-/// In-memory [`AccountWrites`] view: account/membership/invitation writes onto the
-/// shared state. Vended by [`MemUnitOfWork::accounts`]. Writes apply immediately
-/// (the mem unit of work is a no-op envelope), so this does not model rollback.
+/// In-memory [`AccountWrites`] view: account/membership/invitation writes. Vended by
+/// [`MemUnitOfWork::accounts`], where the [`MemBackend`] it wraps is the unit's
+/// *staging* snapshot — so writes land in the staged copy and reach the shared store
+/// only on [`MemUnitOfWork::commit`] (drop = rollback). The test seed helpers on
+/// [`MemBackend`] wrap the shared store directly, so they apply at once.
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
@@ -656,36 +745,51 @@ impl AccountWrites for MemAccountWrites {
 }
 
 /// In-memory [`Database`] write factory over the shared [`MemBackend`]. `begin`
-/// hands back a [`MemUnitOfWork`] sharing the same state; there is no real
-/// transaction, so the unit of work is a no-op envelope (see the module note).
+/// snapshots the shared domain maps into a private staging backend and hands back a
+/// [`MemUnitOfWork`] over it, so the unit's writes are isolated until it commits
+/// (DD `24150017`; see the module note).
 pub struct MemDatabase(MemBackend);
 
 #[async_trait]
 impl Database for MemDatabase {
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
-        Ok(Box::new(MemUnitOfWork(self.0.clone())))
+        Ok(Box::new(MemUnitOfWork {
+            shared: self.0.clone(),
+            staged: self.0.stage(),
+        }))
     }
 }
 
-/// In-memory [`UnitOfWork`]: a no-op envelope over the shared state. Each accessor
-/// hands back a write view sharing the backend; writes apply immediately and
-/// `commit` does nothing (so drop does *not* roll back — that atomicity is a
-/// pg-only assertion, see the module note).
-pub struct MemUnitOfWork(MemBackend);
+/// In-memory [`UnitOfWork`] that models transactional rollback. Holds the `shared`
+/// store and a private `staged` snapshot of its domain maps taken at `begin`; the
+/// write views ([`accounts`](MemUnitOfWork::accounts)/[`users`](MemUnitOfWork::users))
+/// mutate only `staged`. [`commit`](MemUnitOfWork::commit) applies `staged` back onto
+/// `shared`; **dropping the handle without committing discards it** — the mem mirror
+/// of pg's drop = rollback. Uncommitted writes are therefore invisible to the shared
+/// read stores, matching pg (a pool read can't see another connection's open tx).
+pub struct MemUnitOfWork {
+    /// The real, shared store the unit commits back onto.
+    shared: MemBackend,
+    /// A private deep copy of the shared domain maps; the unit's writes land here
+    /// and reach `shared` only on `commit`. (Shares the profile-cache `Arc` — that
+    /// map is a documented Unit-of-Work exemption, never staged.)
+    staged: MemBackend,
+}
 
 #[async_trait]
 impl UnitOfWork for MemUnitOfWork {
     fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
-        Box::new(MemAccountWrites(self.0.clone()))
+        Box::new(MemAccountWrites(self.staged.clone()))
     }
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
-        Box::new(MemUserWrites(self.0.clone()))
+        Box::new(MemUserWrites(self.staged.clone()))
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
-        // The mem writes already applied to the shared maps as they were called, so
-        // commit is a no-op. This deliberately does not model rollback-on-drop.
+        // Apply the staged writes onto the shared store. Without this call the staged
+        // snapshot is simply dropped, so the unit rolls back — as in pg.
+        self.shared.apply(&self.staged);
         Ok(())
     }
 }
@@ -844,6 +948,79 @@ mod tests {
         assert_eq!(found.did, account_did);
         assert_eq!(found.name, account_name); // the name round-trips
         assert_eq!(found.deleted_at, None);
+    }
+
+    // Dropping a unit of work before `commit()` discards EVERY write in it — the mem
+    // mirror of pg's drop = rollback (DD 24150017, mirroring the pg
+    // `a_dropped_unit_of_work_rolls_back_every_write`). `create` stages two writes (the
+    // account + the owner membership); once the handle drops uncommitted, neither
+    // reaches the shared read store. This is what makes the rollback fidelity real and
+    // exercised — a forgotten `commit()` now leaves nothing behind in mem too, so a mem
+    // test can catch it.
+    #[tokio::test]
+    async fn a_dropped_unit_of_work_rolls_back_every_write() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let accounts = backend.account_store();
+
+        let account = live_account("did:plc:rollback");
+        let account_id = account.id;
+        let owner_id = user_id();
+        let owner = UserAccount {
+            user_id: owner_id,
+            account_id: account.id,
+            role: Role::Owner(None),
+        };
+
+        // Open the unit, stage the (two-write) create, then drop WITHOUT committing.
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.accounts().create(&account, &owner).await.unwrap();
+            // `uow` drops here without `commit` → the staged writes are discarded.
+        }
+
+        assert!(
+            accounts.find(account_id).await.unwrap().is_none(),
+            "a dropped unit of work persists no account row"
+        );
+        assert_eq!(
+            accounts.role_of(owner_id, account_id).await.unwrap(),
+            None,
+            "...and no membership either — both staged writes rolled back together"
+        );
+    }
+
+    // An uncommitted unit's writes are invisible to a concurrent read off the shared
+    // store *before* the unit commits — matching pg, where a pool read can't see
+    // another connection's open transaction. Here the read store sees nothing until
+    // `commit`, then sees the account.
+    #[tokio::test]
+    async fn uncommitted_writes_are_invisible_until_commit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let accounts = backend.account_store();
+
+        let account = live_account("did:plc:isolated");
+        let account_id = account.id;
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id: account.id,
+            role: Role::Owner(None),
+        };
+
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts().create(&account, &owner).await.unwrap();
+        // Still open, not committed: the shared read store must not see it yet.
+        assert!(
+            accounts.find(account_id).await.unwrap().is_none(),
+            "an open unit's staged write is invisible to a shared read"
+        );
+
+        uow.commit().await.unwrap();
+        assert!(
+            accounts.find(account_id).await.unwrap().is_some(),
+            "the write becomes visible once the unit commits"
+        );
     }
 
     // The founder's Owner membership is minted alongside the account — `role_of`

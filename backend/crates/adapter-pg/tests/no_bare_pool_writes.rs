@@ -20,27 +20,38 @@
 
 use std::path::{Path, PathBuf};
 
-/// The bare-pool *write* signature this guard bans. A write that executes directly
-/// on the pool skips the Unit of Work; on a transaction-bound view the receiver is
-/// `&mut *self.conn` instead, never `&self.pool`.
+/// The bare-pool *write* signature this guard bans, in its canonical whitespace-free
+/// form. A write that executes directly on the pool skips the Unit of Work; on a
+/// transaction-bound view the receiver is `&mut *self.conn` instead, never
+/// `&self.pool`. Matching is whitespace-insensitive (see [`is_bare_pool_write`]), so
+/// `.execute( &self.pool )` is caught too.
 const BANNED: &str = ".execute(&self.pool)";
 
-/// Files allowed to keep a bare-pool write, by base name — DOCUMENTED exceptions,
-/// not silent skips. Each writes on the pool because it has **no transactional
+/// Files allowed to keep a bare-pool write, keyed by **crate-relative path** — not
+/// bare filename, so an exemption can't leak across crates. (Both `adapter-pg/src`
+/// and `adapter-atproto/src` are scanned, and both have a `profile.rs`; a basename
+/// key would silently exempt the atproto one too.) Each is a DOCUMENTED exception,
+/// not a silent skip: it writes on the pool because it has **no transactional
 /// invariant to uphold** — there is no domain unit of work to thread through:
 ///
-/// - `session_store.rs` — bound by the external `tower_sessions_core::SessionStore`
-///   trait: fixed `&self`, each op independently atomic, no place for our UnitOfWork.
-/// - `auth_store.rs` (adapter-atproto) — bound by the external
+/// - `adapter-pg/src/session_store.rs` — bound by the external
+///   `tower_sessions_core::SessionStore` trait: fixed `&self`, each op independently
+///   atomic, no place for our UnitOfWork.
+/// - `adapter-atproto/src/auth_store.rs` — bound by the external
 ///   `jacquard_oauth::ClientAuthStore` trait, same shape as `session_store`.
-/// - `profile.rs` — the read-through profile **cache** fill (`PgProfileCache::put`):
-///   a best-effort, single-statement upsert on the GET read path whose failure the
-///   caller swallows. It is not a domain write, so routing it through a write
-///   transaction would make a read endpoint open one for nothing (Engineer's call).
+/// - `adapter-pg/src/profile.rs` — the read-through profile **cache** fill
+///   (`PgProfileCache::put`): a best-effort, single-statement upsert on the GET read
+///   path whose failure the caller swallows. It is not a domain write, so routing it
+///   through a write transaction would make a read endpoint open one for nothing
+///   (Engineer's call).
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.
-const EXEMPT: &[&str] = &["session_store.rs", "auth_store.rs", "profile.rs"];
+const EXEMPT: &[&str] = &[
+    "adapter-pg/src/session_store.rs",
+    "adapter-atproto/src/auth_store.rs",
+    "adapter-pg/src/profile.rs",
+];
 
 /// The private-store write adapters this guard scans, relative to this crate's
 /// `CARGO_MANIFEST_DIR` (`backend/crates/adapter-pg`). `adapter-atproto` is included
@@ -72,8 +83,35 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Does this source line carry a bare-pool write? The single detection rule, kept
 /// in one place so the guard and its self-check exercise the *same* logic.
+///
+/// Whitespace-insensitive: all ASCII whitespace is stripped before the match, so
+/// `.execute( &self.pool )` collapses to the canonical [`BANNED`] form and is caught.
+/// This still distinguishes `&self.pool` (banned) from `&mut *self.conn` (the correct
+/// on-transaction write) — stripping whitespace from the latter yields
+/// `.execute(&mut*self.conn)`, which does not contain [`BANNED`].
 fn is_bare_pool_write(line: &str) -> bool {
-    line.contains(BANNED)
+    let collapsed: String = line.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    collapsed.contains(BANNED)
+}
+
+/// The `<crate>/src/<file…>` suffix of a scanned path — the key exemptions are
+/// matched on, so `adapter-pg/src/profile.rs` (exempt) is never confused with
+/// `adapter-atproto/src/profile.rs` (not exempt). Canonicalizes first to resolve the
+/// `..` in the adapter-atproto scan root, then takes the tail after the last
+/// `/crates/` segment; falls back to the raw path if either step can't run.
+fn crate_relative(path: &Path) -> String {
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let s = canon.to_string_lossy().replace('\\', "/");
+    match s.rsplit_once("/crates/") {
+        Some((_, rel)) => rel.to_string(),
+        None => s,
+    }
+}
+
+/// Is this file a DOCUMENTED exemption, matched by its crate-relative path (not bare
+/// filename, so an exemption can't leak across crates)?
+fn is_exempt(path: &Path) -> bool {
+    EXEMPT.contains(&crate_relative(path).as_str())
 }
 
 /// `(file, 1-based line, line text)` for every banned bare-pool write in `files`,
@@ -81,11 +119,7 @@ fn is_bare_pool_write(line: &str) -> bool {
 fn offenders(files: &[PathBuf]) -> Vec<(String, usize, String)> {
     let mut hits = Vec::new();
     for file in files {
-        let name = file
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        if EXEMPT.contains(&name) {
+        if is_exempt(file) {
             continue;
         }
         let body = std::fs::read_to_string(file)
@@ -108,6 +142,12 @@ fn no_bare_pool_writes_outside_documented_exceptions() {
         is_bare_pool_write("        .execute(&self.pool)"),
         "the guard's detector failed to flag a planted bare-pool write — it is broken, \
          so a real violation could slip through"
+    );
+    assert!(
+        is_bare_pool_write("        .execute( &self.pool )"),
+        "the guard's detector failed to flag a whitespace-spaced bare-pool write \
+         `.execute( &self.pool )` — detection must be whitespace-insensitive, or a \
+         reformatted violation slips through"
     );
     assert!(
         !is_bare_pool_write("        .execute(&mut *self.conn)"),

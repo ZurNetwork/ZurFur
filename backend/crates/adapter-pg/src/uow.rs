@@ -46,9 +46,10 @@ impl Database for PgDatabase {
 
 /// One open PostgreSQL transaction, owned by the handler. Holds **only** the
 /// `Transaction` — no pool — so the write views reached through it (`accounts()`,
-/// `users()`, `profiles()`) are the only path to a private-store write, and they
-/// all share this one transaction. [`commit`](UnitOfWork::commit) consumes the
-/// handle; dropping it rolls back.
+/// `users()`) are the only path to a private-store write, and they all share this
+/// one transaction. (The profile cache is not a write view — its best-effort fill
+/// is a documented pool-backed exception; see the module note.)
+/// [`commit`](UnitOfWork::commit) consumes the handle; dropping it rolls back.
 pub struct PgUnitOfWork {
     /// The open transaction. `'static` because `PgPool::begin` borrows nothing from
     /// the pool beyond a pooled connection it owns, so the handle is freely boxable.
