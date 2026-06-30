@@ -13,9 +13,20 @@
 //!
 //! # Layout
 //!
-//! - [`PgAccountRepo`] — accounts and memberships ([`domain::ports::AccountRepo`]).
-//! - [`PgUserRepo`] — recognized visitors ([`domain::ports::UserRepo`]).
-//! - [`PgProfileCache`] — read-through profile cache ([`domain::ports::ProfileCache`]).
+//! Writes go through the compile-enforced Unit of Work (DD `24150017`): the
+//! [`PgDatabase`] factory vends a [`PgUnitOfWork`] that owns the transaction, and
+//! the per-aggregate *write* views are reachable only on it. The read stores keep
+//! the pool and stay non-transactional.
+//!
+//! - [`PgDatabase`] / [`PgUnitOfWork`] — the write factory + transaction handle
+//!   ([`domain::ports::Database`] / [`domain::ports::UnitOfWork`]).
+//! - [`PgAccountStore`] — account/membership reads ([`domain::ports::AccountStore`]);
+//!   writes via [`PgAccountWrites`] ([`domain::ports::AccountWrites`]).
+//! - [`PgUserStore`] — recognized-visitor reads ([`domain::ports::UserStore`]);
+//!   recognition via [`PgUserWrites`] ([`domain::ports::UserWrites`]).
+//! - [`PgProfileCache`] — read-through profile cache ([`domain::ports::ProfileCache`]);
+//!   its best-effort `put` is pool-backed, a documented exception to the Unit of
+//!   Work (a cache fill on the read path has no transactional invariant).
 //! - [`PgSessionStore`] — durable tower-sessions backing store.
 //!
 //! Pool lifecycle and the migrations embedded from `migrations/` are owned by the
@@ -33,11 +44,13 @@ pub use sqlx::PgPool;
 mod account;
 mod profile;
 mod session_store;
+mod uow;
 mod user;
-pub use account::PgAccountRepo;
+pub use account::{PgAccountStore, PgAccountWrites};
 pub use profile::PgProfileCache;
 pub use session_store::PgSessionStore;
-pub use user::PgUserRepo;
+pub use uow::{PgDatabase, PgUnitOfWork};
+pub use user::{PgUserStore, PgUserWrites};
 
 /// Eagerly opens a connection pool, failing fast when the database is
 /// unreachable.

@@ -1,6 +1,12 @@
 //! [`ProfileCache`] over PostgreSQL: a TTL'd read-through cache of public PDS
 //! profiles in the `profile_cache` table, so repeat views don't need the PDS
-//! awake. See ZMVP-10 and DESIGN/"Domains and Applications".
+//! awake. Both the read (`get`) and the cache fill (`put`) are pool-backed and
+//! `&self`. The cache write is a **documented exception** to the compile-enforced
+//! Unit of Work (DD `24150017`): a read-through cache fill on the GET path carries
+//! no transactional invariant, so it does not belong on the write-only
+//! `UnitOfWork` handle — the same reasoning that exempts `session_store` and
+//! `auth_store` (see the `no_bare_pool_writes` guard). See ZMVP-10 and
+//! DESIGN/"Domains and Applications".
 
 use chrono::{Duration, Utc};
 use domain::{
@@ -11,8 +17,9 @@ use sqlx::{PgPool, query};
 
 /// Postgres-backed read-through cache of public profiles (ZMVP-10). Freshness is
 /// this adapter's policy: `get` treats an entry older than `ttl` as a miss, so a
-/// stale profile is refetched from the PDS rather than served. `put` upserts, so
-/// a refetch overwrites the prior copy in one round trip.
+/// stale profile is refetched from the PDS rather than served. `put` upserts, so a
+/// refetch overwrites the prior copy in one round trip. Both run on the pool — the
+/// cache write is a documented exception to the Unit of Work (see the module note).
 pub struct PgProfileCache {
     pool: PgPool,
     ttl: Duration,
@@ -66,6 +73,13 @@ impl ProfileCache for PgProfileCache {
     /// `INSERT ... ON CONFLICT (did) DO UPDATE`: a refetch overwrites the prior
     /// copy in one round trip and stamps `fetched_at = now()`, restarting the TTL
     /// window read by [`get`](PgProfileCache::get).
+    ///
+    /// GUARD EXCEPTION (DD `24150017`): this write runs on the pool, not a
+    /// `UnitOfWork`. A best-effort read-through cache fill on the GET path is not a
+    /// domain write — it has no transactional invariant to uphold, the caller
+    /// swallows its failure, and routing it through a write transaction would make
+    /// a read endpoint open one for nothing. So it is a documented exception to the
+    /// bare-pool-write guard, alongside `session_store` and `auth_store`.
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         query!(
             r#"
