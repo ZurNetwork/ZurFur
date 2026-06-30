@@ -5,7 +5,7 @@
 //! read-through is exercised without a network or a database.
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemProfileCache, MemProfileSource, MemUserRepo};
+use adapter_mem::{MemAuthenticator, MemBackend, MemProfileSource};
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
@@ -55,15 +55,17 @@ async fn me_shows_profile_then_serves_it_from_cache() {
         display_name: Some("Alice".to_string()),
         avatar_url: Some("https://pds.example/avatar/alice.jpg".to_string()),
     }));
+    let backend = MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: Arc::new(MemUserRepo::new()),
+        users: backend.user_store(),
         profile_source: source.clone(),
-        profile_cache: Arc::new(MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
@@ -144,15 +146,17 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
         avatar_url: None,
     });
     source.set_unreachable();
+    let backend = MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: Arc::new(MemUserRepo::new()),
+        users: backend.user_store(),
         profile_source: Arc::new(source),
-        profile_cache: Arc::new(MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {

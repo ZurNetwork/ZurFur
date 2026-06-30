@@ -71,7 +71,7 @@ async fn require_user(state: &AppState, session: &Session) -> Result<User, Probl
         .flatten()
         .ok_or_else(Problem::not_authenticated)?;
     state
-        .user_repo
+        .users
         .find(UserId::new(id))
         .await
         .ok()
@@ -83,7 +83,7 @@ async fn require_user(state: &AppState, session: &Session) -> Result<User, Probl
 /// act on. A store error becomes a `500` via the `?`/`From<anyhow::Error>` seam.
 async fn load_account(state: &AppState, id: AccountId) -> Result<Account, Problem> {
     state
-        .account_repo
+        .accounts
         .find(id)
         .await?
         .ok_or_else(Problem::account_not_found)
@@ -94,7 +94,7 @@ async fn load_account(state: &AppState, id: AccountId) -> Result<Account, Proble
 /// rank rule (`Role::can_grant`) is the caller's. A store error is a `500`.
 async fn actor_role(state: &AppState, user: UserId, account: AccountId) -> Result<Role, Problem> {
     state
-        .account_repo
+        .accounts
         .role_of(user, account)
         .await?
         .ok_or_else(Problem::forbidden)
@@ -162,7 +162,11 @@ async fn create_account(
     // The founding invariant: the account and the creator's Owner membership are
     // minted together (`Account::open`) and persisted atomically.
     let (account, owner) = Account::open(user.id, did, name, chrono::Utc::now());
-    state.account_repo.create(&account, &owner).await?;
+    // One unit of work: the account row and the founder's Owner membership commit
+    // together or not at all — reached through the transaction-bound write view.
+    let mut uow = state.database.begin().await?;
+    uow.accounts().create(&account, &owner).await?;
+    uow.commit().await?;
 
     Ok(created_json(json!({
         "id": account.id.to_string(),
@@ -185,7 +189,7 @@ struct AcceptInvitationBody {
 ///
 /// Flipping the offer to accepted and seating the member (with `parent = inviter`,
 /// DESIGN/Roles rule 4a, and the body's `listed_on_profile` choice) happen in one
-/// private-store transaction inside [`AccountRepo::accept_invitation`]; a revoke or
+/// private-store transaction inside [`AccountWrites::accept_invitation`](domain::ports::AccountWrites::accept_invitation); a revoke or
 /// accept that wins the race there seats no member ("a revoked invitation yields no
 /// membership"). With no pending offer to accept this is a `404`
 /// (`no_pending_invitation`); a malformed body is a `400`.
@@ -200,15 +204,19 @@ async fn accept_invitation(
 
     // The invitee accepts their own offer; an absent/spent one is a 404.
     let invitation = state
-        .account_repo
+        .accounts
         .find_pending_invitation(AccountId::new(account_id), invited_user.id)
         .await?
         .ok_or_else(Problem::no_pending_invitation)?;
 
-    let accepted = state
-        .account_repo
+    // Flip the offer to accepted and seat the member in one transaction; a revoke
+    // or accept that wins the race inside the write view seats no member.
+    let mut uow = state.database.begin().await?;
+    let accepted = uow
+        .accounts()
         .accept_invitation(invitation, body.listed_on_profile)
         .await?;
+    uow.commit().await?;
 
     Ok(ok_json(json!({
         "account": accepted.account_id.to_string(),
@@ -234,13 +242,17 @@ async fn leave_account(
     let leaving_user = require_user(&state, &session).await?;
     let account = AccountId::new(account_id);
 
-    match state.account_repo.role_of(leaving_user.id, account).await? {
+    match state.accounts.role_of(leaving_user.id, account).await? {
         None => return Err(Problem::member_not_found()),
         Some(Role::Owner(_)) => return Err(Problem::owner_cannot_leave()),
         Some(_) => {}
     }
 
-    state.account_repo.leave(leaving_user.id, account).await?;
+    // Re-home the leaver's children, delete the membership, and revoke their
+    // pending issued invitations — atomically, on the transaction-bound view.
+    let mut uow = state.database.begin().await?;
+    uow.accounts().leave(leaving_user.id, account).await?;
+    uow.commit().await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -308,14 +320,18 @@ async fn grant_role(
     // Recognize the grantee by their DID (idempotent — mints them on first contact,
     // returns the existing User otherwise). Granting a role to someone who has never
     // signed in is how an Owner adds them; they resolve to the same User when they do.
-    let grantee = state.user_repo.provision(&Did::new(body.user)).await?;
+    // Recognition is its own unit of work, settled before the grant (as before the
+    // Unit-of-Work refactor): an idempotent recognize, independent of the grant.
+    let mut uow = state.database.begin().await?;
+    let grantee = uow.users().provision(&Did::new(body.user)).await?;
+    uow.commit().await?;
 
     // The guard above bounds the role being *granted*; this bounds the *grantee*.
     // An account's Owner is never demoted through a grant — ownership only moves via
     // the separate transfer seam ("an Owner never has a parent, even when
     // transferred", DESIGN/Roles). Without this, an Admin could grant Manager to the
     // Owner's DID and quietly unseat them.
-    if let Some(Role::Owner(_)) = state.account_repo.role_of(grantee.id, account.id).await? {
+    if let Some(Role::Owner(_)) = state.accounts.role_of(grantee.id, account.id).await? {
         return Err(Problem::forbidden());
     }
 
@@ -325,7 +341,9 @@ async fn grant_role(
         account_id: account.id,
         role: new_role,
     };
-    state.account_repo.grant_role(&member).await?;
+    let mut uow = state.database.begin().await?;
+    uow.accounts().grant_role(&member).await?;
+    uow.commit().await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -380,7 +398,7 @@ async fn revoke_role(
     // Resolve the target by DID *without minting* — unlike a grant, a revoke must not
     // recognize a brand-new visitor as a side effect. An unknown DID is not a member.
     let target = state
-        .user_repo
+        .users
         .find_by_did(&Did::new(body.user))
         .await?
         .ok_or_else(Problem::member_not_found)?;
@@ -389,7 +407,7 @@ async fn revoke_role(
     // same predicate as grant. An Owner outranks everyone, so they're never revocable
     // here; an Admin can't revoke a peer Admin. Someone with no role isn't a member.
     let target_role = state
-        .account_repo
+        .accounts
         .role_of(target.id, account.id)
         .await?
         .ok_or_else(Problem::member_not_found)?;
@@ -397,11 +415,11 @@ async fn revoke_role(
         return Err(Problem::forbidden());
     }
 
-    // Settle the revoke: remove the membership.
-    state
-        .account_repo
-        .revoke_role(target.id, account.id)
-        .await?;
+    // Settle the revoke: remove the membership (and re-home children + revoke the
+    // member's pending issued invitations) atomically, on the write view.
+    let mut uow = state.database.begin().await?;
+    uow.accounts().revoke_role(target.id, account.id).await?;
+    uow.commit().await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -456,13 +474,17 @@ async fn invite_user_to_account(
         return Err(Problem::forbidden());
     }
 
-    let invited = state.user_repo.provision(&Did::new(body.user)).await?;
+    // Recognize the invitee (idempotent), its own unit of work — settled before
+    // the offer is issued, as before the Unit-of-Work refactor.
+    let mut uow = state.database.begin().await?;
+    let invited = uow.users().provision(&Did::new(body.user)).await?;
+    uow.commit().await?;
 
     // An invitation is the path *to* membership; someone who already holds a role has
     // nowhere to be invited. This is a state conflict (409), not an authority failure
     // (403) or a malformed request (422) — the actor may invite, just not this person.
     if state
-        .account_repo
+        .accounts
         .role_of(invited.id, account.id)
         .await?
         .is_some()
@@ -474,7 +496,7 @@ async fn invite_user_to_account(
 
     // Idempotent re-invite: an existing pending offer is returned, not a second row.
     if let Some(existing_invitation) = state
-        .account_repo
+        .accounts
         .find_pending_invitation(account.id, invited.id)
         .await?
     {
@@ -488,7 +510,9 @@ async fn invite_user_to_account(
     }
 
     let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
-    state.account_repo.create_invitation(&invitation).await?;
+    let mut uow = state.database.begin().await?;
+    uow.accounts().create_invitation(&invitation).await?;
+    uow.commit().await?;
 
     Ok(created_json(json!({
         "id": invitation.id.to_string(),
@@ -559,7 +583,7 @@ async fn revoke_invitation_to_account(
     };
 
     let invited_user = match state
-        .user_repo
+        .users
         .find_by_did(&Did::new(invited_did.clone()))
         .await?
     {
@@ -568,7 +592,7 @@ async fn revoke_invitation_to_account(
     };
 
     let mut invitation = match state
-        .account_repo
+        .accounts
         .find_pending_invitation(account.id, invited_user.id)
         .await?
     {
@@ -591,7 +615,9 @@ async fn revoke_invitation_to_account(
             "Could not revoke invitation. Please try again.",
         ));
     }
-    state.account_repo.revoke_invitation(invitation.id).await?;
+    let mut uow = state.database.begin().await?;
+    uow.accounts().revoke_invitation(invitation.id).await?;
+    uow.commit().await?;
 
     Ok(revoked())
 }
@@ -614,7 +640,7 @@ async fn decline_invitation(
 
     // The invitee declines their own offer; an absent/spent one is a 404.
     let mut invitation = state
-        .account_repo
+        .accounts
         .find_pending_invitation(account.id, actor.id)
         .await?
         .ok_or_else(Problem::no_pending_invitation)?;
@@ -626,7 +652,9 @@ async fn decline_invitation(
             "Could not decline the invitation. Please try again.",
         ));
     }
-    state.account_repo.revoke_invitation(invitation.id).await?;
+    let mut uow = state.database.begin().await?;
+    uow.accounts().revoke_invitation(invitation.id).await?;
+    uow.commit().await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),

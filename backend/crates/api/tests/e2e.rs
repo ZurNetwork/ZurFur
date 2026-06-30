@@ -1,17 +1,14 @@
 //! End-to-end sign-in flow with every external dependency faked in-process: the
-//! PDS (a `MemAuthenticator` that authenticates as a fixed DID), the user store
-//! (`MemUserRepo`), and the session store (`MemoryStore`). The only seam to the
+//! PDS (a `MemAuthenticator` that authenticates as a fixed DID), the private store
+//! (`MemBackend`), and the session store (`MemoryStore`). The only seam to the
 //! outside world — the OAuth handshake with the PDS — is the `Authenticator` port,
 //! so this drives the real HTTP stack, routing, session layer, provisioning, and
 //! session→User resolution without a network or a database.
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemUserRepo};
+use adapter_mem::{MemAuthenticator, MemBackend};
 use api::{AppState, Config, Environment};
-use domain::{
-    elements::{did::Did, profile::Profile},
-    ports::UserRepo,
-};
+use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
@@ -24,11 +21,11 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    // Hold a typed handle to the repo so we can introspect it after the flow; the
-    // unsizing coercion to `Arc<dyn UserRepo>` happens at the field assignment.
-    let repo = Arc::new(MemUserRepo::new());
+    // Hold a handle to the shared backend so we can introspect it after the flow.
+    let backend = MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
+        database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -41,14 +38,14 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
         // pool keeps the test free of a container.
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: repo.clone(),
+        users: backend.user_store(),
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "e2ealice.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
@@ -103,7 +100,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     );
 
     // Exactly one User exists for that DID after a successful sign-in.
-    let provisioned = repo
+    let provisioned = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision");
@@ -118,7 +115,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
         .expect("GET /signin-callback (repeat)");
     assert_eq!(res.status(), 303);
 
-    let again = repo
+    let again = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision (repeat)");

@@ -2,7 +2,7 @@
 //! restart. Persistence is the whole point, so this test wires the session layer
 //! to the durable `PgSessionStore` (not `MemoryStore`) over a real PostgreSQL
 //! container — the session row must outlive the process. The PDS and the user
-//! store are still faked in-process (`MemAuthenticator`, `MemUserRepo`), so the
+//! store are still faked in-process (`MemAuthenticator`, `MemBackend`), so the
 //! test stays about session durability, not OAuth or the user repo.
 //!
 //! "Restart" is simulated by dropping the first app/router/store and building a
@@ -13,28 +13,25 @@
 //! runtime socket.
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemUserRepo};
+use adapter_mem::{MemAuthenticator, MemBackend};
 use adapter_pg::{PgPool, PgSessionStore};
 use api::{AppState, Config, Environment};
-use domain::{
-    elements::{did::Did, profile::Profile},
-    ports::UserRepo,
-};
+use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 use tower_sessions::SessionManagerLayer;
 
 /// Builds the app router wired to a fresh `PgSessionStore` over `pool`, serves it
-/// on an ephemeral port, and returns the base URL. The `user_repo` is shared so a
+/// on an ephemeral port, and returns the base URL. The `backend` is shared so a
 /// "restarted" instance resolves the same User the cookie points at — what we are
 /// proving durable is the *session*, kept in Postgres, not the repo.
-async fn serve(pool: PgPool, did: &str, user_repo: Arc<MemUserRepo>) -> String {
+async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -45,14 +42,15 @@ async fn serve(pool: PgPool, did: &str, user_repo: Arc<MemUserRepo>) -> String {
         },
         pool: pool.clone(),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo,
+        users: backend.user_store(),
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "persistalice.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
     };
     // The session layer backs the cookie with Postgres, so the row survives the
     // "restart" simulated below by tearing down this app and building another.
@@ -85,14 +83,14 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     // The user the cookie will point at. Shared across both app instances so the
     // "restart" resolves the same identity — the durable part under test is the
     // session row, which lives in Postgres.
-    let user_repo = Arc::new(MemUserRepo::new());
-    user_repo
+    let backend = MemBackend::new();
+    backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision seeds the recognized user");
 
     // --- First boot: sign in, leaving a real session row in Postgres. ---
-    let base = serve(pool.clone(), did, user_repo.clone()).await;
+    let base = serve(pool.clone(), did, backend.clone()).await;
     let client = reqwest::Client::builder()
         .cookie_store(true)
         .redirect(Policy::none())
@@ -143,7 +141,7 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     drop(client);
 
     // Build a brand-new app + a brand-new PgSessionStore over the SAME pool/database.
-    let restarted_base = serve(pool.clone(), did, user_repo.clone()).await;
+    let restarted_base = serve(pool.clone(), did, backend.clone()).await;
 
     // A fresh client with no cookie jar: the only thing tying it to the prior
     // session is the cookie we captured — and the row that cookie keys, in Postgres.

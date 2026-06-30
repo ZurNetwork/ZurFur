@@ -4,14 +4,9 @@
 //! fakes as the sign-in e2e — no network, no database.
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAccountRepo, MemAuthenticator, MemDidMinter, MemProfileCache, MemProfileSource, MemUserRepo,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
-use domain::{
-    elements::{account::AccountId, did::Did, profile::Profile, role::Role},
-    ports::{AccountRepo, UserRepo},
-};
+use domain::elements::{account::AccountId, did::Did, profile::Profile, role::Role};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use uuid::Uuid;
@@ -21,14 +16,13 @@ mod common;
 /// Boots the app with everything faked in-process and returns the base URL plus
 /// typed handles to the repos, so a test can introspect them after the flow. The
 /// unsizing to the `Arc<dyn …>` fields happens at assignment.
-async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>) {
+async fn spawn_app(did: &str) -> (String, MemBackend) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let user_repo = Arc::new(MemUserRepo::new());
-    let account_repo = Arc::new(MemAccountRepo::new());
+    let backend = MemBackend::new();
     let state = AppState {
         config: Config {
             env: Environment::DEV,
@@ -41,22 +35,23 @@ async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>)
         // the test free of a container.
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: user_repo.clone(),
+        users: backend.user_store(),
         profile_source: Arc::new(MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "owner.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(MemProfileCache::new()),
-        account_repo: account_repo.clone(),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
+        accounts: backend.account_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), user_repo, account_repo)
+    (format!("http://{addr}"), backend)
 }
 
 /// A cookie-keeping client that does not auto-follow redirects, so each hop is
@@ -91,7 +86,7 @@ async fn sign_in(client: &reqwest::Client, base: &str) {
 #[tokio::test]
 async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
     let did = "did:plc:e2eowner";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -120,15 +115,12 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
     );
 
     // The creating User is the Owner of the founded account (the heart of ZMVP-14).
-    let user = user_repo
+    let user = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision is idempotent — returns the signed-in User");
     let account = AccountId::new(Uuid::parse_str(account_id).expect("id is a uuid"));
-    let role = account_repo
-        .role_of(user.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(user.id, account).await.expect("role_of");
     assert_eq!(
         role,
         Some(Role::Owner(None)),
@@ -136,7 +128,7 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
     );
 
     // And the account itself is persisted, retrievable by id.
-    let found = account_repo.find(account).await.expect("find");
+    let found = backend.find(account).await.expect("find");
     assert!(
         found.is_some_and(|a| a.did == Did::new(account_did.to_string())),
         "the founded account is stored under its minted did"
@@ -146,7 +138,7 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
 #[tokio::test]
 async fn founding_requires_a_name() {
     let did = "did:plc:e2enoname";
-    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let (base, _backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -199,7 +191,7 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
 #[tokio::test]
 async fn owner_grants_a_role_and_seats_the_member() {
     let did = "did:plc:e2egranter";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -221,15 +213,12 @@ async fn owner_grants_a_role_and_seats_the_member() {
 
     // The grantee is now an Admin of the account. Provisioning their DID is
     // idempotent — it returns the very User the grant recognized.
-    let grantee = user_repo
+    let grantee = backend
         .provision(&Did::new(grantee_did.to_string()))
         .await
         .expect("provision the grantee");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let role = account_repo
-        .role_of(grantee.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(grantee.id, account).await.expect("role_of");
     assert_eq!(
         role,
         Some(Role::Admin(None)),
@@ -242,7 +231,7 @@ async fn owner_grants_a_role_and_seats_the_member() {
 #[tokio::test]
 async fn granting_owner_is_refused() {
     let did = "did:plc:e2enoowner";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -257,15 +246,12 @@ async fn granting_owner_is_refused() {
     assert_eq!(res.status(), 403, "Owner cannot be granted here");
 
     // Nothing was seated for the would-be owner.
-    let grantee = user_repo
+    let grantee = backend
         .provision(&Did::new(grantee_did.to_string()))
         .await
         .expect("provision");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let role = account_repo
-        .role_of(grantee.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(grantee.id, account).await.expect("role_of");
     assert_eq!(role, None, "a refused grant seats no one");
 }
 
@@ -275,7 +261,7 @@ async fn granting_owner_is_refused() {
 #[tokio::test]
 async fn the_owner_cannot_be_demoted_by_a_grant() {
     let did = "did:plc:e2eownerkeep";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -289,15 +275,12 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
         .expect("POST /accounts/{id}/members");
     assert_eq!(res.status(), 403, "the Owner cannot be demoted by a grant");
 
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision the owner");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let role = account_repo
-        .role_of(owner.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(owner.id, account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner(None)), "the Owner keeps their role");
 }
 
@@ -306,7 +289,7 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
 #[tokio::test]
 async fn granting_an_unknown_role_is_rejected() {
     let did = "did:plc:e2ebadrole";
-    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let (base, _backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -325,7 +308,7 @@ async fn granting_an_unknown_role_is_rejected() {
 #[tokio::test]
 async fn granting_on_a_missing_account_is_not_found() {
     let did = "did:plc:e2enoacct";
-    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let (base, _backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -343,7 +326,7 @@ async fn granting_on_a_missing_account_is_not_found() {
 // (Independent of task ②.)
 #[tokio::test]
 async fn anonymous_visitor_cannot_grant_a_role() {
-    let (base, _user_repo, _account_repo) = spawn_app("did:plc:nobody").await;
+    let (base, _backend) = spawn_app("did:plc:nobody").await;
 
     let res = client()
         .post(format!("{base}/accounts/{}/members", Uuid::now_v7()))
@@ -356,7 +339,7 @@ async fn anonymous_visitor_cannot_grant_a_role() {
 
 #[tokio::test]
 async fn anonymous_visitor_cannot_found_an_account() {
-    let (base, _user_repo, account_repo) = spawn_app("did:plc:nobody").await;
+    let (base, backend) = spawn_app("did:plc:nobody").await;
 
     // No sign-in: the cookie jar carries no session.
     let res = client()
@@ -371,7 +354,7 @@ async fn anonymous_visitor_cannot_found_an_account() {
         "an unrecognized visitor cannot found an account"
     );
     // Nothing was minted or persisted as a side effect of the rejected request.
-    let found = account_repo
+    let found = backend
         .find(AccountId::new(Uuid::now_v7()))
         .await
         .expect("find");
@@ -395,7 +378,7 @@ async fn grant_role(client: &reqwest::Client, base: &str, account_id: &str, did:
 #[tokio::test]
 async fn owner_revokes_a_member_and_unseats_them() {
     let did = "did:plc:e2erevoker";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -417,25 +400,19 @@ async fn owner_revokes_a_member_and_unseats_them() {
     );
 
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let member = user_repo
+    let member = backend
         .provision(&Did::new(member_did.to_string()))
         .await
         .expect("provision the member");
-    let role = account_repo
-        .role_of(member.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(member.id, account).await.expect("role_of");
     assert_eq!(role, None, "the revoked member holds no role");
 
     // The Owner is unaffected by revoking someone else.
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision the owner");
-    let owner_role = account_repo
-        .role_of(owner.id, account)
-        .await
-        .expect("role_of");
+    let owner_role = backend.role_of(owner.id, account).await.expect("role_of");
     assert_eq!(
         owner_role,
         Some(Role::Owner(None)),
@@ -457,7 +434,7 @@ async fn owner_revokes_a_member_and_unseats_them() {
 #[tokio::test]
 async fn the_owner_cannot_be_revoked() {
     let did = "did:plc:e2eownersafe";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -471,15 +448,12 @@ async fn the_owner_cannot_be_revoked() {
         .expect("DELETE /accounts/{id}/members");
     assert_eq!(res.status(), 403, "an Owner cannot be revoked here");
 
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision the owner");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let role = account_repo
-        .role_of(owner.id, account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(owner.id, account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner(None)), "the Owner keeps their role");
 }
 
@@ -488,7 +462,7 @@ async fn the_owner_cannot_be_revoked() {
 #[tokio::test]
 async fn revoking_a_non_member_is_not_found() {
     let did = "did:plc:e2erevnonmember";
-    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let (base, _backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -506,7 +480,7 @@ async fn revoking_a_non_member_is_not_found() {
 #[tokio::test]
 async fn revoking_on_a_missing_account_is_not_found() {
     let did = "did:plc:e2erevnoacct";
-    let (base, _user_repo, _account_repo) = spawn_app(did).await;
+    let (base, _backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -523,7 +497,7 @@ async fn revoking_on_a_missing_account_is_not_found() {
 // An anonymous visitor cannot revoke — turned away at 401 before any lookup.
 #[tokio::test]
 async fn anonymous_visitor_cannot_revoke_a_role() {
-    let (base, _user_repo, _account_repo) = spawn_app("did:plc:nobody").await;
+    let (base, _backend) = spawn_app("did:plc:nobody").await;
 
     let res = client()
         .delete(format!("{base}/accounts/{}/members", Uuid::now_v7()))

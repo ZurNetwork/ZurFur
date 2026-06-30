@@ -3,20 +3,15 @@
 //! account e2e suites: no network, no database.
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAccountRepo, MemAuthenticator, MemDidMinter, MemProfileCache, MemProfileSource, MemUserRepo,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
-use domain::{
-    elements::{
-        account::{Account, AccountId, AccountName},
-        did::Did,
-        invitation::{Invitation, InvitationState},
-        profile::Profile,
-        role::Role,
-        user::UserId,
-    },
-    ports::{AccountRepo, UserRepo},
+use domain::elements::{
+    account::{Account, AccountId, AccountName},
+    did::Did,
+    invitation::{Invitation, InvitationState},
+    profile::Profile,
+    role::Role,
+    user::UserId,
 };
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -26,14 +21,13 @@ mod common;
 
 /// Boots the app with everything faked in-process, returning the base URL plus
 /// typed handles to the repos so a test can introspect them after the flow.
-async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>) {
+async fn spawn_app(did: &str) -> (String, MemBackend) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let user_repo = Arc::new(MemUserRepo::new());
-    let account_repo = Arc::new(MemAccountRepo::new());
+    let backend = MemBackend::new();
     let state = AppState {
         config: Config {
             env: Environment::DEV,
@@ -44,22 +38,23 @@ async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>)
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: user_repo.clone(),
+        users: backend.user_store(),
         profile_source: Arc::new(MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "owner.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(MemProfileCache::new()),
-        account_repo: account_repo.clone(),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
+        accounts: backend.account_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), user_repo, account_repo)
+    (format!("http://{addr}"), backend)
 }
 
 /// A cookie-keeping client that does not auto-follow redirects.
@@ -111,7 +106,7 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
 #[tokio::test]
 async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
     let did = "did:plc:e2einviter";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -137,16 +132,16 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
     );
 
     // A pending invitation is recorded for the invitee, naming the Owner as inviter.
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision the owner");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let pending = account_repo
+    let pending = backend
         .find_pending_invitation(account, invitee.id)
         .await
         .expect("find_pending_invitation")
@@ -163,7 +158,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
 #[tokio::test]
 async fn inviting_at_owner_is_refused() {
     let did = "did:plc:e2einvowner";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -177,13 +172,13 @@ async fn inviting_at_owner_is_refused() {
         .expect("POST /accounts/{id}/invitations");
     assert_eq!(res.status(), 403, "Owner cannot be offered by invitation");
 
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
     assert!(
-        account_repo
+        backend
             .find_pending_invitation(account, invitee.id)
             .await
             .expect("find_pending_invitation")
@@ -197,7 +192,7 @@ async fn inviting_at_owner_is_refused() {
 #[tokio::test]
 async fn re_inviting_a_pending_user_is_idempotent() {
     let did = "did:plc:e2ereinviter";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -231,12 +226,12 @@ async fn re_inviting_a_pending_user_is_idempotent() {
     );
 
     // Still exactly one pending offer, and it's the original (no second row).
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
-    let pending = account_repo
+    let pending = backend
         .find_pending_invitation(account, invitee.id)
         .await
         .expect("find_pending_invitation")
@@ -253,7 +248,7 @@ async fn re_inviting_a_pending_user_is_idempotent() {
 #[tokio::test]
 async fn issuer_revokes_a_pending_invitation() {
     let did = "did:plc:e2erevoker";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -282,13 +277,13 @@ async fn issuer_revokes_a_pending_invitation() {
     );
 
     // The offer is no longer live, and reads back revoked — it can never be accepted.
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
     assert!(
-        account_repo
+        backend
             .find_pending_invitation(account, invitee.id)
             .await
             .expect("find_pending_invitation")
@@ -302,7 +297,7 @@ async fn issuer_revokes_a_pending_invitation() {
 #[tokio::test]
 async fn inviting_an_existing_member_is_a_conflict() {
     let did = "did:plc:e2ememberinviter";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     let client = client();
     sign_in(&client, &base).await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
@@ -329,13 +324,13 @@ async fn inviting_an_existing_member_is_a_conflict() {
         .expect("POST /accounts/{id}/invitations");
     common::assert_problem(res, 409, "already_member").await;
 
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
     let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
     assert!(
-        account_repo
+        backend
             .find_pending_invitation(account, invitee.id)
             .await
             .expect("find_pending_invitation")
@@ -347,7 +342,7 @@ async fn inviting_an_existing_member_is_a_conflict() {
 // An anonymous visitor cannot invite — turned away at 401 before any lookup.
 #[tokio::test]
 async fn anonymous_visitor_cannot_invite() {
-    let (base, _user_repo, _account_repo) = spawn_app("did:plc:nobody").await;
+    let (base, _backend) = spawn_app("did:plc:nobody").await;
 
     let res = client()
         .post(format!("{base}/accounts/{}/invitations", Uuid::now_v7()))
@@ -363,15 +358,14 @@ async fn anonymous_visitor_cannot_invite() {
 /// run with the *invitee* as the session user, so the issuing — which needs the
 /// owner's session — is set up out-of-band here. Returns (account, invitee, owner).
 async fn seed_pending_invite(
-    user_repo: &MemUserRepo,
-    account_repo: &MemAccountRepo,
+    backend: &MemBackend,
     invitee_did: &str,
 ) -> (AccountId, UserId, UserId) {
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new("did:plc:seedowner".to_string()))
         .await
         .expect("provision owner");
-    let invitee = user_repo
+    let invitee = backend
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision invitee");
@@ -381,7 +375,7 @@ async fn seed_pending_invite(
         AccountName::try_new("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
-    account_repo
+    backend
         .create(&account, &owner_membership)
         .await
         .expect("found the account");
@@ -392,7 +386,7 @@ async fn seed_pending_invite(
         owner.id,
         chrono::Utc::now(),
     );
-    account_repo
+    backend
         .create_invitation(&invitation)
         .await
         .expect("issue the pending invitation");
@@ -404,9 +398,8 @@ async fn seed_pending_invite(
 #[tokio::test]
 async fn invitee_declines_a_pending_invitation() {
     let invitee_did = "did:plc:e2edecliner";
-    let (base, user_repo, account_repo) = spawn_app(invitee_did).await;
-    let (account_id, invitee_id, _owner) =
-        seed_pending_invite(&user_repo, &account_repo, invitee_did).await;
+    let (base, backend) = spawn_app(invitee_did).await;
+    let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let client = client();
     sign_in(&client, &base).await;
@@ -425,7 +418,7 @@ async fn invitee_declines_a_pending_invitation() {
     );
 
     assert!(
-        account_repo
+        backend
             .find_pending_invitation(account_id, invitee_id)
             .await
             .expect("find_pending_invitation")
@@ -433,7 +426,7 @@ async fn invitee_declines_a_pending_invitation() {
         "a declined invitation is no longer a live pending offer"
     );
     assert!(
-        account_repo
+        backend
             .role_of(invitee_id, account_id)
             .await
             .expect("role_of")
@@ -447,9 +440,9 @@ async fn invitee_declines_a_pending_invitation() {
 #[tokio::test]
 async fn declining_with_no_pending_invitation_is_not_found() {
     let did = "did:plc:e2enopending";
-    let (base, user_repo, account_repo) = spawn_app(did).await;
+    let (base, backend) = spawn_app(did).await;
     // An account exists, but the signed-in user holds no invitation to it.
-    let owner = user_repo
+    let owner = backend
         .provision(&Did::new("did:plc:seedowner".to_string()))
         .await
         .expect("provision owner");
@@ -459,7 +452,7 @@ async fn declining_with_no_pending_invitation_is_not_found() {
         AccountName::try_new("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
-    account_repo
+    backend
         .create(&account, &owner_membership)
         .await
         .expect("found the account");
@@ -480,9 +473,8 @@ async fn declining_with_no_pending_invitation_is_not_found() {
 #[tokio::test]
 async fn invitee_accepts_and_becomes_a_member() {
     let invitee_did = "did:plc:e2eaccepter";
-    let (base, user_repo, account_repo) = spawn_app(invitee_did).await;
-    let (account_id, invitee_id, _owner) =
-        seed_pending_invite(&user_repo, &account_repo, invitee_did).await;
+    let (base, backend) = spawn_app(invitee_did).await;
+    let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let client = client();
     sign_in(&client, &base).await;
@@ -498,7 +490,7 @@ async fn invitee_accepts_and_becomes_a_member() {
     assert_eq!(res.status(), 200, "the invitee accepts and joins");
 
     // The invitee is now a member at the offered role.
-    let role = account_repo
+    let role = backend
         .role_of(invitee_id, account_id)
         .await
         .expect("role_of");

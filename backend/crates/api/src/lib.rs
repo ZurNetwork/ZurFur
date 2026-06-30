@@ -24,7 +24,9 @@ use std::sync::Arc;
 
 use adapter_pg::PgPool;
 use axum::{Router, middleware};
-use domain::ports::{AccountRepo, Authenticator, DidMinter, ProfileCache, ProfileSource, UserRepo};
+use domain::ports::{
+    AccountStore, Authenticator, Database, DidMinter, ProfileCache, ProfileSource, UserStore,
+};
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
@@ -164,24 +166,37 @@ pub struct AppState {
     /// live adapter (atproto's `AtprotoAuthenticator` in `main`, a fake PDS in
     /// e2e tests). Used by the `signin` and `signin_callback` handlers.
     pub auth: Arc<dyn Authenticator>,
-    /// The [`UserRepo`] port: Zurfur's record of recognized visitors, keyed by
-    /// DID. `provision` mints-or-returns one User per DID (idempotent); `find`
-    /// resolves a session's id. pg in `main`, mem in tests.
-    pub user_repo: Arc<dyn UserRepo>,
+    /// The [`UserStore`] read port: resolves a recognized visitor by id
+    /// (`find`, the session-resolution path) or DID (`find_by_did`), off the pool.
+    /// *Recognition* (`provision`) is a write and lives on the
+    /// [`UnitOfWork`](domain::ports::UnitOfWork) vended by [`database`](AppState::database).
+    /// pg in `main`, mem in tests.
+    pub users: Arc<dyn UserStore>,
     /// The [`ProfileSource`] port: reads public profiles from the PDS. atproto
     /// in `main`, a fake in tests. A failure here degrades the `me` page to the
     /// DID rather than erroring.
     pub profile_source: Arc<dyn ProfileSource>,
     /// The [`ProfileCache`] port: private read-through cache fronting
-    /// [`profile_source`](AppState::profile_source). pg in `main` (entries
-    /// expire after an hour, set in `main`), mem in tests. See
-    /// `resolve_profile`.
+    /// [`profile_source`](AppState::profile_source). Both `get` and the best-effort
+    /// `put` are pool-backed — the cache fill is a documented exception to the Unit
+    /// of Work (a read-path write with no transactional invariant; DD `24150017`).
+    /// pg in `main` (entries expire after an hour, set in `main`), mem in tests.
+    /// See `resolve_profile`.
     pub profile_cache: Arc<dyn ProfileCache>,
-    /// The [`AccountRepo`] port: Zurfur's record of accounts and their
-    /// memberships. `create` persists an account and its founder's Owner
-    /// membership in one transaction (ZMVP-14); `role_of`/`grant_role`/
-    /// `revoke_role` back the membership API. pg in `main`, mem in tests.
-    pub account_repo: Arc<dyn AccountRepo>,
+    /// The [`AccountStore`] read port: account/membership/invitation reads
+    /// (`find`, `role_of`, `find_pending_invitation`, `find_invitation`) off the
+    /// pool. Every account *write* lives on the [`UnitOfWork`](domain::ports::UnitOfWork)
+    /// vended by [`database`](AppState::database). pg in `main`, mem in tests.
+    pub accounts: Arc<dyn AccountStore>,
+    /// The [`Database`] write factory: the **only** way to reach a private-store
+    /// domain write. A handler calls `begin()`, issues its writes through the
+    /// returned [`UnitOfWork`](domain::ports::UnitOfWork)'s view accessors
+    /// (`uow.accounts().create(...)`, `uow.users().provision(...)`), then
+    /// `commit()`s once (drop = rollback). Such writes cannot skip a transaction by
+    /// construction (DD `24150017`). The profile cache is a documented exception —
+    /// its best-effort fill is pool-backed (see [`profile_cache`](AppState::profile_cache)).
+    /// pg in `main`, mem in tests.
+    pub database: Arc<dyn Database>,
     /// The [`DidMinter`] port: mints a sovereign `did:plc` for a newly founded
     /// account. The live adapter is the floor stub (`StubDidMinter`); the real
     /// PLC-directory write lands later as an adapter swap, invisible to the

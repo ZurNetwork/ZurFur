@@ -1,12 +1,12 @@
 //! The exit door (ZMVP-11). Drives the real HTTP stack with every external
 //! dependency faked in-process — the PDS (`MemAuthenticator`), the user store
-//! (`MemUserRepo`), and the session store (`MemoryStore`) — so the test is about
+//! (`MemBackend`), and the session store (`MemoryStore`) — so the test is about
 //! the sign-out route, not the storage tech (`PgSessionStore` is exercised in
 //! adapter-pg's own tests). Asserts both criteria: a signed-out visitor carries no
 //! session on the next request, and a second sign-out from a stale tab is harmless.
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemUserRepo};
+use adapter_mem::{MemAuthenticator, MemBackend};
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
@@ -21,8 +21,10 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
+    let backend = MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
+        database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -35,14 +37,14 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
         // pool keeps the test free of a container.
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: Arc::new(MemUserRepo::new()),
+        users: backend.user_store(),
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "logoutalice.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {

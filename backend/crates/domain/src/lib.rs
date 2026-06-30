@@ -11,7 +11,7 @@
 //!   and [`elements::user::User`], their ids and value objects, plus stubs for
 //!   namespaces (Character, Golem, Commission, …) not yet built out.
 //! - [`ports`] — traits named by the role they play *for* the domain (a
-//!   `UserRepo`, an `Authenticator`), implemented by the adapter crates. These
+//!   `UserStore`, an `Authenticator`), implemented by the adapter crates. These
 //!   are the seams the domain reaches the outside world through.
 //! - [`datetime`] — the single clock type the domain speaks in.
 //!

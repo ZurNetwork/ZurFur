@@ -30,14 +30,9 @@
 //! network, no database.
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAccountRepo, MemAuthenticator, MemDidMinter, MemProfileCache, MemProfileSource, MemUserRepo,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
-use domain::{
-    elements::{did::Did, profile::Profile},
-    ports::UserRepo,
-};
+use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
@@ -55,14 +50,13 @@ const BOB_HANDLE: &str = "bob.bsky.social";
 /// Boots the app with everything faked in-process, signing-in resolves to
 /// [`ALICE_DID`]. Returns the base URL plus the user repo so a test can seat a
 /// second persona directly. Mirrors `accounts.rs::spawn_app`.
-async fn spawn_app() -> (String, Arc<MemUserRepo>) {
+async fn spawn_app() -> (String, MemBackend) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let user_repo = Arc::new(MemUserRepo::new());
-    let account_repo = Arc::new(MemAccountRepo::new());
+    let backend = MemBackend::new();
     let state = AppState {
         config: Config {
             env: Environment::DEV,
@@ -75,22 +69,23 @@ async fn spawn_app() -> (String, Arc<MemUserRepo>) {
         // free of a container.
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(ALICE_DID.to_string()))),
-        user_repo: user_repo.clone(),
+        users: backend.user_store(),
         profile_source: Arc::new(MemProfileSource::new(Profile {
             did: Did::new(ALICE_DID.to_string()),
             handle: ALICE_HANDLE.to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(MemProfileCache::new()),
-        account_repo,
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
+        accounts: backend.account_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), user_repo)
+    (format!("http://{addr}"), backend)
 }
 
 /// A cookie-keeping client that does not auto-follow redirects, so each hop is
@@ -130,7 +125,7 @@ async fn sign_in_as_alice(client: &reqwest::Client, base: &str) {
 /// Users, this fails.
 #[tokio::test]
 async fn the_identity_surface_never_names_a_callers_other_persona() {
-    let (base, user_repo) = spawn_app().await;
+    let (base, backend) = spawn_app().await;
     let client = client();
     sign_in_as_alice(&client, &base).await;
 
@@ -163,7 +158,7 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
 
     // B is now a real, separate User sharing private state with A.
     assert!(
-        user_repo
+        backend
             .find_by_did(&Did::new(BOB_DID.to_string()))
             .await
             .expect("find_by_did")
@@ -196,7 +191,7 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
 /// platform never starts from an enumerable identity read.
 #[tokio::test]
 async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
-    let (base, _user_repo) = spawn_app().await;
+    let (base, _backend) = spawn_app().await;
     let res = client()
         .get(format!("{base}/me"))
         .send()
@@ -216,7 +211,7 @@ async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
 /// reconsidered, not silently regressed.
 #[tokio::test]
 async fn there_is_no_global_user_enumeration_endpoint() {
-    let (base, _user_repo) = spawn_app().await;
+    let (base, _backend) = spawn_app().await;
     let c = client();
     for path in ["/users", "/accounts", "/profiles", "/members"] {
         let res = c

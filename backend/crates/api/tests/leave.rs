@@ -6,20 +6,15 @@
 //! `parent`). Same in-process fakes as the other account e2e tests.
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAccountRepo, MemAuthenticator, MemDidMinter, MemProfileCache, MemProfileSource, MemUserRepo,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
 use chrono::Utc;
-use domain::{
-    elements::{
-        account::{Account, AccountName},
-        did::Did,
-        profile::Profile,
-        role::Role,
-        user_account::UserAccount,
-    },
-    ports::{AccountRepo, UserRepo},
+use domain::elements::{
+    account::{Account, AccountName},
+    did::Did,
+    profile::Profile,
+    role::Role,
+    user_account::UserAccount,
 };
 use reqwest::redirect::Policy;
 use serde_json::{Value, json};
@@ -30,14 +25,13 @@ mod common;
 
 /// Boots the app with everything faked in-process; returns the base URL plus the
 /// repo handles so a test can seed and introspect membership directly.
-async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>) {
+async fn spawn_app(did: &str) -> (String, MemBackend) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let user_repo = Arc::new(MemUserRepo::new());
-    let account_repo = Arc::new(MemAccountRepo::new());
+    let backend = MemBackend::new();
     let state = AppState {
         config: Config {
             env: Environment::DEV,
@@ -48,22 +42,23 @@ async fn spawn_app(did: &str) -> (String, Arc<MemUserRepo>, Arc<MemAccountRepo>)
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: user_repo.clone(),
+        users: backend.user_store(),
         profile_source: Arc::new(MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "owner.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(MemProfileCache::new()),
-        account_repo: account_repo.clone(),
+        profile_cache: backend.profile_cache(),
+        database: backend.database(),
+        accounts: backend.account_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), user_repo, account_repo)
+    (format!("http://{addr}"), backend)
 }
 
 /// A cookie-keeping client that does not auto-follow redirects.
@@ -96,7 +91,7 @@ async fn sign_in(client: &reqwest::Client, base: &str) {
 
 #[tokio::test]
 async fn the_owner_cannot_leave_their_own_account() {
-    let (base, _users, _accounts) = spawn_app("did:plc:leaveowner").await;
+    let (base, _backend) = spawn_app("did:plc:leaveowner").await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -121,7 +116,7 @@ async fn the_owner_cannot_leave_their_own_account() {
 
 #[tokio::test]
 async fn leaving_an_account_you_are_not_a_member_of_is_404() {
-    let (base, _users, _accounts) = spawn_app("did:plc:leavestranger").await;
+    let (base, _backend) = spawn_app("did:plc:leavestranger").await;
     let client = client();
     sign_in(&client, &base).await;
 
@@ -135,18 +130,18 @@ async fn leaving_an_account_you_are_not_a_member_of_is_404() {
 
 #[tokio::test]
 async fn a_member_leaves_and_is_no_longer_a_member() {
-    let (base, users, accounts) = spawn_app("did:plc:leaver").await;
+    let (base, backend) = spawn_app("did:plc:leaver").await;
     let client = client();
     sign_in(&client, &base).await;
 
     // The signed-in user is provisioned by sign-in; seat them as a *Member* of an
     // account someone else owns, so leaving isn't blocked by the Owner rule.
-    let me = users
+    let me = backend
         .find_by_did(&Did::new("did:plc:leaver".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
-    let host = users
+    let host = backend
         .provision(&Did::new("did:plc:host".to_string()))
         .await
         .expect("provision host");
@@ -156,11 +151,11 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         AccountName::try_new("Host Studio").unwrap(),
         Utc::now(),
     );
-    accounts
+    backend
         .create(&account, &owner_membership)
         .await
         .expect("found host account");
-    accounts
+    backend
         .grant_role(&UserAccount {
             user_id: me.id,
             account_id: account.id,
@@ -180,6 +175,6 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         "a member leaves on their own action, no approval"
     );
 
-    let role = accounts.role_of(me.id, account.id).await.expect("role_of");
+    let role = backend.role_of(me.id, account.id).await.expect("role_of");
     assert_eq!(role, None, "after leaving, the user holds no role");
 }

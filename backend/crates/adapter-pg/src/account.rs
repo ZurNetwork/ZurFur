@@ -1,5 +1,8 @@
-//! [`AccountRepo`] over PostgreSQL: accounts and their memberships in the
-//! `accounts` / `account_members` tables. See ZMVP-14 and DESIGN/Account.
+//! [`AccountStore`] (reads) and [`AccountWrites`] (writes) over PostgreSQL:
+//! accounts and their memberships in the `accounts` / `account_members` tables.
+//! Reads are pool-backed; writes are reachable only on an open [`UnitOfWork`]
+//! (`uow.accounts()`), so no account write can skip a transaction. See ZMVP-14,
+//! DESIGN/Account, and DD `24150017` (compile-enforced Unit of Work).
 
 use chrono::Utc;
 use domain::{
@@ -11,29 +14,41 @@ use domain::{
         user::UserId,
         user_account::UserAccount,
     },
-    ports::AccountRepo,
+    ports::{AccountStore, AccountWrites},
 };
 use sqlx::{PgConnection, PgPool, query};
 
-/// PostgreSQL implementation of [`AccountRepo`] — accounts and their memberships
-/// across the `accounts` and `account_members` tables. Soft deletes are honored
-/// on read ([`find`](PgAccountRepo::find) filters `deleted_at IS NULL`); the
-/// role-hierarchy tree (`parent`) is left for a later ticket. See ZMVP-14 and
-/// DESIGN/Account.
-pub struct PgAccountRepo {
+/// PostgreSQL read store for accounts and memberships (the [`AccountStore`] read
+/// surface). Soft deletes are honored on read ([`find`](PgAccountStore::find)
+/// filters `deleted_at IS NULL`). Holds the pool directly — reads pay no
+/// transaction tax. The writes live on [`PgAccountWrites`], reached through the
+/// [`UnitOfWork`](domain::ports::UnitOfWork). See ZMVP-14 and DESIGN/Account.
+pub struct PgAccountStore {
     pool: PgPool,
 }
 
-impl PgAccountRepo {
-    /// Wraps a [`PgPool`] as an [`AccountRepo`]. Clones the pool handle (cheap —
+impl PgAccountStore {
+    /// Wraps a [`PgPool`] as an [`AccountStore`]. Clones the pool handle (cheap —
     /// it's an `Arc`), so the caller keeps its own.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
+/// PostgreSQL write view over an open transaction (the [`AccountWrites`] surface).
+/// Holds **only** a borrowed `&mut PgConnection` — the transaction owned by the
+/// [`PgUnitOfWork`](crate::PgUnitOfWork) — so no pool is in scope here and a
+/// bare-pool write is unrepresentable. Built by `uow.accounts()`; its borrow ties
+/// it to the shared transaction, so writes issued through it commit (or roll back)
+/// together with the rest of the unit. See DD `24150017`.
+pub struct PgAccountWrites<'a> {
+    /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
+    /// Every write executes on `&mut *self.conn`; there is deliberately no pool here.
+    pub(crate) conn: &'a mut PgConnection,
+}
+
 /// Settle a member's departure from `account` on an open transaction — shared by
-/// [`leave`](AccountRepo::leave) and [`revoke_role`](AccountRepo::revoke_role),
+/// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role),
 /// which both remove a member with identical store effects and differ only in the
 /// caller's preconditions. Re-homes the member's children to their parent
 /// (DESIGN/Roles rule 3, scoped to this account), deletes the membership, and
@@ -96,44 +111,7 @@ async fn settle_member_departure(
 }
 
 #[async_trait::async_trait]
-impl AccountRepo for PgAccountRepo {
-    /// Writes the `accounts` row and the founder's `account_members` row inside a
-    /// single transaction, so a half-founded account can never be observed. Both
-    /// rows live in the private store, so this is one unit of work — never a
-    /// cross-store dual write. A duplicate `id` or `did` surfaces as the unique
-    /// constraint's error.
-    async fn create(&self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
-        let mut tx = self.pool.begin().await?;
-        query!(
-            r#"
-        INSERT INTO accounts (id, did, name, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
-        "#,
-            *account.id,
-            account.did.as_str(),
-            account.name.as_str(),
-            account.created_at,
-            account.updated_at
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        query!(
-            r#"
-        INSERT INTO account_members (account_id, user_id, role)
-        VALUES ($1, $2, $3)
-        "#,
-            *owner.account_id,
-            *owner.user_id,
-            owner.role.as_str()
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
+impl AccountStore for PgAccountStore {
     /// Filters `deleted_at IS NULL`, so a soft-deleted account reads as `None`
     /// — indistinguishable from one that never existed. The stored `name` is
     /// re-validated through [`AccountName`]; that only guards against row
@@ -190,84 +168,6 @@ impl AccountRepo for PgAccountRepo {
         .await?;
 
         Ok(row.map(|m| Role::try_from(m.role)).transpose()?)
-    }
-
-    /// `INSERT ... ON CONFLICT (account_id, user_id) DO UPDATE`: a new member is
-    /// seated, an existing one's role is replaced. `parent` defaults to `NULL`
-    /// (role hierarchy deferred), matching the founder row from
-    /// [`create`](PgAccountRepo::create).
-    async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
-        // Upsert: granting a role seats a new member or replaces an existing one's
-        // role (DESIGN/Roles — a grant is how a user joins). `parent` is left to
-        // its default NULL: the role-hierarchy tree is deferred ("dress when The
-        // Who closes"), same as the founder row written by `create`.
-        query!(
-            r#"
-        INSERT INTO account_members (account_id, user_id, role)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (account_id, user_id) DO UPDATE
-            SET role = EXCLUDED.role
-        "#,
-            *member.account_id,
-            *member.user_id,
-            member.role.as_str()
-        )
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// A `DELETE` that matches no row still succeeds, so revoking a non-member is
-    /// a harmless no-op (the handler decides whether absence is a 404).
-    async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        // A revoke is a member-departure event with the same store effects as
-        // `leave` (the caller settles authority first): re-home children to the
-        // member's parent (DESIGN/Roles rule 3), delete the membership, and revoke
-        // the member's pending issued invitations — atomically. Revoking a non-member
-        // is a harmless no-op.
-        let mut tx = self.pool.begin().await?;
-        settle_member_departure(&mut tx, user, account).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// Settle a member leaving the account in one transaction (ZMVP-21): re-home the
-    /// leaver's children to the leaver's parent, delete the membership, and revoke the
-    /// leaver's still-pending issued invitations. Preconditions (must be a member, can't
-    /// be the `Owner`) are the caller's; a membership that vanished under a concurrent
-    /// removal is a no-op. See the [`leave`](AccountRepo::leave) port doc.
-    async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        let mut tx = self.pool.begin().await?;
-        settle_member_departure(&mut tx, user, account).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
-    /// DO NOTHING`: the partial unique index (see the migration) enforces at most
-    /// one pending offer per (account, invited user), so a duplicate issue is
-    /// silently dropped rather than becoming a second row — the store-level backstop
-    /// for the idempotent re-invite the handler also guards by checking
-    /// [`find_pending_invitation`](PgAccountRepo::find_pending_invitation) first.
-    async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()> {
-        query!(r#"
-            INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
-            DO NOTHING
-        "#,
-            *invitation.id,
-            *invitation.account,
-            *invitation.invited_user,
-            invitation.role.as_str(),
-            *invitation.inviter,
-            invitation.state.as_str(),
-            invitation.created_at,
-            invitation.updated_at
-        )
-            .execute(&self.pool)
-        .await?;
-        Ok(())
     }
 
     /// Selects the lone `state = 'pending'` offer for `(account, invited_user)`, or
@@ -341,13 +241,121 @@ impl AccountRepo for PgAccountRepo {
             })
             .transpose()
     }
+}
+
+#[async_trait::async_trait]
+impl AccountWrites for PgAccountWrites<'_> {
+    /// Writes the `accounts` row and the founder's `account_members` row on the
+    /// open transaction, so a half-founded account can never be observed and both
+    /// rows commit with the rest of the unit. Both rows live in the private store,
+    /// so this is one unit of work — never a cross-store dual write. A duplicate
+    /// `id` or `did` surfaces as the unique constraint's error.
+    async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
+        query!(
+            r#"
+        INSERT INTO accounts (id, did, name, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+            *account.id,
+            account.did.as_str(),
+            account.name.as_str(),
+            account.created_at,
+            account.updated_at
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        query!(
+            r#"
+        INSERT INTO account_members (account_id, user_id, role)
+        VALUES ($1, $2, $3)
+        "#,
+            *owner.account_id,
+            *owner.user_id,
+            owner.role.as_str()
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        Ok(())
+    }
+
+    /// `INSERT ... ON CONFLICT (account_id, user_id) DO UPDATE`: a new member is
+    /// seated, an existing one's role is replaced. `parent` defaults to `NULL`
+    /// (role hierarchy deferred), matching the founder row from
+    /// [`create`](PgAccountWrites::create).
+    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
+        // Upsert: granting a role seats a new member or replaces an existing one's
+        // role (DESIGN/Roles — a grant is how a user joins). `parent` is left to
+        // its default NULL: the role-hierarchy tree is deferred ("dress when The
+        // Who closes"), same as the founder row written by `create`.
+        query!(
+            r#"
+        INSERT INTO account_members (account_id, user_id, role)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (account_id, user_id) DO UPDATE
+            SET role = EXCLUDED.role
+        "#,
+            *member.account_id,
+            *member.user_id,
+            member.role.as_str()
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// A revoke is a member-departure event with the same store effects as
+    /// [`leave`](AccountWrites::leave) (the caller settles authority first): re-home
+    /// children to the member's parent (DESIGN/Roles rule 3), delete the membership,
+    /// and revoke the member's pending issued invitations — atomically on the open
+    /// transaction. Revoking a non-member is a harmless no-op.
+    async fn revoke_role(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        settle_member_departure(self.conn, user, account).await
+    }
+
+    /// Settle a member leaving the account on the open transaction (ZMVP-21): re-home
+    /// the leaver's children to the leaver's parent, delete the membership, and revoke
+    /// the leaver's still-pending issued invitations. Preconditions (must be a member,
+    /// can't be the `Owner`) are the caller's; a membership that vanished under a
+    /// concurrent removal is a no-op. See the [`leave`](AccountWrites::leave) port doc.
+    async fn leave(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+        settle_member_departure(self.conn, user, account).await
+    }
+
+    /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
+    /// DO NOTHING`: the partial unique index (see the migration) enforces at most
+    /// one pending offer per (account, invited user), so a duplicate issue is
+    /// silently dropped rather than becoming a second row — the store-level backstop
+    /// for the idempotent re-invite the handler also guards by checking
+    /// [`find_pending_invitation`](AccountStore::find_pending_invitation) first.
+    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<()> {
+        query!(r#"
+            INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
+            DO NOTHING
+        "#,
+            *invitation.id,
+            *invitation.account,
+            *invitation.invited_user,
+            invitation.role.as_str(),
+            *invitation.inviter,
+            invitation.state.as_str(),
+            invitation.created_at,
+            invitation.updated_at
+        )
+            .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
 
     /// A guarded `UPDATE ... SET state = 'revoked' WHERE id = $1 AND state =
     /// 'pending'`: only a pending offer flips, and an `UPDATE` matching no row still
     /// succeeds — so revoking an absent or already-terminal invitation is a harmless
     /// no-op, not an error (the handler decides whether that's a 404/409). Mirrors
-    /// [`revoke_role`](PgAccountRepo::revoke_role)'s no-op-on-no-match shape.
-    async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()> {
+    /// [`revoke_role`](PgAccountWrites::revoke_role)'s no-op-on-no-match shape.
+    async fn revoke_invitation(&mut self, id: InvitationId) -> anyhow::Result<()> {
         let now = Utc::now();
         query!(
             r#"
@@ -360,29 +368,28 @@ impl AccountRepo for PgAccountRepo {
             *id,
             InvitationState::Pending.as_str(),
         )
-        .execute(&self.pool)
+        .execute(&mut *self.conn)
         .await?;
 
         Ok(())
     }
 
     /// Flips the pending invitation to Accepted and seats the invited User as a
-    /// member in ONE transaction, so the accepted state and the membership commit
-    /// together or not at all — the same unit of work as
-    /// [`create`](PgAccountRepo::create), never a cross-store dual write. The
+    /// member on the open transaction, so the accepted state and the membership
+    /// commit together or not at all — the same unit of work as
+    /// [`create`](PgAccountWrites::create), never a cross-store dual write. The
     /// `UPDATE` is guarded on `state = 'pending'`; if it matches no row the offer was
     /// already accepted or revoked (a lost race against the handler's in-memory
-    /// `Invitation::accept` guard), so the whole transaction rolls back and no
-    /// membership is minted — honoring "a revoked invitation yields no membership".
-    /// The new member's `parent` is the `inviter` (DESIGN/Roles rule 4a) and
-    /// `listed_on_profile` records the invitee's opt-in.
+    /// `Invitation::accept` guard), so this errors and the caller's transaction rolls
+    /// back with no membership minted — honoring "a revoked invitation yields no
+    /// membership". The new member's `parent` is the `inviter` (DESIGN/Roles rule 4a)
+    /// and `listed_on_profile` records the invitee's opt-in.
     async fn accept_invitation(
-        &self,
+        &mut self,
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
         let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
 
         let accepted = query!(
             r#"
@@ -395,13 +402,13 @@ impl AccountRepo for PgAccountRepo {
             *invitation.id,
             InvitationState::Pending.as_str(),
         )
-        .execute(&mut *tx)
+        .execute(&mut *self.conn)
         .await?;
 
         // The guarded UPDATE is the atomic backstop for the handler's in-memory
         // `Invitation::accept` check: matching no pending row means the offer was
-        // accepted or revoked in the meantime. Roll back (drop `tx`) rather than seat
-        // a member from a spent invitation.
+        // accepted or revoked in the meantime. Erroring rolls back the caller's
+        // transaction rather than seating a member from a spent invitation.
         if accepted.rows_affected() == 0 {
             return Err(anyhow::anyhow!(
                 "invitation {} is no longer pending; no membership minted",
@@ -421,10 +428,8 @@ impl AccountRepo for PgAccountRepo {
             invitation.role.as_str(),
             listed_on_profile
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *self.conn)
         .await?;
-
-        tx.commit().await?;
 
         Ok(UserAccount {
             account_id: AccountId::new(new_member.account_id),

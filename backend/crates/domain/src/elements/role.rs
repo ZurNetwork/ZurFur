@@ -27,7 +27,7 @@ pub type RoleAlias = Option<String>;
 /// the note on [`can_grant`](Role::can_grant)).
 ///
 /// References: [`UnknownRole`], [`crate::elements::user_account::UserAccount`],
-/// [`crate::ports::AccountRepo::grant_role`], DESIGN/Roles.
+/// [`crate::ports::AccountWrites::grant_role`], DESIGN/Roles.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     /// The account's founder/highest authority; never has a parent (DESIGN/Roles).
