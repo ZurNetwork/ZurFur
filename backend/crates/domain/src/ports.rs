@@ -1,6 +1,6 @@
 //! Ports: traits named by the role they play for the domain, implemented by the
 //! adapter crates (`adapter-pg`, `adapter-mem`). This is the first one; as the
-//! `domain` crate splits into per-domain crates, `UserRepo` moves with the
+//! `domain` crate splits into per-domain crates, `UserStore`/`UserWrites` move with the
 //! `User` entity into the `identity` namespace.
 
 use async_trait::async_trait;
@@ -15,23 +15,77 @@ use crate::elements::{
     user_account::UserAccount,
 };
 
-/// Zurfur's record of recognized visitors. Identity precedes us, so this port
-/// *recognizes* rather than registers (see ZMVP-9, DESIGN/User).
+/// The factory for a private-store [`UnitOfWork`] — the **only** way to reach a
+/// write. It holds the connection pool and serves *reads* (via the per-aggregate
+/// read stores), but the *write* methods live solely on the [`UnitOfWork`] handle
+/// it vends, so a private-store write is unrepresentable without first opening a
+/// transaction. This is "transactions as a capability" by construction: no bare
+/// pool (an `Executor` that can issue any statement) is ever in scope at a write
+/// site (DD "Transactions as a capability — a compile-enforced Unit of Work in
+/// the private store", `24150017`).
+///
+/// Aggregate-neutral on purpose: `begin()` is **not** a method on any aggregate's
+/// repo, because two per-aggregate transactions could not be made atomic
+/// together. One `begin()` opens one transaction; the handler threads N writes
+/// across aggregates through its view accessors and `commit()`s once.
 #[async_trait]
-pub trait UserRepo: Send + Sync {
+pub trait Database: Send + Sync {
+    /// Begin one private-store transaction; the returned handle owns it. The
+    /// handler issues its writes through the handle's view accessors and then
+    /// [`UnitOfWork::commit`]s exactly once; **forgetting to commit rolls back**
+    /// (drop = rollback). This is strictly intra-Postgres — never a cross-store
+    /// dual write (a PDS publish stays a separate retryable step).
+    async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>>;
+}
+
+/// One open private-store transaction, owned by the handler. Aggregate writes are
+/// reached as **views over this shared transaction** through the accessor methods
+/// (`uow.accounts().create(...)`); every view borrows the one transaction, so all
+/// writes in the unit land together on [`commit`](UnitOfWork::commit) or not at
+/// all. The handle holds only the transaction — no pool — so nothing on this path
+/// can skip the transaction.
+#[async_trait]
+pub trait UnitOfWork: Send {
+    /// A view of the [`Account`] write surface over **this** transaction. The
+    /// returned box borrows the handle, tying the view to the shared tx; drop it
+    /// (end of statement) before calling another accessor or [`commit`](UnitOfWork::commit).
+    fn accounts(&mut self) -> Box<dyn AccountWrites + '_>;
+
+    /// A view of the [`User`] write surface (recognition) over this transaction.
+    fn users(&mut self) -> Box<dyn UserWrites + '_>;
+
+    /// Commit the unit, consuming the handle. Every write issued through the view
+    /// accessors lands atomically. Not calling this — dropping the handle — rolls
+    /// the whole unit back.
+    async fn commit(self: Box<Self>) -> anyhow::Result<()>;
+}
+
+/// The write surface of Zurfur's record of recognized visitors — reachable only
+/// on an open [`UnitOfWork`]. Recognition is a private-store write, so it cannot
+/// skip a transaction (see [`Database`]).
+#[async_trait]
+pub trait UserWrites: Send {
     /// Recognize a DID. The first call mints a User; every later call with the
     /// same DID returns that same User. One DID, one User, forever — idempotent,
     /// so callers needn't check existence first. (Criteria 1 & 2.)
-    async fn provision(&self, did: &Did) -> anyhow::Result<User>;
+    async fn provision(&mut self, did: &Did) -> anyhow::Result<User>;
+}
 
+/// The read surface of Zurfur's record of recognized visitors. Identity precedes
+/// us, so this port *recognizes* rather than registers (see ZMVP-9, DESIGN/User).
+/// Reads are pool-backed and non-transactional — they pay no transaction tax;
+/// recognition (the write) lives on [`UserWrites`].
+#[async_trait]
+pub trait UserStore: Send + Sync {
     /// Resolve a session's stored UserId back to its User, without touching the
     /// PDS. Returns None if no such User exists. (Criterion 3.)
     async fn find(&self, id: UserId) -> anyhow::Result<Option<User>>;
 
     /// Resolve a DID to its User *without minting one* — the read-only counterpart
-    /// to `provision`. Returns None if no User has ever been recognized for that
-    /// DID. Lets a caller act on an existing member by their public id (e.g. revoke
-    /// a role) without the side effect of recognizing a brand-new visitor.
+    /// to [`UserWrites::provision`]. Returns None if no User has ever been
+    /// recognized for that DID. Lets a caller act on an existing member by their
+    /// public id (e.g. revoke a role) without the side effect of recognizing a
+    /// brand-new visitor.
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>>;
 }
 
@@ -69,8 +123,15 @@ pub trait ProfileSource: Send + Sync {
 }
 
 /// A private-side read-through cache of public profiles, so repeat views don't
-/// need the PDS awake (ZMVP-10 criterion 2). Freshness/TTL policy lives in the
-/// implementation; a caller treats a miss — absent or stale — as `None`.
+/// need the PDS awake (ZMVP-10 criterion 2). Both the read (`get`) and the
+/// best-effort cache fill (`put`) are pool-backed and `&self`. The cache is a
+/// **documented exception** to the compile-enforced Unit of Work (DD `24150017`):
+/// a read-through cache fill carries no transactional invariant — it is a
+/// single-statement, idempotent upsert issued on the GET read path and swallowed
+/// on failure — so it does not belong on the write-only [`UnitOfWork`] handle, the
+/// same reasoning that exempts `session_store` and `auth_store`. Freshness/TTL
+/// policy lives in the implementation; a caller treats a miss — absent or stale —
+/// as `None`.
 #[async_trait]
 pub trait ProfileCache: Send + Sync {
     /// Return the cached profile for a DID, or `None` on a miss — which the
@@ -78,23 +139,20 @@ pub trait ProfileCache: Send + Sync {
     /// `Result` is for store errors (e.g. the cache backend is down), not misses.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>>;
 
-    /// Store (or refresh) a profile after a [`ProfileSource::fetch`], keyed by
-    /// its DID. Idempotent: writing the same profile twice just refreshes the
-    /// entry.
+    /// Store (or refresh) a profile after a [`ProfileSource::fetch`], keyed by its
+    /// DID. Idempotent: writing the same profile twice just refreshes the entry. A
+    /// best-effort cache fill on the read path — not a domain write — so it is
+    /// pool-backed and exempt from the Unit of Work (see the trait note).
     async fn put(&self, profile: &Profile) -> anyhow::Result<()>;
 }
 
-/// Zurfur's record of accounts and who owns them — an app-private store (see
-/// DESIGN/"Domains and Applications"). An account and its founder's Owner
-/// membership are minted together; persisting them is a single private-side
-/// transaction, never a cross-store dual write (ZMVP-14, DESIGN/Account).
+/// The **read** surface of Zurfur's record of accounts and who owns them — an
+/// app-private store (see DESIGN/"Domains and Applications"). Reads are
+/// pool-backed and non-transactional (no transaction tax); every *write* lives on
+/// [`AccountWrites`], reachable only on an open [`UnitOfWork`] (ZMVP-14,
+/// DESIGN/Account; DD `24150017`).
 #[async_trait]
-pub trait AccountRepo: Send + Sync {
-    /// Persist a freshly founded account together with its Owner membership,
-    /// atomically. Both rows live in the private store, so this is one unit of
-    /// work. (ZMVP-14: "the creating User becomes Owner.")
-    async fn create(&self, account: &Account, owner: &UserAccount) -> anyhow::Result<()>;
-
+pub trait AccountStore: Send + Sync {
     /// Resolve an AccountId back to its Account, or None if no such account
     /// exists (or it has been soft-deleted).
     async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>>;
@@ -102,51 +160,6 @@ pub trait AccountRepo: Send + Sync {
     /// The role a user holds in an account, or None if they are not a member.
     /// Lets callers verify membership/authority without loading every member.
     async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>>;
-
-    /// Set the role a user holds in an account, seating them if they aren't yet a
-    /// member. On this platform granting a role *is* how a user joins an account
-    /// (DESIGN/Roles), so this is an upsert: a brand-new member is inserted, an
-    /// existing one's role is replaced. Idempotent — re-granting the held role is
-    /// a no-op write. Authorization (who may grant what) is decided by the caller
-    /// before this is reached; the store only persists the settled grant. Both
-    /// rows live in the private store, so this is one private-side write, never a
-    /// cross-store dual write (ZMVP-15, DESIGN/Roles).
-    async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()>;
-
-    /// Remove a user's membership in an account — an `Owner`/`Admin` removing someone
-    /// (ZMVP-16). A member-departure event with the **same store effects as**
-    /// [`leave`](AccountRepo::leave): in one transaction it re-homes the member's
-    /// children to their parent (DESIGN/Roles rule 3), deletes the membership, and
-    /// revokes the member's still-pending *issued* invitations (ZMVP-40 — so none can
-    /// later seat a member under a non-member). Idempotent: removing a non-member is a
-    /// no-op. Authorization (who may revoke whom) is the caller's concern, settled
-    /// before this is reached. A private-side write, never a cross-store dual write.
-    async fn revoke_role(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
-
-    /// A member **leaves** their own account on their own action (ZMVP-21). Unlike
-    /// [`revoke_role`](AccountRepo::revoke_role) — which an `Owner`/`Admin` invokes on
-    /// *someone else*, an authority action gated by rank — `leave` is **self-initiated**:
-    /// it is the consent-symmetric counterpart to accepting an invitation (ZMVP-20)
-    /// — joining took the user's yes, so does leaving — so it needs no rank check on
-    /// the actor. In one transaction it re-homes the leaver's role-tree children to the
-    /// leaver's own parent (DESIGN/Roles rule 3), deletes the membership, and revokes
-    /// the leaver's still-pending *issued* invitations, so none can later seat a member
-    /// under a non-member (DD "Invitation Validity & Issuer Departure", ZMVP-40). The
-    /// caller settles the preconditions first — a non-member is turned away and the
-    /// `Owner` cannot leave while still `Owner` — so this assumes a valid, non-`Owner`
-    /// member; a vanished membership (a concurrent removal) is a no-op, not an error. A
-    /// private-side write, never a cross-store dual write.
-    async fn leave(&self, user: UserId, account: AccountId) -> anyhow::Result<()>;
-
-    /// Persist a freshly issued, pending [`Invitation`] (ZMVP-32 — the issuing
-    /// half of invite-then-accept). At most one *pending* invitation may exist per
-    /// (account, invited user): if one already does, this is a no-op rather than a
-    /// second row — the store-level backstop for the idempotent re-invite the
-    /// caller also guards by checking `find_pending_invitation` first. Authority
-    /// (the inviter being Owner/Admin, the offered role below their rank) is the
-    /// caller's check via `Role::can_grant`, settled before this is reached. A
-    /// private-side write, never a cross-store dual write (DESIGN/Roles).
-    async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()>;
 
     /// The pending invitation for `(account, invited_user)`, or `None` if there
     /// isn't one. Underpins the idempotent re-invite (a hit means "already
@@ -162,13 +175,72 @@ pub trait AccountRepo: Send + Sync {
     /// Lets the revoke path load the offer to check the inviter's authority and
     /// its current state before transitioning it.
     async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>>;
+}
+
+/// The **write** surface of Zurfur's record of accounts and memberships —
+/// reachable only on an open [`UnitOfWork`] (`uow.accounts()`), so no private-store
+/// account write can skip a transaction. An account and its founder's Owner
+/// membership are minted together; persisting them is a single private-side
+/// transaction, never a cross-store dual write (ZMVP-14, DESIGN/Account; DD
+/// `24150017`).
+#[async_trait]
+pub trait AccountWrites: Send {
+    /// Persist a freshly founded account together with its Owner membership,
+    /// atomically. Both rows live in the private store, so this is one unit of
+    /// work. (ZMVP-14: "the creating User becomes Owner.")
+    async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()>;
+
+    /// Set the role a user holds in an account, seating them if they aren't yet a
+    /// member. On this platform granting a role *is* how a user joins an account
+    /// (DESIGN/Roles), so this is an upsert: a brand-new member is inserted, an
+    /// existing one's role is replaced. Idempotent — re-granting the held role is
+    /// a no-op write. Authorization (who may grant what) is decided by the caller
+    /// before this is reached; the store only persists the settled grant. Both
+    /// rows live in the private store, so this is one private-side write, never a
+    /// cross-store dual write (ZMVP-15, DESIGN/Roles).
+    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()>;
+
+    /// Remove a user's membership in an account — an `Owner`/`Admin` removing someone
+    /// (ZMVP-16). A member-departure event with the **same store effects as**
+    /// [`leave`](AccountWrites::leave): in one transaction it re-homes the member's
+    /// children to their parent (DESIGN/Roles rule 3), deletes the membership, and
+    /// revokes the member's still-pending *issued* invitations (ZMVP-40 — so none can
+    /// later seat a member under a non-member). Idempotent: removing a non-member is a
+    /// no-op. Authorization (who may revoke whom) is the caller's concern, settled
+    /// before this is reached. A private-side write, never a cross-store dual write.
+    async fn revoke_role(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+
+    /// A member **leaves** their own account on their own action (ZMVP-21). Unlike
+    /// [`revoke_role`](AccountWrites::revoke_role) — which an `Owner`/`Admin` invokes on
+    /// *someone else*, an authority action gated by rank — `leave` is **self-initiated**:
+    /// it is the consent-symmetric counterpart to accepting an invitation (ZMVP-20)
+    /// — joining took the user's yes, so does leaving — so it needs no rank check on
+    /// the actor. In one transaction it re-homes the leaver's role-tree children to the
+    /// leaver's own parent (DESIGN/Roles rule 3), deletes the membership, and revokes
+    /// the leaver's still-pending *issued* invitations, so none can later seat a member
+    /// under a non-member (DD "Invitation Validity & Issuer Departure", ZMVP-40). The
+    /// caller settles the preconditions first — a non-member is turned away and the
+    /// `Owner` cannot leave while still `Owner` — so this assumes a valid, non-`Owner`
+    /// member; a vanished membership (a concurrent removal) is a no-op, not an error. A
+    /// private-side write, never a cross-store dual write.
+    async fn leave(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+
+    /// Persist a freshly issued, pending [`Invitation`] (ZMVP-32 — the issuing
+    /// half of invite-then-accept). At most one *pending* invitation may exist per
+    /// (account, invited user): if one already does, this is a no-op rather than a
+    /// second row — the store-level backstop for the idempotent re-invite the
+    /// caller also guards by checking [`AccountStore::find_pending_invitation`]
+    /// first. Authority (the inviter being Owner/Admin, the offered role below their
+    /// rank) is the caller's check via `Role::can_grant`, settled before this is
+    /// reached. A private-side write, never a cross-store dual write (DESIGN/Roles).
+    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<()>;
 
     /// Transition a pending invitation to revoked, so it can no longer be accepted
     /// (ZMVP-32). Idempotent on a non-pending or absent invitation — a no-op, not
     /// an error; the caller decides whether absence/already-revoked is a 404/409.
     /// *Who* may revoke (the issuing member) is the caller's authority check. A
     /// private-side write, never a cross-store dual write (DESIGN/Roles).
-    async fn revoke_invitation(&self, id: InvitationId) -> anyhow::Result<()>;
+    async fn revoke_invitation(&mut self, id: InvitationId) -> anyhow::Result<()>;
 
     /// Accept a pending invitation: in ONE private-store transaction (the same unit
     /// of work as `create`, never a cross-store dual write) flip the invitation to
@@ -180,7 +252,7 @@ pub trait AccountRepo: Send + Sync {
     /// guard is atomic with the seat, not a caller pre-check. Authority is the
     /// caller's, settled before this is reached (ZMVP-20).
     async fn accept_invitation(
-        &self,
+        &mut self,
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount>;

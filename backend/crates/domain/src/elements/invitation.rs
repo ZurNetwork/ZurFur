@@ -157,7 +157,7 @@ impl std::error::Error for InvitationError {}
 /// caller before issuing — the same authority seam grants use.
 ///
 /// References: [`Invitation::issue`], [`Invitation::revoke`],
-/// [`crate::ports::AccountRepo::create_invitation`], DESIGN/1DD decision 11,
+/// [`crate::ports::AccountWrites::create_invitation`], DESIGN/1DD decision 11,
 /// DESIGN/Roles, ZMVP-32/ZMVP-20.
 ///
 /// [`Pending`]: InvitationState::Pending
@@ -195,7 +195,7 @@ impl Invitation {
     /// authority to issue (the offered `role` strictly below the inviter's rank,
     /// and the inviter being Owner/Admin) is the caller's check via
     /// [`Role::can_grant`], settled before this is reached — exactly as a grant
-    /// settles authority before [`grant_role`](crate::ports::AccountRepo::grant_role).
+    /// settles authority before [`grant_role`](crate::ports::AccountWrites::grant_role).
     ///
     /// ```
     /// use chrono::Utc;
