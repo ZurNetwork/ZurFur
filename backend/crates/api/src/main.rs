@@ -72,7 +72,10 @@ async fn main() -> anyhow::Result<()> {
             redirect_uri,
             pool.clone(),
         )),
-        user_repo: std::sync::Arc::new(adapter_pg::PgUserRepo::new(pool.clone())),
+        // Reads go through the pool-backed stores; every private-store write goes
+        // through the one `database` factory (also pool-backed) — both built from
+        // the same `pool` (DD `24150017`, compile-enforced Unit of Work).
+        users: std::sync::Arc::new(adapter_pg::PgUserStore::new(pool.clone())),
         profile_source: std::sync::Arc::new(adapter_atproto::AtprotoProfileSource::new()),
         // Cache profiles for an hour; a staler entry is refetched from the PDS.
         profile_cache: std::sync::Arc::new(adapter_pg::PgProfileCache::new(
@@ -82,8 +85,10 @@ async fn main() -> anyhow::Result<()> {
         // The live DID minter is the ZMVP-14 floor stub; the real minter lands as
         // an adapter swap here ("dress when The Who closes").
         did_minter: std::sync::Arc::new(adapter_atproto::StubDidMinter::new()),
-        // Accounts and their Owner memberships persist atomically via the pg adapter.
-        account_repo: std::sync::Arc::new(adapter_pg::PgAccountRepo::new(pool.clone())),
+        // Account/membership reads off the pool; their writes (and all other
+        // private-store writes) flow through the transaction-bound `database`.
+        accounts: std::sync::Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
+        database: std::sync::Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
         pool,
     };
     let app = api::app(app_state).layer(session_layer);

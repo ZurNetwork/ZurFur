@@ -6,9 +6,7 @@
 //! tests — no network, no database.
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAccountRepo, MemAuthenticator, MemDidMinter, MemProfileCache, MemProfileSource, MemUserRepo,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
@@ -21,6 +19,7 @@ async fn spawn_app(did: &str) -> String {
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
+    let backend = MemBackend::new();
     let state = AppState {
         config: Config {
             env: Environment::DEV,
@@ -33,15 +32,16 @@ async fn spawn_app(did: &str) -> String {
         // the test free of a container.
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        user_repo: Arc::new(MemUserRepo::new()),
+        users: backend.user_store(),
         profile_source: Arc::new(MemProfileSource::new(Profile {
             did: Did::new(did.to_string()),
             handle: "owner.bsky.social".to_string(),
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(MemProfileCache::new()),
-        account_repo: Arc::new(MemAccountRepo::new()),
+        profile_cache: backend.profile_cache(),
+        accounts: backend.account_store(),
+        database: backend.database(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));

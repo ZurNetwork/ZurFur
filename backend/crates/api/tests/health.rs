@@ -27,8 +27,10 @@ async fn health_is_green_against_fresh_postgres() {
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
+    let backend = adapter_mem::MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
+        database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -43,7 +45,7 @@ async fn health_is_green_against_fresh_postgres() {
         auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::new(
             "did:plc:test".to_string(),
         ))),
-        user_repo: Arc::new(adapter_mem::MemUserRepo::new()),
+        users: backend.user_store(),
         // /health touches neither; mem fakes keep the profile ports out of the test.
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
             did: Did::new("did:plc:test".to_string()),
@@ -51,7 +53,7 @@ async fn health_is_green_against_fresh_postgres() {
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
     };
     let app = api::app(state);
     tokio::spawn(async move {

@@ -6,7 +6,7 @@
 //! founded together with its founder's Owner membership in a single act,
 //! [`Account::open`] — the ZMVP-14 invariant "the creating User becomes Owner."
 //! Persisting the pair is one private-side transaction
-//! ([`crate::ports::AccountRepo::create`]).
+//! ([`crate::ports::AccountWrites::create`]).
 
 use std::ops::Deref;
 
@@ -114,10 +114,10 @@ impl AccountName {
 /// Build one with [`Account::open`], which also mints the founder's Owner
 /// membership — the two are never created apart. `deleted_at` is the soft-delete
 /// marker: a deleted account keeps its row but
-/// [`crate::ports::AccountRepo::find`] returns `None` for it. The struct holds no
+/// [`crate::ports::AccountStore::find`] returns `None` for it. The struct holds no
 /// member list; membership is queried through the repo.
 ///
-/// References: [`Account::open`], [`crate::ports::AccountRepo`],
+/// References: [`Account::open`], [`crate::ports::AccountStore`],
 /// [`crate::ports::DidMinter`] (which mints `did`), DESIGN/Account, ZMVP-14.
 pub struct Account {
     pub id: AccountId,

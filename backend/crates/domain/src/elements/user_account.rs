@@ -3,7 +3,7 @@
 //! On this platform a membership *is* the join: granting a role is how a user
 //! joins an account, revoking it is how they leave (DESIGN/Roles). This is the
 //! row persisted alongside a new account's founder (ZMVP-14) and the unit
-//! [`crate::ports::AccountRepo::grant_role`] upserts.
+//! [`crate::ports::AccountWrites::grant_role`] upserts.
 
 use crate::elements::{account::AccountId, role::Role, user::UserId};
 
@@ -14,7 +14,7 @@ use crate::elements::{account::AccountId, role::Role, user::UserId};
 /// [`AccountId`].
 ///
 /// References: [`Role`], [`crate::elements::account::Account::open`] (which mints
-/// the founder's `UserAccount`), [`crate::ports::AccountRepo`].
+/// the founder's `UserAccount`), [`crate::ports::AccountWrites`].
 pub struct UserAccount {
     pub user_id: UserId,
     pub account_id: AccountId,
