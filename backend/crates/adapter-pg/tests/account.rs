@@ -1,20 +1,24 @@
-//! Round-trips `PgAccountRepo` against a throwaway PostgreSQL container, proving the
-//! migration-created `accounts`/`account_members` tables persist a founded account and
-//! its Owner membership in one transaction, that `find` reads the account back and hides
-//! the unknown, and that `role_of` answers membership. The founder is provisioned through
-//! `PgUserRepo` first because `account_members.user_id` references `users(id)`. Requires a
-//! container runtime socket (DOCKER_HOST honored).
-use adapter_pg::{PgAccountRepo, PgPool, PgUserRepo};
+//! Round-trips the account/membership/invitation store against a throwaway
+//! PostgreSQL container, proving the migration-created `accounts` /
+//! `account_members` / `account_invitations` tables persist a founded account and
+//! its Owner membership in one transaction, that reads come back, and that the
+//! Unit-of-Work seam commits across aggregates atomically (and rolls back a
+//! dropped unit). Reads go through [`PgAccountStore`]; every write goes through the
+//! [`PgDatabase`] factory's [`UnitOfWork`] (DD `24150017`). The founder is
+//! provisioned first because `account_members.user_id` references `users(id)`.
+//! Requires a container runtime socket (DOCKER_HOST honored).
+use adapter_pg::{PgAccountStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
-        invitation::{Invitation, InvitationState},
+        invitation::{Invitation, InvitationId, InvitationState},
         role::Role,
-        user::UserId,
+        user::{User, UserId},
+        user_account::UserAccount,
     },
-    ports::{AccountRepo, UserRepo},
+    ports::{AccountStore, Database},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
@@ -37,17 +41,123 @@ async fn fresh_pool() -> (PgPool, impl Sized) {
     (pool, container)
 }
 
+// --- Test helpers: each write opens its own unit of work (begin → op → commit),
+// the way a handler does; reads go through the pool-backed read store. They keep
+// the test bodies focused on the behavior under test, not the UoW ceremony. ---
+
+/// Recognize a visitor in its own committed unit of work (FK target for memberships).
+async fn provision(pool: &PgPool, did: &str) -> User {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let user = uow
+        .users()
+        .provision(&Did::new(did.to_string()))
+        .await
+        .expect("provision");
+    uow.commit().await.expect("commit");
+    user
+}
+
+/// Found an account with its Owner membership in one unit of work.
+async fn create(pool: &PgPool, account: &Account, owner: &UserAccount) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts().create(account, owner).await.expect("create");
+    uow.commit().await.expect("commit");
+}
+
+/// Persist a pending invitation in one unit of work.
+async fn create_invitation(pool: &PgPool, invitation: &Invitation) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .create_invitation(invitation)
+        .await
+        .expect("create_invitation");
+    uow.commit().await.expect("commit");
+}
+
+/// Revoke an invitation in one unit of work.
+async fn revoke_invitation(pool: &PgPool, id: InvitationId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .revoke_invitation(id)
+        .await
+        .expect("revoke_invitation");
+    uow.commit().await.expect("commit");
+}
+
+/// Accept an invitation (flip + seat) in one unit of work, returning the new membership.
+async fn accept_invitation(pool: &PgPool, invitation: Invitation, listed: bool) -> UserAccount {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let member = uow
+        .accounts()
+        .accept_invitation(invitation, listed)
+        .await
+        .expect("accept_invitation");
+    uow.commit().await.expect("commit");
+    member
+}
+
+/// A member leaves the account in one unit of work.
+async fn leave(pool: &PgPool, user: UserId, account: AccountId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts().leave(user, account).await.expect("leave");
+    uow.commit().await.expect("commit");
+}
+
+/// An Owner/Admin revokes a member's role in one unit of work.
+async fn revoke_role(pool: &PgPool, user: UserId, account: AccountId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .revoke_role(user, account)
+        .await
+        .expect("revoke_role");
+    uow.commit().await.expect("commit");
+}
+
+/// Read an account by id off the pool-backed store.
+async fn find_account(pool: &PgPool, id: AccountId) -> Option<Account> {
+    PgAccountStore::new(pool.clone())
+        .find(id)
+        .await
+        .expect("find")
+}
+
+/// Read a member's role off the pool-backed store.
+async fn role_of(pool: &PgPool, user: UserId, account: AccountId) -> Option<Role> {
+    PgAccountStore::new(pool.clone())
+        .role_of(user, account)
+        .await
+        .expect("role_of")
+}
+
+/// Read the lone pending offer for `(account, invited)` off the pool-backed store.
+async fn find_pending(pool: &PgPool, account: AccountId, invited: UserId) -> Option<Invitation> {
+    PgAccountStore::new(pool.clone())
+        .find_pending_invitation(account, invited)
+        .await
+        .expect("find_pending_invitation")
+}
+
+/// Read an invitation by id off the pool-backed store.
+async fn find_invitation(pool: &PgPool, id: InvitationId) -> Option<Invitation> {
+    PgAccountStore::new(pool.clone())
+        .find_invitation(id)
+        .await
+        .expect("find_invitation")
+}
+
 #[tokio::test]
 async fn create_persists_the_account_and_its_owner_membership() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
     // The founder must exist: account_members.user_id references users(id).
-    let owner = users
-        .provision(&Did::new("did:plc:pgowner".to_string()))
-        .await
-        .expect("provision owner");
+    let owner = provision(&pool, "did:plc:pgowner").await;
 
     let account_did = Did::new("did:plc:pgacct".to_string());
     let account_name = AccountName::try_new("PG Studio").unwrap();
@@ -58,15 +168,10 @@ async fn create_persists_the_account_and_its_owner_membership() {
         Utc::now(),
     );
     let account_id = account.id;
-    accounts
-        .create(&account, &membership)
-        .await
-        .expect("create founds the account and its membership");
+    create(&pool, &account, &membership).await;
 
-    let found = accounts
-        .find(account_id)
+    let found = find_account(&pool, account_id)
         .await
-        .expect("find")
         .expect("the founded account is present");
     assert_eq!(found.id, account_id);
     assert_eq!(
@@ -76,10 +181,7 @@ async fn create_persists_the_account_and_its_owner_membership() {
     assert_eq!(found.name, account_name, "the account's name round-trips");
     assert_eq!(found.deleted_at, None, "a freshly founded account is live");
 
-    let role = accounts
-        .role_of(owner.id, account_id)
-        .await
-        .expect("role_of");
+    let role = role_of(&pool, owner.id, account_id).await;
     assert_eq!(
         role,
         Some(Role::Owner(None)),
@@ -87,16 +189,95 @@ async fn create_persists_the_account_and_its_owner_membership() {
     );
 }
 
+// The Unit of Work commits writes across more than one accessor call atomically:
+// founding the account AND issuing an invitation in the SAME `begin()`/`commit()`
+// both land. This is the multi-write capability the seam exists for (DD `24150017`).
+#[tokio::test]
+async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:multi-o").await;
+    let invitee = provision(&pool, "did:plc:multi-invitee").await;
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:multi-acct".to_string()),
+        AccountName::try_new("Multi Studio").unwrap(),
+        Utc::now(),
+    );
+    let invitation = Invitation::issue(
+        account.id,
+        invitee.id,
+        Role::Member(None),
+        owner.id,
+        Utc::now(),
+    );
+
+    // One unit of work, two writes through two accessor calls — then one commit.
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .create(&account, &membership)
+        .await
+        .expect("found the account on the open tx");
+    uow.accounts()
+        .create_invitation(&invitation)
+        .await
+        .expect("issue the invitation on the same tx");
+    uow.commit().await.expect("commit lands both writes");
+
+    assert!(
+        find_account(&pool, account.id).await.is_some(),
+        "the account committed"
+    );
+    assert!(
+        find_pending(&pool, account.id, invitee.id).await.is_some(),
+        "the invitation committed in the same unit of work"
+    );
+}
+
+// Dropping a unit of work before `commit()` rolls back EVERY write in it — the
+// `create` wrote two rows (account + membership), and neither survives. This is the
+// structural guarantee made observable: an uncommitted unit leaves nothing behind.
+#[tokio::test]
+async fn a_dropped_unit_of_work_rolls_back_every_write() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:rollback-o").await;
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:rollback-acct".to_string()),
+        AccountName::try_new("Rollback").unwrap(),
+        Utc::now(),
+    );
+    let account_id = account.id;
+
+    // Open the unit, issue the (two-row) write, then drop without committing.
+    {
+        let db = PgDatabase::new(pool.clone());
+        let mut uow = db.begin().await.expect("begin");
+        uow.accounts()
+            .create(&account, &membership)
+            .await
+            .expect("create on the open tx");
+        // `uow` drops here without `commit` → the transaction rolls back.
+    }
+
+    assert!(
+        find_account(&pool, account_id).await.is_none(),
+        "a dropped unit of work persists no account row"
+    );
+    assert_eq!(
+        role_of(&pool, owner.id, account_id).await,
+        None,
+        "...and no membership row either — both writes rolled back together"
+    );
+}
+
 #[tokio::test]
 async fn find_unknown_account_is_none() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let owner = users
-        .provision(&Did::new("did:plc:pgowner2".to_string()))
-        .await
-        .expect("provision owner");
+    let owner = provision(&pool, "did:plc:pgowner2").await;
     // Founded in the domain but never persisted, so its id is genuinely unknown.
     let (unfounded, _) = Account::open(
         owner.id,
@@ -105,7 +286,7 @@ async fn find_unknown_account_is_none() {
         Utc::now(),
     );
 
-    let found = accounts.find(unfounded.id).await.expect("find");
+    let found = find_account(&pool, unfounded.id).await;
     assert!(
         found.is_none(),
         "an account we never founded resolves to nothing"
@@ -115,17 +296,9 @@ async fn find_unknown_account_is_none() {
 #[tokio::test]
 async fn role_of_non_member_is_none() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let owner = users
-        .provision(&Did::new("did:plc:pgowner3".to_string()))
-        .await
-        .expect("provision owner");
-    let stranger = users
-        .provision(&Did::new("did:plc:pgstranger".to_string()))
-        .await
-        .expect("provision stranger");
+    let owner = provision(&pool, "did:plc:pgowner3").await;
+    let stranger = provision(&pool, "did:plc:pgstranger").await;
 
     let (account, membership) = Account::open(
         owner.id,
@@ -133,15 +306,9 @@ async fn role_of_non_member_is_none() {
         AccountName::try_new("PG Studio 3").unwrap(),
         Utc::now(),
     );
-    accounts
-        .create(&account, &membership)
-        .await
-        .expect("create");
+    create(&pool, &account, &membership).await;
 
-    let role = accounts
-        .role_of(stranger.id, account.id)
-        .await
-        .expect("role_of");
+    let role = role_of(&pool, stranger.id, account.id).await;
     assert_eq!(role, None, "a user who is not a member holds no role");
 }
 
@@ -153,30 +320,18 @@ async fn role_of_non_member_is_none() {
 
 /// Provisions an owner and an invitee, founds an account, and returns the handles
 /// the invitation tests share. The owner doubles as the inviter.
-async fn invitation_fixture(pool: &PgPool, tag: &str) -> (PgAccountRepo, Account, UserId, UserId) {
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
-
-    let owner = users
-        .provision(&Did::new(format!("did:plc:pginviter-{tag}")))
-        .await
-        .expect("provision owner");
-    let invitee = users
-        .provision(&Did::new(format!("did:plc:pginvitee-{tag}")))
-        .await
-        .expect("provision invitee");
+async fn invitation_fixture(pool: &PgPool, tag: &str) -> (Account, UserId, UserId) {
+    let owner = provision(pool, &format!("did:plc:pginviter-{tag}")).await;
+    let invitee = provision(pool, &format!("did:plc:pginvitee-{tag}")).await;
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("did:plc:pgacct-{tag}")),
         AccountName::try_new("PG Studio").unwrap(),
         Utc::now(),
     );
-    accounts
-        .create(&account, &membership)
-        .await
-        .expect("found account");
+    create(pool, &account, &membership).await;
 
-    (accounts, account, owner.id, invitee.id)
+    (account, owner.id, invitee.id)
 }
 
 // AC3 — a freshly issued pending invitation round-trips: it's the pending offer
@@ -184,19 +339,14 @@ async fn invitation_fixture(pool: &PgPool, tag: &str) -> (PgAccountRepo, Account
 #[tokio::test]
 async fn create_then_find_pending_returns_the_invitation() {
     let (pool, _container) = fresh_pool().await;
-    let (accounts, account, inviter, invitee) = invitation_fixture(&pool, "rt").await;
+    let (account, inviter, invitee) = invitation_fixture(&pool, "rt").await;
 
     let invitation = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
     let id = invitation.id;
-    accounts
-        .create_invitation(&invitation)
-        .await
-        .expect("create_invitation");
+    create_invitation(&pool, &invitation).await;
 
-    let found = accounts
-        .find_pending_invitation(account.id, invitee)
+    let found = find_pending(&pool, account.id, invitee)
         .await
-        .expect("find_pending_invitation")
         .expect("the pending invitation is found");
     assert_eq!(found.id, id);
     assert_eq!(found.account, account.id);
@@ -215,34 +365,22 @@ async fn create_then_find_pending_returns_the_invitation() {
 #[tokio::test]
 async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
     let (pool, _container) = fresh_pool().await;
-    let (accounts, account, inviter, invitee) = invitation_fixture(&pool, "dup").await;
+    let (account, inviter, invitee) = invitation_fixture(&pool, "dup").await;
 
     let first = Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
     let second = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
-    accounts
-        .create_invitation(&first)
-        .await
-        .expect("first create");
-    accounts
-        .create_invitation(&second)
-        .await
-        .expect("second create is a no-op, not an error");
+    create_invitation(&pool, &first).await;
+    create_invitation(&pool, &second).await; // a no-op, not an error
 
-    let found = accounts
-        .find_pending_invitation(account.id, invitee)
+    let found = find_pending(&pool, account.id, invitee)
         .await
-        .expect("find_pending_invitation")
         .expect("a pending invitation remains");
     assert_eq!(
         found.id, first.id,
         "the first pending offer is the one kept"
     );
     assert!(
-        accounts
-            .find_invitation(second.id)
-            .await
-            .expect("find_invitation")
-            .is_none(),
+        find_invitation(&pool, second.id).await.is_none(),
         "the duplicate issue stored nothing"
     );
 }
@@ -252,52 +390,31 @@ async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
 #[tokio::test]
 async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
     let (pool, _container) = fresh_pool().await;
-    let (accounts, account, inviter, invitee) = invitation_fixture(&pool, "rev").await;
+    let (account, inviter, invitee) = invitation_fixture(&pool, "rev").await;
 
     let invitation =
         Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
     let id = invitation.id;
-    accounts
-        .create_invitation(&invitation)
-        .await
-        .expect("create_invitation");
+    create_invitation(&pool, &invitation).await;
 
-    accounts
-        .revoke_invitation(id)
-        .await
-        .expect("revoke_invitation");
+    revoke_invitation(&pool, id).await;
 
     assert_eq!(
-        accounts
-            .find_invitation(id)
-            .await
-            .expect("find_invitation")
-            .map(|i| i.state),
+        find_invitation(&pool, id).await.map(|i| i.state),
         Some(InvitationState::Revoked),
         "the invitation reads back revoked"
     );
     assert!(
-        accounts
-            .find_pending_invitation(account.id, invitee)
-            .await
-            .expect("find_pending_invitation")
-            .is_none(),
+        find_pending(&pool, account.id, invitee).await.is_none(),
         "a revoked invitation is no longer a live pending offer"
     );
 
     // With the prior offer revoked (and out of the partial index), a fresh invitation
     // to the same pair is seated.
     let reissued = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
-    accounts
-        .create_invitation(&reissued)
-        .await
-        .expect("re-invite after revoke");
+    create_invitation(&pool, &reissued).await;
     assert_eq!(
-        accounts
-            .find_pending_invitation(account.id, invitee)
-            .await
-            .expect("find_pending_invitation")
-            .map(|i| i.id),
+        find_pending(&pool, account.id, invitee).await.map(|i| i.id),
         Some(reissued.id),
         "re-inviting after a revoke seats a new pending offer"
     );
@@ -307,15 +424,12 @@ async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
 #[tokio::test]
 async fn find_unknown_invitation_is_none() {
     let (pool, _container) = fresh_pool().await;
-    let (accounts, account, inviter, invitee) = invitation_fixture(&pool, "ghost").await;
+    let (account, inviter, invitee) = invitation_fixture(&pool, "ghost").await;
 
     // Issued in the domain but never persisted, so its id is genuinely unknown.
     let unstored = Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
 
-    let found = accounts
-        .find_invitation(unstored.id)
-        .await
-        .expect("find_invitation");
+    let found = find_invitation(&pool, unstored.id).await;
     assert!(
         found.is_none(),
         "an invitation we never stored resolves to nothing"
@@ -340,21 +454,10 @@ async fn parent_of(pool: &PgPool, account: AccountId, user: UserId) -> Option<uu
 
 /// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
 /// accepting an invitation — the only path that writes `account_members.parent`.
-async fn seat_under(
-    accounts: &PgAccountRepo,
-    account: AccountId,
-    invited: UserId,
-    inviter: UserId,
-) {
+async fn seat_under(pool: &PgPool, account: AccountId, invited: UserId, inviter: UserId) {
     let invitation = Invitation::issue(account, invited, Role::Member(None), inviter, Utc::now());
-    accounts
-        .create_invitation(&invitation)
-        .await
-        .expect("persist invitation");
-    accounts
-        .accept_invitation(invitation, true)
-        .await
-        .expect("accept seats the member under the inviter");
+    create_invitation(pool, &invitation).await;
+    accept_invitation(pool, invitation, true).await;
 }
 
 // AC3 — when a leaving member has children in the role tree, those children re-home
@@ -362,25 +465,11 @@ async fn seat_under(
 #[tokio::test]
 async fn leave_rehomes_children_to_the_leavers_parent() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let owner = users
-        .provision(&Did::new("did:plc:rehome-o".to_string()))
-        .await
-        .expect("owner");
-    let a = users
-        .provision(&Did::new("did:plc:rehome-a".to_string()))
-        .await
-        .expect("a");
-    let b = users
-        .provision(&Did::new("did:plc:rehome-b".to_string()))
-        .await
-        .expect("b");
-    let c = users
-        .provision(&Did::new("did:plc:rehome-c".to_string()))
-        .await
-        .expect("c");
+    let owner = provision(&pool, "did:plc:rehome-o").await;
+    let a = provision(&pool, "did:plc:rehome-a").await;
+    let b = provision(&pool, "did:plc:rehome-b").await;
+    let c = provision(&pool, "did:plc:rehome-c").await;
 
     let (account, membership) = Account::open(
         owner.id,
@@ -388,12 +477,12 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
         AccountName::try_new("Tree").unwrap(),
         Utc::now(),
     );
-    accounts.create(&account, &membership).await.expect("found");
-    seat_under(&accounts, account.id, a.id, owner.id).await; // A's parent is the Owner
-    seat_under(&accounts, account.id, b.id, a.id).await; // B's parent is A
-    seat_under(&accounts, account.id, c.id, a.id).await; // C's parent is A
+    create(&pool, &account, &membership).await;
+    seat_under(&pool, account.id, a.id, owner.id).await; // A's parent is the Owner
+    seat_under(&pool, account.id, b.id, a.id).await; // B's parent is A
+    seat_under(&pool, account.id, c.id, a.id).await; // C's parent is A
 
-    accounts.leave(a.id, account.id).await.expect("A leaves");
+    leave(&pool, a.id, account.id).await; // A leaves
 
     assert_eq!(
         parent_of(&pool, account.id, b.id).await,
@@ -406,7 +495,7 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
         "C re-homes to A's parent (the Owner)"
     );
     assert_eq!(
-        accounts.role_of(a.id, account.id).await.expect("role_of"),
+        role_of(&pool, a.id, account.id).await,
         None,
         "after leaving, the member holds no role"
     );
@@ -418,29 +507,12 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
 #[tokio::test]
 async fn leave_is_scoped_to_the_account_being_left() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let o1 = users
-        .provision(&Did::new("did:plc:scope-o1".to_string()))
-        .await
-        .expect("o1");
-    let o2 = users
-        .provision(&Did::new("did:plc:scope-o2".to_string()))
-        .await
-        .expect("o2");
-    let a = users
-        .provision(&Did::new("did:plc:scope-a".to_string()))
-        .await
-        .expect("a");
-    let b = users
-        .provision(&Did::new("did:plc:scope-b".to_string()))
-        .await
-        .expect("b");
-    let d = users
-        .provision(&Did::new("did:plc:scope-d".to_string()))
-        .await
-        .expect("d");
+    let o1 = provision(&pool, "did:plc:scope-o1").await;
+    let o2 = provision(&pool, "did:plc:scope-o2").await;
+    let a = provision(&pool, "did:plc:scope-a").await;
+    let b = provision(&pool, "did:plc:scope-b").await;
+    let d = provision(&pool, "did:plc:scope-d").await;
 
     let (acct1, m1) = Account::open(
         o1.id,
@@ -448,25 +520,22 @@ async fn leave_is_scoped_to_the_account_being_left() {
         AccountName::try_new("One").unwrap(),
         Utc::now(),
     );
-    accounts.create(&acct1, &m1).await.expect("found acct1");
+    create(&pool, &acct1, &m1).await;
     let (acct2, m2) = Account::open(
         o2.id,
         Did::new("did:plc:scope-acct2".to_string()),
         AccountName::try_new("Two").unwrap(),
         Utc::now(),
     );
-    accounts.create(&acct2, &m2).await.expect("found acct2");
+    create(&pool, &acct2, &m2).await;
 
     // A parents B in acct1 and D in acct2.
-    seat_under(&accounts, acct1.id, a.id, o1.id).await;
-    seat_under(&accounts, acct1.id, b.id, a.id).await;
-    seat_under(&accounts, acct2.id, a.id, o2.id).await;
-    seat_under(&accounts, acct2.id, d.id, a.id).await;
+    seat_under(&pool, acct1.id, a.id, o1.id).await;
+    seat_under(&pool, acct1.id, b.id, a.id).await;
+    seat_under(&pool, acct2.id, a.id, o2.id).await;
+    seat_under(&pool, acct2.id, d.id, a.id).await;
 
-    accounts
-        .leave(a.id, acct1.id)
-        .await
-        .expect("A leaves acct1");
+    leave(&pool, a.id, acct1.id).await; // A leaves acct1
 
     assert_eq!(
         parent_of(&pool, acct1.id, b.id).await,
@@ -479,11 +548,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
         "D in the other account is untouched — leaving is account-scoped"
     );
     assert!(
-        accounts
-            .role_of(a.id, acct2.id)
-            .await
-            .expect("role_of")
-            .is_some(),
+        role_of(&pool, a.id, acct2.id).await.is_some(),
         "A is still a member of the account they didn't leave"
     );
 }
@@ -493,25 +558,11 @@ async fn leave_is_scoped_to_the_account_being_left() {
 #[tokio::test]
 async fn leave_revokes_the_leavers_pending_issued_invitations() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let owner = users
-        .provision(&Did::new("did:plc:rev-o".to_string()))
-        .await
-        .expect("owner");
-    let a = users
-        .provision(&Did::new("did:plc:rev-a".to_string()))
-        .await
-        .expect("a");
-    let x = users
-        .provision(&Did::new("did:plc:rev-x".to_string()))
-        .await
-        .expect("x");
-    let y = users
-        .provision(&Did::new("did:plc:rev-y".to_string()))
-        .await
-        .expect("y");
+    let owner = provision(&pool, "did:plc:rev-o").await;
+    let a = provision(&pool, "did:plc:rev-a").await;
+    let x = provision(&pool, "did:plc:rev-x").await;
+    let y = provision(&pool, "did:plc:rev-y").await;
 
     let (account, membership) = Account::open(
         owner.id,
@@ -519,28 +570,20 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );
-    accounts.create(&account, &membership).await.expect("found");
-    seat_under(&accounts, account.id, a.id, owner.id).await;
+    create(&pool, &account, &membership).await;
+    seat_under(&pool, account.id, a.id, owner.id).await;
 
     // A (leaving) has a pending offer out to X; the Owner (staying) has one out to Y.
     let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
-    accounts
-        .create_invitation(&a_invites_x)
-        .await
-        .expect("A's invite");
+    create_invitation(&pool, &a_invites_x).await;
     let owner_invites_y =
         Invitation::issue(account.id, y.id, Role::Member(None), owner.id, Utc::now());
-    accounts
-        .create_invitation(&owner_invites_y)
-        .await
-        .expect("Owner's invite");
+    create_invitation(&pool, &owner_invites_y).await;
 
-    accounts.leave(a.id, account.id).await.expect("A leaves");
+    leave(&pool, a.id, account.id).await; // A leaves
 
-    let a_offer = accounts
-        .find_invitation(a_invites_x.id)
+    let a_offer = find_invitation(&pool, a_invites_x.id)
         .await
-        .expect("find")
         .expect("A's offer still exists as a record");
     assert_eq!(
         a_offer.state,
@@ -548,11 +591,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         "the leaver's issued offer is revoked, not deleted"
     );
     assert!(
-        accounts
-            .find_pending_invitation(account.id, y.id)
-            .await
-            .expect("find pending")
-            .is_some(),
+        find_pending(&pool, account.id, y.id).await.is_some(),
         "an offer issued by someone still present stays pending"
     );
 }
@@ -564,25 +603,11 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
 #[tokio::test]
 async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
     let (pool, _container) = fresh_pool().await;
-    let users = PgUserRepo::new(pool.clone());
-    let accounts = PgAccountRepo::new(pool.clone());
 
-    let owner = users
-        .provision(&Did::new("did:plc:rv-o".to_string()))
-        .await
-        .expect("owner");
-    let a = users
-        .provision(&Did::new("did:plc:rv-a".to_string()))
-        .await
-        .expect("a");
-    let b = users
-        .provision(&Did::new("did:plc:rv-b".to_string()))
-        .await
-        .expect("b");
-    let x = users
-        .provision(&Did::new("did:plc:rv-x".to_string()))
-        .await
-        .expect("x");
+    let owner = provision(&pool, "did:plc:rv-o").await;
+    let a = provision(&pool, "did:plc:rv-a").await;
+    let b = provision(&pool, "did:plc:rv-b").await;
+    let x = provision(&pool, "did:plc:rv-x").await;
 
     let (account, membership) = Account::open(
         owner.id,
@@ -590,22 +615,16 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );
-    accounts.create(&account, &membership).await.expect("found");
-    seat_under(&accounts, account.id, a.id, owner.id).await; // A under the Owner
-    seat_under(&accounts, account.id, b.id, a.id).await; // B under A
+    create(&pool, &account, &membership).await;
+    seat_under(&pool, account.id, a.id, owner.id).await; // A under the Owner
+    seat_under(&pool, account.id, b.id, a.id).await; // B under A
 
     // A has a pending offer out to X.
     let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
-    accounts
-        .create_invitation(&a_invites_x)
-        .await
-        .expect("A's invite");
+    create_invitation(&pool, &a_invites_x).await;
 
     // An Owner/Admin revokes A's role (authority is the handler's; the store settles).
-    accounts
-        .revoke_role(a.id, account.id)
-        .await
-        .expect("revoke A");
+    revoke_role(&pool, a.id, account.id).await;
 
     assert_eq!(
         parent_of(&pool, account.id, b.id).await,
@@ -613,14 +632,12 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         "B re-homes to A's parent (rule 3)"
     );
     assert_eq!(
-        accounts.role_of(a.id, account.id).await.expect("role_of"),
+        role_of(&pool, a.id, account.id).await,
         None,
         "the revoked member holds no role"
     );
-    let offer = accounts
-        .find_invitation(a_invites_x.id)
+    let offer = find_invitation(&pool, a_invites_x.id)
         .await
-        .expect("find")
         .expect("the offer still exists as a record");
     assert_eq!(
         offer.state,

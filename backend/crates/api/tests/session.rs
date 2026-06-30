@@ -31,8 +31,10 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
+    let backend = adapter_mem::MemBackend::new();
     let state = AppState {
-        account_repo: Arc::new(adapter_mem::MemAccountRepo::new()),
+        accounts: backend.account_store(),
+        database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -46,7 +48,7 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
         auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::new(
             "did:plc:test".to_string(),
         ))),
-        user_repo: Arc::new(adapter_mem::MemUserRepo::new()),
+        users: backend.user_store(),
         // An anonymous /me never reaches the profile ports; mem fakes suffice.
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
             did: Did::new("did:plc:test".to_string()),
@@ -54,7 +56,7 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             display_name: None,
             avatar_url: None,
         })),
-        profile_cache: Arc::new(adapter_mem::MemProfileCache::new()),
+        profile_cache: backend.profile_cache(),
     };
     // The store backing this test is irrelevant — PgSessionStore is exercised in
     // adapter-pg's own tests; here we only need the layer present so the `Session`

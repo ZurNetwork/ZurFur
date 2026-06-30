@@ -1,7 +1,9 @@
 //! Round-trips `PgProfileCache` against a throwaway PostgreSQL container, proving
 //! the migration-created `profile_cache` table stores and reads profiles, that the
-//! TTL predicate hides stale entries, and that `put` upserts. Requires a container
-//! runtime socket (DOCKER_HOST honored).
+//! TTL predicate hides stale entries, and that `put` upserts. Both `get` and `put`
+//! are pool-backed: the cache fill is a documented exception to the Unit of Work (a
+//! best-effort read-path write with no transactional invariant, DD `24150017`).
+//! Requires a container runtime socket (DOCKER_HOST honored).
 use std::time::Duration;
 
 use adapter_pg::{PgPool, PgProfileCache};
