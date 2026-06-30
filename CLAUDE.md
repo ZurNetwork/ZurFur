@@ -8,6 +8,14 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 
 **All design lives in Confluence — it is the single source of truth.** The DESIGN space (https://zurnetwork.atlassian.net/wiki/spaces/DESIGN) holds the glossary (per-entity pages: User, Account, Character, Commission, Golem, Plugin, …), the architecture ("Domains and Applications"), and scope ("Project MVP"). Work is tracked in the Jira project ZMVP. Do not create local design documents; consult and update Confluence instead.
 
+**Fetch before guessing.** Many decisions live only in Confluence, not in code. When unsure whether something is already decided/defined and it sounds familiar, **fetch the relevant DESIGN page before asking or asserting from memory.** A local pointer index of every DESIGN page (titles + page IDs + fetch coordinates) is maintained at @docs/confluence-design-index.md — match the topic there, then fetch the page id with `getConfluencePage`. Only ask once the page doesn't resolve it, or when a genuinely new decision is needed (route through `/design-decision`).
+
+## Memory & references
+
+- **References, not copies.** Confluence is the source of truth; memory and every `CLAUDE.md` hold **pointers** (page Title + ID/URL), never copied page bodies. When in doubt, **fetch** the page (via the index above) rather than assert from memory.
+- **Check memory per directory when a question arises.** Project memory lives under `.claude/projects/<cwd-slug>/memory/` (slug = launch path). Before answering or asserting a fact about an area, **check the relevant memories first.** A folder may carry its own `CLAUDE.md` that points at the memories/DDs specific to it — honor that pointer.
+- Tend this layer with `/optimize-memory`; file a single reference with `/save-reference`.
+
 ## Roles & decision authority
 
 **The human is the Engineer and owns every decision. Claude acts as a Junior Developer.**
@@ -78,15 +86,9 @@ backend/crates/
 
 Conventions: Rust edition 2024; workspace-level dependency versions in root `Cargo.toml` (add a dependency there only when a crate actually consumes it).
 
-## Configuration
+## Configuration & database
 
-Loaded by figment in `api`: `backend/config/{profile}.toml` first, then `ZURFUR_*` environment variables (env wins). Profile selected by `ZURFUR_ENV` (default `dev`).
-
-Variables: `ZURFUR_ENV`, `ZURFUR_HTTP_ADDR` (default `127.0.0.1:3621`; dev.toml sets `127.0.0.1:8080`), `ZURFUR_PUBLIC_URL` (config key `public_url`; externally-visible origin — scheme + host + port — used to build OAuth redirect URIs, dev sets `http://127.0.0.1:8080`), `RUST_LOG` (overrides the `log_level` config), `DATABASE_URL` (deliberately unprefixed — sqlx tooling reads this exact name).
-
-## Database
-
-PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). The binary builds a connection pool from `DATABASE_URL` at boot and fails fast if the database is unreachable. Migrations live in `backend/crates/adapter-pg/migrations/`, are embedded via `sqlx::migrate!`, and run automatically on every boot. `GET /health` reports database reachability (200 up / 503 down).
+Config is figment in `api`: `backend/config/{profile}.toml` then `ZURFUR_*` env (env wins), profile via `ZURFUR_ENV`. Postgres runs via Docker Compose; migrations live in `backend/crates/adapter-pg/migrations/` (embedded `sqlx::migrate!`, run on boot); `GET /health` reports DB reachability. **The full env-var catalogue + Postgres/runtime specifics are in the repo memory `config-and-runtime`** — check it when touching config, ports, or the DB.
 
 ## Branch Strategy
 
@@ -96,5 +98,5 @@ PostgreSQL 16 via Docker Compose (port 5432, user: admin, db: zurfur). The binar
 ### Parallel work — worktrees & units of work
 
 - **Parallel branches use isolated git worktrees** under `~/code/zurfur-<slug>`. Tests are already isolated (each spins up its own testcontainers Postgres on a random port); the **dev stack is not** — run `just worktree-init` once in a new worktree to give it its own DB/HTTP ports + compose project (mechanics live in `scripts/worktree-init.sh` and `.env.example`). `/start` offers a worktree on demand.
-- **A unit of work** is one pass through the lifecycle — a ticket, or a `/next-path` set worked in parallel — driven by **`/unit-of-work`**, which owns the canonical command order and the gates. The active set is recorded (gitignored) in `.understand/parallel-set.json`.
+- **A unit of work** is one pass through the lifecycle — a ticket, or a `/next-path` set worked in parallel — driven by **`/unit-of-work`**, which owns the canonical command order and the gates. The active set is recorded (tracked, under `.understand/`) in `.understand/parallel-set.json`.
 - **Commit convention.** Each unit gets a short **random** id (the ledger's `uow`, unrelated to the Jira key). The **first commit on each branch** carries both — `[ZMVP-N][uow:<id>] <subject>` — later commits just `[ZMVP-N]`.
