@@ -1,0 +1,433 @@
+openapi: 3.1.0
+
+# Zurfur — Plugin REST surface (/plugin/v1)
+#
+# Authoritative, hand-authored contract for the *plugin → core* REST API: the
+# HTTP surface a (first-party, in v1) plugin calls to read commission data and
+# push commission-relevant output into core. Spec-first: this document is the
+# source of truth; there are no Rust route handlers behind it yet.
+#
+# Siblings under epic ZMVP-25:
+#   - ZMVP-27 — AsyncAPI: events/webhooks, core → plugin (NOT here).
+#   - ZMVP-28 — the versioning & deprecation contract this surface runs under.
+#
+# STUBS / PROVISIONAL (see x-zurfur-status below): the Commission and changelog
+# component schemas are placeholders pending ZMVP-19 (the Commission family is
+# Private — an Index/export JSON Schema, not an atproto lexicon — and is not yet
+# pinned). The per-operation scope vocabulary is provisional pending the
+# DD-24543244 scope-vocabulary ticket.
+
+info:
+  title: Zurfur Plugin REST API
+  version: 1.0.0
+  summary: The plugin → core REST contract for the /plugin/v1 surface.
+  description: |
+    The REST API first-party plugins call to **read commission data** and
+    **produce commission-relevant output** into core. This is the plugin → core
+    direction; events (core → plugin) live in the sibling **AsyncAPI** document
+    (ZMVP-27).
+
+    ## Authentication & trust boundary
+    Every request authenticates with an **HTTP bearer token**. The token is a
+    short-lived, scoped, delegation-tagged credential **exchanged from a plugin's
+    `app_key`** — the per-`(plugin, account)` install binding. The `app_key`
+    itself is **never** sent as a bearer credential and is never a long-lived
+    browser secret. A plugin never receives the user's session cookie or the
+    user's atproto (PDS) credential. See the `pluginBearer` security scheme.
+
+    Because `/plugin/v1` carries **no ambient cookie**, it is **CSRF-exempt by
+    construction** and **CORS-open**. CSRF defenses (SameSite + Origin allowlist)
+    are scoped to the first-party cookie surface only and do not apply here.
+    (DESIGN "Auth Surfaces, the Plugin Trust Boundary & CSRF" — DD-24543244 /
+    ZMVP-23.)
+
+    ## Authority model
+    What a plugin may do is the intersection
+    `granted scopes ∩ principal's authority ∩ domain validation`. In the v1
+    MVP slice the principal is the **clicking user** (invoked actions);
+    reactive / Golem-principal actions are post-MVP and absent here. Plugins gate
+    **production** (writing core-renderable output to the changelog); **core**
+    gates reading and visibility — there are no private side-channels.
+
+    ## Errors
+    All error responses are RFC 9457 `application/problem+json` documents (see
+    the `Problem` schema), with `type` (a non-dereferenceable `urn:zurfur:error:*`
+    URN), `code`, `title`, `detail`, and `status`. Codes are drawn from the core
+    error registry in `backend/crates/api/src/problem.rs`.
+
+    ## Versioning
+    The major version is pinned in the path (`/plugin/v1`). The surface runs under
+    the ZMVP-28 versioning & deprecation contract: breaking changes ship a major
+    bump (`/plugin/v2`), with at least one overlap window where both majors serve
+    and a **90-day** deprecation notice before a retired major is removed.
+  contact:
+    name: Zurfur Engineering
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+# Status banner consumed by reviewers and tooling — this contract is partial by
+# design and gated on upstream work.
+x-zurfur-status:
+  maturity: draft
+  stubbed:
+    - schema: Commission
+      pending: ZMVP-19
+      note: >-
+        Placeholder. The Commission family is Private (Index/export JSON Schema,
+        not an atproto lexicon; DESIGN Lexicon §B) and is not yet pinned. The full
+        field list is filled by ZMVP-19; do not treat the fields here as final.
+    - schema: ChangelogEntry
+      pending: ZMVP-19
+      note: Placeholder changelog-artifact shape; final shape pinned with the Commission slice.
+  provisional:
+    - subject: scope-vocabulary
+      pending: DD-24543244 scope-vocabulary ticket
+      note: >-
+        The resource:action scope strings (read:commission, commission:write,
+        post:publish, …) are illustrative. The authoritative vocabulary is settled
+        by the scope-vocabulary ticket under DD-24543244.
+  consumes:
+    - ZMVP-28  # versioning & deprecation contract (referenced, not defined here)
+
+servers:
+  - url: https://{host}/plugin/v1
+    description: Plugin REST surface. `host` is the deployment's public API host.
+    variables:
+      host:
+        default: api.zurfur.app
+        description: Public API host for the target deployment.
+  - url: http://127.0.0.1:8080/plugin/v1
+    description: Local development.
+
+# Every operation requires a valid plugin bearer token. Per-operation scope
+# requirements are declared with the `x-required-scopes` extension (the scope
+# vocabulary is provisional — see x-zurfur-status).
+security:
+  - pluginBearer: []
+
+tags:
+  - name: Commissions
+    description: Read commission data and produce commission-relevant output.
+
+paths:
+  /commissions/{commissionId}:
+    get:
+      tags: [Commissions]
+      operationId: getCommission
+      summary: Read a commission
+      description: |
+        Returns the commission identified by `commissionId`, provided the calling
+        plugin's grant covers it (authority = `granted scopes ∩ principal's
+        authority ∩ domain validation`). The response body is a `Commission`
+        (**stub** — shape pinned by ZMVP-19).
+      x-required-scopes:
+        - read:commission
+      x-scope-vocabulary-status: provisional  # see x-zurfur-status
+      parameters:
+        - $ref: '#/components/parameters/CommissionId'
+      responses:
+        '200':
+          description: The commission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Commission'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/CommissionNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /commissions/{commissionId}/changelog:
+    post:
+      tags: [Commissions]
+      operationId: writeCommissionChangelogEntry
+      summary: Write a changelog artifact
+      description: |
+        Produce a commission-relevant output by appending an entry to the
+        commission's **changelog**. This is an **invoked** action: the principal
+        is the clicking user, and the entry lands in the core-sovereign changelog
+        in a core-renderable format. Plugins gate production; core gates
+        visibility.
+
+        The request and response bodies are **stubs** (`ChangelogEntryInput` /
+        `ChangelogEntry`) pending ZMVP-19.
+      x-required-scopes:
+        - commission:write
+      x-scope-vocabulary-status: provisional  # see x-zurfur-status
+      parameters:
+        - $ref: '#/components/parameters/CommissionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangelogEntryInput'
+      responses:
+        '201':
+          description: The changelog entry that was appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangelogEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/CommissionNotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    pluginBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        A short-lived, scoped, delegation-tagged token **exchanged from a
+        plugin's `app_key`** (the per-`(plugin, account)` install binding). Sent
+        as `Authorization: Bearer <token>`.
+
+        - The `app_key` is the install binding and is **exchanged** for this
+          token; it is never itself a bearer credential and never a long-lived
+          browser secret.
+        - The token grants only the scopes granted at install, further narrowed
+          by the principal's authority and domain validation.
+        - Plugins never receive the first-party session cookie or the user's
+          atproto (PDS) credential.
+        - Because this surface carries no ambient cookie, it is **CSRF-exempt by
+          construction** and **CORS-open**.
+
+        The token's exact wire format, lifetime, refresh/exchange endpoint, and
+        per-`app_key` rate-limit headers are settled by the Plugin-security work
+        (DD-24543244 follow-ups) and are not pinned by this document.
+
+  parameters:
+    CommissionId:
+      name: commissionId
+      in: path
+      required: true
+      description: Identifier of the commission. (Identifier shape pinned by ZMVP-19.)
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    Commission:
+      type: object
+      title: Commission (STUB)
+      description: |
+        **STUB — pending ZMVP-19.** The Commission resource sits at the centre of
+        this surface, but its field list is not yet pinned. The Commission family
+        is Private — it travels as an Index/export JSON Schema, not an atproto
+        lexicon (DESIGN Lexicon §B). The single property below is a placeholder so
+        operations can `$ref` a real schema; **do not** treat these fields as the
+        final contract.
+      x-zurfur-stub: true
+      x-zurfur-pending: ZMVP-19
+      required:
+        - commissionId
+      properties:
+        commissionId:
+          type: string
+          minLength: 1
+          description: Stable identifier of the commission (shape pinned by ZMVP-19).
+      additionalProperties: true
+
+    ChangelogEntry:
+      type: object
+      title: ChangelogEntry (STUB)
+      description: |
+        **STUB — pending ZMVP-19.** A single core-renderable entry in a
+        commission's changelog, as returned after an invoked write. Placeholder
+        shape; final fields pinned with the Commission slice.
+      x-zurfur-stub: true
+      x-zurfur-pending: ZMVP-19
+      required:
+        - id
+        - commissionId
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Stable identifier of the changelog entry.
+        commissionId:
+          type: string
+          minLength: 1
+          description: The commission this entry belongs to.
+        body:
+          type: string
+          description: Core-renderable changelog body (placeholder).
+      additionalProperties: true
+
+    ChangelogEntryInput:
+      type: object
+      title: ChangelogEntryInput (STUB)
+      description: |
+        **STUB — pending ZMVP-19.** The body of an invoked changelog write.
+        Placeholder shape; final fields pinned with the Commission slice.
+      x-zurfur-stub: true
+      x-zurfur-pending: ZMVP-19
+      required:
+        - body
+      properties:
+        body:
+          type: string
+          minLength: 1
+          description: Core-renderable changelog body (placeholder).
+      additionalProperties: true
+
+    Problem:
+      type: object
+      title: Problem
+      description: |
+        An RFC 9457 problem document — the JSON API's single error representation,
+        served as `application/problem+json`. Mirrors
+        `backend/crates/api/src/problem.rs` (ZMVP-35). Every field is always
+        present.
+      required:
+        - type
+        - code
+        - title
+        - detail
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: |
+            Stable, non-dereferenceable `urn:zurfur:error:*` problem-type URN — an
+            identifier to look up, not a live URL.
+          examples:
+            - urn:zurfur:error:forbidden
+        code:
+          type: string
+          description: Terse, machine-branchable code from the core error registry.
+          examples:
+            - forbidden
+        title:
+          type: string
+          description: Short, stable, human-readable summary of the problem type.
+          examples:
+            - Forbidden
+        detail:
+          type: string
+          description: Human-readable explanation of this specific occurrence.
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 599
+          description: HTTP status code, duplicated in the body per RFC 9457.
+          examples:
+            - 403
+      additionalProperties: false
+
+  responses:
+    Unauthorized:
+      description: |
+        No valid plugin bearer token. Registry code `not_authenticated`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:not-authenticated
+            code: not_authenticated
+            title: Not authenticated
+            detail: You must be signed in to do that.
+            status: 401
+
+    Forbidden:
+      description: |
+        The token is valid but its scopes — narrowed by the principal's authority
+        and domain validation — don't permit this action on this commission.
+        Registry code `forbidden`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:forbidden
+            code: forbidden
+            title: Forbidden
+            detail: You don't have permission to perform this action.
+            status: 403
+
+    CommissionNotFound:
+      description: |
+        No commission with the given id is visible to this grant.
+
+        **PROVISIONAL** — the `type`/`code` shown below are not yet in the
+        `problem.rs` registry; the concrete not-found code (and whether an
+        uncovered-but-existing commission returns 404 here or 403 above) is an
+        Engineer call to be registered alongside the Commission slice (ZMVP-19).
+        The response *shape* (a `Problem`) is settled.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:commission-not-found
+            code: commission_not_found
+            title: Commission not found
+            detail: No such commission, or it is not covered by this grant.
+            status: 404
+
+    UnprocessableEntity:
+      description: |
+        The request is understood but its data won't do. Registry code
+        `invalid_request` (specific cases may carry their own `code` under the
+        same `type`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:invalid-request
+            code: invalid_request
+            title: Invalid request
+            detail: The changelog body is required.
+            status: 422
+
+    InternalError:
+      description: |
+        A dependency failed; the request was well-formed. Registry code
+        `internal_error`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:internal
+            code: internal_error
+            title: Internal error
+            detail: The request couldn't be completed. Please try again.
+            status: 500
+
+    ServiceUnavailable:
+      description: |
+        A dependency is unavailable; the caller may retry. Registry code
+        `service_unavailable`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:zurfur:error:service-unavailable
+            code: service_unavailable
+            title: Service unavailable
+            detail: The service is temporarily unavailable. Please retry.
+            status: 503
