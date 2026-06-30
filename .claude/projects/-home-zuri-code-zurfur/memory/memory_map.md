@@ -6,6 +6,8 @@ type: reference
 
 Compact map of the repo's **knowledge-homes** (rebuilt by `/optimize-memory`, last pass 2026-06-30). Facts live in **memory**; a folder `CLAUDE.md` just ensures the right memories/DDs get checked there. Confluence DESIGN is the source of truth; `docs/confluence-design-index.md` is the page pointer index.
 
+**Last mapped against commit `92a529eb9833f71b7f607ec46ec7f2233899fe66`.** Next `/optimize-memory` runs `git diff --name-only <that-sha> HEAD` and re-maps only the knowledge-homes that changed — Git is the hash-tree, so there's no custom one to maintain. Bump this SHA to `HEAD` after each pass.
+
 - **root** — `CLAUDE.md` ✓ (project, roles, DoD, architecture, branch strategy, **Memory & references** convention).
 - **backend/crates/domain** — pure domain entities/ports. No CLAUDE.md (root architecture covers it). Per-entity design = DESIGN glossary pages.
 - **backend/crates/adapter-pg** — private data boundary. `CLAUDE.md` ✓ → DDs `24150017` (UoW/transactions), `10354698` (Data Boundaries), `10125341` (Blobs/PDS).
