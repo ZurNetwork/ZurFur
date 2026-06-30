@@ -137,7 +137,7 @@ async fn signin(
 
 /// The OAuth redirect target (`GET /signin-callback`): completes sign-in and
 /// establishes the session. On success it exchanges the [`CallbackQuery`] `code`
-/// for a DID via the [`Authenticator`], provisions the [`UserRepo`] User for that
+/// for a DID via the [`Authenticator`], provisions the [`UserWrites`](domain::ports::UserWrites) User for that
 /// DID (mint-or-return; first contact *recognizes*, it doesn't register —
 /// ZMVP-9), rotates the session id so a pre-auth id cannot carry into the
 /// authenticated session (session-fixation hardening — ZMVP-24), stores the
@@ -152,7 +152,7 @@ async fn signin(
 /// provision, session-rotation, or session-insert failure is `500`, each rendering the sign-in page
 /// with a steady message. No prior auth required (this *creates* the session).
 ///
-/// References: [`Authenticator`], [`UserRepo`], [`me`], [`SESSION_USER_KEY`].
+/// References: [`Authenticator`], [`UserStore`](domain::ports::UserStore), [`me`], [`SESSION_USER_KEY`].
 ///
 /// ```text
 /// GET /signin-callback?code=abc&state=xyz&iss=https://pds.example
@@ -202,7 +202,15 @@ async fn signin_callback(
     // First contact recognizes rather than registers: provisioning mints a User on
     // the first sign-in for this DID and returns the existing one on every repeat
     // (idempotent — one DID, one User, forever). The human fills out nothing.
-    let user = match state.user_repo.provision(&did).await {
+    // Recognition is a private-store write, so it goes through one unit of work.
+    let provisioned = async {
+        let mut uow = state.database.begin().await?;
+        let user = uow.users().provision(&did).await?;
+        uow.commit().await?;
+        anyhow::Ok(user)
+    }
+    .await;
+    let user = match provisioned {
         Ok(user) => user,
         Err(_) => {
             return (
@@ -237,7 +245,7 @@ async fn signin_callback(
 }
 
 /// The signed-in greeting (`GET /me`): resolves the session's [`UserId`] to a
-/// User via the [`UserRepo`] (no PDS round trip — ZMVP-9 Criterion 3), then
+/// User via the [`UserStore`](domain::ports::UserStore) (no PDS round trip — ZMVP-9 Criterion 3), then
 /// renders the handle and avatar via [`resolve_profile`]/[`render_me`] (ZMVP-10).
 ///
 /// Caveats: an anonymous visitor — no session, an expired one, or one whose User
@@ -245,7 +253,7 @@ async fn signin_callback(
 /// it redirects rather than returning `401`. An unreachable PDS with nothing
 /// cached still renders, falling back to the DID (absence is not an error).
 ///
-/// References: [`UserRepo`], [`resolve_profile`], [`render_me`].
+/// References: [`UserStore`](domain::ports::UserStore), [`resolve_profile`], [`render_me`].
 ///
 /// ```text
 /// GET /me   (Cookie: zurfur.sid=...)
@@ -258,7 +266,7 @@ async fn me(State(state): State<AppState>, session: Session) -> Response {
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Redirect::to("/").into_response();
     };
-    let user = match state.user_repo.find(UserId::new(id)).await {
+    let user = match state.users.find(UserId::new(id)).await {
         Ok(Some(user)) => user,
         _ => return Redirect::to("/").into_response(),
     };
@@ -287,6 +295,12 @@ async fn logout(session: Session) -> Response {
 /// Read-through resolution of a visitor's profile: a fresh cache hit is served
 /// without waking the PDS (ZMVP-10 criterion 2); a miss reads the PDS and caches
 /// the result; a PDS failure degrades to `None` rather than erroring (criterion 3).
+///
+/// The cache fill is pool-backed and best-effort — a documented exception to the
+/// compile-enforced Unit of Work (DD `24150017`): a read-through cache write on the
+/// GET path has no transactional invariant, so it is not routed through a write
+/// transaction (which would make a read endpoint open one for nothing). A `put`
+/// failure is swallowed so a cache hiccup never fails the page.
 async fn resolve_profile(
     cache: &dyn ProfileCache,
     source: &dyn ProfileSource,
@@ -297,7 +311,8 @@ async fn resolve_profile(
     }
     match source.fetch(did).await {
         Ok(profile) => {
-            // Best-effort cache write: a cache failure must not fail the page.
+            // Best-effort, pool-backed cache write (guard exception): a cache failure
+            // must not fail the page, so it is swallowed.
             let _ = cache.put(&profile).await;
             Some(profile)
         }
