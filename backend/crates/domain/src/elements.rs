@@ -16,6 +16,8 @@
 //! - [`invitation`] — a pending offer of membership, issued then accepted/revoked
 //!   (ZMVP-32/ZMVP-20, DESIGN/Roles).
 //! - [`did`] — a decentralized identifier, the AT Protocol identity primitive.
+//! - [`handle`] — a validated, normalized atproto-style Account handle, the one
+//!   shared claim-validation gate (ZMVP-48/45, DESIGN/24870914 §6, DD/26050561).
 //! - [`profile`] — a visitor's public, PDS-owned profile (ZMVP-10).
 //!
 //! The rest are stubs — identity types and shapes sketched ahead of the work
@@ -29,6 +31,7 @@ pub mod character;
 pub mod commission;
 pub mod did;
 pub mod golem;
+pub mod handle;
 pub mod invitation;
 pub mod markdown;
 pub mod profile;
