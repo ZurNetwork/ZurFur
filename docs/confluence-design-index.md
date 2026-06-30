@@ -53,7 +53,8 @@ Know these without fetching; fetch the linked DD page for detail.
 - `3014657` — Deletion of Commissions
 - `6422530` — Payments & Billing Model
 - `6848513` — External Chat Tracking (core vs plugin)
-- `21594113` — User-Profiles, the Handle Swap & Content Maturity
+- `21594113` — User-Profiles, the Handle Swap & Content Maturity (§6 emergent-type & §7 first-account-on-login SUPERSEDED by 26247170)
+- `26247170` — User as Actor & On-Demand Accounts (User is first-class actor; no default account; Accounts created on demand via POST /accounts; Personal/Studio retired)
 - `23003138` — Account Deletion, Tombstoning & Handle Reuse
 - `23101442` — Notification Service, Fan-out-on-Read & the Seen Cursor
 - `23592962` — API Response Shape & Error Model (RFC 9457)
@@ -62,6 +63,8 @@ Know these without fetching; fetch the linked DD page for detail.
 - `24182820` — Invitation Validity & Issuer Departure
 - `24543244` — Auth Surfaces, the Plugin Trust Boundary & CSRF
 - `24870914` — The Default Account's Handle
+- `26050561` — Confusable Handles & the Punycode Policy (block `xn--` IDN labels in v1; UTS #39 allow-with-checks is the documented upgrade path)
+- `26607618` — Handle Resolution for *.zurfur.app — HTTPS well-known (DNS-reversible) (DECIDED; serve handle→DID via Host-routed `/.well-known/atproto-did` reading Postgres, behind one wildcard DNS+TLS cert; reversible to DNS TXT later; key-custody/minter still open; ZMVP-44)
 - `19431425` — Authenticators
 - `8978453` — Where should Portfolios, Batches, Commissions and Collections live? (in progress)
 - `8978501` — Portfolio Live vs Static
