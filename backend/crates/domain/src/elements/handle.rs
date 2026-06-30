@@ -12,14 +12,12 @@
 //! a [`Handle`] enforces — in a single pass — atproto normalization, the charset /
 //! segment / length rules, the `xn--` punycode reject (ZMVP-48,
 //! DD/26050561), and the Zurfur reserved-label reject (ZMVP-45). One gate, not
-//! many: every consumer inherits the whole rule set by building a `Handle`
-//! (memory `feedback_make_unsoundness_unreachable`).
+//! many: every consumer inherits the whole rule set by building a `Handle`.
 //!
 //! It mirrors the [`crate::elements::account::AccountName`] idiom exactly — a
 //! `String` newtype with a validating `try_new`, an `as_str()`, a typed error
 //! enum, and `///` doctests. It is a plain struct + free function: no trait,
-//! because nothing consumes one polymorphically (memory
-//! `feedback_traits_dependency_inversion`).
+//! because nothing consumes one polymorphically.
 
 /// The longest a whole handle may be, in `char`s (atproto handle spec; DD §6).
 pub const HANDLE_MAX_LEN: usize = 253;
@@ -62,7 +60,7 @@ const RESERVED_LABELS: &[&str] = &[
     "blob",
     "status",
     "health",
-    "metrics", //
+    "metrics",
     // auth / identity
     "auth",
     "login",
@@ -74,7 +72,7 @@ const RESERVED_LABELS: &[&str] = &[
     "account",
     "accounts",
     "did",
-    "plc", //
+    "plc",
     // comms / abuse
     "mail",
     "smtp",
@@ -86,7 +84,7 @@ const RESERVED_LABELS: &[&str] = &[
     "postmaster",
     "webmaster",
     "hostmaster",
-    "noc", //
+    "noc",
     // brand / staff
     "zurfur",
     "official",
@@ -95,7 +93,7 @@ const RESERVED_LABELS: &[&str] = &[
     "staff",
     "team",
     "moderator",
-    "mod", //
+    "mod",
     // protocol / well-known
     "well-known",
     "atproto",
