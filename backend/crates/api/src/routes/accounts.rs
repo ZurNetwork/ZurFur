@@ -173,10 +173,12 @@ async fn create_account(
         return Err(Problem::handle_taken());
     }
 
-    // Mint the account's sovereign DID before touching the private store. A mint
-    // failure (the real adapter writes to the PLC directory) aborts with nothing
-    // persisted; the client may retry.
-    let did = state.did_minter.mint().await.map_err(|_| {
+    // Mint the account's sovereign DID before touching the private store. The real
+    // minter generates the account's rotation keys, signs an identity-only genesis
+    // operation binding `alsoKnownAs = at://<handle>`, custodies the keys, and
+    // submits the operation. A mint failure aborts with nothing persisted; the
+    // client may retry.
+    let did = state.did_minter.mint(&handle).await.map_err(|_| {
         Problem::service_unavailable(
             "We couldn't mint an identity for the account. Please try again.",
         )

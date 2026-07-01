@@ -101,12 +101,35 @@ pub struct Config {
     /// any other authority is not ours to resolve (ZMVP-44, DD/26607618).
     #[serde(default = "default_handle_domain")]
     pub handle_domain: String,
+    /// **DEV-ONLY root key** (base64, 32 bytes) that envelope-encrypts every
+    /// account's minted `did:plc` custody keys at rest (ZMVP-49). A config/env
+    /// secret is *not* a hardware boundary: this is acceptable only pre-alpha.
+    /// Hardening it into a cloud KMS/HSM is the URGENT follow-up **ZMVP-53**, which
+    /// must land before any real account is minted. Read from
+    /// `ZURFUR_DID_KEY_ROOT_KEY`; never committed to a profile TOML.
+    pub did_key_root_key: String,
+    /// PLC directory base URL used **only** when [`plc_directory_submit`] is on.
+    /// Defaults to the canonical `https://plc.directory`.
+    ///
+    /// [`plc_directory_submit`]: Config::plc_directory_submit
+    #[serde(default = "default_plc_directory_endpoint")]
+    pub plc_directory_endpoint: String,
+    /// Whether the minter actually submits genesis operations to the directory.
+    /// **Defaults to `false`** (ZMVP-49 C2): the minter uses a no-op directory and
+    /// registers nothing against canonical `plc.directory`. Flip on at launch.
+    #[serde(default)]
+    pub plc_directory_submit: bool,
 }
 
 /// Serde default for [`Config::handle_domain`]: `zurfur.app`, the production
 /// Zurfur-issued handle namespace.
 fn default_handle_domain() -> String {
     "zurfur.app".to_string()
+}
+
+/// Serde default for [`Config::plc_directory_endpoint`]: the canonical directory.
+fn default_plc_directory_endpoint() -> String {
+    "https://plc.directory".to_string()
 }
 
 /// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`. The literal is a
