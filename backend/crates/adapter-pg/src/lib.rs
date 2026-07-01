@@ -42,11 +42,15 @@ use sqlx::postgres::PgPoolOptions;
 pub use sqlx::PgPool;
 
 mod account;
+mod key_store;
+mod key_vault;
 mod profile;
 mod session_store;
 mod uow;
 mod user;
 pub use account::{PgAccountStore, PgAccountWrites};
+pub use key_store::PgKeyStore;
+pub use key_vault::RootKey;
 pub use profile::PgProfileCache;
 pub use session_store::PgSessionStore;
 pub use uow::{PgDatabase, PgUnitOfWork};

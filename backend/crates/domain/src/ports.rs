@@ -10,6 +10,7 @@ use async_trait::async_trait;
 
 use crate::elements::{
     account::{Account, AccountId},
+    account_keys::AccountKeys,
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
@@ -341,15 +342,46 @@ pub trait AccountWrites: Send {
 /// Unlike a *visitor's* DID, which precedes us and is only ever recognized, an
 /// account's DID is created on its behalf, server-side and invisibly.
 ///
-/// FLOOR STUB (ZMVP-14): the live implementation returns a structurally-shaped
-/// but synthetic `did:plc:` value. The real minter — keypair generation, PLC
-/// genesis operation, signing, directory submission, PDS slot, key custody —
-/// is deferred to its own infrastructure/security DD ("dress when The Who
-/// closes"). Callers depend only on this port, so dressing it later is an
-/// adapter swap, not a handler change.
+/// The live implementation (`adapter-atproto`'s `RealDidMinter`, ZMVP-49) is a
+/// real minter: it generates per-account secp256k1 rotation keys, builds and
+/// signs an **identity-only** PLC genesis operation (no PDS — the feed-generator
+/// pattern, DD/26935298), derives the `did:plc` from its hash, persists the keys
+/// envelope-encrypted via [`KeyStore`], and submits the operation to a PLC
+/// directory. A synthetic floor stub (`StubDidMinter`) is kept for tests/dev.
+/// Callers depend only on this port, so the choice is a composition-root swap.
 #[async_trait]
 pub trait DidMinter: Send + Sync {
-    /// Mint a new account DID. Fallible because the real implementation performs
-    /// a network write to the PLC directory; the stub never fails in practice.
-    async fn mint(&self) -> anyhow::Result<Did>;
+    /// Mint a new account DID bound to `handle`: the handle becomes the genesis
+    /// operation's initial `alsoKnownAs` (`at://<handle>`), the back-link half of
+    /// atproto's bidirectional handle verification. Persisting the handle for
+    /// resolution and maintaining it on later changes is a separate concern
+    /// (ZMVP-44); this port only needs it to shape the operation it signs.
+    ///
+    /// Fallible: the real implementation generates keys, writes them to the
+    /// [`KeyStore`], and submits to a directory — any of which can fail. The stub
+    /// never fails in practice.
+    async fn mint(&self, handle: &Handle) -> anyhow::Result<Did>;
+}
+
+/// Custody store for the private keys behind a minted `did:plc`. The pg adapter
+/// **envelope-encrypts** every key under a root key before it touches disk, so a
+/// database compromise alone never yields usable key material; a cloud-KMS
+/// adapter (URGENT follow-up ZMVP-53, required before real accounts) drops in
+/// behind this same port. The mem adapter keeps them in-process for tests.
+///
+/// This is a *private-store* port. Custody keys are the most sensitive rows
+/// Zurfur holds: implementations must never persist them in the clear, and must
+/// never log key material (the [`AccountKeys`] secrets are redacted in `Debug`
+/// and zeroized on drop to help hold that line).
+#[async_trait]
+pub trait KeyStore: Send + Sync {
+    /// Persist the custody keys for `did`, encrypted at rest. Called once, as part
+    /// of minting, before the operation is submitted to the directory. Overwrites
+    /// nothing by contract — one DID mints once.
+    async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()>;
+
+    /// Load and decrypt the custody keys for `did`, or `None` if unknown. Future
+    /// operations (rotation, `alsoKnownAs` updates — ZMVP-50/52) sign with the
+    /// keys returned here; identity-only minting (ZMVP-49) only writes.
+    async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>>;
 }

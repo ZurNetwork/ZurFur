@@ -39,6 +39,10 @@ async fn health_is_green_against_fresh_postgres() {
             database_url,
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".to_string(),
+            // ZMVP-49 config (unused by the mem minter in these tests).
+            did_key_root_key: "unused-in-tests".to_string(),
+            plc_directory_endpoint: "https://plc.directory".to_string(),
+            plc_directory_submit: false,
         },
         pool,
         // /health touches neither the PDS nor the repo; the mem adapters keep both

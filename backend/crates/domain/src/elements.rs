@@ -25,6 +25,7 @@
 //! [`blob`], [`character`], [`commission`], [`golem`], [`markdown`], [`workflow`].
 
 pub mod account;
+pub mod account_keys;
 pub mod achievement;
 pub mod blob;
 pub mod character;
