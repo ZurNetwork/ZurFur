@@ -14,6 +14,7 @@ use crate::elements::{
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
+    plc_operation::PlcOperationRecord,
     profile::Profile,
     role::Role,
     user::{User, UserId},
@@ -360,6 +361,34 @@ pub trait AccountWrites: Send {
         new_owner: UserId,
         account: AccountId,
     ) -> anyhow::Result<()>;
+
+    /// **Soft-delete** an account: mark it deactivated (`accounts.deleted_at = now`)
+    /// without removing anything (ZMVP-34, DD `23003138`). The row stays, so the
+    /// account's handle stays **reserved** (the global unique index spans soft-deleted
+    /// rows) and its `did:plc` stays **live** — but reads treat it as absent
+    /// ([`AccountStore::find`]/[`find_did_by_handle`](AccountStore::find_did_by_handle)
+    /// already filter `deleted_at IS NULL`), so the account's public surface is hidden.
+    /// Memberships and invitations are deliberately **kept**, so a later reactivation
+    /// restores the account intact. In v1 (identity-only, no PDS — DD `26935298`)
+    /// deactivation is purely this private-store state: the DID is untouched, so there
+    /// is **no** atproto operation, and handle resolution stays truthful for the live
+    /// DID. Owner-only, and gated on the account holding facts (commissions, …) — that
+    /// policy is the caller's. Idempotent: re-soft-deleting a soft-deleted account is a
+    /// no-op. A private-side write, never a cross-store dual write.
+    async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
+
+    /// **Hard-delete** an empty account: remove its `account_invitations`,
+    /// `account_members`, and `accounts` rows in one unit of work (ZMVP-34, DD
+    /// `23003138`). Removing the `accounts` row **frees the handle** for reuse — the
+    /// global unique index no longer sees it — which is safe only because an account
+    /// with no facts carries no reputation. Only ever called for an account the caller
+    /// has established holds **no facts** (no commissions, products, or recurring
+    /// billing); that gate is the caller's. The custody keys (`account_keys`) are left
+    /// in place so the native ~72h `did:plc` tombstone recovery window can still reverse
+    /// the deletion. **Tombstoning the DID is a separate retryable atproto step**, never
+    /// part of this private transaction (no cross-store dual write — the mint path's
+    /// mirror). Idempotent: hard-deleting an absent account is a no-op.
+    async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is
@@ -386,6 +415,23 @@ pub trait DidMinter: Send + Sync {
     /// [`KeyStore`], and submits to a directory — any of which can fail. The stub
     /// never fails in practice.
     async fn mint(&self, handle: &Handle) -> anyhow::Result<Did>;
+
+    /// **Tombstone** a minted account DID (ZMVP-34 hard-delete, DD `23003138`). Signs
+    /// a `plc_tombstone` operation with the account's custodied **operational**
+    /// rotation key — chaining onto the DID's most recent operation (its `prev`, read
+    /// from the [`PlcOperationLog`]) — records it in the log, and submits it to the
+    /// directory. The DID's document is cleared and the identity permanently
+    /// deactivated on the native ~72h PLC recovery window, during which a
+    /// higher-authority rotation key can still reverse it (Zurfur retains the
+    /// cold-recovery key).
+    ///
+    /// A **public-boundary** step, run **after** the private hard-delete has
+    /// committed — never inside that transaction (no cross-store dual write, the mint
+    /// path's mirror). Fallible and retryable: a directory failure leaves the freed
+    /// handle and removed rows as they are; the tombstone is re-submittable. In v1 the
+    /// directory is a gated no-op, so this signs and logs but registers nowhere. The
+    /// stub/mem minters are no-ops.
+    async fn tombstone(&self, did: &Did) -> anyhow::Result<()>;
 }
 
 /// Custody store for the private keys behind a minted `did:plc`. The pg adapter
@@ -409,4 +455,24 @@ pub trait KeyStore: Send + Sync {
     /// operations (rotation, `alsoKnownAs` updates — ZMVP-50/52) sign with the
     /// keys returned here; identity-only minting (ZMVP-49) only writes.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>>;
+}
+
+/// Append-only log of the `did:plc` operations Zurfur has submitted for each minted
+/// account identity — a *private-store* port. A DID is a chain of operations, and
+/// every non-genesis operation references the CID of the DID's most recent operation
+/// as its `prev`; since v1 does not fetch the chain back from the (gated) canonical
+/// directory, Zurfur keeps its own record to chain the next operation and to audit
+/// what it published (ZMVP-34 tombstone; reused by ZMVP-50/51, DD `23003138`).
+///
+/// The pg adapter persists these rows; the mem adapter keeps them in-process. The
+/// records carry only public material (see [`PlcOperationRecord`]) — never a key.
+#[async_trait]
+pub trait PlcOperationLog: Send + Sync {
+    /// Record a submitted operation. Appended once per operation, in submission order;
+    /// the log is never mutated or pruned (a tombstone is just the last entry).
+    async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()>;
+
+    /// The CID of the DID's **most recent** logged operation — the `prev` a new
+    /// operation must chain onto — or `None` if no operation is held for it.
+    async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>>;
 }

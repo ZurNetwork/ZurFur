@@ -67,6 +67,30 @@ async fn create(pool: &PgPool, account: &Account, owner: &UserAccount) {
     uow.commit().await.expect("commit");
 }
 
+/// Soft-delete an account in one unit of work (the real [`AccountWrites::soft_delete`]
+/// write path — no more raw-SQL tombstoning).
+async fn soft_delete(pool: &PgPool, account: AccountId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .soft_delete(account)
+        .await
+        .expect("soft_delete");
+    uow.commit().await.expect("commit");
+}
+
+/// Hard-delete an account in one unit of work (the real
+/// [`AccountWrites::hard_delete`] write path).
+async fn hard_delete(pool: &PgPool, account: AccountId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .hard_delete(account)
+        .await
+        .expect("hard_delete");
+    uow.commit().await.expect("commit");
+}
+
 /// Found an account, returning the `create` result instead of asserting success —
 /// so a test can assert the error on a handle collision. Commits only on success
 /// (a failed unit rolls back on drop, as in production).
@@ -743,12 +767,8 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
     );
     create(&pool, &a1, &m1).await;
 
-    // Tombstone it directly (no soft-delete write path exists yet).
-    sqlx::query("UPDATE accounts SET deleted_at = now() WHERE id = $1")
-        .bind(*a1.id)
-        .execute(&pool)
-        .await
-        .expect("soft-delete the account");
+    // Soft-delete through the real write path (ZMVP-34's `AccountWrites::soft_delete`).
+    soft_delete(&pool, a1.id).await;
 
     // Invisible to resolution — the resolver would 404.
     assert!(
@@ -918,5 +938,108 @@ async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
         role_of(&pool, stranger.id, account.id).await,
         None,
         "the non-member gained no role",
+    );
+}
+
+// A hard-deleted (empty) account is gone: its row and Owner membership are removed, so
+// `find`/`role_of` read None — and, UNLIKE a soft-delete, its handle is FREED, so a
+// brand-new, different account may claim it. Hard-delete is only for empty accounts, so
+// the freed label carries no reputation (DD 23003138).
+#[tokio::test]
+async fn hard_delete_frees_the_handle_for_reuse() {
+    let (pool, _container) = fresh_pool().await;
+    let store = PgAccountStore::new(pool.clone());
+    let o1 = provision(&pool, "did:plc:hd-o1").await;
+    let o2 = provision(&pool, "did:plc:hd-o2").await;
+
+    let handle = Handle::try_new("freed.zurfur.app").unwrap();
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:hd-a1".to_string()),
+        handle.clone(),
+        AccountName::try_new("Empty").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    hard_delete(&pool, a1.id).await;
+
+    // The account and its Owner membership are gone.
+    assert!(
+        store.find(a1.id).await.expect("find").is_none(),
+        "a hard-deleted account is gone"
+    );
+    assert!(
+        store
+            .role_of(o1.id, a1.id)
+            .await
+            .expect("role_of")
+            .is_none(),
+        "the Owner membership went with it"
+    );
+
+    // The handle is FREED — a new, different account may now claim it (contrast the
+    // soft-delete case above, where the handle stays reserved).
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:hd-a2".to_string()),
+        handle.clone(),
+        AccountName::try_new("Reclaimed").unwrap(),
+        Utc::now(),
+    );
+    try_create(&pool, &a2, &m2)
+        .await
+        .expect("the freed handle may be reclaimed by a new account");
+    assert_eq!(
+        find_did_by_handle(&pool, &handle).await,
+        Some(a2.did.clone()),
+        "the handle now resolves to the new account"
+    );
+}
+
+// Hard-delete also removes the account's pending invitations, not just its row and
+// memberships — nothing is left dangling to reference a deleted account.
+#[tokio::test]
+async fn hard_delete_removes_pending_invitations() {
+    let (pool, _container) = fresh_pool().await;
+    let store = PgAccountStore::new(pool.clone());
+    let owner = provision(&pool, "did:plc:hi-o").await;
+    let invitee = provision(&pool, "did:plc:hi-i").await;
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:hi-a".to_string()),
+        Handle::try_new("invited.zurfur.app").unwrap(),
+        AccountName::try_new("Has Invite").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+
+    let invitation = Invitation::issue(
+        account.id,
+        invitee.id,
+        Role::Member(None),
+        owner.id,
+        Utc::now(),
+    );
+    create_invitation(&pool, &invitation).await;
+    assert!(
+        store
+            .find_pending_invitation(account.id, invitee.id)
+            .await
+            .expect("find_pending_invitation")
+            .is_some(),
+        "the invitation is pending before the delete"
+    );
+
+    hard_delete(&pool, account.id).await;
+
+    assert!(
+        store
+            .find_invitation(invitation.id)
+            .await
+            .expect("find_invitation")
+            .is_none(),
+        "the pending invitation is removed with the account"
     );
 }

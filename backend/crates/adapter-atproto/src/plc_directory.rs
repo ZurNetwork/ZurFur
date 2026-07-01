@@ -13,17 +13,17 @@
 
 use async_trait::async_trait;
 
-use crate::plc::SignedOperation;
-
 /// Submits a signed PLC operation for a DID. An adapter-local port (not a domain
-/// port) because its argument — the protocol-shaped [`SignedOperation`] — is
-/// quarantined to this crate; the composition root selects an implementation via
-/// [`plc_directory_from_config`], so `api` never names this trait.
+/// port): the composition root selects an implementation via
+/// [`plc_directory_from_config`], so `api` never names this trait. The operation is
+/// passed as its already-serialized JSON body, so the same submitter handles a
+/// genesis operation, a tombstone, or any later operation type without coupling to
+/// their Rust shapes.
 #[async_trait]
 pub trait PlcDirectory: Send + Sync {
-    /// Submit the `signed` operation registering `did`. Fallible: the HTTP impl
-    /// performs a network write; the no-op never fails.
-    async fn submit(&self, did: &str, signed: &SignedOperation) -> anyhow::Result<()>;
+    /// Submit `operation` (its JSON body) registering/updating `did`. Fallible: the
+    /// HTTP impl performs a network write; the no-op never fails.
+    async fn submit(&self, did: &str, operation: &serde_json::Value) -> anyhow::Result<()>;
 }
 
 /// Local/dev directory: accepts the operation and does nothing. Used by the live
@@ -34,7 +34,7 @@ pub struct NoopPlcDirectory;
 
 #[async_trait]
 impl PlcDirectory for NoopPlcDirectory {
-    async fn submit(&self, did: &str, _signed: &SignedOperation) -> anyhow::Result<()> {
+    async fn submit(&self, did: &str, _operation: &serde_json::Value) -> anyhow::Result<()> {
         tracing::info!(%did, "PLC directory submission skipped (no-op directory; ZMVP-49 C2)");
         Ok(())
     }
@@ -63,10 +63,9 @@ impl HttpPlcDirectory {
 
 #[async_trait]
 impl PlcDirectory for HttpPlcDirectory {
-    async fn submit(&self, did: &str, signed: &SignedOperation) -> anyhow::Result<()> {
+    async fn submit(&self, did: &str, operation: &serde_json::Value) -> anyhow::Result<()> {
         let url = format!("{}/{}", self.base_url, did);
-        let body = signed.to_json()?;
-        let resp = self.client.post(&url).json(&body).send().await?;
+        let resp = self.client.post(&url).json(operation).send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
             // Body may carry a PLC validation error; it contains no secret.
@@ -145,7 +144,9 @@ mod tests {
 
         // Base URL carries a trailing slash on purpose — it must be trimmed.
         let dir = HttpPlcDirectory::new(format!("http://{addr}/"));
-        let res = dir.submit("did:plc:x", &signed_op()).await;
+        let res = dir
+            .submit("did:plc:x", &signed_op().to_json().unwrap())
+            .await;
 
         assert!(res.is_err(), "a non-2xx response must be an error");
         server.await.unwrap();

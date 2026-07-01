@@ -546,4 +546,56 @@ impl AccountWrites for PgAccountWrites<'_> {
 
         Ok(())
     }
+
+    /// `UPDATE accounts SET deleted_at = now WHERE id = $1 AND deleted_at IS NULL`:
+    /// stamps the soft-delete marker (and `updated_at`) on a live account, keeping the
+    /// row — so the handle stays reserved (global index) and the DID stays live, while
+    /// [`find`](PgAccountStore::find) now reads it as absent. Memberships and
+    /// invitations are left untouched (a reactivation restores them). The
+    /// `deleted_at IS NULL` guard makes a repeat soft-delete a harmless no-op. See the
+    /// [`soft_delete`](AccountWrites::soft_delete) port doc.
+    async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+        let now = Utc::now();
+        query!(
+            r#"
+            UPDATE accounts
+            SET deleted_at = $1, updated_at = $1
+            WHERE id = $2 AND deleted_at IS NULL
+            "#,
+            now,
+            *account,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Deletes the account's `account_invitations`, then `account_members`, then the
+    /// `accounts` row — children first, since neither child FK cascades. Removing the
+    /// `accounts` row **frees its handle** from the global unique index for reuse. The
+    /// custody `account_keys` row is deliberately **not** touched here (the ~72h PLC
+    /// recovery window can still reverse the tombstone). All three deletes run on the
+    /// open transaction, so an empty account is removed atomically; a `DELETE` matching
+    /// no row is a no-op. See the [`hard_delete`](AccountWrites::hard_delete) port doc.
+    async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+        query!(
+            r#"DELETE FROM account_invitations WHERE account_id = $1"#,
+            *account,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        query!(
+            r#"DELETE FROM account_members WHERE account_id = $1"#,
+            *account,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        query!(r#"DELETE FROM accounts WHERE id = $1"#, *account)
+            .execute(&mut *self.conn)
+            .await?;
+
+        Ok(())
+    }
 }

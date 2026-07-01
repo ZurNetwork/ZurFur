@@ -48,6 +48,7 @@ use domain::elements::{
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
+    plc_operation::PlcOperationRecord,
     profile::Profile,
     role::Role,
     user::{User, UserId},
@@ -55,7 +56,7 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountStore, AccountWrites, Authenticator, Database, DidMinter, HandleTaken, KeyStore,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -852,6 +853,55 @@ impl AccountWrites for MemAccountWrites {
         memberships.insert((account, new_owner), Role::Owner(None));
         Ok(())
     }
+
+    /// Stamps `deleted_at` on the stored account (the in-memory mirror of pg's
+    /// `UPDATE accounts SET deleted_at = now`), keeping the row so the handle stays
+    /// reserved and reads (`find`/`find_did_by_handle`, which filter on `deleted_at`)
+    /// treat it as absent. Memberships and invitations are left in place. Idempotent:
+    /// an already-soft-deleted or absent account is a no-op. See the
+    /// [`soft_delete`](AccountWrites::soft_delete) port doc.
+    async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+        let mut accounts = self
+            .0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned");
+        if let Some(stored) = accounts.get_mut(&account)
+            && stored.deleted_at.is_none()
+        {
+            let now = Utc::now();
+            stored.deleted_at = Some(now);
+            stored.updated_at = now;
+        }
+        Ok(())
+    }
+
+    /// Removes the account row (freeing its handle for reuse) along with every
+    /// membership and invitation belonging to it — the in-memory mirror of pg's
+    /// children-first cascade delete. The custody keys are not modeled here. Removing
+    /// an absent account is a no-op. See the [`hard_delete`](AccountWrites::hard_delete)
+    /// port doc.
+    async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+        self.0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned")
+            .remove(&account);
+
+        self.0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .retain(|(member_account, _), _| *member_account != account);
+
+        self.0
+            .invitations
+            .lock()
+            .expect("MemBackend invitations mutex poisoned")
+            .retain(|_, invitation| invitation.account != account);
+
+        Ok(())
+    }
 }
 
 /// In-memory [`Database`] write factory over the shared [`MemBackend`]. `begin`
@@ -958,6 +1008,13 @@ impl DidMinter for MemDidMinter {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::new(format!("did:plc:mem{n:06}")))
     }
+
+    /// No-op: the fake registers nothing, so there is nothing to tombstone. Matches
+    /// the port so API-level deletion tests run without touching infrastructure (the
+    /// real tombstone is exercised in the `RealDidMinter` unit tests).
+    async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// In-memory [`KeyStore`] test fake: holds custody keys in a process-local map,
@@ -996,6 +1053,51 @@ impl KeyStore for MemKeyStore {
     /// Return the custody keys for `did`, or `None` if never stored.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
         Ok(self.keys.lock().unwrap().get(did.as_str()).cloned())
+    }
+}
+
+/// In-memory [`PlcOperationLog`] test fake: keeps appended operations (as `(did,
+/// cid)` in submission order) in a process-local vec. Lets the `RealDidMinter`'s own
+/// unit tests exercise the append / latest_cid contract — chaining a tombstone onto
+/// the genesis op's CID — without a database.
+#[derive(Clone, Default)]
+pub struct MemPlcOperationLog {
+    /// `(did, cid)` in append order; `Arc<Mutex<…>>` so clones share state.
+    entries: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+impl MemPlcOperationLog {
+    /// An empty in-memory operation log.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl PlcOperationLog for MemPlcOperationLog {
+    /// Append the operation's `(did, cid)` in submission order. Mirrors the pg
+    /// adapter's global `UNIQUE(cid)`: a content-addressed op is logged at most once, so
+    /// a duplicate `cid` is **rejected** — surfacing a retry/idempotency bug in tests
+    /// instead of silently accepting it (as `MemKeyStore` rejects a double-`put`).
+    async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
+        let mut entries = self.entries.lock().unwrap();
+        if entries.iter().any(|(_, cid)| cid == &record.cid) {
+            anyhow::bail!("plc operation {} already logged", record.cid);
+        }
+        entries.push((record.did.to_string(), record.cid.clone()));
+        Ok(())
+    }
+
+    /// The `cid` of the DID's most recently appended operation, or `None`.
+    async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(entry_did, _)| entry_did == did.as_str())
+            .map(|(_, cid)| cid.clone()))
     }
 }
 

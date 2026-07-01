@@ -35,6 +35,7 @@ pub mod golem;
 pub mod handle;
 pub mod invitation;
 pub mod markdown;
+pub mod plc_operation;
 pub mod profile;
 pub mod role;
 pub mod user;

@@ -51,6 +51,13 @@ const BANNED: &str = ".execute(&self.pool)";
 ///   minting*, **before** the account row exists — the account's DID is *derived
 ///   from* the very keys being stored — so there is no account transaction yet to
 ///   join. One row, no cross-aggregate invariant. (Ratified.)
+/// - `adapter-pg/src/plc_operation_log.rs` — the `did:plc` operation-log persistence
+///   (`PgPlcOperationLog::append`, ZMVP-34). Same rationale as `key_store`, at its two
+///   write points, **neither** of which has an account transaction to join: the
+///   *genesis* op is logged during minting, before the account row exists (alongside
+///   the keys); the *tombstone* op is logged during hard-delete as the private half of
+///   the separate, retryable public submission step — by which point the account row is
+///   already gone. Same-store, single-row, no cross-aggregate invariant.
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.
@@ -59,6 +66,7 @@ const EXEMPT: &[&str] = &[
     "adapter-atproto/src/auth_store.rs",
     "adapter-pg/src/profile.rs",
     "adapter-pg/src/key_store.rs",
+    "adapter-pg/src/plc_operation_log.rs",
 ];
 
 /// The private-store write adapters this guard scans, relative to this crate's
