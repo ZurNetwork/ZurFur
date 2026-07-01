@@ -128,10 +128,11 @@ struct CreateAccountBody {
 /// (ZMVP-14: "User creates an Account and becomes its Owner"). Onboarding
 /// *sequencing* — when to prompt, how to nudge a user who has none — is a frontend
 /// concern; this endpoint is the capability the frontend calls. An account is a
-/// sovereign entity, so founding first mints the account's own `did:plc` (the floor
-/// `StubDidMinter`; the real PLC directory write lands later as an adapter swap).
+/// sovereign entity, so founding first mints the account's own `did:plc` (the live
+/// `RealDidMinter`: generates rotation keys, signs an identity-only genesis
+/// operation, custodies the keys, and submits to a — no-op in v1 — directory).
 /// That mint is kept off the sign-in critical path precisely because it is a
-/// fallible network step. The account and the founder's Owner membership are then
+/// fallible, key-generating step. The account and the founder's Owner membership are then
 /// persisted together in one private-store transaction — never a cross-store dual
 /// write. Per DESIGN/Account a user may own several accounts, so this founds a fresh
 /// one on every call rather than being idempotent.

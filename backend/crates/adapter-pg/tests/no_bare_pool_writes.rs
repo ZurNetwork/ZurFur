@@ -45,13 +45,12 @@ const BANNED: &str = ".execute(&self.pool)";
 ///   through a write transaction would make a read endpoint open one for nothing
 ///   (Engineer's call).
 /// - `adapter-pg/src/key_store.rs` — the `did:plc` custody-key persistence
-///   (`PgKeyStore::put`, ZMVP-49): a single-row insert performed *inside minting*,
-///   **before** the account row exists — the DID that keys the account is *derived
-///   from* the very keys being stored, so this write cannot join the account
-///   Unit of Work (there is no account transaction yet, and per the custody DD the
-///   minter is a separate retryable step from the private account write — no
-///   cross-store transaction; DD/26804226, DD `24150017`). One row, no
-///   cross-aggregate invariant.
+///   (`PgKeyStore::put`, ZMVP-49). Both this write and the account row it belongs to
+///   are the *same* private Postgres store, so this is **not** a cross-store concern;
+///   the exemption is **same-store temporal ordering**. The write happens *inside
+///   minting*, **before** the account row exists — the account's DID is *derived
+///   from* the very keys being stored — so there is no account transaction yet to
+///   join. One row, no cross-aggregate invariant. (Ratified.)
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.

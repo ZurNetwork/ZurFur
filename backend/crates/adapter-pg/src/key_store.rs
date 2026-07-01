@@ -5,10 +5,13 @@
 //! secp256k1 custody keys are **envelope-encrypted** under a [`RootKey`] (see
 //! [`crate::key_vault`]) before they are written, so the database never holds
 //! plaintext key material. The write is a single-row, pool-backed insert performed
-//! *during minting* (before the account row exists), not a domain-aggregate write —
-//! so it is deliberately outside the account [`UnitOfWork`](domain::ports::UnitOfWork),
-//! like the profile-cache fill (DD `24150017`). Minting stores keys, then submits
-//! the operation to a directory — two separate steps, never one transaction.
+//! *during minting*, **before the account row exists** — the account's DID is
+//! derived from these very keys, so there is no account transaction yet to join
+//! (same-store *temporal ordering*, not a cross-store concern). It is therefore
+//! deliberately outside the account [`UnitOfWork`](domain::ports::UnitOfWork), like
+//! the profile-cache fill (DD `24150017`). Minting stores keys, then — as a
+//! distinct step — submits the operation to a public directory (that latter pair
+//! *is* the cross-boundary dual write, run as separate retryable steps).
 
 use async_trait::async_trait;
 use chrono::Utc;

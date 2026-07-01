@@ -212,4 +212,13 @@ mod tests {
         assert!(RootKey::from_bytes(&[0u8; 16]).is_err());
         assert!(RootKey::from_bytes(&[0u8; 32]).is_ok());
     }
+
+    // The root key's Debug must never reveal its bytes.
+    #[test]
+    fn root_key_debug_is_redacted() {
+        let root = RootKey::from_bytes(&[0xCD; 32]).unwrap();
+        let shown = format!("{root:?}");
+        assert_eq!(shown, "RootKey(<redacted>)");
+        assert!(!shown.contains("cd") && !shown.contains("205"));
+    }
 }

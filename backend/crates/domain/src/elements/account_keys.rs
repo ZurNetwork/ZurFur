@@ -69,3 +69,34 @@ pub struct AccountKeys {
     /// The `#atproto` signing key (verification method); forward-compat (B3).
     pub signing: SecretKey,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A SecretKey's Debug must never reveal its bytes — a debug log or panic
+    // message carrying key material would defeat the custody model.
+    #[test]
+    fn secret_key_debug_is_redacted() {
+        let key = SecretKey::new(vec![0xAB; 32]);
+        let shown = format!("{key:?}");
+        assert_eq!(shown, "SecretKey(<redacted>)");
+        // The raw byte value never appears, in any common rendering.
+        assert!(!shown.contains("ab"));
+        assert!(!shown.contains("171"));
+    }
+
+    // AccountKeys derives Debug, but every field is a redacted SecretKey — so the
+    // whole bundle is safe to print.
+    #[test]
+    fn account_keys_debug_redacts_every_field() {
+        let keys = AccountKeys {
+            cold_recovery: SecretKey::new(vec![1; 32]),
+            operational: SecretKey::new(vec![2; 32]),
+            signing: SecretKey::new(vec![3; 32]),
+        };
+        let shown = format!("{keys:?}");
+        assert_eq!(shown.matches("<redacted>").count(), 3);
+        assert!(!shown.contains("[1, 1, 1"));
+    }
+}

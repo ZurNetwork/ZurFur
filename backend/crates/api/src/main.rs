@@ -75,6 +75,11 @@ async fn main() -> anyhow::Result<()> {
     let root_key_bytes = base64::engine::general_purpose::STANDARD
         .decode(config.did_key_root_key.trim())
         .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
+    // Boot-time custody guard: refuse to run any configuration that would mint real
+    // identities under dev-only key custody (config-root-backed in prod/stg, or
+    // submitting under the shipped example key). Enforces "harden before real
+    // accounts" — cloud KMS is ZMVP-53.
+    api::ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
     let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
     let key_store = std::sync::Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
     let directory = adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {

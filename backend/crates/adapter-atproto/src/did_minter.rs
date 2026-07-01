@@ -148,13 +148,60 @@ impl DidMinter for StubDidMinter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plc_directory::NoopPlcDirectory;
+    use crate::plc_directory::{NoopPlcDirectory, PlcDirectory};
     use adapter_mem::MemKeyStore;
     use atrium_crypto::verify::verify_signature;
     use k256::ecdsa::Signature;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn handle() -> Handle {
         Handle::try_new("alice.zurfur.app").unwrap()
+    }
+
+    /// A directory that records the DID it was asked to submit, then fails — to
+    /// prove keys are persisted *before* submission (a retry never orphans them).
+    struct FailingPlcDirectory {
+        seen_did: Arc<Mutex<Option<String>>>,
+    }
+    #[async_trait]
+    impl PlcDirectory for FailingPlcDirectory {
+        async fn submit(
+            &self,
+            did: &str,
+            _signed: &crate::plc::SignedOperation,
+        ) -> anyhow::Result<()> {
+            *self.seen_did.lock().unwrap() = Some(did.to_string());
+            anyhow::bail!("simulated directory failure")
+        }
+    }
+
+    /// A directory that records whether it was reached at all.
+    struct RecordingPlcDirectory {
+        called: Arc<AtomicBool>,
+    }
+    #[async_trait]
+    impl PlcDirectory for RecordingPlcDirectory {
+        async fn submit(
+            &self,
+            _did: &str,
+            _signed: &crate::plc::SignedOperation,
+        ) -> anyhow::Result<()> {
+            self.called.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// A KeyStore whose write always fails — to prove submission is not reached.
+    struct FailingKeyStore;
+    #[async_trait]
+    impl KeyStore for FailingKeyStore {
+        async fn put(&self, _did: &Did, _keys: &AccountKeys) -> anyhow::Result<()> {
+            anyhow::bail!("simulated key-store failure")
+        }
+        async fn get(&self, _did: &Did) -> anyhow::Result<Option<AccountKeys>> {
+            Ok(None)
+        }
     }
 
     // The real minter produces a well-formed did:plc: 24 base32 chars, and it is a
@@ -232,6 +279,84 @@ mod tests {
 
         // Verifies under the operational rotation key's did:key.
         verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
+    }
+
+    // Closes the view()-mapping gap: the vector test derives via `derive_did`
+    // directly, so the PRODUCTION path (identity_only → sign → into_signed →
+    // SignedOperation::did()/view()) is otherwise pinned only by shape. Re-signing
+    // is deterministic (RFC 6979), so reconstructing the op from the stored keys must
+    // reproduce the *exact* minted DID — proving the whole production field-mapping.
+    #[tokio::test]
+    async fn minted_did_reproduces_from_stored_keys() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let store = Arc::new(MemKeyStore::new());
+        let minter = RealDidMinter::new(store.clone(), Box::new(NoopPlcDirectory));
+        let h = handle();
+
+        let did = minter.mint(&h).await.unwrap();
+        let keys = store.get(&did).await.unwrap().unwrap();
+
+        let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
+        let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
+        let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
+        let op = GenesisOperation::identity_only(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            h.as_str(),
+        );
+        let sig_bytes = operational.sign(&op.signing_bytes().unwrap()).unwrap();
+        let signed = op.into_signed(URL_SAFE_NO_PAD.encode(&sig_bytes));
+
+        assert_eq!(
+            Did::new(signed.did().unwrap()),
+            did,
+            "the production mint path must reproduce the same did:plc"
+        );
+    }
+
+    // Failure ordering: keys are persisted BEFORE the operation is submitted, so a
+    // submission failure leaves the keys in place (a retry never orphans them).
+    #[tokio::test]
+    async fn keys_persist_when_directory_submission_fails() {
+        let store = Arc::new(MemKeyStore::new());
+        let seen_did = Arc::new(Mutex::new(None));
+        let directory = Box::new(FailingPlcDirectory {
+            seen_did: seen_did.clone(),
+        });
+        let minter = RealDidMinter::new(store.clone(), directory);
+
+        let result = minter.mint(&handle()).await;
+
+        assert!(result.is_err(), "mint fails when submission fails");
+        let did = seen_did
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("submission was reached (so keys were already written)");
+        assert!(
+            store.get(&Did::new(did)).await.unwrap().is_some(),
+            "custody keys must remain persisted after a submission failure"
+        );
+    }
+
+    // Failure ordering: if the key write fails, the directory is NEVER reached — no
+    // operation is published for a DID whose keys we could not custody.
+    #[tokio::test]
+    async fn directory_is_not_reached_when_key_write_fails() {
+        let called = Arc::new(AtomicBool::new(false));
+        let directory = Box::new(RecordingPlcDirectory {
+            called: called.clone(),
+        });
+        let minter = RealDidMinter::new(Arc::new(FailingKeyStore), directory);
+
+        let result = minter.mint(&handle()).await;
+
+        assert!(result.is_err(), "mint fails when the key write fails");
+        assert!(
+            !called.load(Ordering::SeqCst),
+            "directory.submit must not run when the key write fails"
+        );
     }
 
     #[tokio::test]
