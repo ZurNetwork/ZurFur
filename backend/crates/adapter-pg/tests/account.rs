@@ -773,3 +773,150 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
         "reserved-by-tombstone maps to HandleTaken (→409), got: {err:?}"
     );
 }
+
+// --- ZMVP-33: transferring ownership ---
+
+/// Transfer ownership in one unit of work (the way the handler does).
+async fn transfer_ownership(
+    pool: &PgPool,
+    old_owner: UserId,
+    new_owner: UserId,
+    account: AccountId,
+) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts()
+        .transfer_ownership(old_owner, new_owner, account)
+        .await
+        .expect("transfer_ownership");
+    uow.commit().await.expect("commit");
+}
+
+// ACs 1–3 + Roles rule 5, against real SQL: after a transfer the named member is the
+// sole Owner with no parent, and the prior Owner is an Admin re-homed under the new
+// Owner. The `parent` edges are the store's job the mem fake can't model, so they're
+// proven here.
+#[tokio::test]
+async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:xfer-o").await;
+    let heir = provision(&pool, "did:plc:xfer-h").await;
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:xfer-acct".to_string()),
+        Handle::try_new("xfer-acct.example.com").unwrap(),
+        AccountName::try_new("Hand-Off").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+    // Seat the heir as a Member under the Owner (parent = Owner) before the transfer.
+    seat_under(&pool, account.id, heir.id, owner.id).await;
+
+    transfer_ownership(&pool, owner.id, heir.id, account.id).await;
+
+    assert_eq!(
+        role_of(&pool, heir.id, account.id).await,
+        Some(Role::Owner(None)),
+        "the heir is the new Owner",
+    );
+    assert_eq!(
+        parent_of(&pool, account.id, heir.id).await,
+        None,
+        "an Owner never has a parent (Roles rule 5)",
+    );
+    assert_eq!(
+        role_of(&pool, owner.id, account.id).await,
+        Some(Role::Admin(None)),
+        "the prior Owner is demoted to Admin",
+    );
+    assert_eq!(
+        parent_of(&pool, account.id, owner.id).await,
+        Some(*heir.id),
+        "the outgoing Owner is re-homed under the new Owner (Roles rule 8)",
+    );
+}
+
+// Backstop: the outgoing Owner must actually be the Owner. Handing off from a
+// non-Owner errors and — being one unit of work — leaves the roster untouched.
+#[tokio::test]
+async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:nonowner-o").await;
+    let admin = provision(&pool, "did:plc:nonowner-a").await;
+    let heir = provision(&pool, "did:plc:nonowner-h").await;
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:nonowner-acct".to_string()),
+        Handle::try_new("nonowner-acct.example.com").unwrap(),
+        AccountName::try_new("Studio").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+    seat_under(&pool, account.id, admin.id, owner.id).await;
+    seat_under(&pool, account.id, heir.id, owner.id).await;
+
+    // `admin` is not the Owner, so the store guard rejects the transfer.
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow
+        .accounts()
+        .transfer_ownership(admin.id, heir.id, account.id)
+        .await;
+    assert!(result.is_err(), "a non-Owner cannot transfer ownership");
+    drop(uow); // roll the unit back
+
+    assert_eq!(
+        role_of(&pool, owner.id, account.id).await,
+        Some(Role::Owner(None)),
+        "the real Owner still owns the account",
+    );
+    assert_eq!(
+        role_of(&pool, heir.id, account.id).await,
+        Some(Role::Member(None)),
+        "the would-be heir's role is unchanged",
+    );
+}
+
+// Backstop: the incoming Owner must actually be a member. When the promotion guard
+// matches zero rows the whole unit rolls back — the demotion is undone, so the
+// original Owner still owns the account (never left ownerless).
+#[tokio::test]
+async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:nonmember-o").await;
+    let stranger = provision(&pool, "did:plc:nonmember-s").await; // provisioned, never seated
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:nonmember-acct".to_string()),
+        Handle::try_new("nonmember-acct.example.com").unwrap(),
+        AccountName::try_new("Studio").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow
+        .accounts()
+        .transfer_ownership(owner.id, stranger.id, account.id)
+        .await;
+    assert!(result.is_err(), "cannot transfer ownership to a non-member");
+    drop(uow); // roll the unit back
+
+    assert_eq!(
+        role_of(&pool, owner.id, account.id).await,
+        Some(Role::Owner(None)),
+        "the demotion rolled back with the failed promotion — the Owner is intact",
+    );
+    assert_eq!(
+        role_of(&pool, stranger.id, account.id).await,
+        None,
+        "the non-member gained no role",
+    );
+}

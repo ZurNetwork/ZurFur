@@ -50,6 +50,7 @@ pub(crate) fn accounts_router() -> Router<AppState> {
             post(grant_role).delete(revoke_role),
         )
         .route("/accounts/{id}/members/me", delete(leave_account))
+        .route("/accounts/{id}/transfer", post(transfer_ownership))
         .route(
             "/accounts/{id}/invitations",
             post(invite_user_to_account).delete(revoke_invitation_to_account),
@@ -725,5 +726,101 @@ async fn decline_invitation(
     Ok(ok_json(json!({
         "account": account.id.to_string(),
         "user": actor.did.as_str(),
+    })))
+}
+
+/// The body of `POST /accounts/{id}/transfer`. The incoming Owner is named by their
+/// public `new_owner` DID — the same identity convention as grant/revoke: we address
+/// a member by the DID they own, never by our internal id.
+///
+/// Example: `{ "new_owner": "did:plc:abc123" }`.
+#[derive(Deserialize)]
+struct TransferOwnershipBody {
+    new_owner: String,
+}
+
+/// Transfers Account ownership to another existing member (ZMVP-33; DESIGN/Roles
+/// rule 8). Ownership is singular — the role tree's root — so handing it off is its
+/// own seam, distinct from a grant (which never grants Owner) and from leaving. The
+/// transfer is immediate and unilateral (no recipient acceptance): in one
+/// private-store transaction the named member becomes the sole `Owner` with no parent
+/// (rule 5) and the outgoing Owner is demoted to `Admin`, re-homed under the new
+/// Owner. The Account's `did:plc` is stable — only the human Owner pointer moves, so
+/// there is no PLC write. This is the precondition that lets a former sole Owner then
+/// leave (ZMVP-21).
+///
+/// Authority is settled at the handler seam, like grant/revoke/leave, so the outcomes
+/// are problem+json rather than `500`s:
+/// - `200 { "account", "owner", "previous_owner" }` — ownership moved
+/// - `401` — not signed in
+/// - `403` — signed in but not the account's current Owner (only the Owner may transfer)
+/// - `404` — no such account, or the named `new_owner` is not a member of it
+/// - `422` — malformed body, or transferring to oneself (Roles rule 8: to *another* member)
+async fn transfer_ownership(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+    body: Result<Json<TransferOwnershipBody>, JsonRejection>,
+) -> Result<Response, Problem> {
+    // Transferring is a write — it requires a recognized visitor, the acting Owner.
+    let old_owner = require_user(&state, &session).await?;
+
+    let Json(body) = body.map_err(|_| {
+        Problem::invalid_request("Provide the new owner, e.g. {\"new_owner\": \"did:plc:…\"}.")
+    })?;
+
+    // The transfer must address a real, live account (else 404).
+    let account = load_account(&state, AccountId::new(account_id)).await?;
+
+    // Only the current Owner may transfer ownership. A non-member has no role
+    // (`actor_role` → 403); a member who isn't the Owner is likewise forbidden.
+    let actor_role = actor_role(&state, old_owner.id, account.id).await?;
+    if !matches!(actor_role, Role::Owner(_)) {
+        return Err(Problem::forbidden());
+    }
+
+    // Resolve the incoming Owner by DID *without minting* — like revoke, a transfer
+    // must not recognize a brand-new visitor as a side effect. An unknown DID, or a
+    // known user who holds no role here, is not a member (404).
+    let new_owner = state
+        .users
+        .find_by_did(&Did::new(body.new_owner))
+        .await?
+        .ok_or_else(Problem::member_not_found)?;
+    if state
+        .accounts
+        .role_of(new_owner.id, account.id)
+        .await?
+        .is_none()
+    {
+        return Err(Problem::member_not_found());
+    }
+
+    // Ownership moves to *another* member (Roles rule 8). Transferring to oneself is a
+    // no-op the domain doesn't model — reject it as an unusable request rather than
+    // churning the Owner's own row through Admin and back.
+    if new_owner.id == old_owner.id {
+        return Err(Problem::invalid_request(
+            "You already own this account; transfer ownership to another member.",
+        ));
+    }
+
+    // Demote the outgoing Owner to Admin and promote the incoming member to Owner —
+    // atomically, on the transaction-bound write view. Only the `Copy` ids are
+    // captured by the future, so the `User`/`Account` structs stay owned here for the
+    // response body below (the same shape as `leave_account`).
+    transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts()
+                .transfer_ownership(old_owner.id, new_owner.id, account.id)
+                .await
+        })
+    })
+    .await?;
+
+    Ok(ok_json(json!({
+        "account": account.id.to_string(),
+        "owner": new_owner.did.as_str(),
+        "previous_owner": old_owner.did.as_str(),
     })))
 }
