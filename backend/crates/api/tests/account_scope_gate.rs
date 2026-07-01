@@ -174,8 +174,12 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
         .expect("POST /accounts/{id}/members");
     common::assert_problem(res, 403, "forbidden").await;
 
-    // The forbidden write changed nothing: the stranger is still a non-member, and no
-    // membership was minted for the grantee either.
+    // The forbidden write changed nothing. The gate rejects at the `AccountRole`
+    // extractor — before the handler body runs at all — so nothing downstream (body
+    // parse, the rank check, and crucially the grantee `provision`) ever executes.
+    // Assert both halves: the stranger is still a non-member, AND the would-be grantee
+    // was NOT provisioned as a side effect (grant_role recognizes grantees by DID, so a
+    // leak here would mint a User the forbidden request should never have created).
     let me = backend
         .find_by_did(&Did::new("did:plc:stranger".to_string()))
         .await
@@ -185,6 +189,14 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
         backend.role_of(me.id, account.id).await.expect("role_of"),
         None,
         "a forbidden write seats no membership for the actor",
+    );
+    assert!(
+        backend
+            .find_by_did(&Did::new("did:plc:whoever".to_string()))
+            .await
+            .expect("find grantee")
+            .is_none(),
+        "a forbidden grant provisions no User for the grantee (rejected before provisioning)",
     );
 }
 
