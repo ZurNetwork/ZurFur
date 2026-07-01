@@ -94,7 +94,11 @@ where
             Ok(value)
         }
         Err(err) => {
-            uow.rollback().await?;
+            // The closure's error is the meaningful one (e.g. `HandleTaken` → 409);
+            // a rollback failure must never replace it. The unit is abandoned either
+            // way (an uncommitted transaction also rolls back on drop), so a rollback
+            // error here is secondary and deliberately not surfaced over `err`.
+            let _ = uow.rollback().await;
             Err(err)
         }
     }

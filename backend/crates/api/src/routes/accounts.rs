@@ -191,8 +191,9 @@ async fn create_account(
     // One unit of work: the account row and the founder's Owner membership commit
     // together or not at all — reached through the transaction-bound write view. A
     // handle collision surfaces as `HandleTaken` (the global unique index — live or
-    // tombstoned, DD 23003138); map it to a 409 rather than a 500. Dropping the uow
-    // on the early return rolls the (uncommitted) unit back.
+    // tombstoned, DD 23003138); map it to a 409 rather than a 500. On any error the
+    // `transaction` helper rolls the unit back and preserves *this* error (never the
+    // rollback's), so the 409 downcast below still sees `HandleTaken`.
     // The boxed transaction future owns what it writes (it cannot borrow this stack
     // frame across the `for<'a>` boundary), so `account`/`owner` move in and the
     // committed `account` is handed back out for the response body.
