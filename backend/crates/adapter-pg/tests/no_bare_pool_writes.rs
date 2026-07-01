@@ -44,6 +44,14 @@ const BANNED: &str = ".execute(&self.pool)";
 ///   path whose failure the caller swallows. It is not a domain write, so routing it
 ///   through a write transaction would make a read endpoint open one for nothing
 ///   (Engineer's call).
+/// - `adapter-pg/src/key_store.rs` — the `did:plc` custody-key persistence
+///   (`PgKeyStore::put`, ZMVP-49): a single-row insert performed *inside minting*,
+///   **before** the account row exists — the DID that keys the account is *derived
+///   from* the very keys being stored, so this write cannot join the account
+///   Unit of Work (there is no account transaction yet, and per the custody DD the
+///   minter is a separate retryable step from the private account write — no
+///   cross-store transaction; DD/26804226, DD `24150017`). One row, no
+///   cross-aggregate invariant.
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.
@@ -51,6 +59,7 @@ const EXEMPT: &[&str] = &[
     "adapter-pg/src/session_store.rs",
     "adapter-atproto/src/auth_store.rs",
     "adapter-pg/src/profile.rs",
+    "adapter-pg/src/key_store.rs",
 ];
 
 /// The private-store write adapters this guard scans, relative to this crate's
