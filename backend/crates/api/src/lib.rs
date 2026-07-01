@@ -101,12 +101,91 @@ pub struct Config {
     /// any other authority is not ours to resolve (ZMVP-44, DD/26607618).
     #[serde(default = "default_handle_domain")]
     pub handle_domain: String,
+    /// **DEV-ONLY root key** (base64, 32 bytes) that envelope-encrypts every
+    /// account's minted `did:plc` custody keys at rest (ZMVP-49). A config/env
+    /// secret is *not* a hardware boundary: this is acceptable only pre-alpha.
+    /// Hardening it into a cloud KMS/HSM is the URGENT follow-up **ZMVP-53**, which
+    /// must land before any real account is minted. Read from
+    /// `ZURFUR_DID_KEY_ROOT_KEY`; never committed to a profile TOML.
+    pub did_key_root_key: String,
+    /// PLC directory base URL used **only** when [`plc_directory_submit`] is on.
+    /// Defaults to a **local placeholder** (`http://localhost:2582`, the local
+    /// `@did-plc/server` port) — deliberately **not** the canonical
+    /// `https://plc.directory`. The canonical directory is a permanent, public,
+    /// append-only log; a stray `plc_directory_submit = true` must never register
+    /// against it by accident, so canonical must be set **explicitly** at launch.
+    ///
+    /// [`plc_directory_submit`]: Config::plc_directory_submit
+    #[serde(default = "default_plc_directory_endpoint")]
+    pub plc_directory_endpoint: String,
+    /// Whether the minter actually submits genesis operations to the directory.
+    /// **Defaults to `false`** (ZMVP-49 C2): the minter uses a no-op directory and
+    /// registers nothing. Flip on at launch — and only alongside an explicit,
+    /// intentional [`plc_directory_endpoint`](Config::plc_directory_endpoint).
+    #[serde(default)]
+    pub plc_directory_submit: bool,
 }
 
 /// Serde default for [`Config::handle_domain`]: `zurfur.app`, the production
 /// Zurfur-issued handle namespace.
 fn default_handle_domain() -> String {
     "zurfur.app".to_string()
+}
+
+/// Serde default for [`Config::plc_directory_endpoint`]: a **local placeholder**,
+/// never the canonical public log (see the field docs for why).
+fn default_plc_directory_endpoint() -> String {
+    "http://localhost:2582".to_string()
+}
+
+/// The raw bytes of the example dev root key shipped in `.env.example`
+/// (`ZURFUR_DID_KEY_ROOT_KEY`, base64 of these 32 ASCII bytes). Its private value
+/// is public, so minting real identities under it would be catastrophic — the boot
+/// guard refuses it wherever real minting could happen.
+pub const EXAMPLE_DEV_ROOT_KEY: &[u8] = b"dev-only-root-key-do-not-ship!!!";
+
+/// Boot-time custody guard (ZMVP-49): refuse to run any configuration that would
+/// mint **real** account identities under **dev-only** key custody, so the
+/// "harden before real accounts" rule is *enforced*, not documentation.
+///
+/// `root_key` is the decoded `did:plc` custody root key; `submit` is whether the
+/// minter registers operations to a PLC directory. Two refusals:
+///
+/// 1. **Production-like environment (`PROD`/`STG`).** v1 custody is always
+///    config/env-root-backed — there is no KMS-backed [`KeyStore`](domain::ports::KeyStore)
+///    adapter yet (that is the URGENT follow-up **ZMVP-53**). So a production-like
+///    boot with today's custody is refused outright: it must wait for KMS.
+/// 2. **Submitting under the shipped example key.** Registering an operation with
+///    the public example root key would publish a DID whose keys everyone knows —
+///    refused in any environment.
+///
+/// Returns `Ok(())` for the dev/test configurations that are actually safe (dev
+/// env, and — unless it is the example key — submission off).
+pub fn ensure_custody_hardened(
+    env: &Environment,
+    root_key: &[u8],
+    submit: bool,
+) -> anyhow::Result<()> {
+    let prod_like = matches!(env, Environment::PROD | Environment::STG);
+    let is_example_key = root_key == EXAMPLE_DEV_ROOT_KEY;
+    // v1 has no KMS-backed KeyStore; custody is always config/env-root-backed.
+    let config_root_backed = true;
+
+    if prod_like && (config_root_backed || is_example_key) {
+        anyhow::bail!(
+            "refusing to boot in {env:?}: did:plc key custody is config/env-root-backed, \
+             which is DEV-ONLY (a config secret is not a hardware boundary). Cloud-KMS-backed \
+             custody must land before any real account is minted — ZMVP-53."
+        );
+    }
+    if submit && is_example_key {
+        anyhow::bail!(
+            "refusing PLC directory submission: the did:plc custody root key is the shipped \
+             example key (its private value is public). Set a real ZURFUR_DID_KEY_ROOT_KEY and \
+             use KMS-backed custody — ZMVP-53."
+        );
+    }
+    Ok(())
 }
 
 /// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`. The literal is a
@@ -212,9 +291,10 @@ pub struct AppState {
     /// pg in `main`, mem in tests.
     pub database: Arc<dyn Database>,
     /// The [`DidMinter`] port: mints a sovereign `did:plc` for a newly founded
-    /// account. The live adapter is the floor stub (`StubDidMinter`); the real
-    /// PLC-directory write lands later as an adapter swap, invisible to the
-    /// handler layer. Used by the `create_account` handler.
+    /// account. The live adapter is `RealDidMinter` (generates the account's
+    /// rotation keys, signs an identity-only genesis operation, custodies the keys
+    /// via `PgKeyStore`, and submits to a — no-op in v1 — directory); the mem/stub
+    /// minter is used in tests. Used by the `create_account` handler.
     pub did_minter: Arc<dyn DidMinter>,
 }
 
@@ -276,4 +356,36 @@ pub fn app(state: AppState) -> Router {
         .merge(routes::wellknown_router())
         .merge(cookie_surface)
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A production-like boot with today's config-root-backed custody is REFUSED —
+    // it must wait for KMS (ZMVP-53). True regardless of which root key is set.
+    #[test]
+    fn prod_like_boot_is_refused_under_config_root_custody() {
+        let real_key = [0xABu8; 32];
+        assert!(ensure_custody_hardened(&Environment::PROD, &real_key, false).is_err());
+        assert!(ensure_custody_hardened(&Environment::STG, &real_key, false).is_err());
+        assert!(ensure_custody_hardened(&Environment::PROD, EXAMPLE_DEV_ROOT_KEY, false).is_err());
+    }
+
+    // Submitting to a directory under the shipped example key is REFUSED in any env.
+    #[test]
+    fn submitting_with_the_example_key_is_refused() {
+        assert!(ensure_custody_hardened(&Environment::DEV, EXAMPLE_DEV_ROOT_KEY, true).is_err());
+    }
+
+    // The safe dev configurations pass: dev env, and dev submission only when the
+    // root key is a real (non-example) one.
+    #[test]
+    fn dev_configurations_are_allowed() {
+        let real_key = [0xABu8; 32];
+        assert!(ensure_custody_hardened(&Environment::DEV, &real_key, false).is_ok());
+        assert!(ensure_custody_hardened(&Environment::DEV, &real_key, true).is_ok());
+        // Dev with the example key but NOT submitting is fine (the common local case).
+        assert!(ensure_custody_hardened(&Environment::DEV, EXAMPLE_DEV_ROOT_KEY, false).is_ok());
+    }
 }

@@ -44,6 +44,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
+    account_keys::AccountKeys,
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -53,8 +54,8 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{
-    AccountStore, AccountWrites, Authenticator, Database, DidMinter, HandleTaken, ProfileCache,
-    ProfileSource, UnitOfWork, UserStore, UserWrites,
+    AccountStore, AccountWrites, Authenticator, Database, DidMinter, HandleTaken, KeyStore,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -895,11 +896,52 @@ impl MemDidMinter {
 impl DidMinter for MemDidMinter {
     /// Hands back the next deterministic, unique synthetic DID
     /// (`did:plc:mem<n>`, zero-padded to six digits) and never fails — no
-    /// keypair, PLC genesis, or directory write. Distinct from a *visitor's*
-    /// recognized DID; this one is created on an account's behalf.
-    async fn mint(&self) -> anyhow::Result<Did> {
+    /// keypair, PLC genesis, or directory write. `handle` is accepted to match
+    /// the port (the real minter binds it into `alsoKnownAs`) but ignored here:
+    /// the fake mints no real operation. Distinct from a *visitor's* recognized
+    /// DID; this one is created on an account's behalf.
+    async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::new(format!("did:plc:mem{n:06}")))
+    }
+}
+
+/// In-memory [`KeyStore`] test fake: holds custody keys in a process-local map,
+/// **unencrypted** — safe only because they never leave memory and the fake
+/// generates no real DID. Lets crates downstream of minting (and the
+/// `RealDidMinter`'s own unit tests) exercise the put/get contract without a
+/// database or a root key. The real at-rest encryption lives in the pg adapter.
+#[derive(Clone, Default)]
+pub struct MemKeyStore {
+    /// DID string → its custody keys. `Arc<Mutex<…>>` so clones share state.
+    keys: Arc<Mutex<HashMap<String, AccountKeys>>>,
+}
+
+impl MemKeyStore {
+    /// An empty in-memory key store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl KeyStore for MemKeyStore {
+    /// Store `keys` under `did`. Per the [`KeyStore`] contract a DID mints once, so a
+    /// second `put` for the same DID is **rejected** — mirroring the pg unique
+    /// constraint on `account_keys.did`, so an accidental double-mint surfaces in
+    /// tests instead of silently overwriting custody keys.
+    async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
+        let mut map = self.keys.lock().unwrap();
+        if map.contains_key(did.as_str()) {
+            anyhow::bail!("custody keys already exist for {}", did.as_str());
+        }
+        map.insert(did.to_string(), keys.clone());
+        Ok(())
+    }
+
+    /// Return the custody keys for `did`, or `None` if never stored.
+    async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
+        Ok(self.keys.lock().unwrap().get(did.as_str()).cloned())
     }
 }
 
@@ -1136,11 +1178,28 @@ mod tests {
     #[tokio::test]
     async fn mint_returns_distinct_dids() {
         let minter = MemDidMinter::new();
+        let handle = Handle::try_new("alice.zurfur.app").unwrap();
 
-        let first = minter.mint().await.unwrap();
-        let second = minter.mint().await.unwrap();
+        let first = minter.mint(&handle).await.unwrap();
+        let second = minter.mint(&handle).await.unwrap();
 
         assert_ne!(first, second);
+    }
+
+    // The mem KeyStore round-trips custody keys: what you put is what you get.
+    #[tokio::test]
+    async fn mem_key_store_round_trips() {
+        let store = MemKeyStore::new();
+        let d = did("did:plc:alice");
+        let keys = AccountKeys {
+            cold_recovery: domain::elements::account_keys::SecretKey::new(vec![1u8; 32]),
+            operational: domain::elements::account_keys::SecretKey::new(vec![2u8; 32]),
+            signing: domain::elements::account_keys::SecretKey::new(vec![3u8; 32]),
+        };
+
+        assert!(store.get(&d).await.unwrap().is_none());
+        store.put(&d, &keys).await.unwrap();
+        assert_eq!(store.get(&d).await.unwrap().unwrap(), keys);
     }
 
     fn account_id() -> AccountId {

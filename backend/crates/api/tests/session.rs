@@ -43,6 +43,10 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             database_url,
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".to_string(),
+            // ZMVP-49 config (unused by the mem minter in these tests).
+            did_key_root_key: "unused-in-tests".to_string(),
+            plc_directory_endpoint: "https://plc.directory".to_string(),
+            plc_directory_submit: false,
         },
         pool,
         // An anonymous /me reaches neither PDS nor repo; the mem adapters suffice.

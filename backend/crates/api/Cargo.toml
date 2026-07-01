@@ -20,6 +20,8 @@ tracing-subscriber = { workspace = true }
 adapter-atproto = { path = "../adapter-atproto/" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 tower-sessions = { workspace = true }
+# Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
+base64 = { workspace = true }
 [dev-dependencies]
 adapter-mem = { path = "../adapter-mem" }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }

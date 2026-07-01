@@ -40,6 +40,10 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".to_string(),
+            // ZMVP-49 config (unused by the mem minter in these tests).
+            did_key_root_key: "unused-in-tests".to_string(),
+            plc_directory_endpoint: "https://plc.directory".to_string(),
+            plc_directory_submit: false,
         },
         pool: pool.clone(),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),

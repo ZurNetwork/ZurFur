@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT wrapped_keys FROM account_keys WHERE did = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wrapped_keys",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "account_keys",
+            "name": "wrapped_keys"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6479d2aa2b53eaf1b5bd6f1a081a75a737cb7b59bdfa9156c225b096d1e17264"
+}

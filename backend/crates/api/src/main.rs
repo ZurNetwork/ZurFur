@@ -10,6 +10,7 @@
 //! References: CLAUDE.md "Architecture"/"Configuration"/"Database".
 
 use api::{AppState, Config, Environment};
+use base64::Engine as _;
 use fluent_uri::Uri;
 use tower_sessions::{
     Expiry, SessionManagerLayer,
@@ -66,6 +67,27 @@ async fn main() -> anyhow::Result<()> {
         .with_secure(matches!(config.env, Environment::PROD | Environment::STG))
         .with_expiry(Expiry::OnInactivity(time::Duration::days(7)));
 
+    // ZMVP-49: the live DID minter is the REAL one. It generates each account's
+    // secp256k1 rotation keys, signs an identity-only PLC genesis operation,
+    // custodies the keys envelope-encrypted under a DEV-ONLY root key (KMS is the
+    // URGENT follow-up ZMVP-53), and submits to a no-op directory (C2 —
+    // `plc_directory_submit` defaults off, so nothing hits canonical plc.directory).
+    let root_key_bytes = base64::engine::general_purpose::STANDARD
+        .decode(config.did_key_root_key.trim())
+        .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
+    // Boot-time custody guard: refuse to run any configuration that would mint real
+    // identities under dev-only key custody (config-root-backed in prod/stg, or
+    // submitting under the shipped example key). Enforces "harden before real
+    // accounts" — cloud KMS is ZMVP-53.
+    api::ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
+    let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
+    let key_store = std::sync::Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
+    let directory = adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
+        endpoint: config.plc_directory_endpoint.clone(),
+        enabled: config.plc_directory_submit,
+    });
+    let did_minter = std::sync::Arc::new(adapter_atproto::RealDidMinter::new(key_store, directory));
+
     let app_state = AppState {
         config,
         auth: std::sync::Arc::new(adapter_atproto::AtprotoAuthenticator::new(
@@ -82,9 +104,8 @@ async fn main() -> anyhow::Result<()> {
             pool.clone(),
             std::time::Duration::from_secs(60 * 60),
         )),
-        // The live DID minter is the ZMVP-14 floor stub; the real minter lands as
-        // an adapter swap here ("dress when The Who closes").
-        did_minter: std::sync::Arc::new(adapter_atproto::StubDidMinter::new()),
+        // The live DID minter is the real minter, built above.
+        did_minter,
         // Account/membership reads off the pool; their writes (and all other
         // private-store writes) flow through the transaction-bound `database`.
         accounts: std::sync::Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),

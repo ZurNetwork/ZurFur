@@ -128,10 +128,11 @@ struct CreateAccountBody {
 /// (ZMVP-14: "User creates an Account and becomes its Owner"). Onboarding
 /// *sequencing* — when to prompt, how to nudge a user who has none — is a frontend
 /// concern; this endpoint is the capability the frontend calls. An account is a
-/// sovereign entity, so founding first mints the account's own `did:plc` (the floor
-/// `StubDidMinter`; the real PLC directory write lands later as an adapter swap).
+/// sovereign entity, so founding first mints the account's own `did:plc` (the live
+/// `RealDidMinter`: generates rotation keys, signs an identity-only genesis
+/// operation, custodies the keys, and submits to a — no-op in v1 — directory).
 /// That mint is kept off the sign-in critical path precisely because it is a
-/// fallible network step. The account and the founder's Owner membership are then
+/// fallible, key-generating step. The account and the founder's Owner membership are then
 /// persisted together in one private-store transaction — never a cross-store dual
 /// write. Per DESIGN/Account a user may own several accounts, so this founds a fresh
 /// one on every call rather than being idempotent.
@@ -173,10 +174,12 @@ async fn create_account(
         return Err(Problem::handle_taken());
     }
 
-    // Mint the account's sovereign DID before touching the private store. A mint
-    // failure (the real adapter writes to the PLC directory) aborts with nothing
-    // persisted; the client may retry.
-    let did = state.did_minter.mint().await.map_err(|_| {
+    // Mint the account's sovereign DID before touching the private store. The real
+    // minter generates the account's rotation keys, signs an identity-only genesis
+    // operation binding `alsoKnownAs = at://<handle>`, custodies the keys, and
+    // submits the operation. A mint failure aborts with nothing persisted; the
+    // client may retry.
+    let did = state.did_minter.mint(&handle).await.map_err(|_| {
         Problem::service_unavailable(
             "We couldn't mint an identity for the account. Please try again.",
         )

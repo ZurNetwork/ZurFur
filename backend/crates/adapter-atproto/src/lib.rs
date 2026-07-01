@@ -13,9 +13,12 @@
 //! - [`AtprotoAuthenticator`] — the real OAuth client ([`Authenticator`]).
 //! - [`AtprotoProfileSource`] — public profile reads from the user's PDS
 //!   ([`ProfileSource`](domain::ports::ProfileSource)).
-//! - [`StubDidMinter`] — the ZMVP-14 *floor stub*
-//!   [`DidMinter`](domain::ports::DidMinter); it returns a synthetic `did:plc`,
-//!   not a real one.
+//! - [`RealDidMinter`] — the live [`DidMinter`](domain::ports::DidMinter)
+//!   (ZMVP-49): generates per-account secp256k1 rotation keys, signs an
+//!   identity-only PLC genesis operation, derives the `did:plc`, custodies the
+//!   keys via a [`KeyStore`](domain::ports::KeyStore), and submits to a PLC
+//!   directory ([`NoopPlcDirectory`] in v1). [`StubDidMinter`] is kept as a
+//!   synthetic floor stub for tests/dev.
 //! - [`AtprotoAuthStore`] — Postgres-backed persistence for in-flight and
 //!   established OAuth state, so a grant survives a restart or a replica move
 //!   (ZMVP-12).
@@ -41,9 +44,12 @@ use sqlx::PgPool;
 
 mod auth_store;
 mod did_minter;
+mod plc;
+mod plc_directory;
 mod profile;
 pub use auth_store::AtprotoAuthStore;
-pub use did_minter::StubDidMinter;
+pub use did_minter::{RealDidMinter, StubDidMinter};
+pub use plc_directory::{DirectoryConfig, NoopPlcDirectory, plc_directory_from_config};
 pub use profile::AtprotoProfileSource;
 
 /// The fully-applied jacquard OAuth client this crate drives: a
