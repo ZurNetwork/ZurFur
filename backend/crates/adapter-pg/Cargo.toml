@@ -15,6 +15,8 @@ domain = { path = "../domain/" }
 anyhow = { workspace = true }
 # Envelope-encrypt custody keys at rest (XChaCha20-Poly1305 AEAD under a root key).
 chacha20poly1305 = { workspace = true }
+# Wipe intermediate plaintext key buffers after wrap/unwrap.
+zeroize = { workspace = true }
 
 [dev-dependencies]
 testcontainers-modules = { version = "0.15", features = ["postgres"] }

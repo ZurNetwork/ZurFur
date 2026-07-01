@@ -20,6 +20,7 @@
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use domain::elements::account_keys::{AccountKeys, SecretKey};
+use zeroize::Zeroizing;
 
 /// A secp256k1 private scalar is always 32 bytes; the bundle is the three keys
 /// concatenated in role order.
@@ -65,7 +66,9 @@ impl RootKey {
     /// check fails on `unwrap` under the moved-to DID. Defense-in-depth on top of the
     /// core property (a DB read alone yields no usable key).
     pub fn wrap(&self, did: &str, keys: &AccountKeys) -> anyhow::Result<Vec<u8>> {
-        let mut plaintext = Vec::with_capacity(3 * SECRET_LEN);
+        // `Zeroizing` wipes the concatenated plaintext key bundle on drop, so raw
+        // key bytes don't linger in the heap after sealing.
+        let mut plaintext = Zeroizing::new(Vec::with_capacity(3 * SECRET_LEN));
         for secret in [&keys.cold_recovery, &keys.operational, &keys.signing] {
             let bytes = secret.expose();
             if bytes.len() != SECRET_LEN {
@@ -105,20 +108,23 @@ impl RootKey {
         }
         let (nonce_bytes, ciphertext) = blob.split_at(NONCE_LEN);
         let nonce = XNonce::from_slice(nonce_bytes);
-        let plaintext = self
-            .cipher()
-            .decrypt(
-                nonce,
-                Payload {
-                    msg: ciphertext,
-                    aad: did.as_bytes(),
-                },
-            )
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "failed to open custody keys (bad root key, wrong DID, or tampered)"
+        // `Zeroizing` wipes the decrypted key bundle on drop, once the per-role
+        // `SecretKey`s have been copied out of it below.
+        let plaintext = Zeroizing::new(
+            self.cipher()
+                .decrypt(
+                    nonce,
+                    Payload {
+                        msg: ciphertext,
+                        aad: did.as_bytes(),
+                    },
                 )
-            })?;
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "failed to open custody keys (bad root key, wrong DID, or tampered)"
+                    )
+                })?,
+        );
 
         if plaintext.len() != 3 * SECRET_LEN {
             anyhow::bail!(

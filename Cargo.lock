@@ -61,6 +61,7 @@ dependencies = [
  "tokio",
  "tower-sessions-core",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

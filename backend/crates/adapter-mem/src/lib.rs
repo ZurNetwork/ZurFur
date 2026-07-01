@@ -926,12 +926,16 @@ impl MemKeyStore {
 
 #[async_trait]
 impl KeyStore for MemKeyStore {
-    /// Store `keys` under `did`, replacing any prior entry. Never fails.
+    /// Store `keys` under `did`. Per the [`KeyStore`] contract a DID mints once, so a
+    /// second `put` for the same DID is **rejected** — mirroring the pg unique
+    /// constraint on `account_keys.did`, so an accidental double-mint surfaces in
+    /// tests instead of silently overwriting custody keys.
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
-        self.keys
-            .lock()
-            .unwrap()
-            .insert(did.to_string(), keys.clone());
+        let mut map = self.keys.lock().unwrap();
+        if map.contains_key(did.as_str()) {
+            anyhow::bail!("custody keys already exist for {}", did.as_str());
+        }
+        map.insert(did.to_string(), keys.clone());
         Ok(())
     }
 
