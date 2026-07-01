@@ -3,6 +3,9 @@
 //! `domain` crate splits into per-domain crates, `UserStore`/`UserWrites` move with the
 //! `User` entity into the `identity` namespace.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use async_trait::async_trait;
 
 use crate::elements::{
@@ -59,6 +62,41 @@ pub trait UnitOfWork: Send {
     /// accessors lands atomically. Not calling this — dropping the handle — rolls
     /// the whole unit back.
     async fn commit(self: Box<Self>) -> anyhow::Result<()>;
+
+    /// Abort the unit; awaited so the rollback is deterministic rather than relying on drop.
+    async fn rollback(self: Box<Self>) -> anyhow::Result<()>;
+}
+
+/// Run `f` inside one private-store transaction. Opens a [`UnitOfWork`] via
+/// [`Database::begin`], hands it to `f`, then **commits on `Ok`, rolls back on
+/// `Err`** — the closure body *is* the transaction boundary, so a commit can never
+/// be forgotten. Strictly intra-Postgres; never a cross-store dual write.
+///
+/// `f` is a plain closure that returns a boxed, `Send` future
+/// (`|uow| Box::pin(async move { … })`) rather than an `async |uow| …` closure. An
+/// `AsyncFnOnce(&mut dyn UnitOfWork)` bound would be more ergonomic, but an async
+/// closure whose future borrows its `&mut` argument cannot satisfy the *higher-ranked*
+/// `Send` bound Axum requires of a handler future (rust-lang/rust#100013 — "implementation
+/// of `AsyncFnOnce` is not general enough"). Boxing the future — the same shape sqlx's
+/// own transaction-closure API uses — sidesteps that limitation while keeping one call:
+/// `commit`/`rollback` is still impossible to forget.
+pub async fn transaction<T, F>(db: &dyn Database, f: F) -> anyhow::Result<T>
+where
+    F: for<'a> FnOnce(
+        &'a mut Box<dyn UnitOfWork>,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>,
+{
+    let mut uow = db.begin().await?;
+    match f(&mut uow).await {
+        Ok(value) => {
+            uow.commit().await?;
+            Ok(value)
+        }
+        Err(err) => {
+            uow.rollback().await?;
+            Err(err)
+        }
+    }
 }
 
 /// The write surface of Zurfur's record of recognized visitors — reachable only

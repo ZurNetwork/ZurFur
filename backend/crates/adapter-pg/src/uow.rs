@@ -77,4 +77,12 @@ impl UnitOfWork for PgUnitOfWork {
         self.tx.commit().await?;
         Ok(())
     }
+
+    /// Abort the transaction explicitly, consuming the handle. Awaiting the
+    /// `ROLLBACK` makes the abort deterministic rather than deferring it to drop
+    /// (which sqlx also rolls back, but on a background executor).
+    async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
+        self.tx.rollback().await?;
+        Ok(())
+    }
 }
