@@ -807,6 +807,51 @@ impl AccountWrites for MemAccountWrites {
             role: invitation.role,
         })
     }
+
+    /// Transfer ownership (DESIGN/Roles rule 8): promote the incoming member to the
+    /// sole `Owner` and demote the outgoing `Owner` to `Admin`, in one lock so both
+    /// role writes land together — the in-memory mirror of the pg adapter's single
+    /// transaction. The caller (the handler) has already settled authority; the two
+    /// guards here are the defensive backstop the pg adapter's `SELECT`s are, erroring
+    /// (rather than half-transferring) if either membership vanished since that check.
+    ///
+    /// `parent` re-homing (the outgoing Owner under the new Owner, rule 5) is deferred
+    /// on the floor exactly as it is in `grant_role`/`accept_invitation`: no port reads
+    /// `parent` back, so the in-memory map keeps only the role.
+    async fn transfer_ownership(
+        &mut self,
+        old_owner: UserId,
+        new_owner: UserId,
+        account: AccountId,
+    ) -> anyhow::Result<()> {
+        let mut memberships = self
+            .0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned");
+
+        // Backstop: the outgoing Owner must still be the Owner of this account.
+        if !matches!(memberships.get(&(account, old_owner)), Some(Role::Owner(_))) {
+            return Err(anyhow::anyhow!(
+                "user {} is not the Owner of account {}; ownership not transferred",
+                *old_owner,
+                *account
+            ));
+        }
+
+        // Backstop: the incoming Owner must still be a member of this account.
+        if !memberships.contains_key(&(account, new_owner)) {
+            return Err(anyhow::anyhow!(
+                "user {} is not a member of account {}; ownership not transferred",
+                *new_owner,
+                *account
+            ));
+        }
+
+        memberships.insert((account, old_owner), Role::Admin(None));
+        memberships.insert((account, new_owner), Role::Owner(None));
+        Ok(())
+    }
 }
 
 /// In-memory [`Database`] write factory over the shared [`MemBackend`]. `begin`
