@@ -857,6 +857,15 @@ impl UnitOfWork for MemUnitOfWork {
         self.shared.apply(&self.staged);
         Ok(())
     }
+
+    /// The mirror opposite of [`commit`](MemUnitOfWork::commit): commit *applies*
+    /// the staged snapshot back onto the shared store, rollback simply does **not**.
+    /// Consuming `self` here drops the staged copy, discarding every write in the
+    /// unit — the same outcome as dropping the handle uncommitted, made explicit and
+    /// deterministic (mem mirror of pg's awaited `ROLLBACK`).
+    async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Rebuilds an [`Invitation`] from its stored parts (it isn't `Clone`), the

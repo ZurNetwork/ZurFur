@@ -29,7 +29,7 @@ use domain::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
-use domain::ports::HandleTaken;
+use domain::ports::{HandleTaken, transaction};
 use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
@@ -191,16 +191,28 @@ async fn create_account(
     // One unit of work: the account row and the founder's Owner membership commit
     // together or not at all — reached through the transaction-bound write view. A
     // handle collision surfaces as `HandleTaken` (the global unique index — live or
-    // tombstoned, DD 23003138); map it to a 409 rather than a 500. Dropping the uow
-    // on the early return rolls the (uncommitted) unit back.
-    let mut uow = state.database.begin().await?;
-    if let Err(err) = uow.accounts().create(&account, &owner).await {
-        if err.downcast_ref::<HandleTaken>().is_some() {
-            return Err(Problem::handle_taken());
+    // tombstoned, DD 23003138); map it to a 409 rather than a 500. On any error the
+    // `transaction` helper rolls the unit back and preserves *this* error (never the
+    // rollback's), so the 409 downcast below still sees `HandleTaken`.
+    // The boxed transaction future owns what it writes (it cannot borrow this stack
+    // frame across the `for<'a>` boundary), so `account`/`owner` move in and the
+    // committed `account` is handed back out for the response body.
+    let account = match transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts().create(&account, &owner).await?;
+            Ok(account)
+        })
+    })
+    .await
+    {
+        Ok(account) => account,
+        Err(err) => {
+            if err.downcast_ref::<HandleTaken>().is_some() {
+                return Err(Problem::handle_taken());
+            }
+            return Err(err.into());
         }
-        return Err(err.into());
-    }
-    uow.commit().await?;
+    };
 
     Ok(created_json(json!({
         "id": account.id.to_string(),
@@ -246,12 +258,14 @@ async fn accept_invitation(
 
     // Flip the offer to accepted and seat the member in one transaction; a revoke
     // or accept that wins the race inside the write view seats no member.
-    let mut uow = state.database.begin().await?;
-    let accepted = uow
-        .accounts()
-        .accept_invitation(invitation, body.listed_on_profile)
-        .await?;
-    uow.commit().await?;
+    let accepted = transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts()
+                .accept_invitation(invitation, body.listed_on_profile)
+                .await
+        })
+    })
+    .await?;
 
     Ok(ok_json(json!({
         "account": accepted.account_id.to_string(),
@@ -285,9 +299,10 @@ async fn leave_account(
 
     // Re-home the leaver's children, delete the membership, and revoke their
     // pending issued invitations — atomically, on the transaction-bound view.
-    let mut uow = state.database.begin().await?;
-    uow.accounts().leave(leaving_user.id, account).await?;
-    uow.commit().await?;
+    transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.accounts().leave(leaving_user.id, account).await })
+    })
+    .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -357,9 +372,10 @@ async fn grant_role(
     // signed in is how an Owner adds them; they resolve to the same User when they do.
     // Recognition is its own unit of work, settled before the grant (as before the
     // Unit-of-Work refactor): an idempotent recognize, independent of the grant.
-    let mut uow = state.database.begin().await?;
-    let grantee = uow.users().provision(&Did::new(body.user)).await?;
-    uow.commit().await?;
+    let grantee = transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.users().provision(&Did::new(body.user)).await })
+    })
+    .await?;
 
     // The guard above bounds the role being *granted*; this bounds the *grantee*.
     // An account's Owner is never demoted through a grant — ownership only moves via
@@ -376,14 +392,20 @@ async fn grant_role(
         account_id: account.id,
         role: new_role,
     };
-    let mut uow = state.database.begin().await?;
-    uow.accounts().grant_role(&member).await?;
-    uow.commit().await?;
+    // `member` moves into the boxed future (it can't be borrowed across `for<'a>`);
+    // the granted role is returned back out for the response body.
+    let granted_role = transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts().grant_role(&member).await?;
+            Ok(member.role)
+        })
+    })
+    .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
         "user": grantee.did.as_str(),
-        "role": member.role.as_str(),
+        "role": granted_role.as_str(),
     })))
 }
 
@@ -452,9 +474,10 @@ async fn revoke_role(
 
     // Settle the revoke: remove the membership (and re-home children + revoke the
     // member's pending issued invitations) atomically, on the write view.
-    let mut uow = state.database.begin().await?;
-    uow.accounts().revoke_role(target.id, account.id).await?;
-    uow.commit().await?;
+    transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.accounts().revoke_role(target.id, account.id).await })
+    })
+    .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -511,9 +534,10 @@ async fn invite_user_to_account(
 
     // Recognize the invitee (idempotent), its own unit of work — settled before
     // the offer is issued, as before the Unit-of-Work refactor.
-    let mut uow = state.database.begin().await?;
-    let invited = uow.users().provision(&Did::new(body.user)).await?;
-    uow.commit().await?;
+    let invited = transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.users().provision(&Did::new(body.user)).await })
+    })
+    .await?;
 
     // An invitation is the path *to* membership; someone who already holds a role has
     // nowhere to be invited. This is a state conflict (409), not an authority failure
@@ -545,9 +569,14 @@ async fn invite_user_to_account(
     }
 
     let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
-    let mut uow = state.database.begin().await?;
-    uow.accounts().create_invitation(&invitation).await?;
-    uow.commit().await?;
+    // `invitation` moves into the boxed future and is handed back out for the body.
+    let invitation = transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts().create_invitation(&invitation).await?;
+            Ok(invitation)
+        })
+    })
+    .await?;
 
     Ok(created_json(json!({
         "id": invitation.id.to_string(),
@@ -650,9 +679,10 @@ async fn revoke_invitation_to_account(
             "Could not revoke invitation. Please try again.",
         ));
     }
-    let mut uow = state.database.begin().await?;
-    uow.accounts().revoke_invitation(invitation.id).await?;
-    uow.commit().await?;
+    transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.accounts().revoke_invitation(invitation.id).await })
+    })
+    .await?;
 
     Ok(revoked())
 }
@@ -687,9 +717,10 @@ async fn decline_invitation(
             "Could not decline the invitation. Please try again.",
         ));
     }
-    let mut uow = state.database.begin().await?;
-    uow.accounts().revoke_invitation(invitation.id).await?;
-    uow.commit().await?;
+    transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.accounts().revoke_invitation(invitation.id).await })
+    })
+    .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
