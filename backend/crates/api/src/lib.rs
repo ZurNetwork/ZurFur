@@ -64,7 +64,8 @@ pub enum Environment {
 
 /// The fully-resolved runtime configuration, produced by [`Config::load`] and
 /// then moved into [`AppState`]. Every field is required at boot except
-/// [`http_addr`], which defaults to `127.0.0.1:3621`.
+/// [`http_addr`], which defaults to `127.0.0.1:3621`, and [`handle_domain`], which
+/// defaults to `zurfur.app`.
 ///
 /// Caveats: figment layers config/{profile}.toml first, then `DATABASE_URL`,
 /// then `ZURFUR_*` env (env wins); a missing required key fails the load.
@@ -78,6 +79,7 @@ pub enum Environment {
 /// [`http_addr`]: Config::http_addr
 /// [`database_url`]: Config::database_url
 /// [`public_url`]: Config::public_url
+/// [`handle_domain`]: Config::handle_domain
 #[derive(Clone, Deserialize)]
 pub struct Config {
     /// The deployment profile; see [`Environment`].
@@ -93,6 +95,18 @@ pub struct Config {
     pub database_url: String,
     /// Default tracing filter, applied when `RUST_LOG` is unset (see `main`).
     pub log_level: String,
+    /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`
+    /// (default `default_handle_domain`). The `/.well-known/atproto-did` resolver
+    /// only answers for a `Host` that is a subdomain of this domain — a request for
+    /// any other authority is not ours to resolve (ZMVP-44, DD/26607618).
+    #[serde(default = "default_handle_domain")]
+    pub handle_domain: String,
+}
+
+/// Serde default for [`Config::handle_domain`]: `zurfur.app`, the production
+/// Zurfur-issued handle namespace.
+fn default_handle_domain() -> String {
+    "zurfur.app".to_string()
 }
 
 /// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`. The literal is a
@@ -218,7 +232,8 @@ pub struct AppState {
 /// authenticates by `app_key` and is exempt by construction (ZMVP-23, DD "Auth
 /// Surfaces, the Plugin Trust Boundary & CSRF").
 ///
-/// Routes: `GET /health`; the sign-in flow (`GET /`, `POST /signin`,
+/// Routes: `GET /health`; `GET /.well-known/atproto-did` (handle resolution, also
+/// top-level and CSRF-exempt); the sign-in flow (`GET /`, `POST /signin`,
 /// `GET /signin-callback`, `GET /me`, `POST /logout`); and the accounts tree
 /// (`POST /accounts`, `POST`/`DELETE /accounts/{id}/members`,
 /// `DELETE /accounts/{id}/members/me`, `POST`/`DELETE /accounts/{id}/invitations`,
@@ -251,11 +266,14 @@ pub fn app(state: AppState) -> Router {
             routes::require_first_party_origin,
         ));
 
-    // `/health` is mounted top-level, deliberately outside the CSRF layer (it bears no
-    // cookie and changes no state). The future bearer `/plugin/v1` namespace nests here
-    // too, exempt by construction rather than by a remembered carve-out.
+    // `/health` and the atproto `/.well-known/atproto-did` resolver are mounted
+    // top-level, deliberately outside the CSRF layer (they bear no cookie and change
+    // no state — the resolver is a public unauthenticated GET). The future bearer
+    // `/plugin/v1` namespace nests here too, exempt by construction rather than by a
+    // remembered carve-out.
     Router::new()
         .merge(routes::health_router())
+        .merge(routes::wellknown_router())
         .merge(cookie_surface)
         .with_state(state)
 }

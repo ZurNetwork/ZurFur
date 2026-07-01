@@ -12,7 +12,7 @@ use std::ops::Deref;
 
 use crate::{
     datetime::DateTimeUtc,
-    elements::{did::Did, role::Role, user::UserId, user_account::UserAccount},
+    elements::{did::Did, handle::Handle, role::Role, user::UserId, user_account::UserAccount},
 };
 
 /// The app-private, stable handle for an [`Account`].
@@ -122,6 +122,12 @@ impl AccountName {
 pub struct Account {
     pub id: AccountId,
     pub did: Did,
+    /// The public handle the account is reached by — a validated, normalized
+    /// atproto handle chosen at founding (`POST /accounts`), unique across live
+    /// accounts. For a Zurfur-issued handle (`<label>.zurfur.app`) this is what the
+    /// `/.well-known/atproto-did` resolver looks the account up by (ZMVP-44,
+    /// DD/24870914 §6). See [`Handle`].
+    pub handle: Handle,
     /// The name the founder gave the account. See [`AccountName`].
     pub name: AccountName,
     /// When the account was founded; equals `updated_at` at creation.
@@ -139,35 +145,39 @@ impl Account {
     /// Mints the account (`AccountId::new(Uuid::now_v7())`, `created_at ==
     /// updated_at == now`) and pairs it with `UserAccount { user_id: owner,
     /// account_id: id, role: Role::Owner(None) }` — the founder seated as Owner
-    /// with no role alias. The `name` is already validated (see [`AccountName`]); the
-    /// `did` is minted upstream by a `DidMinter`.
+    /// with no role alias. The `name` and `handle` are already validated (see
+    /// [`AccountName`], [`Handle`]); the `did` is minted upstream by a `DidMinter`.
     ///
     /// Named `open` ("open an account"), not `found`, to dodge the past tense of
     /// `find`.
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{account::{Account, AccountName}, did::Did, role::Role, user::UserId};
+    /// use domain::elements::{account::{Account, AccountName}, did::Did, handle::Handle, role::Role, user::UserId};
     ///
     /// let owner = UserId::new(uuid::Uuid::now_v7());
     /// let (account, membership) = Account::open(
     ///     owner,
     ///     Did::new("did:plc:example".to_string()),
+    ///     Handle::try_new("acme.zurfur.app").unwrap(),
     ///     AccountName::try_new("Acme Studio").unwrap(),
     ///     Utc::now(),
     /// );
     /// assert_eq!(membership.role, Role::Owner(None)); // founder is Owner
+    /// assert_eq!(account.handle.as_str(), "acme.zurfur.app"); // reached by its handle
     /// assert_eq!(account.created_at, account.updated_at);   // stamped once
     /// ```
     pub fn open(
         owner: UserId,
         did: Did,
+        handle: Handle,
         name: AccountName,
         now: DateTimeUtc,
     ) -> (Account, UserAccount) {
         let new_account = Account {
             id: AccountId::new(uuid::Uuid::now_v7()),
             did,
+            handle,
             name,
             created_at: now,
             updated_at: now,

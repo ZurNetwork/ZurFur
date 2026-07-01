@@ -13,6 +13,7 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
+        handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
         role::Role,
         user::{User, UserId},
@@ -160,10 +161,12 @@ async fn create_persists_the_account_and_its_owner_membership() {
     let owner = provision(&pool, "did:plc:pgowner").await;
 
     let account_did = Did::new("did:plc:pgacct".to_string());
+    let account_handle = Handle::try_new("pgacct.example.com").unwrap();
     let account_name = AccountName::try_new("PG Studio").unwrap();
     let (account, membership) = Account::open(
         owner.id,
         account_did.clone(),
+        account_handle.clone(),
         account_name.clone(),
         Utc::now(),
     );
@@ -177,6 +180,10 @@ async fn create_persists_the_account_and_its_owner_membership() {
     assert_eq!(
         found.did, account_did,
         "the account's minted did round-trips"
+    );
+    assert_eq!(
+        found.handle, account_handle,
+        "the account's handle round-trips"
     );
     assert_eq!(found.name, account_name, "the account's name round-trips");
     assert_eq!(found.deleted_at, None, "a freshly founded account is live");
@@ -201,6 +208,7 @@ async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:multi-acct".to_string()),
+        Handle::try_new("multi-acct.example.com").unwrap(),
         AccountName::try_new("Multi Studio").unwrap(),
         Utc::now(),
     );
@@ -246,6 +254,7 @@ async fn a_dropped_unit_of_work_rolls_back_every_write() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rollback-acct".to_string()),
+        Handle::try_new("rollback-acct.example.com").unwrap(),
         AccountName::try_new("Rollback").unwrap(),
         Utc::now(),
     );
@@ -282,6 +291,7 @@ async fn find_unknown_account_is_none() {
     let (unfounded, _) = Account::open(
         owner.id,
         Did::new("did:plc:ghost".to_string()),
+        Handle::try_new("ghost.example.com").unwrap(),
         AccountName::try_new("Ghost").unwrap(),
         Utc::now(),
     );
@@ -303,6 +313,7 @@ async fn role_of_non_member_is_none() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:pgacct3".to_string()),
+        Handle::try_new("pgacct3.example.com").unwrap(),
         AccountName::try_new("PG Studio 3").unwrap(),
         Utc::now(),
     );
@@ -326,6 +337,7 @@ async fn invitation_fixture(pool: &PgPool, tag: &str) -> (Account, UserId, UserI
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("did:plc:pgacct-{tag}")),
+        Handle::try_new(format!("pgacct-{tag}.example.com")).unwrap(),
         AccountName::try_new("PG Studio").unwrap(),
         Utc::now(),
     );
@@ -474,6 +486,7 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rehome-acct".to_string()),
+        Handle::try_new("rehome-acct.example.com").unwrap(),
         AccountName::try_new("Tree").unwrap(),
         Utc::now(),
     );
@@ -517,6 +530,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     let (acct1, m1) = Account::open(
         o1.id,
         Did::new("did:plc:scope-acct1".to_string()),
+        Handle::try_new("scope-acct1.example.com").unwrap(),
         AccountName::try_new("One").unwrap(),
         Utc::now(),
     );
@@ -524,6 +538,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     let (acct2, m2) = Account::open(
         o2.id,
         Did::new("did:plc:scope-acct2".to_string()),
+        Handle::try_new("scope-acct2.example.com").unwrap(),
         AccountName::try_new("Two").unwrap(),
         Utc::now(),
     );
@@ -567,6 +582,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rev-acct".to_string()),
+        Handle::try_new("rev-acct.example.com").unwrap(),
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );
@@ -612,6 +628,7 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rv-acct".to_string()),
+        Handle::try_new("rv-acct.example.com").unwrap(),
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );

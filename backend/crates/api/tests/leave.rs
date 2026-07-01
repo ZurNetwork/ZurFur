@@ -12,6 +12,7 @@ use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
     did::Did,
+    handle::Handle,
     profile::Profile,
     role::Role,
     user_account::UserAccount,
@@ -39,6 +40,7 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
             public_url: format!("http://{addr}"),
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
@@ -98,7 +100,7 @@ async fn the_owner_cannot_leave_their_own_account() {
     // Founding makes the signed-in user the Owner.
     let res = client
         .post(format!("{base}/accounts"))
-        .json(&json!({ "name": "Solo Studio" }))
+        .json(&json!({ "name": "Solo Studio", "handle": "solo.zurfur.app" }))
         .send()
         .await
         .expect("POST /accounts");
@@ -148,6 +150,7 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
     let (account, owner_membership) = Account::open(
         host.id,
         Did::new("did:plc:hostacct".to_string()),
+        Handle::try_new("host.zurfur.app").unwrap(),
         AccountName::try_new("Host Studio").unwrap(),
         Utc::now(),
     );

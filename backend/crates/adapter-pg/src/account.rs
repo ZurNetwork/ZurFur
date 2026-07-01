@@ -9,6 +9,7 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
+        handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
         role::Role,
         user::UserId,
@@ -122,6 +123,7 @@ impl AccountStore for PgAccountStore {
         SELECT
             id      AS "id!",
             did     AS "did!",
+            handle  AS "handle!",
             name    AS "name!",
             created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
             updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>",
@@ -135,12 +137,14 @@ impl AccountStore for PgAccountStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        // The stored name was validated before it was written, so re-validation
-        // here only guards against tampering — surfaced as an error, never a panic.
+        // The stored name/handle were validated before they were written, so
+        // re-validation here only guards against tampering — surfaced as an error,
+        // never a panic.
         row.map(|row| {
             Ok(Account {
                 id: AccountId::new(row.id),
                 did: Did::new(row.did),
+                handle: Handle::try_new(row.handle)?,
                 name: AccountName::try_new(row.name)?,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
@@ -241,6 +245,22 @@ impl AccountStore for PgAccountStore {
             })
             .transpose()
     }
+
+    /// Exact-match lookup of a live account's `did` by its normalized `handle`,
+    /// filtering `deleted_at IS NULL` (a soft-deleted account resolves to `None`,
+    /// like [`find`](PgAccountStore::find)). Backs the `/.well-known/atproto-did`
+    /// resolver and the founding-time duplicate-handle pre-check. The `UNIQUE`
+    /// handle index makes at most one row possible.
+    async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
+        let row = query!(
+            r#"SELECT did AS "did!" FROM accounts WHERE handle = $1 AND deleted_at IS NULL"#,
+            handle.as_str(),
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| Did::new(row.did)))
+    }
 }
 
 #[async_trait::async_trait]
@@ -249,15 +269,18 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// open transaction, so a half-founded account can never be observed and both
     /// rows commit with the rest of the unit. Both rows live in the private store,
     /// so this is one unit of work — never a cross-store dual write. A duplicate
-    /// `id` or `did` surfaces as the unique constraint's error.
+    /// `id`, `did`, or `handle` surfaces as the unique constraint's error (the
+    /// founding handler pre-checks `handle` for a friendlier 409, with this index
+    /// as the race backstop).
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         query!(
             r#"
-        INSERT INTO accounts (id, did, name, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO accounts (id, did, handle, name, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
         "#,
             *account.id,
             account.did.as_str(),
+            account.handle.as_str(),
             account.name.as_str(),
             account.created_at,
             account.updated_at

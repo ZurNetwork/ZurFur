@@ -150,6 +150,19 @@ impl Problem {
         )
     }
 
+    /// `409` — the chosen account handle is already taken by another account. A
+    /// handle is unique across live accounts (DD "The Account Handle" 24870914), so
+    /// founding with a claimed handle is a state conflict, not an authority failure.
+    pub fn handle_taken() -> Self {
+        Self::new(
+            "urn:zurfur:error:handle-taken",
+            "handle_taken",
+            "Handle already taken",
+            409,
+            "That handle is already in use. Please choose another.",
+        )
+    }
+
     /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
     /// nowhere to re-home its members, so leaving is refused as a state conflict (not
     /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.

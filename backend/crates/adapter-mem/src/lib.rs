@@ -45,6 +45,7 @@ use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
+    handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
     profile::Profile,
     role::Role,
@@ -418,6 +419,9 @@ struct StoredAccount {
     /// The account's sovereign `did:plc` (minted by [`MemDidMinter`] in the
     /// real founding flow).
     did: Did,
+    /// The account's public handle — the validated, normalized name it is reached
+    /// by, unique across live accounts (mirrors the pg `handle` column).
+    handle: Handle,
     /// The account's display name.
     name: AccountName,
     /// When the account was founded.
@@ -475,6 +479,7 @@ impl AccountStore for MemAccountStore {
             Some(Account {
                 id,
                 did: stored.did.clone(),
+                handle: stored.handle.clone(),
                 name: stored.name.clone(),
                 created_at: stored.created_at,
                 updated_at: stored.updated_at,
@@ -523,6 +528,22 @@ impl AccountStore for MemAccountStore {
         Ok(invitations
             .get(&id)
             .map(|stored| rebuild_invitation(id, stored)))
+    }
+
+    /// Scans for the live account whose handle matches, returning its `did`. A
+    /// soft-deleted account resolves to `None`, mirroring `find` and the pg
+    /// adapter's `deleted_at IS NULL` filter. `Handle` equality is exact (both
+    /// sides are normalized), so this is the in-memory mirror of the unique-index
+    /// lookup.
+    async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
+        let accounts = self
+            .0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned");
+        Ok(accounts.values().find_map(|stored| {
+            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| stored.did.clone())
+        }))
     }
 }
 
@@ -577,6 +598,7 @@ impl AccountWrites for MemAccountWrites {
             account.id,
             StoredAccount {
                 did: account.did.clone(),
+                handle: account.handle.clone(),
                 name: account.name.clone(),
                 created_at: account.created_at,
                 updated_at: account.updated_at,
@@ -910,9 +932,16 @@ mod tests {
     // covered end-to-end by the api `accounts.rs` test, which drives `POST /accounts`.
     fn live_account(did_s: &str) -> Account {
         let now = Utc::now();
+        // Derive a valid, distinct handle from the did so accounts built for
+        // different dids never collide on the unique handle.
+        let label: String = did_s
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
         Account {
             id: AccountId::new(uuid::Uuid::now_v7()),
             did: did(did_s),
+            handle: Handle::try_new(format!("{label}.example.com")).unwrap(),
             name: AccountName::try_new("Test Studio").unwrap(),
             created_at: now,
             updated_at: now,

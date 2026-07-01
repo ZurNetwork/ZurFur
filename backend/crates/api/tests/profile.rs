@@ -18,6 +18,7 @@ fn config_for(addr: std::net::SocketAddr) -> Config {
         public_url: format!("http://{addr}"),
         database_url: "postgres://unused".to_string(),
         log_level: "info".to_string(),
+        handle_domain: "zurfur.app".to_string(),
     }
 }
 

@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use crate::elements::{
     account::{Account, AccountId},
     did::Did,
+    handle::Handle,
     invitation::{Invitation, InvitationId},
     profile::Profile,
     role::Role,
@@ -175,6 +176,15 @@ pub trait AccountStore: Send + Sync {
     /// Lets the revoke path load the offer to check the inviter's authority and
     /// its current state before transitioning it.
     async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>>;
+
+    /// Resolve a live account's [`Handle`] to its sovereign [`Did`], or `None` if
+    /// no live account holds it. Backs atproto handle resolution — the
+    /// `/.well-known/atproto-did` endpoint for Zurfur-issued `*.zurfur.app` handles
+    /// (ZMVP-44, DD/26607618) — and the founding-time duplicate-handle pre-check.
+    /// Soft-deleted accounts don't match, mirroring [`find`](AccountStore::find).
+    /// The `handle` is already normalized (it is a validated [`Handle`]), so this is
+    /// an exact-match lookup, not a normalizing one.
+    async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>>;
 }
 
 /// The **write** surface of Zurfur's record of accounts and memberships —

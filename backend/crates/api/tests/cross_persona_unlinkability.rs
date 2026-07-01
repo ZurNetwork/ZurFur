@@ -64,6 +64,7 @@ async fn spawn_app() -> (String, MemBackend) {
             public_url: format!("http://{addr}"),
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         // No route under test touches the database, so a lazy pool keeps the test
         // free of a container.
@@ -134,7 +135,7 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
     // the real seam provisions B as a separate User with a separate DID.
     let res = client
         .post(format!("{base}/accounts"))
-        .json(&serde_json::json!({ "name": "Shared Studio" }))
+        .json(&serde_json::json!({ "name": "Shared Studio", "handle": "shared.zurfur.app" }))
         .send()
         .await
         .expect("POST /accounts");

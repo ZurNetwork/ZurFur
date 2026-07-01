@@ -33,10 +33,12 @@ use crate::problem::Problem;
 mod accounts;
 mod health;
 mod session;
+mod wellknown;
 
 pub(crate) use accounts::accounts_router;
 pub(crate) use health::health_router;
 pub(crate) use session::session_router;
+pub(crate) use wellknown::wellknown_router;
 
 /// CSRF defense-in-depth on the cookie surface (ZMVP-23): on a state-changing
 /// method, reject a request whose `Origin` header is present and is **not** our

@@ -23,6 +23,7 @@ use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
+    handle::Handle,
     invitation::Invitation,
     role::Role,
     user::{User, UserId},
@@ -111,12 +112,15 @@ fn created_json(body: serde_json::Value) -> Response {
     (StatusCode::CREATED, Json(body)).into_response()
 }
 
-/// The body of `POST /accounts`. Founding takes real input, not a bare click.
+/// The body of `POST /accounts`. Founding takes real input, not a bare click:
+/// the account's display `name` and its public `handle` (the atproto-style name it
+/// is reached by; DD "The Account Handle" 24870914).
 ///
-/// Example: `{ "name": "Acme Studio" }`.
+/// Example: `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }`.
 #[derive(Deserialize)]
 struct CreateAccountBody {
     name: String,
+    handle: String,
 }
 
 /// Founds a new Account for the signed-in visitor and makes them its Owner
@@ -131,10 +135,13 @@ struct CreateAccountBody {
 /// write. Per DESIGN/Account a user may own several accounts, so this founds a fresh
 /// one on every call rather than being idempotent.
 ///
-/// The caller must supply a name (the anti-spam gate). Examples:
-/// - `{ "name": "Acme Studio" }` → `201 { "id", "did", "name" }`
-/// - `{ "name": "   " }` or no body → `422` problem+json (`invalid_request` /
+/// The caller must supply a name and a handle. Examples:
+/// - `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }` → `201 { "id", "did",
+///   "handle", "name" }`
+/// - `{ "name": "   ", ... }` or no body → `422` problem+json (`invalid_request` /
 ///   `name_required`), nothing minted
+/// - a malformed/reserved/punycode handle → `422` (`invalid_request`), nothing minted
+/// - a handle already claimed by another account → `409` (`handle_taken`), nothing minted
 async fn create_account(
     State(state): State<AppState>,
     session: Session,
@@ -144,11 +151,23 @@ async fn create_account(
     // user without any accounts must create one before any write").
     let user = require_user(&state, &session).await?;
 
-    // A missing/malformed body, or a name that fails validation, is rejected before
-    // anything is minted. Both map to 422 — the request was understood but unusable.
+    // A missing/malformed body, or a name/handle that fails validation, is rejected
+    // before anything is minted. All map to 422 — the request was understood but
+    // unusable. The `Handle` newtype is the one shared claim-validation gate
+    // (normalize + punycode/reserved-label rejects; ZMVP-48/45, DD/24870914 §6).
     let Json(body) = body.map_err(|_| Problem::name_required())?;
     let name =
         AccountName::try_new(body.name).map_err(|err| Problem::invalid_request(err.to_string()))?;
+    let handle =
+        Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
+
+    // A handle is unique across live accounts, so reject a claimed one up front with
+    // a friendly 409 — nothing minted. The unique index is the race backstop (a
+    // concurrent duplicate that slips past this read fails the INSERT), keeping the
+    // check honest without holding a lock.
+    if state.accounts.find_did_by_handle(&handle).await?.is_some() {
+        return Err(Problem::handle_taken());
+    }
 
     // Mint the account's sovereign DID before touching the private store. A mint
     // failure (the real adapter writes to the PLC directory) aborts with nothing
@@ -161,7 +180,7 @@ async fn create_account(
 
     // The founding invariant: the account and the creator's Owner membership are
     // minted together (`Account::open`) and persisted atomically.
-    let (account, owner) = Account::open(user.id, did, name, chrono::Utc::now());
+    let (account, owner) = Account::open(user.id, did, handle, name, chrono::Utc::now());
     // One unit of work: the account row and the founder's Owner membership commit
     // together or not at all — reached through the transaction-bound write view.
     let mut uow = state.database.begin().await?;
@@ -171,6 +190,7 @@ async fn create_account(
     Ok(created_json(json!({
         "id": account.id.to_string(),
         "did": account.did.as_str(),
+        "handle": account.handle.as_str(),
         "name": account.name.as_str(),
     })))
 }

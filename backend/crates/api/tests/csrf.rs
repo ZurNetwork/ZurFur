@@ -31,6 +31,7 @@ async fn spawn_app() -> String {
             public_url: format!("http://{addr}"),
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new("did:plc:test".to_string()))),

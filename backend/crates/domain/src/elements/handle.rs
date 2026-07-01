@@ -524,21 +524,14 @@ mod tests {
         }
     }
 
-    // ---- Deferred: RFC-9457 claim-site mapping (HANDED OFF → ZMVP-44/30) ----
+    // ---- RFC-9457 claim-site mapping — FULFILLED (ZMVP-44) ----
     //
-    // No endpoint accepts a handle yet: `POST /accounts` has no handle field
-    // (that surface, plus the `Account.handle` column + migration, is ZMVP-44's).
-    // The `HandleError -> Problem` (RFC 9457, DD/23592962) mapping and its
-    // integration test are therefore deferred. When ZMVP-44/30 introduce a
-    // handle-accepting claim surface, each `HandleError` variant must map to a
-    // `urn:zurfur:error:*` problem+json response (4xx) with its own `code`; the
-    // integration test belongs in `api/tests/accounts.rs`. This ignored test is
-    // the placeholder marking that handoff.
-    #[test]
-    #[ignore = "blocked on ZMVP-44/30: no handle-accepting claim endpoint exists yet (RFC-9457 mapping deferred)"]
-    fn handle_error_maps_to_rfc9457_problem_at_claim_site() {
-        unimplemented!(
-            "ZMVP-44/30: wire HandleError -> Problem (urn:zurfur:error:*) at the claim endpoint"
-        );
-    }
+    // The claim surface now exists: `POST /accounts` accepts a `handle`, validates
+    // it through this newtype, and maps a [`HandleError`] to a 422
+    // `urn:zurfur:error:invalid-request` problem+json (DD/23592962). Duplicate
+    // handles map to a 409 `handle_taken`. That mapping is an api-layer concern
+    // (the `domain` crate has no HTTP types), so its integration coverage lives in
+    // `api/tests/accounts.rs` (`founding_rejects_a_punycode_handle`,
+    // `founding_rejects_a_reserved_handle`, `founding_rejects_a_duplicate_handle`),
+    // not here. This note records that the earlier handoff is closed.
 }
