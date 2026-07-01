@@ -28,6 +28,10 @@ async fn spawn_app(did: &str) -> String {
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".to_string(),
+            // ZMVP-49 config (unused by the mem minter in these tests).
+            did_key_root_key: "unused-in-tests".to_string(),
+            plc_directory_endpoint: "https://plc.directory".to_string(),
+            plc_directory_submit: false,
         },
         // No route here touches the database, so a lazy (never-connected) pool keeps
         // the test free of a container.

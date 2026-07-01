@@ -33,6 +33,10 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".to_string(),
+            // ZMVP-49 config (unused by the mem minter in these tests).
+            did_key_root_key: "unused-in-tests".to_string(),
+            plc_directory_endpoint: "https://plc.directory".to_string(),
+            plc_directory_submit: false,
         },
         // No route exercised here touches the database, so a lazy (never-connected)
         // pool keeps the test free of a container.
