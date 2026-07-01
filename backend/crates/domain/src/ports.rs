@@ -187,6 +187,32 @@ pub trait AccountStore: Send + Sync {
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>>;
 }
 
+/// The error a [`AccountWrites::create`] failure carries (as the source of its
+/// `anyhow::Error`) when the account's handle collides with one already stored.
+///
+/// The `accounts` handle index is **global**, not scoped to live rows: a
+/// soft-deleted (tombstoned) account still reserves its handle, and it is freed
+/// only when the row is actually removed (hard delete) — DD `23003138` "Account
+/// Deletion, Tombstoning & Handle Reuse". So a collision can be with a live *or* a
+/// soft-deleted account.
+///
+/// Adapters return it so the founding handler can `downcast_ref` and answer `409`
+/// rather than a generic `500`. The handler's `find_did_by_handle` pre-check is a
+/// fast path for the common **live** collision; this is the authoritative backstop
+/// for the two cases the pre-check cannot see — a **soft-deleted** reservation
+/// (the pre-check filters those out) and the **concurrent-claim race** (two founds
+/// pass the pre-check, one loses at the unique index).
+#[derive(Debug)]
+pub struct HandleTaken;
+
+impl std::fmt::Display for HandleTaken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "account handle already taken")
+    }
+}
+
+impl std::error::Error for HandleTaken {}
+
 /// The **write** surface of Zurfur's record of accounts and memberships —
 /// reachable only on an open [`UnitOfWork`] (`uow.accounts()`), so no private-store
 /// account write can skip a transaction. An account and its founder's Owner
@@ -198,6 +224,10 @@ pub trait AccountWrites: Send {
     /// Persist a freshly founded account together with its Owner membership,
     /// atomically. Both rows live in the private store, so this is one unit of
     /// work. (ZMVP-14: "the creating User becomes Owner.")
+    ///
+    /// A handle collision (the global unique handle index — live **or** tombstoned,
+    /// DD `23003138`) fails with [`HandleTaken`] as the error source, so the caller
+    /// can map it to a `409`; any other failure is an opaque store error.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()>;
 
     /// Set the role a user holds in an account, seating them if they aren't yet a

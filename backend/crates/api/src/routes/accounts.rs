@@ -29,6 +29,7 @@ use domain::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
+use domain::ports::HandleTaken;
 use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
@@ -138,10 +139,11 @@ struct CreateAccountBody {
 /// The caller must supply a name and a handle. Examples:
 /// - `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }` → `201 { "id", "did",
 ///   "handle", "name" }`
-/// - `{ "name": "   ", ... }` or no body → `422` problem+json (`invalid_request` /
-///   `name_required`), nothing minted
+/// - missing/malformed body (e.g. no `handle`) → `422` (`invalid_request`), nothing minted
+/// - a blank name → `422` (`invalid_request`), nothing minted
 /// - a malformed/reserved/punycode handle → `422` (`invalid_request`), nothing minted
-/// - a handle already claimed by another account → `409` (`handle_taken`), nothing minted
+/// - a handle already claimed by a live **or tombstoned** account → `409`
+///   (`handle_taken`), nothing minted
 async fn create_account(
     State(state): State<AppState>,
     session: Session,
@@ -151,20 +153,22 @@ async fn create_account(
     // user without any accounts must create one before any write").
     let user = require_user(&state, &session).await?;
 
-    // A missing/malformed body, or a name/handle that fails validation, is rejected
-    // before anything is minted. All map to 422 — the request was understood but
-    // unusable. The `Handle` newtype is the one shared claim-validation gate
-    // (normalize + punycode/reserved-label rejects; ZMVP-48/45, DD/24870914 §6).
-    let Json(body) = body.map_err(|_| Problem::name_required())?;
+    // A missing/malformed body (e.g. no `handle` field, or non-JSON), or a
+    // name/handle that fails validation, is rejected before anything is minted. All
+    // map to 422 — the request was understood but unusable. The `Handle` newtype is
+    // the one shared claim-validation gate (normalize + punycode/reserved-label
+    // rejects; ZMVP-48/45, DD/24870914 §6).
+    let Json(body) =
+        body.map_err(|_| Problem::invalid_request("A name and handle are required."))?;
     let name =
         AccountName::try_new(body.name).map_err(|err| Problem::invalid_request(err.to_string()))?;
     let handle =
         Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
 
-    // A handle is unique across live accounts, so reject a claimed one up front with
-    // a friendly 409 — nothing minted. The unique index is the race backstop (a
-    // concurrent duplicate that slips past this read fails the INSERT), keeping the
-    // check honest without holding a lock.
+    // Fast path: reject a handle already claimed by a *live* account up front with a
+    // friendly 409 — nothing minted. This can't see a handle reserved by a
+    // soft-deleted account, nor win against a concurrent claim; the global unique
+    // index (mapped to `HandleTaken` below) is the authoritative backstop for both.
     if state.accounts.find_did_by_handle(&handle).await?.is_some() {
         return Err(Problem::handle_taken());
     }
@@ -182,9 +186,17 @@ async fn create_account(
     // minted together (`Account::open`) and persisted atomically.
     let (account, owner) = Account::open(user.id, did, handle, name, chrono::Utc::now());
     // One unit of work: the account row and the founder's Owner membership commit
-    // together or not at all — reached through the transaction-bound write view.
+    // together or not at all — reached through the transaction-bound write view. A
+    // handle collision surfaces as `HandleTaken` (the global unique index — live or
+    // tombstoned, DD 23003138); map it to a 409 rather than a 500. Dropping the uow
+    // on the early return rolls the (uncommitted) unit back.
     let mut uow = state.database.begin().await?;
-    uow.accounts().create(&account, &owner).await?;
+    if let Err(err) = uow.accounts().create(&account, &owner).await {
+        if err.downcast_ref::<HandleTaken>().is_some() {
+            return Err(Problem::handle_taken());
+        }
+        return Err(err.into());
+    }
     uow.commit().await?;
 
     Ok(created_json(json!({

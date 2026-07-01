@@ -123,8 +123,9 @@ pub struct Account {
     pub id: AccountId,
     pub did: Did,
     /// The public handle the account is reached by — a validated, normalized
-    /// atproto handle chosen at founding (`POST /accounts`), unique across live
-    /// accounts. For a Zurfur-issued handle (`<label>.zurfur.app`) this is what the
+    /// atproto handle chosen at founding (`POST /accounts`), unique across **all**
+    /// accounts (a soft-deleted account still reserves its handle; DD/23003138).
+    /// For a Zurfur-issued handle (`<label>.zurfur.app`) this is what the
     /// `/.well-known/atproto-did` resolver looks the account up by (ZMVP-44,
     /// DD/24870914 §6). See [`Handle`].
     pub handle: Handle,

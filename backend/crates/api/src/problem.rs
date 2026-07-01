@@ -150,9 +150,11 @@ impl Problem {
         )
     }
 
-    /// `409` — the chosen account handle is already taken by another account. A
-    /// handle is unique across live accounts (DD "The Account Handle" 24870914), so
-    /// founding with a claimed handle is a state conflict, not an authority failure.
+    /// `409` — the chosen account handle is already taken. The handle index is
+    /// global — a soft-deleted (tombstoned) account still reserves its handle (DD
+    /// 23003138 "Account Deletion, Tombstoning & Handle Reuse"; DD "The Account
+    /// Handle" 24870914) — so founding with a claimed handle is a state conflict, not
+    /// an authority failure, whether the holder is live or tombstoned.
     pub fn handle_taken() -> Self {
         Self::new(
             "urn:zurfur:error:handle-taken",
@@ -186,17 +188,6 @@ impl Problem {
             "Invalid request",
             422,
             detail,
-        )
-    }
-
-    /// `422`, code `name_required` — a blank/missing account name.
-    pub fn name_required() -> Self {
-        Self::new(
-            "urn:zurfur:error:invalid-request",
-            "name_required",
-            "Invalid request",
-            422,
-            "An account name is required.",
         )
     }
 
@@ -303,12 +294,12 @@ mod tests {
     // The 422 specifics share the invalid-request type but carry their own code.
     #[test]
     fn invalid_request_specifics_share_the_type_but_vary_the_code() {
-        assert_eq!(Problem::name_required().code, "name_required");
+        assert_eq!(Problem::invalid_request("x").code, "invalid_request");
         assert_eq!(Problem::unknown_role("bad").code, "unknown_role");
         assert_eq!(
-            Problem::name_required().kind,
+            Problem::unknown_role("bad").kind,
             "urn:zurfur:error:invalid-request"
         );
-        assert_eq!(Problem::name_required().status, 422);
+        assert_eq!(Problem::unknown_role("bad").status, 422);
     }
 }

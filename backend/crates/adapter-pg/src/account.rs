@@ -15,7 +15,7 @@ use domain::{
         user::UserId,
         user_account::UserAccount,
     },
-    ports::{AccountStore, AccountWrites},
+    ports::{AccountStore, AccountWrites, HandleTaken},
 };
 use sqlx::{PgConnection, PgPool, query};
 
@@ -268,12 +268,18 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Writes the `accounts` row and the founder's `account_members` row on the
     /// open transaction, so a half-founded account can never be observed and both
     /// rows commit with the rest of the unit. Both rows live in the private store,
-    /// so this is one unit of work — never a cross-store dual write. A duplicate
-    /// `id`, `did`, or `handle` surfaces as the unique constraint's error (the
-    /// founding handler pre-checks `handle` for a friendlier 409, with this index
-    /// as the race backstop).
+    /// so this is one unit of work — never a cross-store dual write.
+    ///
+    /// A **handle** collision — the global `accounts_handle_key` unique index, which
+    /// covers live *and* soft-deleted accounts (a tombstone still reserves its
+    /// handle, DD `23003138`) — fails with [`HandleTaken`] as the error source, so
+    /// the founding handler maps it to a `409` rather than a `500`. This is the
+    /// authoritative backstop for the two cases the handler's pre-check can't see: a
+    /// handle reserved by a soft-deleted account, and the concurrent-claim race. A
+    /// duplicate `id` or `did` (both machine-minted, never user-facing) stays an
+    /// opaque store error.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
-        query!(
+        let insert = query!(
             r#"
         INSERT INTO accounts (id, did, handle, name, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -286,7 +292,16 @@ impl AccountWrites for PgAccountWrites<'_> {
             account.updated_at
         )
         .execute(&mut *self.conn)
-        .await?;
+        .await;
+
+        // Map a handle-uniqueness violation to the typed `HandleTaken` so the caller
+        // can answer 409; any other database error stays opaque (→ 500).
+        if let Err(sqlx::Error::Database(ref db_err)) = insert
+            && db_err.constraint() == Some("accounts_handle_key")
+        {
+            return Err(anyhow::Error::new(HandleTaken));
+        }
+        insert?;
 
         query!(
             r#"

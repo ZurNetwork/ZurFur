@@ -53,8 +53,8 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{
-    AccountStore, AccountWrites, Authenticator, Database, DidMinter, ProfileCache, ProfileSource,
-    UnitOfWork, UserStore, UserWrites,
+    AccountStore, AccountWrites, Authenticator, Database, DidMinter, HandleTaken, ProfileCache,
+    ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -204,6 +204,30 @@ impl MemBackend {
     /// [`AccountWrites::create`]).
     pub async fn create(&self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         MemAccountWrites(self.clone()).create(account, owner).await
+    }
+
+    /// Seed a **soft-deleted** account holding `handle` (test-only). There is no
+    /// soft-delete write path yet, so this inserts a tombstoned `StoredAccount`
+    /// directly — the mem mirror of `UPDATE accounts SET deleted_at = …`. It lets a
+    /// test assert that a tombstone (a) is invisible to resolution/`find` yet (b)
+    /// still reserves its handle at founding, exactly as the global pg index does
+    /// (DD `23003138`).
+    pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
+        let now = Utc::now();
+        self.accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned")
+            .insert(
+                AccountId::new(uuid::Uuid::now_v7()),
+                StoredAccount {
+                    did: did.clone(),
+                    handle: handle.clone(),
+                    name: AccountName::try_new("Tombstoned").expect("valid name"),
+                    created_at: now,
+                    updated_at: now,
+                    deleted_at: Some(now),
+                },
+            );
     }
 
     /// Seat/replace a member's role (test seed of [`AccountWrites::grant_role`]).
@@ -420,7 +444,8 @@ struct StoredAccount {
     /// real founding flow).
     did: Did,
     /// The account's public handle — the validated, normalized name it is reached
-    /// by, unique across live accounts (mirrors the pg `handle` column).
+    /// by, globally unique (a soft-deleted account still reserves it, DD/23003138;
+    /// mirrors the pg `handle` column + its `accounts_handle_key` index).
     handle: Handle,
     /// The account's display name.
     name: AccountName,
@@ -588,12 +613,29 @@ impl AccountWrites for MemAccountWrites {
     /// sit behind separate locks, so this isn't truly atomic — it stands in for
     /// the real pg adapter's single private-store transaction, which tests don't
     /// stress for partial failure.
+    ///
+    /// Mirrors the pg `accounts_handle_key` unique index — **global**, spanning
+    /// live *and* soft-deleted accounts (a tombstone reserves its handle, DD
+    /// `23003138`): a handle already present in ANY state fails with [`HandleTaken`],
+    /// the same typed error the handler maps to a `409`. Keeping this fidelity here
+    /// lets the founding backstop (pre-check miss → store rejection) be exercised
+    /// in-process.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         let mut accounts = self
             .0
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
+
+        // Global handle uniqueness — NOT filtered on `deleted_at`, unlike the read
+        // path — so a soft-deleted account still reserves its handle.
+        if accounts
+            .values()
+            .any(|stored| stored.handle == account.handle)
+        {
+            return Err(anyhow::Error::new(HandleTaken));
+        }
+
         accounts.insert(
             account.id,
             StoredAccount {

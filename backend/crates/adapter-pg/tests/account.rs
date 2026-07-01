@@ -19,7 +19,7 @@ use domain::{
         user::{User, UserId},
         user_account::UserAccount,
     },
-    ports::{AccountStore, Database},
+    ports::{AccountStore, Database, HandleTaken},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
@@ -65,6 +65,27 @@ async fn create(pool: &PgPool, account: &Account, owner: &UserAccount) {
     let mut uow = db.begin().await.expect("begin");
     uow.accounts().create(account, owner).await.expect("create");
     uow.commit().await.expect("commit");
+}
+
+/// Found an account, returning the `create` result instead of asserting success —
+/// so a test can assert the error on a handle collision. Commits only on success
+/// (a failed unit rolls back on drop, as in production).
+async fn try_create(pool: &PgPool, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow.accounts().create(account, owner).await;
+    if result.is_ok() {
+        uow.commit().await.expect("commit");
+    }
+    result
+}
+
+/// Resolve a handle to its live account's `did` off the pool-backed store.
+async fn find_did_by_handle(pool: &PgPool, handle: &Handle) -> Option<Did> {
+    PgAccountStore::new(pool.clone())
+        .find_did_by_handle(handle)
+        .await
+        .expect("find_did_by_handle")
 }
 
 /// Persist a pending invitation in one unit of work.
@@ -660,5 +681,95 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         offer.state,
         InvitationState::Revoked,
         "the revoked member's issued offer is revoked, not deleted"
+    );
+}
+
+// ── ZMVP-44 handle uniqueness ───────────────────────────────────────────────────
+
+// The `accounts_handle_key` unique index rejects a second account claiming a
+// handle another account already holds — and the pg adapter maps that violation to
+// the typed `HandleTaken` (which the founding handler answers as 409), never a
+// silent second row or a raw 500.
+#[tokio::test]
+async fn create_rejects_a_duplicate_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let o1 = provision(&pool, "did:plc:dup-o1").await;
+    let o2 = provision(&pool, "did:plc:dup-o2").await;
+
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:dup-a1".to_string()),
+        Handle::try_new("dup.zurfur.app").unwrap(),
+        AccountName::try_new("One").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    // A different account (its own did/id) claiming the same handle is rejected.
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:dup-a2".to_string()),
+        Handle::try_new("dup.zurfur.app").unwrap(),
+        AccountName::try_new("Two").unwrap(),
+        Utc::now(),
+    );
+    let err = try_create(&pool, &a2, &m2)
+        .await
+        .expect_err("a duplicate handle is rejected");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_some(),
+        "the collision maps to HandleTaken (→409), got: {err:?}"
+    );
+}
+
+// A soft-deleted (tombstoned) account still reserves its handle: it is invisible to
+// resolution (`find_did_by_handle` → None) yet founding over its handle still fails
+// with `HandleTaken`. The index is GLOBAL, not filtered on deleted_at — DD 23003138
+// "Account Deletion, Tombstoning & Handle Reuse". This is the case the founding
+// handler's live pre-check cannot see, so the constraint is the authoritative 409.
+#[tokio::test]
+async fn a_soft_deleted_account_still_reserves_its_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let o1 = provision(&pool, "did:plc:ts-o1").await;
+    let o2 = provision(&pool, "did:plc:ts-o2").await;
+
+    let handle = Handle::try_new("reserved.zurfur.app").unwrap();
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:ts-a1".to_string()),
+        handle.clone(),
+        AccountName::try_new("Gone").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    // Tombstone it directly (no soft-delete write path exists yet).
+    sqlx::query("UPDATE accounts SET deleted_at = now() WHERE id = $1")
+        .bind(*a1.id)
+        .execute(&pool)
+        .await
+        .expect("soft-delete the account");
+
+    // Invisible to resolution — the resolver would 404.
+    assert!(
+        find_did_by_handle(&pool, &handle).await.is_none(),
+        "a tombstoned handle does not resolve"
+    );
+
+    // ...but the handle is still reserved: founding over it fails with HandleTaken,
+    // which the handler answers 409 (not 500).
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:ts-a2".to_string()),
+        handle.clone(),
+        AccountName::try_new("Reclaim").unwrap(),
+        Utc::now(),
+    );
+    let err = try_create(&pool, &a2, &m2)
+        .await
+        .expect_err("the tombstoned handle is still reserved");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_some(),
+        "reserved-by-tombstone maps to HandleTaken (→409), got: {err:?}"
     );
 }

@@ -45,9 +45,15 @@ pub(crate) fn wellknown_router() -> Router<AppState> {
 /// [`Handle`] gate, so a punycode or otherwise malformed host resolves to `None`
 /// (and is answered `404`) rather than reaching the store.
 fn handle_from_host(host: &str, handle_domain: &str) -> Option<Handle> {
-    // Drop an optional `:port`. Handles are domain names (no colon), so the first
-    // segment is the authority.
-    let host = host.split(':').next().unwrap_or(host);
+    // Drop an optional `:port`. A handle authority is a DNS name (no colon in the
+    // host itself), so at most one colon is allowed. Anything with more — an IPv6
+    // literal like `[::1]:443`, or a malformed `host:port:garbage` — is not a valid
+    // handle authority; reject it (fail closed) rather than silently taking a prefix.
+    let host = match host.split_once(':') {
+        None => host,
+        Some((h, port)) if !h.is_empty() && !port.contains(':') => h,
+        Some(_) => return None,
+    };
     // Drop a single FQDN-root trailing dot so `alice.zurfur.app.` resolves the same
     // as `alice.zurfur.app` — consistent with `Handle::try_new`'s normalization.
     let host = host.strip_suffix('.').unwrap_or(host);
@@ -136,6 +142,26 @@ mod tests {
         assert!(handle_from_host("alice.example.com", "zurfur.app").is_none());
         // A look-alike that only contains the domain mid-string is still refused.
         assert!(handle_from_host("zurfur.app.evil.com", "zurfur.app").is_none());
+    }
+
+    #[test]
+    fn refuses_a_dot_boundary_near_miss() {
+        // The suffix gate requires a real label boundary (a leading dot): a host that
+        // ends in `-zurfur.app` or `xzurfur.app` is NOT a subdomain of `zurfur.app`.
+        assert!(handle_from_host("evil-zurfur.app", "zurfur.app").is_none());
+        assert!(handle_from_host("notzurfur.app", "zurfur.app").is_none());
+    }
+
+    #[test]
+    fn refuses_a_multi_colon_authority() {
+        // `host:port:garbage` is malformed — fail closed rather than take a prefix.
+        assert!(handle_from_host("alice.zurfur.app:443:garbage", "zurfur.app").is_none());
+    }
+
+    #[test]
+    fn refuses_an_ipv6_authority() {
+        // An IPv6 literal is not a handle authority.
+        assert!(handle_from_host("[::1]:443", "zurfur.app").is_none());
     }
 
     #[test]

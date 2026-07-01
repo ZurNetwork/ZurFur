@@ -572,8 +572,9 @@ async fn founding_rejects_a_reserved_handle() {
 }
 
 // A handle already claimed by a live account is a 409 (`handle_taken`), and the
-// second founding mints nothing (the mem minter's counter does not advance to a
-// third DID here — the duplicate is caught before the mint).
+// rejected founding mints nothing — proven the same way as `founding_requires_a_name`:
+// a subsequent valid founding still gets the *second* mem DID, so the 409 consumed
+// none.
 #[tokio::test]
 async fn founding_rejects_a_duplicate_handle() {
     let did = "did:plc:e2edup";
@@ -581,7 +582,7 @@ async fn founding_rejects_a_duplicate_handle() {
     let client = client();
     sign_in(&client, &base).await;
 
-    // First claim of `taken.zurfur.app` succeeds.
+    // First claim of `taken.zurfur.app` succeeds — it takes the first mem DID.
     let res = client
         .post(format!("{base}/accounts"))
         .json(&serde_json::json!({ "name": "First", "handle": "taken.zurfur.app" }))
@@ -589,12 +590,70 @@ async fn founding_rejects_a_duplicate_handle() {
         .await
         .expect("POST /accounts");
     assert_eq!(res.status(), 201, "the first claim of the handle succeeds");
+    let first_did = res.json::<serde_json::Value>().await.expect("json")["did"]
+        .as_str()
+        .expect("did")
+        .to_string();
+    assert_eq!(
+        first_did, "did:plc:mem000000",
+        "the first founding mints the first DID"
+    );
 
     // A second account claiming the same handle (any case — it normalizes to the
     // same value) is refused with 409 handle_taken.
     let res = client
         .post(format!("{base}/accounts"))
         .json(&serde_json::json!({ "name": "Second", "handle": "Taken.Zurfur.App" }))
+        .send()
+        .await
+        .expect("POST /accounts");
+    common::assert_problem(res, 409, "handle_taken").await;
+
+    // The rejected founding minted nothing: the next, valid founding gets the SECOND
+    // mem DID (`...mem000001`). Had the 409 reached the minter, this would be `...002`.
+    let res = client
+        .post(format!("{base}/accounts"))
+        .json(&serde_json::json!({ "name": "Third", "handle": "fresh.zurfur.app" }))
+        .send()
+        .await
+        .expect("POST /accounts");
+    assert_eq!(res.status(), 201);
+    assert_eq!(
+        res.json::<serde_json::Value>().await.expect("json")["did"],
+        "did:plc:mem000001",
+        "a rejected 409 founding must not consume a minted identity"
+    );
+}
+
+// A handle reserved by a SOFT-DELETED (tombstoned) account is invisible to the
+// resolver (404) but still reserves the handle: founding over it is a 409, NOT a
+// 500 (the founding pre-check filters soft-deleted rows, so this exercises the
+// store-level `HandleTaken` backstop — the global unique index, DD 23003138).
+#[tokio::test]
+async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
+    let did = "did:plc:e2etombstone";
+    let (base, backend) = spawn_app(did).await;
+
+    // Seed a tombstoned account holding `gone.zurfur.app` (no soft-delete write path
+    // exists yet, so insert it directly — the mem mirror of an UPDATE deleted_at).
+    let reserved = domain::elements::handle::Handle::try_new("gone.zurfur.app").unwrap();
+    backend.seed_soft_deleted_account(&Did::new("did:plc:tombstoned".to_string()), &reserved);
+
+    // The resolver does not serve a tombstoned handle.
+    let res = client()
+        .get(format!("{base}/.well-known/atproto-did"))
+        .header(reqwest::header::HOST, "gone.zurfur.app")
+        .send()
+        .await
+        .expect("GET /.well-known/atproto-did");
+    assert_eq!(res.status(), 404, "a tombstoned handle does not resolve");
+
+    // ...but founding over it is a clean 409 (the store backstop), not a 500.
+    let client = client();
+    sign_in(&client, &base).await;
+    let res = client
+        .post(format!("{base}/accounts"))
+        .json(&serde_json::json!({ "name": "Reclaimer", "handle": "gone.zurfur.app" }))
         .send()
         .await
         .expect("POST /accounts");
