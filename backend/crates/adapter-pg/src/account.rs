@@ -480,67 +480,69 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// member to Owner with no parent (rule 5). Both `UPDATE`s ride the one
     /// transaction-bound connection, so they commit together or not at all.
     ///
-    /// The caller (the handler) has already settled authority — the actor is the
-    /// current Owner and the target is an existing member — so the two `SELECT`
-    /// guards below are a defensive backstop against a concurrent membership change
-    /// between the caller's check and this write; if either precondition has since
-    /// vanished the guard errors and the whole unit rolls back (a rare race, mapped
-    /// to a 500), rather than leaving the account half-transferred.
+    /// Each precondition is enforced **inside** its mutating statement — the demotion
+    /// only fires while the actor is *still* the Owner (`role = 'owner'`), the
+    /// promotion only while the target is *still* a member — and each must touch
+    /// exactly one row or the whole unit rolls back. Guarding the mutation itself
+    /// (rather than a prior `SELECT`) is what makes the single-Owner invariant
+    /// unreachable to violate under concurrency: two simultaneous transfers of the
+    /// same account serialize on the Owner row, so the second one's demotion matches
+    /// zero rows (the Owner is already demoted) and fails closed — it can never mint a
+    /// second Owner. The caller (the handler) still settles authority up front for the
+    /// friendly `403`/`404`; these guards are the last line that also survives a race.
     async fn transfer_ownership(
         &mut self,
         old_owner: UserId,
         new_owner: UserId,
         account: AccountId,
     ) -> anyhow::Result<()> {
-        query!(
-            r#"
-            SELECT user_id FROM account_members
-            WHERE account_id = $1 AND user_id = $2 AND role = $3
-        "#,
-            *account,
-            *old_owner,
-            Role::Owner(None).as_str()
-        )
-        .fetch_one(&mut *self.conn)
-        .await?; // backstop: the outgoing Owner must still be the Owner
-
-        query!(
-            r#"
-            SELECT user_id FROM account_members
-            WHERE account_id = $1 AND user_id = $2
-        "#,
-            *account,
-            *new_owner
-        )
-        .fetch_one(&mut *self.conn)
-        .await?; // backstop: the incoming Owner must still be a member
-
-        query!(
+        // Demote the outgoing Owner to Admin, re-homed under the incoming Owner — but
+        // only while they are *still* the Owner. A race that already moved ownership
+        // leaves this matching zero rows, so we error and roll back.
+        let demoted = query!(
             r#"
             UPDATE account_members
             SET "role" = $1, parent = $4
-            WHERE user_id = $2 AND account_id = $3
+            WHERE account_id = $2 AND user_id = $3 AND "role" = $5
         "#,
             Role::Admin(None).as_str(),
+            *account,
             *old_owner,
+            *new_owner,
+            Role::Owner(None).as_str()
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        if demoted.rows_affected() != 1 {
+            anyhow::bail!(
+                "transfer_ownership: user {} is not the current Owner of account {}; nothing transferred",
+                *old_owner,
+                *account
+            );
+        }
+
+        // Promote the incoming member to sole Owner with no parent — but only while
+        // they are *still* a member. Zero rows means they vanished mid-transfer, so we
+        // error and roll back rather than leave the account with no Owner.
+        let promoted = query!(
+            r#"
+            UPDATE account_members
+            SET "role" = $1, parent = NULL
+            WHERE account_id = $2 AND user_id = $3
+        "#,
+            Role::Owner(None).as_str(),
             *account,
             *new_owner
         )
         .execute(&mut *self.conn)
         .await?;
-
-        query!(
-            r#"
-            UPDATE account_members
-            SET "role" = $1, parent = NULL
-            WHERE user_id = $2 AND account_id = $3
-        "#,
-            Role::Owner(None).as_str(),
-            *new_owner,
-            *account
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        if promoted.rows_affected() != 1 {
+            anyhow::bail!(
+                "transfer_ownership: user {} is not a member of account {}; nothing transferred",
+                *new_owner,
+                *account
+            );
+        }
 
         Ok(())
     }

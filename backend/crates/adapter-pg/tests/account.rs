@@ -880,3 +880,43 @@ async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
         "the would-be heir's role is unchanged",
     );
 }
+
+// Backstop: the incoming Owner must actually be a member. When the promotion guard
+// matches zero rows the whole unit rolls back — the demotion is undone, so the
+// original Owner still owns the account (never left ownerless).
+#[tokio::test]
+async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:nonmember-o").await;
+    let stranger = provision(&pool, "did:plc:nonmember-s").await; // provisioned, never seated
+
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:nonmember-acct".to_string()),
+        Handle::try_new("nonmember-acct.example.com").unwrap(),
+        AccountName::try_new("Studio").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow
+        .accounts()
+        .transfer_ownership(owner.id, stranger.id, account.id)
+        .await;
+    assert!(result.is_err(), "cannot transfer ownership to a non-member");
+    drop(uow); // roll the unit back
+
+    assert_eq!(
+        role_of(&pool, owner.id, account.id).await,
+        Some(Role::Owner(None)),
+        "the demotion rolled back with the failed promotion — the Owner is intact",
+    );
+    assert_eq!(
+        role_of(&pool, stranger.id, account.id).await,
+        None,
+        "the non-member gained no role",
+    );
+}
