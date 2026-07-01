@@ -6,16 +6,22 @@
 //! browsing to them. This is part of the cookie surface, so [`crate::app`] mounts
 //! the group under the first-party-`Origin` (CSRF) layer.
 //!
-//! The shared write-path helpers ([`require_user`], [`load_account`],
-//! [`actor_role`]) live here: they are the reusable auth seam every account write
-//! consults, so the authority rule isn't reinvented per handler.
+//! The shared write-path seam lives here. [`AccountRole`] is the account-scope
+//! authorization **extractor** every account-scoped write declares: it resolves the
+//! actor, loads the `{id}` account, and enforces the membership floor in one place a
+//! route cannot compile without (generalizing the former per-handler
+//! [`require_user`] → [`load_account`] → [`actor_role`] chain, which those helpers
+//! still back). User-scoped writes (e.g. founding an account) and public account
+//! reads stay off the seam — the gate is writes-against-a-target-account only
+//! (ZMVP-47; DD 26247170 §5).
 //!
-//! References: ZMVP-14 through ZMVP-21, ZMVP-32; DESIGN/Account, DESIGN/Roles.
+//! References: ZMVP-14 through ZMVP-21, ZMVP-32, ZMVP-47; DESIGN/Account,
+//! DESIGN/Roles; DD "User as Actor & On-Demand Accounts" (26247170).
 
 use axum::{
     Json, Router,
-    extract::{Path, State, rejection::JsonRejection},
-    http::StatusCode,
+    extract::{FromRequestParts, Path, State, rejection::JsonRejection},
+    http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
     routing::{delete, post},
 };
@@ -102,6 +108,87 @@ async fn actor_role(state: &AppState, user: UserId, account: AccountId) -> Resul
         .role_of(user, account)
         .await?
         .ok_or_else(Problem::forbidden)
+}
+
+/// The account-scope authorization seam: the extractor every **account-scoped
+/// write** flows through (ZMVP-47). It resolves the acting [`User`], loads the
+/// target [`Account`] named by the `{id}` path parameter, and confirms the actor
+/// holds *some* role on it — the shared membership floor, generalizing the former
+/// per-handler `require_user` → [`load_account`] → [`actor_role`] chain into one
+/// place that cannot be forgotten.
+///
+/// **Why an extractor.** Declaring `AccountRole` in a handler's argument list is
+/// what makes the floor unskippable: an account-scoped route *cannot compile*
+/// without it, so no future route can quietly omit the membership check. This is
+/// the "make unsoundness unreachable" move — one enforced path over per-site checks
+/// that drift — the same instinct as the compile-enforced Unit of Work (DD 24150017).
+///
+/// **Floor, not rank.** It yields the actor, the loaded account, and the actor's
+/// [`Role`]; the handler then applies its own capability-specific rank rule
+/// ([`Role::can_grant`], Owner-only) on that `Role`. The floor is *membership*; the
+/// rank stays the handler's (DD 26247170 §5 — capability-scoped, flat membership
+/// floor returning `Role`; DESIGN/Roles).
+///
+/// **Writes only.** Public reads of an account are anonymous-readable (discovery)
+/// and must **not** extract this — gating a read path would be a regression
+/// (DD 26247170 §5). User-scoped writes (Characters, reviews, commission
+/// participation, founding an account) likewise sit at the auth-only floor and do
+/// not extract it.
+///
+/// Rejections mirror the chain it replaces, in the same order (auth before any
+/// account lookup, so an anonymous caller is a `401` even on a missing account):
+/// - no/unreadable session, or a vanished User → `401` `not_authenticated`
+/// - the `{id}` names no live account (unknown, soft-deleted, or non-uuid) → `404`
+///   `account_not_found`
+/// - the actor holds no role on the account → `403` `forbidden`
+pub(crate) struct AccountRole {
+    /// The acting, recognized [`User`] (the session resolved to a live User).
+    pub actor: User,
+    /// The live target [`Account`] named by the `{id}` path parameter.
+    pub account: Account,
+    /// The actor's [`Role`] on [`account`](AccountRole::account) — always `Some` by
+    /// construction (a non-member is rejected `403` before this is built). The
+    /// handler applies its own rank rule on it.
+    pub role: Role,
+}
+
+impl FromRequestParts<AppState> for AccountRole {
+    type Rejection = Problem;
+
+    /// Resolve `(actor, account, role)` for an account-scoped write, or reject.
+    ///
+    /// Order matters and mirrors the former handler chain: the acting User is
+    /// resolved *first*, so an anonymous caller is turned away at `401` before any
+    /// account is loaded (never leaking a `404`/`403` to the signed-out). Only then
+    /// is the `{id}` account loaded (`404` if it names none) and the membership floor
+    /// applied (`403` for a non-member).
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Problem> {
+        // Resolve the acting visitor first — an anonymous caller is a 401 before any
+        // account lookup. A missing session layer (infra misconfig, never in practice)
+        // is likewise "not authenticated" rather than a leaked 500.
+        let session = Session::from_request_parts(parts, state)
+            .await
+            .map_err(|_| Problem::not_authenticated())?;
+        let actor = require_user(state, &session).await?;
+
+        // The `{id}` path segment names the target account. A non-uuid segment names
+        // no account — a 404 (nothing to act on), the same outcome as an unknown id —
+        // never a bare 400/500.
+        let Path(account_id) = Path::<Uuid>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| Problem::account_not_found())?;
+        let account = load_account(state, AccountId::new(account_id)).await?;
+
+        // The membership floor: a non-member has no role and so no authority (403).
+        // The per-capability rank rule stays the handler's (flat floor, DD 26247170 §5).
+        let role = actor_role(state, actor.id, account.id).await?;
+
+        Ok(AccountRole {
+            actor,
+            account,
+            role,
+        })
+    }
 }
 
 /// `200 OK` carrying a bare JSON resource body (success bodies are not enveloped;
@@ -266,20 +353,16 @@ async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<boo
 /// - `404` — no such live account
 async fn delete_account(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
 ) -> Result<Response, Problem> {
-    // Deleting is a write, so it requires a recognized visitor — the acting authority.
-    let actor = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam already settled the write floor: a recognized
+    // visitor (else 401), a real live account named by `{id}` (else 404), and a role
+    // on it (else 403). It hands back the loaded account and the actor's role.
+    let AccountRole { account, role, .. } = account_role;
 
-    // The delete must address a real, live account. A soft-deleted or unknown id is a
-    // 404 — there's nothing to act on — kept distinct from "you may not" (403).
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-
-    // Owner-only (DD 23003138). `actor_role` turns a non-member away with 403; a member
-    // who is not the Owner is likewise forbidden — deletion is the Owner's alone, unlike
-    // the grant/revoke seam which any sufficiently-ranked member may reach.
-    let role = actor_role(&state, actor.id, account.id).await?;
+    // Owner-only (DD 23003138), the handler's rank rule on top of the membership
+    // floor: a member who is not the Owner is forbidden — deletion is the Owner's
+    // alone, unlike the grant/revoke seam which any sufficiently-ranked member reaches.
     if !matches!(role, Role::Owner(_)) {
         return Err(Problem::forbidden());
     }
@@ -438,16 +521,19 @@ struct GrantRoleBody {
 /// - `422` — malformed body or an unknown role discriminant
 async fn grant_role(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
     body: Result<Json<GrantRoleBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    // Granting is a write, so it requires a recognized visitor — the actor whose
-    // authority we are about to check.
-    let actor = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam already settled the write floor (401/404/403) and
+    // loaded the account plus the actor's role in it.
+    let AccountRole {
+        account,
+        role: actor_role,
+        ..
+    } = account_role;
 
     // A missing/malformed body, or a role string that isn't one of the four known
-    // discriminants, is rejected before anything is touched — understood but unusable.
+    // discriminants, is rejected as understood-but-unusable (422).
     let Json(body) = body.map_err(|_| {
         Problem::invalid_request(
             "Provide a member to grant, e.g. {\"user\": \"did:plc:…\", \"role\": \"admin\"}.",
@@ -456,13 +542,8 @@ async fn grant_role(
     let new_role =
         Role::try_from(body.role).map_err(|err| Problem::unknown_role(err.to_string()))?;
 
-    // The grant must address a real, live account. A soft-deleted or unknown id is
-    // a 404 — there's nothing to act on — kept distinct from "you may not" (403).
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-
-    // Authorization, at the seam: the actor's standing in *this* account decides
-    // whether the grant is allowed. A non-member has no role and so no authority.
-    let actor_role = actor_role(&state, actor.id, account.id).await?;
+    // Authorization, the handler's rank rule on the membership floor: the actor's
+    // standing in this account decides whether *this* grant is allowed.
     if !actor_role.can_grant(&new_role) {
         return Err(Problem::forbidden());
     }
@@ -534,23 +615,20 @@ struct RevokeRoleBody {
 /// - `422` — malformed body
 async fn revoke_role(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
     body: Result<Json<RevokeRoleBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    // Revoking is a write — it requires a recognized visitor, the acting authority.
-    let actor = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam already settled the write floor (401/404/403) and
+    // loaded the account plus the actor's standing in it — what decides the revoke.
+    let AccountRole {
+        account,
+        role: actor_role,
+        ..
+    } = account_role;
 
     let Json(body) = body.map_err(|_| {
         Problem::invalid_request("Provide a member to revoke, e.g. {\"user\": \"did:plc:…\"}.")
     })?;
-
-    // The revoke must address a real, live account.
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-
-    // The actor's standing in this account decides what they may do; a non-member
-    // has none.
-    let actor_role = actor_role(&state, actor.id, account.id).await?;
 
     // Resolve the target by DID *without minting* — unlike a grant, a revoke must not
     // recognize a brand-new visitor as a side effect. An unknown DID is not a member.
@@ -612,11 +690,16 @@ struct InviteUserToAccountBody {
 /// Otherwise a fresh pending offer is created (`201`).
 async fn invite_user_to_account(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
     body: Result<Json<InviteUserToAccountBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    let actor = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam settled the write floor (401/404/403) and loaded
+    // the account plus the inviter's own standing (`actor` is the issuing member).
+    let AccountRole {
+        actor,
+        account,
+        role: inviting_user_role,
+    } = account_role;
 
     let Json(body) = body.map_err(|_| {
         Problem::invalid_request(
@@ -624,9 +707,6 @@ async fn invite_user_to_account(
         )
     })?;
     let role = Role::try_from(body.role).map_err(|err| Problem::unknown_role(err.to_string()))?;
-
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-    let inviting_user_role = actor_role(&state, actor.id, account.id).await?;
 
     if !inviting_user_role.can_grant(&role) {
         return Err(Problem::forbidden());
@@ -710,11 +790,17 @@ struct RevokeInvitationBody {
 /// to report an id or state from.
 async fn revoke_invitation_to_account(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
     body: Result<Json<RevokeInvitationBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    let actor = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam settled the write floor (401/404/403) and loaded
+    // the account plus the actor's standing — kept to apply the authority rule once
+    // the invitation is loaded.
+    let AccountRole {
+        account,
+        role: actor_role,
+        ..
+    } = account_role;
 
     let Json(body) = body.map_err(|_| {
         Problem::invalid_request(
@@ -725,12 +811,6 @@ async fn revoke_invitation_to_account(
     // `revoke_role`), including the idempotent no-ops where no invitation row — and so
     // no id/state — is available to report.
     let invited_did = body.user;
-
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-
-    // The actor's standing in this account decides what they may do; a non-member has
-    // none. We keep the role to apply the authority rule once the invitation is loaded.
-    let actor_role = actor_role(&state, actor.id, account.id).await?;
 
     // Resolve the invited user by DID *without minting* — like revoke_role, a revoke
     // must not recognize a brand-new visitor as a side effect. An unknown DID was never
@@ -857,23 +937,23 @@ struct TransferOwnershipBody {
 /// - `422` — malformed body, or transferring to oneself (Roles rule 8: to *another* member)
 async fn transfer_ownership(
     State(state): State<AppState>,
-    session: Session,
-    Path(account_id): Path<Uuid>,
+    account_role: AccountRole,
     body: Result<Json<TransferOwnershipBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    // Transferring is a write — it requires a recognized visitor, the acting Owner.
-    let old_owner = require_user(&state, &session).await?;
+    // The shared `AccountRole` seam settled the write floor (401/404/403) and loaded
+    // the account plus the acting member's standing (`old_owner` is the actor).
+    let AccountRole {
+        actor: old_owner,
+        account,
+        role: actor_role,
+    } = account_role;
 
     let Json(body) = body.map_err(|_| {
         Problem::invalid_request("Provide the new owner, e.g. {\"new_owner\": \"did:plc:…\"}.")
     })?;
 
-    // The transfer must address a real, live account (else 404).
-    let account = load_account(&state, AccountId::new(account_id)).await?;
-
-    // Only the current Owner may transfer ownership. A non-member has no role
-    // (`actor_role` → 403); a member who isn't the Owner is likewise forbidden.
-    let actor_role = actor_role(&state, old_owner.id, account.id).await?;
+    // Only the current Owner may transfer ownership (the handler's rank rule on the
+    // membership floor): a member who isn't the Owner is forbidden.
     if !matches!(actor_role, Role::Owner(_)) {
         return Err(Problem::forbidden());
     }
@@ -922,4 +1002,148 @@ async fn transfer_ownership(
         "owner": new_owner.did.as_str(),
         "previous_owner": old_owner.did.as_str(),
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the account-scope authorization floor the [`AccountRole`]
+    //! extractor is built on (ZMVP-47). These pin the *mapping* the extractor
+    //! delegates to — "no role → 403", "unknown account → 404", "a member's role is
+    //! returned" — independent of the HTTP stack, so the invariant survives a future
+    //! change to how routes are wired. The extractor's request-ordering (auth *before*
+    //! account lookup, so an anonymous caller is 401 even on a missing account) and the
+    //! 401 floor itself are proven end-to-end in `tests/account_scope_gate.rs`, since
+    //! they need a real request (session + matched path).
+
+    use std::sync::Arc;
+
+    use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
+    use chrono::Utc;
+    use domain::elements::{account::Account, profile::Profile};
+
+    use super::*;
+    use crate::{Config, Environment};
+
+    /// A fully in-memory [`AppState`] plus the backing [`MemBackend`], so a unit test
+    /// can seed accounts/memberships and then call the shared floor helpers directly —
+    /// the same fakes `spawn_app` wires, without binding a socket.
+    fn mem_state() -> (AppState, MemBackend) {
+        let backend = MemBackend::new();
+        let state = AppState {
+            config: Config {
+                env: Environment::DEV,
+                http_addr: "127.0.0.1:0".parse().unwrap(),
+                public_url: "http://127.0.0.1".to_string(),
+                database_url: "postgres://unused".to_string(),
+                log_level: "info".to_string(),
+                handle_domain: "zurfur.app".to_string(),
+                did_key_root_key: "unused-in-tests".to_string(),
+                plc_directory_endpoint: "https://plc.directory".to_string(),
+                plc_directory_submit: false,
+            },
+            pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
+            auth: Arc::new(MemAuthenticator::new(Did::new("did:plc:unit".to_string()))),
+            users: backend.user_store(),
+            profile_source: Arc::new(MemProfileSource::new(Profile {
+                did: Did::new("did:plc:unit".to_string()),
+                handle: "unit.bsky.social".to_string(),
+                display_name: None,
+                avatar_url: None,
+            })),
+            profile_cache: backend.profile_cache(),
+            database: backend.database(),
+            accounts: backend.account_store(),
+            did_minter: Arc::new(MemDidMinter::new()),
+        };
+        (state, backend)
+    }
+
+    /// Seed an account owned by a freshly-provisioned user; returns the account and
+    /// its owner's [`UserId`].
+    async fn seed_account(
+        backend: &MemBackend,
+        owner_did: &str,
+        handle: &str,
+    ) -> (Account, UserId) {
+        let owner = backend
+            .provision(&Did::new(owner_did.to_string()))
+            .await
+            .expect("provision owner");
+        let (account, membership) = Account::open(
+            owner.id,
+            Did::new(format!("{owner_did}:acct")),
+            Handle::try_new(handle).expect("valid handle"),
+            AccountName::try_new("Seed Studio").expect("valid name"),
+            Utc::now(),
+        );
+        backend
+            .create(&account, &membership)
+            .await
+            .expect("seed account");
+        (account, owner.id)
+    }
+
+    // The floor's core mapping: a user with NO role on the account is turned away with
+    // a 403 `forbidden` — the exact rejection the extractor surfaces for a non-member.
+    #[tokio::test]
+    async fn actor_role_maps_a_non_member_to_forbidden() {
+        let (state, backend) = mem_state();
+        let (account, _owner) = seed_account(&backend, "did:plc:owner", "seed.zurfur.app").await;
+        // A provisioned user who was never granted a role on the account.
+        let stranger = backend
+            .provision(&Did::new("did:plc:stranger".to_string()))
+            .await
+            .expect("provision stranger");
+
+        let err = actor_role(&state, stranger.id, account.id)
+            .await
+            .expect_err("a non-member has no authority");
+        assert_eq!(err.status, 403, "no role on the account is a 403");
+        assert_eq!(err.code, "forbidden");
+    }
+
+    // The floor's positive path: a seated member's actual [`Role`] is returned, for the
+    // handler to apply its own rank rule on (flat membership floor, DD 26247170 §5).
+    #[tokio::test]
+    async fn actor_role_returns_a_members_role() {
+        let (state, backend) = mem_state();
+        let (account, owner_id) = seed_account(&backend, "did:plc:owner", "seed.zurfur.app").await;
+
+        let owner_role = actor_role(&state, owner_id, account.id)
+            .await
+            .expect("the owner holds a role");
+        assert_eq!(owner_role, Role::Owner(None), "the founder is the Owner");
+
+        // A non-owner member's own rank comes back unchanged — the floor never flattens
+        // the role it returns.
+        let member = backend
+            .provision(&Did::new("did:plc:member".to_string()))
+            .await
+            .expect("provision member");
+        backend
+            .grant_role(&UserAccount {
+                user_id: member.id,
+                account_id: account.id,
+                role: Role::Manager(None),
+            })
+            .await
+            .expect("seat a manager");
+        let member_role = actor_role(&state, member.id, account.id)
+            .await
+            .expect("the member holds a role");
+        assert_eq!(member_role, Role::Manager(None));
+    }
+
+    // The account-load floor: an unknown (or soft-deleted) account id is a 404, kept
+    // distinct from the 403 authority failure — the extractor's `{id}` → account step.
+    #[tokio::test]
+    async fn load_account_maps_an_unknown_id_to_not_found() {
+        let (state, _backend) = mem_state();
+
+        let Err(err) = load_account(&state, AccountId::new(Uuid::now_v7())).await else {
+            panic!("an unknown account id has nothing to act on");
+        };
+        assert_eq!(err.status, 404, "an unknown account is a 404");
+        assert_eq!(err.code, "account_not_found");
+    }
 }
