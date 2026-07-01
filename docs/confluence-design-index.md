@@ -65,6 +65,8 @@ Know these without fetching; fetch the linked DD page for detail.
 - `24870914` — The Default Account's Handle
 - `26050561` — Confusable Handles & the Punycode Policy (block `xn--` IDN labels in v1; UTS #39 allow-with-checks is the documented upgrade path)
 - `26607618` — Handle Resolution for *.zurfur.app — HTTPS well-known (DNS-reversible) (DECIDED; serve handle→DID via Host-routed `/.well-known/atproto-did` reading Postgres, behind one wildcard DNS+TLS cert; reversible to DNS TXT later; key-custody/minter still open; ZMVP-44)
+- `26804226` — did:plc Identity Custody, Minting & Credible Exit (rotation-key custody + minter lifecycle; key-storage/KMS follow-ups; ZMVP-49/53)
+- `26935298` — Zurfur Public Presence & PDS — Identity-Only for v1 (v1 mints identity-only did:plc for Accounts/Characters: valid identity+handle, no PDS/atproto repo — feed-generator pattern; entity public presence deferred reversibly; records-hosting fork open)
 - `19431425` — Authenticators
 - `8978453` — Where should Portfolios, Batches, Commissions and Collections live? (in progress)
 - `8978501` — Portfolio Live vs Static

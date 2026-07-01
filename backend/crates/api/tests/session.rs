@@ -42,6 +42,7 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             public_url: format!("http://{addr}"),
             database_url,
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         pool,
         // An anonymous /me reaches neither PDS nor repo; the mem adapters suffice.

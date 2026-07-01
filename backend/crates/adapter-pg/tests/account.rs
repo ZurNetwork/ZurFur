@@ -13,12 +13,13 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
+        handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
         role::Role,
         user::{User, UserId},
         user_account::UserAccount,
     },
-    ports::{AccountStore, Database},
+    ports::{AccountStore, Database, HandleTaken},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
@@ -64,6 +65,27 @@ async fn create(pool: &PgPool, account: &Account, owner: &UserAccount) {
     let mut uow = db.begin().await.expect("begin");
     uow.accounts().create(account, owner).await.expect("create");
     uow.commit().await.expect("commit");
+}
+
+/// Found an account, returning the `create` result instead of asserting success —
+/// so a test can assert the error on a handle collision. Commits only on success
+/// (a failed unit rolls back on drop, as in production).
+async fn try_create(pool: &PgPool, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow.accounts().create(account, owner).await;
+    if result.is_ok() {
+        uow.commit().await.expect("commit");
+    }
+    result
+}
+
+/// Resolve a handle to its live account's `did` off the pool-backed store.
+async fn find_did_by_handle(pool: &PgPool, handle: &Handle) -> Option<Did> {
+    PgAccountStore::new(pool.clone())
+        .find_did_by_handle(handle)
+        .await
+        .expect("find_did_by_handle")
 }
 
 /// Persist a pending invitation in one unit of work.
@@ -160,10 +182,12 @@ async fn create_persists_the_account_and_its_owner_membership() {
     let owner = provision(&pool, "did:plc:pgowner").await;
 
     let account_did = Did::new("did:plc:pgacct".to_string());
+    let account_handle = Handle::try_new("pgacct.example.com").unwrap();
     let account_name = AccountName::try_new("PG Studio").unwrap();
     let (account, membership) = Account::open(
         owner.id,
         account_did.clone(),
+        account_handle.clone(),
         account_name.clone(),
         Utc::now(),
     );
@@ -177,6 +201,10 @@ async fn create_persists_the_account_and_its_owner_membership() {
     assert_eq!(
         found.did, account_did,
         "the account's minted did round-trips"
+    );
+    assert_eq!(
+        found.handle, account_handle,
+        "the account's handle round-trips"
     );
     assert_eq!(found.name, account_name, "the account's name round-trips");
     assert_eq!(found.deleted_at, None, "a freshly founded account is live");
@@ -201,6 +229,7 @@ async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:multi-acct".to_string()),
+        Handle::try_new("multi-acct.example.com").unwrap(),
         AccountName::try_new("Multi Studio").unwrap(),
         Utc::now(),
     );
@@ -246,6 +275,7 @@ async fn a_dropped_unit_of_work_rolls_back_every_write() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rollback-acct".to_string()),
+        Handle::try_new("rollback-acct.example.com").unwrap(),
         AccountName::try_new("Rollback").unwrap(),
         Utc::now(),
     );
@@ -282,6 +312,7 @@ async fn find_unknown_account_is_none() {
     let (unfounded, _) = Account::open(
         owner.id,
         Did::new("did:plc:ghost".to_string()),
+        Handle::try_new("ghost.example.com").unwrap(),
         AccountName::try_new("Ghost").unwrap(),
         Utc::now(),
     );
@@ -303,6 +334,7 @@ async fn role_of_non_member_is_none() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:pgacct3".to_string()),
+        Handle::try_new("pgacct3.example.com").unwrap(),
         AccountName::try_new("PG Studio 3").unwrap(),
         Utc::now(),
     );
@@ -326,6 +358,7 @@ async fn invitation_fixture(pool: &PgPool, tag: &str) -> (Account, UserId, UserI
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("did:plc:pgacct-{tag}")),
+        Handle::try_new(format!("pgacct-{tag}.example.com")).unwrap(),
         AccountName::try_new("PG Studio").unwrap(),
         Utc::now(),
     );
@@ -474,6 +507,7 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rehome-acct".to_string()),
+        Handle::try_new("rehome-acct.example.com").unwrap(),
         AccountName::try_new("Tree").unwrap(),
         Utc::now(),
     );
@@ -517,6 +551,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     let (acct1, m1) = Account::open(
         o1.id,
         Did::new("did:plc:scope-acct1".to_string()),
+        Handle::try_new("scope-acct1.example.com").unwrap(),
         AccountName::try_new("One").unwrap(),
         Utc::now(),
     );
@@ -524,6 +559,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     let (acct2, m2) = Account::open(
         o2.id,
         Did::new("did:plc:scope-acct2".to_string()),
+        Handle::try_new("scope-acct2.example.com").unwrap(),
         AccountName::try_new("Two").unwrap(),
         Utc::now(),
     );
@@ -567,6 +603,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rev-acct".to_string()),
+        Handle::try_new("rev-acct.example.com").unwrap(),
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );
@@ -612,6 +649,7 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new("did:plc:rv-acct".to_string()),
+        Handle::try_new("rv-acct.example.com").unwrap(),
         AccountName::try_new("Studio").unwrap(),
         Utc::now(),
     );
@@ -643,5 +681,95 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         offer.state,
         InvitationState::Revoked,
         "the revoked member's issued offer is revoked, not deleted"
+    );
+}
+
+// ── ZMVP-44 handle uniqueness ───────────────────────────────────────────────────
+
+// The `accounts_handle_key` unique index rejects a second account claiming a
+// handle another account already holds — and the pg adapter maps that violation to
+// the typed `HandleTaken` (which the founding handler answers as 409), never a
+// silent second row or a raw 500.
+#[tokio::test]
+async fn create_rejects_a_duplicate_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let o1 = provision(&pool, "did:plc:dup-o1").await;
+    let o2 = provision(&pool, "did:plc:dup-o2").await;
+
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:dup-a1".to_string()),
+        Handle::try_new("dup.zurfur.app").unwrap(),
+        AccountName::try_new("One").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    // A different account (its own did/id) claiming the same handle is rejected.
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:dup-a2".to_string()),
+        Handle::try_new("dup.zurfur.app").unwrap(),
+        AccountName::try_new("Two").unwrap(),
+        Utc::now(),
+    );
+    let err = try_create(&pool, &a2, &m2)
+        .await
+        .expect_err("a duplicate handle is rejected");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_some(),
+        "the collision maps to HandleTaken (→409), got: {err:?}"
+    );
+}
+
+// A soft-deleted (tombstoned) account still reserves its handle: it is invisible to
+// resolution (`find_did_by_handle` → None) yet founding over its handle still fails
+// with `HandleTaken`. The index is GLOBAL, not filtered on deleted_at — DD 23003138
+// "Account Deletion, Tombstoning & Handle Reuse". This is the case the founding
+// handler's live pre-check cannot see, so the constraint is the authoritative 409.
+#[tokio::test]
+async fn a_soft_deleted_account_still_reserves_its_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let o1 = provision(&pool, "did:plc:ts-o1").await;
+    let o2 = provision(&pool, "did:plc:ts-o2").await;
+
+    let handle = Handle::try_new("reserved.zurfur.app").unwrap();
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:ts-a1".to_string()),
+        handle.clone(),
+        AccountName::try_new("Gone").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    // Tombstone it directly (no soft-delete write path exists yet).
+    sqlx::query("UPDATE accounts SET deleted_at = now() WHERE id = $1")
+        .bind(*a1.id)
+        .execute(&pool)
+        .await
+        .expect("soft-delete the account");
+
+    // Invisible to resolution — the resolver would 404.
+    assert!(
+        find_did_by_handle(&pool, &handle).await.is_none(),
+        "a tombstoned handle does not resolve"
+    );
+
+    // ...but the handle is still reserved: founding over it fails with HandleTaken,
+    // which the handler answers 409 (not 500).
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:ts-a2".to_string()),
+        handle.clone(),
+        AccountName::try_new("Reclaim").unwrap(),
+        Utc::now(),
+    );
+    let err = try_create(&pool, &a2, &m2)
+        .await
+        .expect_err("the tombstoned handle is still reserved");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_some(),
+        "reserved-by-tombstone maps to HandleTaken (→409), got: {err:?}"
     );
 }

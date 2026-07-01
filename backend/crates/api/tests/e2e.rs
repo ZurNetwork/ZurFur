@@ -33,6 +33,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
             public_url: format!("http://{addr}"),
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         // No route exercised here touches the database, so a lazy (never-connected)
         // pool keeps the test free of a container.

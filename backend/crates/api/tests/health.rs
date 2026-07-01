@@ -38,6 +38,7 @@ async fn health_is_green_against_fresh_postgres() {
             public_url: format!("http://{addr}"),
             database_url,
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         pool,
         // /health touches neither the PDS nor the repo; the mem adapters keep both

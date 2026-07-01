@@ -8,6 +8,7 @@ use api::{AppState, Config, Environment};
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
+    handle::Handle,
     invitation::{Invitation, InvitationState},
     profile::Profile,
     role::Role,
@@ -35,6 +36,7 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
             public_url: format!("http://{addr}"),
             database_url: "postgres://unused".to_string(),
             log_level: "info".to_string(),
+            handle_domain: "zurfur.app".to_string(),
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
@@ -87,9 +89,18 @@ async fn sign_in(client: &reqwest::Client, base: &str) {
 
 /// Founds an account and returns its id — the shared first step of every test.
 async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> String {
+    // A handle is required at founding; derive a valid one from the first word of
+    // the name (each test has its own backend, so a per-name handle never collides).
+    let handle = format!(
+        "{}.zurfur.app",
+        name.split_whitespace()
+            .next()
+            .unwrap_or("acct")
+            .to_lowercase()
+    );
     let res = client
         .post(format!("{base}/accounts"))
-        .json(&serde_json::json!({ "name": name }))
+        .json(&serde_json::json!({ "name": name, "handle": handle }))
         .send()
         .await
         .expect("POST /accounts");
@@ -372,6 +383,7 @@ async fn seed_pending_invite(
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new("did:plc:seedacct".to_string()),
+        Handle::try_new("acme.zurfur.app").unwrap(),
         AccountName::try_new("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
@@ -449,6 +461,7 @@ async fn declining_with_no_pending_invitation_is_not_found() {
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new("did:plc:seedacct".to_string()),
+        Handle::try_new("acme.zurfur.app").unwrap(),
         AccountName::try_new("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
