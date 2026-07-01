@@ -82,11 +82,14 @@ async fn main() -> anyhow::Result<()> {
     api::ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
     let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
     let key_store = std::sync::Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
+    let op_log = std::sync::Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
     let directory = adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
         endpoint: config.plc_directory_endpoint.clone(),
         enabled: config.plc_directory_submit,
     });
-    let did_minter = std::sync::Arc::new(adapter_atproto::RealDidMinter::new(key_store, directory));
+    let did_minter = std::sync::Arc::new(adapter_atproto::RealDidMinter::new(
+        key_store, op_log, directory,
+    ));
 
     let app_state = AppState {
         config,

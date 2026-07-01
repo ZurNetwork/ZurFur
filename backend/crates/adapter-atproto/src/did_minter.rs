@@ -17,13 +17,14 @@ use domain::{
         account_keys::{AccountKeys, SecretKey},
         did::Did,
         handle::Handle,
+        plc_operation::PlcOperationRecord,
     },
-    ports::{DidMinter, KeyStore},
+    ports::{DidMinter, KeyStore, PlcOperationLog},
 };
 use rand::Rng;
 use std::sync::Arc;
 
-use crate::plc::GenesisOperation;
+use crate::plc::{GenesisOperation, TombstoneOperation};
 use crate::plc_directory::PlcDirectory;
 
 /// The real [`DidMinter`]: mints a genuine, custody-backed `did:plc`.
@@ -34,14 +35,22 @@ use crate::plc_directory::PlcDirectory;
 /// unit-testable against fakes.
 pub struct RealDidMinter {
     key_store: Arc<dyn KeyStore>,
+    op_log: Arc<dyn PlcOperationLog>,
     directory: Box<dyn PlcDirectory>,
 }
 
 impl RealDidMinter {
-    /// Build the real minter over a [`KeyStore`] and a [`PlcDirectory`].
-    pub fn new(key_store: Arc<dyn KeyStore>, directory: Box<dyn PlcDirectory>) -> Self {
+    /// Build the real minter over a [`KeyStore`] (custody), a [`PlcOperationLog`]
+    /// (the chain of operations we've submitted, so the next op knows its `prev`), and
+    /// a [`PlcDirectory`] (submission).
+    pub fn new(
+        key_store: Arc<dyn KeyStore>,
+        op_log: Arc<dyn PlcOperationLog>,
+        directory: Box<dyn PlcDirectory>,
+    ) -> Self {
         Self {
             key_store,
+            op_log,
             directory,
         }
     }
@@ -92,6 +101,10 @@ impl DidMinter for RealDidMinter {
 
         let signed = op.into_signed(sig);
         let did = Did::new(signed.did()?);
+        // The genesis op's CID — the `prev` a future operation (e.g. the tombstone)
+        // will chain onto. Recorded in the operation log below.
+        let genesis_cid = signed.cid()?;
+        let op_json = signed.to_json()?;
 
         // Custody: keep every private half, in role order, for future operations.
         let keys = AccountKeys {
@@ -102,10 +115,77 @@ impl DidMinter for RealDidMinter {
 
         // (5) Private write — keys encrypted at rest by the KeyStore adapter.
         self.key_store.put(&did, &keys).await?;
+        // (5b) Private write — record the genesis op so the chain can be extended.
+        self.op_log
+            .append(&PlcOperationRecord {
+                did: did.clone(),
+                cid: genesis_cid,
+                op_type: "plc_operation".to_string(),
+                prev: None,
+                operation_json: op_json.to_string(),
+            })
+            .await?;
         // (6) Public dual-write — separate, retryable step (no shared transaction).
-        self.directory.submit(did.as_str(), &signed).await?;
+        self.directory.submit(did.as_str(), &op_json).await?;
 
         Ok(did)
+    }
+
+    /// Tombstone `did` (ZMVP-34 hard-delete): sign a `plc_tombstone` with the
+    /// account's **operational** rotation key, chaining onto the DID's most recent
+    /// operation.
+    ///
+    /// Steps: (1) load the custody keys (the operational key signs; the cold-recovery
+    /// key stays off the signing path but is retained so a higher-authority reversal is
+    /// possible within the ~72h window); (2) read the DID's latest op CID from the log
+    /// — the tombstone's mandatory `prev`; (3) build and sign the `plc_tombstone`'s
+    /// no-`sig` DAG-CBOR (ECDSA-SHA256, low-S, base64url no-pad — the same procedure as
+    /// the genesis op); (4) **submit** it to the directory (public); then (5) **record**
+    /// it in the log (private). Submit-before-record — the opposite of [`mint`], where
+    /// the genesis must be recorded before the DID is registered — so a failed submit
+    /// never advances our local chain: a retry re-reads the correct `prev` (the DID's
+    /// still-latest op) and re-signs the *same* tombstone, rather than chaining onto an
+    /// unsubmitted one (which the unique `cid` index would also reject). Steps (4) and
+    /// (5) are separate writes across the boundary — never one transaction — and this
+    /// whole method runs only after the private hard-delete has committed. Fails
+    /// (retryably) if the DID has no custody keys or no logged operation to chain onto.
+    async fn tombstone(&self, did: &Did) -> anyhow::Result<()> {
+        let keys = self
+            .key_store
+            .get(did)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("no custody keys to tombstone {}", did.as_str()))?;
+        let prev = self.op_log.latest_cid(did).await?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no prior PLC operation to chain a tombstone onto for {}",
+                did.as_str()
+            )
+        })?;
+
+        let operational = Secp256k1Keypair::import(keys.operational.expose())?;
+        let op = TombstoneOperation::new(prev.clone());
+        let sig_bytes = operational.sign(&op.signing_bytes()?)?;
+        let signed = op.into_signed(URL_SAFE_NO_PAD.encode(&sig_bytes));
+        let cid = signed.cid()?;
+        let op_json = signed.to_json()?;
+
+        // (4) Public submission FIRST — so a failed submit never advances our local
+        // chain. A retry then re-reads the correct `prev` and re-signs the same
+        // tombstone (deterministic) rather than chaining onto an unsubmitted op. A
+        // separate retryable step across the boundary, never a shared transaction.
+        self.directory.submit(did.as_str(), &op_json).await?;
+        // (5) Private write — record the now-submitted tombstone (chains onto `prev`).
+        self.op_log
+            .append(&PlcOperationRecord {
+                did: did.clone(),
+                cid,
+                op_type: "plc_tombstone".to_string(),
+                prev: Some(prev),
+                operation_json: op_json.to_string(),
+            })
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -143,13 +223,19 @@ impl DidMinter for StubDidMinter {
             .collect();
         Ok(Did::new(format!("did:plc:{suffix}")))
     }
+
+    /// No-op: the stub builds and registers no operation, so there is nothing to
+    /// tombstone. Present to satisfy the port.
+    async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plc_directory::{NoopPlcDirectory, PlcDirectory};
-    use adapter_mem::MemKeyStore;
+    use adapter_mem::{MemKeyStore, MemPlcOperationLog};
     use atrium_crypto::verify::verify_signature;
     use k256::ecdsa::Signature;
     use std::sync::Mutex;
@@ -166,11 +252,7 @@ mod tests {
     }
     #[async_trait]
     impl PlcDirectory for FailingPlcDirectory {
-        async fn submit(
-            &self,
-            did: &str,
-            _signed: &crate::plc::SignedOperation,
-        ) -> anyhow::Result<()> {
+        async fn submit(&self, did: &str, _operation: &serde_json::Value) -> anyhow::Result<()> {
             *self.seen_did.lock().unwrap() = Some(did.to_string());
             anyhow::bail!("simulated directory failure")
         }
@@ -182,11 +264,7 @@ mod tests {
     }
     #[async_trait]
     impl PlcDirectory for RecordingPlcDirectory {
-        async fn submit(
-            &self,
-            _did: &str,
-            _signed: &crate::plc::SignedOperation,
-        ) -> anyhow::Result<()> {
+        async fn submit(&self, _did: &str, _operation: &serde_json::Value) -> anyhow::Result<()> {
             self.called.store(true, Ordering::SeqCst);
             Ok(())
         }
@@ -210,7 +288,11 @@ mod tests {
     #[tokio::test]
     async fn real_mint_produces_well_formed_did_and_stores_keys() {
         let store = Arc::new(MemKeyStore::new());
-        let minter = RealDidMinter::new(store.clone(), Box::new(NoopPlcDirectory));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            Arc::new(MemPlcOperationLog::new()),
+            Box::new(NoopPlcDirectory),
+        );
 
         let did = minter.mint(&handle()).await.unwrap();
 
@@ -234,7 +316,11 @@ mod tests {
     #[tokio::test]
     async fn distinct_mints_are_independent() {
         let store = Arc::new(MemKeyStore::new());
-        let minter = RealDidMinter::new(store.clone(), Box::new(NoopPlcDirectory));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            Arc::new(MemPlcOperationLog::new()),
+            Box::new(NoopPlcDirectory),
+        );
 
         let a = minter.mint(&handle()).await.unwrap();
         let b = minter.mint(&handle()).await.unwrap();
@@ -254,7 +340,11 @@ mod tests {
     #[tokio::test]
     async fn genesis_signature_is_valid_low_s_and_from_a_rotation_key() {
         let store = Arc::new(MemKeyStore::new());
-        let minter = RealDidMinter::new(store.clone(), Box::new(NoopPlcDirectory));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            Arc::new(MemPlcOperationLog::new()),
+            Box::new(NoopPlcDirectory),
+        );
         let h = handle();
 
         let did = minter.mint(&h).await.unwrap();
@@ -291,7 +381,11 @@ mod tests {
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
         let store = Arc::new(MemKeyStore::new());
-        let minter = RealDidMinter::new(store.clone(), Box::new(NoopPlcDirectory));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            Arc::new(MemPlcOperationLog::new()),
+            Box::new(NoopPlcDirectory),
+        );
         let h = handle();
 
         let did = minter.mint(&h).await.unwrap();
@@ -324,7 +418,11 @@ mod tests {
         let directory = Box::new(FailingPlcDirectory {
             seen_did: seen_did.clone(),
         });
-        let minter = RealDidMinter::new(store.clone(), directory);
+        let minter = RealDidMinter::new(
+            store.clone(),
+            Arc::new(MemPlcOperationLog::new()),
+            directory,
+        );
 
         let result = minter.mint(&handle()).await;
 
@@ -348,7 +446,11 @@ mod tests {
         let directory = Box::new(RecordingPlcDirectory {
             called: called.clone(),
         });
-        let minter = RealDidMinter::new(Arc::new(FailingKeyStore), directory);
+        let minter = RealDidMinter::new(
+            Arc::new(FailingKeyStore),
+            Arc::new(MemPlcOperationLog::new()),
+            directory,
+        );
 
         let result = minter.mint(&handle()).await;
 
@@ -371,5 +473,76 @@ mod tests {
         let suffix = &value["did:plc:".len()..];
         assert_eq!(suffix.len(), 24);
         assert!(suffix.bytes().all(|b| PLC_BASE32.contains(&b)));
+    }
+
+    /// A directory that records the last operation JSON it was asked to submit.
+    struct CapturingPlcDirectory {
+        last: Arc<Mutex<Option<serde_json::Value>>>,
+    }
+    #[async_trait]
+    impl PlcDirectory for CapturingPlcDirectory {
+        async fn submit(&self, _did: &str, operation: &serde_json::Value) -> anyhow::Result<()> {
+            *self.last.lock().unwrap() = Some(operation.clone());
+            Ok(())
+        }
+    }
+
+    // The security-critical path: minting records the genesis op, and `tombstone`
+    // signs a `plc_tombstone` that (a) chains onto the genesis op's CID as its `prev`
+    // and (b) is signed by the OPERATIONAL rotation key — a valid, verifiable, low-S
+    // signature. If `prev` or the signing were wrong, the canonical directory would
+    // reject the tombstone.
+    #[tokio::test]
+    async fn tombstone_chains_onto_genesis_and_is_signed_by_the_operational_key() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let last = Arc::new(Mutex::new(None));
+        let directory = Box::new(CapturingPlcDirectory { last: last.clone() });
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), directory);
+
+        // Mint (records the genesis op), then tombstone.
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log
+            .latest_cid(&did)
+            .await
+            .unwrap()
+            .expect("the genesis op was logged");
+
+        minter.tombstone(&did).await.unwrap();
+
+        // The submitted op is a tombstone chaining onto the genesis CID.
+        let submitted = last
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("a tombstone was submitted");
+        assert_eq!(submitted["type"], "plc_tombstone");
+        assert_eq!(
+            submitted["prev"], genesis_cid,
+            "the tombstone chains onto the genesis op CID"
+        );
+
+        // The tombstone was logged as the DID's new latest op (chained on `prev`).
+        let latest = op_log.latest_cid(&did).await.unwrap().unwrap();
+        assert_ne!(
+            latest, genesis_cid,
+            "the log's latest op is now the tombstone"
+        );
+
+        // The signature verifies under the operational rotation key's did:key, low-S.
+        let keys = store.get(&did).await.unwrap().unwrap();
+        let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
+        let signing_bytes = TombstoneOperation::new(genesis_cid)
+            .signing_bytes()
+            .unwrap();
+        let sig_bytes = URL_SAFE_NO_PAD
+            .decode(submitted["sig"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(sig_bytes.len(), 64, "compact 64-byte r‖s");
+        let s = Signature::from_slice(&sig_bytes).unwrap();
+        assert!(s.normalize_s().is_none(), "signature must already be low-S");
+        verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
     }
 }

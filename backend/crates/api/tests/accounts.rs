@@ -6,7 +6,15 @@ use std::sync::Arc;
 
 use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
-use domain::elements::{account::AccountId, did::Did, profile::Profile, role::Role};
+use chrono::Utc;
+use domain::elements::{
+    account::{Account, AccountId, AccountName},
+    did::Did,
+    handle::Handle,
+    profile::Profile,
+    role::Role,
+    user_account::UserAccount,
+};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 use uuid::Uuid;
@@ -213,6 +221,161 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
         .as_str()
         .expect("response carries the account id")
         .to_string()
+}
+
+// ZMVP-34 — the Owner deletes their account. With no facts persisted yet (the
+// `account_has_facts` seam is `false` until commission storage lands), deletion is a
+// hard-delete: the account is removed and its handle freed. Returns 204.
+#[tokio::test]
+async fn owner_deletes_their_empty_account() {
+    let did = "did:plc:e2edeleter";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account_id = found_account(&client, &base, "Acme Studio").await;
+
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    assert_eq!(
+        res.status(),
+        204,
+        "the Owner deleting their account returns 204 No Content"
+    );
+
+    // Empty → hard-deleted → gone.
+    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    assert!(
+        backend.find(account).await.expect("find").is_none(),
+        "the deleted account is gone"
+    );
+}
+
+// A hard-deleted (empty) account frees its handle: a brand-new account may reclaim it.
+// Only empty accounts hard-delete, so the freed label carries no reputation (DD 23003138).
+#[tokio::test]
+async fn deleting_an_empty_account_frees_its_handle() {
+    let did = "did:plc:e2erefound";
+    let (base, _backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    // Founds `acme.zurfur.app` (handle derived from the first word of the name).
+    let account_id = found_account(&client, &base, "Acme Studio").await;
+
+    let res = client
+        .delete(format!("{base}/accounts/{account_id}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    assert_eq!(res.status(), 204);
+
+    // The freed handle can be founded anew (a soft-delete would have kept it reserved →
+    // 409; this is the hard-delete contrast).
+    let res = client
+        .post(format!("{base}/accounts"))
+        .json(&serde_json::json!({ "name": "Acme Reborn", "handle": "acme.zurfur.app" }))
+        .send()
+        .await
+        .expect("POST /accounts over the freed handle");
+    assert_eq!(
+        res.status(),
+        201,
+        "the freed handle may be reclaimed by a new account"
+    );
+}
+
+// Deleting an account that isn't there (or was already deleted) is a 404 — there is
+// nothing live to act on, kept distinct from a 403 "you may not".
+#[tokio::test]
+async fn deleting_an_unknown_account_is_404() {
+    let did = "did:plc:e2edelmissing";
+    let (base, _backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let missing = Uuid::now_v7();
+    let res = client
+        .delete(format!("{base}/accounts/{missing}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    assert_eq!(res.status(), 404, "deleting an unknown account is 404");
+}
+
+// Deletion is a write, so an anonymous caller is turned away with 401 (a problem+json
+// status, never a redirect) — before any account is loaded.
+#[tokio::test]
+async fn deleting_requires_a_signed_in_user() {
+    let did = "did:plc:e2edelanon";
+    let (base, _backend) = spawn_app(did).await;
+    let client = client(); // deliberately not signed in
+
+    let some_id = Uuid::now_v7();
+    let res = client
+        .delete(format!("{base}/accounts/{some_id}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    assert_eq!(
+        res.status(),
+        401,
+        "an anonymous caller is turned away with 401"
+    );
+}
+
+// Owner-only: a signed-in member who is NOT the Owner (here an Admin) is forbidden from
+// deleting the account — 403, distinct from 401 (they are signed in) and 404 (the
+// account is live). The e2e harness signs in only one DID, so the account is owned by
+// another user and the signed-in caller is seated as a non-Owner member via the backend.
+#[tokio::test]
+async fn a_non_owner_member_cannot_delete() {
+    let (base, backend) = spawn_app("did:plc:deleter-nonowner").await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let me = backend
+        .find_by_did(&Did::new("did:plc:deleter-nonowner".to_string()))
+        .await
+        .expect("find me")
+        .expect("sign-in provisioned me");
+    let owner = backend
+        .provision(&Did::new("did:plc:realowner".to_string()))
+        .await
+        .expect("provision owner");
+    let (account, owner_membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:ownedacct".to_string()),
+        Handle::try_new("owned.zurfur.app").unwrap(),
+        AccountName::try_new("Not Yours").unwrap(),
+        Utc::now(),
+    );
+    backend
+        .create(&account, &owner_membership)
+        .await
+        .expect("found the account under another owner");
+    backend
+        .grant_role(&UserAccount {
+            user_id: me.id,
+            account_id: account.id,
+            role: Role::Admin(None),
+        })
+        .await
+        .expect("seat me as a non-Owner Admin");
+
+    let res = client
+        .delete(format!("{base}/accounts/{}", *account.id))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    common::assert_problem(res, 403, "forbidden").await;
+
+    // The account is untouched by the forbidden attempt.
+    assert!(
+        backend.find(account.id).await.expect("find").is_some(),
+        "the account still exists after the forbidden delete"
+    );
 }
 
 // ZMVP-15 — the heart: an Owner grants a role and the grantee is seated as a member

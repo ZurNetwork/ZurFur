@@ -45,6 +45,7 @@ use crate::{AppState, SESSION_USER_KEY};
 pub(crate) fn accounts_router() -> Router<AppState> {
     Router::new()
         .route("/accounts", post(create_account))
+        .route("/accounts/{id}", delete(delete_account))
         .route(
             "/accounts/{id}/members",
             post(grant_role).delete(revoke_role),
@@ -221,6 +222,104 @@ async fn create_account(
         "handle": account.handle.as_str(),
         "name": account.name.as_str(),
     })))
+}
+
+/// Whether an account holds any **fact** — anything that would be orphaned by removing
+/// the account: a **commission** (part of the MVP), and later products and recurring
+/// billing in either direction (DD 23003138). This is the single seam that decides
+/// soft-vs-hard deletion: an account holding any fact is soft-deleted and never
+/// escalates; an empty one is hard-deleted.
+///
+/// Per the ticket it gates on **whatever fact store exists at delete time** — the
+/// invariant ("nothing is orphaned") is durable even as the fact kinds grow. Today no
+/// fact is persisted yet (commissions have only a domain element on `main`; products and
+/// billing don't exist), so no account can hold a queryable fact and this is `false` —
+/// every deletion is currently a hard-delete. When commission storage lands, this
+/// becomes its query (and products/billing join it as they arrive); nothing else in the
+/// delete path changes.
+///
+/// SAFETY — this constant `false` is the ONLY thing keeping a fact-bearing account from
+/// being *hard*-deleted (handle freed for reuse, `did:plc` tombstoned). It is safe only
+/// while no fact is persistable. **The moment commission (or product/billing) storage
+/// lands, this MUST start querying it in the same change** — otherwise an Owner deleting
+/// a commissioned account silently frees its handle and tombstones its DID, orphaning the
+/// facts. Do not merge fact storage without updating this seam (ZMVP-34 tombstone review, F1).
+async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<bool, Problem> {
+    Ok(false)
+}
+
+/// `DELETE /accounts/{id}` — the Owner deletes their account (ZMVP-34). Owner-only and
+/// live-account-only: the acting user must hold `Owner` in this account, and the account
+/// must not already be soft-deleted/unknown.
+///
+/// The account is **soft-deleted** if it holds facts (commissions, …) and **hard-deleted**
+/// if it is empty. Soft keeps the row — the handle stays reserved, the `did:plc` stays
+/// live, the account's surface is hidden — and never escalates to hard. Hard removes the
+/// account (freeing its handle for reuse) and, as a **separate retryable atproto step**
+/// (never inside the private transaction), tombstones the DID on the native ~72h PLC
+/// recovery window (DD 23003138; in v1 the DID is identity-only, DD 26935298).
+///
+/// Outcomes:
+/// - `204` — the account was soft- or hard-deleted
+/// - `401` — not signed in
+/// - `403` — signed in but not this account's Owner (a non-member or a non-Owner member)
+/// - `404` — no such live account
+async fn delete_account(
+    State(state): State<AppState>,
+    session: Session,
+    Path(account_id): Path<Uuid>,
+) -> Result<Response, Problem> {
+    // Deleting is a write, so it requires a recognized visitor — the acting authority.
+    let actor = require_user(&state, &session).await?;
+
+    // The delete must address a real, live account. A soft-deleted or unknown id is a
+    // 404 — there's nothing to act on — kept distinct from "you may not" (403).
+    let account = load_account(&state, AccountId::new(account_id)).await?;
+
+    // Owner-only (DD 23003138). `actor_role` turns a non-member away with 403; a member
+    // who is not the Owner is likewise forbidden — deletion is the Owner's alone, unlike
+    // the grant/revoke seam which any sufficiently-ranked member may reach.
+    let role = actor_role(&state, actor.id, account.id).await?;
+    if !matches!(role, Role::Owner(_)) {
+        return Err(Problem::forbidden());
+    }
+
+    // Soft if the account holds facts (it then never escalates to hard); hard if it is
+    // empty. Both are one private-store transaction on the write view.
+    if account_has_facts(&state, account.id).await? {
+        let account_id = account.id;
+        transaction(&*state.database, |uow| {
+            Box::pin(async move { uow.accounts().soft_delete(account_id).await })
+        })
+        .await?;
+    } else {
+        let account_id = account.id;
+        transaction(&*state.database, |uow| {
+            Box::pin(async move { uow.accounts().hard_delete(account_id).await })
+        })
+        .await?;
+
+        // The private hard-delete above already freed the handle. Tombstoning the
+        // account's `did:plc` is a separate, retryable **public** step — never a
+        // cross-store transaction with the private delete (the mint path's mirror). The
+        // custody keys and the operation log deliberately outlive the hard-delete so
+        // this can run (and be retried) afterward, and so a higher-authority key can
+        // reverse it within the native ~72h window. A failure here does not undo the
+        // delete — the account is gone and its handle freed — so we log and still return
+        // success rather than resurrecting a deleted account; the tombstone is
+        // re-submittable. In v1 the directory is a gated no-op, so this signs and logs
+        // but registers nowhere.
+        if let Err(err) = state.did_minter.tombstone(&account.did).await {
+            tracing::warn!(
+                did = %account.did.as_str(),
+                error = %err,
+                "did:plc tombstone failed after hard-delete; account is deleted and its \
+                 handle freed — the tombstone is retryable"
+            );
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// The accept-invitation request body: the invitee's choice of whether this new
