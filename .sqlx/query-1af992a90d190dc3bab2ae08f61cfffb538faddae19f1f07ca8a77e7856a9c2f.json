@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE account_members\n            SET \"role\" = $1, parent = NULL\n            WHERE user_id = $2 AND account_id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1af992a90d190dc3bab2ae08f61cfffb538faddae19f1f07ca8a77e7856a9c2f"
+}
