@@ -339,6 +339,27 @@ pub trait AccountWrites: Send {
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount>;
+
+    /// Transfer ownership of an account from its current Owner to another existing
+    /// member (ZMVP-33; DESIGN/Roles rule 8), in ONE private-store transaction: the
+    /// incoming member becomes the sole `Owner` with no parent (rule 5) and the
+    /// outgoing Owner is demoted to `Admin`, re-homed under the new Owner. Ownership
+    /// is singular, so this is its own seam — distinct from `grant_role` (which never
+    /// grants Owner) and `leave`. Principals are addressed by id, like [`leave`] and
+    /// [`revoke_role`]. Authority (the actor being the current Owner, the target being
+    /// an existing member) is the caller's check, settled before this is reached; the
+    /// implementation keeps a defensive backstop but does not re-authorize. A
+    /// private-side write, never a cross-store dual write — the account's `did:plc` is
+    /// stable, so no PLC write is involved.
+    ///
+    /// [`leave`]: AccountWrites::leave
+    /// [`revoke_role`]: AccountWrites::revoke_role
+    async fn transfer_ownership(
+        &mut self,
+        old_owner: UserId,
+        new_owner: UserId,
+        account: AccountId,
+    ) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is
