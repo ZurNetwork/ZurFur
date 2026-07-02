@@ -1016,7 +1016,7 @@ impl DidMinter for MemDidMinter {
         Ok(())
     }
 
-    /// No-op: the fake minted no real operation, so there is no `alsoKnownAs` to
+    /// No-op: the fake mints no real operation, so there is no `alsoKnownAs` to
     /// re-point. Matches the port so API-level handle-change tests (ZMVP-46) run
     /// without touching infrastructure (the real update is exercised in the
     /// `RealDidMinter` unit tests).

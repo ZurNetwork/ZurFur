@@ -195,7 +195,10 @@ impl DidMinter for RealDidMinter {
     /// Steps: (1) read the DID's latest logged op (our own log, never the directory)
     /// — its `cid` is the update's `prev`, and its stored JSON supplies the DID
     /// document's **public** fields (`rotationKeys`/`verificationMethods`) carried
-    /// forward verbatim, with only `alsoKnownAs` REPLACED (DD 27852802 §5); (2) load
+    /// forward verbatim, with only `alsoKnownAs` REPLACED (DD 27852802 §5). The prior
+    /// op must be an identity-only `plc_operation`; a tombstone or a richer future
+    /// shape (`services` / extra verification methods) is **rejected**, never silently
+    /// rewritten. (2) load
     /// custody and import **only the operational key** — the sole key an update
     /// needs, since the rest of the document is public and read from the prior op
     /// (F2: the cold-recovery/signing private keys are never decrypted into a
@@ -227,8 +230,35 @@ impl DidMinter for RealDidMinter {
                 did.as_str()
             )
         })?;
+        // An update reconstructs an IDENTITY-ONLY `plc_operation` (v1: no PDS, exactly
+        // one `atproto` verification method — DD 26935298), REPLACING only
+        // `alsoKnownAs`. Guard that assumption so a prior op of any other shape fails
+        // LOUD here rather than silently dropping fields into a clobbering update: a
+        // `plc_tombstone` (nonsensical to chain an update onto), or a future op carrying
+        // `services` / extra verification methods (whose verbatim carry-forward is the
+        // extension point when such shapes exist).
+        if prior.op_type != "plc_operation" {
+            anyhow::bail!(
+                "cannot update {}: its latest op is `{}`, not a chainable plc_operation",
+                did.as_str(),
+                prior.op_type
+            );
+        }
         let prior_json: serde_json::Value = serde_json::from_str(&prior.operation_json)?;
         let rotation_keys = string_array(&prior_json, "rotationKeys")?;
+        let services_empty = prior_json["services"]
+            .as_object()
+            .is_none_or(serde_json::Map::is_empty);
+        let verification_only_atproto = prior_json["verificationMethods"]
+            .as_object()
+            .is_some_and(|vm| vm.len() == 1 && vm.contains_key("atproto"));
+        if !(services_empty && verification_only_atproto) {
+            anyhow::bail!(
+                "cannot update {}: its latest op is not identity-only (unexpected services or \
+                 verification methods); carrying those forward is not implemented",
+                did.as_str()
+            );
+        }
         let atproto_signing_did = prior_json["verificationMethods"]["atproto"]
             .as_str()
             .ok_or_else(|| {
@@ -1237,6 +1267,79 @@ mod tests {
         .signing_bytes()
         .unwrap();
         verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
+    }
+
+    // GUARD (review F: no silent field drop): an update refuses a TOMBSTONED DID —
+    // its latest op is a `plc_tombstone`, which has no rotationKeys to chain an
+    // identity-only update onto — with a clear error, not a confusing parse failure.
+    #[tokio::test]
+    async fn update_rejects_a_tombstoned_did() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), Box::new(NoopPlcDirectory));
+
+        let did = minter.mint(&handle()).await.unwrap();
+        minter.tombstone(&did).await.unwrap();
+
+        let err = minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect_err("cannot update a tombstoned DID")
+            .to_string();
+        assert!(
+            err.contains("not a chainable plc_operation"),
+            "the rejection names the tombstone clearly, got: {err}"
+        );
+    }
+
+    // GUARD (review F: no silent field drop): if the prior op is NOT identity-only
+    // (here a hand-seeded op carrying a `services` entry), an update REFUSES it rather
+    // than rebuilding an empty-`services` op that would silently drop the PDS binding.
+    // The guard fires before custody is even loaded (empty key store), so this proves
+    // the check, not a downstream failure.
+    #[tokio::test]
+    async fn update_rejects_a_non_identity_only_prior() {
+        let did = Did::new("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa".to_string());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        op_log
+            .append(&PlcOperationRecord {
+                did: did.clone(),
+                cid: "bafyreiprior".to_string(),
+                op_type: "plc_operation".to_string(),
+                prev: None,
+                operation_json: serde_json::json!({
+                    "type": "plc_operation",
+                    "rotationKeys": ["did:key:cold", "did:key:hot"],
+                    "verificationMethods": {"atproto": "did:key:sign"},
+                    "alsoKnownAs": ["at://alice.zurfur.app"],
+                    "services": {
+                        "atproto_pds": {
+                            "type": "AtprotoPersonalDataServer",
+                            "endpoint": "https://pds.example"
+                        }
+                    },
+                    "prev": serde_json::Value::Null
+                })
+                .to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Empty key store — the guard must reject before any custody read.
+        let minter = RealDidMinter::new(
+            Arc::new(MemKeyStore::new()),
+            op_log,
+            Box::new(NoopPlcDirectory),
+        );
+        let err = minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect_err("cannot update onto a non-identity-only op")
+            .to_string();
+        assert!(
+            err.contains("not identity-only"),
+            "the PDS binding is not silently dropped, got: {err}"
+        );
     }
 
     // The stub minter's update is a no-op, matching its mint/tombstone: nothing
