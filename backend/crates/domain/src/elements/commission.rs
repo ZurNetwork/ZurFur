@@ -1,182 +1,247 @@
-//! The [`Commission`] — the platform's first-class unit of work. **Stub: shapes
-//! sketched, no behaviour yet.**
+//! The [`Commission`] — the platform's most basic unit of work and the aggregator
+//! of the work done under it (DESIGN/Commission).
 //!
-//! A commission is the basic unit and, in domain terms, the *aggregator* of
-//! work: it aggregates [`Participant`]s (assigned or merely invited), [`Slot`]s
-//! holding characters and reference art, and a [`Lifecycle`] state machine
-//! (DESIGN/Commission). Notably it does **not** belong to an account directly —
-//! a participant is a [`ParticipantRef`] (a user or a golem), never an account,
-//! though one account *manages* it via `current_managing_account_id` so a
-//! commission can be transferred between accounts. The types below are the data
-//! shapes only; constructors, transitions, and invariants are deferred until the
-//! `workflow`/commission namespace is built out.
+//! This is the **birth** shape (ZMVP-65): only the fixed metadata that always
+//! exists — a UUIDv7 [`CommissionId`], a `Title`, the owning [`UserId`], a single
+//! [`LifecycleStep`], a nullable deadline, and a creation stamp. A commission is
+//! created by any authenticated User with **no Account required** (a user-scoped
+//! write; ZMVP-47, DD 26247170). Everything else the glossary describes — the
+//! content tree of Surfaces/Components, Seats/Slots, participants beyond the
+//! creator, the managing-account association, and lifecycle/status transitions —
+//! materializes in later tickets, not here.
+//!
+//! A commission is **isolated from accounts**: it survives account deletion and its
+//! participants are always Users, never accounts. Visibility is carried as a flat
+//! [`Visibility`] field defaulting to `Private` (the closed-door policy) — the three
+//! values survive as the aliases the per-surface Surfaces DD (`28246028`) keeps for
+//! the future root-surface mode (`Private` = root at `Total`), so when the content
+//! tree lands the field is reinterpreted, not replaced.
 
-use std::collections::HashSet;
+use std::ops::Deref;
 
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{
-        account::AccountId, blob::BlobId, character::CharacterId, did::Did, golem::GolemId,
-        markdown::Markdown, user::UserId,
-    },
-};
+use crate::{datetime::DateTimeUtc, elements::user::UserId};
 
-/// The identity of a [`Commission`]. Stub: a UUIDv7 wrapped for type safety.
+/// The app-private, stable handle for a [`Commission`].
+///
+/// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::account::AccountId`]
+/// and [`crate::elements::user::UserId`]. The UUIDv7 carries the creation timestamp;
+/// Deref exposes the inner UUID for foreign keys and lookups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommissionId(uuid::Uuid);
 
-/// A participant's function *within a commission* — distinct from an account
-/// [`crate::elements::role::Role`].
+impl CommissionId {
+    /// Wraps an already-minted UUIDv7. Mirrors [`crate::elements::account::AccountId::new`]:
+    /// the app mints the key (PG16 has no native `uuidv7()`), the domain only names it.
+    pub fn new(id: uuid::Uuid) -> Self {
+        Self(id)
+    }
+}
+
+impl Deref for CommissionId {
+    type Target = uuid::Uuid;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// A commission's Title, validated on the way in.
 ///
-/// A participant may hold more than one (hence stored in a [`HashSet`] on
-/// [`Participant`]): e.g. a creator on one commission can also be a client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CommissionRole {
-    /// A creator in the commission
-    Creator,
-    /// A client in the commission
-    Client,
-}
-
-/// A reference to whoever can take part in a commission.
+/// Surrounding whitespace is trimmed; the result must be non-empty. The Title is
+/// the one always-present content facet of a commission (DESIGN/Commission), so a
+/// blank one is rejected rather than stored — the same construction-time gate
+/// [`crate::elements::account::AccountName`] applies to account names (no length cap
+/// is imposed here yet).
 ///
-/// Deliberately a user *or* a golem, never an account (DESIGN/Commission): the
-/// actors at the table are principals, not accounts. See
-/// [`crate::elements::golem`] for why a [`Golem`](GolemId) is a participant in
-/// its own right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ParticipantRef {
-    User(UserId),
-    Golem(GolemId),
-}
-
-/// One actor's seat in a commission: who they are, what role(s) they play, and
-/// how they got there. Stub shape.
-#[derive(Debug, Clone)]
-pub struct Participant {
-    /// The ParticipantRef of the participant. As per design, not an account.
-    pub subject: ParticipantRef,
-    /// What roles of this participant is
-    pub roles: HashSet<CommissionRole>,
-    /// Whether this participant is actively assigned (vs merely invited) —
-    /// "assigned is mostly for keeping track on who did what" (DESIGN/Commission).
-    pub assigned: bool,
-    /// Who this user was invited by. As per rules as written, Golems may add users!
-    pub invited_by: Option<ParticipantRef>,
-    /// The title given to this participant
-    pub title: Option<String>,
-}
-
-/// A reference to a [`Blob`](BlobId) together with its owner's [`Did`].
+/// ```
+/// use domain::elements::commission::CommissionTitle;
 ///
-/// The owner DID travels with the [`BlobId`] because blobs live on the owner's
-/// PDS (content-addressed; see [`crate::elements::blob`]), so resolving the bytes
-/// needs to know whose repository to fetch from.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BlobRef {
-    pub owner: Did,
-    pub id: BlobId,
-}
-
-/// A single reference image pinned to a [`Slot`], with optional notes. Stub shape.
-#[derive(Debug, Clone)]
-pub struct SlotReference {
-    pub blob: BlobRef,
-    pub notes: Option<Markdown>,
-}
-
-/// One workspace within a commission: a numbered slot holding at most one
-/// character plus its reference art. Stub shape.
+/// let title = CommissionTitle::try_new("  A ref sheet  ").unwrap();
+/// assert_eq!(title.as_str(), "A ref sheet"); // trimmed
 ///
-/// Only one [`Character`](CharacterId) may occupy a slot at a time
-/// (DESIGN/Character); a character must be *assigned* to a slot to be used in the
-/// commission. The character may be present without its Keeper being a
-/// participant (gift art, fan art, secret art).
-#[derive(Debug, Clone)]
-pub struct Slot {
-    pub slot_number: u8,
-    pub character_id: Option<CharacterId>,
-    /// Multiple art pieces may be used as references
-    pub references: Vec<SlotReference>,
+/// assert!(CommissionTitle::try_new("   ").is_err()); // empty after trim
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommissionTitle(String);
+
+/// Why a string was rejected as a commission title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommissionTitleError {
+    /// Empty once trimmed. Example: `""` or `"   "`.
+    Empty,
 }
 
-/// A commission — the aggregator of work. **Stub: a data shape, no behaviour.**
+impl std::fmt::Display for CommissionTitleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommissionTitleError::Empty => write!(f, "commission title must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for CommissionTitleError {}
+
+impl CommissionTitle {
+    /// Validate and wrap a title: trim surrounding whitespace, then reject an empty
+    /// result with [`CommissionTitleError::Empty`].
+    pub fn try_new(raw: impl Into<String>) -> Result<Self, CommissionTitleError> {
+        let trimmed = raw.into().trim().to_owned();
+        if trimmed.is_empty() {
+            return Err(CommissionTitleError::Empty);
+        }
+        Ok(Self(trimmed))
+    }
+
+    /// The validated, trimmed title as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A created commission and its fixed metadata (ZMVP-65).
 ///
-/// Bundles the participants, slots, lifecycle, and visibility that make up a
-/// piece of work (DESIGN/Commission). `current_managing_account_id` is the one
-/// link to an account — the manager that can be reassigned to transfer the
-/// commission — while `owner` and `participants` are [`ParticipantRef`]s, never
-/// accounts. `deleted_at` is the soft-delete marker. Constructors and lifecycle
-/// transitions are not modelled here yet.
+/// Build one with [`Commission::create`], which stamps a fresh UUIDv7 id and opens
+/// it in [`LifecycleStep::Draft`] owned by its creator. The struct holds no
+/// participant list, content tree, or managing account — those are later tickets;
+/// this is only the always-present envelope. Persisting it is one private-side
+/// write ([`crate::ports::CommissionWrites::create`]).
+///
+/// References: [`Commission::create`], [`crate::ports::CommissionWrites`],
+/// DESIGN/Commission (`3276807`), Ask-for-Art (`28114957`) D0.
 #[derive(Debug)]
 pub struct Commission {
-    /// The ID of the commission
+    /// The app-private id (UUIDv7, so it sorts by creation time).
     pub id: CommissionId,
-    pub title: String,
-    pub description: Markdown,
-    /// The current lifecycle state of the commission
-    pub lifecycle: Lifecycle,
-    /// Where the commission sits in the give-direction / request-changes loop,
-    /// or `None` when no direction is pending. See [`DirectionStatus`].
-    pub direction: Option<DirectionStatus>,
-    /// Deadline health, or `None` when on track. See [`DeadlineStatus`].
-    pub deadline_status: Option<DeadlineStatus>,
-    /// The account that currently controls the commission. Allows for transferring commissions
-    /// between accounts.
-    pub current_managing_account_id: Option<AccountId>,
-    /// The participant who owns the commission (a user or golem, not an account).
-    pub owner: ParticipantRef,
+    /// The commission's Title — fixed and always present, validated non-empty; every
+    /// other content facet is later composition. See [`CommissionTitle`].
+    pub title: CommissionTitle,
+    /// The User who created the commission and owns it. The owner is permanent in
+    /// the domain model (transfer is an explicit later act; DESIGN/Commission);
+    /// birth just records the creator here.
+    pub owner_id: UserId,
+    /// The single lifecycle state the commission is in; a fresh one is
+    /// [`LifecycleStep::Draft`].
+    pub lifecycle_step: LifecycleStep,
+    /// Who may see the commission; a fresh one is [`Visibility::Private`] (the
+    /// closed-door default — AC3).
     pub visibility: Visibility,
-    /// Every participant and their role in the commission
-    pub participants: Vec<Participant>,
-    /// The agreed delivery deadline, if any. See [`deadline_status`](Commission::deadline_status).
+    /// The nullable-but-fixed deadline envelope field — `None` when the commission
+    /// carries no deadline (DESIGN/Commission).
     pub deadline: Option<DateTimeUtc>,
-    pub slots: Vec<Slot>,
+    /// When the commission was created.
     pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
-    /// Soft-delete marker: `Some(when)` once deleted, else `None`.
-    pub deleted_at: Option<DateTimeUtc>,
 }
 
-/// The commission's lifecycle state. Mutually exclusive — a commission is in
-/// exactly one. **Stub: variants only; no transition rules enforced yet.**
+impl Commission {
+    /// Create a commission owned by `owner`, born in [`LifecycleStep::Draft`].
+    ///
+    /// Mints the id (`CommissionId::new(Uuid::now_v7())`), records the already-validated
+    /// [`CommissionTitle`] and optional `deadline`, and stamps `created_at` from `now`.
+    /// The title is validated at the boundary ([`CommissionTitle::try_new`]) before this
+    /// is reached, so this constructor is infallible — mirroring how [`Account::open`]
+    /// takes an already-validated [`AccountName`]. Authority (a signed-in User; no
+    /// Account needed — ZMVP-47) is the caller's concern, settled before this is reached.
+    ///
+    /// [`Account::open`]: crate::elements::account::Account::open
+    /// [`AccountName`]: crate::elements::account::AccountName
+    ///
+    /// ```
+    /// use chrono::Utc;
+    /// use domain::elements::{commission::{Commission, CommissionTitle, LifecycleStep}, user::UserId};
+    ///
+    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let title = CommissionTitle::try_new("A ref sheet").unwrap();
+    /// let c = Commission::create(title, owner, Utc::now(), None);
+    /// assert_eq!(c.owner_id, owner);                             // the creator owns it
+    /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
+    /// assert_eq!(c.title.as_str(), "A ref sheet");
+    /// ```
+    pub fn create(
+        title: CommissionTitle,
+        owner: UserId,
+        now: DateTimeUtc,
+        deadline: Option<DateTimeUtc>,
+    ) -> Self {
+        Self {
+            id: CommissionId::new(uuid::Uuid::now_v7()),
+            title,
+            owner_id: owner,
+            lifecycle_step: LifecycleStep::Draft,
+            created_at: now,
+            visibility: Visibility::Private,
+            deadline,
+        }
+    }
+}
+
+/// The single lifecycle state a commission holds (DESIGN/Commission).
 ///
-/// Per DESIGN/Commission this is the state machine every actor's authority is
-/// bounded by (a participant can never violate it).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Lifecycle {
+/// A commission is always in exactly one of these, and the state is moved
+/// **explicitly by a participant**, never by a system event. Only the birth state
+/// ([`Draft`](LifecycleStep::Draft)) is exercised in ZMVP-65; the transitions between
+/// states are later tickets.
+#[derive(Debug, Clone)]
+pub enum LifecycleStep {
+    /// Just created. No content commitments and no facts. Hard delete is possible.
     Draft,
+    /// Part of the workload but not active
     Batched,
+    /// Selected to be worked in the batch
     Active,
+    /// Approved and closed
     Completed,
+    /// Cancelled by one of the parties
     Cancelled,
+    /// Disputed and requiring intervention
     Disputed,
 }
 
-/// Deadline health flags, set only when a commission is off the happy path.
-/// Stub: variants only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DeadlineStatus {
-    Delayed,
-    Late,
+impl LifecycleStep {
+    /// The stable, lowercase wire/storage token for this state — the value the pg
+    /// adapter writes to the `commission.lifecycle` column. Stable across releases
+    /// (it is persisted), so renaming a token is a migration, not a free edit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Batched => "batched",
+            Self::Active => "active",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Disputed => "disputed",
+        }
+    }
 }
 
-/// Where a commission sits in the direction/approval loop between client and
-/// creator. Stub: variants only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DirectionStatus {
-    WaitingForInput,
-    ChangesRequested,
-    WaitingForApproval,
-}
-
-/// How widely a commission is exposed. Stub: variants only.
+/// Who may see a commission (DESIGN/Commission, the Closed-Door Policy).
 ///
-/// `Private` (only participants), `Listed` (reachable but not surfaced), and
-/// `Public` (openly listed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The three values are the flat aliases the per-surface Surfaces DD (`28246028`)
+/// preserves for the future root-surface mode — `Private` = root at `Total`,
+/// `Listed` = root at `Presentation`, `Public` = root at `Description`. A birth
+/// commission defaults to [`Private`](Visibility::Private); widening is an explicit
+/// later act, and when the content tree lands this field is reinterpreted as the
+/// root mode rather than replaced.
+#[derive(Debug, Clone)]
 pub enum Visibility {
+    /// Closed door — nobody outside the participants sees the commission at all,
+    /// not even its existence. The default at birth.
     Private,
+    /// Outsiders see only a status-only card (title/alias, stage, position,
+    /// maturity) — never the brief, client, price, or file entries.
     Listed,
+    /// Outsiders see whatever the owner has composed under Description-visible
+    /// surfaces; everything else stays dark.
     Public,
+}
+
+impl Visibility {
+    /// The stable, lowercase wire/storage token for this value — what the pg adapter
+    /// writes to the `commission.visibility` column. Stable across releases (it is
+    /// persisted), so renaming a token is a migration, not a free edit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Listed => "listed",
+            Self::Public => "public",
+        }
+    }
 }

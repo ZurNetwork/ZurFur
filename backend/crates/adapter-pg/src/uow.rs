@@ -10,9 +10,10 @@
 //! see `PgProfileCache` and the `no_bare_pool_writes` guard.)
 
 use async_trait::async_trait;
-use domain::ports::{AccountWrites, Database, UnitOfWork, UserWrites};
+use domain::ports::{AccountWrites, CommissionWrites, Database, UnitOfWork, UserWrites};
 use sqlx::{PgPool, Postgres, Transaction};
 
+use crate::PgCommissionWrites;
 use crate::account::PgAccountWrites;
 use crate::user::PgUserWrites;
 
@@ -64,6 +65,10 @@ impl UnitOfWork for PgUnitOfWork {
     /// statement) before the next accessor or before `commit`.
     fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
         Box::new(PgAccountWrites { conn: &mut self.tx })
+    }
+
+    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
+        Box::new(PgCommissionWrites { conn: &mut self.tx })
     }
 
     /// A view of the user (recognition) write surface over this transaction.

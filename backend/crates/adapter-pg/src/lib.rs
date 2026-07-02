@@ -42,6 +42,7 @@ use sqlx::postgres::PgPoolOptions;
 pub use sqlx::PgPool;
 
 mod account;
+mod commission;
 mod key_store;
 mod key_vault;
 mod plc_operation_log;
@@ -50,6 +51,7 @@ mod session_store;
 mod uow;
 mod user;
 pub use account::{PgAccountStore, PgAccountWrites};
+pub use commission::PgCommissionWrites;
 pub use key_store::PgKeyStore;
 pub use key_vault::RootKey;
 pub use plc_operation_log::PgPlcOperationLog;

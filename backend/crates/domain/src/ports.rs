@@ -12,6 +12,7 @@ use crate::datetime::DateTimeUtc;
 use crate::elements::{
     account::{Account, AccountId},
     account_keys::AccountKeys,
+    commission::Commission,
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
@@ -58,6 +59,7 @@ pub trait UnitOfWork: Send {
     /// (end of statement) before calling another accessor or [`commit`](UnitOfWork::commit).
     fn accounts(&mut self) -> Box<dyn AccountWrites + '_>;
 
+    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_>;
     /// A view of the [`User`] write surface (recognition) over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_>;
 
@@ -444,6 +446,11 @@ pub trait AccountWrites: Send {
     /// part of this private transaction (no cross-store dual write — the mint path's
     /// mirror). Idempotent: hard-deleting an absent account is a no-op.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+pub trait CommissionWrites: Send {
+    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is

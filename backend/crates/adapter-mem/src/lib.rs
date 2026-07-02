@@ -46,6 +46,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
+    commission::{Commission, CommissionId, CommissionTitle, LifecycleStep, Visibility},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -56,8 +57,8 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{
-    AccountStore, AccountWrites, Authenticator, Database, DidMinter, HandleTaken, KeyStore,
-    PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    AccountStore, AccountWrites, Authenticator, CommissionWrites, Database, DidMinter, HandleTaken,
+    KeyStore, PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -88,6 +89,10 @@ pub struct MemBackend {
     /// vacated-handle quarantine (DD `27852802` §3/§4). A domain map, so it is staged
     /// and applied by the Unit of Work exactly like `accounts`/`memberships`.
     handle_changes: Arc<Mutex<Vec<StoredHandleChange>>>,
+    /// [`StoredCommission`] parts keyed by [`CommissionId`] (ZMVP-65). Stored as
+    /// parts because [`Commission`] isn't `Clone`; a read rebuilds a fresh
+    /// `Commission`. Mirrors the pg `commission` table.
+    commissions: Arc<Mutex<HashMap<CommissionId, StoredCommission>>>,
 }
 
 impl MemBackend {
@@ -159,6 +164,12 @@ impl MemBackend {
                     .expect("MemBackend handle_changes mutex poisoned")
                     .clone(),
             )),
+            commissions: Arc::new(Mutex::new(
+                self.commissions
+                    .lock()
+                    .expect("MemBackend commissions mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -203,6 +214,14 @@ impl MemBackend {
             .handle_changes
             .lock()
             .expect("MemBackend handle_changes mutex poisoned")
+            .clone();
+        *self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned") = staged
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
             .clone();
     }
 
@@ -283,6 +302,49 @@ impl MemBackend {
         MemAccountStore(self.clone())
             .find_pending_invitation(account, invited)
             .await
+    }
+
+    /// Resolve a commission by id, rebuilding it from its stored parts (it isn't
+    /// `Clone`), or `None` if never created (inspect helper — there is no
+    /// `CommissionStore` read port in the birth ticket, ZMVP-65, so tests read the
+    /// shared store directly, as they do for the pre-read-port account seams).
+    pub async fn find_commission(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
+        let commissions = self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        Ok(commissions.get(&id).map(|stored| Commission {
+            id,
+            title: stored.title.clone(),
+            owner_id: stored.owner_id,
+            lifecycle_step: stored.lifecycle_step.clone(),
+            visibility: stored.visibility.clone(),
+            deadline: stored.deadline,
+            created_at: stored.created_at,
+        }))
+    }
+
+    /// Every stored commission, rebuilt from its parts, in unspecified order
+    /// (inspect helper). Lets an api test that drives `POST /commissions` — which
+    /// returns a bare `201` with no id — introspect what was persisted (owner,
+    /// lifecycle) without a read port.
+    pub async fn all_commissions(&self) -> anyhow::Result<Vec<Commission>> {
+        let commissions = self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        Ok(commissions
+            .iter()
+            .map(|(id, stored)| Commission {
+                id: *id,
+                title: stored.title.clone(),
+                owner_id: stored.owner_id,
+                lifecycle_step: stored.lifecycle_step.clone(),
+                visibility: stored.visibility.clone(),
+                deadline: stored.deadline,
+                created_at: stored.created_at,
+            })
+            .collect())
     }
 }
 
@@ -518,6 +580,63 @@ struct StoredHandleChange {
     old_handle: Handle,
     /// When the change committed — the rate-limit / quarantine window anchor.
     changed_at: DateTimeUtc,
+}
+
+/// The fields of a [`Commission`] we keep behind the lock. Like [`Account`],
+/// `Commission` isn't `Clone` (an aggregate root, not a value), so we store its
+/// parts and rebuild a fresh `Commission` on read. `Clone` so a unit of work can
+/// deep-copy the commissions map into its staging snapshot (see
+/// [`MemBackend::stage`]).
+#[derive(Clone)]
+struct StoredCommission {
+    /// The commission's fixed, always-present Title (ZMVP-65), validated non-empty.
+    title: CommissionTitle,
+    /// The User who created it and owns it — the permanent owner (DESIGN/Commission).
+    owner_id: UserId,
+    /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
+    lifecycle_step: LifecycleStep,
+    /// Who may see it; a freshly created commission is [`Visibility::Private`].
+    visibility: Visibility,
+    /// The nullable-but-fixed deadline envelope field.
+    deadline: Option<domain::datetime::DateTimeUtc>,
+    /// When the commission was created.
+    created_at: domain::datetime::DateTimeUtc,
+}
+
+/// In-memory [`CommissionWrites`] view: commission writes land on the shared
+/// state. Vended by [`MemUnitOfWork::commissions`], where the [`MemBackend`] it
+/// wraps is the unit's *staging* snapshot — so a write reaches the shared store
+/// only on [`MemUnitOfWork::commit`] (drop = rollback), exactly like
+/// [`MemAccountWrites`].
+pub struct MemCommissionWrites(MemBackend);
+
+#[async_trait]
+impl CommissionWrites for MemCommissionWrites {
+    /// Insert the freshly created commission, keyed by its id — the in-memory
+    /// mirror of the pg adapter's single `INSERT INTO commission`. The pg `id` is a
+    /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does not
+    /// model that (a plain `insert`, the same as [`MemAccountWrites::create`] does
+    /// for its own account id), because commission ids are freshly-minted UUIDv7 —
+    /// a collision is unreachable by construction, never a case a test can reach.
+    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        commissions.insert(
+            commission.id,
+            StoredCommission {
+                title: commission.title.clone(),
+                owner_id: commission.owner_id,
+                lifecycle_step: commission.lifecycle_step.clone(),
+                visibility: commission.visibility.clone(),
+                deadline: commission.deadline,
+                created_at: commission.created_at,
+            },
+        );
+        Ok(())
+    }
 }
 
 /// In-memory [`AccountStore`] read surface over the shared [`MemBackend`].
@@ -1082,6 +1201,10 @@ pub struct MemUnitOfWork {
 impl UnitOfWork for MemUnitOfWork {
     fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
         Box::new(MemAccountWrites(self.staged.clone()))
+    }
+
+    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
+        Box::new(MemCommissionWrites(self.staged.clone()))
     }
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
@@ -1770,5 +1893,104 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_none());
+    }
+
+    // ZMVP-65 AC1/AC2/AC3 (store layer) — a commission written through the
+    // UnitOfWork's commission view (begin → commissions().create → commit) is read
+    // back with its fixed metadata intact: the creating User is the owner and the
+    // fresh commission is in `Draft`. The mem seam, end to end — proving the write
+    // view and the shared store share state, mirroring the account seam test.
+    #[tokio::test]
+    async fn uow_create_commission_is_visible_after_commit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+
+        let commission = Commission::create(
+            CommissionTitle::try_new("A ref sheet").unwrap(),
+            owner,
+            Utc::now(),
+            None,
+        );
+        let id = commission.id;
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().create(&commission).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let found = backend
+            .find_commission(id)
+            .await
+            .unwrap()
+            .expect("commission present");
+        assert_eq!(found.id, id);
+        assert_eq!(found.title.as_str(), "A ref sheet");
+        assert_eq!(found.owner_id, owner, "the creating User owns it");
+        assert!(
+            matches!(found.lifecycle_step, LifecycleStep::Draft),
+            "a fresh commission is in Draft"
+        );
+        assert!(
+            matches!(found.visibility, Visibility::Private),
+            "a fresh commission is Private (the closed-door default)"
+        );
+    }
+
+    // Dropping a unit of work before `commit()` discards the commission — the mem
+    // mirror of pg's drop = rollback (DD 24150017), the commission analogue of
+    // `a_dropped_unit_of_work_rolls_back_every_write`.
+    #[tokio::test]
+    async fn a_dropped_unit_of_work_rolls_back_the_commission() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        let commission = Commission::create(
+            CommissionTitle::try_new("Uncommitted").unwrap(),
+            user_id(),
+            Utc::now(),
+            None,
+        );
+        let id = commission.id;
+
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().create(&commission).await.unwrap();
+            // `uow` drops here without `commit` → the staged write is discarded.
+        }
+
+        assert!(
+            backend.find_commission(id).await.unwrap().is_none(),
+            "a dropped unit of work persists no commission row"
+        );
+    }
+
+    // An uncommitted unit's commission is invisible to a read off the shared store
+    // *before* the unit commits — matching pg, where a pool read can't see another
+    // connection's open transaction.
+    #[tokio::test]
+    async fn uncommitted_commission_is_invisible_until_commit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        let commission = Commission::create(
+            CommissionTitle::try_new("Isolated").unwrap(),
+            user_id(),
+            Utc::now(),
+            None,
+        );
+        let id = commission.id;
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().create(&commission).await.unwrap();
+        assert!(
+            backend.find_commission(id).await.unwrap().is_none(),
+            "an open unit's staged commission is invisible to a shared read"
+        );
+
+        uow.commit().await.unwrap();
+        assert!(
+            backend.find_commission(id).await.unwrap().is_some(),
+            "the commission becomes visible once the unit commits"
+        );
     }
 }
