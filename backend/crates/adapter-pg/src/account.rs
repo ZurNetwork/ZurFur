@@ -6,6 +6,7 @@
 
 use chrono::Utc;
 use domain::{
+    datetime::DateTimeUtc,
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
@@ -261,6 +262,59 @@ impl AccountStore for PgAccountStore {
 
         Ok(row.map(|row| Did::new(row.did)))
     }
+
+    /// Counts the account's `account_handle_changes` rows at or after `since` — the
+    /// recent-change tally the change handler weighs against the rate limit. Uses the
+    /// `(account_id, changed_at)` index; `count(*)` is never null (forced non-null).
+    async fn count_handle_changes_since(
+        &self,
+        account: AccountId,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<i64> {
+        let row = query!(
+            r#"
+            SELECT count(*) AS "count!"
+            FROM account_handle_changes
+            WHERE account_id = $1 AND changed_at >= $2
+            "#,
+            *account,
+            since,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.count)
+    }
+
+    /// `EXISTS` a recent vacation of `handle` by an account other than `excluding` —
+    /// i.e. the handle is quarantined to someone else (DD `27852802` §4). `excluding`
+    /// (the asking account) is threaded as a nullable uuid so it can reclaim its own
+    /// vacated handle: `$3 IS NULL OR account_id <> $3`. Uses the
+    /// `(old_handle, changed_at)` index.
+    async fn handle_reserved_for_other(
+        &self,
+        handle: &Handle,
+        excluding: Option<AccountId>,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<bool> {
+        let excluding = excluding.map(|account| *account);
+        let row = query!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM account_handle_changes
+                WHERE old_handle = $1
+                  AND changed_at >= $2
+                  AND ($3::uuid IS NULL OR account_id <> $3)
+            ) AS "reserved!"
+            "#,
+            handle.as_str(),
+            since,
+            excluding,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.reserved)
+    }
 }
 
 #[async_trait::async_trait]
@@ -311,6 +365,79 @@ impl AccountWrites for PgAccountWrites<'_> {
             *owner.account_id,
             *owner.user_id,
             owner.role.as_str()
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Repoints `accounts.handle` to `new` and appends the change to
+    /// `account_handle_changes`, atomically on the open transaction (ZMVP-46, DD
+    /// `27852802`). The audit row is what later rate-limits changes (§3) and
+    /// quarantines the vacated `old` handle (§4), so it must land with the repoint or
+    /// not at all. The public half — re-pointing the DID document's `alsoKnownAs` via
+    /// [`DidMinter::update_handle`](domain::ports::DidMinter::update_handle) — is a
+    /// separate retryable step the caller runs *first*, never in this transaction (DD
+    /// §7; no cross-store dual write).
+    ///
+    /// The `UPDATE` guards `deleted_at IS NULL` (a live account only) and must touch
+    /// exactly one row, else the whole unit rolls back — so a soft-deleted or vanished
+    /// account never records a phantom change. A collision with the global
+    /// `accounts_handle_key` index (a handle held by another account, live **or**
+    /// tombstoned — DD 23003138) surfaces as [`HandleTaken`] so the handler answers
+    /// `409`, mirroring [`create`](PgAccountWrites::create). Changing to the account's
+    /// *own* current handle is a caller-side no-op rejected before this is reached, so
+    /// it never hits the index. `old` is the vacated handle as the handler observed it;
+    /// `at` is the change instant.
+    async fn change_handle(
+        &mut self,
+        account: AccountId,
+        old: &Handle,
+        new: &Handle,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()> {
+        let updated = query!(
+            r#"
+            UPDATE accounts
+            SET handle = $1, updated_at = $2
+            WHERE id = $3 AND deleted_at IS NULL
+            "#,
+            new.as_str(),
+            at,
+            *account,
+        )
+        .execute(&mut *self.conn)
+        .await;
+
+        // Map a handle-uniqueness violation to the typed `HandleTaken` (→ 409), exactly
+        // as `create` does; any other database error stays opaque (→ 500).
+        if let Err(sqlx::Error::Database(ref db_err)) = updated
+            && db_err.constraint() == Some("accounts_handle_key")
+        {
+            return Err(anyhow::Error::new(HandleTaken));
+        }
+        let updated = updated?;
+        // The account was loaded live by the handler moments ago; a zero-row update
+        // means it was soft-deleted/removed since. Fail so the unit rolls back rather
+        // than record a change for a handle that didn't move.
+        if updated.rows_affected() != 1 {
+            anyhow::bail!(
+                "change_handle: account {} is not a live account; nothing changed",
+                *account
+            );
+        }
+
+        query!(
+            r#"
+            INSERT INTO account_handle_changes (id, account_id, old_handle, new_handle, changed_at)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            uuid::Uuid::now_v7(),
+            *account,
+            old.as_str(),
+            new.as_str(),
+            at,
         )
         .execute(&mut *self.conn)
         .await?;

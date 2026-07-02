@@ -8,7 +8,7 @@
 //! provisioned first because `account_members.user_id` references `users(id)`.
 //! Requires a container runtime socket (DOCKER_HOST honored).
 use adapter_pg::{PgAccountStore, PgDatabase, PgPool};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
@@ -1041,5 +1041,186 @@ async fn hard_delete_removes_pending_invitations() {
             .expect("find_invitation")
             .is_none(),
         "the pending invitation is removed with the account"
+    );
+}
+
+// ── ZMVP-46 handle change ───────────────────────────────────────────────────────
+// Round-trips the change flow's private half against real SQL: the `accounts.handle`
+// repoint (so resolution follows), the `account_handle_changes` audit row that backs
+// the rate limit and quarantine, and the HandleTaken mapping on a collision. DD 27852802.
+
+/// Change an account's handle in one unit of work, returning the result (so a test can
+/// assert an error). Commits only on success — a failed unit rolls back on drop.
+async fn try_change_handle(
+    pool: &PgPool,
+    account: AccountId,
+    old: &Handle,
+    new: &Handle,
+    at: chrono::DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let result = uow.accounts().change_handle(account, old, new, at).await;
+    if result.is_ok() {
+        uow.commit().await.expect("commit");
+    }
+    result
+}
+
+/// Count an account's recorded handle changes since `since`, off the pool-backed store.
+async fn count_changes(pool: &PgPool, account: AccountId, since: chrono::DateTime<Utc>) -> i64 {
+    PgAccountStore::new(pool.clone())
+        .count_handle_changes_since(account, since)
+        .await
+        .expect("count_handle_changes_since")
+}
+
+/// Whether `handle` is quarantined to an account other than `excluding` since `since`.
+async fn reserved_for_other(
+    pool: &PgPool,
+    handle: &Handle,
+    excluding: Option<AccountId>,
+    since: chrono::DateTime<Utc>,
+) -> bool {
+    PgAccountStore::new(pool.clone())
+        .handle_reserved_for_other(handle, excluding, since)
+        .await
+        .expect("handle_reserved_for_other")
+}
+
+// The private half of a change: `accounts.handle` repoints (so resolution follows), and
+// the audit row lands (so the change is counted). One unit of work.
+#[tokio::test]
+async fn change_handle_repoints_resolution_and_records_the_change() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:chg-o").await;
+
+    let old = Handle::try_new("chg-before.zurfur.app").unwrap();
+    let new = Handle::try_new("chg-after.zurfur.app").unwrap();
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:chg-acct".to_string()),
+        old.clone(),
+        AccountName::try_new("Rename").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+
+    let before = Utc::now();
+    try_change_handle(&pool, account.id, &old, &new, Utc::now())
+        .await
+        .expect("the change commits");
+
+    // handle→DID resolution followed: the new handle resolves, the old does not.
+    assert_eq!(
+        find_did_by_handle(&pool, &new).await,
+        Some(account.did.clone()),
+        "the new handle resolves to the account's DID"
+    );
+    assert!(
+        find_did_by_handle(&pool, &old).await.is_none(),
+        "the old handle no longer resolves"
+    );
+    // The account row carries the new handle.
+    assert_eq!(
+        find_account(&pool, account.id).await.expect("live").handle,
+        new,
+        "the account's stored handle is the new one"
+    );
+    // The change was recorded (backs the rate limit).
+    assert_eq!(
+        count_changes(&pool, account.id, before).await,
+        1,
+        "the change is recorded exactly once"
+    );
+}
+
+// A change to a handle another live account already holds fails with the typed
+// `HandleTaken` (→ 409), and — being one unit of work — leaves the account unchanged.
+#[tokio::test]
+async fn change_handle_rejects_a_taken_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let o1 = provision(&pool, "did:plc:chgdup-o1").await;
+    let o2 = provision(&pool, "did:plc:chgdup-o2").await;
+
+    let mine = Handle::try_new("chgdup-mine.zurfur.app").unwrap();
+    let (a1, m1) = Account::open(
+        o1.id,
+        Did::new("did:plc:chgdup-a1".to_string()),
+        mine.clone(),
+        AccountName::try_new("Mine").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a1, &m1).await;
+
+    let theirs = Handle::try_new("chgdup-theirs.zurfur.app").unwrap();
+    let (a2, m2) = Account::open(
+        o2.id,
+        Did::new("did:plc:chgdup-a2".to_string()),
+        theirs.clone(),
+        AccountName::try_new("Theirs").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &a2, &m2).await;
+
+    let err = try_change_handle(&pool, a1.id, &mine, &theirs, Utc::now())
+        .await
+        .expect_err("changing to a taken handle is rejected");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_some(),
+        "the collision maps to HandleTaken (→409), got: {err:?}"
+    );
+    // Rolled back: a1 still holds its original handle.
+    assert_eq!(
+        find_account(&pool, a1.id).await.expect("live").handle,
+        mine,
+        "a rejected change leaves the account's handle untouched"
+    );
+}
+
+// The quarantine read: a vacated handle is reserved to the account that left it —
+// visible to *others* (§4), excluded for that account itself (reclaimable), and no
+// longer matching once the window has passed.
+#[tokio::test]
+async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:quar-o").await;
+
+    let vacated = Handle::try_new("quar-vacated.zurfur.app").unwrap();
+    let moved_to = Handle::try_new("quar-moved.zurfur.app").unwrap();
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:quar-acct".to_string()),
+        vacated.clone(),
+        AccountName::try_new("Quar").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+    try_change_handle(&pool, account.id, &vacated, &moved_to, Utc::now())
+        .await
+        .expect("change commits");
+
+    let window = Utc::now() - Duration::days(30);
+    // Some OTHER account is barred from the vacated handle.
+    let stranger = AccountId::new(uuid::Uuid::now_v7());
+    assert!(
+        reserved_for_other(&pool, &vacated, Some(stranger), window).await,
+        "the vacated handle is quarantined to its former holder — barred to others"
+    );
+    // The account that vacated it may reclaim it (excluded from its own quarantine).
+    assert!(
+        !reserved_for_other(&pool, &vacated, Some(account.id), window).await,
+        "the leaving account may reclaim its own quarantined handle"
+    );
+    // Once the window has passed (a floor in the future), the reservation lifts.
+    assert!(
+        !reserved_for_other(
+            &pool,
+            &vacated,
+            Some(stranger),
+            Utc::now() + Duration::days(1)
+        )
+        .await,
+        "an expired quarantine no longer reserves the handle"
     );
 }

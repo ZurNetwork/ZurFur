@@ -23,9 +23,9 @@ use axum::{
     extract::{FromRequestParts, Path, State, rejection::JsonRejection},
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
-    routing::{delete, post},
+    routing::{delete, patch, post},
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
@@ -52,6 +52,7 @@ pub(crate) fn accounts_router() -> Router<AppState> {
     Router::new()
         .route("/accounts", post(create_account))
         .route("/accounts/{id}", delete(delete_account))
+        .route("/accounts/{id}/handle", patch(change_handle))
         .route(
             "/accounts/{id}/members",
             post(grant_role).delete(revoke_role),
@@ -191,6 +192,33 @@ impl FromRequestParts<AppState> for AccountRole {
     }
 }
 
+/// The light anti-abuse ceiling on handle changes per account within
+/// [`handle_change_window`] (DD "Account Handle Change Flow" `27852802` §3 — Bluesky's
+/// ~10-per-5-minutes spirit: a burst throttle, **not** a long cooldown, since the
+/// anti-impersonation weight lives on the quarantine, not the cadence). A build-time
+/// number the DD leaves to implementation.
+const HANDLE_CHANGE_LIMIT: i64 = 10;
+
+/// The rolling window [`HANDLE_CHANGE_LIMIT`] is counted over (DD `27852802` §3).
+fn handle_change_window() -> Duration {
+    Duration::minutes(5)
+}
+
+/// How long a vacated `*.zurfur.app` handle stays reserved (quarantined) to the account
+/// that left it before it frees for anyone else (DD `27852802` §4) — the
+/// anti-impersonation knob, a build-time number the DD leaves to implementation.
+fn handle_quarantine_window() -> Duration {
+    Duration::days(30)
+}
+
+/// Whether `handle` is in the Zurfur-issued namespace (a subdomain of `handle_domain`)
+/// rather than a brought (BYO) domain. Quarantine reserves this namespace only, and v1
+/// ships the *change* flow for it only — a BYO target needs bidirectional
+/// verify-before-commit that isn't built yet (DD `27852802` §4/§6).
+fn in_zurfur_namespace(handle: &Handle, handle_domain: &str) -> bool {
+    handle.as_str().ends_with(&format!(".{handle_domain}"))
+}
+
 /// `200 OK` carrying a bare JSON resource body (success bodies are not enveloped;
 /// see the RFC 9457 response-shape decision).
 fn ok_json(body: serde_json::Value) -> Response {
@@ -260,6 +288,21 @@ async fn create_account(
     // soft-deleted account, nor win against a concurrent claim; the global unique
     // index (mapped to `HandleTaken` below) is the authoritative backstop for both.
     if state.accounts.find_did_by_handle(&handle).await?.is_some() {
+        return Err(Problem::handle_taken());
+    }
+
+    // A handle a *different* account vacated recently is quarantined to them for a
+    // window — a squatter must not be able to found a fresh account on a just-freed
+    // identity (DD 27852802 §4). Both handle-claim sites (this and the change flow)
+    // honor the quarantine, so the reservation can't be sidestepped by founding instead
+    // of renaming. Only the Zurfur namespace is quarantined (a BYO domain is the user's
+    // own DNS); `excluding = None` because a founder claims fresh, never reclaiming.
+    if in_zurfur_namespace(&handle, &state.config.handle_domain)
+        && state
+            .accounts
+            .handle_reserved_for_other(&handle, None, Utc::now() - handle_quarantine_window())
+            .await?
+    {
         return Err(Problem::handle_taken());
     }
 
@@ -403,6 +446,164 @@ async fn delete_account(
     }
 
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// The body of `PATCH /accounts/{id}/handle`: the `handle` to change to (the
+/// atproto-style name the account will be reached by). Re-validated through the same
+/// [`Handle`] gate as founding.
+///
+/// Example: `{ "handle": "renamed.zurfur.app" }`.
+#[derive(Deserialize)]
+struct ChangeHandleBody {
+    handle: String,
+}
+
+/// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle after
+/// onboarding (ZMVP-46, DD "Account Handle Change Flow" `27852802`). Owner-only, the
+/// new handle re-validated to the *same* guarantees as the initial claim
+/// ([`Handle::try_new`]), with both resolution halves brought into agreement without a
+/// cross-store transaction.
+///
+/// The order is the DD's (§7): **the DID document first, the private store second.**
+/// We re-point the DID's `alsoKnownAs` via the ZMVP-50 signed `did:plc` UPDATE op — its
+/// own retryable, idempotent step, never inside the private transaction — and only then
+/// commit `accounts.handle` (which flips the `*.zurfur.app` handle→DID resolver) and
+/// record the change. If the private write fails after the DID-doc succeeded the worst
+/// transient is `handle.invalid` (the new handle simply not-yet-valid), never a handle
+/// resolving to the wrong DID; the op is idempotent, so a client retry is safe.
+///
+/// Policy (all DD-decided): **Owner-only** (§2); a light **rate limit** (§3); the
+/// vacated `*.zurfur.app` handle is **quarantined** to this account (§4 — recorded by
+/// the change itself, enforced at every claim site); `alsoKnownAs` is **REPLACED** (§5,
+/// owned by the ZMVP-50 op). **BYO targets are deferred** (§6): changing *to* a
+/// non-`*.zurfur.app` handle is refused until bidirectional verify-before-commit ships
+/// (changing *from* a BYO handle *to* a Zurfur one is fine — the target is ours).
+///
+/// Outcomes:
+/// - `200 { "id", "did", "handle", "name" }` — the handle changed; resolution follows
+/// - `401` — not signed in · `403` — signed in but not this account's Owner
+/// - `404` — no such live account
+/// - `409` (`handle_taken`) — the target is held by another account (live or tombstoned)
+///   or quarantined to another
+/// - `422` — malformed body, an invalid handle, the account's own current handle, or a
+///   BYO target (`unsupported_handle`)
+/// - `429` (`rate_limited`) — too many recent changes · `503` — the DID minter is down
+async fn change_handle(
+    State(state): State<AppState>,
+    account_role: AccountRole,
+    body: Result<Json<ChangeHandleBody>, JsonRejection>,
+) -> Result<Response, Problem> {
+    // The shared `AccountRole` seam settled the write floor (401/404/403) and loaded the
+    // live account plus the actor's role in it.
+    let AccountRole { account, role, .. } = account_role;
+
+    // Owner-only (DD §2), the handler's rank rule on the membership floor — the same
+    // authority bar as delete/transfer, above the grant/revoke seam any ranked member
+    // reaches.
+    if !matches!(role, Role::Owner(_)) {
+        return Err(Problem::forbidden());
+    }
+
+    // Re-validate through the one shared claim gate — punycode/reserved/normalization
+    // all re-enforced on a change, exactly as at founding (Done-when: "same validation
+    // guarantees as the initial claim").
+    let Json(body) = body.map_err(|_| Problem::invalid_request("A new handle is required."))?;
+    let new =
+        Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
+
+    // Changing to the account's own current handle is a no-op: reject it as unusable
+    // rather than burn a rate-limit slot and sign a redundant chain op.
+    if new == account.handle {
+        return Err(Problem::invalid_request(
+            "That is already this account's handle.",
+        ));
+    }
+
+    // BYO deferred (DD §6): v1 ships the change flow for the Zurfur namespace only. A
+    // brought-domain target needs bidirectional verify-before-commit (so we never
+    // persist a handle the user hasn't proved they control) — a capability carved into
+    // a follow-up ticket. Migrating *from* a BYO handle *to* a `*.zurfur.app` one is
+    // allowed: the target resolves under our control.
+    if !in_zurfur_namespace(&new, &state.config.handle_domain) {
+        return Err(Problem::unsupported_handle(
+            "Changing to a brought (non-*.zurfur.app) handle isn't supported yet.",
+        ));
+    }
+
+    let now = Utc::now();
+
+    // Rate limit (DD §3): a light anti-abuse throttle on how often an account renames.
+    if state
+        .accounts
+        .count_handle_changes_since(account.id, now - handle_change_window())
+        .await?
+        >= HANDLE_CHANGE_LIMIT
+    {
+        return Err(Problem::rate_limited(
+            "You've changed this account's handle too many times recently. Please wait a bit and try again.",
+        ));
+    }
+
+    // Availability (DD §4). Fast path: a handle held by a *live* account is taken.
+    if state.accounts.find_did_by_handle(&new).await?.is_some() {
+        return Err(Problem::handle_taken());
+    }
+    // Quarantine: a handle another account vacated recently is reserved to them — a
+    // squatter can't grab a just-freed identity. The asking account is excluded, so it
+    // may reclaim its OWN vacated handle within the window. (The global unique index is
+    // the write-time backstop for the tombstoned/race cases the reads can't see.)
+    if state
+        .accounts
+        .handle_reserved_for_other(&new, Some(account.id), now - handle_quarantine_window())
+        .await?
+    {
+        return Err(Problem::handle_taken());
+    }
+
+    // DID-doc FIRST (DD §7): re-point the DID document's `alsoKnownAs` to the new handle
+    // — the ZMVP-50 signed `did:plc` UPDATE op (REPLACE), its own retryable/idempotent
+    // step, NEVER inside the private transaction below (no cross-store dual write). A
+    // failure here changes nothing in Postgres, so the account keeps its old handle and
+    // the caller may retry.
+    state
+        .did_minter
+        .update_handle(&account.did, &new)
+        .await
+        .map_err(|_| {
+            Problem::service_unavailable(
+                "We couldn't update the account's identity right now. Please try again.",
+            )
+        })?;
+
+    // Private half (DD §7): repoint `accounts.handle` (which flips the handle→DID
+    // resolver) and record the change (the rate-limit + quarantine source) in ONE unit
+    // of work. A collision with the global handle index maps to 409, exactly as founding
+    // does. `old`/`new` move into the boxed future; `new` is cloned so the response can
+    // still name it.
+    let old = account.handle.clone();
+    let account_id = account.id;
+    let new_stored = new.clone();
+    if let Err(err) = transaction(&*state.database, |uow| {
+        Box::pin(async move {
+            uow.accounts()
+                .change_handle(account_id, &old, &new_stored, now)
+                .await
+        })
+    })
+    .await
+    {
+        if err.downcast_ref::<HandleTaken>().is_some() {
+            return Err(Problem::handle_taken());
+        }
+        return Err(err.into());
+    }
+
+    Ok(ok_json(json!({
+        "id": account.id.to_string(),
+        "did": account.did.as_str(),
+        "handle": new.as_str(),
+        "name": account.name.as_str(),
+    })))
 }
 
 /// The accept-invitation request body: the invitee's choice of whether this new
