@@ -74,4 +74,31 @@ impl PlcOperationLog for PgPlcOperationLog {
 
         Ok(row.map(|row| row.cid))
     }
+
+    /// The DID's highest-`seq` (most recent) operation as a full record, or `None`.
+    /// `operation` is stored as `jsonb`; it is re-serialized to the JSON text the
+    /// record carries. Used by an update to carry the prior op's public fields
+    /// forward without touching custody's non-signing private keys (F2).
+    async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
+        let row = query!(
+            r#"
+            SELECT cid AS "cid!", "type" AS "op_type!", prev, operation AS "operation!"
+            FROM plc_operations
+            WHERE did = $1
+            ORDER BY seq DESC
+            LIMIT 1
+            "#,
+            did.as_str(),
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| PlcOperationRecord {
+            did: did.clone(),
+            cid: row.cid,
+            op_type: row.op_type,
+            prev: row.prev,
+            operation_json: row.operation.to_string(),
+        }))
+    }
 }
