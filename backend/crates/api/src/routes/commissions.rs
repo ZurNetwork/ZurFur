@@ -37,7 +37,7 @@ pub(crate) fn commissions_router() -> Router<AppState> {
 }
 
 /// The `POST /commissions` request body: the commission's fixed metadata a caller
-/// supplies. The `title` is required (a missing/invalid body is a `400`); `deadline`
+/// supplies. The `title` is required (a missing/invalid body is a `422`); `deadline`
 /// is the optional envelope field. Owner and lifecycle are not accepted from the
 /// client — the owner is the authenticated caller and the lifecycle is always `Draft`.
 #[derive(Deserialize)]
@@ -54,7 +54,7 @@ struct CreateCommissionBody {
 /// Account (ZMVP-47). Builds the commission with the caller as owner and `Draft`
 /// lifecycle, then persists it in one unit of work via
 /// [`transaction`](domain::ports::transaction). Returns `201 Created` on success;
-/// a missing/invalid JSON body is a `400`.
+/// a missing/invalid JSON body is a `422` (`invalid_request`).
 async fn create_commission(
     State(state): State<AppState>,
     session: Session,

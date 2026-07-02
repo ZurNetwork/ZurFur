@@ -613,10 +613,11 @@ pub struct MemCommissionWrites(MemBackend);
 #[async_trait]
 impl CommissionWrites for MemCommissionWrites {
     /// Insert the freshly created commission, keyed by its id — the in-memory
-    /// mirror of the pg adapter's single `INSERT INTO commission`. Ids are UUIDv7
-    /// and minted per commission, so a collision doesn't arise in practice; a
-    /// repeated id would overwrite, matching an upsert-free insert's "last write
-    /// wins" under test rather than erroring.
+    /// mirror of the pg adapter's single `INSERT INTO commission`. The pg `id` is a
+    /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does not
+    /// model that (a plain `insert`, the same as [`MemAccountWrites::create`] does
+    /// for its own account id), because commission ids are freshly-minted UUIDv7 —
+    /// a collision is unreachable by construction, never a case a test can reach.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         let mut commissions = self
             .0
