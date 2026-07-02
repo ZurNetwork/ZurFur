@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1\n                FROM account_handle_changes\n                WHERE old_handle = $1\n                  AND changed_at >= $2\n                  AND ($3::uuid IS NULL OR account_id <> $3)\n            ) AS \"reserved!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reserved!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9fb77787c6476805da4c55f25867b881f9aeca72611bd7b0f3fbb2f589f69f40"
+}

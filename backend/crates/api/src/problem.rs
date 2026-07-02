@@ -202,6 +202,35 @@ impl Problem {
         )
     }
 
+    /// `422`, code `unsupported_handle` — a well-formed handle whose *namespace* isn't
+    /// supported for this operation yet: v1 ships the handle-*change* flow for the
+    /// Zurfur-issued `*.zurfur.app` namespace only, since changing to a brought (BYO)
+    /// domain needs bidirectional verify-before-commit that isn't built (DD "Account
+    /// Handle Change Flow" `27852802` §6; deferred to a follow-up). Shares the
+    /// invalid-request `type` but carries its own `code`, like [`unknown_role`](Problem::unknown_role).
+    pub fn unsupported_handle(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:invalid-request",
+            "unsupported_handle",
+            "Invalid request",
+            422,
+            detail,
+        )
+    }
+
+    /// `429` — the caller has hit the light anti-abuse rate limit for an action (the
+    /// handle-change throttle; DD `27852802` §3). The request was valid; the caller may
+    /// retry once the window passes.
+    pub fn rate_limited(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:rate-limited",
+            "rate_limited",
+            "Too many requests",
+            429,
+            detail,
+        )
+    }
+
     /// `500` — a dependency (store, recognizer) failed; the request was fine.
     pub fn internal_error(detail: impl Into<String>) -> Self {
         Self::new(

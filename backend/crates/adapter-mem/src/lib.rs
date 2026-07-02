@@ -42,6 +42,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
@@ -82,6 +83,11 @@ pub struct MemBackend {
     /// Cached profiles keyed by DID. Entries never expire here — TTL is the real
     /// (pg) cache's policy; tests control freshness by what they put in.
     profiles: Arc<Mutex<HashMap<Did, Profile>>>,
+    /// Append-only handle-change audit log (ZMVP-46), the in-memory mirror of the pg
+    /// `account_handle_changes` table. Backs both the change rate limit and the
+    /// vacated-handle quarantine (DD `27852802` §3/§4). A domain map, so it is staged
+    /// and applied by the Unit of Work exactly like `accounts`/`memberships`.
+    handle_changes: Arc<Mutex<Vec<StoredHandleChange>>>,
 }
 
 impl MemBackend {
@@ -147,6 +153,12 @@ impl MemBackend {
             )),
             // Shared, not copied: the profile cache is a Unit-of-Work exemption.
             profiles: self.profiles.clone(),
+            handle_changes: Arc::new(Mutex::new(
+                self.handle_changes
+                    .lock()
+                    .expect("MemBackend handle_changes mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -183,6 +195,14 @@ impl MemBackend {
             .invitations
             .lock()
             .expect("MemBackend invitations mutex poisoned")
+            .clone();
+        *self
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned") = staged
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned")
             .clone();
     }
 
@@ -484,6 +504,22 @@ struct StoredInvitation {
     updated_at: domain::datetime::DateTimeUtc,
 }
 
+/// One appended handle change as the mem backend keeps it — the in-memory mirror of a
+/// pg `account_handle_changes` row (ZMVP-46). `Clone` so a unit of work can deep-copy
+/// the log into its staging snapshot (see [`MemBackend::stage`]).
+/// The mem fake keeps only the fields its reads consume — the account, the vacated
+/// `old_handle`, and the instant. It deliberately drops the pg row's `new_handle`
+/// (audit-only, read by nothing here), per this module's "fidelity, not realism" note.
+#[derive(Clone)]
+struct StoredHandleChange {
+    /// The account whose handle changed.
+    account_id: AccountId,
+    /// The handle vacated by this change — what the quarantine reserves.
+    old_handle: Handle,
+    /// When the change committed — the rate-limit / quarantine window anchor.
+    changed_at: DateTimeUtc,
+}
+
 /// In-memory [`AccountStore`] read surface over the shared [`MemBackend`].
 pub struct MemAccountStore(MemBackend);
 
@@ -570,6 +606,45 @@ impl AccountStore for MemAccountStore {
             .expect("MemBackend accounts mutex poisoned");
         Ok(accounts.values().find_map(|stored| {
             (stored.deleted_at.is_none() && &stored.handle == handle).then(|| stored.did.clone())
+        }))
+    }
+
+    /// Counts this account's recorded changes at or after `since` — the in-memory
+    /// mirror of the pg `count(*)` over `account_handle_changes` (ZMVP-46 rate limit).
+    async fn count_handle_changes_since(
+        &self,
+        account: AccountId,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<i64> {
+        let changes = self
+            .0
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned");
+        Ok(changes
+            .iter()
+            .filter(|change| change.account_id == account && change.changed_at >= since)
+            .count() as i64)
+    }
+
+    /// Whether `handle` was recently vacated by an account other than `excluding` —
+    /// the in-memory mirror of the pg `EXISTS` quarantine check (ZMVP-46 §4). A row for
+    /// `excluding` itself never counts, so an account can reclaim its own vacated handle.
+    async fn handle_reserved_for_other(
+        &self,
+        handle: &Handle,
+        excluding: Option<AccountId>,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<bool> {
+        let changes = self
+            .0
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned");
+        Ok(changes.iter().any(|change| {
+            &change.old_handle == handle
+                && change.changed_at >= since
+                && excluding.is_none_or(|account| change.account_id != account)
         }))
     }
 }
@@ -661,6 +736,73 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend memberships mutex poisoned");
         memberships.insert((*account_id, *user_id), role.clone());
+        Ok(())
+    }
+
+    /// Repoints the stored account's handle to `new` and appends the change to the
+    /// audit log — the in-memory mirror of the pg adapter's single transaction (ZMVP-46).
+    /// `old` is an **optimistic-concurrency precondition** (matching the pg `handle =
+    /// old` guard): the change applies only if the account is live and *still* holds
+    /// `old`, else it fails and records no audit row — so a stale observation can't log a
+    /// wrong `old_handle` (which would leave the truly vacated handle un-quarantined).
+    /// The precondition is checked *before* uniqueness, mirroring the pg `UPDATE` (whose
+    /// `WHERE handle = old` short-circuits ahead of the index). Global handle uniqueness
+    /// across every OTHER account (live *or* tombstoned) then fails a collision with
+    /// [`HandleTaken`] (→ 409), like [`create`](MemAccountWrites::create). Changing to
+    /// the account's own current handle is a caller-side no-op rejected before this.
+    async fn change_handle(
+        &mut self,
+        account: AccountId,
+        old: &Handle,
+        new: &Handle,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()> {
+        let mut accounts = self
+            .0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned");
+
+        // Precondition first (mirrors pg's `WHERE ... AND handle = old`, which gates the
+        // row before the unique index is touched): the account must be live and still
+        // hold `old`, else we roll back without auditing a stale change.
+        if !accounts
+            .get(&account)
+            .is_some_and(|stored| stored.deleted_at.is_none() && &stored.handle == old)
+        {
+            anyhow::bail!(
+                "change_handle: account {} is not a live account still holding the expected \
+                 handle; nothing changed (concurrent change or removal)",
+                *account
+            );
+        }
+
+        // Global handle uniqueness across every OTHER account (live or tombstoned),
+        // mirroring the pg `accounts_handle_key` index; the account's own row is exempt
+        // (a no-op self-rename never reaches here).
+        if accounts
+            .iter()
+            .any(|(id, stored)| *id != account && &stored.handle == new)
+        {
+            return Err(anyhow::Error::new(HandleTaken));
+        }
+
+        let stored = accounts
+            .get_mut(&account)
+            .expect("account presence checked by the precondition above");
+        stored.handle = new.clone();
+        stored.updated_at = at;
+        drop(accounts);
+
+        self.0
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned")
+            .push(StoredHandleChange {
+                account_id: account,
+                old_handle: old.clone(),
+                changed_at: at,
+            });
         Ok(())
     }
 
@@ -1380,6 +1522,95 @@ mod tests {
         let found = backend.find(other.id).await.unwrap();
 
         assert_eq!(found.map(|a| a.id), None);
+    }
+
+    // ZMVP-46 — the change flow's private half through the UnitOfWork: `change_handle`
+    // repoints resolution (new resolves, old doesn't), and records the change so the
+    // rate-limit count sees it. Staged like any account write, visible after commit.
+    #[tokio::test]
+    async fn change_handle_repoints_resolution_and_is_counted() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let store = backend.account_store();
+
+        let account = live_account("did:plc:memchg");
+        let (old, account_id, account_did) =
+            (account.handle.clone(), account.id, account.did.clone());
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id,
+            role: Role::Owner(None),
+        };
+        backend.create(&account, &owner).await.unwrap();
+
+        let new = Handle::try_new("memchg-new.example.com").unwrap();
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts()
+            .change_handle(account_id, &old, &new, Utc::now())
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+
+        assert_eq!(
+            store.find_did_by_handle(&new).await.unwrap(),
+            Some(account_did),
+            "the new handle resolves to the account's DID"
+        );
+        assert!(
+            store.find_did_by_handle(&old).await.unwrap().is_none(),
+            "the old handle no longer resolves"
+        );
+        assert_eq!(
+            store
+                .count_handle_changes_since(account_id, Utc::now() - chrono::Duration::minutes(5))
+                .await
+                .unwrap(),
+            1,
+            "the change is counted for the rate limit"
+        );
+    }
+
+    // ZMVP-46 §4 — the vacated handle is quarantined to the leaving account: barred to
+    // another account, excluded (reclaimable) for the account that left it.
+    #[tokio::test]
+    async fn change_handle_quarantines_the_vacated_handle() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let store = backend.account_store();
+
+        let account = live_account("did:plc:memquar");
+        let (old, account_id) = (account.handle.clone(), account.id);
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id,
+            role: Role::Owner(None),
+        };
+        backend.create(&account, &owner).await.unwrap();
+
+        let new = Handle::try_new("memquar-new.example.com").unwrap();
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts()
+            .change_handle(account_id, &old, &new, Utc::now())
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+
+        let window = Utc::now() - chrono::Duration::days(30);
+        let stranger = AccountId::new(uuid::Uuid::now_v7());
+        assert!(
+            store
+                .handle_reserved_for_other(&old, Some(stranger), window)
+                .await
+                .unwrap(),
+            "the vacated handle is reserved against another account"
+        );
+        assert!(
+            !store
+                .handle_reserved_for_other(&old, Some(account_id), window)
+                .await
+                .unwrap(),
+            "the leaving account may reclaim its own vacated handle"
+        );
     }
 
     // Each mint yields a distinct DID — accounts never share a sovereign identity.
