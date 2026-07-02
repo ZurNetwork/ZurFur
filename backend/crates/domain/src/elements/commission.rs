@@ -45,6 +45,59 @@ impl Deref for CommissionId {
     }
 }
 
+/// A commission's Title, validated on the way in.
+///
+/// Surrounding whitespace is trimmed; the result must be non-empty. The Title is
+/// the one always-present content facet of a commission (DESIGN/Commission), so a
+/// blank one is rejected rather than stored — the same construction-time gate
+/// [`crate::elements::account::AccountName`] applies to account names (no length cap
+/// is imposed here yet).
+///
+/// ```
+/// use domain::elements::commission::CommissionTitle;
+///
+/// let title = CommissionTitle::try_new("  A ref sheet  ").unwrap();
+/// assert_eq!(title.as_str(), "A ref sheet"); // trimmed
+///
+/// assert!(CommissionTitle::try_new("   ").is_err()); // empty after trim
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommissionTitle(String);
+
+/// Why a string was rejected as a commission title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommissionTitleError {
+    /// Empty once trimmed. Example: `""` or `"   "`.
+    Empty,
+}
+
+impl std::fmt::Display for CommissionTitleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommissionTitleError::Empty => write!(f, "commission title must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for CommissionTitleError {}
+
+impl CommissionTitle {
+    /// Validate and wrap a title: trim surrounding whitespace, then reject an empty
+    /// result with [`CommissionTitleError::Empty`].
+    pub fn try_new(raw: impl Into<String>) -> Result<Self, CommissionTitleError> {
+        let trimmed = raw.into().trim().to_owned();
+        if trimmed.is_empty() {
+            return Err(CommissionTitleError::Empty);
+        }
+        Ok(Self(trimmed))
+    }
+
+    /// The validated, trimmed title as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A created commission and its fixed metadata (ZMVP-65).
 ///
 /// Build one with [`Commission::create`], which stamps a fresh UUIDv7 id and opens
@@ -59,9 +112,9 @@ impl Deref for CommissionId {
 pub struct Commission {
     /// The app-private id (UUIDv7, so it sorts by creation time).
     pub id: CommissionId,
-    /// The commission's Title — fixed and always present; every other content
-    /// facet is later composition.
-    pub title: String,
+    /// The commission's Title — fixed and always present, validated non-empty; every
+    /// other content facet is later composition. See [`CommissionTitle`].
+    pub title: CommissionTitle,
     /// The User who created the commission and owns it. The owner is permanent in
     /// the domain model (transfer is an explicit later act; DESIGN/Commission);
     /// birth just records the creator here.
@@ -82,23 +135,29 @@ pub struct Commission {
 impl Commission {
     /// Create a commission owned by `owner`, born in [`LifecycleStep::Draft`].
     ///
-    /// Mints the id (`CommissionId::new(Uuid::now_v7())`), records the caller-supplied
-    /// `title` and optional `deadline`, and stamps `created_at` from `now`. Authority
-    /// is the caller's concern (a signed-in User; no Account needed — ZMVP-47), settled
-    /// before this is reached; this constructor only shapes the row.
+    /// Mints the id (`CommissionId::new(Uuid::now_v7())`), records the already-validated
+    /// [`CommissionTitle`] and optional `deadline`, and stamps `created_at` from `now`.
+    /// The title is validated at the boundary ([`CommissionTitle::try_new`]) before this
+    /// is reached, so this constructor is infallible — mirroring how [`Account::open`]
+    /// takes an already-validated [`AccountName`]. Authority (a signed-in User; no
+    /// Account needed — ZMVP-47) is the caller's concern, settled before this is reached.
+    ///
+    /// [`Account::open`]: crate::elements::account::Account::open
+    /// [`AccountName`]: crate::elements::account::AccountName
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{commission::{Commission, LifecycleStep}, user::UserId};
+    /// use domain::elements::{commission::{Commission, CommissionTitle, LifecycleStep}, user::UserId};
     ///
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let c = Commission::create("A ref sheet".to_string(), owner, Utc::now(), None);
+    /// let title = CommissionTitle::try_new("A ref sheet").unwrap();
+    /// let c = Commission::create(title, owner, Utc::now(), None);
     /// assert_eq!(c.owner_id, owner);                             // the creator owns it
     /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
-    /// assert_eq!(c.title, "A ref sheet");
+    /// assert_eq!(c.title.as_str(), "A ref sheet");
     /// ```
     pub fn create(
-        title: String,
+        title: CommissionTitle,
         owner: UserId,
         now: DateTimeUtc,
         deadline: Option<DateTimeUtc>,

@@ -44,7 +44,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             VALUES ($1, $2, $3, $4, $5, $6, $7)
         "#,
             *commission.id,
-            commission.title,
+            commission.title.as_str(),
             *commission.owner_id,
             commission.lifecycle_step.as_str(),
             commission.visibility.as_str(),

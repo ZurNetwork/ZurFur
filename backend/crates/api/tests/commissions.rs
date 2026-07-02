@@ -9,7 +9,8 @@
 //!   returns a bare `201`);
 //! - **AC4** — a User with **no Account** can create one (a user-scoped write; not
 //!   gated on account membership — ZMVP-47, DD 26247170 §5);
-//! - and the floor: an **anonymous** caller cannot create a commission (`401`).
+//! - and the floors: an **anonymous** caller cannot create a commission (`401`), and
+//!   a **blank title** is rejected (`422`, the `CommissionTitle` gate).
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -125,7 +126,11 @@ async fn signed_in_user_creates_a_commission_and_owns_it() {
     let all = backend.all_commissions().await.expect("list commissions");
     assert_eq!(all.len(), 1, "exactly one commission was persisted");
     let commission = &all[0];
-    assert_eq!(commission.title, "A ref sheet", "the Title round-trips");
+    assert_eq!(
+        commission.title.as_str(),
+        "A ref sheet",
+        "the Title round-trips"
+    );
     assert_eq!(commission.owner_id, me.id, "the creating User is the owner");
     assert!(
         matches!(commission.lifecycle_step, LifecycleStep::Draft),
@@ -182,5 +187,27 @@ async fn anonymous_cannot_create_a_commission() {
     assert!(
         backend.all_commissions().await.expect("list").is_empty(),
         "an unauthenticated create persists nothing",
+    );
+}
+
+// Title validation — a blank (whitespace-only) title is rejected as `422`
+// `invalid_request` (the `CommissionTitle` gate), and nothing is persisted.
+#[tokio::test]
+async fn a_blank_title_is_rejected() {
+    let (base, backend) = spawn_app("did:plc:artist").await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let res = client
+        .post(format!("{base}/commissions"))
+        .json(&json!({ "title": "   " }))
+        .send()
+        .await
+        .expect("POST /commissions");
+    common::assert_problem(res, 422, "invalid_request").await;
+
+    assert!(
+        backend.all_commissions().await.expect("list").is_empty(),
+        "a blank-title create persists nothing",
     );
 }

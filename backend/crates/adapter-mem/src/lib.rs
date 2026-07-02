@@ -46,7 +46,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
-    commission::{Commission, CommissionId, LifecycleStep, Visibility},
+    commission::{Commission, CommissionId, CommissionTitle, LifecycleStep, Visibility},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -589,8 +589,8 @@ struct StoredHandleChange {
 /// [`MemBackend::stage`]).
 #[derive(Clone)]
 struct StoredCommission {
-    /// The commission's fixed, always-present Title (ZMVP-65).
-    title: String,
+    /// The commission's fixed, always-present Title (ZMVP-65), validated non-empty.
+    title: CommissionTitle,
     /// The User who created it and owns it — the permanent owner (DESIGN/Commission).
     owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
@@ -1906,7 +1906,12 @@ mod tests {
         let database = backend.database();
         let owner = user_id();
 
-        let commission = Commission::create("A ref sheet".to_string(), owner, Utc::now(), None);
+        let commission = Commission::create(
+            CommissionTitle::try_new("A ref sheet").unwrap(),
+            owner,
+            Utc::now(),
+            None,
+        );
         let id = commission.id;
 
         let mut uow = database.begin().await.unwrap();
@@ -1919,7 +1924,7 @@ mod tests {
             .unwrap()
             .expect("commission present");
         assert_eq!(found.id, id);
-        assert_eq!(found.title, "A ref sheet");
+        assert_eq!(found.title.as_str(), "A ref sheet");
         assert_eq!(found.owner_id, owner, "the creating User owns it");
         assert!(
             matches!(found.lifecycle_step, LifecycleStep::Draft),
@@ -1939,7 +1944,12 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
 
-        let commission = Commission::create("Uncommitted".to_string(), user_id(), Utc::now(), None);
+        let commission = Commission::create(
+            CommissionTitle::try_new("Uncommitted").unwrap(),
+            user_id(),
+            Utc::now(),
+            None,
+        );
         let id = commission.id;
 
         {
@@ -1962,7 +1972,12 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
 
-        let commission = Commission::create("Isolated".to_string(), user_id(), Utc::now(), None);
+        let commission = Commission::create(
+            CommissionTitle::try_new("Isolated").unwrap(),
+            user_id(),
+            Utc::now(),
+            None,
+        );
         let id = commission.id;
 
         let mut uow = database.begin().await.unwrap();

@@ -20,7 +20,10 @@ use axum::{
 use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
-    elements::{commission::Commission, user::UserId},
+    elements::{
+        commission::{Commission, CommissionTitle},
+        user::UserId,
+    },
     ports::transaction,
 };
 use serde::Deserialize;
@@ -53,8 +56,10 @@ struct CreateCommissionBody {
 /// because the frontend *calls* this endpoint. Requires only authentication, no
 /// Account (ZMVP-47). Builds the commission with the caller as owner and `Draft`
 /// lifecycle, then persists it in one unit of work via
-/// [`transaction`](domain::ports::transaction). Returns `201 Created` on success;
-/// a missing/invalid JSON body is a `422` (`invalid_request`).
+/// [`transaction`](domain::ports::transaction). Returns `201 Created` on success. A
+/// missing/malformed JSON body — or a blank (empty/whitespace) title, rejected by
+/// [`CommissionTitle::try_new`](domain::elements::commission::CommissionTitle::try_new) —
+/// is a `422` (`invalid_request`).
 async fn create_commission(
     State(state): State<AppState>,
     session: Session,
@@ -74,10 +79,12 @@ async fn create_commission(
         .flatten()
         .ok_or_else(Problem::not_authenticated)?;
 
-    let Json(body) = body.map_err(|_| Problem::invalid_request("Title needed."))?;
+    let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
+    let title = CommissionTitle::try_new(body.title)
+        .map_err(|e| Problem::invalid_request(e.to_string()))?;
 
     let now = Utc::now();
-    let commission = Commission::create(body.title, user.id, now, body.deadline);
+    let commission = Commission::create(title, user.id, now, body.deadline);
 
     transaction(&*state.database, |uow| {
         Box::pin(async move { uow.commissions().create(&commission).await })
