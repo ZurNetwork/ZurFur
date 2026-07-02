@@ -1178,6 +1178,50 @@ async fn change_handle_rejects_a_taken_handle() {
     );
 }
 
+// Optimistic concurrency (Copilot review): `old` is a precondition, not just an
+// observation. A change against a stale `old` (not the row's current handle) matches no
+// row, fails, and — being one unit of work — records NO audit entry, so the log can
+// never capture a wrong `old_handle` that would leave the truly vacated handle
+// un-quarantined. The account keeps its real handle.
+#[tokio::test]
+async fn change_handle_rejects_a_stale_old_handle() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:stale-o").await;
+
+    let current = Handle::try_new("stale-current.zurfur.app").unwrap();
+    let (account, membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:stale-acct".to_string()),
+        current.clone(),
+        AccountName::try_new("Stale").unwrap(),
+        Utc::now(),
+    );
+    create(&pool, &account, &membership).await;
+
+    // A caller that observed a DIFFERENT (stale) old handle tries to change to a new one.
+    let stale = Handle::try_new("stale-wrong.zurfur.app").unwrap();
+    let new = Handle::try_new("stale-new.zurfur.app").unwrap();
+    let before = Utc::now();
+    let err = try_change_handle(&pool, account.id, &stale, &new, Utc::now())
+        .await
+        .expect_err("a change against a stale old handle is rejected");
+    assert!(
+        err.downcast_ref::<HandleTaken>().is_none(),
+        "a stale precondition is not a HandleTaken — it's a rolled-back no-change"
+    );
+    // Nothing changed: the account keeps its real handle and no audit row was written.
+    assert_eq!(
+        find_account(&pool, account.id).await.expect("live").handle,
+        current,
+        "the account keeps its actual handle after a rejected stale change"
+    );
+    assert_eq!(
+        count_changes(&pool, account.id, before).await,
+        0,
+        "no audit row is recorded for a rejected stale change"
+    );
+}
+
 // The quarantine read: a vacated handle is reserved to the account that left it —
 // visible to *others* (§4), excluded for that account itself (reclaimable), and no
 // longer matching once the window has passed.

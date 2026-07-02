@@ -381,15 +381,18 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// separate retryable step the caller runs *first*, never in this transaction (DD
     /// §7; no cross-store dual write).
     ///
-    /// The `UPDATE` guards `deleted_at IS NULL` (a live account only) and must touch
-    /// exactly one row, else the whole unit rolls back — so a soft-deleted or vanished
-    /// account never records a phantom change. A collision with the global
-    /// `accounts_handle_key` index (a handle held by another account, live **or**
-    /// tombstoned — DD 23003138) surfaces as [`HandleTaken`] so the handler answers
-    /// `409`, mirroring [`create`](PgAccountWrites::create). Changing to the account's
-    /// *own* current handle is a caller-side no-op rejected before this is reached, so
-    /// it never hits the index. `old` is the vacated handle as the handler observed it;
-    /// `at` is the change instant.
+    /// `old` is an **optimistic-concurrency precondition**, not just an observation: the
+    /// `UPDATE` guards `deleted_at IS NULL` (a live account) **and** `handle = old`, so
+    /// it applies only if the row *still* holds the handle the caller saw. It must touch
+    /// exactly one row, else the whole unit rolls back — a soft-deleted/vanished account,
+    /// or one whose handle changed under a concurrent rename, records **no** audit row,
+    /// so the log can never capture a stale `old_handle` (which would leave the truly
+    /// vacated handle un-quarantined). A collision with the global `accounts_handle_key`
+    /// index (a handle held by another account, live **or** tombstoned — DD 23003138)
+    /// surfaces as [`HandleTaken`] so the handler answers `409`, mirroring
+    /// [`create`](PgAccountWrites::create). Changing to the account's *own* current
+    /// handle is a caller-side no-op rejected before this is reached, so it never hits
+    /// the index. `at` is the change instant.
     async fn change_handle(
         &mut self,
         account: AccountId,
@@ -401,11 +404,12 @@ impl AccountWrites for PgAccountWrites<'_> {
             r#"
             UPDATE accounts
             SET handle = $1, updated_at = $2
-            WHERE id = $3 AND deleted_at IS NULL
+            WHERE id = $3 AND deleted_at IS NULL AND handle = $4
             "#,
             new.as_str(),
             at,
             *account,
+            old.as_str(),
         )
         .execute(&mut *self.conn)
         .await;
@@ -418,12 +422,13 @@ impl AccountWrites for PgAccountWrites<'_> {
             return Err(anyhow::Error::new(HandleTaken));
         }
         let updated = updated?;
-        // The account was loaded live by the handler moments ago; a zero-row update
-        // means it was soft-deleted/removed since. Fail so the unit rolls back rather
-        // than record a change for a handle that didn't move.
+        // Zero rows means the precondition failed: the account was soft-deleted/removed,
+        // or its handle changed under a concurrent rename since the handler loaded it.
+        // Fail so the unit rolls back rather than audit a change against a stale `old`.
         if updated.rows_affected() != 1 {
             anyhow::bail!(
-                "change_handle: account {} is not a live account; nothing changed",
+                "change_handle: account {} is not a live account still holding the expected \
+                 handle; nothing changed (concurrent change or removal)",
                 *account
             );
         }

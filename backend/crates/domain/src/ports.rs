@@ -310,10 +310,13 @@ pub trait AccountWrites: Send {
     /// retryable step the caller runs **first**, never inside this transaction (DD §7; no
     /// cross-store dual write). A collision with the global `accounts_handle_key` index —
     /// a handle held by another account, live **or** tombstoned (DD 23003138) — fails
-    /// with [`HandleTaken`] so the caller can answer `409`, exactly as [`create`] does; a
-    /// soft-deleted or vanished account fails so no phantom change is recorded. `old` is
-    /// the vacated handle as the caller observed it, `at` the change instant. Changing to
-    /// the account's own current handle is a caller-side no-op rejected before this is
+    /// with [`HandleTaken`] so the caller can answer `409`, exactly as [`create`] does.
+    /// `old` is an **optimistic-concurrency precondition**: the change applies only if the
+    /// account is live and *still* holds `old` — a soft-deleted/vanished account, or one
+    /// whose handle moved under a concurrent rename, fails and records **no** audit row,
+    /// so the log can never capture a stale `old_handle` (which would leave the truly
+    /// vacated handle un-quarantined). `at` is the change instant. Changing to the
+    /// account's own current handle is a caller-side no-op rejected before this is
     /// reached. A private-side write, never a cross-store dual write.
     ///
     /// [`create`]: AccountWrites::create

@@ -741,11 +741,15 @@ impl AccountWrites for MemAccountWrites {
 
     /// Repoints the stored account's handle to `new` and appends the change to the
     /// audit log — the in-memory mirror of the pg adapter's single transaction (ZMVP-46).
-    /// Global handle uniqueness (live *or* tombstoned, minus the account itself) is
-    /// enforced the same way as [`create`](MemAccountWrites::create): a collision with a
-    /// *different* account fails with [`HandleTaken`] (→ 409). A soft-deleted or absent
-    /// account fails rather than record a phantom change. Changing to the account's own
-    /// current handle is a caller-side no-op rejected before this is reached.
+    /// `old` is an **optimistic-concurrency precondition** (matching the pg `handle =
+    /// old` guard): the change applies only if the account is live and *still* holds
+    /// `old`, else it fails and records no audit row — so a stale observation can't log a
+    /// wrong `old_handle` (which would leave the truly vacated handle un-quarantined).
+    /// The precondition is checked *before* uniqueness, mirroring the pg `UPDATE` (whose
+    /// `WHERE handle = old` short-circuits ahead of the index). Global handle uniqueness
+    /// across every OTHER account (live *or* tombstoned) then fails a collision with
+    /// [`HandleTaken`] (→ 409), like [`create`](MemAccountWrites::create). Changing to
+    /// the account's own current handle is a caller-side no-op rejected before this.
     async fn change_handle(
         &mut self,
         account: AccountId,
@@ -759,6 +763,20 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend accounts mutex poisoned");
 
+        // Precondition first (mirrors pg's `WHERE ... AND handle = old`, which gates the
+        // row before the unique index is touched): the account must be live and still
+        // hold `old`, else we roll back without auditing a stale change.
+        if !accounts
+            .get(&account)
+            .is_some_and(|stored| stored.deleted_at.is_none() && &stored.handle == old)
+        {
+            anyhow::bail!(
+                "change_handle: account {} is not a live account still holding the expected \
+                 handle; nothing changed (concurrent change or removal)",
+                *account
+            );
+        }
+
         // Global handle uniqueness across every OTHER account (live or tombstoned),
         // mirroring the pg `accounts_handle_key` index; the account's own row is exempt
         // (a no-op self-rename never reaches here).
@@ -769,18 +787,11 @@ impl AccountWrites for MemAccountWrites {
             return Err(anyhow::Error::new(HandleTaken));
         }
 
-        match accounts.get_mut(&account) {
-            Some(stored) if stored.deleted_at.is_none() => {
-                stored.handle = new.clone();
-                stored.updated_at = at;
-            }
-            _ => {
-                anyhow::bail!(
-                    "change_handle: account {} is not a live account; nothing changed",
-                    *account
-                );
-            }
-        }
+        let stored = accounts
+            .get_mut(&account)
+            .expect("account presence checked by the precondition above");
+        stored.handle = new.clone();
+        stored.updated_at = at;
         drop(accounts);
 
         self.0

@@ -215,8 +215,18 @@ fn handle_quarantine_window() -> Duration {
 /// rather than a brought (BYO) domain. Quarantine reserves this namespace only, and v1
 /// ships the *change* flow for it only — a BYO target needs bidirectional
 /// verify-before-commit that isn't built yet (DD `27852802` §4/§6).
+///
+/// `handle.as_str()` is already normalized (lowercase, no trailing dot) by
+/// [`Handle::try_new`]; the configured `handle_domain` is not, so we normalize it the
+/// same way before comparing — otherwise a mixed-case or trailing-dot domain (via
+/// config/env) would misclassify a Zurfur handle as BYO and silently disable both the
+/// quarantine and the change flow. Mirrors `handle_from_host` in `routes/wellknown.rs`.
 fn in_zurfur_namespace(handle: &Handle, handle_domain: &str) -> bool {
-    handle.as_str().ends_with(&format!(".{handle_domain}"))
+    let domain = handle_domain
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    handle.as_str().ends_with(&format!(".{domain}"))
 }
 
 /// `200 OK` carrying a bare JSON resource body (success bodies are not enveloped;
