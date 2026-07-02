@@ -8,6 +8,7 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
+use crate::datetime::DateTimeUtc;
 use crate::elements::{
     account::{Account, AccountId},
     account_keys::AccountKeys,
@@ -229,6 +230,33 @@ pub trait AccountStore: Send + Sync {
     /// The `handle` is already normalized (it is a validated [`Handle`]), so this is
     /// an exact-match lookup, not a normalizing one.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>>;
+
+    /// How many handle changes `account` has recorded on or after `since` — the count
+    /// the caller weighs against the light anti-abuse rate limit before allowing
+    /// another change (DD "Account Handle Change Flow" `27852802` §3). A pool-backed
+    /// read over the `account_handle_changes` audit log; the limit and the window are
+    /// the caller's policy (it passes `since = now − window`).
+    async fn count_handle_changes_since(
+        &self,
+        account: AccountId,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<i64>;
+
+    /// Whether `handle` is currently **quarantined to a different account** — vacated
+    /// by some *other* account on or after `since` (the window floor `now − quarantine
+    /// window` the caller computes) and so held reserved to whoever left it (DD
+    /// `27852802` §4). `excluding` is the account asking, so it can *reclaim* its own
+    /// just-vacated handle: a row whose `account_id` equals `excluding` never counts.
+    /// Within the window a given `*.zurfur.app` handle maps to at most one prior holder,
+    /// so a hit unambiguously means "reserved to someone else." Backs the availability
+    /// check at both claim sites (founding and change). BYO handles are never
+    /// quarantined, so callers only ask this for a Zurfur-namespace handle.
+    async fn handle_reserved_for_other(
+        &self,
+        handle: &Handle,
+        excluding: Option<AccountId>,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<bool>;
 }
 
 /// The error a [`AccountWrites::create`] failure carries (as the source of its
@@ -273,6 +301,33 @@ pub trait AccountWrites: Send {
     /// DD `23003138`) fails with [`HandleTaken`] as the error source, so the caller
     /// can map it to a `409`; any other failure is an opaque store error.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()>;
+
+    /// Change an account's handle: repoint `accounts.handle` to `new` **and** append the
+    /// change to the audit log — the record that both rate-limits future changes and
+    /// quarantines the vacated `old` handle (DD "Account Handle Change Flow" `27852802`
+    /// §3/§4) — atomically on the open transaction. The public half (re-pointing the DID
+    /// document's `alsoKnownAs` via [`DidMinter::update_handle`]) is a **separate**
+    /// retryable step the caller runs **first**, never inside this transaction (DD §7; no
+    /// cross-store dual write). A collision with the global `accounts_handle_key` index —
+    /// a handle held by another account, live **or** tombstoned (DD 23003138) — fails
+    /// with [`HandleTaken`] so the caller can answer `409`, exactly as [`create`] does.
+    /// `old` is an **optimistic-concurrency precondition**: the change applies only if the
+    /// account is live and *still* holds `old` — a soft-deleted/vanished account, or one
+    /// whose handle moved under a concurrent rename, fails and records **no** audit row,
+    /// so the log can never capture a stale `old_handle` (which would leave the truly
+    /// vacated handle un-quarantined). `at` is the change instant. Changing to the
+    /// account's own current handle is a caller-side no-op rejected before this is
+    /// reached. A private-side write, never a cross-store dual write.
+    ///
+    /// [`create`]: AccountWrites::create
+    /// [`DidMinter::update_handle`]: DidMinter::update_handle
+    async fn change_handle(
+        &mut self,
+        account: AccountId,
+        old: &Handle,
+        new: &Handle,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()>;
 
     /// Set the role a user holds in an account, seating them if they aren't yet a
     /// member. On this platform granting a role *is* how a user joins an account
