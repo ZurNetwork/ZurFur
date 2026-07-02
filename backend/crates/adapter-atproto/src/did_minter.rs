@@ -24,7 +24,7 @@ use domain::{
 use rand::Rng;
 use std::sync::Arc;
 
-use crate::plc::{GenesisOperation, TombstoneOperation};
+use crate::plc::{PlcOperation, TombstoneOperation};
 use crate::plc_directory::PlcDirectory;
 
 /// The real [`DidMinter`]: mints a genuine, custody-backed `did:plc`.
@@ -90,7 +90,7 @@ impl DidMinter for RealDidMinter {
         // operational second (index 1). Index 0 is reserved above operational for a
         // future user recovery key (ZMVP-52) — DD/26804226 B2.
         let rotation_keys = vec![cold.did(), operational.did()];
-        let op = GenesisOperation::identity_only(rotation_keys, signing.did(), handle.as_str());
+        let op = PlcOperation::identity_only(rotation_keys, signing.did(), handle.as_str());
 
         // Sign the no-`sig` DAG-CBOR with the operational key. atrium-crypto's
         // secp256k1 `sign` already emits atproto's canonical form (ECDSA-SHA256,
@@ -187,6 +187,126 @@ impl DidMinter for RealDidMinter {
 
         Ok(())
     }
+
+    /// Re-point `did`'s `alsoKnownAs` to `handle` (ZMVP-50): sign a `plc_operation`
+    /// with the account's **operational** rotation key, chaining onto the DID's most
+    /// recent logged operation.
+    ///
+    /// Steps: (1) read the DID's latest logged op (our own log, never the directory)
+    /// — its `cid` is the update's `prev`, and its stored JSON supplies the DID
+    /// document's **public** fields (`rotationKeys`/`verificationMethods`) carried
+    /// forward verbatim, with only `alsoKnownAs` REPLACED (DD 27852802 §5); (2) load
+    /// custody and import **only the operational key** — the sole key an update
+    /// needs, since the rest of the document is public and read from the prior op
+    /// (F2: the cold-recovery/signing private keys are never decrypted into a
+    /// keypair for a routine update, matching [`tombstone`](Self::tombstone)); (3)
+    /// sign the update's no-`sig` DAG-CBOR (ECDSA-SHA256, low-S, base64url no-pad —
+    /// the same procedure as genesis); (4) **submit** it to the directory (public);
+    /// then (5) **record** it in the log (private). Submit-before-record, exactly
+    /// like `tombstone`: a failed submit never advances the local chain, so a retry
+    /// re-reads the same `prev` and re-signs the *same* deterministic operation.
+    /// Steps (4) and (5) are separate writes across the boundary — never one
+    /// transaction.
+    ///
+    /// **Idempotent by content-address; the chain never forks.** An identical replay
+    /// produces the same CID (deterministic signing): if the append hits the log's
+    /// `UNIQUE(cid)` rejection *and* the log's latest op already **is** this exact
+    /// operation, the replay is benign — treated as success. A *different* concurrent
+    /// update chaining the same `prev` is rejected by `UNIQUE(did, prev)` (F1); the
+    /// log's tip is then not our op, so the error propagates and the caller's retry
+    /// re-reads the new tip and chains onto it — serializing concurrent writers into
+    /// one linear chain rather than forking it. Fails (retryably) if the DID has no
+    /// custody keys or no logged operation to chain onto.
+    async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
+        // (1) The DID's latest op: its `cid` is our `prev`, and its stored JSON holds
+        // the public document fields we preserve unchanged (never re-derived from the
+        // custodied private keys — F2).
+        let prior = self.op_log.latest_op(did).await?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no prior PLC operation to chain an update onto for {}",
+                did.as_str()
+            )
+        })?;
+        let prior_json: serde_json::Value = serde_json::from_str(&prior.operation_json)?;
+        let rotation_keys = string_array(&prior_json, "rotationKeys")?;
+        let atproto_signing_did = prior_json["verificationMethods"]["atproto"]
+            .as_str()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "prior op for {} has no verificationMethods.atproto",
+                    did.as_str()
+                )
+            })?
+            .to_string();
+
+        // (2) Only the operational key is decrypted into a keypair — it is the signer;
+        // the cold-recovery and signing keys stay sealed for a routine update.
+        let keys = self
+            .key_store
+            .get(did)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("no custody keys to update {}", did.as_str()))?;
+        let operational = Secp256k1Keypair::import(keys.operational.expose())?;
+
+        // (3) Build the update — same shape as the prior op, `alsoKnownAs` REPLACED —
+        // and sign it with the operational key.
+        let op = PlcOperation::update_handle(
+            rotation_keys,
+            atproto_signing_did,
+            handle.as_str(),
+            prior.cid.clone(),
+        );
+        let sig_bytes = operational.sign(&op.signing_bytes()?)?;
+        let signed = op.into_signed(URL_SAFE_NO_PAD.encode(&sig_bytes));
+        let cid = signed.cid()?;
+        let op_json = signed.to_json()?;
+
+        // (4) Public submission FIRST — a failed submit never advances our local
+        // chain; the retry re-reads the same `prev` and re-signs the same op.
+        self.directory.submit(did.as_str(), &op_json).await?;
+        // (5) Private write — record the now-submitted update as the DID's latest op.
+        let append = self
+            .op_log
+            .append(&PlcOperationRecord {
+                did: did.clone(),
+                cid: cid.clone(),
+                op_type: "plc_operation".to_string(),
+                prev: Some(prior.cid),
+                operation_json: op_json.to_string(),
+            })
+            .await;
+        if let Err(err) = append {
+            // The append was rejected — either a benign identical replay
+            // (`UNIQUE(cid)`) or a fork attempt against an already-used `prev`
+            // (`UNIQUE(did, prev)`, F1). It is benign ONLY if the log's tip already
+            // IS our exact op (a concurrent identical writer landed it); then the
+            // work is done, so surface success and blind retries stay safe. Otherwise
+            // the tip advanced to a different op — propagate so the caller retries
+            // onto the new tip (linear serialization, no fork).
+            if self.op_log.latest_cid(did).await?.as_deref() == Some(cid.as_str()) {
+                return Ok(());
+            }
+            return Err(err);
+        }
+        Ok(())
+    }
+}
+
+/// Extract a JSON string array as `Vec<String>`, erroring if the field is missing,
+/// not an array, or holds a non-string element. Used to carry a prior `did:plc`
+/// op's public `rotationKeys` forward into an update without touching custody keys.
+fn string_array(value: &serde_json::Value, field: &str) -> anyhow::Result<Vec<String>> {
+    value[field]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("prior op field `{field}` is missing or not an array"))?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("prior op field `{field}` has a non-string element"))
+        })
+        .collect()
 }
 
 /// `did:plc` base32 alphabet (RFC 4648, lowercase, no padding). A real account DID
@@ -227,6 +347,12 @@ impl DidMinter for StubDidMinter {
     /// No-op: the stub builds and registers no operation, so there is nothing to
     /// tombstone. Present to satisfy the port.
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// No-op: the stub registered no operation and custodies no keys, so there is
+    /// no `alsoKnownAs` to re-point. Present to satisfy the port.
+    async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -354,7 +480,7 @@ mod tests {
         let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
         let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
         let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
-        let op = GenesisOperation::identity_only(
+        let op = PlcOperation::identity_only(
             vec![cold.did(), operational.did()],
             signing.did(),
             h.as_str(),
@@ -394,7 +520,7 @@ mod tests {
         let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
         let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
         let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
-        let op = GenesisOperation::identity_only(
+        let op = PlcOperation::identity_only(
             vec![cold.did(), operational.did()],
             signing.did(),
             h.as_str(),
@@ -544,5 +670,582 @@ mod tests {
         let s = Signature::from_slice(&sig_bytes).unwrap();
         assert!(s.normalize_s().is_none(), "signature must already be low-S");
         verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
+    }
+
+    fn new_handle() -> Handle {
+        Handle::try_new("bob.zurfur.app").unwrap()
+    }
+
+    /// The fields of one appended record, as [`RecordingOpLog`] stores them.
+    #[derive(Clone)]
+    struct StoredOp {
+        did: String,
+        cid: String,
+        op_type: String,
+        prev: Option<String>,
+        operation_json: String,
+    }
+
+    /// An op log keeping FULL records — so tests can assert the `op_type`/`prev` the
+    /// minter appended and serve `latest_op`. Mirrors the pg adapter's two integrity
+    /// indexes: rejects a duplicate `cid` (`UNIQUE(cid)`) and a second non-genesis op
+    /// chaining an already-used `prev` (`UNIQUE(did, prev)`, F1).
+    #[derive(Clone, Default)]
+    struct RecordingOpLog {
+        /// Appended records, in append order.
+        records: Arc<Mutex<Vec<StoredOp>>>,
+    }
+    #[async_trait]
+    impl PlcOperationLog for RecordingOpLog {
+        async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
+            let mut records = self.records.lock().unwrap();
+            if records.iter().any(|stored| stored.cid == record.cid) {
+                anyhow::bail!("plc operation {} already logged", record.cid);
+            }
+            if let Some(prev) = &record.prev
+                && records.iter().any(|stored| {
+                    stored.did == record.did.as_str() && stored.prev.as_deref() == Some(prev)
+                })
+            {
+                anyhow::bail!("plc operation already chains onto {prev} (chain would fork)");
+            }
+            records.push(StoredOp {
+                did: record.did.to_string(),
+                cid: record.cid.clone(),
+                op_type: record.op_type.clone(),
+                prev: record.prev.clone(),
+                operation_json: record.operation_json.clone(),
+            });
+            Ok(())
+        }
+        async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
+            Ok(self
+                .records
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|stored| stored.did == did.as_str())
+                .map(|stored| stored.cid.clone()))
+        }
+        async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
+            Ok(self
+                .records
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|stored| stored.did == did.as_str())
+                .map(|stored| PlcOperationRecord {
+                    did: did.clone(),
+                    cid: stored.cid.clone(),
+                    op_type: stored.op_type.clone(),
+                    prev: stored.prev.clone(),
+                    operation_json: stored.operation_json.clone(),
+                }))
+        }
+    }
+
+    /// An op log that simulates losing the append race ONCE: while `race_pending`,
+    /// the next `append` first lands the IDENTICAL record — as a concurrent retry
+    /// of the same deterministic update would — so the minter's own append then
+    /// hits the duplicate-`cid` rejection (the mem mirror of pg's `UNIQUE(cid)`).
+    struct RacingOpLog {
+        inner: RecordingOpLog,
+        race_pending: AtomicBool,
+    }
+    #[async_trait]
+    impl PlcOperationLog for RacingOpLog {
+        async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
+            if self.race_pending.swap(false, Ordering::SeqCst) {
+                self.inner.append(record).await?;
+            }
+            self.inner.append(record).await
+        }
+        async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
+            self.inner.latest_cid(did).await
+        }
+        async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
+            self.inner.latest_op(did).await
+        }
+    }
+
+    /// An op log that simulates a DIFFERENT concurrent writer winning the append
+    /// race: on the first `append`, it first lands a pre-seeded `winner` op chaining
+    /// the SAME `prev`, so the minter's own append then hits the `UNIQUE(did, prev)`
+    /// fork guard (F1). Used to prove `update_handle` propagates the rejection (no
+    /// silent fork) and that a retry serializes onto the new tip.
+    struct ForkRaceOpLog {
+        inner: RecordingOpLog,
+        winner: Mutex<Option<PlcOperationRecord>>,
+    }
+    #[async_trait]
+    impl PlcOperationLog for ForkRaceOpLog {
+        async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
+            // Take the winner out of the lock BEFORE awaiting (never hold a std Mutex
+            // guard across `.await`).
+            let winner = self.winner.lock().unwrap().take();
+            if let Some(winner) = winner {
+                self.inner.append(&winner).await?;
+            }
+            self.inner.append(record).await
+        }
+        async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
+            self.inner.latest_cid(did).await
+        }
+        async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
+            self.inner.latest_op(did).await
+        }
+    }
+
+    // The update chains onto the DID's latest LOGGED op (never fetched from the
+    // directory): its `prev` is the genesis CID, it REPLACES `alsoKnownAs` with the
+    // new handle, and the log advances so the update is now the DID's latest op.
+    #[tokio::test]
+    async fn update_chains_onto_latest_logged_op() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let last = Arc::new(Mutex::new(None));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        minter.update_handle(&did, &new_handle()).await.unwrap();
+
+        let submitted = last
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("an update was submitted");
+        assert_eq!(submitted["type"], "plc_operation");
+        assert_eq!(
+            submitted["prev"], genesis_cid,
+            "the update chains onto the DID's latest logged op"
+        );
+        assert_eq!(
+            submitted["alsoKnownAs"],
+            serde_json::json!(["at://bob.zurfur.app"]),
+            "alsoKnownAs is REPLACED with the new handle"
+        );
+
+        let latest = op_log.latest_cid(&did).await.unwrap().unwrap();
+        assert_ne!(latest, genesis_cid, "the log's latest op is now the update");
+    }
+
+    // The update is signed by the OPERATIONAL rotation key (`rotationKeys[1]`) —
+    // a valid, verifiable, low-S signature over the update's no-`sig` DAG-CBOR.
+    // We rebuild the exact operation from the stored keys and check the submitted
+    // signature against it, mirroring the genesis signature test.
+    #[tokio::test]
+    async fn update_is_signed_by_the_operational_key() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let last = Arc::new(Mutex::new(None));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        minter.update_handle(&did, &new_handle()).await.unwrap();
+        let submitted = last.lock().unwrap().clone().unwrap();
+
+        // Rebuild the exact signed-over bytes from the custodied keys.
+        let keys = store.get(&did).await.unwrap().unwrap();
+        let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
+        let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
+        let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
+        let signing_bytes = PlcOperation::update_handle(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            new_handle().as_str(),
+            genesis_cid,
+        )
+        .signing_bytes()
+        .unwrap();
+
+        let sig_bytes = URL_SAFE_NO_PAD
+            .decode(submitted["sig"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(sig_bytes.len(), 64, "compact 64-byte r‖s");
+        let s = Signature::from_slice(&sig_bytes).unwrap();
+        assert!(s.normalize_s().is_none(), "signature must already be low-S");
+        verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
+    }
+
+    // The update is durably logged: `update_handle` appends a `plc_operation`
+    // record whose `prev` is the genesis CID and whose `cid` is exactly the
+    // deterministic content id of the signed update.
+    #[tokio::test]
+    async fn update_appends_a_plc_operation_record() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(RecordingOpLog::default());
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), Box::new(NoopPlcDirectory));
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        minter.update_handle(&did, &new_handle()).await.unwrap();
+
+        // Recompute the expected CID from the custodied keys (signing is
+        // deterministic, so this is the exact op the minter signed).
+        let keys = store.get(&did).await.unwrap().unwrap();
+        let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
+        let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
+        let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
+        let op = PlcOperation::update_handle(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            new_handle().as_str(),
+            genesis_cid.clone(),
+        );
+        let sig_bytes = operational.sign(&op.signing_bytes().unwrap()).unwrap();
+        let expected_cid = op
+            .into_signed(URL_SAFE_NO_PAD.encode(&sig_bytes))
+            .cid()
+            .unwrap();
+
+        let records = op_log.records.lock().unwrap();
+        assert_eq!(records.len(), 2, "genesis + the update");
+        let update = &records[1];
+        assert_eq!(update.did, did.as_str());
+        assert_eq!(update.op_type, "plc_operation");
+        assert_eq!(update.prev.as_deref(), Some(genesis_cid.as_str()));
+        assert_eq!(
+            update.cid, expected_cid,
+            "the logged cid is the signed op's content id"
+        );
+    }
+
+    // IDEMPOTENT REPLAY: signing is deterministic, so an identical update (same
+    // prev, handle, keys) has the same CID. If the identical op already landed —
+    // here a simulated concurrent retry that wins the append race — the
+    // duplicate-cid rejection is treated as SUCCESS (the op IS logged), so the
+    // caller can retry blindly: no error, and no second row.
+    #[tokio::test]
+    async fn replaying_an_identical_update_is_idempotent() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(RacingOpLog {
+            inner: RecordingOpLog::default(),
+            race_pending: AtomicBool::new(false),
+        });
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), Box::new(NoopPlcDirectory));
+
+        let did = minter.mint(&handle()).await.unwrap();
+
+        // The identical op lands first (racing retry); our append hits UNIQUE(cid).
+        op_log.race_pending.store(true, Ordering::SeqCst);
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("a benign replay (identical op already logged) is success, not an error");
+
+        let records = op_log.inner.records.lock().unwrap();
+        assert_eq!(
+            records.len(),
+            2,
+            "genesis + exactly ONE update row — the replay appended nothing"
+        );
+    }
+
+    // RETRYABLE FAILURE: a failed directory submission must not advance the local
+    // chain (submit-before-record, like the tombstone) — so a clean retry re-reads
+    // the SAME `prev`, re-signs the SAME deterministic op, and lands it once.
+    #[tokio::test]
+    async fn update_survives_directory_submission_failure_retryably() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), Box::new(NoopPlcDirectory));
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        // First attempt: the directory fails; nothing may be logged.
+        let failing = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(FailingPlcDirectory {
+                seen_did: Arc::new(Mutex::new(None)),
+            }),
+        );
+        assert!(
+            failing.update_handle(&did, &new_handle()).await.is_err(),
+            "update fails when submission fails"
+        );
+        assert_eq!(
+            op_log.latest_cid(&did).await.unwrap().unwrap(),
+            genesis_cid,
+            "a failed submit must not advance the local chain (no orphaned op)"
+        );
+
+        // Retry with a healthy directory: same prev → the same op, landed once.
+        let last = Arc::new(Mutex::new(None));
+        let retrying = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+        retrying
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("the retry succeeds");
+
+        let submitted = last.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            submitted["prev"], genesis_cid,
+            "the retry chains onto the same prev the failed attempt read"
+        );
+        assert_ne!(
+            op_log.latest_cid(&did).await.unwrap().unwrap(),
+            genesis_cid,
+            "the retried update is now the DID's latest logged op"
+        );
+    }
+
+    // INITIAL-MAINTAIN: calling update_handle again after a fully-landed update is
+    // NOT a replay — `prev` has advanced, so it signs a NEW op chaining onto the
+    // previous update, re-asserting the current handle (the briefing's
+    // "initial-maintain" use; DD 27852802).
+    #[tokio::test]
+    async fn re_asserting_the_current_handle_chains_a_new_op() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let last = Arc::new(Mutex::new(None));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+
+        let did = minter.mint(&handle()).await.unwrap();
+        minter.update_handle(&did, &new_handle()).await.unwrap();
+        let first_update_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("re-asserting the current handle is valid");
+
+        let submitted = last.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            submitted["prev"], first_update_cid,
+            "the re-assertion chains onto the previous update"
+        );
+        assert_ne!(
+            op_log.latest_cid(&did).await.unwrap().unwrap(),
+            first_update_cid,
+            "the re-assertion is a new op in the chain"
+        );
+    }
+
+    // update_handle fails retryably when the DID has no custody keys or no logged
+    // op to chain onto — never signs an unchainable or unsigned-able update.
+    #[tokio::test]
+    async fn update_fails_without_custody_or_a_prior_op() {
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        let minter = RealDidMinter::new(store.clone(), op_log.clone(), Box::new(NoopPlcDirectory));
+
+        // Unknown DID: no keys, no ops.
+        let unknown = Did::new("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa".to_string());
+        assert!(minter.update_handle(&unknown, &new_handle()).await.is_err());
+    }
+
+    // NO CHAIN FORK (F1): two updates cannot both chain the same `prev`. When a
+    // DIFFERENT concurrent writer lands its op onto the DID's tip first, our append
+    // hits `UNIQUE(did, prev)`; the tip is not our op, so `update_handle` propagates
+    // the error (never silently forks), and a retry re-reads the NEW tip and chains
+    // onto it — serializing the two writers into ONE linear chain.
+    #[tokio::test]
+    async fn a_forking_update_is_rejected_and_the_chain_stays_linear() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let store = Arc::new(MemKeyStore::new());
+        let op_log = Arc::new(ForkRaceOpLog {
+            inner: RecordingOpLog::default(),
+            winner: Mutex::new(None),
+        });
+        let last = Arc::new(Mutex::new(None));
+        let minter = RealDidMinter::new(
+            store.clone(),
+            op_log.clone(),
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis_cid = op_log.latest_cid(&did).await.unwrap().unwrap();
+
+        // Build a DIFFERENT concurrent winner (a change to a THIRD handle) chaining
+        // the same genesis `prev`, and arm it to land first on the next append.
+        let keys = store.get(&did).await.unwrap().unwrap();
+        let operational = Secp256k1Keypair::import(keys.operational.expose()).unwrap();
+        let cold = Secp256k1Keypair::import(keys.cold_recovery.expose()).unwrap();
+        let signing = Secp256k1Keypair::import(keys.signing.expose()).unwrap();
+        let winner_op = PlcOperation::update_handle(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            "carol.zurfur.app",
+            genesis_cid.clone(),
+        );
+        let winner_sig = operational
+            .sign(&winner_op.signing_bytes().unwrap())
+            .unwrap();
+        let winner_signed = winner_op.into_signed(URL_SAFE_NO_PAD.encode(&winner_sig));
+        let winner_cid = winner_signed.cid().unwrap();
+        let winner_json = winner_signed.to_json().unwrap();
+        *op_log.winner.lock().unwrap() = Some(PlcOperationRecord {
+            did: did.clone(),
+            cid: winner_cid.clone(),
+            op_type: "plc_operation".to_string(),
+            prev: Some(genesis_cid.clone()),
+            operation_json: winner_json.to_string(),
+        });
+
+        // Our update reads prev=genesis, but the winner lands first chaining genesis;
+        // our append hits UNIQUE(did, prev) and the error propagates (no silent fork).
+        assert!(
+            minter.update_handle(&did, &new_handle()).await.is_err(),
+            "a fork (a second op chaining the same prev) is rejected, not accepted"
+        );
+        {
+            let records = op_log.inner.records.lock().unwrap();
+            assert_eq!(
+                records.len(),
+                2,
+                "genesis + the winner — no forked third op"
+            );
+            assert_eq!(records[1].cid, winner_cid);
+        }
+        assert_eq!(
+            op_log.latest_cid(&did).await.unwrap().unwrap(),
+            winner_cid,
+            "the winner is the DID's tip"
+        );
+
+        // Retry: now reads prev=winner and chains onto it — one linear chain.
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("the retry serializes onto the new tip");
+        assert_eq!(
+            last.lock().unwrap().clone().unwrap()["prev"],
+            winner_cid,
+            "the retry chains onto the winner, not the stale genesis"
+        );
+        assert_eq!(
+            op_log.inner.records.lock().unwrap().len(),
+            3,
+            "genesis → winner → the retried update: one linear chain, never a fork"
+        );
+    }
+
+    // KEY HYGIENE (F2): a routine update needs ONLY the operational key. Here custody
+    // holds a valid operational key but GARBAGE (all-zero, un-importable) cold-recovery
+    // and signing scalars; the update still succeeds — proving those private keys are
+    // never imported — by carrying the public rotationKeys/verificationMethods forward
+    // from the logged op, and signs with the operational key alone.
+    #[tokio::test]
+    async fn update_uses_only_the_operational_key_carrying_public_fields_from_the_log() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        // A genesis op signed with REAL keys, logged as the DID's only op.
+        let cold = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let operational = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let signing = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let genesis = PlcOperation::identity_only(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            "alice.zurfur.app",
+        );
+        let g_sig = operational.sign(&genesis.signing_bytes().unwrap()).unwrap();
+        let genesis_signed = genesis.into_signed(URL_SAFE_NO_PAD.encode(&g_sig));
+        let did = Did::new(genesis_signed.did().unwrap());
+        let genesis_cid = genesis_signed.cid().unwrap();
+        let genesis_json = genesis_signed.to_json().unwrap();
+
+        // Custody: real operational key, but cold-recovery and signing are GARBAGE —
+        // all-zero scalars that would fail `Secp256k1Keypair::import`.
+        let store = Arc::new(MemKeyStore::new());
+        store
+            .put(
+                &did,
+                &AccountKeys {
+                    cold_recovery: SecretKey::new(vec![0u8; 32]),
+                    operational: SecretKey::new(operational.export()),
+                    signing: SecretKey::new(vec![0u8; 32]),
+                },
+            )
+            .await
+            .unwrap();
+        let op_log = Arc::new(MemPlcOperationLog::new());
+        op_log
+            .append(&PlcOperationRecord {
+                did: did.clone(),
+                cid: genesis_cid.clone(),
+                op_type: "plc_operation".to_string(),
+                prev: None,
+                operation_json: genesis_json.to_string(),
+            })
+            .await
+            .unwrap();
+
+        let last = Arc::new(Mutex::new(None));
+        let minter = RealDidMinter::new(
+            store,
+            op_log,
+            Box::new(CapturingPlcDirectory { last: last.clone() }),
+        );
+
+        // Succeeds despite un-importable cold/signing custody — they are never touched.
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("update needs only the operational key; the rest is public, read from the log");
+
+        let submitted = last.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            submitted["rotationKeys"],
+            serde_json::json!([cold.did(), operational.did()]),
+            "rotationKeys carried forward from the logged op, not re-derived from custody"
+        );
+        assert_eq!(
+            submitted["verificationMethods"]["atproto"],
+            signing.did(),
+            "verificationMethods carried forward from the logged op"
+        );
+        // The update still verifies against the operational key over its own bytes.
+        let sig_bytes = URL_SAFE_NO_PAD
+            .decode(submitted["sig"].as_str().unwrap())
+            .unwrap();
+        let signing_bytes = PlcOperation::update_handle(
+            vec![cold.did(), operational.did()],
+            signing.did(),
+            new_handle().as_str(),
+            genesis_cid,
+        )
+        .signing_bytes()
+        .unwrap();
+        verify_signature(&operational.did(), &signing_bytes, &sig_bytes).unwrap();
+    }
+
+    // The stub minter's update is a no-op, matching its mint/tombstone: nothing
+    // real was registered, so there is nothing to update.
+    #[tokio::test]
+    async fn stub_update_handle_is_a_noop() {
+        StubDidMinter::new()
+            .update_handle(&Did::new("did:plc:stub".to_string()), &new_handle())
+            .await
+            .unwrap();
     }
 }

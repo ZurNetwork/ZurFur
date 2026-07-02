@@ -1015,6 +1015,14 @@ impl DidMinter for MemDidMinter {
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// No-op: the fake minted no real operation, so there is no `alsoKnownAs` to
+    /// re-point. Matches the port so API-level handle-change tests (ZMVP-46) run
+    /// without touching infrastructure (the real update is exercised in the
+    /// `RealDidMinter` unit tests).
+    async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// In-memory [`KeyStore`] test fake: holds custody keys in a process-local map,
@@ -1056,14 +1064,25 @@ impl KeyStore for MemKeyStore {
     }
 }
 
-/// In-memory [`PlcOperationLog`] test fake: keeps appended operations (as `(did,
-/// cid)` in submission order) in a process-local vec. Lets the `RealDidMinter`'s own
-/// unit tests exercise the append / latest_cid contract — chaining a tombstone onto
-/// the genesis op's CID — without a database.
+/// One appended operation as [`MemPlcOperationLog`] keeps it — enough to mirror the
+/// pg adapter's reads (`latest_cid`/`latest_op`) and its two integrity indexes.
+#[derive(Clone)]
+struct MemPlcEntry {
+    did: String,
+    cid: String,
+    op_type: String,
+    prev: Option<String>,
+    operation_json: String,
+}
+
+/// In-memory [`PlcOperationLog`] test fake: keeps appended operations, in submission
+/// order, in a process-local vec. Lets the `RealDidMinter`'s own unit tests exercise
+/// the append / latest_cid / latest_op contract — chaining a tombstone or a handle
+/// update onto the genesis op's CID — without a database.
 #[derive(Clone, Default)]
 pub struct MemPlcOperationLog {
-    /// `(did, cid)` in append order; `Arc<Mutex<…>>` so clones share state.
-    entries: Arc<Mutex<Vec<(String, String)>>>,
+    /// Appended entries in order; `Arc<Mutex<…>>` so clones share state.
+    entries: Arc<Mutex<Vec<MemPlcEntry>>>,
 }
 
 impl MemPlcOperationLog {
@@ -1075,16 +1094,31 @@ impl MemPlcOperationLog {
 
 #[async_trait]
 impl PlcOperationLog for MemPlcOperationLog {
-    /// Append the operation's `(did, cid)` in submission order. Mirrors the pg
-    /// adapter's global `UNIQUE(cid)`: a content-addressed op is logged at most once, so
-    /// a duplicate `cid` is **rejected** — surfacing a retry/idempotency bug in tests
-    /// instead of silently accepting it (as `MemKeyStore` rejects a double-`put`).
+    /// Append the operation in submission order, mirroring the pg adapter's two
+    /// integrity indexes so tests catch a retry/fork bug instead of silently
+    /// accepting it: a duplicate `cid` is **rejected** (`UNIQUE(cid)` — a
+    /// content-addressed op is logged at most once), and a second non-genesis op
+    /// chaining an already-used `prev` is **rejected** (`UNIQUE(did, prev)` where
+    /// `prev IS NOT NULL` — the chain never forks; ZMVP-50 F1).
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
         let mut entries = self.entries.lock().unwrap();
-        if entries.iter().any(|(_, cid)| cid == &record.cid) {
+        if entries.iter().any(|entry| entry.cid == record.cid) {
             anyhow::bail!("plc operation {} already logged", record.cid);
         }
-        entries.push((record.did.to_string(), record.cid.clone()));
+        if let Some(prev) = &record.prev
+            && entries.iter().any(|entry| {
+                entry.did == record.did.as_str() && entry.prev.as_deref() == Some(prev)
+            })
+        {
+            anyhow::bail!("plc operation already chains onto {prev} (chain would fork)");
+        }
+        entries.push(MemPlcEntry {
+            did: record.did.to_string(),
+            cid: record.cid.clone(),
+            op_type: record.op_type.clone(),
+            prev: record.prev.clone(),
+            operation_json: record.operation_json.clone(),
+        });
         Ok(())
     }
 
@@ -1096,8 +1130,26 @@ impl PlcOperationLog for MemPlcOperationLog {
             .unwrap()
             .iter()
             .rev()
-            .find(|(entry_did, _)| entry_did == did.as_str())
-            .map(|(_, cid)| cid.clone()))
+            .find(|entry| entry.did == did.as_str())
+            .map(|entry| entry.cid.clone()))
+    }
+
+    /// The DID's most recently appended operation as a full record, or `None`.
+    async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
+        Ok(self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|entry| entry.did == did.as_str())
+            .map(|entry| PlcOperationRecord {
+                did: did.clone(),
+                cid: entry.cid.clone(),
+                op_type: entry.op_type.clone(),
+                prev: entry.prev.clone(),
+                operation_json: entry.operation_json.clone(),
+            }))
     }
 }
 
@@ -1340,6 +1392,21 @@ mod tests {
         let second = minter.mint(&handle).await.unwrap();
 
         assert_ne!(first, second);
+    }
+
+    // Parity with the real minter's port surface: the fake's update_handle is a
+    // no-op that never fails (it registers no real operation), so API-level
+    // handle-change tests run against mem without infrastructure.
+    #[tokio::test]
+    async fn mem_update_handle_is_a_noop() {
+        let minter = MemDidMinter::new();
+        let handle = Handle::try_new("alice.zurfur.app").unwrap();
+
+        let did = minter.mint(&handle).await.unwrap();
+        minter
+            .update_handle(&did, &Handle::try_new("bob.zurfur.app").unwrap())
+            .await
+            .unwrap();
     }
 
     // The mem KeyStore round-trips custody keys: what you put is what you get.

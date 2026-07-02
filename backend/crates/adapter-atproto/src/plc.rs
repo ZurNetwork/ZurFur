@@ -1,5 +1,9 @@
-//! Building, signing, and hashing a `did:plc` **genesis operation** — the
-//! byte-exact core of the minter.
+//! Building, signing, and hashing `did:plc` **operations** — the byte-exact core
+//! of the minter. One [`PlcOperation`] builder covers both the **genesis** op
+//! (`prev = null`) and a **handle update** op (`prev` = the CID of the DID's
+//! latest op, `alsoKnownAs` REPLACED with the new handle — ZMVP-50); both are the
+//! same `plc_operation` shape and share one serialization path, so the two can
+//! never drift byte-wise. The `plc_tombstone` op has its own minimal shape.
 //!
 //! A `did:plc` is *defined by* the hash of its first (genesis) operation, so
 //! every byte is load-bearing. Two serializations of the same operation are used,
@@ -74,21 +78,26 @@ struct SignedView<'a> {
     sig: &'a str,
 }
 
-/// An unsigned identity-only genesis operation: the owned field data plus the
-/// [`signing_bytes`](GenesisOperation::signing_bytes) it must be signed over.
+/// An unsigned identity-only `plc_operation`: the owned field data plus the
+/// [`signing_bytes`](PlcOperation::signing_bytes) it must be signed over. One
+/// builder covers both op kinds of this shape — a **genesis** op
+/// ([`identity_only`](PlcOperation::identity_only), `prev = null`) and a
+/// **handle update** op ([`update_handle`](PlcOperation::update_handle),
+/// `prev` = a CID) — so there is exactly one DAG-CBOR path that can never drift.
 ///
 /// "Identity-only" means the `services` map is empty — a valid, resolvable DID
 /// with **no PDS** (the feed-generator pattern, DD/26935298). Attaching a PDS
 /// later is an operation on the same DID, no churn.
-pub struct GenesisOperation {
+pub struct PlcOperation {
     rotation_keys: Vec<String>,
     verification_methods: BTreeMap<String, String>,
     also_known_as: Vec<String>,
     services: BTreeMap<String, PlcService>,
+    prev: Option<String>,
 }
 
-impl GenesisOperation {
-    /// Build an **identity-only** genesis operation:
+impl PlcOperation {
+    /// Build an **identity-only genesis** operation:
     ///
     /// - `rotation_keys` — the `did:key` multikeys of the rotation keypairs, in
     ///   descending authority (`[cold_recovery, operational]`, DD/26804226 B2).
@@ -102,6 +111,34 @@ impl GenesisOperation {
         atproto_signing_did: String,
         handle: &str,
     ) -> Self {
+        Self::build(rotation_keys, atproto_signing_did, handle, None)
+    }
+
+    /// Build an **identity-only handle update** operation (ZMVP-50): the same
+    /// `plc_operation` shape as a genesis op, differing in exactly two fields —
+    /// `alsoKnownAs` is **REPLACED** with `["at://<handle>"]` (the old alias is
+    /// dropped, never retained — DD 27852802 §5) and `prev` is the CID of the
+    /// DID's most recent operation, which this op chains onto. The rest of the
+    /// DID document (rotation keys, verification methods, empty services) is
+    /// reconstructed unchanged from the same key material.
+    pub fn update_handle(
+        rotation_keys: Vec<String>,
+        atproto_signing_did: String,
+        handle: &str,
+        prev: String,
+    ) -> Self {
+        Self::build(rotation_keys, atproto_signing_did, handle, Some(prev))
+    }
+
+    /// The one constructor both op kinds funnel through — genesis passes
+    /// `prev = None`, update passes `Some(cid)`; every other field is shaped
+    /// identically.
+    fn build(
+        rotation_keys: Vec<String>,
+        atproto_signing_did: String,
+        handle: &str,
+        prev: Option<String>,
+    ) -> Self {
         let mut verification_methods = BTreeMap::new();
         verification_methods.insert("atproto".to_string(), atproto_signing_did);
         Self {
@@ -109,6 +146,7 @@ impl GenesisOperation {
             verification_methods,
             also_known_as: vec![format!("at://{handle}")],
             services: BTreeMap::new(),
+            prev,
         }
     }
 
@@ -120,22 +158,25 @@ impl GenesisOperation {
             verification_methods: &self.verification_methods,
             also_known_as: &self.also_known_as,
             services: &self.services,
-            prev: None,
+            prev: self.prev.as_deref(),
         };
         Ok(serde_ipld_dagcbor::to_vec(&view)?)
     }
 
     /// Attach a computed signature (base64url-no-pad), yielding the
-    /// [`SignedOperation`] whose hash is the DID.
+    /// [`SignedOperation`] whose hash is the DID (for a genesis op) and whose
+    /// CID the next operation chains onto.
     pub fn into_signed(self, sig: String) -> SignedOperation {
         SignedOperation { op: self, sig }
     }
 }
 
-/// A signed genesis operation: the DID is derived from its DAG-CBOR hash, and its
-/// JSON is the directory submission body.
+/// A signed `plc_operation` (genesis or handle update): for a genesis op the DID
+/// is derived from its DAG-CBOR hash; for both kinds the JSON is the directory
+/// submission body and the [`cid`](SignedOperation::cid) is what the next
+/// operation chains onto.
 pub struct SignedOperation {
-    op: GenesisOperation,
+    op: PlcOperation,
     sig: String,
 }
 
@@ -149,13 +190,16 @@ impl SignedOperation {
             verification_methods: &self.op.verification_methods,
             also_known_as: &self.op.also_known_as,
             services: &self.op.services,
-            prev: None,
+            prev: self.op.prev.as_deref(),
             sig: &self.sig,
         }
     }
 
     /// Derive the `did:plc:` identifier: `base32(sha256(dag_cbor(op incl. sig)))`
     /// lowercased, no padding, truncated to 24 chars. See [`derive_did`].
+    ///
+    /// Only a **genesis** operation defines a DID — calling this on a handle
+    /// update yields a value that identifies nothing.
     pub fn did(&self) -> anyhow::Result<String> {
         let cbor = serde_ipld_dagcbor::to_vec(&self.view())?;
         Ok(derive_did(&cbor))
@@ -345,7 +389,7 @@ mod tests {
     // serialized JSON has no `atproto_pds` anywhere.
     #[test]
     fn identity_only_op_has_no_pds() {
-        let op = GenesisOperation::identity_only(
+        let op = PlcOperation::identity_only(
             vec!["did:key:cold".to_string(), "did:key:hot".to_string()],
             "did:key:sign".to_string(),
             "alice.zurfur.app",
@@ -371,7 +415,7 @@ mod tests {
     // one (which would derive a DID over bytes nobody signed).
     #[test]
     fn signing_bytes_exclude_sig() {
-        let op = GenesisOperation::identity_only(
+        let op = PlcOperation::identity_only(
             vec!["did:key:cold".to_string(), "did:key:hot".to_string()],
             "did:key:sign".to_string(),
             "alice.zurfur.app",
@@ -427,6 +471,141 @@ mod tests {
         assert_eq!(
             cid(&cbor),
             "bafyreibfvkh3n6odvdpwj54j4xxdsgnn4zo5utbyf7z7nfbyikhtygzjcq"
+        );
+    }
+
+    /// A prior-op CID for update tests to chain onto (the real vector genesis CID,
+    /// so the value is shaped like production data).
+    const PREV: &str = "bafyreibfvkh3n6odvdpwj54j4xxdsgnn4zo5utbyf7z7nfbyikhtygzjcq";
+
+    fn update_op() -> PlcOperation {
+        PlcOperation::update_handle(
+            vec!["did:key:cold".to_string(), "did:key:hot".to_string()],
+            "did:key:sign".to_string(),
+            "bob.zurfur.app",
+            PREV.to_string(),
+        )
+    }
+
+    // An update signs over bytes that EXCLUDE `sig`, exactly like a genesis op —
+    // both serialize through the same UnsignedView/SignedView pair, so this guards
+    // the shared path from ever hashing/signing the wrong serialization.
+    #[test]
+    fn update_signing_bytes_exclude_sig() {
+        let op = update_op();
+        let unsigned = op.signing_bytes().unwrap();
+        let signed_view_cbor =
+            serde_ipld_dagcbor::to_vec(&op.into_signed("theSig".to_string()).view()).unwrap();
+        assert_ne!(
+            unsigned, signed_view_cbor,
+            "signed and unsigned update CBOR must differ (sig included vs excluded)"
+        );
+    }
+
+    // REPLACE semantics (DD 27852802 §5): the update's `alsoKnownAs` is exactly
+    // `["at://<new-handle>"]` — the old handle is dropped, never retained as a
+    // dead alias (a retained alias fails bidirectional handle verification).
+    #[test]
+    fn update_replaces_also_known_as() {
+        let json = update_op()
+            .into_signed("sig".to_string())
+            .to_json()
+            .unwrap();
+        assert_eq!(
+            json["alsoKnownAs"],
+            serde_json::json!(["at://bob.zurfur.app"]),
+            "alsoKnownAs is REPLACED with exactly the new handle"
+        );
+        assert!(
+            !json.to_string().contains("alice.zurfur.app"),
+            "no stale alias may survive the update"
+        );
+    }
+
+    // The update PRESERVES the rest of the DID document: rotationKeys,
+    // verificationMethods, and the (empty) services map equal the genesis shape
+    // reconstructed from the same keys — only `alsoKnownAs` and `prev` differ.
+    #[test]
+    fn update_preserves_rotation_keys_and_verification_methods() {
+        let genesis = PlcOperation::identity_only(
+            vec!["did:key:cold".to_string(), "did:key:hot".to_string()],
+            "did:key:sign".to_string(),
+            "alice.zurfur.app",
+        )
+        .into_signed("sig".to_string())
+        .to_json()
+        .unwrap();
+        let update = update_op()
+            .into_signed("sig".to_string())
+            .to_json()
+            .unwrap();
+
+        assert_eq!(
+            update["type"], "plc_operation",
+            "same discriminant as genesis"
+        );
+        assert_eq!(update["rotationKeys"], genesis["rotationKeys"]);
+        assert_eq!(
+            update["verificationMethods"],
+            genesis["verificationMethods"]
+        );
+        assert_eq!(update["services"], serde_json::json!({}));
+        assert_ne!(update["alsoKnownAs"], genesis["alsoKnownAs"]);
+        assert_ne!(update["prev"], genesis["prev"]);
+    }
+
+    // The update chains: its `prev` is the supplied CID of the DID's latest op
+    // (a genesis op serializes `prev: null`; an update never does).
+    #[test]
+    fn update_chains_on_prev() {
+        let json = update_op()
+            .into_signed("sig".to_string())
+            .to_json()
+            .unwrap();
+        assert_eq!(json["prev"], PREV);
+    }
+
+    // Signing is DETERMINISTIC (atrium-crypto uses RFC 6979 + low-S): the same
+    // bytes under the same key yield the same signature, so the same
+    // (prev, alsoKnownAs, keys) yield the same CID. The whole idempotency model —
+    // a replayed identical update dedups on `UNIQUE(cid)` — rests on this test.
+    #[test]
+    fn signing_is_deterministic() {
+        use atrium_crypto::keypair::{Did as _, Secp256k1Keypair};
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let key = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let build = || {
+            PlcOperation::update_handle(
+                vec!["did:key:cold".to_string(), key.did()],
+                "did:key:sign".to_string(),
+                "bob.zurfur.app",
+                PREV.to_string(),
+            )
+        };
+
+        let first_bytes = build().signing_bytes().unwrap();
+        let second_bytes = build().signing_bytes().unwrap();
+        assert_eq!(first_bytes, second_bytes, "unsigned CBOR is deterministic");
+
+        let first_sig = key.sign(&first_bytes).unwrap();
+        let second_sig = key.sign(&second_bytes).unwrap();
+        assert_eq!(
+            first_sig, second_sig,
+            "ECDSA signing must be deterministic (RFC 6979) — idempotency rests on it"
+        );
+
+        let first_cid = build()
+            .into_signed(URL_SAFE_NO_PAD.encode(&first_sig))
+            .cid()
+            .unwrap();
+        let second_cid = build()
+            .into_signed(URL_SAFE_NO_PAD.encode(&second_sig))
+            .cid()
+            .unwrap();
+        assert_eq!(
+            first_cid, second_cid,
+            "same inputs → same signed op → same CID"
         );
     }
 

@@ -105,12 +105,12 @@ pub fn plc_directory_from_config(config: &DirectoryConfig) -> Box<dyn PlcDirecto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plc::GenesisOperation;
+    use crate::plc::PlcOperation;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn signed_op() -> crate::plc::SignedOperation {
-        GenesisOperation::identity_only(
+        PlcOperation::identity_only(
             vec!["did:key:a".to_string(), "did:key:b".to_string()],
             "did:key:c".to_string(),
             "alice.zurfur.app",

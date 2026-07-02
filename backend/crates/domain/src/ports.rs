@@ -432,6 +432,28 @@ pub trait DidMinter: Send + Sync {
     /// directory is a gated no-op, so this signs and logs but registers nowhere. The
     /// stub/mem minters are no-ops.
     async fn tombstone(&self, did: &Did) -> anyhow::Result<()>;
+
+    /// **Re-point** a minted DID's `alsoKnownAs` to `handle` (ZMVP-50; consumed by
+    /// the handle change, ZMVP-46, and usable to re-assert the current handle —
+    /// "initial-maintain"). Signs a `plc_operation` with the account's custodied
+    /// **operational** rotation key — the same shape as the genesis op, but with
+    /// `alsoKnownAs` **REPLACED** by `["at://<handle>"]` (the old alias is dropped,
+    /// DD `27852802` §5) and `prev` set to the DID's most recent operation's CID
+    /// (read from the [`PlcOperationLog`], never fetched from the directory) —
+    /// submits it to the directory, then records it in the log.
+    ///
+    /// A **public-boundary** step, always run as its own retryable unit — never
+    /// inside a private-store transaction (no cross-store dual write; the caller
+    /// owns any cross-store ordering, DD `27852802` §7). **Idempotent by
+    /// content-address:** signing is deterministic (RFC 6979 + low-S), so an
+    /// identical update — same `prev`, handle, and keys — has the same CID, and a
+    /// replay dedups on the log's unique `cid`: "already logged" is success, not an
+    /// error, which is what makes blind retries safe. A submission failure never
+    /// advances the local chain, so a retry re-signs the *same* operation. Fails
+    /// (retryably) if the DID has no custody keys or no logged operation to chain
+    /// onto. In v1 the directory is a gated no-op, so this signs and logs but
+    /// registers nowhere. The stub/mem minters are no-ops.
+    async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()>;
 }
 
 /// Custody store for the private keys behind a minted `did:plc`. The pg adapter
@@ -475,4 +497,14 @@ pub trait PlcOperationLog: Send + Sync {
     /// The CID of the DID's **most recent** logged operation — the `prev` a new
     /// operation must chain onto — or `None` if no operation is held for it.
     async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>>;
+
+    /// The DID's **most recent** logged operation in full, or `None`. Unlike
+    /// [`latest_cid`](PlcOperationLog::latest_cid), this returns the whole record so
+    /// a handle update can carry the prior op's **public** document fields
+    /// (`rotationKeys`, `verificationMethods`) forward from its `operation_json`
+    /// verbatim — preserving the DID document while replacing only `alsoKnownAs` —
+    /// **without decrypting any non-signing private key** (ZMVP-50 F2: the sibling
+    /// `tombstone` needs only the operational key, and so should an update). The
+    /// record carries public material only, never a key.
+    async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>>;
 }

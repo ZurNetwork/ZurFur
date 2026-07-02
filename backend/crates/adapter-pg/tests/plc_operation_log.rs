@@ -82,6 +82,124 @@ async fn append_then_latest_cid_returns_the_most_recent_per_did() {
     );
 }
 
+// A handle-update op (ZMVP-50: `plc_operation` with a non-null `prev`) round-trips:
+// appended after the genesis, it becomes the `latest_cid` the NEXT op must chain onto —
+// and replaying the identical update (same content → same cid) is rejected by the
+// unique index, the DB half of the update's idempotency contract.
+#[tokio::test]
+async fn an_update_op_becomes_the_latest_and_a_replay_is_rejected() {
+    let (pool, _container) = fresh_pool().await;
+    let log = PgPlcOperationLog::new(pool.clone());
+    let did = Did::new("did:plc:oplog-update".to_string());
+
+    log.append(&record(&did, "bafyreigenesis2", "plc_operation", None))
+        .await
+        .expect("append genesis");
+    log.append(&record(
+        &did,
+        "bafyreiupdate",
+        "plc_operation",
+        Some("bafyreigenesis2"),
+    ))
+    .await
+    .expect("append update");
+
+    assert_eq!(
+        log.latest_cid(&did).await.expect("latest_cid").as_deref(),
+        Some("bafyreiupdate"),
+        "the update is now the DID's latest op",
+    );
+
+    assert!(
+        log.append(&record(
+            &did,
+            "bafyreiupdate",
+            "plc_operation",
+            Some("bafyreigenesis2"),
+        ))
+        .await
+        .is_err(),
+        "an identical replay (same content, same cid) is rejected by the unique index",
+    );
+}
+
+// NO CHAIN FORK (ZMVP-50 F1): a given `prev` may be chained onto at most once, so two
+// DIFFERENT ops (distinct cids, so `UNIQUE(cid)` does NOT catch them) chaining the same
+// prev cannot both land — the partial `UNIQUE(did, prev)` index rejects the second. This
+// is what stops concurrent handle updates forking the DID's local chain.
+#[tokio::test]
+async fn two_different_ops_cannot_chain_the_same_prev() {
+    let (pool, _container) = fresh_pool().await;
+    let log = PgPlcOperationLog::new(pool.clone());
+    let did = Did::new("did:plc:oplog-fork".to_string());
+
+    log.append(&record(&did, "bafyreigenesis3", "plc_operation", None))
+        .await
+        .expect("append genesis");
+    log.append(&record(
+        &did,
+        "bafyreiupdatex",
+        "plc_operation",
+        Some("bafyreigenesis3"),
+    ))
+    .await
+    .expect("first update chains onto genesis");
+
+    assert!(
+        log.append(&record(
+            &did,
+            "bafyreiupdatey",
+            "plc_operation",
+            Some("bafyreigenesis3"),
+        ))
+        .await
+        .is_err(),
+        "a SECOND, different op chaining the same prev is rejected — the chain cannot fork",
+    );
+}
+
+// `latest_op` returns the DID's most recent op in full (cid, type, prev, JSON) so an
+// update can carry the prior op's public fields forward without decrypting custody keys
+// (ZMVP-50 F2).
+#[tokio::test]
+async fn latest_op_returns_the_full_most_recent_record() {
+    let (pool, _container) = fresh_pool().await;
+    let log = PgPlcOperationLog::new(pool.clone());
+    let did = Did::new("did:plc:oplog-latestop".to_string());
+
+    assert!(
+        log.latest_op(&did).await.expect("latest_op").is_none(),
+        "no operations logged yet",
+    );
+
+    log.append(&record(&did, "bafyreigenesis4", "plc_operation", None))
+        .await
+        .expect("append genesis");
+    log.append(&record(
+        &did,
+        "bafyreiupdatez",
+        "plc_operation",
+        Some("bafyreigenesis4"),
+    ))
+    .await
+    .expect("append update");
+
+    let latest = log
+        .latest_op(&did)
+        .await
+        .expect("latest_op")
+        .expect("an op is logged");
+    assert_eq!(latest.cid, "bafyreiupdatez", "the most recent op");
+    assert_eq!(latest.op_type, "plc_operation");
+    assert_eq!(latest.prev.as_deref(), Some("bafyreigenesis4"));
+    let json: serde_json::Value =
+        serde_json::from_str(&latest.operation_json).expect("operation_json is valid JSON");
+    assert_eq!(
+        json["type"], "plc_operation",
+        "the stored op body round-trips"
+    );
+}
+
 // The `cid` unique index rejects a duplicate append — a content-addressed op is logged
 // at most once.
 #[tokio::test]
