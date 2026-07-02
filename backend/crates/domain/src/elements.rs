@@ -31,7 +31,6 @@ pub mod blob;
 pub mod character;
 pub mod commission;
 pub mod did;
-pub mod golem;
 pub mod handle;
 pub mod invitation;
 pub mod markdown;
