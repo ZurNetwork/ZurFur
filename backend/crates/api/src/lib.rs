@@ -7,7 +7,7 @@
 //! crate only wires them together and translates between HTTP and those ports.
 //!
 //! The HTTP surface is split into per-domain route groups under [`mod@routes`]
-//! (`health`, `session`, `accounts`), each exposing a `*_router()` builder;
+//! (`health`, `session`, `accounts`, `commissions`), each exposing a `*_router()` builder;
 //! [`app`] is pure composition that merges them. Two shapes of endpoint coexist.
 //! The browser-facing sign-in flow (`/`, `/signin`, `/signin-callback`, `/me`,
 //! `/logout`) speaks HTML and redirects — an unrecognized visitor lands back on
@@ -314,10 +314,11 @@ pub struct AppState {
 ///
 /// Routes: `GET /health`; `GET /.well-known/atproto-did` (handle resolution, also
 /// top-level and CSRF-exempt); the sign-in flow (`GET /`, `POST /signin`,
-/// `GET /signin-callback`, `GET /me`, `POST /logout`); and the accounts tree
+/// `GET /signin-callback`, `GET /me`, `POST /logout`); the accounts tree
 /// (`POST /accounts`, `POST`/`DELETE /accounts/{id}/members`,
 /// `DELETE /accounts/{id}/members/me`, `POST`/`DELETE /accounts/{id}/invitations`,
-/// `POST /accounts/{id}/invitations/decline`, `POST /accounts/{id}/invitations/accept`).
+/// `POST /accounts/{id}/invitations/decline`, `POST /accounts/{id}/invitations/accept`);
+/// and `POST /commissions` (create a commission — user-scoped, no Account required).
 ///
 /// Cross-persona unlinkability (ZMVP-17): this table is the public surface, and
 /// no route on it may correlate one person's separate handles — join one
@@ -341,6 +342,7 @@ pub fn app(state: AppState) -> Router {
     // this surface once — a state-changing request from a foreign `Origin` is refused.
     let cookie_surface = routes::session_router()
         .merge(routes::accounts_router())
+        .merge(routes::commissions_router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::require_first_party_origin,
