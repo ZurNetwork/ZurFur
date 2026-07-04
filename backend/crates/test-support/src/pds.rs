@@ -44,6 +44,10 @@ impl ThrowawayPds {
     /// Mirrors the Postgres testcontainers pattern: the container handle
     /// lives inside the returned value, so it survives exactly as long as
     /// the test holds the `ThrowawayPds`.
+    ///
+    /// Errors if no container runtime socket is available, the image cannot
+    /// be pulled/started, or the PDS never reports healthy (`HEALTH_TIMEOUT`,
+    /// 60s).
     pub async fn boot() -> anyhow::Result<Self> {
         // Each instance gets its own PLC directory: per-instance state is
         // what makes two booted PDSes provably share nothing.
@@ -105,6 +109,9 @@ impl ThrowawayPds {
     /// The handle must use the PDS's dev handle domain — `PDS_HOSTNAME=localhost`
     /// makes that `.test` (e.g. `alice.test`). Email and password are
     /// generated; the returned [`ActingCredential`] is the way to act.
+    ///
+    /// Errors if the PDS rejects the account (e.g. an invalid or already
+    /// taken handle on this instance), echoing the XRPC error body.
     pub async fn provision_account(&self, handle: &str) -> anyhow::Result<FixtureAccount> {
         let response = self
             .client
