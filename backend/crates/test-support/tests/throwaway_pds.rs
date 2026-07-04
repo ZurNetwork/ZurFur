@@ -124,11 +124,14 @@ async fn boot_act_destroy() {
             .send()
             .await
         {
-            Err(_) => {
+            // Only a connection-level error means the container's port is gone.
+            // A timeout (a slow-but-alive PDS) or any other transient error must
+            // NOT count as torn-down, or this assertion could false-green.
+            Err(e) if e.is_connect() => {
                 gone = true;
                 break;
             }
-            Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
         }
     }
     assert!(
