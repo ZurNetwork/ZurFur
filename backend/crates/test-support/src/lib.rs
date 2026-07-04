@@ -14,11 +14,11 @@
 //!
 //! let pds = ThrowawayPds::boot().await?;                    // fresh, empty, hermetic
 //! let account = pds.provision_account("alice.test").await?; // the ZMVP-105 seam
-//! let bearer = match &account.credential {
+//! let token = match &account.credential {
 //!     ActingCredential::PdsSession { access_jwt, .. } => access_jwt.clone(),
 //!     _ => unreachable!("new credential variants opt in explicitly"),
 //! };
-//! // ... act against `account.endpoint` as `account.did` ...
+//! // ... send `Authorization: Bearer {token}` to `account.endpoint`, acting as `account.did` ...
 //! drop(pds);                                                // container + state gone
 //! # Ok(())
 //! # }
