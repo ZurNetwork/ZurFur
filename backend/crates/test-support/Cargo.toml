@@ -1,0 +1,23 @@
+[package]
+name = "test-support"
+version = "0.1.0"
+edition = "2024"
+# Test-rig crate (ZMVP-103): never published, consumed as a dev-dependency.
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+# The in-process stub PLC directory the throwaway PDS publishes identities to.
+axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+data-encoding = { workspace = true }
+# Same version testcontainers-modules 0.15 (the Postgres harness) resolves to;
+# this crate drives a GenericImage, so it needs the core crate only.
+testcontainers = "0.27"
+# Plain-HTTP XRPC against 127.0.0.1 — no TLS backend needed.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
+# 32-byte string is not guaranteed to be a valid scalar; SecretKey::random is).
+k256 = "0.13"
