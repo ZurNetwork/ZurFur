@@ -92,6 +92,24 @@ if [ ! -f .env ]; then
   fi
 fi
 
+# --- seed missing managed-secret keys on re-run (without printing values) ----
+# If a new managed secret was added to the project after this worktree's
+# initial .env (e.g., new PDS/PLC keys), re-running this script should
+# seed it without overwriting existing keys or printing their values.
+managed_secrets="ZURFUR_PDS_JWT_SECRET ZURFUR_PDS_ADMIN_PASSWORD ZURFUR_PDS_PLC_ROTATION_KEY"
+for secret_key in $managed_secrets; do
+  if ! grep -q "^$secret_key=" .env; then
+    # Try to seed from primary worktree's .env first, then fall back to .env.example
+    if [ -f "$main_root/.env" ] && grep -q "^$secret_key=" "$main_root/.env"; then
+      grep "^$secret_key=" "$main_root/.env" >> .env
+      echo "[worktree-init] seeded missing $secret_key from primary worktree"
+    elif grep -q "^$secret_key=" .env.example; then
+      grep "^$secret_key=" .env.example >> .env
+      echo "[worktree-init] seeded missing $secret_key from .env.example"
+    fi
+  fi
+done
+
 # --- rewrite the managed block ----------------------------------------------
 # Drop any prior managed block AND any standalone definitions of the keys we own,
 # so we never depend on dotenv duplicate-key precedence (which differs between

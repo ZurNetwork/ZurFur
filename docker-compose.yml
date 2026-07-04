@@ -37,9 +37,11 @@ services:
   # is `internal: true` (Docker refuses it a default route out — enforced at
   # the network layer, not just by config discipline) — see CLAUDE.md
   # "no cross-store transactions" sibling guarantee, ZMVP-49's
-  # `ZURFUR_PLC_DIRECTORY_SUBMIT=false`. Published host ports still work
-  # normally (that's a separate, inbound-only NAT path), so the app on the
-  # host and `just pds-provision` can still reach both.
+  # `ZURFUR_PLC_DIRECTORY_SUBMIT=false`. Host-port publishing on an
+  # `internal:` network is provider-dependent. Verified on podman/netavark:
+  # containers on this internal network still get their published host ports
+  # while being denied a default route out (inbound-only NAT path).
+  # Docker-proper behavior is a follow-up to verify (ZMVP-102 review).
   plc:
     build:
       context: ./docker/plc
