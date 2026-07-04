@@ -19,5 +19,6 @@ testcontainers = "0.27"
 # Plain-HTTP XRPC against 127.0.0.1 — no TLS backend needed.
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
-# 32-byte string is not guaranteed to be a valid scalar; SecretKey::random is).
-k256 = "0.13"
+# 32-byte string is not guaranteed to be a valid scalar) — the same vetted
+# primitive the did:plc minter uses.
+atrium-crypto = { workspace = true }

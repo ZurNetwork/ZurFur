@@ -15,7 +15,7 @@ use test_support::{ActingCredential, FixtureAccount, ThrowawayPds};
 fn bearer(account: &FixtureAccount) -> String {
     match &account.credential {
         ActingCredential::PdsSession { access_jwt, .. } => format!("Bearer {access_jwt}"),
-        _ => unimplemented!("future credential variants choose their own auth construction"),
+        _ => unreachable!("future credential variants choose their own auth construction"),
     }
 }
 

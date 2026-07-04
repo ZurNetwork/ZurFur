@@ -52,6 +52,14 @@ mod plc_stub;
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;
 
+// The container-reuse escape hatch documented above rests on `ThrowawayPds`
+// being shareable across tests; pin the auto-traits so a future field can't
+// silently revoke the lever.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ThrowawayPds>();
+};
+
 /// The reference-PDS image the throwaway harness boots.
 ///
 /// Must stay **the same literal** as the canonical `ZURFUR_PDS_IMAGE` pin in
@@ -86,6 +94,11 @@ fn split_image_ref(image: &str) -> (String, String) {
     };
     // The last ':' separates the tag — unless it belongs to a registry port
     // (i.e. a '/' follows it, as in `localhost:5000/pds`).
+    //
+    // A tagless digest pin deliberately gets the placeholder `latest`:
+    // GenericImage formats the pull ref as `name:tag`, yielding
+    // `name:latest@sha256:…`, where the digest overrides the tag — verified
+    // against this repo's container runtime. Don't "simplify" the `latest@`.
     let (name, tag) = match name_tag.rfind(':') {
         Some(i) if !name_tag[i..].contains('/') => (&name_tag[..i], &name_tag[i + 1..]),
         _ => (name_tag, "latest"),

@@ -72,15 +72,19 @@ impl StubPlc {
         self.port
     }
 
-    /// Every DID whose genesis operation was submitted here — the hermeticity
+    /// Every DID whose genesis operation was submitted here (sorted, so
+    /// multi-account assertions stay deterministic) — the hermeticity
     /// witness: identities the PDS published, provably to *this* stub.
     pub(crate) fn recorded_dids(&self) -> Vec<String> {
-        self.ops
+        let mut dids: Vec<String> = self
+            .ops
             .lock()
             .expect("stub PLC lock")
             .keys()
             .cloned()
-            .collect()
+            .collect();
+        dids.sort();
+        dids
     }
 }
 
