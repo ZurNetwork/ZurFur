@@ -27,8 +27,11 @@ pass() { echo "  PASS: $1"; }
 fail() { echo "  FAIL: $1" >&2; exit 1; }
 
 cleanup() {
-    echo "--- tearing down (docker compose down -v) ---"
-    docker compose down -v > /dev/null 2>&1 || true
+    # `down` WITHOUT `-v`: tear down the smoke run's containers but never remove
+    # named volumes — `-v` here would wipe a developer's local Postgres/pds_data
+    # when they run `just pds-smoke`. AC3 already proves wiping, via `just pds-reset`.
+    echo "--- tearing down (docker compose down) ---"
+    docker compose down > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -47,12 +50,21 @@ first_access="$(printf '%s' "$first_session" | python3 -c 'import json,sys; prin
 pass "provisioned did=$first_did with a session token"
 
 echo "=== AC4: no request reaches the public atproto network / canonical plc.directory ==="
-# Static: the network the pds/plc containers sit on is internal (no default
-# route out — enforced by Docker/podman, not just config discipline), and the
-# PDS's own config never names a public PLC or crawler.
-docker compose config | grep -A2 '^networks:' | grep -q 'internal: true' \
-    || fail "docker-compose network is not internal: true"
-pass "compose network is internal: true (no default route out)"
+# Static: the pds_net network the pds/plc containers sit on is internal (no
+# default route out — enforced by Docker/podman, not just config discipline),
+# and the PDS's own config never names a public PLC or crawler. Scope the
+# assertion to the pds_net block specifically — the resolved config also carries
+# an implicit `default` network, so a stray `internal:` elsewhere must not spoof
+# this (the runtime probe below is the decisive check; this is the static guard).
+docker compose config | awk '
+    /^networks:/                { in_net = 1; next }
+    in_net && /^[^[:space:]]/   { in_net = 0 }        # dedent to col 0 -> left networks:
+    in_net && /^  [^[:space:]]/ { cur = $1 }          # a network name (2-space indent)
+    in_net && cur == "pds_net:" && /internal: true/ { ok = 1 }
+    END                         { exit ok ? 0 : 1 }
+' \
+    || fail "pds_net is not internal: true in the resolved compose config"
+pass "pds_net is internal: true (no default route out)"
 
 resolved_env="$(docker compose config)"
 if printf '%s' "$resolved_env" | grep -qi 'plc\.directory\|bsky\.network'; then
