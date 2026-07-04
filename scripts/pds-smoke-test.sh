@@ -72,12 +72,23 @@ if printf '%s' "$resolved_env" | grep -qi 'plc\.directory\|bsky\.network'; then
 fi
 pass "no public atproto/PLC hostname in resolved compose config"
 
-# Runtime: confirm the pds container genuinely cannot resolve/reach a public
-# host — not just that we didn't configure one.
-if docker compose exec -T pds wget -T 3 -q -O- https://plc.directory/_health > /dev/null 2>&1; then
-    fail "the pds container CAN reach https://plc.directory — isolation is broken"
+# Runtime: confirm the pds container genuinely cannot reach a public host — a
+# raw TCP egress probe (not HTTP), so a busybox/TLS quirk in the image cannot
+# confound the result (an https `wget` that always fails for lack of TLS would
+# false-green). `node` is the PDS runtime, so it is always present. It exits 0
+# on connect, 1 on error/timeout.
+tcp_probe='const [h,p]=process.argv.slice(1);const s=require("net").connect({host:h,port:+p,timeout:3000});s.on("connect",()=>{s.destroy();process.exit(0)});s.on("error",()=>process.exit(1));s.on("timeout",()=>{s.destroy();process.exit(1)});'
+# Positive control: the container CAN open a TCP connection to the in-network
+# `plc` service — proves the probe mechanism works, so the negative below can't
+# pass merely because `node`/networking is broken.
+docker compose exec -T pds node -e "$tcp_probe" plc 2582 \
+    || fail "positive control failed: the pds container cannot even reach the local plc service — the egress probe would not be meaningful"
+# Negative: it must NOT reach an external IP:port (1.1.1.1:443 — a bare IP, so
+# no DNS is involved either).
+if docker compose exec -T pds node -e "$tcp_probe" 1.1.1.1 443 > /dev/null 2>&1; then
+    fail "the pds container CAN open a TCP connection to 1.1.1.1:443 — network isolation is broken"
 fi
-pass "pds container cannot reach https://plc.directory (network truly isolated)"
+pass "pds container reaches local plc but not external 1.1.1.1:443 (network truly isolated)"
 
 # Sibling guarantee (ZMVP-49): the app's own minter must still be non-submitting.
 if [ "${ZURFUR_PLC_DIRECTORY_SUBMIT:-}" = "true" ]; then
