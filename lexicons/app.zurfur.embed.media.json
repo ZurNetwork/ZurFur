@@ -1,0 +1,52 @@
+{
+  "lexicon": 1,
+  "id": "app.zurfur.embed.media",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "A single visual-media embed: the blob plus its REQUIRED alt text (accessibility-first, 2026-07-04 ruling) and an optional aspect ratio. Shared def under the `embed.*` family (mirrors `app.bsky.embed.*`) so any record can `ref` it; `app.zurfur.feed.post.embed` is its first and only v1 consumer. NOTE on the size cap: the lexicon has a SINGLE `maxSize` number (100000000 = 100 MB), sized for video — it CANNOT express a tighter per-mime ceiling, so the image sub-cap (images ≤ 10 MB) is enforced app-side at the write/publish path (ZMVP-105), not by this schema. The 'at least one of text/embed' rule that governs whether this embed is present is likewise enforced app-side (a lexicon cannot express either-of).",
+      "required": ["blob", "alt"],
+      "properties": {
+        "blob": {
+          "type": "blob",
+          "description": "The visual-media file — the work itself. `accept` is the v1 allow-list of image and video mime types; `maxSize` is the hard 100 MB ceiling (video-sized). The image-≤-10 MB sub-cap CANNOT be expressed by this single `maxSize` and is enforced app-side at publish (ZMVP-105). Byte-identical blobs are CID-deduped across posters at the PDS/blob layer.",
+          "accept": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif",
+            "video/mp4",
+            "video/webm"
+          ],
+          "maxSize": 100000000
+        },
+        "alt": {
+          "type": "string",
+          "description": "REQUIRED alt-text description of the media, for accessibility (the 2026-07-04 accessibility-first ruling). Structurally required on every embed; the publish path additionally enforces it is non-blank (ZMVP-105).",
+          "maxGraphemes": 2000,
+          "maxLength": 10000
+        },
+        "aspectRatio": {
+          "type": "ref",
+          "ref": "#aspectRatio",
+          "description": "Optional width:height aspect ratio of the media, for layout before the blob loads."
+        }
+      }
+    },
+    "aspectRatio": {
+      "type": "object",
+      "description": "width:height represents an aspect ratio. It may be approximate and need not correspond to absolute dimensions in any unit.",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

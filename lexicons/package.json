@@ -1,0 +1,13 @@
+{
+  "name": "zurfur-lexicons",
+  "version": "1.0.0",
+  "description": "Zurfur atproto lexicons (source of truth) + schema-validity test",
+  "scripts": {
+    "test": "node --test"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@atproto/lexicon": "^0.7.4"
+  },
+  "private": true
+}

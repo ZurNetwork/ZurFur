@@ -1,0 +1,23 @@
+{
+  "lexicon": 1,
+  "id": "app.zurfur.feed.defs",
+  "defs": {
+    "credit": {
+      "type": "object",
+      "description": "A single collaborator credit: the DID that contributed and the capacity (`role`) it contributed in. Both required. `role` is an OPEN string (`knownValues`, NOT a closed enum) so unknown roles never break clients and new roles are additive forever — no NSID rev (Gallery Posts DD 29949954 Update 2026-07-04). Characters are credited by Index-side tags, NOT by this def — internal tag management makes character-crediting a cheap additive change later. Consent runs the moderation road (e621-style flag -> disavow/hide); credit rendering respects atproto blocks and the Index-side suppression path, never a schema mutation.",
+      "required": ["role", "did"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "The capacity in which the subject contributed. OPEN set — the v1 coverage below is illustrative, not exhaustive; clients render unknown roles verbatim.",
+          "knownValues": ["artist", "lines", "colors", "sketch", "commissioner", "writer"]
+        },
+        "did": {
+          "type": "string",
+          "format": "did",
+          "description": "The credited collaborator's DID. Public and permanent once published — a deliberate cross-persona correlation surface, opt-out at compose time."
+        }
+      }
+    }
+  }
+}
