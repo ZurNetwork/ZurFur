@@ -28,5 +28,77 @@ services:
     profiles:
       - proxy
 
+  # --- Local PDS + PLC (dev loop; ZMVP-102) ---
+  #
+  # A real reference PDS speaking the real protocol, wipeable with one
+  # command, on the DEFAULT profile (so plain `just up` brings it up
+  # alongside `db`). Nothing here ever reaches the public atproto network or
+  # canonical plc.directory: `pds`/`plc` sit on the `pds_net` network, which
+  # is `internal: true` (Docker refuses it a default route out — enforced at
+  # the network layer, not just by config discipline) — see CLAUDE.md
+  # "no cross-store transactions" sibling guarantee, ZMVP-49's
+  # `ZURFUR_PLC_DIRECTORY_SUBMIT=false`. Host-port publishing on an
+  # `internal:` network is provider-dependent. Verified on podman/netavark:
+  # containers on this internal network still get their published host ports
+  # while being denied a default route out (inbound-only NAT path).
+  # Docker-proper behavior is a follow-up to verify (ZMVP-102 review).
+  plc:
+    build:
+      context: ./docker/plc
+    ports:
+      # Reconciles onto the SAME endpoint the did:plc minter (ZMVP-49) already
+      # points at (ZURFUR_PLC_DIRECTORY_ENDPOINT, http://localhost:2582) —
+      # not a second/different PLC. Host port is env-driven for worktree
+      # isolation (scripts/worktree-init.sh).
+      - "${ZURFUR_PLC_HOST_PORT:-2582}:2582"
+    networks:
+      - pds_net
+
+  pds:
+    image: ${ZURFUR_PDS_IMAGE:?Set ZURFUR_PDS_IMAGE in .env — see .env.example}
+    # Start-order only (not health-gated): a HEALTHCHECK-based `condition:
+    # service_healthy` is silently ignored by podman's default OCI image
+    # format (Docker-only feature), so it can hang forever there. Actual
+    # readiness is polled externally instead — `just _wait-for-pds`, same
+    # pattern `_wait-for-db` already uses for Postgres (which has no
+    # compose-level healthcheck either).
+    depends_on:
+      - plc
+    ports:
+      - "${ZURFUR_PDS_HOST_PORT:-2583}:3000"
+    environment:
+      PDS_HOSTNAME: localhost
+      # PDS_DEV_MODE relaxes the OAuth protected-resource metadata's
+      # https-only check (this loopback dev PDS is plain http) and disables
+      # SSRF protection so the PDS can reach the loopback `plc` service.
+      PDS_DEV_MODE: "true"
+      PDS_PORT: "3000"
+      PDS_DATA_DIRECTORY: /pds
+      PDS_BLOBSTORE_DISK_LOCATION: /pds/blocks
+      # Local PLC only — never https://plc.directory (AC4).
+      PDS_DID_PLC_URL: http://plc:2582
+      # Empty: no firehose crawler is notified of new commits (AC4 — a
+      # non-empty list is how a self-hosted PDS joins the public relay mesh).
+      PDS_CRAWLERS: ""
+      # No invite-code flow to fight with for a throwaway dev/test account.
+      PDS_INVITE_REQUIRED: "false"
+      PDS_JWT_SECRET: ${ZURFUR_PDS_JWT_SECRET:?Set ZURFUR_PDS_JWT_SECRET in .env}
+      PDS_ADMIN_PASSWORD: ${ZURFUR_PDS_ADMIN_PASSWORD:?Set ZURFUR_PDS_ADMIN_PASSWORD in .env}
+      PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX: ${ZURFUR_PDS_PLC_ROTATION_KEY:?Set ZURFUR_PDS_PLC_ROTATION_KEY in .env}
+      # Must sit at/above the feed.post lexicon's 100MB video cap (ZMVP-104) —
+      # a lexicon-valid record must never be rejected by the server's own
+      # (default 5MB) limit.
+      PDS_BLOB_UPLOAD_LIMIT: ${ZURFUR_PDS_BLOB_UPLOAD_LIMIT:-104857600}
+    volumes:
+      - pds_data:/pds
+    networks:
+      - pds_net
+
+networks:
+  # internal: true — no default route out. See the ZMVP-102 comment above.
+  pds_net:
+    internal: true
+
 volumes:
   pg_data:
+  pds_data:

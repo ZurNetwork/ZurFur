@@ -6,3 +6,11 @@ http_addr = "127.0.0.1:8080"
 # In dev this is the loopback address; in prod it is the public HTTPS domain.
 public_url = "http://127.0.0.1:8080"
 log_level = "info,zurfur=debug"
+
+# Local reference-PDS endpoint (ZMVP-102; docker-compose.yml `pds` service).
+# Coherent with .env.example's ZURFUR_PDS_ENDPOINT default — env still wins if
+# a worktree overrides the port. Not read by any Config field yet: this
+# establishes the key name/default ahead of its first consumer, ZMVP-105
+# (adapter-atproto's write-path), same as this file otherwise carries no PLC
+# keys today (those are Rust-side serde defaults, not TOML).
+pds_endpoint = "http://localhost:2583"
