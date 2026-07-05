@@ -10,6 +10,13 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 # Minting AccountIds for the test seed helpers (e.g. seed_soft_deleted_account).
 uuid = { workspace = true }
+# Content-addressing blobs and records in the MemPublicRecords fake (ZMVP-105):
+# the same CIDv1/sha2-256 scheme the real boundary uses, so identical bytes yield
+# an identical, stable CID (fidelity, not realism).
+cid = "0.11.3"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+# The shared PublicRecords conformance suite, run against MemPublicRecords.
+test-support = { path = "../test-support" }
