@@ -127,11 +127,17 @@ impl AtUri {
     ///
     /// The authority (a DID) contains colons but no slashes, and neither the
     /// collection NSID nor the rkey contains a slash, so the three path segments
-    /// after `at://` split unambiguously on `/`.
+    /// after `at://` split unambiguously on `/`. A query (`?…`) or fragment
+    /// (`#…`) — legal in the full AT-URI grammar — is rejected: the repo-record
+    /// form has neither, and none of the three parts may contain those
+    /// characters.
     pub fn parse(s: &str) -> Result<Self, AtUriParseError> {
         let rest = s
             .strip_prefix("at://")
             .ok_or(AtUriParseError::MissingScheme)?;
+        if rest.contains(['?', '#']) {
+            return Err(AtUriParseError::Malformed);
+        }
         let mut parts = rest.splitn(3, '/');
         let (Some(did), Some(collection), Some(rkey)) = (parts.next(), parts.next(), parts.next())
         else {
@@ -385,6 +391,18 @@ mod tests {
         );
         assert_eq!(
             AtUri::parse("at://did:plc:abc/app.zurfur.feed.post"),
+            Err(AtUriParseError::Malformed)
+        );
+    }
+
+    #[test]
+    fn at_uri_parse_rejects_query_and_fragment() {
+        assert_eq!(
+            AtUri::parse("at://did:plc:abc/app.zurfur.feed.post/3laa7lepk2c?x=1"),
+            Err(AtUriParseError::Malformed)
+        );
+        assert_eq!(
+            AtUri::parse("at://did:plc:abc/app.zurfur.feed.post/3laa7lepk2c#frag"),
             Err(AtUriParseError::Malformed)
         );
     }

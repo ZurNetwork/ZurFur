@@ -188,7 +188,7 @@ impl PublicRecords for AtprotoPublicRecords {
         // buffer (it should `extend_from_slice`), which panics on the stateless
         // client path. A plain POST — same Bearer auth, same endpoint — sidesteps
         // that bug while keeping the wire format identical.
-        let size = bytes.len() as u64;
+        let request_size = bytes.len() as u64;
         let response = self
             .http
             .post(format!(
@@ -230,6 +230,9 @@ impl PublicRecords for AtprotoPublicRecords {
             ))
         })?;
         let mime = blob["mimeType"].as_str().unwrap_or(mime_type).to_string();
+        // Prefer the size the repo recorded; fall back to the bytes we sent if
+        // the response omits it (as with mimeType).
+        let size = blob["size"].as_u64().unwrap_or(request_size);
         Ok(BlobRef {
             cid: parse_cid(cid)?,
             mime_type: mime,
