@@ -8,6 +8,7 @@ default:
 dev:
     just up
     just _wait-for-db
+    just _wait-for-pds
     just dev-back & just dev-auth & wait
 
 dev-back:
@@ -37,12 +38,40 @@ migrate-add name:
     cd backend/crates/adapter-pg && sqlx migrate add {{ name }}
 
 # Drop the database volume and bring up a fresh PostgreSQL.
-# `down -v` removes this project's named volume (project = COMPOSE_PROJECT_NAME,
-# default `zurfur`), so it does the right thing in an isolated worktree too.
+# `down -v` removes this project's named volumes (project = COMPOSE_PROJECT_NAME,
+# default `zurfur`) — that's Postgres AND the dev PDS/PLC (ZMVP-102) together,
+# so it does the right thing in an isolated worktree too.
 db-reset:
     docker compose down -v
     just up
     just _wait-for-db
+    just _wait-for-pds
+
+# --- Local PDS + PLC (dev loop; ZMVP-102) ---
+
+# Wipe ONLY the dev PDS + local PLC back to clean, leaving Postgres alone.
+# The PLC has no volume at all (it's an in-memory mock DB — recreating the
+# container already wipes it); `pds_data` is the PDS's own named volume, torn
+# down here with `down -v` (service-scoped — `rm -v` isn't supported by every
+# compose provider; `down -v <service>` is).
+pds-reset:
+    docker compose down -v plc pds
+    docker compose up -d plc pds
+    just _wait-for-pds
+
+# Create (or, if it already exists, sign into) the fixture test account on the
+# local dev PDS and print the resulting session as JSON. Idempotent — safe to
+# run again after a `pds-reset`/`db-reset`, or against an already-provisioned
+# account.
+pds-provision:
+    bash scripts/pds-provision.sh
+
+# Scripted proof for ZMVP-102: boot -> provision -> sign-in -> wipe -> clean,
+# plus the no-public-egress guarantee (AC4). NOT a cargo test — the automated,
+# per-test-throwaway PDS harness is ZMVP-103's lane; this proves the *dev
+# loop* itself.
+pds-smoke:
+    bash scripts/pds-smoke-test.sh
 
 # --- Testing ---
 
@@ -94,4 +123,18 @@ _wait-for-db:
         sleep 1
     done
     echo "ERROR: PostgreSQL did not become ready in 30s"
+    exit 1
+
+_wait-for-pds:
+    #!/usr/bin/env bash
+    echo "Waiting for the local PDS + PLC (ZMVP-102)..."
+    for i in $(seq 1 30); do
+        if docker compose exec -T plc wget -q -O- http://localhost:2582/_health > /dev/null 2>&1 \
+            && docker compose exec -T pds wget -q -O- http://localhost:3000/xrpc/_health > /dev/null 2>&1; then
+            echo "PDS + PLC are ready."
+            exit 0
+        fi
+        sleep 1
+    done
+    echo "ERROR: PDS/PLC did not become ready in 30s"
     exit 1
