@@ -7,6 +7,10 @@ publish = false
 
 [dependencies]
 anyhow = { workspace = true }
+# The shared PublicRecords conformance suite (ZMVP-105) is generic over the
+# domain port and is run against every adapter that implements it.
+domain = { path = "../domain" }
+chrono = { workspace = true }
 # The in-process stub PLC directory the throwaway PDS publishes identities to.
 axum = { workspace = true }
 tokio = { workspace = true }
