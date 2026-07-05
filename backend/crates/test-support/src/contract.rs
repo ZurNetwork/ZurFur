@@ -31,7 +31,14 @@ pub const TINY_PNG: &[u8] = &[
 
 /// A fixed, millisecond-precision timestamp so field-identical round-trips do not
 /// depend on sub-millisecond clock precision surviving an RFC-3339 encode.
-fn fixed_created_at() -> chrono::DateTime<chrono::Utc> {
+///
+/// Public so a determinism capstone (ZMVP-106) can pin the **same** `createdAt`
+/// this suite uses: with the timestamp fixed, the record's DAG-CBOR bytes — and
+/// therefore its content-address record CID — are identical across two runs on
+/// two freshly-booted PDSes, which is exactly what "the write path is
+/// deterministic against a wipeable rig" asserts. Reuse this rather than
+/// duplicating the literal.
+pub fn fixed_created_at() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339("2026-07-05T12:00:00.000Z")
         .expect("valid RFC-3339")
         .with_timezone(&chrono::Utc)
