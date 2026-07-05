@@ -12,8 +12,23 @@ use cid::Cid;
 /// The content-addressed identity of a Blob: its [`Cid`] (IPFS-style CID).
 ///
 /// Stub: identity only. Because it is the content hash, the same bytes always
-/// yield the same `BlobId`, and the id changes if any byte changes. Referenced
-/// from commissions via [`crate::elements::commission::BlobRef`], which pairs it
-/// with the owning [`crate::elements::did::Did`].
+/// yield the same `BlobId`, and the id changes if any byte changes. A
+/// [`BlobRef`](crate::elements::public_record::BlobRef) — the public-boundary
+/// reference an embed carries — is this same content-address plus the mime/size
+/// the repo recorded ([`BlobRef::id`](crate::elements::public_record::BlobRef::id)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlobId(Cid);
+
+impl BlobId {
+    /// Wrap a blob's content-address [`Cid`]. The content-address is computed by
+    /// the store that holds the bytes (the PDS/blob store), never invented by the
+    /// domain — this only names one the caller already holds.
+    pub fn new(cid: Cid) -> Self {
+        Self(cid)
+    }
+
+    /// The underlying content-address.
+    pub fn cid(&self) -> &Cid {
+        &self.0
+    }
+}

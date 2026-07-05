@@ -35,6 +35,9 @@
 //! References: DESIGN/"Domains and Applications"; the per-port detail lives on
 //! the trait docs in [`domain::ports`].
 
+mod public_records;
+pub use public_records::MemPublicRecords;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;

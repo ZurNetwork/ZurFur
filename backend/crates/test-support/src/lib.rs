@@ -45,6 +45,7 @@
 //! in a test's common module (with per-test unique handles) is the intended
 //! lever — the same reuse escape hatch the Postgres harness leaves available.
 
+pub mod contract;
 mod fixture;
 mod pds;
 mod plc_stub;
