@@ -228,6 +228,8 @@ async fn raw_get_blob(pds: &ThrowawayPds, did: &Did, blob_cid: &cid::Cid) -> Vec
     reqwest::get(&url)
         .await
         .expect("getBlob request reaches the PDS")
+        .error_for_status()
+        .expect("getBlob succeeds")
         .bytes()
         .await
         .expect("getBlob body")
@@ -248,6 +250,8 @@ async fn raw_get_record_value(pds: &ThrowawayPds, uri: &AtUri) -> serde_json::Va
     let body = reqwest::get(&url)
         .await
         .expect("getRecord request reaches the PDS")
+        .error_for_status()
+        .expect("getRecord succeeds")
         .bytes()
         .await
         .expect("getRecord body");
@@ -270,11 +274,16 @@ const FEED_POST_LEXICON: &str = concat!(
     "/../../../lexicons/app.zurfur.feed.post.json"
 );
 
-/// The `(allowed, required)` top-level property names of the final lexicon's
-/// `main` record, read straight off disk.
-fn final_lexicon_record_shape() -> (BTreeSet<String>, BTreeSet<String>) {
+/// The `(record type, allowed, required)` shape of the final lexicon's `main`
+/// record, read straight off disk: its NSID (the record `$type`) plus the
+/// top-level property names.
+fn final_lexicon_record_shape() -> (String, BTreeSet<String>, BTreeSet<String>) {
     let raw = std::fs::read_to_string(FEED_POST_LEXICON).expect("read the final feed.post lexicon");
     let lexicon: serde_json::Value = serde_json::from_str(&raw).expect("parse the lexicon JSON");
+    let record_type = lexicon["id"]
+        .as_str()
+        .expect("lexicon id is a string")
+        .to_string();
     let record = &lexicon["defs"]["main"]["record"];
 
     let allowed = record["properties"]
@@ -293,14 +302,14 @@ fn final_lexicon_record_shape() -> (BTreeSet<String>, BTreeSet<String>) {
                 .to_string()
         })
         .collect();
-    (allowed, required)
+    (record_type, allowed, required)
 }
 
 /// Pure, I/O-free check that a stored record `value` conforms to the lexicon's
-/// **shape**: every top-level key (except the atproto `$type` discriminator, which
-/// is not a lexicon property) is one the lexicon declares, and every required
-/// property is present. Returns a describing `Err` on the first violation so a
-/// failure names the offending field.
+/// **shape**: `$type` names exactly the final record type, every other top-level
+/// key is one the lexicon declares, and every required property is present.
+/// Returns a describing `Err` on the first violation so a failure names the
+/// offending field.
 ///
 /// This checks the *actual wire shape the PDS stored*, so it needs neither the
 /// crate-private wire type nor a re-encode — a stray or draft field the adapter
@@ -308,6 +317,7 @@ fn final_lexicon_record_shape() -> (BTreeSet<String>, BTreeSet<String>) {
 /// (`medium`, `commissionRef`, tags — Class B, must never cross), breaks it.
 fn stored_value_within(
     value: &serde_json::Value,
+    record_type: &str,
     allowed: &BTreeSet<String>,
     required: &BTreeSet<String>,
 ) -> Result<(), String> {
@@ -315,7 +325,17 @@ fn stored_value_within(
         .as_object()
         .ok_or_else(|| "stored record value is not a JSON object".to_string())?;
 
-    // `$type` is the atproto record-type discriminator, not a lexicon property.
+    // `$type` is the atproto record-type discriminator, not a lexicon property —
+    // but it must name exactly the final record type: a same-shaped record under
+    // a different `$type` (a draft variant, say) is outside the lexicon too.
+    match object.get("$type").and_then(|v| v.as_str()) {
+        Some(found) if found == record_type => {}
+        found => {
+            return Err(format!(
+                "record $type is {found:?}, expected {record_type:?}"
+            ));
+        }
+    }
     let keys: BTreeSet<String> = object
         .keys()
         .filter(|key| key.as_str() != "$type")
@@ -339,8 +359,8 @@ fn stored_value_within(
 /// The capstone flow runs this on the record the PDS actually stored, so a
 /// boundary leak is caught on the real wire shape, on every run.
 fn assert_stored_value_within_final_lexicon(value: &serde_json::Value) {
-    let (allowed, required) = final_lexicon_record_shape();
-    if let Err(reason) = stored_value_within(value, &allowed, &required) {
+    let (record_type, allowed, required) = final_lexicon_record_shape();
+    if let Err(reason) = stored_value_within(value, &record_type, &allowed, &required) {
         panic!("the stored record violates the final lexicon: {reason}");
     }
 }
@@ -352,7 +372,11 @@ fn assert_stored_value_within_final_lexicon(value: &serde_json::Value) {
 /// the PDS stored (see `run_capstone_flow`).
 #[test]
 fn stored_record_has_no_field_outside_the_final_lexicon() {
-    let (allowed, required) = final_lexicon_record_shape();
+    let (record_type, allowed, required) = final_lexicon_record_shape();
+    assert_eq!(
+        record_type, "app.zurfur.feed.post",
+        "the on-disk lexicon names the final record type"
+    );
 
     // The frozen ZMVP-104 field set (one-way door: fields may only be ADDED, and a
     // deliberate additive change must update this pin). If this fails, the on-disk
@@ -384,7 +408,7 @@ fn stored_record_has_no_field_outside_the_final_lexicon() {
         "createdAt": "2026-07-05T12:00:00.000Z",
     });
     assert!(
-        stored_value_within(&conforming, &allowed, &required).is_ok(),
+        stored_value_within(&conforming, &record_type, &allowed, &required).is_ok(),
         "a record whose fields are all declared by the lexicon must pass"
     );
 
@@ -397,7 +421,7 @@ fn stored_record_has_no_field_outside_the_final_lexicon() {
         "medium": "digital",
     });
     assert!(
-        stored_value_within(&leaky, &allowed, &required).is_err(),
+        stored_value_within(&leaky, &record_type, &allowed, &required).is_err(),
         "a field outside the final lexicon (a leaked private fact) must be rejected"
     );
 
@@ -407,7 +431,19 @@ fn stored_record_has_no_field_outside_the_final_lexicon() {
         "createdAt": "2026-07-05T12:00:00.000Z",
     });
     assert!(
-        stored_value_within(&missing_required, &allowed, &required).is_err(),
+        stored_value_within(&missing_required, &record_type, &allowed, &required).is_err(),
         "a record missing a required field (labels) must be rejected"
+    );
+
+    // The same shape under a different `$type` (a draft variant, say) must be
+    // rejected: AC4 is "the final lexicon", record type included.
+    let wrong_type = serde_json::json!({
+        "$type": "app.zurfur.feed.post.draft",
+        "labels": { "values": [] },
+        "createdAt": "2026-07-05T12:00:00.000Z",
+    });
+    assert!(
+        stored_value_within(&wrong_type, &record_type, &allowed, &required).is_err(),
+        "a record under a non-final $type must be rejected"
     );
 }
