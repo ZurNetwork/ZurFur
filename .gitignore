@@ -2,3 +2,6 @@
 .cursor
 **/target
 .env
+
+# JS schema-validity harness for lexicons/ (ZMVP-104)
+lexicons/node_modules

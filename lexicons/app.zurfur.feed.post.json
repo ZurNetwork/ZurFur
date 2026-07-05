@@ -1,0 +1,81 @@
+{
+  "lexicon": 1,
+  "id": "app.zurfur.feed.post",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "description": "The unified Zurfur content primitive: a gallery publication, a comment, and a profile shout are ALL this one record — a reply is simply a post with `reply` set (there is no `feed.comment` lexicon; it was deleted before publication, 2026-07-04). The Gallery is an Index-side filter over these records — 'has embed, no reply'. This is a Class A (atproto-native, PDS-canonical) public record born in the poster's own repo. One-way door: fields may only be ADDED, never removed or tightened — a breaking change requires a new NSID (Lexicon 10354710). NOTE on DEFERRED `snapshot`: Gallery Posts DD 29949954 §9 lists an optional `snapshot` (a denormalized, privacy-respecting copy of Product facts computed at compose time) but gives it NO shape, and nothing in this epic consumes it; it is deliberately OMITTED here as an additive-later field pending an Engineer shape decision, and MUST never be a ref to the private commission. App-enforced rules the lexicon CANNOT express: (1) at least one of `text`/`embed` must be present (either-of is inexpressible in a lexicon); (2) a mature work must carry the correct maturity self-label ('rated'); compose silently defaults a text-only post to Safe = an empty `labels.values` array. Index-side facts are NOT record fields: descriptive tags (incl. character tags and Asks), `medium`, and any `commissionRef` live in The Index, never on this public record (Gallery Posts DD 29949954 §5/§9, Boundary Contract 29622283). See DESIGN: Lexicon (10354710), Gallery Posts (29949954), Replyable (30572573), Maturity Vocabulary (29982722).",
+      "record": {
+        "type": "object",
+        "required": ["createdAt", "labels"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Optional poster-authored free text (post body, comment text, or shout). App rule: at least one of `text`/`embed` must be present (enforced at the write path — a lexicon cannot express either-of). CAP PENDING ENGINEER RATIFICATION: `maxGraphemes` is set to 3000 to mirror the earlier Description ceiling; the exact cap is not yet ratified and may change (additively-safe to raise; lowering a max is a breaking tighten).",
+            "maxGraphemes": 3000,
+            "maxLength": 15000
+          },
+          "embed": {
+            "type": "ref",
+            "ref": "app.zurfur.embed.media",
+            "description": "Optional single visual-media embed (the shared `app.zurfur.embed.media` def: blob + required alt + optional aspect ratio). A single ref, not a union — v1 has exactly one embed kind; a second embed type would promote this to a union additively. App rule: at least one of `text`/`embed` must be present (see `text`)."
+          },
+          "reply": {
+            "type": "ref",
+            "ref": "#replyRef",
+            "description": "Optional reply anchor. Its presence is what makes this post a comment/shout rather than a gallery publication (the Gallery filters these out). `{root, parent}`; each arm is a union of a post `com.atproto.repo.strongRef` (gallery-post subject) or a DID subject (User/Account profile shout). v1 composes reply-to-root only and renders flat; threads are a later render unlock — the {root, parent} shape is already reserved (Replyable DD 30572573)."
+          },
+          "credits": {
+            "type": "array",
+            "description": "Optional collaborator credits: each names a DID and the capacity it contributed in (`app.zurfur.feed.defs#credit` = {role, did}). These are collaborator DIDs published in a public record — permanent, network-wide, un-forgettable (a deliberate cross-persona correlation surface, opt-out at compose time). Characters are credited by Index-side tags, NOT here. Per-viewer render-suppression of a credit is handled Index-side, never by mutating this record (Gallery Posts DD 29949954 Update 2026-07-04).",
+            "items": {
+              "type": "ref",
+              "ref": "app.zurfur.feed.defs#credit"
+            },
+            "maxLength": 32
+          },
+          "labels": {
+            "type": "union",
+            "description": "REQUIRED maturity self-labels — content-warning metadata that travels with the blob to any appview (protocol norm: safety metadata must ride with the content). Uses the atproto standard self-label shape (`com.atproto.label.defs#selfLabels`, a bag of `#selfLabel {val}` values). SAFE = an EMPTY `values` array: compose silently defaults a text-only post to Safe by emitting `labels: { values: [] }`. This field is REQUIRED at the schema (unlike Bluesky, where it is optional) so every Zurfur post declares a maturity posture explicitly. The permitted `val` vocabulary (Suggestive/Nudity/Adult/Graphic per Maturity Vocabulary 29982722) is NOT constrained here — selfLabels is an open bag; the 'a mature work must carry the correct label' rule is enforced server-side at publish (ZMVP-105), because a lexicon cannot require a CONDITIONAL label.",
+            "refs": ["com.atproto.label.defs#selfLabels"]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Client-declared creation timestamp. Required."
+          }
+        }
+      }
+    },
+    "replyRef": {
+      "type": "object",
+      "description": "A reply anchor: the thread `root` and the immediate `parent`. Each is a union of a gallery-post subject (`com.atproto.repo.strongRef` — an at-uri + cid content-hash) or a profile subject (`#didSubject` — a bare DID, which is how shouts on User/Account profiles fall out of the same shape). Mirrors the Bluesky `replyRef` pattern (Replyable DD 30572573).",
+      "required": ["root", "parent"],
+      "properties": {
+        "root": {
+          "type": "union",
+          "description": "The root of the thread this reply belongs to. Post subject (strongRef) or profile subject (DID).",
+          "refs": ["com.atproto.repo.strongRef", "#didSubject"]
+        },
+        "parent": {
+          "type": "union",
+          "description": "The immediate subject being replied to. Post subject (strongRef) or profile subject (DID). v1 composes reply-to-root only, so parent == root at v1; distinct parents unlock threaded rendering later.",
+          "refs": ["com.atproto.repo.strongRef", "#didSubject"]
+        }
+      }
+    },
+    "didSubject": {
+      "type": "object",
+      "description": "A profile reply subject: a bare DID (a User or Account identity). Modeled as its own def so the reply union has a ref-valid object arm alongside `com.atproto.repo.strongRef` (a union member must be a referenceable object def). This is the 'shout' arm — replying to a profile rather than to a post.",
+      "required": ["did"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "format": "did",
+          "description": "The DID of the profile (User or Account) being replied to / shouted at."
+        }
+      }
+    }
+  }
+}
