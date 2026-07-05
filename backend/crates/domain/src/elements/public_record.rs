@@ -248,7 +248,7 @@ pub struct Embed {
     /// The embedded media blob.
     pub blob: BlobRef,
     /// Required alt-text description of the media (accessibility-first). The
-    /// non-blank rule is enforced at the compose/publish layer, not here (ZMVP-106).
+    /// non-blank rule is enforced at the compose/publish layer, not here (ZMVP-108).
     pub alt: String,
     /// Optional width:height hint for layout before the blob loads.
     pub aspect_ratio: Option<AspectRatio>,
@@ -303,7 +303,7 @@ pub struct Credit {
 /// content; Zurfur additionally *requires* the field so every post declares a
 /// posture explicitly). Mirrors `com.atproto.label.defs#selfLabels`. The
 /// "a mature work must carry the correct label" rule is enforced at the
-/// compose/publish layer, not here (ZMVP-106).
+/// compose/publish layer, not here (ZMVP-108).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SelfLabels(pub Vec<String>);
 
@@ -327,7 +327,7 @@ impl SelfLabels {
 /// empty label set); everything else is optional. The app-side publish rules the
 /// lexicon cannot express (≥1 of text/embed, conditional maturity label, image
 /// sub-cap, non-blank alt) are enforced at the compose/publish layer, **not** in
-/// this value type nor in the write adapter (ZMVP-106) — ZMVP-105 writes
+/// this value type nor in the write adapter (ZMVP-108) — ZMVP-105 writes
 /// faithfully and relies on the repo to validate structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedPost {
