@@ -47,10 +47,12 @@ mod did_minter;
 mod plc;
 mod plc_directory;
 mod profile;
+mod public_records;
 pub use auth_store::AtprotoAuthStore;
 pub use did_minter::{RealDidMinter, StubDidMinter};
 pub use plc_directory::{DirectoryConfig, NoopPlcDirectory, plc_directory_from_config};
 pub use profile::AtprotoProfileSource;
+pub use public_records::AtprotoPublicRecords;
 
 /// The fully-applied jacquard OAuth client this crate drives: a
 /// [`JacquardResolver`] (handle/DID resolution over `reqwest`) paired with the

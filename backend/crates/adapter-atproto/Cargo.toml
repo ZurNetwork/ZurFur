@@ -12,6 +12,12 @@ jacquard-oauth = { version = "0.12.0" }
 jacquard-common = { version = "0.12.0" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 smol_str = "0.3.6"
+# Public-boundary record writes (ZMVP-105): content-address CIDs for blob refs,
+# raw request body bytes, and typed HTTP headers for uploadBlob's Content-Type.
+cid = "0.11.3"
+bytes = "1"
+http = "1"
+chrono = { workspace = true }
 # Randomness for the floor stub minter and for secp256k1 key generation.
 rand = { workspace = true }
 # --- ZMVP-49 real did:plc minter ---
@@ -44,3 +50,6 @@ tokio = { workspace = true }
 adapter-mem = { path = "../adapter-mem" }
 # Assert the genesis signature is low-S (Signature::normalize_s) in tests.
 k256 = { version = "0.13", features = ["ecdsa"] }
+# The throwaway PDS rig + the shared PublicRecords conformance suite (ZMVP-105).
+test-support = { path = "../test-support" }
+chrono = { workspace = true }
