@@ -18,6 +18,7 @@ use crate::elements::{
     invitation::{Invitation, InvitationId},
     plc_operation::PlcOperationRecord,
     profile::Profile,
+    public_record::{AtUri, BlobRef, PublicRecord, RecordRef},
     role::Role,
     user::{User, UserId},
     user_account::UserAccount,
@@ -451,6 +452,129 @@ pub trait AccountWrites: Send {
 #[async_trait]
 pub trait CommissionWrites: Send {
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
+}
+
+/// Why a [`PublicRecords`] operation failed.
+///
+/// The variants classify the **XRPC** outcome (transport reachability + the
+/// response's status/error name), deliberately **not** the auth transport: a
+/// later Bearer→OAuth switch (ZMVP-107) changes how the adapter authenticates but
+/// not how a rejected write, a missing record, or an unreachable PDS surface —
+/// so this mapping survives it. AC4 wants failures *distinguishable* (unreachable
+/// vs rejected vs not-found), never a panic and never a silent success.
+#[derive(Debug)]
+pub enum PublicRecordsError {
+    /// The PDS could not be reached at all (connection refused, DNS, timeout).
+    /// A transient, retryable transport fault — nothing was written.
+    Unreachable(anyhow::Error),
+    /// The PDS answered but **refused** the operation: it carries the atproto
+    /// error name (e.g. `InvalidRequest`, `AuthMissing`) and the HTTP status the
+    /// server returned, so the caller can tell an authorization refusal from a
+    /// bad request without string-matching a message.
+    Rejected {
+        /// The HTTP status the PDS returned.
+        status: u16,
+        /// The atproto error name (the `error` field of the XRPC error body).
+        error: String,
+        /// The optional human-readable detail (`message` field), if any.
+        message: Option<String>,
+    },
+    /// The record failed structural validation before or at the write — a
+    /// malformed record the repo will not accept.
+    InvalidRecord(String),
+    /// A [`get`](PublicRecords::get_record) (or a target of another op) named a
+    /// record that does not exist.
+    NotFound,
+    /// Any other, unclassified failure (serialization, an unexpected response
+    /// shape) — carried opaquely so nothing is swallowed.
+    Unexpected(anyhow::Error),
+}
+
+impl std::fmt::Display for PublicRecordsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PublicRecordsError::Unreachable(e) => write!(f, "PDS unreachable: {e}"),
+            PublicRecordsError::Rejected {
+                status,
+                error,
+                message,
+            } => match message {
+                Some(m) => write!(f, "PDS rejected ({status} {error}): {m}"),
+                None => write!(f, "PDS rejected ({status} {error})"),
+            },
+            PublicRecordsError::InvalidRecord(why) => write!(f, "invalid record: {why}"),
+            PublicRecordsError::NotFound => write!(f, "record not found"),
+            PublicRecordsError::Unexpected(e) => write!(f, "unexpected public-records error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for PublicRecordsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PublicRecordsError::Unreachable(e) | PublicRecordsError::Unexpected(e) => {
+                Some(e.as_ref())
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The **write** surface of the public data boundary: create / put / delete /
+/// read a record, and upload a blob, in the acting identity's atproto repo on its
+/// PDS (DESIGN/"Domains and Applications", "Data Boundaries" `10354698`). The
+/// mirror of [`Database`]'s private-store write surface, on the *public* side.
+///
+/// **Auth-agnostic by construction.** The port speaks [`Did`] + domain records
+/// only; it never takes a credential per call. *How* the adapter authenticates as
+/// the acting identity (a Bearer `CredentialSession` in ZMVP-105; a DPoP-bound
+/// OAuth session later, ZMVP-107) is internal to the adapter, which is
+/// **constructed with** its session. The PDS credential therefore lives inside
+/// `adapter-atproto` and can never appear in a port signature or leak past the
+/// crate boundary — the same containment plugins have (they never touch the PDS
+/// credential; DD `24543244`).
+///
+/// **No cross-store transaction.** These are public-boundary writes, always their
+/// own retryable step — never fused with a private-store [`UnitOfWork`] (the
+/// mint/tombstone path's rule).
+#[async_trait]
+pub trait PublicRecords: Send + Sync {
+    /// Create a new record in `repo`'s collection (the NSID is fixed by the
+    /// record variant), letting the repo mint the rkey. Returns where it landed
+    /// and the content hash of the written revision. The adapter can only write
+    /// to the repo it is authenticated as; a `repo` it cannot act in is a
+    /// [`PublicRecordsError::Rejected`].
+    async fn create_record(
+        &self,
+        repo: &Did,
+        record: &PublicRecord,
+    ) -> Result<RecordRef, PublicRecordsError>;
+
+    /// Upsert the record at `uri` (create-or-overwrite at that exact key).
+    /// Returns the new [`RecordRef`]. Idempotent for identical content.
+    async fn put_record(
+        &self,
+        uri: &AtUri,
+        record: &PublicRecord,
+    ) -> Result<RecordRef, PublicRecordsError>;
+
+    /// Delete the record at `uri`. Deleting an absent record is not an error
+    /// (the repo treats it as a no-op), so a subsequent [`get_record`](PublicRecords::get_record) is the way
+    /// to observe the deletion (it becomes [`PublicRecordsError::NotFound`]).
+    async fn delete_record(&self, uri: &AtUri) -> Result<(), PublicRecordsError>;
+
+    /// Read the record at `uri` back as a typed [`PublicRecord`]. A record that
+    /// does not exist is [`PublicRecordsError::NotFound`].
+    async fn get_record(&self, uri: &AtUri) -> Result<PublicRecord, PublicRecordsError>;
+
+    /// Upload blob bytes to the acting identity's repo, returning the
+    /// content-addressed [`BlobRef`] a record can then embed. Byte-identical
+    /// uploads content-address to the same [`cid::Cid`].
+    async fn upload_blob(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: &str,
+    ) -> Result<BlobRef, PublicRecordsError>;
 }
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity (an Account is

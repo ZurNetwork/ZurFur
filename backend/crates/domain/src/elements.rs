@@ -36,6 +36,7 @@ pub mod invitation;
 pub mod markdown;
 pub mod plc_operation;
 pub mod profile;
+pub mod public_record;
 pub mod role;
 pub mod user;
 pub mod user_account;
