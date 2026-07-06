@@ -20,6 +20,8 @@
 //!   adds a leaf under a surface).
 //! - [`remove`] — `DELETE /commissions/{id}/nodes/{node}` (ZMVP-73: the owner
 //!   prunes a node and its subtree; the root refuses).
+//! - [`status`] — `PUT`/`DELETE /commissions/{id}/status/direction` (the
+//!   direction-axis Status, ZMVP-85).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -59,6 +61,7 @@ mod maturity;
 mod notes;
 mod positioning;
 mod remove;
+mod status;
 mod surfaces;
 
 /// The commissions route group. On the cookie surface; the composition root
@@ -110,6 +113,10 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         .route(
             "/commissions/{id}/nodes/{node}",
             delete(remove::remove_node),
+        )
+        .route(
+            "/commissions/{id}/status/direction",
+            put(status::set_direction_status).delete(status::clear_direction_status),
         )
 }
 

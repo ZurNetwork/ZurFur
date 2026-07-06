@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,\n                   linked_channel, archived_at, created_at\n            FROM commission\n            WHERE id = $1\n            ",
+  "query": "\n            SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,\n                   direction_status, linked_channel, archived_at, created_at\n            FROM commission\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "direction_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commission",
+            "name": "direction_status"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "linked_channel",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "archived_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -129,8 +140,9 @@
       true,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "8c878433eba9f2811fd30b9c562e3b22767fc6a53d1e0220e35b9c3e55e9a95a"
+  "hash": "846917ac8a3edc0c7242aa8e5b0fb6ac33ade224f369a3c8047b7ff8b151c877"
 }

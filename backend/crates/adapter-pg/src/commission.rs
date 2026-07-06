@@ -9,9 +9,9 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree, GrantLevel,
-            LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
-            RootSurface, SurfaceMode, Visibility,
+            ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree,
+            DirectionStatus, GrantLevel, LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind,
+            NodeRow, Placement, RootSurface, SurfaceMode, Visibility,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -540,6 +540,31 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    /// Repoint (or clear) the `commission.direction_status` column — one
+    /// `UPDATE` on the open transaction, so the caller's matching
+    /// `status_changed` changelog entry lands atomically with it (ZMVP-85;
+    /// Changelog DD D4). The value is stored as its stable `as_str()` token; an
+    /// absent commission matches no row: a no-op here, per the port contract
+    /// (existence is the caller's check).
+    async fn set_direction_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DirectionStatus>,
+    ) -> anyhow::Result<bool> {
+        let result = query!(
+            r#"
+            UPDATE commission
+            SET direction_status = $2
+            WHERE id = $1 AND direction_status IS DISTINCT FROM $2
+            "#,
+            *id,
+            status.map(|s| s.as_str()),
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 /// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
@@ -561,10 +586,11 @@ impl PgCommissionStore {
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
     /// Rebuild the [`Commission`] from its row. The stored `lifecycle`,
-    /// `visibility`, `maturity`, and `linked_channel` values are re-validated
-    /// through their domain gates ([`LifecycleStep::parse`] /
-    /// [`Visibility::parse`] / [`MaturityRating`]'s `TryFrom<&str>` /
-    /// [`ChannelPointer::try_new`], with [`CommissionTitle::try_new`] for the
+    /// `visibility`, `maturity`, `direction_status`, and `linked_channel` values
+    /// are re-validated through their domain gates (`TryFrom<&str>` on
+    /// [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`] /
+    /// [`DirectionStatus`], with [`ChannelPointer::try_new`] and
+    /// [`CommissionTitle::try_new`] for the
     /// title); a value outside its vocabulary means row tampering and surfaces
     /// as an `Err`, never a panic or a silent default — as does a half-set
     /// maturity posture, which the migration's CHECK already makes
@@ -573,7 +599,7 @@ impl CommissionStore for PgCommissionStore {
         let Some(row) = query!(
             r#"
             SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,
-                   linked_channel, archived_at, created_at
+                   direction_status, linked_channel, archived_at, created_at
             FROM commission
             WHERE id = $1
             "#,
@@ -600,12 +626,20 @@ impl CommissionStore for PgCommissionStore {
             id,
             title: CommissionTitle::try_new(row.title)?,
             owner_id: UserId::new(row.owner_id),
-            lifecycle_step: LifecycleStep::parse(&row.lifecycle)
-                .ok_or_else(|| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?,
-            visibility: Visibility::parse(&row.visibility)
-                .ok_or_else(|| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
+            lifecycle_step: LifecycleStep::try_from(row.lifecycle.as_str())
+                .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?,
+            visibility: Visibility::try_from(row.visibility.as_str())
+                .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
             deadline: row.deadline,
             maturity,
+            direction_status: row
+                .direction_status
+                .as_deref()
+                .map(|token| {
+                    DirectionStatus::try_from(token)
+                        .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
+                })
+                .transpose()?,
             linked_channel: row
                 .linked_channel
                 .map(ChannelPointer::try_new)
