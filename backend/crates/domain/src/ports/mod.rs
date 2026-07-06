@@ -7,12 +7,14 @@
 
 pub mod changelog;
 pub mod commission;
+pub mod file;
 
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
     CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
     ParentNotASurface,
 };
+pub use file::FileStore;
 
 use std::future::Future;
 use std::pin::Pin;

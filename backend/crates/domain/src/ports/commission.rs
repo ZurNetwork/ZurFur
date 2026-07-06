@@ -9,9 +9,9 @@ use crate::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTree, DeadlineStatus,
-            DirectionStatus, GrantLevel, LapsedDeadline, NewComponent, NewSurface, NodeId,
-            Placement,
+            ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
+            DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
+            NewSurface, NodeId, Placement,
         },
         maturity::Maturity,
         user::UserId,
@@ -94,6 +94,20 @@ pub trait CommissionStore: Send + Sync {
     /// serialize only through the viewer projection ZMVP-75 introduces;
     /// authorization is the caller's concern, settled before this is read.
     async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>>;
+
+    /// The [`CommissionFile`] entry `key` names **within `commission`**, or `None`
+    /// if this commission holds no such entry (ZMVP-88). Scoped to `commission` by
+    /// construction: a `key` that belongs to a *different* commission answers
+    /// `None` here, so the retrieval path never becomes a cross-commission
+    /// existence oracle — a participant of one commission cannot confirm a file of
+    /// another. The bytes themselves live behind
+    /// [`FileStore`](crate::ports::FileStore); this read only settles the
+    /// commission→file link the participant gate authorizes against.
+    async fn find_file(
+        &self,
+        commission: CommissionId,
+        key: FileKey,
+    ) -> anyhow::Result<Option<CommissionFile>>;
 }
 
 /// The error an [`CommissionWrites::add_surface`] failure carries (as the source
@@ -248,6 +262,19 @@ pub trait CommissionWrites: Send {
     /// external state tied to the subtree). No such event machinery exists
     /// yet — plugins don't — so this is a recorded need, not a hook.
     async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()>;
+
+    /// Record a file entry's [`CommissionFile`] link (ZMVP-88) — the Index-canonical
+    /// row tying an uploaded file's opaque [`FileKey`] to its commission. Written on
+    /// the open transaction **together with** the `file_added` changelog entry the
+    /// caller appends through [`ChangelogWrites`](crate::ports::ChangelogWrites), so
+    /// the entry and its record land atomically (Changelog DD D4). The **bytes** are
+    /// stored separately, before this unit, through
+    /// [`FileStore::put`](crate::ports::FileStore::put) — never inside this
+    /// transaction (blob bytes cannot ride a Postgres unit of work; orphan-on-rollback
+    /// is accepted). The row is commission-owned bookkeeping, **not a
+    /// [`Fact`](crate::elements::commission::Fact)**: it cascades away with the
+    /// commission, so a commission with only file entries stays hard-deletable (AC2).
+    async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD

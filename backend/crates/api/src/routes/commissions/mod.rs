@@ -44,6 +44,7 @@
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
 };
 use domain::elements::{
@@ -62,12 +63,21 @@ mod components;
 mod create;
 mod deadline;
 mod delete;
+mod files;
 mod maturity;
 mod notes;
 mod positioning;
 mod remove;
 mod status;
 mod surfaces;
+
+/// Slack, in bytes, added above [`Config::max_upload_bytes`](crate::Config::max_upload_bytes)
+/// for the request body-size limit on the upload route: a `multipart/form-data`
+/// envelope (boundary + part headers) adds a little to the file's own size, so the
+/// framework backstop must sit above the file cap. The exact per-file cap is still
+/// enforced on the read bytes (a `413`); this only keeps the envelope overhead from
+/// tripping the backstop for a file that is itself within the cap.
+const UPLOAD_BODY_SLACK_BYTES: usize = 1024 * 1024;
 
 /// The commissions route group. On the cookie surface; the composition root
 /// wraps the group with the CSRF
@@ -76,7 +86,12 @@ mod surfaces;
 /// The changelog surface is deliberately **append-and-read only** (ZMVP-87 AC4):
 /// `GET` is the stream's single method — no route updates or removes an entry,
 /// so editing history is unrepresentable at the HTTP layer too.
-pub(crate) fn commissions_router() -> Router<AppState> {
+///
+/// `max_upload_bytes` is [`Config::max_upload_bytes`](crate::Config::max_upload_bytes),
+/// used to size the request body-size limit on the file-upload route (the exact
+/// per-file cap is enforced in the handler).
+pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
+    let upload_body_limit = max_upload_bytes.saturating_add(UPLOAD_BODY_SLACK_BYTES);
     Router::new()
         .route("/commissions", post(create::create_commission))
         .route(
@@ -130,6 +145,16 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         .route(
             "/commissions/{id}/status/deadline",
             put(deadline::set_deadline_status).delete(deadline::clear_deadline_status),
+        )
+        .route(
+            // The upload raises the request body limit above the default (2 MiB) to
+            // the configured cap plus envelope slack; the download is a plain GET.
+            "/commissions/{id}/files",
+            post(files::upload_file).layer(DefaultBodyLimit::max(upload_body_limit)),
+        )
+        .route(
+            "/commissions/{id}/files/{file_id}",
+            get(files::download_file),
         )
 }
 

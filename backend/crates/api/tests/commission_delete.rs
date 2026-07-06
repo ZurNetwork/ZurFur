@@ -69,7 +69,9 @@ async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Databas
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
+            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
         },
+        files: backend.file_store(),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
         users: backend.user_store(),
@@ -350,6 +352,13 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         self.0.set_maturity(id, maturity).await
+    }
+
+    async fn add_file(
+        &mut self,
+        file: &domain::elements::commission::CommissionFile,
+    ) -> anyhow::Result<()> {
+        self.0.add_file(file).await
     }
 
     async fn place(

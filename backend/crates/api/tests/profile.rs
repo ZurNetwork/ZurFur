@@ -24,6 +24,7 @@ fn config_for(addr: std::net::SocketAddr) -> Config {
         plc_directory_endpoint: "https://plc.directory".to_string(),
         plc_directory_submit: false,
         deadline_sweep_interval_secs: 60,
+        max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
     }
 }
 
@@ -66,6 +67,7 @@ async fn me_shows_profile_then_serves_it_from_cache() {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),
+        files: backend.file_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
@@ -159,6 +161,7 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),
+        files: backend.file_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),

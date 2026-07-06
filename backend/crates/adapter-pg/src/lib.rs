@@ -49,6 +49,7 @@ pub use sqlx::PgPool;
 mod account;
 mod commission;
 mod commission_changelog;
+mod file_store;
 mod key_store;
 mod key_vault;
 mod plc_operation_log;
@@ -61,6 +62,7 @@ pub use commission::{
     COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
 };
 pub use commission_changelog::{PgChangelogStore, PgChangelogWrites};
+pub use file_store::PgFileStore;
 pub use key_store::PgKeyStore;
 pub use key_vault::RootKey;
 pub use plc_operation_log::PgPlcOperationLog;
