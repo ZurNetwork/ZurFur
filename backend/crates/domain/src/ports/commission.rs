@@ -10,7 +10,7 @@ use crate::{
         account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewComponent,
-            NewSurface, Placement,
+            NewSurface, NodeId, Placement,
         },
         user::UserId,
     },
@@ -134,6 +134,48 @@ impl std::fmt::Display for ParentNotASurface {
 
 impl std::error::Error for ParentNotASurface {}
 
+/// The error [`CommissionWrites::remove_node`] carries (as the source of its
+/// `anyhow::Error`) when the addressed node does not exist **in that
+/// commission** — covering both a truly absent node id and a node that belongs
+/// to some other commission's tree, indistinguishably (the removal twin of
+/// [`ParentNodeNotFound`], and the same closed-door collapse: probing node ids
+/// through a removal must reveal nothing about other commissions' trees —
+/// not even that a foreign node is a root, which is why this always answers
+/// **before** [`CannotRemoveRoot`] can). Adapters return it so the route can
+/// `downcast_ref` and answer `404` rather than a generic `500`.
+#[derive(Debug)]
+pub struct NodeNotFound;
+
+impl std::fmt::Display for NodeNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "node not found in this commission")
+    }
+}
+
+impl std::error::Error for NodeNotFound {}
+
+/// The error [`CommissionWrites::remove_node`] carries (as the source of its
+/// `anyhow::Error`) when the addressed node is the commission's **root
+/// surface** (ZMVP-73 AC3): the root is the fixed skeleton — every commission
+/// has exactly one, minted with it — so pruning it is refused outright.
+/// Deliberately reachable **only past** [`NodeNotFound`]: a root in someone
+/// else's commission answers not-found first, so this error never confirms
+/// what a foreign node is. (The Title needs no sibling error: it is a
+/// `commission` envelope field, not a tree node, so no node id addresses it —
+/// irremovable by construction.) Adapters return it so the route can
+/// `downcast_ref` and answer an honest `409` (the caller owns the commission
+/// and already sees the root).
+#[derive(Debug)]
+pub struct CannotRemoveRoot;
+
+impl std::fmt::Display for CannotRemoveRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the root surface cannot be removed")
+    }
+}
+
+impl std::error::Error for CannotRemoveRoot {}
+
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`), so no
 /// private-store commission write can skip a transaction (ZMVP-65; DD `24150017`).
@@ -178,6 +220,32 @@ pub trait CommissionWrites: Send {
     /// (a component projects with its parent) and the opaque payload
     /// semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving) (AC3).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()>;
+
+    /// Prune the commission's tree: remove `node` **and its entire subtree**
+    /// (ZMVP-73) — removal is subtree-deep, so a surface takes every
+    /// descendant (nested surfaces and components) with it, while a component,
+    /// being a leaf, goes singly. Runs on the open transaction, which also
+    /// **renumbers the remaining sibling group** (contiguous from 0, order
+    /// preserved) so positions stay consistent — prune and renumber commit or
+    /// roll back together.
+    ///
+    /// The target must exist in `commission`'s own tree: an absent node id
+    /// *and* a node belonging to another commission fail with [`NodeNotFound`]
+    /// as the error source (one indistinguishable answer — see its docs); the
+    /// root surface refuses with [`CannotRemoveRoot`], reachable only past
+    /// that gate (AC3; the Title is not a node, so it is irremovable by
+    /// construction). Authority (owner-only in v1) and the commission's own
+    /// existence are the caller's checks, settled before this is reached.
+    /// Deliberately **not** changelog-recorded: tree edits are not in the
+    /// frozen entry taxonomy (ZMVP-87).
+    ///
+    /// **Plugin note (ZMVP-73):** when plugin-owned subtrees land, a plugin's
+    /// append point is a node like any other — removing it removes the
+    /// plugin's whole subtree through this same path. That removal must then
+    /// emit an event the owning plugin can observe (its signal to drop
+    /// external state tied to the subtree). No such event machinery exists
+    /// yet — plugins don't — so this is a recorded need, not a hook.
+    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD

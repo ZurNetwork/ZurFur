@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT parent FROM commission_node WHERE id = $1 AND commission_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "parent",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "commission_node",
+            "name": "parent"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "534252286e85a2f9a17be5ba098ea12e9f7ffd5119057d2a9201b627a4d9c0f7"
+}

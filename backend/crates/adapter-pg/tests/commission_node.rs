@@ -1,8 +1,9 @@
-//! The commission content tree over PostgreSQL (ZMVP-71/72), against a
+//! The commission content tree over PostgreSQL (ZMVP-71/72/73), against a
 //! throwaway container: every commission is born with (or backfilled to) a root
 //! surface, the owner grows surfaces under any existing surface in append
 //! order, components grow as leaves whose opaque payload round-trips (and under
-//! which nothing grows), and the whole tree loads back assembled. Requires a
+//! which nothing grows), the whole tree loads back assembled, and pruning takes
+//! a node's whole subtree (root refused, siblings renumbered). Requires a
 //! container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
@@ -16,7 +17,10 @@ use domain::{
         did::Did,
         user::User,
     },
-    ports::{CommissionStore, Database, ParentNodeNotFound, ParentNotASurface},
+    ports::{
+        CannotRemoveRoot, CommissionStore, Database, NodeNotFound, ParentNodeNotFound,
+        ParentNotASurface,
+    },
 };
 use serde_json::json;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
@@ -448,6 +452,248 @@ async fn add_component_refuses_absent_and_foreign_parents() {
         .expect("load")
         .expect("tree exists");
     assert!(tree.root.children.is_empty(), "no refused write landed");
+}
+
+/// The `position` values of `parent`'s current children, ascending — read
+/// straight off the table, so a test can assert the renumbering invariant
+/// (contiguous from 0) that the assembled tree deliberately hides.
+async fn sibling_positions(pool: &PgPool, parent: NodeId) -> Vec<(uuid::Uuid, i32)> {
+    sqlx::query_as::<_, (uuid::Uuid, i32)>(
+        "SELECT id, position FROM commission_node WHERE parent = $1 ORDER BY position",
+    )
+    .bind(*parent)
+    .fetch_all(pool)
+    .await
+    .expect("read sibling positions")
+}
+
+/// Runs `remove_node` in its own committed unit of work.
+async fn remove_node(pool: &PgPool, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await?;
+    uow.commissions().remove_node(commission, node).await?;
+    uow.commit().await
+}
+
+// ZMVP-73 AC1 (pg) — removing a mid-tree surface takes its ENTIRE subtree (a
+// component and a nested surface with its own component ride the
+// self-referential cascade), leaves the other siblings intact, and renumbers
+// the remaining sibling group to contiguous positions in the same transaction.
+#[tokio::test]
+async fn remove_surface_takes_its_whole_subtree_and_renumbers() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:pruner").await;
+    let commission = create_commission(&pool, &owner, "Pruned").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    // root -> [first, doomed, last]; under doomed: a component and a surface
+    // holding another component.
+    let first = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let doomed = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let last = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let in_doomed = NewComponent::under(
+        commission.id,
+        doomed.id,
+        json!({"kind": "text"}),
+        owner.id,
+        Utc::now(),
+    );
+    let nested = NewSurface::under(commission.id, doomed.id, owner.id, Utc::now());
+    let in_nested = NewComponent::under(commission.id, nested.id, json!({}), owner.id, Utc::now());
+    let (first_id, doomed_id, last_id) = (first.id, doomed.id, last.id);
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    {
+        let mut commissions = uow.commissions();
+        commissions.add_surface(&first).await.expect("first");
+        commissions.add_surface(&doomed).await.expect("doomed");
+        commissions.add_surface(&last).await.expect("last");
+        commissions.add_component(&in_doomed).await.expect("leaf");
+        commissions.add_surface(&nested).await.expect("nested");
+        commissions
+            .add_component(&in_nested)
+            .await
+            .expect("nested leaf");
+    }
+    uow.commit().await.expect("commit");
+
+    remove_node(&pool, commission.id, doomed_id)
+        .await
+        .expect("removal succeeds");
+
+    let tree = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert_eq!(
+        tree.root.children.len(),
+        2,
+        "the surface and its whole subtree went together"
+    );
+    assert_eq!(tree.root.children[0].id, first_id, "sibling order holds");
+    assert_eq!(tree.root.children[1].id, last_id);
+    assert!(
+        tree.root.children.iter().all(|c| c.children.is_empty()),
+        "nothing of the subtree survives"
+    );
+    assert_eq!(
+        sibling_positions(&pool, root).await,
+        vec![(*first_id, 0), (*last_id, 1)],
+        "the remaining siblings renumber to contiguous positions"
+    );
+}
+
+// ZMVP-73 AC2 (pg) — removing a component removes just that leaf; its siblings
+// survive in order with contiguous positions.
+#[tokio::test]
+async fn remove_component_removes_only_the_leaf() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:leaf-pruner").await;
+    let commission = create_commission(&pool, &owner, "Leaf-pruned").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let doomed = NewComponent::under(
+        commission.id,
+        root,
+        json!({"kind": "text"}),
+        owner.id,
+        Utc::now(),
+    );
+    let surface = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let kept = NewComponent::under(commission.id, root, json!({}), owner.id, Utc::now());
+    let (doomed_id, surface_id, kept_id) = (doomed.id, surface.id, kept.id);
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    {
+        let mut commissions = uow.commissions();
+        commissions.add_component(&doomed).await.expect("doomed");
+        commissions.add_surface(&surface).await.expect("surface");
+        commissions.add_component(&kept).await.expect("kept");
+    }
+    uow.commit().await.expect("commit");
+
+    remove_node(&pool, commission.id, doomed_id)
+        .await
+        .expect("removal succeeds");
+
+    let tree = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert_eq!(tree.root.children.len(), 2, "only the one leaf went");
+    assert_eq!(tree.root.children[0].id, surface_id, "order holds");
+    assert_eq!(tree.root.children[1].id, kept_id);
+    assert_eq!(
+        sibling_positions(&pool, root).await,
+        vec![(*surface_id, 0), (*kept_id, 1)],
+        "positions renumber contiguously"
+    );
+}
+
+// ZMVP-73 AC3 (pg) — the root surface refuses removal with CannotRemoveRoot,
+// and the whole tree is untouched.
+#[tokio::test]
+async fn removing_the_root_is_refused() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:root-pruner").await;
+    let commission = create_commission(&pool, &owner, "Rooted still").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let child = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let child_id = child.id;
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions().add_surface(&child).await.expect("child");
+    uow.commit().await.expect("commit");
+
+    let err = remove_node(&pool, commission.id, root)
+        .await
+        .expect_err("the root refuses removal");
+    assert!(
+        err.downcast_ref::<CannotRemoveRoot>().is_some(),
+        "expected CannotRemoveRoot, got: {err:?}"
+    );
+
+    let tree = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert_eq!(tree.root.id, root, "the root survives");
+    assert_eq!(tree.root.children[0].id, child_id, "so does its subtree");
+}
+
+// ZMVP-73 (pg) — a fabricated node id and a node belonging to another
+// commission both refuse with NodeNotFound (indistinguishably); someone else's
+// ROOT through my commission id is also NodeNotFound — never CannotRemoveRoot,
+// which would leak what a foreign node is — and nothing is removed anywhere.
+#[tokio::test]
+async fn remove_refuses_absent_and_foreign_nodes() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:remove-prober").await;
+    let mine = create_commission(&pool, &owner, "Mine").await;
+    let theirs = {
+        let other = provision(&pool, "did:plc:remove-victim").await;
+        create_commission(&pool, &other, "Theirs").await
+    };
+
+    let store = PgCommissionStore::new(pool.clone());
+    let their_root = store
+        .load_tree(theirs.id)
+        .await
+        .expect("load")
+        .expect("their tree exists")
+        .root
+        .id;
+
+    let err = remove_node(&pool, mine.id, NodeId::new(uuid::Uuid::now_v7()))
+        .await
+        .expect_err("a fabricated node refuses");
+    assert!(
+        err.downcast_ref::<NodeNotFound>().is_some(),
+        "expected NodeNotFound, got: {err:?}"
+    );
+
+    let err = remove_node(&pool, mine.id, their_root)
+        .await
+        .expect_err("a foreign node refuses");
+    assert!(
+        err.downcast_ref::<NodeNotFound>().is_some(),
+        "a foreign root is indistinguishable from an absent node, got: {err:?}"
+    );
+
+    assert!(
+        store.load_tree(theirs.id).await.expect("load").is_some(),
+        "the foreign tree is untouched"
+    );
 }
 
 // AC1, the retroactive half — commissions created BEFORE the tree existed get a

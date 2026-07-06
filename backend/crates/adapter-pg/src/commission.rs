@@ -15,7 +15,10 @@ use domain::{
         },
         user::UserId,
     },
-    ports::{CommissionStore, CommissionWrites, ParentNodeNotFound, ParentNotASurface},
+    ports::{
+        CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
+        ParentNotASurface,
+    },
 };
 use sqlx::{PgConnection, PgPool, query};
 
@@ -252,6 +255,55 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *component.created_by,
             component.created_at,
             component.payload,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Prune the tree (ZMVP-73), on the open transaction — three statements
+    /// sharing it. First the target gate: one `SELECT` scoped to
+    /// `commission_id`, so an absent node id and a node in another
+    /// commission's tree refuse as one indistinguishable [`NodeNotFound`]
+    /// **before** anything about the node is revealed (a foreign *root* is
+    /// therefore never [`CannotRemoveRoot`]); a root here — `parent IS NULL` —
+    /// refuses with [`CannotRemoveRoot`] (AC3). Then one `DELETE` of the node
+    /// row: the self-referential `ON DELETE CASCADE` takes the entire subtree
+    /// with it (Tree Storage DD `28409880` Decision 5). Finally the remaining
+    /// sibling group renumbers to contiguous positions (`ROW_NUMBER` over the
+    /// surviving order) — the `UNIQUE (parent, position)` constraint is
+    /// deferred, so intermediate states inside the transaction can't trip it.
+    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
+        let row = query!(
+            r#"SELECT parent FROM commission_node WHERE id = $1 AND commission_id = $2"#,
+            *node,
+            *commission,
+        )
+        .fetch_optional(&mut *self.conn)
+        .await?;
+        let Some(row) = row else {
+            return Err(NodeNotFound.into());
+        };
+        let Some(parent) = row.parent else {
+            return Err(CannotRemoveRoot.into());
+        };
+
+        query!(r#"DELETE FROM commission_node WHERE id = $1"#, *node)
+            .execute(&mut *self.conn)
+            .await?;
+
+        query!(
+            r#"
+            UPDATE commission_node AS node
+            SET position = renumbered.position
+            FROM (
+                SELECT id, (ROW_NUMBER() OVER (ORDER BY position))::int - 1 AS position
+                FROM commission_node
+                WHERE parent = $1
+            ) AS renumbered
+            WHERE node.id = renumbered.id AND node.position <> renumbered.position
+            "#,
+            parent,
         )
         .execute(&mut *self.conn)
         .await?;

@@ -21,8 +21,8 @@ use domain::elements::{
     user::UserId,
 };
 use domain::ports::{
-    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, ParentNodeNotFound,
-    ParentNotASurface,
+    CannotRemoveRoot, ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites,
+    NodeNotFound, ParentNodeNotFound, ParentNotASurface,
 };
 use serde_json::Value;
 
@@ -318,6 +318,63 @@ impl CommissionWrites for MemCommissionWrites {
                 payload: component.payload.clone(),
             },
         );
+        Ok(())
+    }
+
+    /// Prune the tree — the mem mirror of the pg gate + cascading `DELETE` +
+    /// renumber (ZMVP-73): the target must exist in `commission`'s own tree
+    /// (an absent id and a foreign node both refuse with [`NodeNotFound`],
+    /// indistinguishably — a foreign *root* included, so removal probes reveal
+    /// nothing) and must not be the root ([`CannotRemoveRoot`], AC3). The
+    /// subtree the pg self-referential cascade takes is walked and dropped
+    /// here explicitly, and the remaining sibling group renumbers to
+    /// contiguous positions — all on the unit's staging snapshot, so prune and
+    /// renumber commit or vanish together.
+    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
+        let mut nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        let parent = match nodes.get(&node) {
+            Some(stored) if stored.commission_id == commission => match stored.parent {
+                Some(parent) => parent,
+                None => return Err(CannotRemoveRoot.into()),
+            },
+            _ => return Err(NodeNotFound.into()),
+        };
+
+        // The subtree, walked breadth-first from the target (the mem mirror of
+        // the pg cascade).
+        let mut doomed = vec![node];
+        let mut next = 0;
+        while next < doomed.len() {
+            let current = doomed[next];
+            doomed.extend(
+                nodes
+                    .iter()
+                    .filter(|(_, stored)| stored.parent == Some(current))
+                    .map(|(id, _)| *id),
+            );
+            next += 1;
+        }
+        for id in doomed {
+            nodes.remove(&id);
+        }
+
+        // Renumber the surviving sibling group to contiguous positions.
+        let mut siblings: Vec<(NodeId, i32)> = nodes
+            .iter()
+            .filter(|(_, stored)| stored.parent == Some(parent))
+            .map(|(id, stored)| (*id, stored.position))
+            .collect();
+        siblings.sort_by_key(|(_, position)| *position);
+        for (index, (id, _)) in siblings.into_iter().enumerate() {
+            nodes
+                .get_mut(&id)
+                .expect("sibling was just enumerated")
+                .position = index as i32;
+        }
         Ok(())
     }
 
@@ -695,7 +752,7 @@ impl MemBackend {
 mod tests {
     use chrono::Utc;
     use domain::elements::commission::{NodeId, NodeKind, SurfaceMode};
-    use domain::ports::{ParentNodeNotFound, ParentNotASurface};
+    use domain::ports::{CannotRemoveRoot, NodeNotFound, ParentNodeNotFound, ParentNotASurface};
     use serde_json::json;
 
     use super::*;
@@ -1563,6 +1620,251 @@ mod tests {
         assert!(
             tree.root.children[0].children.is_empty(),
             "a component never has children"
+        );
+    }
+
+    /// The `(id, position)` pairs of `parent`'s current children, in position
+    /// order — read straight off the shared node map, so a test can assert the
+    /// renumbering invariant (positions contiguous from 0) that the assembled
+    /// tree deliberately hides.
+    fn sibling_positions(backend: &MemBackend, parent: NodeId) -> Vec<(NodeId, i32)> {
+        let nodes = backend.nodes.lock().expect("nodes mutex");
+        let mut pairs: Vec<(NodeId, i32)> = nodes
+            .iter()
+            .filter(|(_, node)| node.parent == Some(parent))
+            .map(|(id, node)| (*id, node.position))
+            .collect();
+        pairs.sort_by_key(|(_, position)| *position);
+        pairs
+    }
+
+    /// Runs `remove_node` in its own committed unit of work.
+    async fn remove_node(
+        database: &std::sync::Arc<dyn domain::ports::Database>,
+        commission: CommissionId,
+        node: NodeId,
+    ) -> anyhow::Result<()> {
+        let mut uow = database.begin().await?;
+        uow.commissions().remove_node(commission, node).await?;
+        uow.commit().await
+    }
+
+    // ZMVP-73 AC1 (store layer) — removing a mid-tree surface takes its ENTIRE
+    // subtree (a component and a nested surface with its own component), leaves
+    // the other siblings intact, and renumbers the remaining sibling group so
+    // positions stay contiguous, in the same transaction.
+    #[tokio::test]
+    async fn remove_surface_takes_its_whole_subtree_and_renumbers() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        // root -> [first, doomed, last]; under doomed: a component and a
+        // surface holding another component.
+        let first = NewSurface::under(id, root, owner, Utc::now());
+        let doomed = NewSurface::under(id, root, owner, Utc::now());
+        let last = NewSurface::under(id, root, owner, Utc::now());
+        let in_doomed =
+            NewComponent::under(id, doomed.id, json!({"kind": "text"}), owner, Utc::now());
+        let nested = NewSurface::under(id, doomed.id, owner, Utc::now());
+        let in_nested = NewComponent::under(id, nested.id, json!({}), owner, Utc::now());
+        let (first_id, doomed_id, last_id) = (first.id, doomed.id, last.id);
+
+        let mut uow = database.begin().await.unwrap();
+        {
+            let mut commissions = uow.commissions();
+            commissions.add_surface(&first).await.unwrap();
+            commissions.add_surface(&doomed).await.unwrap();
+            commissions.add_surface(&last).await.unwrap();
+            commissions.add_component(&in_doomed).await.unwrap();
+            commissions.add_surface(&nested).await.unwrap();
+            commissions.add_component(&in_nested).await.unwrap();
+        }
+        uow.commit().await.unwrap();
+
+        remove_node(&database, id, doomed_id).await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(
+            tree.root.children.len(),
+            2,
+            "the surface and its whole subtree went together"
+        );
+        assert_eq!(tree.root.children[0].id, first_id, "sibling order holds");
+        assert_eq!(tree.root.children[1].id, last_id);
+        assert!(
+            tree.root.children.iter().all(|c| c.children.is_empty()),
+            "nothing of the subtree survives"
+        );
+        assert_eq!(
+            sibling_positions(&backend, root),
+            vec![(first_id, 0), (last_id, 1)],
+            "the remaining siblings renumber to contiguous positions"
+        );
+    }
+
+    // ZMVP-73 AC2 (store layer) — removing a component removes just that leaf;
+    // its siblings survive in order with contiguous positions.
+    #[tokio::test]
+    async fn remove_component_removes_only_the_leaf() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let doomed = NewComponent::under(id, root, json!({"kind": "text"}), owner, Utc::now());
+        let surface = NewSurface::under(id, root, owner, Utc::now());
+        let kept = NewComponent::under(id, root, json!({}), owner, Utc::now());
+        let (doomed_id, surface_id, kept_id) = (doomed.id, surface.id, kept.id);
+
+        let mut uow = database.begin().await.unwrap();
+        {
+            let mut commissions = uow.commissions();
+            commissions.add_component(&doomed).await.unwrap();
+            commissions.add_surface(&surface).await.unwrap();
+            commissions.add_component(&kept).await.unwrap();
+        }
+        uow.commit().await.unwrap();
+
+        remove_node(&database, id, doomed_id).await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 2, "only the one leaf went");
+        assert_eq!(tree.root.children[0].id, surface_id, "order holds");
+        assert_eq!(tree.root.children[1].id, kept_id);
+        assert_eq!(
+            sibling_positions(&backend, root),
+            vec![(surface_id, 0), (kept_id, 1)],
+            "positions renumber contiguously"
+        );
+    }
+
+    // ZMVP-73 AC3 (store layer) — the root surface refuses removal with
+    // CannotRemoveRoot, and the whole tree (root and children) is untouched.
+    #[tokio::test]
+    async fn removing_the_root_is_refused() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let child = NewSurface::under(id, root, owner, Utc::now());
+        let child_id = child.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_surface(&child).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let err = remove_node(&database, id, root)
+            .await
+            .expect_err("the root refuses removal");
+        assert!(
+            err.downcast_ref::<CannotRemoveRoot>().is_some(),
+            "expected CannotRemoveRoot, got: {err:?}"
+        );
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.id, root, "the root survives");
+        assert_eq!(tree.root.children[0].id, child_id, "so does its subtree");
+    }
+
+    // ZMVP-73 — the target must exist in THIS commission's tree: a fabricated
+    // node id and a node belonging to another commission both refuse with
+    // NodeNotFound (one indistinguishable answer). Someone else's ROOT through
+    // my commission id is also NodeNotFound — never CannotRemoveRoot, which
+    // would leak what a foreign node is — and nothing is removed anywhere.
+    #[tokio::test]
+    async fn remove_refuses_absent_and_foreign_nodes() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (mine, _) = rooted_commission(&backend, owner).await;
+        let (theirs, their_root) = rooted_commission(&backend, user_id()).await;
+
+        let err = remove_node(&database, mine, NodeId::new(uuid::Uuid::now_v7()))
+            .await
+            .expect_err("a fabricated node refuses");
+        assert!(
+            err.downcast_ref::<NodeNotFound>().is_some(),
+            "expected NodeNotFound, got: {err:?}"
+        );
+
+        let err = remove_node(&database, mine, their_root)
+            .await
+            .expect_err("a foreign node refuses");
+        assert!(
+            err.downcast_ref::<NodeNotFound>().is_some(),
+            "a foreign root is indistinguishable from an absent node, got: {err:?}"
+        );
+
+        assert!(
+            backend
+                .commission_store()
+                .load_tree(theirs)
+                .await
+                .unwrap()
+                .is_some(),
+            "the foreign tree is untouched"
+        );
+    }
+
+    // ZMVP-73 (transactionality) — a staged removal is invisible until commit
+    // and discarded on drop, exactly like every other unit-of-work write.
+    #[tokio::test]
+    async fn remove_commits_and_rolls_back_with_the_unit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let surface = NewSurface::under(id, root, owner, Utc::now());
+        let surface_id = surface.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_surface(&surface).await.unwrap();
+        uow.commit().await.unwrap();
+
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().remove_node(id, surface_id).await.unwrap();
+            let shared = backend
+                .commission_store()
+                .load_tree(id)
+                .await
+                .unwrap()
+                .expect("tree exists");
+            assert_eq!(
+                shared.root.children.len(),
+                1,
+                "an open unit's staged removal is invisible to a shared read"
+            );
+            // `uow` drops here without `commit` -> the staged removal is discarded.
+        }
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(
+            tree.root.children.len(),
+            1,
+            "a dropped unit of work removes nothing"
         );
     }
 
