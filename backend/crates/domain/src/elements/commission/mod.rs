@@ -42,8 +42,8 @@ pub use changelog::{
 };
 pub use fact::Fact;
 pub use node::{
-    CommissionNode, CommissionTree, NewSurface, NodeId, NodeKind, NodeRow, RootSurface,
-    SurfaceMode, TreeAssemblyError,
+    CommissionNode, CommissionTree, NewComponent, NewSurface, NodeId, NodeKind, NodeRow,
+    RootSurface, SurfaceMode, TreeAssemblyError,
 };
 pub use positioning::{GrantLevel, Placement};
 

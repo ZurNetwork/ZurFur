@@ -10,12 +10,12 @@ use domain::{
         account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree, GrantLevel,
-            LifecycleStep, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface,
-            Visibility,
+            LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+            RootSurface, SurfaceMode, Visibility,
         },
         user::UserId,
     },
-    ports::{CommissionStore, CommissionWrites, ParentNodeNotFound},
+    ports::{CommissionStore, CommissionWrites, ParentNodeNotFound, ParentNotASurface},
 };
 use sqlx::{PgConnection, PgPool, query};
 
@@ -86,6 +86,51 @@ pub struct PgCommissionWrites<'a> {
     pub(crate) conn: &'a mut PgConnection,
 }
 
+impl PgCommissionWrites<'_> {
+    /// The shared **parent gate** of every tree-growing write (ZMVP-71/72), on
+    /// the open transaction: the named parent must exist in `commission`'s own
+    /// tree — an absent id and a node from another commission both refuse with
+    /// [`ParentNodeNotFound`], indistinguishably, *before* anything about the
+    /// node is revealed — and must be a surface, else [`ParentNotASurface`]
+    /// (components are leaves; nothing grows under one). Locks the parent row
+    /// (`FOR UPDATE`), so concurrent appends under one parent serialize instead
+    /// of racing to the same `position` slot and aborting on the deferred
+    /// UNIQUE at commit (PR #103 review; Engineer-ruled fix) — one path,
+    /// shared by both add ops, so neither can drift out of the lock's
+    /// protection. Returns the parent's [`SurfaceMode`] on success — the mode
+    /// `add_surface` inherits (Engineer ruling 2026-07-07, PR #103);
+    /// `add_component` has no use for it.
+    async fn require_surface_parent(
+        &mut self,
+        parent: NodeId,
+        commission: CommissionId,
+    ) -> anyhow::Result<SurfaceMode> {
+        let row = query!(
+            r#"
+            SELECT type AS type_tag, mode FROM commission_node
+            WHERE id = $1 AND commission_id = $2
+            FOR UPDATE
+            "#,
+            *parent,
+            *commission,
+        )
+        .fetch_optional(&mut *self.conn)
+        .await?;
+        let Some(row) = row else {
+            return Err(ParentNodeNotFound.into());
+        };
+        match NodeKind::from_columns(&row.type_tag, row.mode.as_deref()) {
+            Some(NodeKind::Surface { mode }) => Ok(mode),
+            Some(NodeKind::Component) => Err(ParentNotASurface.into()),
+            None => Err(anyhow::anyhow!(
+                "unknown node envelope ({:?}, {:?})",
+                row.type_tag,
+                row.mode
+            )),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
     /// Insert a freshly created commission as one row (`INSERT INTO commission`)
@@ -143,32 +188,19 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Grow the tree under an existing parent (ZMVP-71 AC2), on the open
-    /// transaction. Two statements sharing it: a scoped parent check that also
-    /// loads the parent's `mode` — the id must exist, belong to
-    /// `surface.commission_id`, **and carry a mode** (i.e. be a surface), else
-    /// [`ParentNodeNotFound`] (one answer for absent, foreign, and non-surface,
-    /// per the port contract) — then the insert, with the **mode inherited from
-    /// the parent** (Engineer ruling 2026-07-07, PR #103; inheritance never
-    /// widens — see [`NewSurface::under`]) and `position` assigned as
-    /// `max(sibling position) + 1` in a subquery on this same transaction. The
-    /// gate locks the parent row (`FOR UPDATE`), so concurrent appends under
-    /// one parent serialize instead of racing to the same slot and aborting on
-    /// the deferred UNIQUE at commit (PR #103 review; Engineer-ruled fix).
+    /// Grow the tree under an existing parent surface (ZMVP-71 AC2), on the
+    /// open transaction, behind the shared parent gate
+    /// ([`require_surface_parent`](Self::require_surface_parent) —
+    /// [`ParentNodeNotFound`] for absent/foreign, [`ParentNotASurface`] for a
+    /// component parent), which also locks the row and hands back its mode —
+    /// **inherited** by the new surface (Engineer ruling 2026-07-07, PR #103;
+    /// inheritance never widens — see [`NewSurface::under`]). `position` is
+    /// assigned as `max(sibling position) + 1` in a subquery on this same
+    /// transaction, so append order can't race.
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        let parent_mode = query!(
-            r#"
-            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2 FOR UPDATE
-            "#,
-            *surface.parent,
-            *surface.commission_id,
-        )
-        .fetch_optional(&mut *self.conn)
-        .await?
-        .and_then(|row| row.mode);
-        let Some(mode) = parent_mode else {
-            return Err(ParentNodeNotFound.into());
-        };
+        let mode = self
+            .require_surface_parent(surface.parent, surface.commission_id)
+            .await?;
 
         query!(
             r#"
@@ -183,9 +215,43 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *surface.id,
             *surface.commission_id,
             *surface.parent,
-            mode,
+            mode.as_str(),
             *surface.created_by,
             surface.created_at,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Grow a leaf under an existing parent surface (ZMVP-72 AC1), on the open
+    /// transaction — the component mirror of [`add_surface`](Self::add_surface):
+    /// the same shared parent gate, the same racing-proof append `position`
+    /// subquery. The row stores `type = 'component'` with a **NULL `mode`**
+    /// (the surface-XOR-mode CHECK's other arm — a component projects with its
+    /// parent, AC2) and the opaque payload as jsonb, byte-semantically
+    /// unmodified (AC3; a top-level JSON `null` lands as jsonb `'null'`, never
+    /// SQL `NULL`).
+    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
+        self.require_surface_parent(component.parent, component.commission_id)
+            .await?;
+
+        query!(
+            r#"
+            INSERT INTO commission_node
+                (id, commission_id, parent, type, mode, position, created_by, created_at, payload)
+            VALUES (
+                $1, $2, $3, 'component', NULL,
+                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
+                $4, $5, $6
+            )
+            "#,
+            *component.id,
+            *component.commission_id,
+            *component.parent,
+            *component.created_by,
+            component.created_at,
+            component.payload,
         )
         .execute(&mut *self.conn)
         .await?;

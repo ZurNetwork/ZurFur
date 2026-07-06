@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT type AS type_tag FROM commission_node WHERE id = $1 AND commission_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "type_tag",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commission_node",
+            "name": "type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "35184ccafb6ea952e12dc3b464e3c568fb5dabbc978019ca78857afa88d6ac92"
+}
