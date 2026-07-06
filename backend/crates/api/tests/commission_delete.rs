@@ -321,6 +321,14 @@ impl CommissionWrites for FactBearingCommissions<'_> {
     async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
         self.0.delete(id).await
     }
+
+    async fn set_archived(
+        &mut self,
+        id: CommissionId,
+        archived_at: Option<domain::datetime::DateTimeUtc>,
+    ) -> anyhow::Result<bool> {
+        self.0.set_archived(id, archived_at).await
+    }
 }
 
 // AC3 — deleting a fact-bearing commission is refused with the 409

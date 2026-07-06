@@ -18,7 +18,7 @@ use domain::{
         did::Did,
         user::User,
     },
-    ports::Database,
+    ports::{CommissionStore, Database},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
@@ -193,6 +193,124 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
         changelog_rows(pool.clone()).await,
         0,
         "commission_changelog cascaded away (ON DELETE CASCADE)"
+    );
+}
+
+/// ZMVP-68 (pg store layer): `set_archived` flips the `archived_at` column in
+/// the unit of work and reports **whether the state actually transitioned** —
+/// the bool the route keys its changelog append on, so a repeated archive (or
+/// un-archive) can never mint a duplicate entry. The first stamp survives a
+/// repeat; both directions round-trip through the read store; an unknown id is
+/// a no-op.
+#[tokio::test]
+async fn set_archived_round_trips_and_reports_transitions() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:archiving-owner").await;
+    let commission = Commission::create(
+        CommissionTitle::try_new("A ref sheet").expect("valid title"),
+        owner.id,
+        Utc::now(),
+        None,
+    );
+    let id = commission.id;
+
+    let db = PgDatabase::new(pool.clone());
+    let store = adapter_pg::PgCommissionStore::new(pool.clone());
+
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions().create(&commission).await.expect("create");
+    uow.commit().await.expect("commit");
+    assert!(
+        store
+            .find(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at
+            .is_none(),
+        "a fresh commission is active"
+    );
+
+    // Archive: a real transition, visible after commit.
+    let stamp = Utc::now();
+    let mut uow = db.begin().await.expect("begin");
+    let changed = uow
+        .commissions()
+        .set_archived(id, Some(stamp))
+        .await
+        .expect("archive");
+    assert!(changed, "active -> archived is a transition");
+    uow.commit().await.expect("commit");
+    let stored = store
+        .find(id)
+        .await
+        .expect("find")
+        .expect("the record survives archiving");
+    let stored_stamp = stored.archived_at.expect("the flag is set");
+    assert_eq!(
+        stored_stamp.timestamp_micros(),
+        stamp.timestamp_micros(),
+        "the stamp round-trips (at the column's microsecond precision)",
+    );
+    assert_eq!(
+        stored.title.as_str(),
+        "A ref sheet",
+        "the record survives intact"
+    );
+
+    // A repeat archive is no transition and keeps the first stamp.
+    let mut uow = db.begin().await.expect("begin");
+    let changed = uow
+        .commissions()
+        .set_archived(id, Some(Utc::now()))
+        .await
+        .expect("repeat archive");
+    assert!(!changed, "archived -> archived is not a transition");
+    uow.commit().await.expect("commit");
+    assert_eq!(
+        store
+            .find(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at,
+        Some(stored_stamp),
+        "a repeat archive never rewrites the original stamp",
+    );
+
+    // Un-archive: back to active; a repeat is no transition; unknown = no-op.
+    let mut uow = db.begin().await.expect("begin");
+    assert!(
+        uow.commissions()
+            .set_archived(id, None)
+            .await
+            .expect("unarchive"),
+        "archived -> active is a transition",
+    );
+    assert!(
+        !uow.commissions()
+            .set_archived(id, None)
+            .await
+            .expect("repeat unarchive"),
+        "active -> active is not a transition",
+    );
+    assert!(
+        !uow.commissions()
+            .set_archived(CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .await
+            .expect("archive an unknown id"),
+        "an absent commission matches nothing (existence is the caller's check)",
+    );
+    uow.commit().await.expect("commit");
+    assert!(
+        store
+            .find(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at
+            .is_none(),
+        "un-archiving clears the flag"
     );
 }
 

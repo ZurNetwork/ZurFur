@@ -2,7 +2,9 @@
 //! `commission_has_facts` is reachable only on an open [`UnitOfWork`]'s
 //! commissions view — the same transaction a future delete/archive gate
 //! (ZMVP-66/68) runs in — and, with no fact-minter wired anywhere, every
-//! commission answers `false`.
+//! commission answers `false`. The archive flag (ZMVP-68) rides the same
+//! seam: `set_archived` is a transactional write reporting whether the state
+//! actually flipped.
 
 use adapter_mem::MemBackend;
 use chrono::Utc;
@@ -70,4 +72,159 @@ async fn an_unknown_commission_answers_false() {
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
     uow.rollback().await.expect("rollback read-only unit");
+}
+
+/// ZMVP-68 (mem store layer): `set_archived` flips the archive flag through the
+/// unit of work and reports **whether the state actually transitioned** — the
+/// bool the route keys its changelog append on, so a repeated archive (or
+/// un-archive) can never mint a duplicate entry. The first stamp survives a
+/// repeat, and both directions round-trip through `find`.
+#[tokio::test]
+async fn set_archived_round_trips_and_reports_transitions() {
+    let backend = MemBackend::new();
+    let owner = backend
+        .provision(&Did::new("did:plc:archiving-owner".to_string()))
+        .await
+        .expect("provision owner");
+    let commission = Commission::create(
+        CommissionTitle::try_new("A ref sheet").expect("valid title"),
+        owner.id,
+        Utc::now(),
+        None,
+    );
+    let id = commission.id;
+    backend
+        .create_commission(&commission)
+        .await
+        .expect("seed commission");
+    assert!(
+        backend
+            .find_commission(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at
+            .is_none(),
+        "a fresh commission is active"
+    );
+
+    // Archive: a real transition.
+    let stamp = Utc::now();
+    let mut uow = backend.database().begin().await.expect("begin");
+    let changed = uow
+        .commissions()
+        .set_archived(id, Some(stamp))
+        .await
+        .expect("archive");
+    assert!(changed, "active -> archived is a transition");
+    uow.commit().await.expect("commit");
+    let stored = backend
+        .find_commission(id)
+        .await
+        .expect("find")
+        .expect("the record survives");
+    assert_eq!(stored.archived_at, Some(stamp), "the stamp round-trips");
+
+    // A repeat archive is no transition and keeps the first stamp.
+    let mut uow = backend.database().begin().await.expect("begin");
+    let changed = uow
+        .commissions()
+        .set_archived(id, Some(Utc::now()))
+        .await
+        .expect("repeat archive");
+    assert!(!changed, "archived -> archived is not a transition");
+    uow.commit().await.expect("commit");
+    assert_eq!(
+        backend
+            .find_commission(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at,
+        Some(stamp),
+        "a repeat archive never rewrites the original stamp",
+    );
+
+    // Un-archive: back to active.
+    let mut uow = backend.database().begin().await.expect("begin");
+    let changed = uow
+        .commissions()
+        .set_archived(id, None)
+        .await
+        .expect("unarchive");
+    assert!(changed, "archived -> active is a transition");
+    uow.commit().await.expect("commit");
+    assert!(
+        backend
+            .find_commission(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at
+            .is_none(),
+        "un-archiving clears the flag"
+    );
+
+    // A repeat un-archive is no transition; an unknown commission is a no-op.
+    let mut uow = backend.database().begin().await.expect("begin");
+    assert!(
+        !uow.commissions()
+            .set_archived(id, None)
+            .await
+            .expect("repeat unarchive"),
+        "active -> active is not a transition",
+    );
+    assert!(
+        !uow.commissions()
+            .set_archived(CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .await
+            .expect("archive an unknown id"),
+        "an absent commission matches nothing (existence is the caller's check)",
+    );
+    uow.rollback().await.expect("rollback");
+}
+
+/// ZMVP-68 (mem store layer): an archive staged in a dropped unit of work is
+/// discarded — the flag write obeys the same commit-or-discard rule as every
+/// other commission write (DD 24150017).
+#[tokio::test]
+async fn a_dropped_unit_of_work_discards_the_archive() {
+    let backend = MemBackend::new();
+    let owner = backend
+        .provision(&Did::new("did:plc:rollback-owner".to_string()))
+        .await
+        .expect("provision owner");
+    let commission = Commission::create(
+        CommissionTitle::try_new("Kept active").expect("valid title"),
+        owner.id,
+        Utc::now(),
+        None,
+    );
+    let id = commission.id;
+    backend
+        .create_commission(&commission)
+        .await
+        .expect("seed commission");
+
+    {
+        let mut uow = backend.database().begin().await.expect("begin");
+        assert!(
+            uow.commissions()
+                .set_archived(id, Some(Utc::now()))
+                .await
+                .expect("stage archive"),
+        );
+        // `uow` drops here without `commit` → the staged flag is discarded.
+    }
+
+    assert!(
+        backend
+            .find_commission(id)
+            .await
+            .expect("find")
+            .expect("present")
+            .archived_at
+            .is_none(),
+        "a dropped unit of work archives nothing"
+    );
 }

@@ -39,6 +39,9 @@ pub(crate) struct StoredCommission {
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
     pub(crate) linked_channel: Option<ChannelPointer>,
+    /// When the commission was archived, or `None` while active (ZMVP-68) —
+    /// the mem mirror of the pg `archived_at` column.
+    pub(crate) archived_at: Option<domain::datetime::DateTimeUtc>,
     /// When the commission was created.
     pub(crate) created_at: domain::datetime::DateTimeUtc,
 }
@@ -55,6 +58,7 @@ impl StoredCommission {
             visibility: self.visibility.clone(),
             deadline: self.deadline,
             linked_channel: self.linked_channel.clone(),
+            archived_at: self.archived_at,
             created_at: self.created_at,
         }
     }
@@ -128,6 +132,7 @@ impl CommissionWrites for MemCommissionWrites {
                 visibility: commission.visibility.clone(),
                 deadline: commission.deadline,
                 linked_channel: commission.linked_channel.clone(),
+                archived_at: commission.archived_at,
                 created_at: commission.created_at,
             },
         );
@@ -170,6 +175,33 @@ impl CommissionWrites for MemCommissionWrites {
             .expect("MemBackend changelog mutex poisoned");
         changelog.retain(|entry| entry.commission_id != id);
         Ok(())
+    }
+
+    /// Flip the stored archive stamp (ZMVP-68) — the mem mirror of the pg
+    /// conditional `UPDATE`: the write applies only on a **real transition**
+    /// (the `is_none`/`is_some` arms differ between stored and requested), so a
+    /// repeat in the same direction changes nothing, answers `false`, and keeps
+    /// the original stamp. An absent commission answers `false` (existence is
+    /// the caller's check). Staged like every write here: shared state moves
+    /// only on commit.
+    async fn set_archived(
+        &mut self,
+        id: CommissionId,
+        archived_at: Option<domain::datetime::DateTimeUtc>,
+    ) -> anyhow::Result<bool> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.archived_at.is_none() == archived_at.is_none() {
+            return Ok(false);
+        }
+        stored.archived_at = archived_at;
+        Ok(true)
     }
 
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of

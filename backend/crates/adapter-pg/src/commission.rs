@@ -5,6 +5,7 @@
 //! DESIGN/Commission and DD `24150017` (compile-enforced Unit of Work).
 
 use domain::{
+    datetime::DateTimeUtc,
     elements::{
         commission::{
             ChannelPointer, Commission, CommissionId, CommissionTitle, LifecycleStep, Visibility,
@@ -134,6 +135,33 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
+    /// Flip the `commission.archived_at` column (ZMVP-68) — one **conditional**
+    /// `UPDATE` on the open transaction: the row matches only when the write is
+    /// a real transition (`archived_at IS NULL` differs between the row and the
+    /// requested state), so the returned rows-affected IS the transition answer
+    /// and a repeat in the same direction touches nothing (keeping the original
+    /// stamp). The caller keys its changelog append on the bool in this same
+    /// unit of work, so a duplicate `archived`/`unarchived` entry is
+    /// unrepresentable. An absent commission matches no row and answers `false`.
+    async fn set_archived(
+        &mut self,
+        id: CommissionId,
+        archived_at: Option<DateTimeUtc>,
+    ) -> anyhow::Result<bool> {
+        let result = query!(
+            r#"
+            UPDATE commission
+            SET archived_at = $2
+            WHERE id = $1 AND (archived_at IS NULL) <> ($2::timestamptz IS NULL)
+            "#,
+            *id,
+            archived_at,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Repoint (or clear) the `commission.linked_channel` column — one
     /// **conditional** `UPDATE` on the open transaction: the row matches only
     /// when the stored value differs from the requested one
@@ -190,7 +218,8 @@ impl CommissionStore for PgCommissionStore {
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = query!(
             r#"
-            SELECT title, owner_id, lifecycle, visibility, deadline, linked_channel, created_at
+            SELECT title, owner_id, lifecycle, visibility, deadline, linked_channel,
+                   archived_at, created_at
             FROM commission
             WHERE id = $1
             "#,
@@ -215,6 +244,7 @@ impl CommissionStore for PgCommissionStore {
                 .linked_channel
                 .map(ChannelPointer::try_new)
                 .transpose()?,
+            archived_at: row.archived_at,
             created_at: row.created_at,
         }))
     }

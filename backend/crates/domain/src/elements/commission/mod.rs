@@ -146,6 +146,20 @@ pub struct Commission {
     /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
     /// changelog-recorded on set/clear, rendered as an opaque pointer.
     pub linked_channel: Option<ChannelPointer>,
+    /// When the commission was **archived** — `None` while active (ZMVP-68).
+    ///
+    /// Archive is the soft path (Deletion DD `3014657`): the mandatory route once
+    /// facts exist, and available regardless of facts (hard delete, ZMVP-66, is
+    /// the fact-gated path). An archived commission disappears from **active
+    /// views** — every listing projection filters on this field — but the record
+    /// and its facts survive intact and stay queryable by its Participants.
+    /// Owner-only in both directions, and both directions are changelog entries
+    /// ([`ChangelogEntryKind::Archived`]/[`ChangelogEntryKind::Unarchived`]);
+    /// un-archive is an explicit owner act that returns the commission to active
+    /// views (Engineer ruling 2026-07-05, recorded on ZMVP-68). Archive stays in
+    /// the owner-only reserve even when Commission Admin lands (Structural
+    /// Authority DD `29425666` Decision 2).
+    pub archived_at: Option<DateTimeUtc>,
     /// When the commission was created.
     pub created_at: DateTimeUtc,
 }
@@ -189,6 +203,7 @@ impl Commission {
             visibility: Visibility::Private,
             deadline,
             linked_channel: None,
+            archived_at: None,
         }
     }
 }

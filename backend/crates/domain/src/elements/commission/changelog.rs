@@ -42,6 +42,17 @@ use crate::{datetime::DateTimeUtc, elements::user::UserId};
 /// gallery-publish unit; [`Created`], [`Note`], [`ChannelLinked`] and
 /// [`ChannelUnlinked`] are emitted from ZMVP-87 itself.
 ///
+/// **Amended once, additively** (ZMVP-68): the pre-build interview ruled that
+/// un-archive exists and that archive and un-archive are **both** changelog
+/// entries (Engineer ruling 2026-07-05, recorded on the ticket) — the ZMVP-87
+/// taxonomy predated that ruling and carried neither, so [`Archived`] and
+/// [`Unarchived`] were added and are emitted from ZMVP-68 itself. A ruling is
+/// design authority; the matching Changelog DD (`30408741`) amendment is queued
+/// for `/design-sync`.
+///
+/// [`Archived`]: Self::Archived
+/// [`Unarchived`]: Self::Unarchived
+///
 /// Each variant persists as its stable [`as_str`](Self::as_str) token in the
 /// `commission_changelog.kind` text column, validated back through
 /// [`parse`](Self::parse) on read — so the enum, not the database, owns the
@@ -117,6 +128,12 @@ pub enum ChangelogEntryKind {
     InvoicePaymentSent,
     /// A gallery snapshot of the commission was published.
     SnapshotPublished,
+    /// The owner archived the commission — soft-removed from active views, the
+    /// record and its facts surviving intact (ZMVP-68; Deletion DD `3014657`).
+    Archived,
+    /// The owner un-archived the commission — an explicit act returning it to
+    /// active views (ZMVP-68; Engineer ruling 2026-07-05).
+    Unarchived,
     /// A standalone free-text note — speech into the record, never dialogue
     /// (DD Decision 1). The text rides the entry's `note` field.
     Note,
@@ -162,6 +179,8 @@ impl ChangelogEntryKind {
         Self::InvoiceMarkedPaid,
         Self::InvoicePaymentSent,
         Self::SnapshotPublished,
+        Self::Archived,
+        Self::Unarchived,
         Self::Note,
         Self::ChannelLinked,
         Self::ChannelUnlinked,
@@ -204,6 +223,8 @@ impl ChangelogEntryKind {
             Self::InvoiceMarkedPaid => "invoice_marked_paid",
             Self::InvoicePaymentSent => "invoice_payment_sent",
             Self::SnapshotPublished => "snapshot_published",
+            Self::Archived => "archived",
+            Self::Unarchived => "unarchived",
             Self::Note => "note",
             Self::ChannelLinked => "channel_linked",
             Self::ChannelUnlinked => "channel_unlinked",
