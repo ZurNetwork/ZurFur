@@ -640,6 +640,21 @@ impl CommissionWrites for MemCommissionWrites {
         );
         Ok(())
     }
+
+    /// Whether the commission bears any fact (ZMVP-67) — the in-memory mirror of
+    /// the pg predicate, answered on the unit's staged snapshot so the fake keeps
+    /// the same same-transaction semantics the delete gate (ZMVP-66) relies on.
+    ///
+    /// Constant `false` for the same reason the pg body is: no fact-minter exists,
+    /// so `MemBackend` holds no fact map any query could scan. The fact registry
+    /// and its tripwires live in the pg adapter (`COMMISSION_FACT_TABLES` in
+    /// `adapter-pg/src/commission.rs`, Deletion DD `3014657`); the change that
+    /// registers the first fact table there MUST also give this fake the matching
+    /// fact map and check it here, or mem-backed gate tests would pass against a
+    /// predicate blind to the facts they stage.
+    async fn commission_has_facts(&mut self, _id: CommissionId) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// In-memory [`AccountStore`] read surface over the shared [`MemBackend`].

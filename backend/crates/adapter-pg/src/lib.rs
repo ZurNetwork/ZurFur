@@ -51,7 +51,7 @@ mod session_store;
 mod uow;
 mod user;
 pub use account::{PgAccountStore, PgAccountWrites};
-pub use commission::PgCommissionWrites;
+pub use commission::{COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionWrites};
 pub use key_store::PgKeyStore;
 pub use key_vault::RootKey;
 pub use plc_operation_log::PgPlcOperationLog;
