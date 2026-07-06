@@ -1264,6 +1264,8 @@ mod tests {
             profile_cache: backend.profile_cache(),
             database: backend.database(),
             accounts: backend.account_store(),
+            commissions: backend.commission_store(),
+            changelog: backend.changelog_store(),
             did_minter: Arc::new(MemDidMinter::new()),
         };
         (state, backend)

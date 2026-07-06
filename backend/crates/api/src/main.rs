@@ -112,6 +112,10 @@ async fn main() -> anyhow::Result<()> {
         // Account/membership reads off the pool; their writes (and all other
         // private-store writes) flow through the transaction-bound `database`.
         accounts: std::sync::Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
+        // Commission + changelog reads off the pool (ZMVP-87); the changelog
+        // append is a UnitOfWork view, so it rides `database` like every write.
+        commissions: std::sync::Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
+        changelog: std::sync::Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
         database: std::sync::Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
         pool,
     };

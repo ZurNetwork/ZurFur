@@ -1,0 +1,98 @@
+//! The commissions route group: the commission JSON API, split per area
+//! (ZMVP-65/87) so each later commission ticket adds a file here rather than
+//! growing one hotspot — the same seam-splitting move as [`super`] itself:
+//!
+//! - [`create`] — `POST /commissions` (ZMVP-65 + the creation changelog entry).
+//! - [`changelog`] — `GET /commissions/{id}/changelog` (the ordered read).
+//! - [`notes`] — `POST /commissions/{id}/notes` (free text into the record).
+//! - [`channel`] — `PUT`/`DELETE /commissions/{id}/channel` (the linked-channel
+//!   pointer).
+//!
+//! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
+//! entirely Index-side. Like the rest of the JSON API the group returns status
+//! codes, not redirects: an unrecognized caller gets a `401`. It is part of the
+//! cookie surface, so [`crate::app`] mounts the group under the
+//! first-party-`Origin` (CSRF) layer.
+//!
+//! **The closed door.** Whether a commission *exists* is participant-only
+//! knowledge: every handler here answers a non-participant — and a truly absent
+//! id — with the one uniform [`Problem::commission_not_found`] 404 via
+//! [`require_participant`], never a 403 (an existence oracle). The changelog is
+//! Total-tier: this holds at every future root mode.
+//!
+//! References: ZMVP-65/87; DESIGN/Commission (`3276807`), the Changelog DD
+//! (`30408741`).
+
+use axum::{
+    Router,
+    routing::{get, post, put},
+};
+use domain::elements::{commission::CommissionId, user::User, user::UserId};
+use tower_sessions::Session;
+use uuid::Uuid;
+
+use crate::{AppState, SESSION_USER_KEY, problem::Problem};
+
+mod changelog;
+mod channel;
+mod create;
+mod notes;
+
+/// The commissions route group. On the cookie surface; the composition root
+/// wraps the group with the CSRF
+/// [`require_first_party_origin`](super::require_first_party_origin) layer.
+///
+/// The changelog surface is deliberately **append-and-read only** (ZMVP-87 AC4):
+/// `GET` is the stream's single method — no route updates or removes an entry,
+/// so editing history is unrepresentable at the HTTP layer too.
+pub(crate) fn commissions_router() -> Router<AppState> {
+    Router::new()
+        .route("/commissions", post(create::create_commission))
+        .route(
+            "/commissions/{id}/changelog",
+            get(changelog::read_changelog),
+        )
+        .route("/commissions/{id}/notes", post(notes::write_note))
+        .route(
+            "/commissions/{id}/channel",
+            put(channel::link_channel).delete(channel::clear_channel),
+        )
+}
+
+/// Resolve the session to the acting [`User`] — the shared authentication step
+/// of every commission handler. An absent/unreadable session or a vanished User
+/// is a `401`, never a redirect, because the frontend *calls* these endpoints.
+async fn current_user(state: &AppState, session: &Session) -> Result<User, Problem> {
+    let id = session
+        .get::<Uuid>(SESSION_USER_KEY)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(Problem::not_authenticated)?;
+    state
+        .users
+        .find(UserId::new(id))
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(Problem::not_authenticated)
+}
+
+/// The closed-door gate (ZMVP-87 AC5; DESIGN/Commission): admit `user` only if
+/// they are a Participant of `commission`, answering **everyone else with the
+/// one uniform [`Problem::commission_not_found`] 404** — the same body whether
+/// the commission is hidden from them or does not exist at all
+/// ([`CommissionStore::is_participant`](domain::ports::CommissionStore::is_participant)
+/// answers `false` for both), so no response distinguishes the cases. Never a
+/// 403: a 403 would confirm existence.
+async fn require_participant(
+    state: &AppState,
+    commission: CommissionId,
+    user: UserId,
+) -> Result<(), Problem> {
+    if state.commissions.is_participant(commission, user).await? {
+        Ok(())
+    } else {
+        Err(Problem::commission_not_found())
+    }
+}

@@ -58,6 +58,8 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         profile_cache: backend.profile_cache(),
         database: backend.database(),
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));

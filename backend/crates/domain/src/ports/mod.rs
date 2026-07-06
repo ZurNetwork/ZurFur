@@ -1,7 +1,15 @@
 //! Ports: traits named by the role they play for the domain, implemented by the
-//! adapter crates (`adapter-pg`, `adapter-mem`). This is the first one; as the
-//! `domain` crate splits into per-domain crates, `UserStore`/`UserWrites` move with the
-//! `User` entity into the `identity` namespace.
+//! adapter crates (`adapter-pg`, `adapter-mem`). As the `domain` crate splits
+//! into per-domain crates, each port moves with its entity (`UserStore`/
+//! `UserWrites` into the `identity` namespace, …). Per-area ports live in
+//! submodules ([`commission`], [`changelog`]) and are re-exported flat here, so
+//! a new area adds a file rather than growing this one.
+
+pub mod changelog;
+pub mod commission;
+
+pub use changelog::{ChangelogStore, ChangelogWrites};
+pub use commission::{CommissionStore, CommissionWrites};
 
 use std::future::Future;
 use std::pin::Pin;
@@ -12,7 +20,6 @@ use crate::datetime::DateTimeUtc;
 use crate::elements::{
     account::{Account, AccountId},
     account_keys::AccountKeys,
-    commission::{Commission, CommissionId},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
@@ -61,6 +68,14 @@ pub trait UnitOfWork: Send {
     fn accounts(&mut self) -> Box<dyn AccountWrites + '_>;
 
     fn commissions(&mut self) -> Box<dyn CommissionWrites + '_>;
+
+    /// A view of the commission-changelog **append** surface over this
+    /// transaction (ZMVP-87). On the Unit of Work — never pool-backed — because
+    /// an entry must commit **atomically with the domain write it records**
+    /// (Changelog DD `30408741` D4, no dual write): the emitter issues its
+    /// domain write and its `append` through this same open unit.
+    fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_>;
+
     /// A view of the [`User`] write surface (recognition) over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_>;
 
@@ -447,36 +462,6 @@ pub trait AccountWrites: Send {
     /// part of this private transaction (no cross-store dual write — the mint path's
     /// mirror). Idempotent: hard-deleting an absent account is a no-op.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
-}
-
-/// The **write** surface of Zurfur's record of commissions — reachable only on an
-/// open [`UnitOfWork`] (`uow.commissions()`), so no private-store commission write
-/// can skip a transaction (ZMVP-65; DD `24150017`). Commissions are entirely
-/// Index-side: nothing on this surface ever touches atproto.
-#[async_trait]
-pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`Commission`] as one private-side write.
-    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
-
-    /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
-    /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD
-    /// `3014657`). The delete/archive gates (ZMVP-66/68) consume **this port**,
-    /// never ad-hoc checks.
-    ///
-    /// A *read*, deliberately placed on the transactional write view rather than a
-    /// pool-backed store (conductor ruling E17): the gate that asks it runs in the
-    /// **same transaction** as the delete it guards, so a fact minted between check
-    /// and delete is unrepresentable (no TOCTOU window) — the same
-    /// make-unsoundness-unreachable posture as the Unit of Work itself.
-    ///
-    /// An unknown commission answers `false`: absence of the commission is absence
-    /// of facts, not an error — existence is the caller's separate concern. With no
-    /// fact-minter wired anywhere (every fact kind — Product, rating, EXP,
-    /// achievement, payment — is a future ticket), every commission answers `false`
-    /// (AC3). Implementations carry the registry duty stated on
-    /// [`Fact`](crate::elements::commission::Fact): every fact kind's storage must
-    /// join this predicate in the same change that introduces it.
-    async fn commission_has_facts(&mut self, id: CommissionId) -> anyhow::Result<bool>;
 }
 
 /// Why a [`PublicRecords`] operation failed.

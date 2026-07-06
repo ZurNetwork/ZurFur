@@ -24,6 +24,8 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
     let backend = MemBackend::new();
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {

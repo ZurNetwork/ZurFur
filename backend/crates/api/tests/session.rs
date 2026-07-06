@@ -34,6 +34,8 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
     let backend = adapter_mem::MemBackend::new();
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
