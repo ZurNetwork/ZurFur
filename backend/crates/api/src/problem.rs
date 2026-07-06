@@ -172,6 +172,23 @@ impl Problem {
         )
     }
 
+    /// `409` — the commission bears facts, so hard-deleting it is no longer
+    /// possible (ZMVP-66; Deletion DD `3014657`: "Delete = hard delete, possible
+    /// only while fact-free"). A state conflict, not an authority failure — the
+    /// caller is the owner, the commission just crossed the point of no return.
+    /// The detail points at **Archive** (ZMVP-68), the path that remains once
+    /// facts exist. Fixed text by construction: naming *which* facts would leak
+    /// the other party's activity to no benefit.
+    pub fn commission_has_facts() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-has-facts",
+            "commission_has_facts",
+            "Commission has facts",
+            409,
+            "This commission bears facts and can no longer be deleted. Archive it instead.",
+        )
+    }
+
     /// `409` — the chosen account handle is already taken. The handle index is
     /// global — a soft-deleted (tombstoned) account still reserves its handle (DD
     /// 23003138 "Account Deletion, Tombstoning & Handle Reuse"; DD "The Account
@@ -339,6 +356,21 @@ mod tests {
                 .get(CONTENT_TYPE)
                 .expect("content-type is set"),
             "application/problem+json"
+        );
+    }
+
+    // ZMVP-66 AC3 — the fact-bearing delete refusal is a 409 whose detail points
+    // the caller at Archive (the path that remains once facts exist).
+    #[test]
+    fn commission_has_facts_is_a_409_pointing_at_archive() {
+        let problem = Problem::commission_has_facts();
+        assert_eq!(problem.kind, "urn:zurfur:error:commission-has-facts");
+        assert_eq!(problem.code, "commission_has_facts");
+        assert_eq!(problem.status, 409);
+        assert!(
+            problem.detail.to_lowercase().contains("archive"),
+            "the detail points at Archive, got {:?}",
+            problem.detail
         );
     }
 

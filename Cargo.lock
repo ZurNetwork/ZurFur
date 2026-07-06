@@ -142,6 +142,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "async-trait",
  "axum",
  "base64",
  "chrono",

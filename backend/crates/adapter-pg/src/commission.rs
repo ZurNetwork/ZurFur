@@ -119,6 +119,21 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(false)
     }
 
+    /// Remove the commission row — one `DELETE FROM commission` on the open
+    /// transaction, so the caller's fact gate
+    /// ([`commission_has_facts`](CommissionWrites::commission_has_facts)) and the
+    /// delete commit or roll back together (ZMVP-66, ruling E17). Child rows reap
+    /// via each commission-referencing table's `ON DELETE CASCADE` (ruling E35;
+    /// today `commission_changelog` — see [`COMMISSION_NON_FACT_TABLES`], whose
+    /// tripwire keeps every future child classified). An absent commission
+    /// matches no row: a no-op, per the port contract.
+    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
+        query!(r#"DELETE FROM commission WHERE id = $1"#, *id)
+            .execute(&mut *self.conn)
+            .await?;
+        Ok(())
+    }
+
     /// Repoint (or clear) the `commission.linked_channel` column — one
     /// **conditional** `UPDATE` on the open transaction: the row matches only
     /// when the stored value differs from the requested one

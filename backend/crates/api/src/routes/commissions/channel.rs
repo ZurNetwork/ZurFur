@@ -13,12 +13,7 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    elements::{
-        commission::{
-            ChangelogEntryKind, ChannelPointer, Commission, CommissionId, NewChangelogEntry,
-        },
-        user::User,
-    },
+    elements::commission::{ChangelogEntryKind, ChannelPointer, CommissionId, NewChangelogEntry},
     ports::transaction,
 };
 use serde::Deserialize;
@@ -28,44 +23,12 @@ use uuid::Uuid;
 
 use crate::{AppState, problem::Problem};
 
+use super::require_owner;
+
 /// The `PUT /commissions/{id}/channel` request body: the raw pointer text.
 #[derive(Deserialize)]
 pub(super) struct LinkChannelBody {
     channel: String,
-}
-
-/// The channel authority gate — **owner-only in v1**, shaped so the future
-/// Commission Admin (ZMVP-83) extends *this one match* rather than growing a
-/// second path: resolve the commission, then rank the caller. A non-participant
-/// (who may not learn the commission exists) gets the uniform
-/// [`commission_not_found`](Problem::commission_not_found) 404; a participant
-/// who is not the owner already knows it exists, so refusing them managing
-/// authority is an honest `403` — today that arm is unreachable (the owner is
-/// the only participant until ZMVP-79 seats more).
-async fn require_owner(
-    state: &AppState,
-    commission: CommissionId,
-    user: &User,
-) -> Result<Commission, Problem> {
-    let found = state
-        .commissions
-        .find(commission)
-        .await?
-        .ok_or_else(Problem::commission_not_found)?;
-    if found.owner_id == user.id {
-        return Ok(found);
-    }
-    Err(
-        if state
-            .commissions
-            .is_participant(commission, user.id)
-            .await?
-        {
-            Problem::forbidden()
-        } else {
-            Problem::commission_not_found()
-        },
-    )
 }
 
 /// Declare (or replace) the commission's linked channel (ZMVP-87 AC3).
