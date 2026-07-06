@@ -35,7 +35,9 @@
 //! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
 //! Index-canonical link. The [`markup`] submodule carries the [`Markup`]
 //! annotation shapes (ZMVP-90) that ride the `markup_added` changelog entry's
-//! payload.
+//! payload. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
+//! Character positions as tree components with a title/notes satellite — fill
+//! deferred wholesale to the Character epic.
 
 pub mod changelog;
 pub mod fact;
@@ -43,6 +45,7 @@ pub mod file;
 pub mod markup;
 pub mod node;
 pub mod positioning;
+pub mod slot;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
@@ -55,6 +58,7 @@ pub use node::{
     RootSurface, SurfaceMode, TreeAssemblyError,
 };
 pub use positioning::{GrantLevel, Placement};
+pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
 
 use std::ops::Deref;
 

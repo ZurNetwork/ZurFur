@@ -45,8 +45,9 @@ impl NodeId {
         Self(id)
     }
 
-    /// Mint a fresh UUIDv7 node key.
-    fn mint() -> Self {
+    /// Mint a fresh UUIDv7 node key (shared with the sibling shapes that grow
+    /// the tree, e.g. [`NewSlot`](super::NewSlot)).
+    pub(super) fn mint() -> Self {
         Self(uuid::Uuid::now_v7())
     }
 }

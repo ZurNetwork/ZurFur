@@ -11,7 +11,7 @@ use crate::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
             DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
-            NewSurface, NodeId, Placement,
+            NewSlot, NewSurface, NodeId, Placement,
         },
         maturity::Maturity,
         user::UserId,
@@ -275,6 +275,28 @@ pub trait CommissionWrites: Send {
     /// [`Fact`](crate::elements::commission::Fact)**: it cascades away with the
     /// commission, so a commission with only file entries stays hard-deletable (AC2).
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()>;
+
+    /// Declare a **Slot** on the commission: persist a [`NewSlot`] as an
+    /// ordinary component leaf under its parent **surface** *plus* its
+    /// satellite row — the required title and optional notes, keyed by the slot
+    /// node's id — in this same write (ZMVP-77 AC1; the slot mirror of the Seat
+    /// satellite ruling, Gate A E20). The tree half carries exactly the
+    /// [`add_component`](Self::add_component) contract: append sibling order
+    /// assigned on the open transaction, an absent/foreign parent refusing with
+    /// [`ParentNodeNotFound`], a component parent refusing with
+    /// [`ParentNotASurface`], authority and commission existence settled by the
+    /// caller. The node's payload is the empty object — the slot's substance
+    /// lives in the satellite, which is why the generic component add cannot
+    /// declare one.
+    ///
+    /// **No changelog entry**: the frozen ZMVP-87 taxonomy carries
+    /// `seat_declared` for Seats but no slot variant, and the taxonomy is not
+    /// this ticket's to grow (flagged to the Engineer rather than invented).
+    ///
+    /// Nothing here fills the Slot — no occupant is even representable on
+    /// [`NewSlot`] or in its storage (AC2/AC3: an empty Slot is a valid,
+    /// permanent state; the assignment surface is the Character epic's).
+    async fn declare_slot(&mut self, slot: &NewSlot) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD

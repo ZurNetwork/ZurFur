@@ -14,8 +14,8 @@ use domain::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
-            RootSurface, SurfaceMode, Visibility, derive_deadline_status,
+            LifecycleStep, NewComponent, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
+            Placement, RootSurface, SurfaceMode, Visibility, derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -71,10 +71,15 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   commission foreign key (blobs know nothing of commissions) and so is not
 ///   commission-referencing — the hard-delete cascade (ZMVP-66) severs them through
 ///   [`FileStore::delete`](domain::ports::FileStore::delete), not the row cascade.
+/// - `commission_slot` (ZMVP-77): the declared-Slot satellite (title/notes on a
+///   slot's component node). A declaration is composition like the node it
+///   decorates, not evidence that work happened; it cascades with the
+///   commission (ruling E35) and with its own node.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
     "commission_file",
     "commission_node",
+    "commission_slot",
     "commission_placement",
     "commission_current_placement",
     "commission_view_grant",
@@ -290,6 +295,53 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *file.uploaded_by,
             file.created_at,
         )
+        .await?;
+        Ok(())
+    }
+
+    /// Declare a Slot (ZMVP-77): two inserts on the open transaction behind the
+    /// shared parent gate — the slot's tree half as an ordinary component row
+    /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
+    /// subquery, the empty payload: the substance is the satellite's) and the
+    /// `commission_slot` satellite (title, notes) keyed by the same node id (the
+    /// slot mirror of the Seat satellite ruling, Gate A E20). One transaction,
+    /// so the leaf and its satellite land or vanish together; there is no
+    /// occupant column to write (fill is the Character epic's), and no
+    /// changelog entry (the frozen taxonomy has no slot variant).
+    async fn declare_slot(&mut self, slot: &NewSlot) -> anyhow::Result<()> {
+        self.require_surface_parent(slot.parent, slot.commission_id)
+            .await?;
+
+        query!(
+            r#"
+            INSERT INTO commission_node
+                (id, commission_id, parent, type, mode, position, created_by, created_at)
+            VALUES (
+                $1, $2, $3, 'component', NULL,
+                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
+                $4, $5
+            )
+            "#,
+            *slot.id,
+            *slot.commission_id,
+            *slot.parent,
+            *slot.created_by,
+            slot.created_at,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        query!(
+            r#"
+            INSERT INTO commission_slot (node_id, commission_id, title, notes)
+            VALUES ($1, $2, $3, $4)
+            "#,
+            *slot.id,
+            *slot.commission_id,
+            slot.title.as_str(),
+            slot.notes.as_deref(),
+        )
+        .execute(&mut *self.conn)
         .await?;
         Ok(())
     }

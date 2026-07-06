@@ -45,7 +45,9 @@ pub use commission::{
 pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
 
-pub(crate) use commission::{StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement};
+pub(crate) use commission::{
+    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSlot,
+};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -145,6 +147,11 @@ pub struct MemBackend {
     /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
     /// nor clobber it.
     pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredFile>>>,
+    /// [`StoredSlot`] satellites keyed by the slot node's [`NodeId`] (ZMVP-77) —
+    /// the in-memory mirror of the pg `commission_slot` table. A domain map,
+    /// staged and applied by the Unit of Work exactly like `nodes`: a slot's
+    /// component leaf and its satellite commit (or vanish) together.
+    pub(crate) slots: Arc<Mutex<HashMap<NodeId, StoredSlot>>>,
 }
 
 impl MemBackend {
@@ -278,6 +285,12 @@ impl MemBackend {
             // Shared, not copied: the blob store is a Unit-of-Work exemption (the
             // blob write is a step outside the unit — the FileStore contract).
             blobs: self.blobs.clone(),
+            slots: Arc::new(Mutex::new(
+                self.slots
+                    .lock()
+                    .expect("MemBackend slots mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -372,6 +385,11 @@ impl MemBackend {
             .files
             .lock()
             .expect("MemBackend files mutex poisoned")
+            .clone();
+        *self.slots.lock().expect("MemBackend slots mutex poisoned") = staged
+            .slots
+            .lock()
+            .expect("MemBackend slots mutex poisoned")
             .clone();
     }
 

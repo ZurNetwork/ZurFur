@@ -20,6 +20,9 @@
 //!   adds a leaf under a surface).
 //! - [`remove`] — `DELETE /commissions/{id}/nodes/{node}` (ZMVP-73: the owner
 //!   prunes a node and its subtree; the root refuses).
+//! - [`slots`] — `POST /commissions/{id}/slots` (ZMVP-77: the owner declares a
+//!   Slot — a component plus its title/notes satellite; fill deferred to the
+//!   Character epic).
 //! - [`status`] — `PUT`/`DELETE /commissions/{id}/status/direction` (the
 //!   direction-axis Status, ZMVP-85).
 //! - [`deadline`] — `PUT`/`DELETE /commissions/{id}/deadline` and
@@ -71,6 +74,7 @@ mod maturity;
 mod notes;
 mod positioning;
 mod remove;
+mod slots;
 mod status;
 mod surfaces;
 
@@ -137,6 +141,7 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
             "/commissions/{id}/nodes/{node}",
             delete(remove::remove_node),
         )
+        .route("/commissions/{id}/slots", post(slots::declare_slot))
         .route(
             "/commissions/{id}/status/direction",
             put(status::set_direction_status).delete(status::clear_direction_status),
