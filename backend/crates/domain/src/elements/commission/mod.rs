@@ -16,6 +16,13 @@
 //! values survive as the aliases the per-surface Surfaces DD (`28246028`) keeps for
 //! the future root-surface mode (`Private` = root at `Total`), so when the content
 //! tree lands the field is reinterpreted, not replaced.
+//!
+//! The [`fact`] submodule carries the [`Fact`] contract (ZMVP-67) — what it means
+//! for a type to be commission-anchored evidence that blocks hard deletion.
+
+pub mod fact;
+
+pub use fact::Fact;
 
 use std::ops::Deref;
 

@@ -12,7 +12,7 @@ use crate::datetime::DateTimeUtc;
 use crate::elements::{
     account::{Account, AccountId},
     account_keys::AccountKeys,
-    commission::Commission,
+    commission::{Commission, CommissionId},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
@@ -449,9 +449,34 @@ pub trait AccountWrites: Send {
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
 }
 
+/// The **write** surface of Zurfur's record of commissions — reachable only on an
+/// open [`UnitOfWork`] (`uow.commissions()`), so no private-store commission write
+/// can skip a transaction (ZMVP-65; DD `24150017`). Commissions are entirely
+/// Index-side: nothing on this surface ever touches atproto.
 #[async_trait]
 pub trait CommissionWrites: Send {
+    /// Persist a freshly created [`Commission`] as one private-side write.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
+
+    /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
+    /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD
+    /// `3014657`). The delete/archive gates (ZMVP-66/68) consume **this port**,
+    /// never ad-hoc checks.
+    ///
+    /// A *read*, deliberately placed on the transactional write view rather than a
+    /// pool-backed store (conductor ruling E17): the gate that asks it runs in the
+    /// **same transaction** as the delete it guards, so a fact minted between check
+    /// and delete is unrepresentable (no TOCTOU window) — the same
+    /// make-unsoundness-unreachable posture as the Unit of Work itself.
+    ///
+    /// An unknown commission answers `false`: absence of the commission is absence
+    /// of facts, not an error — existence is the caller's separate concern. With no
+    /// fact-minter wired anywhere (every fact kind — Product, rating, EXP,
+    /// achievement, payment — is a future ticket), every commission answers `false`
+    /// (AC3). Implementations carry the registry duty stated on
+    /// [`Fact`](crate::elements::commission::Fact): every fact kind's storage must
+    /// join this predicate in the same change that introduces it.
+    async fn commission_has_facts(&mut self, id: CommissionId) -> anyhow::Result<bool>;
 }
 
 /// Why a [`PublicRecords`] operation failed.
