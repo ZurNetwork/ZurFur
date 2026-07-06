@@ -7,11 +7,17 @@
 //! [`PgDatabase`] factory's [`UnitOfWork`] (DD `24150017`). The founder is
 //! provisioned first because `account_members.user_id` references `users(id)`.
 //! Requires a container runtime socket (DOCKER_HOST honored).
-use adapter_pg::{PgAccountStore, PgDatabase, PgPool};
+use std::collections::BTreeSet;
+
+use adapter_pg::{
+    ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgCommissionStore, PgDatabase,
+    PgPool,
+};
 use chrono::{Duration, Utc};
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
+        commission::{Commission, CommissionTitle, GrantLevel},
         did::Did,
         handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
@@ -19,7 +25,7 @@ use domain::{
         user::{User, UserId},
         user_account::UserAccount,
     },
-    ports::{AccountStore, Database, HandleTaken},
+    ports::{AccountStore, CommissionStore, Database, HandleTaken},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
@@ -1219,6 +1225,197 @@ async fn change_handle_rejects_a_stale_old_handle() {
         count_changes(&pool, account.id, before).await,
         0,
         "no audit row is recorded for a rejected stale change"
+    );
+}
+
+// ── ZMVP-57: account-anchored fact gate & positioning severance ──────────────────
+
+/// AC4 — THE ACCOUNT-FACT TRIPWIRE (mirrors ZMVP-67's commission tripwire): every
+/// table holding a foreign key onto `accounts(id)` must be **deliberately
+/// classified** — registered in [`ACCOUNT_FACT_TABLES`] (its rows are
+/// account-anchored facts; an account bearing one is soft-deleted, never hard) or in
+/// [`ACCOUNT_NON_FACT_TABLES`] (bookkeeping severed with the account, never a fact).
+/// A migration that adds an `accounts`-referencing table trips this test until its
+/// author makes that call in code — and registering a fact table trips the
+/// compile-time guards in `adapter_pg::account` and beside `account_has_facts` in the
+/// `api` crate, which refuse to build until that seam stops returning its unexamined
+/// constant `false`. Neither step can happen by accident (Account Deletion DD 23003138).
+#[tokio::test]
+async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
+    let (pool, _container) = fresh_pool().await;
+
+    // Every table holding a foreign key onto `accounts` — the schema-level superset
+    // of possible account-anchored storage.
+    let referencing: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT conrelid::regclass::text
+        FROM pg_constraint
+        WHERE contype = 'f' AND confrelid = 'accounts'::regclass
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("scan foreign keys onto accounts");
+
+    let referencing: BTreeSet<&str> = referencing.iter().map(String::as_str).collect();
+    let facts: BTreeSet<&str> = ACCOUNT_FACT_TABLES.iter().copied().collect();
+    let non_facts: BTreeSet<&str> = ACCOUNT_NON_FACT_TABLES.iter().copied().collect();
+
+    let overlap: Vec<&&str> = facts.intersection(&non_facts).collect();
+    assert!(
+        overlap.is_empty(),
+        "a table cannot be both fact and non-fact: {overlap:?}"
+    );
+
+    // AC2 (structural) — commissions are NOT account facts (Ownership Separation DD
+    // 29130754): a commission is User-owned and carries no foreign key onto
+    // `accounts`, so it can never enter this scan and can never be wired into
+    // `account_has_facts`. Assert that structural fact directly.
+    assert!(
+        !referencing.contains("commission"),
+        "commission must not reference accounts(id) — it is User-owned and survives \
+         account deletion, never an account-anchored fact",
+    );
+
+    let classified: BTreeSet<&str> = facts.union(&non_facts).copied().collect();
+    assert_eq!(
+        referencing, classified,
+        "every table referencing accounts(id) must be listed in exactly one of \
+         ACCOUNT_FACT_TABLES (the account_has_facts registry, Account Deletion DD 23003138) \
+         or ACCOUNT_NON_FACT_TABLES (deliberate exemptions) in adapter-pg/src/account.rs — \
+         classify it there, in the same change that adds the table"
+    );
+}
+
+/// AC1 — account hard-delete **severs** the account's positioning rails (its
+/// placements and view grants) while the placed **commission survives untouched**.
+/// Commissions are User-owned, not account facts (Ownership Separation DD 29130754),
+/// so a placed commission never forces a soft-delete; severance rides the ZMVP-70
+/// `ON DELETE CASCADE` on each positioning FK onto `accounts`, exercised through the
+/// real [`AccountWrites::hard_delete`](domain::ports::AccountWrites::hard_delete) path.
+#[tokio::test]
+async fn hard_delete_severs_placements_and_grants_while_the_commission_survives() {
+    let (pool, _container) = fresh_pool().await;
+    let commissions = PgCommissionStore::new(pool.clone());
+    let accounts = PgAccountStore::new(pool.clone());
+
+    // A User owns a commission; a separate account will hold its positioning.
+    let owner = provision(&pool, "did:plc:sever-owner").await;
+    let commission = Commission::create(
+        CommissionTitle::try_new("A ref sheet").expect("title"),
+        owner.id,
+        Utc::now(),
+        None,
+    );
+    let commission_id = commission.id;
+    {
+        let db = PgDatabase::new(pool.clone());
+        let mut uow = db.begin().await.expect("begin");
+        uow.commissions()
+            .create(&commission)
+            .await
+            .expect("create commission");
+        uow.commit().await.expect("commit");
+    }
+
+    let account_owner = provision(&pool, "did:plc:sever-acct-owner").await;
+    let (account, membership) = Account::open(
+        account_owner.id,
+        Did::new("did:plc:sever-acct".to_string()),
+        Handle::try_new("sever-acct.zurfur.app").unwrap(),
+        AccountName::try_new("Holder").unwrap(),
+        Utc::now(),
+    );
+    let account_id = account.id;
+    create(&pool, &account, &membership).await;
+
+    // Place the commission in the account's position and grant it a Total view key.
+    {
+        let db = PgDatabase::new(pool.clone());
+        let mut uow = db.begin().await.expect("begin");
+        uow.commissions()
+            .place(commission_id, account_id, owner.id, Utc::now())
+            .await
+            .expect("place");
+        uow.commissions()
+            .grant_view(commission_id, account_id, GrantLevel::Total)
+            .await
+            .expect("grant");
+        uow.commit().await.expect("commit");
+    }
+    // Precondition: the positioning rails exist before the delete.
+    assert!(
+        commissions
+            .current_placement(commission_id)
+            .await
+            .unwrap()
+            .is_some(),
+        "the commission is placed before the delete"
+    );
+    assert!(
+        !commissions
+            .placement_log(commission_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the placement log has a row before the delete"
+    );
+    assert!(
+        commissions
+            .view_grant(commission_id, account_id)
+            .await
+            .unwrap()
+            .is_some(),
+        "the view grant exists before the delete"
+    );
+
+    // Hard-delete the account: it holds no account-anchored fact (a placed commission
+    // is not one), so it takes the hard path.
+    hard_delete(&pool, account_id).await;
+
+    // The account is gone...
+    assert!(
+        accounts.find(account_id).await.expect("find").is_none(),
+        "the account is hard-deleted"
+    );
+    // ...its positioning rails are severed...
+    assert!(
+        commissions
+            .current_placement(commission_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "the current-placement pointer is severed with the account"
+    );
+    assert!(
+        commissions
+            .placement_log(commission_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the placement log is severed with the account"
+    );
+    assert!(
+        commissions
+            .view_grant(commission_id, account_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "the view grant is severed with the account"
+    );
+    // ...but the commission itself survives untouched.
+    let survivor = commissions
+        .find(commission_id)
+        .await
+        .expect("find")
+        .expect("the User-owned commission survives account deletion");
+    assert_eq!(
+        survivor.id, commission_id,
+        "the commission is untouched by account deletion"
+    );
+    assert_eq!(
+        survivor.owner_id, owner.id,
+        "its ownership is unchanged — the commission never belonged to the account"
     );
 }
 

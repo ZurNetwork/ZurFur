@@ -56,7 +56,7 @@ mod profile;
 mod session_store;
 mod uow;
 mod user;
-pub use account::{PgAccountStore, PgAccountWrites};
+pub use account::{ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgAccountWrites};
 pub use commission::{
     COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
 };

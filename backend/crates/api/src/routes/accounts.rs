@@ -364,26 +364,47 @@ async fn create_account(
     })))
 }
 
-/// Whether an account holds any **fact** — anything that would be orphaned by removing
-/// the account: a **commission** (part of the MVP), and later products and recurring
-/// billing in either direction (DD 23003138). This is the single seam that decides
-/// soft-vs-hard deletion: an account holding any fact is soft-deleted and never
-/// escalates; an empty one is hard-deleted.
+// Mirror of the `adapter_pg::ACCOUNT_FACT_TABLES` compile guard, placed right beside
+// the seam it protects (ZMVP-57 AC4): the constant-`false` body of `account_has_facts`
+// below is sound ONLY while no account-anchored fact store exists. The moment the
+// account-fact registry gains its first table, this fails to compile at the exact seam
+// that must change — forcing whoever wires that store to replace the constant with a
+// real query over it in the same change (and remove this guard and its sibling in
+// `adapter_pg::account`). A test can be skipped or deleted; a compile guard cannot.
+const _: () = assert!(
+    adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
+    "an account-anchored fact store was registered: replace the constant-`false` body \
+     of account_has_facts with a real query over it (an account bearing such a fact must \
+     be soft-deleted, never hard-deleted), then remove this guard and its sibling in \
+     adapter_pg::account"
+);
+
+/// Whether an account holds any **account-anchored fact** — evidence that would be
+/// *orphaned* by removing the account. This is the single seam that decides soft-vs-hard
+/// deletion: an account holding any such fact is **soft-deleted** (its row kept, handle
+/// reserved, `did:plc` live) and never escalates; an empty one is **hard-deleted**.
 ///
-/// Per the ticket it gates on **whatever fact store exists at delete time** — the
-/// invariant ("nothing is orphaned") is durable even as the fact kinds grow. Today no
-/// fact is persisted yet (commissions have only a domain element on `main`; products and
-/// billing don't exist), so no account can hold a queryable fact and this is `false` —
-/// every deletion is currently a hard-delete. When commission storage lands, this
-/// becomes its query (and products/billing join it as they arrive); nothing else in the
-/// delete path changes.
+/// The enumeration of account-anchored fact classes is owned by the Account Deletion DD
+/// (`23003138`), not this seam — this seam enforces the gate, whatever that list becomes.
+/// Commissions are **not** among them: a commission is **User-owned** and survives account
+/// deletion by design (Ownership Separation DD `29130754`); an account holds only a
+/// commission's *placement* and revocable *view grants*, which are severed with the
+/// account (never facts). So placing a commission in an account never forces a soft-delete.
+///
+/// Today **no** account-anchored fact store exists (the account-fact registry
+/// `adapter_pg::ACCOUNT_FACT_TABLES` is empty), so no account can hold a queryable fact
+/// and this is `false` — every deletion is currently a hard-delete. When the first such
+/// store lands it wires its query here **in the same change**; nothing else in the delete
+/// path changes.
 ///
 /// SAFETY — this constant `false` is the ONLY thing keeping a fact-bearing account from
-/// being *hard*-deleted (handle freed for reuse, `did:plc` tombstoned). It is safe only
-/// while no fact is persistable. **The moment commission (or product/billing) storage
-/// lands, this MUST start querying it in the same change** — otherwise an Owner deleting
-/// a commissioned account silently frees its handle and tombstones its DID, orphaning the
-/// facts. Do not merge fact storage without updating this seam (ZMVP-34 tombstone review, F1).
+/// being *hard*-deleted (handle freed for reuse, `did:plc` tombstoned), and it is sound
+/// only while the account-fact registry is empty. That soundness is not left to vigilance:
+/// the compile guard above (and its sibling in `adapter_pg::account`) breaks the build the
+/// moment a fact table is registered, and the schema tripwire test refuses any
+/// `accounts`-referencing table that skips classification — so this body becomes a real
+/// query in the same change that mints the first account-anchored fact (ZMVP-34 tombstone
+/// review F1; ZMVP-57).
 async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<bool, Problem> {
     Ok(false)
 }
@@ -392,8 +413,9 @@ async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<boo
 /// live-account-only: the acting user must hold `Owner` in this account, and the account
 /// must not already be soft-deleted/unknown.
 ///
-/// The account is **soft-deleted** if it holds facts (commissions, …) and **hard-deleted**
-/// if it is empty. Soft keeps the row — the handle stays reserved, the `did:plc` stays
+/// The account is **soft-deleted** if it holds any account-anchored fact (per the Account
+/// Deletion DD `23003138` — **not** commissions, which are User-owned and survive) and
+/// **hard-deleted** if it is empty. Soft keeps the row — the handle stays reserved, the `did:plc` stays
 /// live, the account's surface is hidden — and never escalates to hard. Hard removes the
 /// account (freeing its handle for reuse) and, as a **separate retryable atproto step**
 /// (never inside the private transaction), tombstones the DID on the native ~72h PLC
