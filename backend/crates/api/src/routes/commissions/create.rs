@@ -3,7 +3,6 @@
 //! and the act itself is the changelog's genesis entry (ZMVP-87; the Changelog
 //! DD's taxonomy includes "creation itself").
 
-use anyhow::Result;
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},

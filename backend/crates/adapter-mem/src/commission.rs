@@ -136,7 +136,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Whether the commission bears any fact (ZMVP-67) — the in-memory mirror of
     /// the pg predicate, answered on the unit's staged snapshot so the fake keeps
-    /// the same same-transaction semantics the delete gate (ZMVP-66) relies on.
+    /// the same-transaction semantics the delete gate (ZMVP-66) relies on.
     ///
     /// Constant `false` for the same reason the pg body is: no fact-minter exists,
     /// so `MemBackend` holds no fact map any query could scan. The fact registry

@@ -3,7 +3,6 @@
 //! record, never dialogue: a note is a standalone entry with **no reply
 //! affordances** — it cannot reference another entry, by shape.
 
-use anyhow::Result;
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
