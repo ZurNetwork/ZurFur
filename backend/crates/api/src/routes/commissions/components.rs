@@ -6,7 +6,7 @@
 //! opaque payload — nothing else. There is no mode (a component projects with
 //! its parent; none is even representable, `NodeKind::Component`) and no type
 //! tag (v1 is the generic, untyped contract — the type catalog is deliberately
-//! deferred). The payload is stored byte-semantically unmodified; the core
+//! deferred). The payload is stored semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving); the core
 //! never validates or interprets it. Tree edits append **no** changelog entry —
 //! they are not in the frozen entry taxonomy (ZMVP-87).
 

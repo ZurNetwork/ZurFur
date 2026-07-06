@@ -176,7 +176,7 @@ pub trait CommissionWrites: Send {
     /// caller, and no changelog entry (tree edits are not in the frozen
     /// taxonomy) — plus the leaf's own half: the row stores **no mode**
     /// (a component projects with its parent) and the opaque payload
-    /// byte-semantically unmodified, to read back verbatim (AC3).
+    /// semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving) (AC3).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)

@@ -229,8 +229,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// the same shared parent gate, the same racing-proof append `position`
     /// subquery. The row stores `type = 'component'` with a **NULL `mode`**
     /// (the surface-XOR-mode CHECK's other arm — a component projects with its
-    /// parent, AC2) and the opaque payload as jsonb, byte-semantically
-    /// unmodified (AC3; a top-level JSON `null` lands as jsonb `'null'`, never
+    /// parent, AC2) and the opaque payload as jsonb, semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving)
+    /// (AC3; a top-level JSON `null` lands as jsonb `'null'`, never
     /// SQL `NULL`).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
         self.require_surface_parent(component.parent, component.commission_id)
