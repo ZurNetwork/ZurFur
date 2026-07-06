@@ -9,12 +9,13 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, LifecycleStep,
-            Placement, Visibility,
+            ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree, GrantLevel,
+            LifecycleStep, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface,
+            Visibility,
         },
         user::UserId,
     },
-    ports::{CommissionStore, CommissionWrites},
+    ports::{CommissionStore, CommissionWrites, ParentNodeNotFound},
 };
 use sqlx::{PgConnection, PgPool, query};
 
@@ -49,8 +50,13 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   current pointer, and the view-grant keys. Commission-owned bookkeeping that
 ///   cascades with the commission (Ownership Separation DD `29130754`), never a
 ///   fact that blocks its deletion.
+/// - `commission_node` (ZMVP-71): the content tree. Nodes are the commission's
+///   own composition, not evidence that work happened — the Tree Storage DD
+///   (`28409880`) has the whole tree cascade with its commission, which is what
+///   ZMVP-66's "gone entirely" relies on.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
+    "commission_node",
     "commission_placement",
     "commission_current_placement",
     "commission_view_grant",
@@ -82,13 +88,17 @@ pub struct PgCommissionWrites<'a> {
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
-    /// Insert a freshly created commission as one row (`INSERT INTO commission`).
-    /// The [`LifecycleStep`](domain::elements::commission::LifecycleStep) and
-    /// [`Visibility`](domain::elements::commission::Visibility) are each stored as their
-    /// stable `as_str()` token in the `lifecycle` / `visibility` text columns, and the
-    /// nullable deadline maps to a nullable `timestamptz`. The id is a caller-minted
-    /// UUIDv7, so no conflict handling is needed; any store failure surfaces as an
-    /// opaque error.
+    /// Insert a freshly created commission as one row (`INSERT INTO commission`)
+    /// **plus its root surface** as one `commission_node` row ([`RootSurface::of`]),
+    /// on this same open transaction (ZMVP-71 AC1) — a commission can never land
+    /// without its tree. The [`LifecycleStep`](domain::elements::commission::LifecycleStep)
+    /// and [`Visibility`](domain::elements::commission::Visibility) are each stored as
+    /// their stable `as_str()` token in the `lifecycle` / `visibility` text columns,
+    /// the root's `mode` token is the visibility's alias mapping
+    /// ([`Visibility::as_root_mode`](domain::elements::commission::Visibility::as_root_mode)),
+    /// and the nullable deadline maps to a nullable `timestamptz`. The ids are
+    /// caller-/adapter-minted UUIDv7, so no conflict handling is needed; any store
+    /// failure surfaces as an opaque error.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         query!(
             r#"
@@ -111,6 +121,68 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             commission.visibility.as_str(),
             commission.deadline,
             commission.created_at
+        )
+        .execute(&mut *self.conn)
+        .await?;
+
+        let root = RootSurface::of(commission);
+        query!(
+            r#"
+            INSERT INTO commission_node
+                (id, commission_id, parent, type, mode, position, created_by, created_at)
+            VALUES ($1, $2, NULL, 'surface', $3, 0, $4, $5)
+            "#,
+            *root.id,
+            *commission.id,
+            root.mode.as_str(),
+            *root.created_by,
+            root.created_at,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Grow the tree under an existing parent (ZMVP-71 AC2), on the open
+    /// transaction. Two statements sharing it: a scoped parent check — the id
+    /// must exist **and** belong to `surface.commission_id`, else
+    /// [`ParentNodeNotFound`] (one answer for absent and foreign, per the port
+    /// contract) — then the insert, with `position` assigned as
+    /// `max(sibling position) + 1` in a subquery on this same transaction, so
+    /// append order can't race.
+    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
+        let parent_in_tree = query!(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM commission_node WHERE id = $1 AND commission_id = $2
+            ) AS "parent_in_tree!"
+            "#,
+            *surface.parent,
+            *surface.commission_id,
+        )
+        .fetch_one(&mut *self.conn)
+        .await?
+        .parent_in_tree;
+        if !parent_in_tree {
+            return Err(ParentNodeNotFound.into());
+        }
+
+        query!(
+            r#"
+            INSERT INTO commission_node
+                (id, commission_id, parent, type, mode, position, created_by, created_at)
+            VALUES (
+                $1, $2, $3, 'surface', $4,
+                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
+                $5, $6
+            )
+            "#,
+            *surface.id,
+            *surface.commission_id,
+            *surface.parent,
+            surface.mode.as_str(),
+            *surface.created_by,
+            surface.created_at,
         )
         .execute(&mut *self.conn)
         .await?;
@@ -444,6 +516,52 @@ impl CommissionStore for PgCommissionStore {
         GrantLevel::parse(&row.level)
             .ok_or_else(|| anyhow::anyhow!("unknown grant level token {:?}", row.level))
             .map(Some)
+    }
+
+    /// Load and assemble the commission's whole tree: **one** indexed query
+    /// (`WHERE commission_id = $1`, the Tree Storage DD's read model), rows
+    /// re-validated through the domain gates ([`NodeKind::from_columns`] — an
+    /// unknown type tag, a modeless surface, or a mode token outside the
+    /// vocabulary means row tampering and surfaces as an `Err`), then nested by
+    /// [`CommissionTree::assemble`] in Rust. `None` when no rows exist — no
+    /// commission (a created one always has its root).
+    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>> {
+        let rows = query!(
+            r#"
+            SELECT id, parent, type AS type_tag, mode, position, created_by, created_at, payload
+            FROM commission_node
+            WHERE commission_id = $1
+            "#,
+            *id,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let rows =
+            rows.into_iter()
+                .map(|row| {
+                    let kind = NodeKind::from_columns(&row.type_tag, row.mode.as_deref())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown node envelope ({:?}, {:?})",
+                                row.type_tag,
+                                row.mode
+                            )
+                        })?;
+                    Ok(NodeRow {
+                        id: NodeId::new(row.id),
+                        parent: row.parent.map(NodeId::new),
+                        kind,
+                        position: row.position,
+                        created_by: UserId::new(row.created_by),
+                        created_at: row.created_at,
+                        payload: row.payload,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(Some(CommissionTree::assemble(rows)?))
     }
 
     /// The **owner arm** of participant-hood (ZMVP-87): one `EXISTS` over the

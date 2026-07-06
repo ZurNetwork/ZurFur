@@ -131,6 +131,17 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     sqlx::migrate!().run(pool).await
 }
 
+/// The embedded migration set itself — the same one [`migrate`] runs.
+///
+/// For tests that need to stop *between* migrations: a data-bearing migration
+/// (e.g. ZMVP-71's root backfill) is only truly exercised against rows that
+/// predate it, so its test truncates the returned set at the target version,
+/// runs that, seeds, then lets [`migrate`] catch up. Production code has no
+/// business with this — boot always runs the full set.
+pub fn migrator() -> sqlx::migrate::Migrator {
+    sqlx::migrate!()
+}
+
 /// Liveness probe: `true` when a trivial `SELECT 1` round-trips within 2s.
 ///
 /// Backs `GET /health` (200 up / 503 down). A tokio timeout is the authoritative

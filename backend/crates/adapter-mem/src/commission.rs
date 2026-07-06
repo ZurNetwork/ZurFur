@@ -12,11 +12,14 @@ use domain::elements::{
     account::AccountId,
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, GrantLevel, LifecycleStep, NewChangelogEntry, Placement, Visibility,
+        CommissionTitle, CommissionTree, GrantLevel, LifecycleStep, NewChangelogEntry, NewSurface,
+        NodeId, NodeKind, NodeRow, Placement, RootSurface, Visibility,
     },
     user::UserId,
 };
-use domain::ports::{ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites};
+use domain::ports::{
+    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, ParentNodeNotFound,
+};
 use serde_json::Value;
 
 use crate::MemBackend;
@@ -64,6 +67,28 @@ impl StoredCommission {
             created_at: self.created_at,
         }
     }
+}
+
+/// One commission tree node as the mem backend keeps it — the in-memory mirror
+/// of a pg `commission_node` row (ZMVP-71). Keyed by [`NodeId`] in the backend
+/// map, so the row's own id lives in the key. `Clone` so a unit of work can
+/// deep-copy the node map into its staging snapshot.
+#[derive(Clone)]
+pub(crate) struct StoredNode {
+    /// The tree (commission) this node belongs to.
+    pub(crate) commission_id: CommissionId,
+    /// The parent node, or `None` for the root surface.
+    pub(crate) parent: Option<NodeId>,
+    /// The typed envelope half (kind + mode on surfaces).
+    pub(crate) kind: NodeKind,
+    /// Sibling order within the parent (append = max + 1).
+    pub(crate) position: i32,
+    /// Who created the node.
+    pub(crate) created_by: UserId,
+    /// When the node was created.
+    pub(crate) created_at: domain::datetime::DateTimeUtc,
+    /// The type-owned payload, opaque here exactly as in pg.
+    pub(crate) payload: Value,
 }
 
 /// One appended changelog entry as the mem backend keeps it — the in-memory
@@ -147,29 +172,91 @@ pub struct MemCommissionWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl CommissionWrites for MemCommissionWrites {
-    /// Insert the freshly created commission, keyed by its id — the in-memory
-    /// mirror of the pg adapter's single `INSERT INTO commission`. The pg `id` is a
-    /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does not
-    /// model that (a plain `insert`, the same as `MemAccountWrites::create` does
-    /// for its own account id), because commission ids are freshly-minted UUIDv7 —
-    /// a collision is unreachable by construction, never a case a test can reach.
+    /// Insert the freshly created commission, keyed by its id — **together with
+    /// its root surface** ([`RootSurface::of`]), the mem mirror of the pg
+    /// adapter's two inserts in one transaction (ZMVP-71 AC1): both maps belong
+    /// to this unit's staging snapshot, so commission and root commit or vanish
+    /// together, and a treeless commission is unrepresentable. The pg `id` is a
+    /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does
+    /// not model that (a plain `insert`, the same as `MemAccountWrites::create`
+    /// does for its own account id), because commission ids are freshly-minted
+    /// UUIDv7 — a collision is unreachable by construction, never a case a test
+    /// can reach.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
-        let mut commissions = self
+        {
+            let mut commissions = self
+                .0
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned");
+            commissions.insert(
+                commission.id,
+                StoredCommission {
+                    title: commission.title.clone(),
+                    owner_id: commission.owner_id,
+                    lifecycle_step: commission.lifecycle_step.clone(),
+                    visibility: commission.visibility.clone(),
+                    deadline: commission.deadline,
+                    linked_channel: commission.linked_channel.clone(),
+                    archived_at: commission.archived_at,
+                    created_at: commission.created_at,
+                },
+            );
+        }
+        let root = RootSurface::of(commission);
+        let mut nodes = self
             .0
-            .commissions
+            .nodes
             .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        commissions.insert(
-            commission.id,
-            StoredCommission {
-                title: commission.title.clone(),
-                owner_id: commission.owner_id,
-                lifecycle_step: commission.lifecycle_step.clone(),
-                visibility: commission.visibility.clone(),
-                deadline: commission.deadline,
-                linked_channel: commission.linked_channel.clone(),
-                archived_at: commission.archived_at,
-                created_at: commission.created_at,
+            .expect("MemBackend nodes mutex poisoned");
+        nodes.insert(
+            root.id,
+            StoredNode {
+                commission_id: commission.id,
+                parent: None,
+                kind: NodeKind::Surface { mode: root.mode },
+                position: 0,
+                created_by: root.created_by,
+                created_at: root.created_at,
+                payload: Value::Object(Default::default()),
+            },
+        );
+        Ok(())
+    }
+
+    /// Grow the tree under an existing parent — the mem mirror of the pg
+    /// `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2). The parent must
+    /// exist in `surface.commission_id`'s tree: an absent id and a node from
+    /// another commission both refuse with [`ParentNodeNotFound`] (one
+    /// indistinguishable answer, per the port contract).
+    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
+        let mut nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        let parent_in_tree = nodes
+            .get(&surface.parent)
+            .is_some_and(|parent| parent.commission_id == surface.commission_id);
+        if !parent_in_tree {
+            return Err(ParentNodeNotFound.into());
+        }
+        let position = nodes
+            .values()
+            .filter(|node| node.parent == Some(surface.parent))
+            .map(|node| node.position + 1)
+            .max()
+            .unwrap_or(0);
+        nodes.insert(
+            surface.id,
+            StoredNode {
+                commission_id: surface.commission_id,
+                parent: Some(surface.parent),
+                kind: NodeKind::Surface { mode: surface.mode },
+                position,
+                created_by: surface.created_by,
+                created_at: surface.created_at,
+                payload: Value::Object(Default::default()),
             },
         );
         Ok(())
@@ -432,6 +519,39 @@ impl CommissionStore for MemCommissionStore {
             .copied())
     }
 
+    /// Load and assemble the whole tree — the mem mirror of the pg one-query
+    /// read (ZMVP-71): filter the node map by commission, then share the same
+    /// [`CommissionTree::assemble`] the pg adapter uses. `None` for a
+    /// commission nobody created (no rows = no root); assembly failures on a
+    /// non-empty row set surface as errors (corruption, unreachable through
+    /// the write ports).
+    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>> {
+        let rows: Vec<NodeRow> = {
+            let nodes = self
+                .0
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned");
+            nodes
+                .iter()
+                .filter(|(_, node)| node.commission_id == id)
+                .map(|(node_id, node)| NodeRow {
+                    id: *node_id,
+                    parent: node.parent,
+                    kind: node.kind,
+                    position: node.position,
+                    created_by: node.created_by,
+                    created_at: node.created_at,
+                    payload: node.payload.clone(),
+                })
+                .collect()
+        };
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CommissionTree::assemble(rows)?))
+    }
+
     /// The **owner arm** of participant-hood — the owner IS a Participant
     /// without holding a Seat (DESIGN/Commission); ZMVP-79 adds the seated arm.
     /// An unknown commission has no participants, so it answers `false`.
@@ -515,6 +635,8 @@ impl MemBackend {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use domain::elements::commission::{NodeId, NodeKind, SurfaceMode};
+    use domain::ports::ParentNodeNotFound;
     use serde_json::json;
 
     use super::*;
@@ -950,6 +1072,231 @@ mod tests {
         assert!(
             backend.find_commission(id).await.unwrap().is_some(),
             "the User-owned commission survives account deletion",
+        );
+    }
+
+    // ZMVP-71 AC1 (store layer) — a commission is born with its root surface in
+    // the same unit of work: after create+commit the loaded tree is exactly one
+    // root — kind Surface, mode Total (a birth commission is Private), the
+    // owner as creator, the commission's own creation instant — with no
+    // children. There is no write that could remove it (removal is ZMVP-73's
+    // guarded op), so "cannot be removed" holds by construction.
+    #[tokio::test]
+    async fn creating_a_commission_mints_its_root_surface() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Rooted", owner);
+        let id = created.id;
+        let created_at = created.created_at;
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().create(&created).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("a created commission always has a tree");
+        assert!(
+            matches!(
+                tree.root.kind,
+                NodeKind::Surface {
+                    mode: SurfaceMode::Total
+                }
+            ),
+            "born Private = root Total (the closed-door default)"
+        );
+        assert_eq!(tree.root.created_by, owner, "the owner is the creator");
+        assert_eq!(
+            tree.root.created_at, created_at,
+            "the root is born with the commission"
+        );
+        assert!(tree.root.children.is_empty(), "a fresh tree is just a root");
+    }
+
+    // ZMVP-71 AC2/AC3 (store layer) — surfaces grow under any existing surface:
+    // two siblings under the root keep append order, a nested surface attaches
+    // under its parent, and every new surface is born Total.
+    #[tokio::test]
+    async fn add_surface_grows_the_tree_in_append_order() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Growing", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let root = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists")
+            .root
+            .id;
+
+        let first = NewSurface::under(id, root, owner, Utc::now());
+        let second = NewSurface::under(id, root, owner, Utc::now());
+        let (first_id, second_id) = (first.id, second.id);
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_surface(&first).await.unwrap();
+        uow.commissions().add_surface(&second).await.unwrap();
+        uow.commit().await.unwrap();
+
+        // Nest one under the first child.
+        let nested = NewSurface::under(id, first_id, owner, Utc::now());
+        let nested_id = nested.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_surface(&nested).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 2);
+        assert_eq!(tree.root.children[0].id, first_id, "append order holds");
+        assert_eq!(tree.root.children[1].id, second_id);
+        assert!(
+            tree.root.children.iter().all(|child| matches!(
+                child.kind,
+                NodeKind::Surface {
+                    mode: SurfaceMode::Total
+                }
+            )),
+            "every new surface is born Total (AC3)"
+        );
+        assert_eq!(
+            tree.root.children[0].children[0].id, nested_id,
+            "a surface grows under any existing surface, not just the root"
+        );
+    }
+
+    // ZMVP-71 — the parent must exist in THIS commission's tree: a fabricated
+    // parent id and a parent belonging to another commission both fail with
+    // ParentNodeNotFound (one indistinguishable answer — no probing other
+    // trees), and neither write lands.
+    #[tokio::test]
+    async fn add_surface_refuses_absent_and_foreign_parents() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let mine = commission("Mine", owner);
+        let theirs = commission("Theirs", user_id());
+        let mine_id = mine.id;
+        let theirs_id = theirs.id;
+        backend.create_commission(&mine).await.unwrap();
+        backend.create_commission(&theirs).await.unwrap();
+        let their_root = backend
+            .commission_store()
+            .load_tree(theirs_id)
+            .await
+            .unwrap()
+            .expect("their tree exists")
+            .root
+            .id;
+
+        // A parent id that exists nowhere.
+        let fabricated = NewSurface::under(
+            mine_id,
+            NodeId::new(uuid::Uuid::now_v7()),
+            owner,
+            Utc::now(),
+        );
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .add_surface(&fabricated)
+            .await
+            .unwrap_err();
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "absent parent surfaces as ParentNodeNotFound, got: {err:?}"
+        );
+        drop(uow);
+
+        // A real node — in someone else's tree.
+        let cross = NewSurface::under(mine_id, their_root, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow.commissions().add_surface(&cross).await.unwrap_err();
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+        );
+        drop(uow);
+
+        let tree = backend
+            .commission_store()
+            .load_tree(mine_id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert!(tree.root.children.is_empty(), "no refused write landed");
+    }
+
+    // ZMVP-71 (transactionality) — a staged surface is invisible until commit
+    // and discarded on drop, exactly like every other unit-of-work write.
+    #[tokio::test]
+    async fn add_surface_commits_and_rolls_back_with_the_unit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Tx", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let root = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists")
+            .root
+            .id;
+
+        {
+            let surface = NewSurface::under(id, root, owner, Utc::now());
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().add_surface(&surface).await.unwrap();
+            let shared = backend
+                .commission_store()
+                .load_tree(id)
+                .await
+                .unwrap()
+                .expect("tree exists");
+            assert!(
+                shared.root.children.is_empty(),
+                "an open unit's staged surface is invisible to a shared read"
+            );
+            // `uow` drops here without `commit` -> the staged surface is discarded.
+        }
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert!(
+            tree.root.children.is_empty(),
+            "a dropped unit of work persists no surface"
+        );
+    }
+
+    // load_tree for a commission nobody created is None, mirroring `find`.
+    #[tokio::test]
+    async fn load_tree_answers_none_for_an_unknown_commission() {
+        let backend = MemBackend::new();
+        assert!(
+            backend
+                .commission_store()
+                .load_tree(CommissionId::new(uuid::Uuid::now_v7()))
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

@@ -8,7 +8,10 @@ use crate::{
     datetime::DateTimeUtc,
     elements::{
         account::AccountId,
-        commission::{ChannelPointer, Commission, CommissionId, GrantLevel, Placement},
+        commission::{
+            ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewSurface,
+            Placement,
+        },
         user::UserId,
     },
 };
@@ -75,15 +78,67 @@ pub trait CommissionStore: Send + Sync {
     /// is what lets a caller collapse "absent" and "hidden" into one uniform 404
     /// (the closed-door policy: existence is never leaked to outsiders).
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool>;
+
+    /// Load the commission's **whole content tree** — one indexed read of every
+    /// node row, assembled into the nested [`CommissionTree`] in Rust (ZMVP-71;
+    /// Tree Storage DD `28409880` Decision 4). `None` if no such commission
+    /// exists; a commission is never treeless (its root is minted with it and
+    /// backfilled for those that predate the tree), so a found commission always
+    /// yields a tree. Corrupt row sets (no/multiple roots, detached nodes)
+    /// surface as errors, never a partial tree.
+    ///
+    /// **The returned tree is raw and server-internal** — `Total`-tier content
+    /// included, deliberately not serializable (see [`CommissionTree`]). Callers
+    /// serialize only through the viewer projection ZMVP-75 introduces;
+    /// authorization is the caller's concern, settled before this is read.
+    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>>;
 }
+
+/// The error an [`CommissionWrites::add_surface`] failure carries (as the source
+/// of its `anyhow::Error`) when the named parent node does not exist **in that
+/// commission** — covering both a truly absent node id and a node that belongs
+/// to some other commission's tree, indistinguishably. One answer for both by
+/// design: the closed-door policy means a caller must learn nothing about other
+/// commissions' trees from probing parent ids (the same collapse
+/// [`CommissionStore::is_participant`] documents for commissions themselves).
+/// Adapters return it so the route can `downcast_ref` and answer `404` rather
+/// than a generic `500` — the [`HandleTaken`](crate::ports::HandleTaken) pattern.
+#[derive(Debug)]
+pub struct ParentNodeNotFound;
+
+impl std::fmt::Display for ParentNodeNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "parent node not found in this commission")
+    }
+}
+
+impl std::error::Error for ParentNodeNotFound {}
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`), so no
 /// private-store commission write can skip a transaction (ZMVP-65; DD `24150017`).
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`Commission`] as one private-side write.
+    /// Persist a freshly created [`Commission`] — **together with its root
+    /// surface** ([`RootSurface::of`](crate::elements::commission::RootSurface::of)),
+    /// in this same write (ZMVP-71 AC1). The root is minted *inside* the
+    /// implementation, not by the caller, so a treeless commission is
+    /// unrepresentable: no call site exists that could persist the row and
+    /// forget the root. One private-side write on the open unit of work.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
+
+    /// Grow the commission's tree: persist a [`NewSurface`] under its parent
+    /// (ZMVP-71 AC2). Sibling order is assigned here, **on the open
+    /// transaction** — append = max sibling `position` + 1 — so concurrent adds
+    /// can't race to one slot (Tree Storage DD `28409880` Decision 3). The
+    /// parent must exist in `surface.commission_id`'s tree: an absent parent
+    /// *or* one belonging to another commission fails with
+    /// [`ParentNodeNotFound`] as the error source (one indistinguishable
+    /// answer — see its docs). Authority (owner-only in v1) and the
+    /// commission's own existence are the caller's checks, settled before this
+    /// is reached. Deliberately **not** changelog-recorded: tree edits are not
+    /// in the frozen entry taxonomy (ZMVP-87).
+    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD
