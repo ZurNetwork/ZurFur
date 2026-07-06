@@ -15,9 +15,9 @@ use domain::elements::{
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
         CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
-        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSlot,
-        NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Slot, SlotTitle,
-        SurfaceMode, Visibility, derive_deadline_status,
+        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSeat,
+        NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat, SeatKind,
+        SeatLink, SeatPrompt, Slot, SlotTitle, SurfaceMode, Visibility, derive_deadline_status,
     },
     maturity::Maturity,
     user::UserId,
@@ -183,6 +183,27 @@ impl StoredSlot {
     }
 }
 
+/// One declared Seat's interpreted half as the mem backend keeps it — the
+/// in-memory mirror of a pg `commission_seat` row (ZMVP-76), keyed by the
+/// seat's [`NodeId`] in the backend map (one identity: the tree node in
+/// [`StoredNode`], this satellite here). `Clone` so a unit of work can
+/// deep-copy the seat map into its staging snapshot.
+#[derive(Clone)]
+pub(crate) struct StoredSeat {
+    /// The owning commission — the mem mirror of the denormalized
+    /// `commission_seat.commission_id` column backing the seats() read.
+    pub(crate) commission_id: CommissionId,
+    /// The seat's semantic kind (open vocabulary; kinds repeat freely).
+    pub(crate) kind: SeatKind,
+    /// The optional free-text requirement prompt riding the vacant seat.
+    pub(crate) prompt: Option<SeatPrompt>,
+    /// The optional external requirements link riding the vacant seat.
+    pub(crate) link: Option<SeatLink>,
+    /// The single occupant slot — `None` from declaration until ZMVP-79 fills
+    /// it; at most one occupant is unrepresentable to violate (AC3).
+    pub(crate) occupant: Option<UserId>,
+}
+
 /// One appended changelog entry as the mem backend keeps it — the in-memory
 /// mirror of a pg `commission_changelog` row (ZMVP-87). `Clone` so a unit of
 /// work can deep-copy the log into its staging snapshot. Append-only like the pg
@@ -265,10 +286,13 @@ pub struct MemCommissionWrites(pub(crate) MemBackend);
 #[async_trait]
 impl CommissionWrites for MemCommissionWrites {
     /// Insert the freshly created commission, keyed by its id — **together with
-    /// its root surface** ([`RootSurface::of`]), the mem mirror of the pg
-    /// adapter's two inserts in one transaction (ZMVP-71 AC1): both maps belong
-    /// to this unit's staging snapshot, so commission and root commit or vanish
-    /// together, and a treeless commission is unrepresentable. The pg `id` is a
+    /// its root surface** ([`RootSurface::of`], ZMVP-71 AC1) **and its owner's
+    /// participant row** (ZMVP-76: the owner is a permanent Participant from
+    /// birth, stamped with the commission's creation instant), the mem mirror
+    /// of the pg adapter's three inserts in one transaction: all three maps
+    /// belong to this unit's staging snapshot, so commission, root, and
+    /// membership commit or vanish together — a treeless or owner-less
+    /// commission is unrepresentable. The pg `id` is a
     /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does
     /// not model that (a plain `insert`, the same as `MemAccountWrites::create`
     /// does for its own account id), because commission ids are freshly-minted
@@ -299,23 +323,31 @@ impl CommissionWrites for MemCommissionWrites {
             );
         }
         let root = RootSurface::of(commission);
-        let mut nodes = self
+        {
+            let mut nodes = self
+                .0
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned");
+            nodes.insert(
+                root.id,
+                StoredNode {
+                    commission_id: commission.id,
+                    parent: None,
+                    kind: NodeKind::Surface { mode: root.mode },
+                    position: 0,
+                    created_by: root.created_by,
+                    created_at: root.created_at,
+                    payload: Value::Object(Default::default()),
+                },
+            );
+        }
+        let mut participants = self
             .0
-            .nodes
+            .participants
             .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        nodes.insert(
-            root.id,
-            StoredNode {
-                commission_id: commission.id,
-                parent: None,
-                kind: NodeKind::Surface { mode: root.mode },
-                position: 0,
-                created_by: root.created_by,
-                created_at: root.created_at,
-                payload: Value::Object(Default::default()),
-            },
-        );
+            .expect("MemBackend participants mutex poisoned");
+        participants.insert((commission.id, commission.owner_id), commission.created_at);
         Ok(())
     }
 
@@ -580,6 +612,53 @@ impl CommissionWrites for MemCommissionWrites {
         }
         Ok(())
     }
+    /// Declare a seat — the mem mirror of the pg adapter's node + satellite
+    /// pair (ZMVP-76): behind the same shared parent gate
+    /// ([`require_surface_parent`]), one [`StoredNode`] (an ordinary component
+    /// — the untyped ZMVP-72 contract) and one [`StoredSeat`] land under the
+    /// same [`NodeId`] in this unit's staging snapshot, so both halves commit
+    /// or vanish together. The occupant is never written here: every seat is
+    /// born vacant (AC3; ZMVP-79 fills it).
+    async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
+        {
+            let mut nodes = self
+                .0
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned");
+            require_surface_parent(&nodes, seat.parent, seat.commission_id)?;
+            let position = next_position(&nodes, seat.parent);
+            nodes.insert(
+                seat.id,
+                StoredNode {
+                    commission_id: seat.commission_id,
+                    parent: Some(seat.parent),
+                    kind: NodeKind::Component,
+                    position,
+                    created_by: seat.created_by,
+                    created_at: seat.created_at,
+                    payload: Value::Object(Default::default()),
+                },
+            );
+        }
+        let mut seats = self
+            .0
+            .seats
+            .lock()
+            .expect("MemBackend seats mutex poisoned");
+        seats.insert(
+            seat.id,
+            StoredSeat {
+                commission_id: seat.commission_id,
+                kind: seat.kind.clone(),
+                prompt: seat.prompt.clone(),
+                link: seat.link.clone(),
+                occupant: None,
+            },
+        );
+        Ok(())
+    }
+
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
     /// the pg conditional `UPDATE`: the write applies only when the stored value
     /// differs from the requested one, so a repeat answers `false` and the
@@ -936,21 +1015,45 @@ impl CommissionStore for MemCommissionStore {
         Ok(Some(CommissionTree::assemble(rows)?))
     }
 
-    /// The **owner arm** of participant-hood — the owner IS a Participant
-    /// without holding a Seat (DESIGN/Commission); ZMVP-79 adds the seated arm.
-    /// An unknown commission has no participants, so it answers `false`.
+    /// Answers from the **persisted membership map** (ZMVP-76, Engineer
+    /// ruling: the mem mirror of `commission_participant`, never a computed
+    /// owner-∪-seated union): the owner's entry is inserted with the
+    /// commission; ZMVP-79's seated arm adds entries behind this same lookup.
+    /// An unknown commission has no entries, so it answers `false`.
     /// **Unaffected by placement or view grants** (Ownership Separation DD
     /// Decision 8): positioning is environmental and a key is only a view, so
     /// neither makes an account's members Participants.
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
-        let commissions = self
+        let participants = self
             .0
-            .commissions
+            .participants
             .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        Ok(commissions
-            .get(&commission)
-            .is_some_and(|stored| stored.owner_id == user))
+            .expect("MemBackend participants mutex poisoned");
+        Ok(participants.contains_key(&(commission, user)))
+    }
+
+    /// The commission's seat satellites in declaration order — the mem mirror
+    /// of the pg `ORDER BY id` read (seat ids are UUIDv7, so id order is
+    /// declaration order). No seats (or no commission) is the empty list.
+    async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>> {
+        let seats = self
+            .0
+            .seats
+            .lock()
+            .expect("MemBackend seats mutex poisoned");
+        let mut found: Vec<Seat> = seats
+            .iter()
+            .filter(|(_, stored)| stored.commission_id == commission)
+            .map(|(id, stored)| Seat {
+                id: *id,
+                kind: stored.kind.clone(),
+                prompt: stored.prompt.clone(),
+                link: stored.link.clone(),
+                occupant: stored.occupant,
+            })
+            .collect();
+        found.sort_by_key(|seat| *seat.id);
+        Ok(found)
     }
 
     /// The file-entry link `key` names **within `commission`** (ZMVP-88) — the mem
@@ -2520,6 +2623,290 @@ mod tests {
             tree.root.children.len(),
             1,
             "a dropped unit of work removes nothing"
+        );
+    }
+
+    // ZMVP-76 (Engineer ruling B2, store layer) — creating a commission seats
+    // its owner as a PERSISTED participant in the same unit of work: the
+    // membership row exists (independent of the owner_id column), stamped with
+    // the commission's own creation instant, and is_participant reads it.
+    #[tokio::test]
+    async fn creating_a_commission_persists_its_owners_participant_row() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Membered", owner);
+        let id = created.id;
+        let created_at = created.created_at;
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().create(&created).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let participants = backend
+            .participants
+            .lock()
+            .expect("participants mutex poisoned")
+            .clone();
+        assert_eq!(
+            participants.get(&(id, owner)),
+            Some(&created_at),
+            "the owner's membership row is born with the commission"
+        );
+        assert!(
+            backend
+                .commission_store()
+                .is_participant(id, owner)
+                .await
+                .unwrap(),
+            "the predicate reads the membership record"
+        );
+    }
+
+    // ZMVP-76 — is_participant answers from the membership TABLE, not the
+    // owner_id column: a directly seeded membership row for a non-owner (the
+    // shape ZMVP-79's seated arm will write) already counts.
+    #[tokio::test]
+    async fn is_participant_reads_the_membership_record_not_the_owner_column() {
+        let backend = MemBackend::new();
+        let owner = user_id();
+        let seated = user_id();
+        let created = commission("Seated later", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        assert!(
+            !backend
+                .commission_store()
+                .is_participant(id, seated)
+                .await
+                .unwrap(),
+            "not a participant before any membership row exists"
+        );
+        backend
+            .participants
+            .lock()
+            .expect("participants mutex poisoned")
+            .insert((id, seated), Utc::now());
+        assert!(
+            backend
+                .commission_store()
+                .is_participant(id, seated)
+                .await
+                .unwrap(),
+            "a membership row alone makes a participant (the ZMVP-79 seated arm's shape)"
+        );
+    }
+
+    // ZMVP-76 AC1/AC2/AC3 (store layer) — declaring a seat grows ONE component
+    // node in the tree AND its interpreted satellite sharing the id, atomically
+    // in the unit: kind + requirements read back, the seat is born vacant, and
+    // kinds repeat freely across a commission's seats.
+    #[tokio::test]
+    async fn declare_seat_lands_a_node_and_its_satellite_together() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let first = NewSeat::under(
+            id,
+            root,
+            SeatKind::try_new("Creator").unwrap(),
+            Some(SeatPrompt::try_new("Two refs, please.").unwrap()),
+            Some(SeatLink::try_new("https://forms.example/apply").unwrap()),
+            owner,
+            Utc::now(),
+        );
+        // A second seat of the SAME kind — kinds repeat freely (AC1).
+        let second = NewSeat::under(
+            id,
+            root,
+            SeatKind::try_new("Creator").unwrap(),
+            None,
+            None,
+            owner,
+            Utc::now(),
+        );
+        let (first_id, second_id) = (first.id, second.id);
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().declare_seat(&first).await.unwrap();
+        uow.commissions().declare_seat(&second).await.unwrap();
+        uow.commit().await.unwrap();
+
+        // The tree half: two component nodes under the root, in append order.
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 2);
+        assert_eq!(tree.root.children[0].id, first_id, "append order");
+        assert_eq!(tree.root.children[1].id, second_id);
+        assert!(
+            tree.root
+                .children
+                .iter()
+                .all(|child| matches!(child.kind, NodeKind::Component)),
+            "a seat's node is an ordinary component (the untyped v1 contract)"
+        );
+
+        // The interpreted half: the satellite rows, keyed by the same ids.
+        let seats = backend.commission_store().seats(id).await.unwrap();
+        assert_eq!(seats.len(), 2);
+        let first_seat = seats.iter().find(|s| s.id == first_id).expect("first");
+        assert_eq!(first_seat.kind.as_str(), "Creator");
+        assert_eq!(
+            first_seat.prompt.as_ref().map(|p| p.as_str()),
+            Some("Two refs, please.")
+        );
+        assert_eq!(
+            first_seat.link.as_ref().map(|l| l.as_str()),
+            Some("https://forms.example/apply")
+        );
+        assert!(first_seat.is_vacant(), "a seat is born vacant (AC3)");
+        let second_seat = seats.iter().find(|s| s.id == second_id).expect("second");
+        assert_eq!(
+            second_seat.kind.as_str(),
+            "Creator",
+            "kinds repeat freely (AC1)"
+        );
+        assert!(second_seat.prompt.is_none());
+        assert!(second_seat.link.is_none());
+        assert!(second_seat.is_vacant());
+
+        // An unknown commission simply has no seats.
+        assert!(
+            backend
+                .commission_store()
+                .seats(CommissionId::new(uuid::Uuid::now_v7()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    // ZMVP-76 (transactionality) — a dropped unit discards BOTH halves of a
+    // staged seat: neither the node nor the satellite survives, so a
+    // half-declared seat is unrepresentable.
+    #[tokio::test]
+    async fn a_dropped_unit_discards_both_halves_of_a_seat() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        {
+            let seat = NewSeat::under(
+                id,
+                root,
+                SeatKind::try_new("Client").unwrap(),
+                None,
+                None,
+                owner,
+                Utc::now(),
+            );
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().declare_seat(&seat).await.unwrap();
+            // drops without commit -> rollback
+        }
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert!(tree.root.children.is_empty(), "no node landed");
+        assert!(
+            backend
+                .commission_store()
+                .seats(id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "no satellite landed"
+        );
+    }
+
+    // ZMVP-76 — a seat walks the same parent gate as every tree-growing write:
+    // absent/foreign parents refuse with ParentNodeNotFound, a component
+    // parent with ParentNotASurface, and nothing lands either time.
+    #[tokio::test]
+    async fn declare_seat_walks_the_shared_parent_gate() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+
+        let kind = || SeatKind::try_new("Creator").unwrap();
+        // Absent parent.
+        let fabricated = NewSeat::under(
+            id,
+            NodeId::new(uuid::Uuid::now_v7()),
+            kind(),
+            None,
+            None,
+            owner,
+            Utc::now(),
+        );
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_seat(&fabricated)
+            .await
+            .expect_err("absent parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "expected ParentNodeNotFound, got: {err:?}"
+        );
+        drop(uow);
+
+        // Foreign parent — indistinguishable from absent.
+        let cross = NewSeat::under(id, their_root, kind(), None, None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_seat(&cross)
+            .await
+            .expect_err("foreign parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+        );
+        drop(uow);
+
+        // A component parent — seats live under surfaces, like every leaf.
+        let component = NewComponent::under(id, root, json!({}), owner, Utc::now());
+        let component_id = component.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_component(&component).await.unwrap();
+        uow.commit().await.unwrap();
+        let under_component =
+            NewSeat::under(id, component_id, kind(), None, None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_seat(&under_component)
+            .await
+            .expect_err("a component parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNotASurface>().is_some(),
+            "expected ParentNotASurface, got: {err:?}"
+        );
+        drop(uow);
+
+        assert!(
+            backend
+                .commission_store()
+                .seats(id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "no refused seat landed"
         );
     }
 
