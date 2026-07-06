@@ -32,6 +32,7 @@ async fn spawn_app(did: &str) -> String {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         // No route here touches the database, so a lazy (never-connected) pool keeps
         // the test free of a container.

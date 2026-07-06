@@ -68,6 +68,7 @@ async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Databas
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
@@ -384,6 +385,29 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         status: Option<domain::elements::commission::DirectionStatus>,
     ) -> anyhow::Result<bool> {
         self.0.set_direction_status(id, status).await
+    }
+
+    async fn set_deadline(
+        &mut self,
+        id: CommissionId,
+        deadline: Option<domain::datetime::DateTimeUtc>,
+    ) -> anyhow::Result<()> {
+        self.0.set_deadline(id, deadline).await
+    }
+
+    async fn set_deadline_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<domain::elements::commission::DeadlineStatus>,
+    ) -> anyhow::Result<()> {
+        self.0.set_deadline_status(id, status).await
+    }
+
+    async fn lapsed_deadlines(
+        &mut self,
+        now: domain::datetime::DateTimeUtc,
+    ) -> anyhow::Result<Vec<domain::elements::commission::LapsedDeadline>> {
+        self.0.lapsed_deadlines(now).await
     }
 }
 

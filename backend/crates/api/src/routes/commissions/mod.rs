@@ -22,6 +22,10 @@
 //!   prunes a node and its subtree; the root refuses).
 //! - [`status`] — `PUT`/`DELETE /commissions/{id}/status/direction` (the
 //!   direction-axis Status, ZMVP-85).
+//! - [`deadline`] — `PUT`/`DELETE /commissions/{id}/deadline` and
+//!   `PUT`/`DELETE /commissions/{id}/status/deadline` (the deadline envelope
+//!   field and the manual Delayed flag, ZMVP-86; the system half — the Late
+//!   sweeper — lives in [`crate::sweep_deadlines`], not on a route).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -56,6 +60,7 @@ mod changelog;
 mod channel;
 mod components;
 mod create;
+mod deadline;
 mod delete;
 mod maturity;
 mod notes;
@@ -117,6 +122,14 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         .route(
             "/commissions/{id}/status/direction",
             put(status::set_direction_status).delete(status::clear_direction_status),
+        )
+        .route(
+            "/commissions/{id}/deadline",
+            put(deadline::set_deadline).delete(deadline::clear_deadline),
+        )
+        .route(
+            "/commissions/{id}/status/deadline",
+            put(deadline::set_deadline_status).delete(deadline::clear_deadline_status),
         )
 }
 

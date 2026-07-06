@@ -33,8 +33,8 @@ use crate::{datetime::DateTimeUtc, elements::user::UserId};
 /// tickets emit *existing* variants instead of each editing this definition:
 /// an unemitted variant is inert — never stored until its emitter ships — and
 /// doubles as the visible to-wire checklist. The emitters: lifecycle → ZMVP-84;
-/// direction status → ZMVP-85; deadline set/extend and the system
-/// [`Delayed`]/[`Late`] → ZMVP-86; seats → ZMVP-76/78/79/80/82; ceilings →
+/// direction status → ZMVP-85; deadline set/extend, the manual [`Delayed`]
+/// flag, and the system [`Late`] → ZMVP-86; seats → ZMVP-76/78/79/80/82; ceilings →
 /// ZMVP-96; view grants → ZMVP-70; Admin grant/revoke → held for the Commission
 /// Admin ticket (ZMVP-83); ownership transfer → ZMVP-69; tree attach/detach —
 /// commission *relationships*, outside this epic; phases → ZMVP-93/94; files →
@@ -76,9 +76,13 @@ pub enum ChangelogEntryKind {
     DeadlineSet,
     /// An existing deadline was extended.
     DeadlineExtended,
-    /// **System entry:** the commission became Delayed (no actor).
+    /// A Participant set or cleared the manual Delayed "slipping" flag (the
+    /// payload says which). An **explicit act with an actor** — Delayed is
+    /// never system-set (Engineer ruling 2026-07-05, ZMVP-86; the frozen-time
+    /// "system entry" gloss predated that ruling).
     Delayed,
-    /// **System entry:** the commission became Late (no actor).
+    /// **System entry:** the commission became Late — its deadline passed (no
+    /// actor; the deadline sweeper of ZMVP-86, the one place the system acts).
     Late,
     /// A seat was declared on the commission.
     SeatDeclared,
@@ -296,7 +300,9 @@ impl NewChangelogEntry {
     }
 
     /// An entry for an act the **system** performed — no actor (the shape the
-    /// [`Delayed`]/[`Late`] marks of ZMVP-86 use).
+    /// [`Late`] mark of ZMVP-86's sweeper uses; the manual [`Delayed`] flag is
+    /// a Participant [`event`](Self::event), per the Engineer ruling
+    /// 2026-07-05).
     ///
     /// [`Delayed`]: ChangelogEntryKind::Delayed
     /// [`Late`]: ChangelogEntryKind::Late

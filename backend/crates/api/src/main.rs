@@ -119,6 +119,16 @@ async fn main() -> anyhow::Result<()> {
         database: std::sync::Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
         pool,
     };
+    // ZMVP-86 (ruling E12): the deadline sweeper — the crate's first background
+    // task. A tokio interval driving the pure `sweep_deadlines(now)` policy on
+    // the wall clock; each sweep is one unit of work (mark Late + append the
+    // system changelog entry, atomically), so a crash or failure between ticks
+    // loses nothing — the next tick re-sweeps whatever still stands lapsed.
+    tokio::spawn(api::run_deadline_sweeper(
+        app_state.database.clone(),
+        std::time::Duration::from_secs(app_state.config.deadline_sweep_interval_secs),
+    ));
+
     let app = api::app(app_state).layer(session_layer);
 
     axum::serve(listener, app).await?;

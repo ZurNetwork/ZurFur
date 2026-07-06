@@ -40,6 +40,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         // No route exercised here touches the database, so a lazy (never-connected)
         // pool keeps the test free of a container.

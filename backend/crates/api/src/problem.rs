@@ -257,6 +257,34 @@ impl Problem {
         )
     }
 
+    /// `409` — a deadline-axis act on a commission that has no deadline: a
+    /// commission with no deadline never receives deadline-axis statuses
+    /// (ZMVP-86 AC4), so flagging it Delayed is a state conflict, not a
+    /// malformed request — set a deadline first.
+    pub fn no_deadline() -> Self {
+        Self::new(
+            "urn:zurfur:error:no-deadline",
+            "no_deadline",
+            "No deadline",
+            409,
+            "This commission has no deadline, so it can't carry a deadline status.",
+        )
+    }
+
+    /// `409` — the commission is Late, and Late is the **system's word**
+    /// (Engineer ruling 2026-07-05): a Participant neither overwrites it with
+    /// the manual Delayed flag nor clears it by hand — it resolves through the
+    /// deadline itself (extend it into the future, or clear it).
+    pub fn commission_late() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-late",
+            "commission_late",
+            "Commission is Late",
+            409,
+            "The commission is Late; extend or clear the deadline to resolve it.",
+        )
+    }
+
     /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
     /// nowhere to re-home its members, so leaving is refused as a state conflict (not
     /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.
