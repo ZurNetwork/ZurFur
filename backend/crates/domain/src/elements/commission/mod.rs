@@ -150,9 +150,11 @@ pub struct Commission {
     ///
     /// Archive is the soft path (Deletion DD `3014657`): the mandatory route once
     /// facts exist, and available regardless of facts (hard delete, ZMVP-66, is
-    /// the fact-gated path). An archived commission disappears from **active
-    /// views** — every listing projection filters on this field — but the record
-    /// and its facts survive intact and stay queryable by its Participants.
+    /// the fact-gated path). An archived commission is meant to disappear from
+    /// **active views** — listing projections are responsible for filtering on
+    /// this field (active-view filtering lands with the S1 listing work) — but
+    /// the record and its facts survive intact and stay queryable by its
+    /// Participants.
     /// Owner-only in both directions, and both directions are changelog entries
     /// ([`ChangelogEntryKind::Archived`]/[`ChangelogEntryKind::Unarchived`]);
     /// un-archive is an explicit owner act that returns the commission to active

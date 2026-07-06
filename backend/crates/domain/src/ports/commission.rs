@@ -23,10 +23,10 @@ pub trait CommissionStore: Send + Sync {
     /// such commission exists.
     ///
     /// An **archived** commission is still found (ZMVP-68): archive removes it
-    /// from *active views* — the listing projections, which filter on
-    /// [`Commission::archived_at`] — never from its Participants' reach (the
-    /// record and its facts survive and stay queryable, and the owner resolves
-    /// it here to un-archive it).
+    /// from *active views* — listing projections are responsible for filtering
+    /// on [`Commission::archived_at`] (deferred to the S1 listing work) — never
+    /// from its Participants' reach (the record and its facts survive and stay
+    /// queryable, and the owner resolves it here to un-archive it).
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// Whether `user` is a **Participant** of `commission` — the authorization
