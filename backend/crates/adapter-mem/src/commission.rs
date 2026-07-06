@@ -449,49 +449,53 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Declare a Slot — the mem mirror of the pg two-insert transaction
-    /// (ZMVP-77): the same shared parent gate ([`require_surface_parent`]) and
+    /// Declare a batch of Slots — the mem mirror of the pg per-slot two-insert
+    /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
+    /// slot, the same shared parent gate ([`require_surface_parent`]) and
     /// append order as [`add_component`](Self::add_component), an ordinary
     /// [`NodeKind::Component`] leaf with the empty payload, plus the
-    /// [`StoredSlot`] satellite keyed by the same node id. Both maps belong to
-    /// this unit's staging snapshot, so the leaf and its satellite commit or
-    /// vanish together. No changelog entry (the frozen taxonomy has no slot
-    /// variant), and no occupant exists to store.
-    async fn declare_slot(&mut self, slot: &NewSlot) -> anyhow::Result<()> {
-        {
-            let mut nodes = self
+    /// [`StoredSlot`] satellite keyed by the same node id. All maps belong to
+    /// this unit's staging snapshot, so the whole batch commits or vanishes
+    /// together — a refusing slot mid-batch errors the unit and nothing is
+    /// applied. No changelog entry (the frozen taxonomy has no slot variant),
+    /// and no occupant exists to store.
+    async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
+        for slot in new_slots {
+            {
+                let mut nodes = self
+                    .0
+                    .nodes
+                    .lock()
+                    .expect("MemBackend nodes mutex poisoned");
+                require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
+                let position = next_position(&nodes, slot.parent);
+                nodes.insert(
+                    slot.id,
+                    StoredNode {
+                        commission_id: slot.commission_id,
+                        parent: Some(slot.parent),
+                        kind: NodeKind::Component,
+                        position,
+                        created_by: slot.created_by,
+                        created_at: slot.created_at,
+                        payload: Value::Object(Default::default()),
+                    },
+                );
+            }
+            let mut slots = self
                 .0
-                .nodes
+                .slots
                 .lock()
-                .expect("MemBackend nodes mutex poisoned");
-            require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
-            let position = next_position(&nodes, slot.parent);
-            nodes.insert(
+                .expect("MemBackend slots mutex poisoned");
+            slots.insert(
                 slot.id,
-                StoredNode {
+                StoredSlot {
                     commission_id: slot.commission_id,
-                    parent: Some(slot.parent),
-                    kind: NodeKind::Component,
-                    position,
-                    created_by: slot.created_by,
-                    created_at: slot.created_at,
-                    payload: Value::Object(Default::default()),
+                    title: slot.title.clone(),
+                    notes: slot.notes.clone(),
                 },
             );
         }
-        let mut slots = self
-            .0
-            .slots
-            .lock()
-            .expect("MemBackend slots mutex poisoned");
-        slots.insert(
-            slot.id,
-            StoredSlot {
-                commission_id: slot.commission_id,
-                title: slot.title.clone(),
-                notes: slot.notes.clone(),
-            },
-        );
         Ok(())
     }
 
@@ -2592,7 +2596,7 @@ mod tests {
         let noted = NewSlot::under(
             id,
             root,
-            SlotTitle::try_new("The knight").unwrap(),
+            SlotTitle::try_from("The knight").unwrap(),
             Some("full plate, no cape".to_string()),
             owner,
             Utc::now(),
@@ -2600,7 +2604,7 @@ mod tests {
         let bare = NewSlot::under(
             id,
             root,
-            SlotTitle::try_new("The mage").unwrap(),
+            SlotTitle::try_from("The mage").unwrap(),
             None,
             owner,
             Utc::now(),
@@ -2608,8 +2612,10 @@ mod tests {
         let (noted_id, bare_id) = (noted.id, bare.id);
 
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().declare_slot(&noted).await.unwrap();
-        uow.commissions().declare_slot(&bare).await.unwrap();
+        uow.commissions()
+            .declare_slots(&[noted, bare])
+            .await
+            .unwrap();
         uow.commit().await.unwrap();
 
         let tree = backend
@@ -2670,7 +2676,7 @@ mod tests {
         uow.commissions().add_component(&component).await.unwrap();
         uow.commit().await.unwrap();
 
-        let title = || SlotTitle::try_new("The knight").unwrap();
+        let title = || SlotTitle::try_from("The knight").unwrap();
 
         let fabricated = NewSlot::under(
             mine,
@@ -2683,7 +2689,7 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
-            .declare_slot(&fabricated)
+            .declare_slots(&[fabricated])
             .await
             .expect_err("absent parent refuses");
         assert!(
@@ -2696,7 +2702,7 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
-            .declare_slot(&cross)
+            .declare_slots(&[cross])
             .await
             .expect_err("foreign parent refuses");
         assert!(
@@ -2709,7 +2715,7 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
-            .declare_slot(&nested)
+            .declare_slots(&[nested])
             .await
             .expect_err("component parent refuses");
         assert!(
@@ -2718,9 +2724,20 @@ mod tests {
         );
         drop(uow);
 
+        // The batch is all-or-nothing (PR #108 ruling): a refusing slot
+        // mid-batch takes the valid ones down with it.
+        let good = NewSlot::under(mine, my_root, title(), None, owner, Utc::now());
+        let bad = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .declare_slots(&[good, bad])
+            .await
+            .expect_err("a refusing slot fails the whole batch");
+        drop(uow);
+
         assert!(
             backend.slots_of(mine).await.unwrap().is_empty(),
-            "no refused declaration left a satellite behind"
+            "no refused declaration — including a batch's valid half — left a satellite behind"
         );
     }
 
@@ -2738,14 +2755,14 @@ mod tests {
             let slot = NewSlot::under(
                 id,
                 root,
-                SlotTitle::try_new("Never lands").unwrap(),
+                SlotTitle::try_from("Never lands").unwrap(),
                 None,
                 owner,
                 Utc::now(),
             );
             let slot_id = slot.id;
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().declare_slot(&slot).await.unwrap();
+            uow.commissions().declare_slots(&[slot]).await.unwrap();
             assert!(
                 backend.find_slot(slot_id).await.unwrap().is_none(),
                 "an open unit's staged slot is invisible to a shared read"

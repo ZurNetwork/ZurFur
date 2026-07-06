@@ -4,10 +4,13 @@
 //! Pins the acceptance criteria at the API surface (the store-layer seams are
 //! covered in `adapter-mem`/`adapter-pg`):
 //!
-//! - **AC1** — the owner declares a Slot with `POST /commissions/{id}/slots`:
-//!   a required title (trimmed, blank refused with a `422`) and optional
-//!   freeform notes (trimmed; blank normalizes to absent). The Slot lands as a
-//!   component leaf in the tree plus its title/notes satellite.
+//! - **AC1** — the owner declares Slots with `POST /commissions/{id}/slots`,
+//!   whose body is an **array** of slot objects (PR #108 ruling: slots usually
+//!   arrive several at a time; the batch lands all-or-nothing, an empty array
+//!   is a `422`): each with a required title (trimmed, blank refused with a
+//!   `422`) and optional freeform notes (trimmed; blank normalizes to absent).
+//!   Each Slot lands as a component leaf in the tree plus its title/notes
+//!   satellite.
 //! - **AC2** — a commission holds zero or more Slots; an empty (unfilled) Slot
 //!   is a valid, permanent state — there is no occupant anywhere to be missing.
 //! - **AC3** — filling is not offered: no fill surface exists on this route (or
@@ -60,6 +63,8 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
+            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
         },
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
@@ -75,6 +80,7 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),
+        files: backend.file_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
@@ -142,27 +148,33 @@ async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .id
 }
 
-/// POSTs a new slot declaration and returns the created node's id from the
-/// `201` body.
-async fn declare_slot(
+/// POSTs a slot-declaration batch (a JSON array of slot objects) and returns
+/// the created node ids from the `201` body, in request order.
+async fn declare_slots(
     client: &reqwest::Client,
     base: &str,
     commission: uuid::Uuid,
     body: &serde_json::Value,
-) -> uuid::Uuid {
+) -> Vec<uuid::Uuid> {
     let res = client
         .post(format!("{base}/commissions/{commission}/slots"))
         .json(body)
         .send()
         .await
-        .expect("POST slot");
-    assert_eq!(res.status(), 201, "declaring a slot returns 201");
+        .expect("POST slots");
+    assert_eq!(res.status(), 201, "declaring slots returns 201");
     let body: serde_json::Value = res.json().await.expect("201 body is JSON");
-    body["id"]
-        .as_str()
-        .expect("the body carries the new node id")
-        .parse()
-        .expect("the id is a UUID")
+    body["ids"]
+        .as_array()
+        .expect("the body carries the new node ids")
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .expect("each id is a string")
+                .parse()
+                .expect("each id is a UUID")
+        })
+        .collect()
 }
 
 /// Seeds a committed commission owned by a directly-provisioned user (someone
@@ -219,20 +231,19 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         .parse()
         .expect("uuid");
 
-    let noted = declare_slot(
+    // One request declares both (the array contract, PR #108 ruling); the 201
+    // ids come back in request order.
+    let ids = declare_slots(
         &client,
         &base,
         id,
-        &json!({ "parent": root, "title": "  The knight  ", "notes": "  full plate, no cape  " }),
+        &json!([
+            { "parent": root, "title": "  The knight  ", "notes": "  full plate, no cape  " },
+            { "parent": surface, "title": "The mage" },
+        ]),
     )
     .await;
-    let bare = declare_slot(
-        &client,
-        &base,
-        id,
-        &json!({ "parent": surface, "title": "The mage" }),
-    )
-    .await;
+    let (noted, bare) = (ids[0], ids[1]);
 
     let me = backend
         .find_by_did(&Did::new("did:plc:artist".to_string()))
@@ -320,7 +331,7 @@ async fn a_blank_or_missing_title_is_rejected() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": root, "title": "   " }))
+        .json(&json!([{ "parent": root, "title": "   " }]))
         .send()
         .await
         .expect("POST blank title");
@@ -328,10 +339,19 @@ async fn a_blank_or_missing_title_is_rejected() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": root }))
+        .json(&json!([{ "parent": root }]))
         .send()
         .await
         .expect("POST missing title");
+    common::assert_problem(res, 422, "invalid_request").await;
+
+    // Declaring nothing is malformed, not a no-op (the array contract).
+    let res = client
+        .post(format!("{base}/commissions/{id}/slots"))
+        .json(&json!([]))
+        .send()
+        .await
+        .expect("POST empty batch");
     common::assert_problem(res, 422, "invalid_request").await;
 
     let tree = backend
@@ -360,13 +380,13 @@ async fn blank_notes_normalize_to_absent() {
     let id = create_commission(&client, &base, &backend).await;
     let root = root_of(&backend, id).await;
 
-    let node = declare_slot(
+    let node = declare_slots(
         &client,
         &base,
         id,
-        &json!({ "parent": root, "title": "The bard", "notes": "   " }),
+        &json!([{ "parent": root, "title": "The bard", "notes": "   " }]),
     )
-    .await;
+    .await[0];
 
     let slot = backend
         .find_slot(NodeId::new(node))
@@ -385,27 +405,43 @@ async fn declaring_under_a_component_is_rejected() {
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
     let root = root_of(&backend, id).await;
-    let slot = declare_slot(
+    let slot = declare_slots(
         &client,
         &base,
         id,
-        &json!({ "parent": root, "title": "First" }),
+        &json!([{ "parent": root, "title": "First" }]),
     )
-    .await;
+    .await[0];
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": slot, "title": "Nested?" }))
+        .json(&json!([{ "parent": slot, "title": "Nested?" }]))
         .send()
         .await
         .expect("POST slot under slot");
+    common::assert_problem(res, 409, "parent_not_a_surface").await;
+
+    // All-or-nothing: a refusing slot mid-batch takes the valid one with it.
+    let res = client
+        .post(format!("{base}/commissions/{id}/slots"))
+        .json(&json!([
+            { "parent": root, "title": "Would be fine alone" },
+            { "parent": slot, "title": "Nested?" },
+        ]))
+        .send()
+        .await
+        .expect("POST mixed batch");
     common::assert_problem(res, 409, "parent_not_a_surface").await;
 
     let slots = backend
         .slots_of(CommissionId::new(id))
         .await
         .expect("list slots");
-    assert_eq!(slots.len(), 1, "only the first slot exists");
+    assert_eq!(
+        slots.len(),
+        1,
+        "only the first slot exists — no refused batch left its valid half behind"
+    );
 }
 
 // Floor — anonymous callers can't declare slots: 401.
@@ -419,7 +455,7 @@ async fn an_anonymous_caller_cannot_declare_a_slot() {
 
     let res = client()
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": root, "title": "The knight" }))
+        .json(&json!([{ "parent": root, "title": "The knight" }]))
         .send()
         .await
         .expect("anonymous POST");
@@ -439,7 +475,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
 
     let hidden = client
         .post(format!("{base}/commissions/{foreign}/slots"))
-        .json(&json!({ "parent": foreign_root, "title": "Probe" }))
+        .json(&json!([{ "parent": foreign_root, "title": "Probe" }]))
         .send()
         .await
         .expect("probe foreign");
@@ -449,7 +485,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     let absent_id = uuid::Uuid::now_v7();
     let absent = client
         .post(format!("{base}/commissions/{absent_id}/slots"))
-        .json(&json!({ "parent": foreign_root, "title": "Probe" }))
+        .json(&json!([{ "parent": foreign_root, "title": "Probe" }]))
         .send()
         .await
         .expect("probe absent");
@@ -486,7 +522,7 @@ async fn an_unknown_or_foreign_parent_is_node_not_found() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": uuid::Uuid::now_v7(), "title": "The knight" }))
+        .json(&json!([{ "parent": uuid::Uuid::now_v7(), "title": "The knight" }]))
         .send()
         .await
         .expect("POST fabricated parent");
@@ -496,7 +532,7 @@ async fn an_unknown_or_foreign_parent_is_node_not_found() {
     let foreign_root = root_of(&backend, foreign).await;
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "parent": foreign_root, "title": "The knight" }))
+        .json(&json!([{ "parent": foreign_root, "title": "The knight" }]))
         .send()
         .await
         .expect("POST foreign parent");
@@ -513,7 +549,7 @@ async fn a_malformed_body_is_rejected() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!({ "title": "The knight" }))
+        .json(&json!([{ "title": "The knight" }]))
         .send()
         .await
         .expect("POST malformed");

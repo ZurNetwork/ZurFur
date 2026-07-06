@@ -276,11 +276,17 @@ pub trait CommissionWrites: Send {
     /// commission, so a commission with only file entries stays hard-deletable (AC2).
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()>;
 
-    /// Declare a **Slot** on the commission: persist a [`NewSlot`] as an
-    /// ordinary component leaf under its parent **surface** *plus* its
-    /// satellite row — the required title and optional notes, keyed by the slot
-    /// node's id — in this same write (ZMVP-77 AC1; the slot mirror of the Seat
-    /// satellite ruling, Gate A E20). The tree half carries exactly the
+    /// Declare **Slots** on the commission — a batch, all in this one write
+    /// (Engineer ruling, PR #108: a commission's slots usually arrive several
+    /// at a time, so declaration is an array operation). Each [`NewSlot`]
+    /// persists as an ordinary component leaf under its parent **surface**
+    /// *plus* its satellite row — the required title and optional notes, keyed
+    /// by the slot node's id (ZMVP-77 AC1; the slot mirror of the Seat
+    /// satellite ruling, Gate A E20). The whole batch lands or none of it does:
+    /// the first refusing slot aborts the write, and the open transaction
+    /// takes the earlier inserts with it.
+    ///
+    /// Each slot's tree half carries exactly the
     /// [`add_component`](Self::add_component) contract: append sibling order
     /// assigned on the open transaction, an absent/foreign parent refusing with
     /// [`ParentNodeNotFound`], a component parent refusing with
@@ -293,10 +299,10 @@ pub trait CommissionWrites: Send {
     /// `seat_declared` for Seats but no slot variant, and the taxonomy is not
     /// this ticket's to grow (flagged to the Engineer rather than invented).
     ///
-    /// Nothing here fills the Slot — no occupant is even representable on
+    /// Nothing here fills a Slot — no occupant is even representable on
     /// [`NewSlot`] or in its storage (AC2/AC3: an empty Slot is a valid,
     /// permanent state; the assignment surface is the Character epic's).
-    async fn declare_slot(&mut self, slot: &NewSlot) -> anyhow::Result<()>;
+    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD

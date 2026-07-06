@@ -1,5 +1,5 @@
 //! Declared Slots over PostgreSQL (ZMVP-77), against a throwaway container:
-//! `declare_slot` persists an ordinary component leaf in `commission_node`
+//! `declare_slots` persists an ordinary component leaf in `commission_node`
 //! **plus** its `commission_slot` satellite (required title, optional notes,
 //! keyed by the slot node's id — the slot mirror of the Seat satellite ruling,
 //! Gate A E20) in one transaction; the parent gates match the other tree
@@ -105,7 +105,7 @@ async fn declare_slot_persists_the_leaf_and_its_satellite() {
     let noted = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_new("The knight").expect("valid"),
+        SlotTitle::try_from("The knight").expect("valid"),
         Some("full plate, no cape".to_string()),
         owner.id,
         Utc::now(),
@@ -113,7 +113,7 @@ async fn declare_slot_persists_the_leaf_and_its_satellite() {
     let bare = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_new("The mage").expect("valid"),
+        SlotTitle::try_from("The mage").expect("valid"),
         None,
         owner.id,
         Utc::now(),
@@ -124,8 +124,10 @@ async fn declare_slot_persists_the_leaf_and_its_satellite() {
     let mut uow = db.begin().await.expect("begin");
     {
         let mut commissions = uow.commissions();
-        commissions.declare_slot(&noted).await.expect("first slot");
-        commissions.declare_slot(&bare).await.expect("second slot");
+        commissions
+            .declare_slots(&[noted, bare])
+            .await
+            .expect("the slot batch");
     }
     uow.commit().await.expect("commit");
 
@@ -184,7 +186,7 @@ async fn declare_slot_refuses_bad_parents_like_every_tree_write() {
         .expect("component");
     uow.commit().await.expect("commit");
 
-    let title = || SlotTitle::try_new("The knight").expect("valid");
+    let title = || SlotTitle::try_from("The knight").expect("valid");
 
     // Fabricated parent.
     let fabricated = NewSlot::under(
@@ -198,7 +200,7 @@ async fn declare_slot_refuses_bad_parents_like_every_tree_write() {
     let mut uow = db.begin().await.expect("begin");
     let err = uow
         .commissions()
-        .declare_slot(&fabricated)
+        .declare_slots(&[fabricated])
         .await
         .expect_err("absent parent refuses");
     assert!(
@@ -212,7 +214,7 @@ async fn declare_slot_refuses_bad_parents_like_every_tree_write() {
     let mut uow = db.begin().await.expect("begin");
     let err = uow
         .commissions()
-        .declare_slot(&cross)
+        .declare_slots(&[cross])
         .await
         .expect_err("foreign parent refuses");
     assert!(
@@ -226,7 +228,7 @@ async fn declare_slot_refuses_bad_parents_like_every_tree_write() {
     let mut uow = db.begin().await.expect("begin");
     let err = uow
         .commissions()
-        .declare_slot(&nested)
+        .declare_slots(&[nested])
         .await
         .expect_err("component parent refuses");
     assert!(
@@ -253,7 +255,7 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
     let slot = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_new("Never lands").expect("valid"),
+        SlotTitle::try_from("Never lands").expect("valid"),
         None,
         owner.id,
         Utc::now(),
@@ -262,7 +264,10 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions().declare_slot(&slot).await.expect("stage");
+    uow.commissions()
+        .declare_slots(&[slot])
+        .await
+        .expect("stage");
     uow.rollback().await.expect("rollback");
 
     assert!(slot_row(&pool, slot_id).await.is_none(), "no satellite row");
@@ -286,7 +291,7 @@ async fn slots_cascade_away_with_their_commission() {
     let slot = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_new("Swept").expect("valid"),
+        SlotTitle::try_from("Swept").expect("valid"),
         Some("goes with the ship".to_string()),
         owner.id,
         Utc::now(),
@@ -295,7 +300,7 @@ async fn slots_cascade_away_with_their_commission() {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .declare_slot(&slot)
+        .declare_slots(&[slot])
         .await
         .expect("declare");
     uow.commit().await.expect("commit");

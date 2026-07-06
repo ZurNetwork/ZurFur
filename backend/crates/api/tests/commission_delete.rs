@@ -418,6 +418,13 @@ impl CommissionWrites for FactBearingCommissions<'_> {
     ) -> anyhow::Result<Vec<domain::elements::commission::LapsedDeadline>> {
         self.0.lapsed_deadlines(now).await
     }
+
+    async fn declare_slots(
+        &mut self,
+        slots: &[domain::elements::commission::NewSlot],
+    ) -> anyhow::Result<()> {
+        self.0.declare_slots(slots).await
+    }
 }
 
 // AC3 — deleting a fact-bearing commission is refused with the 409

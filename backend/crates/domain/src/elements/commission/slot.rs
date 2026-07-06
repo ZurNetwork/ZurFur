@@ -33,10 +33,10 @@ use crate::{datetime::DateTimeUtc, elements::user::UserId};
 /// ```
 /// use domain::elements::commission::SlotTitle;
 ///
-/// let title = SlotTitle::try_new("  The knight  ").unwrap();
+/// let title = SlotTitle::try_from("  The knight  ").unwrap();
 /// assert_eq!(title.as_str(), "The knight"); // trimmed
 ///
-/// assert!(SlotTitle::try_new("   ").is_err()); // empty after trim
+/// assert!(SlotTitle::try_from("   ").is_err()); // empty after trim
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotTitle(String);
@@ -58,17 +58,29 @@ impl std::fmt::Display for SlotTitleError {
 
 impl std::error::Error for SlotTitleError {}
 
-impl SlotTitle {
+impl TryFrom<String> for SlotTitle {
+    type Error = SlotTitleError;
+
     /// Validate and wrap a title: trim surrounding whitespace, then reject an
     /// empty result with [`SlotTitleError::Empty`].
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, SlotTitleError> {
-        let trimmed = raw.into().trim().to_owned();
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        let trimmed = raw.trim().to_owned();
         if trimmed.is_empty() {
             return Err(SlotTitleError::Empty);
         }
         Ok(Self(trimmed))
     }
+}
 
+impl TryFrom<&str> for SlotTitle {
+    type Error = SlotTitleError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+impl SlotTitle {
     /// The validated, trimmed title as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -76,7 +88,7 @@ impl SlotTitle {
 }
 
 /// A freshly declared Slot, ready to persist under an existing **surface**
-/// ([`CommissionWrites::declare_slot`](crate::ports::CommissionWrites::declare_slot),
+/// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots),
 /// ZMVP-77).
 ///
 /// Built with [`NewSlot::under`]. The tree half is exactly a
@@ -125,7 +137,7 @@ impl NewSlot {
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
     /// let parent = NodeId::new(uuid::Uuid::now_v7());
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let title = SlotTitle::try_new("The knight").unwrap();
+    /// let title = SlotTitle::try_from("The knight").unwrap();
     /// let slot = NewSlot::under(commission, parent, title, None, owner, Utc::now());
     /// assert_eq!(slot.parent, parent);
     /// assert_eq!(slot.title.as_str(), "The knight");
@@ -183,11 +195,11 @@ mod tests {
     #[test]
     fn a_slot_title_trims_and_rejects_blank() {
         assert_eq!(
-            SlotTitle::try_new("  The knight  ").unwrap().as_str(),
+            SlotTitle::try_from("  The knight  ").unwrap().as_str(),
             "The knight"
         );
-        assert_eq!(SlotTitle::try_new(""), Err(SlotTitleError::Empty));
-        assert_eq!(SlotTitle::try_new("   \t "), Err(SlotTitleError::Empty));
+        assert_eq!(SlotTitle::try_from(""), Err(SlotTitleError::Empty));
+        assert_eq!(SlotTitle::try_from("   \t "), Err(SlotTitleError::Empty));
     }
 
     // AC1 — a new Slot's envelope: fresh id, the surface it grows under, the
@@ -197,7 +209,7 @@ mod tests {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
         let parent = NodeId::new(uuid::Uuid::now_v7());
         let owner = UserId::new(uuid::Uuid::now_v7());
-        let title = SlotTitle::try_new("The mage").unwrap();
+        let title = SlotTitle::try_from("The mage").unwrap();
 
         let slot = NewSlot::under(
             commission,

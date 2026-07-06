@@ -28,7 +28,7 @@ CREATE TABLE commission_slot (
     node_id       uuid NOT NULL PRIMARY KEY
                        REFERENCES commission_node (id) ON DELETE CASCADE,
     commission_id uuid NOT NULL REFERENCES commission (id) ON DELETE CASCADE,
-    title         text NOT NULL CHECK (title <> ''),
+    title         text NOT NULL CHECK (btrim(title) <> ''),
     notes         text
 );
 

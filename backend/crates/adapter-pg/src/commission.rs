@@ -14,8 +14,8 @@ use domain::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
-            Placement, RootSurface, SurfaceMode, Visibility, derive_deadline_status,
+            LifecycleStep, NewComponent, NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+            RootSurface, SurfaceMode, Visibility, derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -299,50 +299,42 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declare a Slot (ZMVP-77): two inserts on the open transaction behind the
+    /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
+    /// ruling): per slot, two inserts on the open transaction behind the
     /// shared parent gate — the slot's tree half as an ordinary component row
     /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
     /// subquery, the empty payload: the substance is the satellite's) and the
     /// `commission_slot` satellite (title, notes) keyed by the same node id (the
-    /// slot mirror of the Seat satellite ruling, Gate A E20). One transaction,
-    /// so the leaf and its satellite land or vanish together; there is no
-    /// occupant column to write (fill is the Character epic's), and no
-    /// changelog entry (the frozen taxonomy has no slot variant).
-    async fn declare_slot(&mut self, slot: &NewSlot) -> anyhow::Result<()> {
-        self.require_surface_parent(slot.parent, slot.commission_id)
+    /// slot mirror of the Seat satellite ruling, Gate A E20). One transaction
+    /// for the whole batch, so every leaf and satellite lands or none does —
+    /// the first refusing slot aborts and the caller's rollback takes the
+    /// earlier inserts with it. There is no occupant column to write (fill is
+    /// the Character epic's), and no changelog entry (the frozen taxonomy has
+    /// no slot variant).
+    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
+        for slot in slots {
+            self.require_surface_parent(slot.parent, slot.commission_id)
+                .await?;
+
+            sql::declare_slot_node(
+                &mut *self.conn,
+                *slot.id,
+                *slot.commission_id,
+                *slot.parent,
+                *slot.created_by,
+                slot.created_at,
+            )
             .await?;
 
-        query!(
-            r#"
-            INSERT INTO commission_node
-                (id, commission_id, parent, type, mode, position, created_by, created_at)
-            VALUES (
-                $1, $2, $3, 'component', NULL,
-                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
-                $4, $5
+            sql::declare_slot_satellite(
+                &mut *self.conn,
+                *slot.id,
+                *slot.commission_id,
+                slot.title.as_str(),
+                slot.notes.as_deref(),
             )
-            "#,
-            *slot.id,
-            *slot.commission_id,
-            *slot.parent,
-            *slot.created_by,
-            slot.created_at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
-
-        query!(
-            r#"
-            INSERT INTO commission_slot (node_id, commission_id, title, notes)
-            VALUES ($1, $2, $3, $4)
-            "#,
-            *slot.id,
-            *slot.commission_id,
-            slot.title.as_str(),
-            slot.notes.as_deref(),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+            .await?;
+        }
         Ok(())
     }
 
