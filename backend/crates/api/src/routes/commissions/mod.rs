@@ -26,6 +26,8 @@
 //!   `PUT`/`DELETE /commissions/{id}/status/deadline` (the deadline envelope
 //!   field and the manual Delayed flag, ZMVP-86; the system half — the Late
 //!   sweeper — lives in [`crate::sweep_deadlines`], not on a route).
+//! - [`markup`] — `POST /commissions/{id}/files/{file_id}/markup` (raw,
+//!   strictly-validated annotation onto a file entry, ZMVP-90).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -64,6 +66,7 @@ mod create;
 mod deadline;
 mod delete;
 mod files;
+mod markup;
 mod maturity;
 mod notes;
 mod positioning;
@@ -155,6 +158,10 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         .route(
             "/commissions/{id}/files/{file_id}",
             get(files::download_file),
+        )
+        .route(
+            "/commissions/{id}/files/{file_id}/markup",
+            post(markup::add_markup),
         )
 }
 
