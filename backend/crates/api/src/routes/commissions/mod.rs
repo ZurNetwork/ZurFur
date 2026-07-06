@@ -29,7 +29,7 @@
 
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use domain::elements::{
     commission::{Commission, CommissionId},
@@ -46,6 +46,7 @@ mod channel;
 mod create;
 mod delete;
 mod notes;
+mod positioning;
 
 /// The commissions route group. On the cookie surface; the composition root
 /// wraps the group with the CSRF
@@ -77,6 +78,15 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         .route(
             "/commissions/{id}/unarchive",
             post(archive::unarchive_commission),
+        )
+        .route(
+            "/commissions/{id}/placements",
+            post(positioning::place_commission),
+        )
+        .route("/commissions/{id}/grants", post(positioning::grant_view))
+        .route(
+            "/commissions/{id}/grants/{account_id}",
+            delete(positioning::revoke_view),
         )
 }
 

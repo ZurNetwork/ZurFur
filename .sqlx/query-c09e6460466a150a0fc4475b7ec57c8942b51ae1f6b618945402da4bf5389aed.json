@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT seq, account_id, placed_by, placed_at\n            FROM commission_placement\n            WHERE commission_id = $1\n            ORDER BY seq\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "commission_placement",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "account_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "commission_placement",
+            "name": "account_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "placed_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "commission_placement",
+            "name": "placed_by"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "placed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "commission_placement",
+            "name": "placed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c09e6460466a150a0fc4475b7ec57c8942b51ae1f6b618945402da4bf5389aed"
+}

@@ -29,7 +29,8 @@ use api::{AppState, Config, Environment};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{ChannelPointer, Commission, CommissionId, CommissionTitle},
+    account::AccountId,
+    commission::{ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel},
     did::Did,
     profile::Profile,
     user::UserId,
@@ -328,6 +329,33 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         archived_at: Option<domain::datetime::DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.0.set_archived(id, archived_at).await
+    }
+
+    async fn place(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        actor: UserId,
+        at: domain::datetime::DateTimeUtc,
+    ) -> anyhow::Result<()> {
+        self.0.place(commission, account, actor, at).await
+    }
+
+    async fn grant_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        level: GrantLevel,
+    ) -> anyhow::Result<()> {
+        self.0.grant_view(commission, account, level).await
+    }
+
+    async fn revoke_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<bool> {
+        self.0.revoke_view(commission, account).await
     }
 }
 

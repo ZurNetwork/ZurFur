@@ -7,8 +7,10 @@
 use domain::{
     datetime::DateTimeUtc,
     elements::{
+        account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTitle, LifecycleStep, Visibility,
+            ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, LifecycleStep,
+            Placement, Visibility,
         },
         user::UserId,
     },
@@ -42,7 +44,17 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 /// - `commission_changelog` (ZMVP-87): the commission's own memory. The Changelog
 ///   DD's retention rule — entries hard-delete **only** with the commission itself
 ///   (or legal duty) — is exactly `ON DELETE CASCADE`, not a deletion block.
-pub const COMMISSION_NON_FACT_TABLES: &[&str] = &["commission_changelog"];
+/// - `commission_placement` / `commission_current_placement` / `commission_view_grant`
+///   (ZMVP-70): account positioning — the append-only placement log, its cached
+///   current pointer, and the view-grant keys. Commission-owned bookkeeping that
+///   cascades with the commission (Ownership Separation DD `29130754`), never a
+///   fact that blocks its deletion.
+pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
+    "commission_changelog",
+    "commission_placement",
+    "commission_current_placement",
+    "commission_view_grant",
+];
 
 // Tripwire (conductor ruling E18): the constant-`false` body of
 // `commission_has_facts` below is sound ONLY while the fact registry is empty.
@@ -189,6 +201,106 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    /// Append one placement-log row and repoint the current-placement cache to it,
+    /// both on the open transaction (ZMVP-70) — so the cache equals the latest log
+    /// row atomically, never via a second transaction. `RETURNING seq` carries the
+    /// freshly-assigned ordering key straight into the cache upsert, so the two
+    /// always agree on which row is current. Re-placement always appends (the log
+    /// is never rewritten); the cache upsert overwrites on the `commission_id`
+    /// primary key. A bad `commission`/`account` (no such row) fails the FK — the
+    /// store-level backstop for a check the caller settles first.
+    async fn place(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        placed_by: UserId,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()> {
+        let seq = query!(
+            r#"
+            INSERT INTO commission_placement (commission_id, account_id, placed_by, placed_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING seq
+            "#,
+            *commission,
+            *account,
+            *placed_by,
+            at,
+        )
+        .fetch_one(&mut *self.conn)
+        .await?
+        .seq;
+
+        query!(
+            r#"
+            INSERT INTO commission_current_placement (commission_id, account_id, seq, placed_by, placed_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (commission_id)
+            DO UPDATE SET account_id = EXCLUDED.account_id,
+                          seq = EXCLUDED.seq,
+                          placed_by = EXCLUDED.placed_by,
+                          placed_at = EXCLUDED.placed_at
+            "#,
+            *commission,
+            *account,
+            seq,
+            *placed_by,
+            at,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Upsert the account's key on the open transaction (ZMVP-70): one row per
+    /// (commission, account), so re-granting replaces the level ("issuing anew").
+    /// The level persists as its stable [`GrantLevel::as_str`] token. A bad
+    /// `commission`/`account` fails the FK (the caller settled existence first).
+    async fn grant_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        level: GrantLevel,
+    ) -> anyhow::Result<()> {
+        query!(
+            r#"
+            INSERT INTO commission_view_grant (commission_id, account_id, level)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (commission_id, account_id)
+            DO UPDATE SET level = EXCLUDED.level
+            "#,
+            *commission,
+            *account,
+            level.as_str(),
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Hard-delete the account's key on the open transaction (ZMVP-70; DD D5) —
+    /// one `DELETE`, whose rows-affected IS the transition answer: `true` when a
+    /// key existed and is now gone, `false` when the account held none (an
+    /// idempotent no-op). The caller keys its `view_grant_revoked` changelog append
+    /// on this bool in the same unit, so a duplicate entry is unrepresentable.
+    async fn revoke_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<bool> {
+        let result = query!(
+            r#"
+            DELETE FROM commission_view_grant
+            WHERE commission_id = $1 AND account_id = $2
+            "#,
+            *commission,
+            *account,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 /// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
@@ -249,10 +361,98 @@ impl CommissionStore for PgCommissionStore {
         }))
     }
 
+    /// The current-placement pointer row (ZMVP-70), or `None` if the commission
+    /// was never placed. Read straight from the denormalized
+    /// `commission_current_placement` cache — kept equal to the latest log row by
+    /// [`place`](CommissionWrites::place).
+    async fn current_placement(
+        &self,
+        commission: CommissionId,
+    ) -> anyhow::Result<Option<Placement>> {
+        let Some(row) = query!(
+            r#"
+            SELECT seq, account_id, placed_by, placed_at
+            FROM commission_current_placement
+            WHERE commission_id = $1
+            "#,
+            *commission,
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Placement {
+            seq: row.seq,
+            commission_id: commission,
+            account_id: AccountId::new(row.account_id),
+            placed_by: UserId::new(row.placed_by),
+            placed_at: row.placed_at,
+        }))
+    }
+
+    /// The whole placement log in append order (ascending `seq`) — the current
+    /// placement is the last row, the origin the first (ZMVP-70). An unplaced
+    /// commission has an empty log.
+    async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>> {
+        let rows = query!(
+            r#"
+            SELECT seq, account_id, placed_by, placed_at
+            FROM commission_placement
+            WHERE commission_id = $1
+            ORDER BY seq
+            "#,
+            *commission,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Placement {
+                seq: row.seq,
+                commission_id: commission,
+                account_id: AccountId::new(row.account_id),
+                placed_by: UserId::new(row.placed_by),
+                placed_at: row.placed_at,
+            })
+            .collect())
+    }
+
+    /// The [`GrantLevel`] `account` holds on `commission`, or `None` (ZMVP-70).
+    /// The stored token is re-validated through [`GrantLevel::parse`]; a value
+    /// outside the vocabulary means row tampering and surfaces as an `Err`, never
+    /// a silent default.
+    async fn view_grant(
+        &self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<Option<GrantLevel>> {
+        let Some(row) = query!(
+            r#"
+            SELECT level
+            FROM commission_view_grant
+            WHERE commission_id = $1 AND account_id = $2
+            "#,
+            *commission,
+            *account,
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        GrantLevel::parse(&row.level)
+            .ok_or_else(|| anyhow::anyhow!("unknown grant level token {:?}", row.level))
+            .map(Some)
+    }
+
     /// The **owner arm** of participant-hood (ZMVP-87): one `EXISTS` over the
     /// owner column — the owner IS a Participant without holding a Seat
     /// (DESIGN/Commission). ZMVP-79 extends this query with the seated arm; an
-    /// unknown commission matches nothing and answers `false`.
+    /// unknown commission matches nothing and answers `false`. **Unaffected by
+    /// placement or view grants** (Ownership Separation DD Decision 8): a key is
+    /// only a view, and positioning is environmental — neither makes an account's
+    /// members Participants.
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
         let row = query!(
             r#"
