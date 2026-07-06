@@ -1151,6 +1151,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "cid",
+ "serde",
  "serde_json",
  "uuid",
  "zeroize",

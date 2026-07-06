@@ -33,11 +33,14 @@
 //! loaded tree deliberately never serializes (projection is ZMVP-75). The
 //! [`file`] submodule carries the file-entry shapes (ZMVP-88): the opaque
 //! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
-//! Index-canonical link.
+//! Index-canonical link. The [`markup`] submodule carries the [`Markup`]
+//! annotation shapes (ZMVP-90) that ride the `markup_added` changelog entry's
+//! payload.
 
 pub mod changelog;
 pub mod fact;
 pub mod file;
+pub mod markup;
 pub mod node;
 pub mod positioning;
 
@@ -46,6 +49,7 @@ pub use changelog::{
 };
 pub use fact::Fact;
 pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
+pub use markup::{Markup, MarkupError, MarkupShape};
 pub use node::{
     CommissionNode, CommissionTree, NewComponent, NewSurface, NodeId, NodeKind, NodeRow,
     RootSurface, SurfaceMode, TreeAssemblyError,
