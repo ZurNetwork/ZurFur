@@ -294,6 +294,22 @@ impl Problem {
         )
     }
 
+    /// `422`, code `unknown_maturity_rating` — a maturity token outside the four-tier
+    /// vocabulary the Maturity Vocabulary DD (`29982722`) fixes (Safe / Suggestive /
+    /// Nudity / Adult). The server-side half of ZMVP-31's "values from the enum only":
+    /// the superseded Safe/Questionable/Explicit tokens, case variants, and the derived
+    /// *label* values all land here. Shares the invalid-request `type` but carries its
+    /// own `code`, like [`unknown_role`](Problem::unknown_role).
+    pub fn unknown_maturity_rating(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:invalid-request",
+            "unknown_maturity_rating",
+            "Invalid request",
+            422,
+            detail,
+        )
+    }
+
     /// `422`, code `unsupported_handle` — a well-formed handle whose *namespace* isn't
     /// supported for this operation yet: v1 ships the handle-*change* flow for the
     /// Zurfur-issued `*.zurfur.app` namespace only, since changing to a brought (BYO)

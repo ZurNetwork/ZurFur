@@ -49,7 +49,10 @@ pub use positioning::{GrantLevel, Placement};
 
 use std::ops::Deref;
 
-use crate::{datetime::DateTimeUtc, elements::user::UserId};
+use crate::{
+    datetime::DateTimeUtc,
+    elements::{maturity::Maturity, user::UserId},
+};
 
 /// The app-private, stable handle for a [`Commission`].
 ///
@@ -158,6 +161,16 @@ pub struct Commission {
     /// The nullable-but-fixed deadline envelope field — `None` when the commission
     /// carries no deadline (DESIGN/Commission).
     pub deadline: Option<DateTimeUtc>,
+    /// The commission's maturity posture (ZMVP-31; Maturity Vocabulary DD
+    /// `29982722`) — an envelope field like the deadline, **not** a tree node
+    /// (the Surfaces DD pins where it *renders*: the Presentation tier, so it
+    /// gates before any content shows). **`None` at birth by invariant**: a
+    /// fresh commission is Private (root `Total` — nobody outside sees
+    /// anything, so no rating is needed yet); rating becomes *required* at the
+    /// widening gate ZMVP-74 owns. Set through the owner-gated
+    /// `PUT /commissions/{id}/maturity`, replace-only — no path clears it back
+    /// to `None`, so a widened commission can never lose its rating.
+    pub maturity: Option<Maturity>,
     /// The external **linked channel** pointer — "where we talk" (ZMVP-87,
     /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
     /// changelog-recorded on set/clear, rendered as an opaque pointer.
@@ -205,6 +218,7 @@ impl Commission {
     /// assert_eq!(c.owner_id, owner);                             // the creator owns it
     /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
     /// assert_eq!(c.title.as_str(), "A ref sheet");
+    /// assert!(c.maturity.is_none()); // born unrated (ZMVP-31: rating gates widening, not birth)
     /// ```
     pub fn create(
         title: CommissionTitle,
@@ -220,6 +234,7 @@ impl Commission {
             created_at: now,
             visibility: Visibility::Private,
             deadline,
+            maturity: None,
             linked_channel: None,
             archived_at: None,
         }

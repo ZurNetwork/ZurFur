@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT title, owner_id, lifecycle, visibility, deadline, linked_channel,\n                   archived_at, created_at\n            FROM commission\n            WHERE id = $1\n            ",
+  "query": "\n            SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,\n                   linked_channel, archived_at, created_at\n            FROM commission\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,28 @@
       },
       {
         "ordinal": 5,
+        "name": "maturity",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commission",
+            "name": "maturity"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "graphic",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "commission",
+            "name": "graphic"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "linked_channel",
         "type_info": "Text",
         "origin": {
@@ -70,7 +92,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "archived_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +103,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -105,8 +127,10 @@
       true,
       true,
       true,
+      true,
+      true,
       false
     ]
   },
-  "hash": "bab705e19b9280ef7b16c88751d1b5dc1916ccf7b75bedea71cfde3ea0d0984a"
+  "hash": "8c878433eba9f2811fd30b9c562e3b22767fc6a53d1e0220e35b9c3e55e9a95a"
 }

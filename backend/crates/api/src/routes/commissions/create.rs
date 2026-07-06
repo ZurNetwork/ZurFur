@@ -12,7 +12,10 @@ use axum::{
 use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
-    elements::commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
+    elements::{
+        commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
+        maturity::{Maturity, MaturityRating},
+    },
     ports::transaction,
 };
 use serde::Deserialize;
@@ -23,12 +26,32 @@ use crate::{AppState, problem::Problem};
 
 /// The `POST /commissions` request body: the commission's fixed metadata a caller
 /// supplies. The `title` is required (a missing/invalid body is a `422`); `deadline`
-/// is the optional envelope field. Owner and lifecycle are not accepted from the
-/// client — the owner is the authenticated caller and the lifecycle is always `Draft`.
+/// and `maturity` are the optional envelope fields. Owner and lifecycle are not
+/// accepted from the client — the owner is the authenticated caller and the
+/// lifecycle is always `Draft`.
+///
+/// `maturity` lets the caller rate the commission **at creation** instead of a
+/// follow-up `PUT /commissions/{id}/maturity`: when present its `rating` is resolved
+/// server-side (a bad token is a `422`, never stored) and lands in the same write;
+/// when absent the commission is born unrated (`None`) — legal while it stays
+/// private (Maturity Vocabulary DD `29982722`: a rating is required at *publish*,
+/// not at birth).
 #[derive(Deserialize)]
 pub(super) struct CreateCommissionBody {
     title: String,
     deadline: Option<DateTimeUtc>,
+    maturity: Option<MaturityInput>,
+}
+
+/// The optional at-creation maturity posture on [`CreateCommissionBody`] — the same
+/// `{ rating, graphic }` shape the `PUT .../maturity` route accepts, so rating at
+/// birth and re-rating later speak one wire language. `graphic` defaults to `false`
+/// when omitted.
+#[derive(Deserialize)]
+struct MaturityInput {
+    rating: String,
+    #[serde(default)]
+    graphic: bool,
 }
 
 /// Create a commission owned by the signed-in caller (ZMVP-65), recording the
@@ -49,7 +72,9 @@ pub(super) struct CreateCommissionBody {
 /// `201 Created` on success. A missing/malformed JSON body — or a blank
 /// (empty/whitespace) title, rejected by
 /// [`CommissionTitle::try_new`](domain::elements::commission::CommissionTitle::try_new) —
-/// is a `422` (`invalid_request`).
+/// is a `422` (`invalid_request`). An optional `maturity` posture may rate the
+/// commission at birth; its `rating` is validated server-side, and an
+/// out-of-vocabulary token is a `422` (`unknown_maturity_rating`) before any write.
 pub(super) async fn create_commission(
     State(state): State<AppState>,
     session: Session,
@@ -60,9 +85,28 @@ pub(super) async fn create_commission(
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     let title = CommissionTitle::try_new(body.title)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
+    // The optional at-creation rating passes the same server-side enum gate as the
+    // PUT route — an out-of-vocabulary token is a 422 here, before anything is
+    // written, never a silently-dropped or defaulted value.
+    let maturity = body
+        .maturity
+        .map(|input| {
+            let rating = MaturityRating::try_from(input.rating.as_str()).map_err(|_| {
+                Problem::unknown_maturity_rating(format!(
+                    "{:?} is not a maturity rating; expected one of: safe, suggestive, nudity, adult.",
+                    input.rating,
+                ))
+            })?;
+            Ok::<_, Problem>(Maturity {
+                rating,
+                graphic: input.graphic,
+            })
+        })
+        .transpose()?;
 
     let now = Utc::now();
-    let commission = Commission::create(title, user.id, now, body.deadline);
+    let mut commission = Commission::create(title, user.id, now, body.deadline);
+    commission.maturity = maturity;
     // The genesis entry: the payload carries the title so the sentence renders
     // without joins (the DD's core-renderable rule).
     let entry = NewChangelogEntry::event(

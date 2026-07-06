@@ -12,6 +12,8 @@
 //!   ZMVP-66).
 //! - [`archive`] — `POST /commissions/{id}/archive` / `POST
 //!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
+//! - [`maturity`] — `PUT /commissions/{id}/maturity` (ZMVP-31: the owner rates
+//!   the commission; replace-only, no clear).
 //! - [`surfaces`] — `POST /commissions/{id}/surfaces` (ZMVP-71: the owner grows
 //!   the content tree).
 //! - [`components`] — `POST /commissions/{id}/components` (ZMVP-72: the owner
@@ -53,6 +55,7 @@ mod channel;
 mod components;
 mod create;
 mod delete;
+mod maturity;
 mod notes;
 mod positioning;
 mod remove;
@@ -98,6 +101,7 @@ pub(crate) fn commissions_router() -> Router<AppState> {
             "/commissions/{id}/grants/{account_id}",
             delete(positioning::revoke_view),
         )
+        .route("/commissions/{id}/maturity", put(maturity::set_maturity))
         .route("/commissions/{id}/surfaces", post(surfaces::add_surface))
         .route(
             "/commissions/{id}/components",

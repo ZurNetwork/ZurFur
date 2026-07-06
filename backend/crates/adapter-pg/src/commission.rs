@@ -13,6 +13,7 @@ use domain::{
             LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
             RootSurface, SurfaceMode, Visibility,
         },
+        maturity::{Maturity, MaturityRating},
         user::UserId,
     },
     ports::{
@@ -158,9 +159,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
                 lifecycle,
                 visibility,
                 deadline,
+                maturity,
+                graphic,
                 created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
             *commission.id,
             commission.title.as_str(),
@@ -168,6 +171,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             commission.lifecycle_step.as_str(),
             commission.visibility.as_str(),
             commission.deadline,
+            commission.maturity.map(|m| m.rating.as_str()),
+            commission.maturity.map(|m| m.graphic),
             commission.created_at
         )
         .execute(&mut *self.conn)
@@ -390,6 +395,24 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Write the posture's two column halves (`maturity`, `graphic`) — one
+    /// `UPDATE` on the open transaction (ZMVP-31). Always both together: the
+    /// signature has no clear arm and the schema's both-or-neither CHECK
+    /// refuses a half-set pair, so an unrated-with-graphic (or rated-without)
+    /// row is unrepresentable from any direction. An absent commission
+    /// matches no row: a no-op here, per the port contract.
+    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+        query!(
+            r#"UPDATE commission SET maturity = $2, graphic = $3 WHERE id = $1"#,
+            *id,
+            maturity.rating.as_str(),
+            maturity.graphic,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
     /// Repoint (or clear) the `commission.linked_channel` column — one
     /// **conditional** `UPDATE` on the open transaction: the row matches only
     /// when the stored value differs from the requested one
@@ -538,16 +561,19 @@ impl PgCommissionStore {
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
     /// Rebuild the [`Commission`] from its row. The stored `lifecycle`,
-    /// `visibility`, and `linked_channel` values are re-validated through their
-    /// domain gates ([`LifecycleStep::parse`] / [`Visibility::parse`] /
+    /// `visibility`, `maturity`, and `linked_channel` values are re-validated
+    /// through their domain gates ([`LifecycleStep::parse`] /
+    /// [`Visibility::parse`] / [`MaturityRating`]'s `TryFrom<&str>` /
     /// [`ChannelPointer::try_new`], with [`CommissionTitle::try_new`] for the
     /// title); a value outside its vocabulary means row tampering and surfaces
-    /// as an `Err`, never a panic or a silent default.
+    /// as an `Err`, never a panic or a silent default — as does a half-set
+    /// maturity posture, which the migration's CHECK already makes
+    /// unrepresentable at the database.
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = query!(
             r#"
-            SELECT title, owner_id, lifecycle, visibility, deadline, linked_channel,
-                   archived_at, created_at
+            SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,
+                   linked_channel, archived_at, created_at
             FROM commission
             WHERE id = $1
             "#,
@@ -559,6 +585,17 @@ impl CommissionStore for PgCommissionStore {
             return Ok(None);
         };
 
+        let maturity = match (row.maturity, row.graphic) {
+            (None, None) => None,
+            (Some(token), Some(graphic)) => Some(Maturity {
+                rating: MaturityRating::try_from(token.as_str())
+                    .map_err(|_| anyhow::anyhow!("unknown maturity token {token:?}"))?,
+                graphic,
+            }),
+            (token, graphic) => {
+                anyhow::bail!("half-set maturity posture (maturity {token:?}, graphic {graphic:?})")
+            }
+        };
         Ok(Some(Commission {
             id,
             title: CommissionTitle::try_new(row.title)?,
@@ -568,6 +605,7 @@ impl CommissionStore for PgCommissionStore {
             visibility: Visibility::parse(&row.visibility)
                 .ok_or_else(|| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
             deadline: row.deadline,
+            maturity,
             linked_channel: row
                 .linked_channel
                 .map(ChannelPointer::try_new)

@@ -19,6 +19,8 @@
 //! - [`handle`] — a validated, normalized atproto-style Account handle, the one
 //!   shared claim-validation gate (ZMVP-48/45, DESIGN/24870914 §6, DD/26050561).
 //! - [`profile`] — a visitor's public, PDS-owned profile (ZMVP-10).
+//! - [`maturity`] — the platform-wide maturity rating: the atproto self-label
+//!   axis + the orthogonal Graphic flag (ZMVP-31, DD 29982722).
 //!
 //! The rest are stubs — identity types and shapes sketched ahead of the work
 //! that fills them in, documented honestly per the glossary: [`achievement`],
@@ -34,6 +36,7 @@ pub mod did;
 pub mod handle;
 pub mod invitation;
 pub mod markdown;
+pub mod maturity;
 pub mod plc_operation;
 pub mod profile;
 pub mod public_record;
