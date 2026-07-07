@@ -1,0 +1,25 @@
+#!/bin/sh
+# Commit-time gate (Engineer directive 2026-07-06): formatting + linter run at
+# COMMIT; tests run on CI. Rebases/restacks never trigger this (git only runs
+# pre-commit on `git commit`), which is what keeps stacked-branch surgery fast.
+
+# Fast path: nothing Rust-shaped staged -> nothing to check.
+if git diff --cached --name-only | grep -qE '\.(rs|toml)$'; then
+    :
+else
+    exit 0
+fi
+
+echo "pre-commit: cargo fmt --check"
+if ! cargo fmt --all --check; then
+    echo ""
+    echo "pre-commit: formatting failed — run 'cargo fmt --all', restage, and commit again."
+    exit 1
+fi
+
+echo "pre-commit: cargo clippy (offline)"
+if ! SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings; then
+    echo ""
+    echo "pre-commit: clippy failed — fix the warnings above, restage, and commit again."
+    exit 1
+fi
