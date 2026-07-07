@@ -31,7 +31,8 @@ use chrono::Utc;
 use domain::elements::{
     account::AccountId,
     commission::{
-        ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, NewSurface,
+        ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, NewComponent,
+        NewSurface,
     },
     did::Did,
     profile::Profile,
@@ -335,6 +336,10 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
         self.0.add_surface(surface).await
+    }
+
+    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
+        self.0.add_component(component).await
     }
 
     async fn place(
