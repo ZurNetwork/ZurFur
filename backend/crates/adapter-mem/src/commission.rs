@@ -149,6 +149,29 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(false)
     }
 
+    /// Remove the commission and, with it, its changelog entries — the mem
+    /// mirror of the pg `DELETE FROM commission` plus `commission_changelog`'s
+    /// `ON DELETE CASCADE` (ZMVP-66; ruling E35). Lands on the unit's staged
+    /// snapshot, so it commits or rolls back with the caller's fact gate
+    /// (ruling E17), like every write here. An absent commission is a no-op,
+    /// per the port contract. A future commission-child map added to
+    /// [`MemBackend`] must cascade here too, mirroring its pg table's cascade.
+    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        commissions.remove(&id);
+        let mut changelog = self
+            .0
+            .changelog
+            .lock()
+            .expect("MemBackend changelog mutex poisoned");
+        changelog.retain(|entry| entry.commission_id != id);
+        Ok(())
+    }
+
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
     /// the pg conditional `UPDATE`: the write applies only when the stored value
     /// differs from the requested one, so a repeat answers `false` and the
@@ -476,6 +499,107 @@ mod tests {
                 .is_empty(),
             "an unknown commission has an empty stream"
         );
+    }
+
+    // ZMVP-66 AC1 (store layer) — `delete` removes the commission and its
+    // changelog entries together (the mem mirror of the pg ON DELETE CASCADE),
+    // leaving other commissions' streams untouched.
+    #[tokio::test]
+    async fn delete_removes_the_commission_and_cascades_its_changelog() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let doomed = commission("Doomed", owner);
+        let doomed_id = doomed.id;
+        let survivor = commission("Survivor", owner);
+        let survivor_id = survivor.id;
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().create(&doomed).await.unwrap();
+        uow.commissions().create(&survivor).await.unwrap();
+        for (id, title) in [(doomed_id, "Doomed"), (survivor_id, "Survivor")] {
+            uow.changelog()
+                .append(&NewChangelogEntry::event(
+                    id,
+                    ChangelogEntryKind::Created,
+                    owner,
+                    json!({ "title": title }),
+                    Utc::now(),
+                ))
+                .await
+                .unwrap();
+        }
+        uow.commit().await.unwrap();
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().delete(doomed_id).await.unwrap();
+        uow.commit().await.unwrap();
+
+        assert!(
+            backend.find_commission(doomed_id).await.unwrap().is_none(),
+            "the deleted commission is gone"
+        );
+        assert!(
+            backend
+                .changelog_entries(doomed_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "its changelog cascaded away with it"
+        );
+        assert!(
+            backend
+                .find_commission(survivor_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "other commissions survive"
+        );
+        assert_eq!(
+            backend.changelog_entries(survivor_id).await.unwrap().len(),
+            1,
+            "other streams are untouched"
+        );
+    }
+
+    // ZMVP-66 (store layer) — a delete staged in a dropped (uncommitted) unit of
+    // work is discarded: the commission and its changelog survive. The gate that
+    // precedes the delete runs in this same unit (ruling E17), so rollback must
+    // undo the delete too.
+    #[tokio::test]
+    async fn a_dropped_unit_of_work_rolls_back_the_delete() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Kept", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().delete(id).await.unwrap();
+            // `uow` drops here without `commit` → the staged delete is discarded.
+        }
+
+        assert!(
+            backend.find_commission(id).await.unwrap().is_some(),
+            "a dropped unit of work deletes nothing"
+        );
+    }
+
+    // ZMVP-66 (store layer) — deleting an absent commission is a no-op, not an
+    // error (existence is the caller's separate check, per the port contract).
+    #[tokio::test]
+    async fn deleting_an_absent_commission_is_a_no_op() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .delete(CommissionId::new(uuid::Uuid::now_v7()))
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
     }
 
     // The owner-arm participant predicate and the linked-channel round-trip on

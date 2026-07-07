@@ -12,7 +12,9 @@ use adapter_pg::{COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgDatabase,
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{Commission, CommissionId, CommissionTitle},
+        commission::{
+            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, NewChangelogEntry,
+        },
         did::Did,
         user::User,
     },
@@ -109,6 +111,89 @@ async fn an_unknown_commission_answers_false() {
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
     uow.rollback().await.expect("rollback read-only unit");
+}
+
+/// ZMVP-66 AC1 (pg): the hard delete — gated by `commission_has_facts` **in the
+/// same transaction** (ruling E17) — removes the `commission` row, and every
+/// child table in this lineage reaps via its `ON DELETE CASCADE` (ruling E35):
+/// `commission_changelog` is the only commission-referencing table at this
+/// stack. Also proves the delete is transactional: a rolled-back unit deletes
+/// nothing.
+#[tokio::test]
+async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:deleting-owner").await;
+    let title = CommissionTitle::try_new("Doomed").expect("valid title");
+    let commission = Commission::create(title, owner.id, Utc::now(), None);
+    let id = commission.id;
+
+    let db = PgDatabase::new(pool.clone());
+
+    // Arrange: the commission plus a changelog entry (its child row).
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions().create(&commission).await.expect("create");
+    uow.changelog()
+        .append(&NewChangelogEntry::event(
+            id,
+            ChangelogEntryKind::Created,
+            owner.id,
+            serde_json::json!({ "title": "Doomed" }),
+            Utc::now(),
+        ))
+        .await
+        .expect("append genesis entry");
+    uow.commit().await.expect("commit");
+
+    let changelog_rows = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM commission_changelog WHERE commission_id = $1",
+        )
+        .bind(*id)
+        .fetch_one(&pool)
+        .await
+        .expect("count changelog rows")
+    };
+    assert_eq!(
+        changelog_rows(pool.clone()).await,
+        1,
+        "the child row exists"
+    );
+
+    // A rolled-back delete removes nothing (the delete rides the transaction).
+    let mut uow = db.begin().await.expect("begin rollback unit");
+    uow.commissions().delete(id).await.expect("staged delete");
+    uow.rollback().await.expect("rollback");
+    assert_eq!(
+        changelog_rows(pool.clone()).await,
+        1,
+        "a rolled-back delete leaves the child row"
+    );
+
+    // The real delete: gate and delete inside ONE unit of work (ruling E17).
+    let mut uow = db.begin().await.expect("begin delete unit");
+    {
+        let mut commissions = uow.commissions();
+        let has_facts = commissions
+            .commission_has_facts(id)
+            .await
+            .expect("gate in the deleting unit");
+        assert!(!has_facts, "fact-free by construction");
+        commissions.delete(id).await.expect("delete");
+    }
+    uow.commit().await.expect("commit delete");
+
+    let row_count: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM commission WHERE id = $1")
+            .bind(*id)
+            .fetch_one(&pool)
+            .await
+            .expect("count commission rows");
+    assert_eq!(row_count, 0, "the commission row is gone");
+    assert_eq!(
+        changelog_rows(pool.clone()).await,
+        0,
+        "commission_changelog cascaded away (ON DELETE CASCADE)"
+    );
 }
 
 /// THE TRIPWIRE (ZMVP-67, conductor ruling E18): every table that references

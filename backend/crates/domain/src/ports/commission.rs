@@ -65,6 +65,23 @@ pub trait CommissionWrites: Send {
     /// join this predicate in the same change that introduces it.
     async fn commission_has_facts(&mut self, id: CommissionId) -> anyhow::Result<bool>;
 
+    /// **Hard-delete** the commission: remove its row, taking every child row
+    /// with it (ZMVP-66; Deletion DD `3014657` — "Delete = hard delete, possible
+    /// only while fact-free"). In the pg adapter the children reap via each child
+    /// table's `ON DELETE CASCADE` (the epic's convention, ruling E35) — at this
+    /// stack that is `commission_changelog`, the commission's own memory, which
+    /// dies with it by design (DD retention); the mem adapter mirrors the
+    /// cascade. Every child row is a non-fact **by construction**: the caller
+    /// gates this on [`commission_has_facts`](Self::commission_has_facts) in the
+    /// **same unit of work** (ruling E17 — no TOCTOU window), so the cascade can
+    /// never take a fact with it.
+    ///
+    /// Authority (owner-only) and existence are the caller's checks, settled
+    /// before this is reached; deleting an absent commission matches no row and
+    /// is a no-op, which keeps a lost race (a concurrent delete) idempotent
+    /// rather than an error.
+    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()>;
+
     /// Set (`Some`) or clear (`None`) the commission's external **linked
     /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). Returns whether
     /// the stored value actually **changed**; a write that repeats the current
