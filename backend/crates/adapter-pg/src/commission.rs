@@ -151,11 +151,14 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// per the port contract) — then the insert, with the **mode inherited from
     /// the parent** (Engineer ruling 2026-07-07, PR #103; inheritance never
     /// widens — see [`NewSurface::under`]) and `position` assigned as
-    /// `max(sibling position) + 1` in a subquery on this same transaction.
+    /// `max(sibling position) + 1` in a subquery on this same transaction. The
+    /// gate locks the parent row (`FOR UPDATE`), so concurrent appends under
+    /// one parent serialize instead of racing to the same slot and aborting on
+    /// the deferred UNIQUE at commit (PR #103 review; Engineer-ruled fix).
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
         let parent_mode = query!(
             r#"
-            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2
+            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2 FOR UPDATE
             "#,
             *surface.parent,
             *surface.commission_id,

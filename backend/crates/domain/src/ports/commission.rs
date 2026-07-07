@@ -129,10 +129,15 @@ pub trait CommissionWrites: Send {
 
     /// Grow the commission's tree: persist a [`NewSurface`] under its parent
     /// (ZMVP-71 AC2). Sibling order is assigned here, **on the open
-    /// transaction** — append = max sibling `position` + 1 — so concurrent adds
-    /// can't race to one slot (Tree Storage DD `28409880` Decision 3). The
-    /// parent must exist in `surface.commission_id`'s tree: an absent parent
-    /// *or* one belonging to another commission fails with
+    /// transaction** — append = max sibling `position` + 1 — and
+    /// implementations must **serialize same-parent appends** (the pg adapter
+    /// locks the parent row `FOR UPDATE`; the mem fake's single lock is
+    /// coarser), so concurrent adds cannot race to one slot NOR abort on the
+    /// slot uniqueness at commit (Tree Storage DD `28409880` Decision 3;
+    /// hardened per the PR #103 review). The birth mode is inherited from the
+    /// parent (see [`NewSurface::under`]). The parent must exist in
+    /// `surface.commission_id`'s tree as a surface: an absent parent, one
+    /// belonging to another commission, *or* a modeless node all fail with
     /// [`ParentNodeNotFound`] as the error source (one indistinguishable
     /// answer — see its docs). Authority (owner-only in v1) and the
     /// commission's own existence are the caller's checks, settled before this

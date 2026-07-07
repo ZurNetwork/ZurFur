@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2\n            ",
+  "query": "\n            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2 FOR UPDATE\n            ",
   "describe": {
     "columns": [
       {
@@ -25,5 +25,5 @@
       true
     ]
   },
-  "hash": "f361860d9b7f7916332beb30ad8d0fb07a9b2cff5bd746be17f2df51faf69b70"
+  "hash": "11c7c37c271f6cbcc5732093cd2c83f2e046d96a03ba4d56e90b0c3f08ed05a5"
 }
