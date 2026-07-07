@@ -30,7 +30,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
     account::AccountId,
-    commission::{ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel},
+    commission::{
+        ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, NewSurface,
+    },
     did::Did,
     profile::Profile,
     user::UserId,
@@ -329,6 +331,10 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         archived_at: Option<domain::datetime::DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.0.set_archived(id, archived_at).await
+    }
+
+    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
+        self.0.add_surface(surface).await
     }
 
     async fn place(
