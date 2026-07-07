@@ -170,8 +170,6 @@ pub struct NewSurface {
     /// minted exactly once, with the commission itself (see [`RootSurface`]),
     /// so no caller can ever attempt a second root.
     pub parent: NodeId,
-    /// The new surface's mode — always [`SurfaceMode::Total`] at birth (AC3).
-    pub mode: SurfaceMode,
     /// The acting User (the owner; the route's authority gate settles that
     /// before this is built).
     pub created_by: UserId,
@@ -180,14 +178,22 @@ pub struct NewSurface {
 }
 
 impl NewSurface {
-    /// A new surface under `parent`, born closed ([`SurfaceMode::Total`] — the
-    /// closed-door default, AC3). Mints the node id; authority (owner-only in
-    /// v1) is the caller's concern, settled before this is reached.
+    /// A new surface under `parent`. The birth mode is **inherited from the
+    /// parent** at the store layer (Engineer ruling 2026-07-07, PR #103 —
+    /// composing an open subtree must not require re-widening every new node;
+    /// amends the Surfaces DD's born-`Total` default), so this carrier holds no
+    /// mode at all: no caller can choose one. Inheritance never widens the
+    /// tree — a child at its parent's mode exposes nothing the parent didn't
+    /// already (and the min-of-ancestors cap holds regardless). The root is
+    /// unaffected: it is minted `Total` with the commission ([`RootSurface`]),
+    /// so a fresh commission still errs fully closed. Mints the node id;
+    /// authority (owner-only in v1) is the caller's concern, settled before
+    /// this is reached.
     ///
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     commission::{CommissionId, NewSurface, NodeId, SurfaceMode},
+    ///     commission::{CommissionId, NewSurface, NodeId},
     ///     user::UserId,
     /// };
     ///
@@ -195,8 +201,7 @@ impl NewSurface {
     /// let parent = NodeId::new(uuid::Uuid::now_v7());
     /// let owner = UserId::new(uuid::Uuid::now_v7());
     /// let surface = NewSurface::under(commission, parent, owner, Utc::now());
-    /// assert_eq!(surface.mode, SurfaceMode::Total); // born closed — always
-    /// assert_eq!(surface.parent, parent);
+    /// assert_eq!(surface.parent, parent); // mode: inherited at the store
     /// ```
     pub fn under(
         commission: CommissionId,
@@ -208,7 +213,6 @@ impl NewSurface {
             id: NodeId::mint(),
             commission_id: commission,
             parent,
-            mode: SurfaceMode::Total,
             created_by,
             created_at: now,
         }
@@ -426,17 +430,19 @@ mod tests {
         }
     }
 
-    // AC3/AC4 — a new surface's envelope: fresh id, the parent it grows under,
-    // the acting user, and mode ALWAYS Total (no way to pass anything else).
+    // AC3/AC4 as amended (Engineer ruling 2026-07-07, PR #103) — a new
+    // surface's envelope: fresh id, the parent it grows under, the acting
+    // user, and NO mode field at all: the mode is inherited from the parent at
+    // the store layer, so no caller can choose one (the adapters' tests pin
+    // the inheritance itself).
     #[test]
-    fn a_new_surface_is_born_total() {
+    fn a_new_surface_carries_no_mode_of_its_own() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
         let parent = NodeId::new(uuid::Uuid::now_v7());
         let owner = UserId::new(uuid::Uuid::now_v7());
 
         let surface = NewSurface::under(commission, parent, owner, Utc::now());
 
-        assert_eq!(surface.mode, SurfaceMode::Total, "born closed (AC3)");
         assert_eq!(surface.parent, parent);
         assert_eq!(surface.commission_id, commission);
         assert_eq!(surface.created_by, owner);

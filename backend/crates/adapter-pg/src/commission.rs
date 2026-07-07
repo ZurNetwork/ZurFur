@@ -144,28 +144,28 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Grow the tree under an existing parent (ZMVP-71 AC2), on the open
-    /// transaction. Two statements sharing it: a scoped parent check — the id
-    /// must exist **and** belong to `surface.commission_id`, else
-    /// [`ParentNodeNotFound`] (one answer for absent and foreign, per the port
-    /// contract) — then the insert, with `position` assigned as
-    /// `max(sibling position) + 1` in a subquery on this same transaction, so
-    /// append order can't race.
+    /// transaction. Two statements sharing it: a scoped parent check that also
+    /// loads the parent's `mode` — the id must exist, belong to
+    /// `surface.commission_id`, **and carry a mode** (i.e. be a surface), else
+    /// [`ParentNodeNotFound`] (one answer for absent, foreign, and non-surface,
+    /// per the port contract) — then the insert, with the **mode inherited from
+    /// the parent** (Engineer ruling 2026-07-07, PR #103; inheritance never
+    /// widens — see [`NewSurface::under`]) and `position` assigned as
+    /// `max(sibling position) + 1` in a subquery on this same transaction.
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        let parent_in_tree = query!(
+        let parent_mode = query!(
             r#"
-            SELECT EXISTS(
-                SELECT 1 FROM commission_node WHERE id = $1 AND commission_id = $2
-            ) AS "parent_in_tree!"
+            SELECT mode FROM commission_node WHERE id = $1 AND commission_id = $2
             "#,
             *surface.parent,
             *surface.commission_id,
         )
-        .fetch_one(&mut *self.conn)
+        .fetch_optional(&mut *self.conn)
         .await?
-        .parent_in_tree;
-        if !parent_in_tree {
+        .and_then(|row| row.mode);
+        let Some(mode) = parent_mode else {
             return Err(ParentNodeNotFound.into());
-        }
+        };
 
         query!(
             r#"
@@ -180,7 +180,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *surface.id,
             *surface.commission_id,
             *surface.parent,
-            surface.mode.as_str(),
+            mode,
             *surface.created_by,
             surface.created_at,
         )

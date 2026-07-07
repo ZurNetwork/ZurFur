@@ -225,22 +225,28 @@ impl CommissionWrites for MemCommissionWrites {
     }
 
     /// Grow the tree under an existing parent — the mem mirror of the pg
-    /// `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2). The parent must
-    /// exist in `surface.commission_id`'s tree: an absent id and a node from
-    /// another commission both refuse with [`ParentNodeNotFound`] (one
-    /// indistinguishable answer, per the port contract).
+    /// `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2), with the mode
+    /// **inherited from the parent** (Engineer ruling 2026-07-07, PR #103).
+    /// The parent must exist in `surface.commission_id`'s tree as a surface:
+    /// an absent id and a node from another commission both refuse with
+    /// [`ParentNodeNotFound`] (one indistinguishable answer, per the port
+    /// contract).
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
         let mut nodes = self
             .0
             .nodes
             .lock()
             .expect("MemBackend nodes mutex poisoned");
-        let parent_in_tree = nodes
-            .get(&surface.parent)
-            .is_some_and(|parent| parent.commission_id == surface.commission_id);
-        if !parent_in_tree {
+        let parent_mode = nodes.get(&surface.parent).and_then(|parent| {
+            (parent.commission_id == surface.commission_id)
+                .then_some(match parent.kind {
+                    NodeKind::Surface { mode } => Some(mode),
+                })
+                .flatten()
+        });
+        let Some(mode) = parent_mode else {
             return Err(ParentNodeNotFound.into());
-        }
+        };
         let position = nodes
             .values()
             .filter(|node| node.parent == Some(surface.parent))
@@ -252,7 +258,7 @@ impl CommissionWrites for MemCommissionWrites {
             StoredNode {
                 commission_id: surface.commission_id,
                 parent: Some(surface.parent),
-                kind: NodeKind::Surface { mode: surface.mode },
+                kind: NodeKind::Surface { mode },
                 position,
                 created_by: surface.created_by,
                 created_at: surface.created_at,
