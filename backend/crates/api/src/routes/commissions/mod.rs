@@ -9,6 +9,8 @@
 //!   pointer).
 //! - [`delete`] — `DELETE /commissions/{id}` (the fact-free hard delete,
 //!   ZMVP-66).
+//! - [`archive`] — `POST /commissions/{id}/archive` / `POST
+//!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -38,6 +40,7 @@ use uuid::Uuid;
 
 use crate::{AppState, SESSION_USER_KEY, problem::Problem};
 
+mod archive;
 mod changelog;
 mod channel;
 mod create;
@@ -66,6 +69,14 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         .route(
             "/commissions/{id}/channel",
             put(channel::link_channel).delete(channel::clear_channel),
+        )
+        .route(
+            "/commissions/{id}/archive",
+            post(archive::archive_commission),
+        )
+        .route(
+            "/commissions/{id}/unarchive",
+            post(archive::unarchive_commission),
         )
 }
 
@@ -107,17 +118,16 @@ async fn require_participant(
     }
 }
 
-/// The **managing-authority** gate, shared by every owner-gated commission
-/// operation (the channel pointer, the hard delete, …) — **owner-only in v1**,
-/// shaped so the future Commission Admin (ZMVP-83) extends *this one match*
-/// rather than growing per-site checks: resolve the commission, then rank the
-/// caller. A non-participant (who may not learn the commission exists) gets the
-/// uniform [`commission_not_found`](Problem::commission_not_found) 404 — the
-/// closed door, exactly like [`require_participant`]; a participant who is not
-/// the owner already knows it exists, so refusing them managing authority is an
-/// honest `403` — today that arm is unreachable (the owner is the only
-/// participant until ZMVP-79 seats more). Returns the resolved [`Commission`]
-/// so the handler needn't re-fetch it.
+/// The shared **owner-authority gate** — owner-only in v1, shaped so the future
+/// Commission Admin (ZMVP-83) extends *this one match* rather than growing a
+/// second path (one seam, swept once when the Admin arm activates): resolve the
+/// commission, then rank the caller. A non-participant (who may not learn the
+/// commission exists) gets the uniform
+/// [`commission_not_found`](Problem::commission_not_found) 404; a participant
+/// who is not the owner already knows it exists, so refusing them managing
+/// authority is an honest `403` — today that arm is unreachable (the owner is
+/// the only participant until ZMVP-79 seats more). Consumed by every
+/// owner-gated commission handler ([`channel`], [`delete`], [`archive`]).
 async fn require_owner(
     state: &AppState,
     commission: CommissionId,

@@ -4,9 +4,12 @@
 
 use async_trait::async_trait;
 
-use crate::elements::{
-    commission::{ChannelPointer, Commission, CommissionId},
-    user::UserId,
+use crate::{
+    datetime::DateTimeUtc,
+    elements::{
+        commission::{ChannelPointer, Commission, CommissionId},
+        user::UserId,
+    },
 };
 
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
@@ -18,6 +21,12 @@ use crate::elements::{
 pub trait CommissionStore: Send + Sync {
     /// Resolve a [`CommissionId`] back to its [`Commission`], or `None` if no
     /// such commission exists.
+    ///
+    /// An **archived** commission is still found (ZMVP-68): archive removes it
+    /// from *active views* — listing projections are responsible for filtering
+    /// on [`Commission::archived_at`] (deferred to the S1 listing work) — never
+    /// from its Participants' reach (the record and its facts survive and stay
+    /// queryable, and the owner resolves it here to un-archive it).
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// Whether `user` is a **Participant** of `commission` — the authorization
@@ -81,6 +90,28 @@ pub trait CommissionWrites: Send {
     /// is a no-op, which keeps a lost race (a concurrent delete) idempotent
     /// rather than an error.
     async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()>;
+
+    /// Archive (`Some(when)`) or un-archive (`None`) the commission — the soft
+    /// path of the Deletion DD (`3014657`): the record and its facts survive
+    /// intact, only the active-view listings lose it (ZMVP-68). Returns whether
+    /// the state actually **transitioned** (active→archived or
+    /// archived→active); a repeat in the same direction changes nothing,
+    /// answers `false`, and keeps the original archive stamp — the caller keys
+    /// its matching [`Archived`]/[`Unarchived`] changelog append on this bool
+    /// **in the same unit of work**, so a duplicate entry is unrepresentable,
+    /// not merely unlikely (the no-TOCTOU posture of
+    /// [`commission_has_facts`](Self::commission_has_facts)). An absent
+    /// commission matches nothing and answers `false`; existence and authority
+    /// (owner-only in both directions — Engineer ruling 2026-07-05 on ZMVP-68)
+    /// are the caller's checks.
+    ///
+    /// [`Archived`]: crate::elements::commission::ChangelogEntryKind::Archived
+    /// [`Unarchived`]: crate::elements::commission::ChangelogEntryKind::Unarchived
+    async fn set_archived(
+        &mut self,
+        id: CommissionId,
+        archived_at: Option<DateTimeUtc>,
+    ) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's external **linked
     /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). Returns whether

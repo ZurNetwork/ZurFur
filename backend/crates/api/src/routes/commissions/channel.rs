@@ -21,9 +21,8 @@ use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
 
-use crate::{AppState, problem::Problem};
-
 use super::require_owner;
+use crate::{AppState, problem::Problem};
 
 /// The `PUT /commissions/{id}/channel` request body: the raw pointer text.
 #[derive(Deserialize)]
