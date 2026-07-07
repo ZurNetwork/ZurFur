@@ -66,16 +66,23 @@ pub trait CommissionWrites: Send {
     async fn commission_has_facts(&mut self, id: CommissionId) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's external **linked
-    /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). The declaration
-    /// is changelog-recorded, so the caller appends the matching
-    /// `channel_linked`/`channel_unlinked` entry through
-    /// [`ChangelogWrites`](crate::ports::ChangelogWrites) **in this same unit of
-    /// work** — the pointer and its record land atomically (DD D4). Setting on an
-    /// absent commission is a no-op write; existence and authority (owner-only in
-    /// v1) are the caller's checks, settled before this is reached.
+    /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). Returns whether
+    /// the stored value actually **changed**; a write that repeats the current
+    /// state (re-linking the same pointer, clearing an already-clear channel)
+    /// touches nothing and answers `false`. The declaration is
+    /// changelog-recorded, so the caller keys its matching
+    /// `channel_linked`/`channel_unlinked` append through
+    /// [`ChangelogWrites`](crate::ports::ChangelogWrites) on this bool **in this
+    /// same unit of work** — the pointer and its record land atomically (DD D4)
+    /// and a no-change entry is unrepresentable even under concurrent writers
+    /// (the same no-TOCTOU posture as
+    /// [`commission_has_facts`](Self::commission_has_facts)). An absent
+    /// commission matches nothing and answers `false`; existence and authority
+    /// (owner-only in v1) are the caller's checks, settled before this is
+    /// reached.
     async fn set_linked_channel(
         &mut self,
         id: CommissionId,
         channel: Option<&ChannelPointer>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<bool>;
 }

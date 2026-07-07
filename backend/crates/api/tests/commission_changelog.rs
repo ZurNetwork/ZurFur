@@ -410,6 +410,22 @@ async fn the_owner_links_and_clears_the_channel() {
         "the entry renders the pointer without joins",
     );
 
+    // Re-declaring the identical pointer is a no-op: 204, but no noise entry
+    // (the append is keyed on the port's changed answer, inside the unit).
+    let res = client
+        .put(format!("{base}/commissions/{id}/channel"))
+        .json(&json!({ "channel": "https://t.me/refsheet-chat" }))
+        .send()
+        .await
+        .expect("PUT identical channel again");
+    assert_eq!(
+        res.status(),
+        204,
+        "re-linking the same pointer is idempotent"
+    );
+    let entries = read_changelog(&client, &base, id).await;
+    assert_eq!(entries.len(), 2, "no entry is appended for a no-op re-link");
+
     let res = client
         .delete(format!("{base}/commissions/{id}/channel"))
         .send()

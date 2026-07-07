@@ -119,24 +119,32 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(false)
     }
 
-    /// Repoint (or clear) the `commission.linked_channel` column — one `UPDATE`
-    /// on the open transaction, so the caller's matching changelog entry lands
-    /// atomically with it (ZMVP-87 AC3; Changelog DD D4). An absent commission
-    /// matches no row: a no-op here, per the port contract (existence is the
-    /// caller's check).
+    /// Repoint (or clear) the `commission.linked_channel` column — one
+    /// **conditional** `UPDATE` on the open transaction: the row matches only
+    /// when the stored value differs from the requested one
+    /// (`IS DISTINCT FROM`, so NULLs compare honestly), making rows-affected THE
+    /// changed answer. The caller keys its changelog append on the bool in this
+    /// same unit of work (ZMVP-87 AC3; Changelog DD D4), so a duplicate
+    /// `channel_linked`/`channel_unlinked` entry is unrepresentable even under
+    /// concurrent writers. An absent commission matches no row and answers
+    /// `false`, per the port contract (existence is the caller's check).
     async fn set_linked_channel(
         &mut self,
         id: CommissionId,
         channel: Option<&ChannelPointer>,
-    ) -> anyhow::Result<()> {
-        query!(
-            r#"UPDATE commission SET linked_channel = $2 WHERE id = $1"#,
+    ) -> anyhow::Result<bool> {
+        let result = query!(
+            r#"
+            UPDATE commission
+            SET linked_channel = $2
+            WHERE id = $1 AND linked_channel IS DISTINCT FROM $2
+            "#,
             *id,
             channel.map(ChannelPointer::as_str),
         )
         .execute(&mut *self.conn)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }
 

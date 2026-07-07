@@ -150,22 +150,28 @@ impl CommissionWrites for MemCommissionWrites {
     }
 
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
-    /// the pg `UPDATE commission SET linked_channel`. An absent commission is a
-    /// no-op, per the port contract (existence is the caller's check).
+    /// the pg conditional `UPDATE`: the write applies only when the stored value
+    /// differs from the requested one, so a repeat answers `false` and the
+    /// caller's changelog append keys on the bool. An absent commission answers
+    /// `false`, per the port contract (existence is the caller's check).
     async fn set_linked_channel(
         &mut self,
         id: CommissionId,
         channel: Option<&ChannelPointer>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        if let Some(stored) = commissions.get_mut(&id) {
-            stored.linked_channel = channel.cloned();
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.linked_channel.as_ref() == channel {
+            return Ok(false);
         }
-        Ok(())
+        stored.linked_channel = channel.cloned();
+        Ok(true)
     }
 }
 
@@ -495,10 +501,20 @@ mod tests {
 
         let pointer = ChannelPointer::try_new("@artist on Telegram").unwrap();
         let mut uow = database.begin().await.unwrap();
-        uow.commissions()
-            .set_linked_channel(id, Some(&pointer))
-            .await
-            .unwrap();
+        assert!(
+            uow.commissions()
+                .set_linked_channel(id, Some(&pointer))
+                .await
+                .unwrap(),
+            "the first link is a real change"
+        );
+        assert!(
+            !uow.commissions()
+                .set_linked_channel(id, Some(&pointer))
+                .await
+                .unwrap(),
+            "re-linking the identical pointer answers false"
+        );
         uow.commit().await.unwrap();
         assert_eq!(
             store
@@ -512,10 +528,20 @@ mod tests {
         );
 
         let mut uow = database.begin().await.unwrap();
-        uow.commissions()
-            .set_linked_channel(id, None)
-            .await
-            .unwrap();
+        assert!(
+            uow.commissions()
+                .set_linked_channel(id, None)
+                .await
+                .unwrap(),
+            "the clear is a real change"
+        );
+        assert!(
+            !uow.commissions()
+                .set_linked_channel(id, None)
+                .await
+                .unwrap(),
+            "clearing an already-clear channel answers false"
+        );
         uow.commit().await.unwrap();
         assert!(
             store

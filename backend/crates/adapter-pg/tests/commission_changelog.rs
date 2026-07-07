@@ -305,10 +305,20 @@ async fn find_roundtrips_the_linked_channel() {
 
     let pointer = ChannelPointer::try_new("https://t.me/refsheet-chat").expect("valid pointer");
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_linked_channel(commission.id, Some(&pointer))
-        .await
-        .expect("set channel");
+    assert!(
+        uow.commissions()
+            .set_linked_channel(commission.id, Some(&pointer))
+            .await
+            .expect("set channel"),
+        "the first link is a real change"
+    );
+    assert!(
+        !uow.commissions()
+            .set_linked_channel(commission.id, Some(&pointer))
+            .await
+            .expect("re-set channel"),
+        "re-linking the identical pointer answers false"
+    );
     uow.commit().await.expect("commit");
     let found = store
         .find(commission.id)
@@ -321,10 +331,20 @@ async fn find_roundtrips_the_linked_channel() {
     );
 
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_linked_channel(commission.id, None)
-        .await
-        .expect("clear channel");
+    assert!(
+        uow.commissions()
+            .set_linked_channel(commission.id, None)
+            .await
+            .expect("clear channel"),
+        "the clear is a real change"
+    );
+    assert!(
+        !uow.commissions()
+            .set_linked_channel(commission.id, None)
+            .await
+            .expect("re-clear channel"),
+        "clearing an already-clear channel answers false"
+    );
     uow.commit().await.expect("commit");
     let found = store
         .find(commission.id)

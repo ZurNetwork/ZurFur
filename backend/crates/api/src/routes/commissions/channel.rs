@@ -75,7 +75,10 @@ async fn require_owner(
 /// control-character-free, **no scheme allowlist** — a failure is a `422`. The
 /// column write and the `channel_linked` changelog entry (payload carries the
 /// pointer, so it renders without joins) land in **one unit of work** (Changelog
-/// DD D4). Returns `204 No Content`.
+/// DD D4), with the append keyed on the write's *changed* answer — re-declaring
+/// the identical pointer is an idempotent no-op (`204`, no entry), and the
+/// keying holds under concurrent writers because the port decides **inside**
+/// the transaction. Returns `204 No Content`.
 pub(super) async fn link_channel(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -99,10 +102,14 @@ pub(super) async fn link_channel(
     );
     transaction(&*state.database, |uow| {
         Box::pin(async move {
-            uow.commissions()
+            let changed = uow
+                .commissions()
                 .set_linked_channel(commission, Some(&pointer))
                 .await?;
-            uow.changelog().append(&entry).await
+            if changed {
+                uow.changelog().append(&entry).await?;
+            }
+            Ok(())
         })
     })
     .await?;
@@ -116,7 +123,9 @@ pub(super) async fn link_channel(
 /// idempotent no-op — `204` with **no** entry appended (a record of nothing
 /// changing would be noise, not audit). Otherwise the column clears and the
 /// `channel_unlinked` entry (payload names the pointer that was cleared) lands
-/// in one unit of work. Returns `204 No Content`.
+/// in one unit of work, keyed on the write's *changed* answer — so two racing
+/// clears append exactly one entry (the pre-read below is only a fast path; the
+/// port decides **inside** the transaction). Returns `204 No Content`.
 pub(super) async fn clear_channel(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -139,10 +148,14 @@ pub(super) async fn clear_channel(
     );
     transaction(&*state.database, |uow| {
         Box::pin(async move {
-            uow.commissions()
+            let changed = uow
+                .commissions()
                 .set_linked_channel(commission, None)
                 .await?;
-            uow.changelog().append(&entry).await
+            if changed {
+                uow.changelog().append(&entry).await?;
+            }
+            Ok(())
         })
     })
     .await?;
