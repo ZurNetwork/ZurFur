@@ -892,6 +892,67 @@ mod tests {
         );
     }
 
+    // ZMVP-57 AC1 (mem parity) — hard-deleting an account **severs** its positioning
+    // rails (the placements it held and its view grants) while the placed commission
+    // **survives untouched**. This mirrors pg's `ON DELETE CASCADE` on the positioning
+    // FKs onto `accounts`: only the account-side positioning goes; the User-owned
+    // commission stays (Ownership Separation DD 29130754).
+    #[tokio::test]
+    async fn hard_deleting_an_account_severs_its_positioning_but_keeps_the_commission() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Placed then orphaned", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let store = backend.commission_store();
+        let account = account_id();
+
+        // Place the commission in the account and grant it a view key.
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .place(id, account, owner, Utc::now())
+            .await
+            .unwrap();
+        uow.commissions()
+            .grant_view(id, account, GrantLevel::Total)
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert!(
+            store.current_placement(id).await.unwrap().is_some(),
+            "placed before the delete"
+        );
+        assert!(
+            store.view_grant(id, account).await.unwrap().is_some(),
+            "granted before the delete"
+        );
+
+        // Hard-delete the account.
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts().hard_delete(account).await.unwrap();
+        uow.commit().await.unwrap();
+
+        // The positioning rails are severed...
+        assert!(
+            store.current_placement(id).await.unwrap().is_none(),
+            "the current-placement pointer is severed with the account",
+        );
+        assert!(
+            store.placement_log(id).await.unwrap().is_empty(),
+            "the placement log is severed with the account",
+        );
+        assert!(
+            store.view_grant(id, account).await.unwrap().is_none(),
+            "the view grant is severed with the account",
+        );
+        // ...but the commission itself survives untouched.
+        assert!(
+            backend.find_commission(id).await.unwrap().is_some(),
+            "the User-owned commission survives account deletion",
+        );
+    }
+
     // The owner-arm participant predicate and the linked-channel round-trip on
     // the mem read store (ZMVP-87).
     #[tokio::test]

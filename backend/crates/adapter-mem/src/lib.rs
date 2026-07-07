@@ -1141,10 +1141,15 @@ impl AccountWrites for MemAccountWrites {
     }
 
     /// Removes the account row (freeing its handle for reuse) along with every
-    /// membership and invitation belonging to it — the in-memory mirror of pg's
-    /// children-first cascade delete. The custody keys are not modeled here. Removing
-    /// an absent account is a no-op. See the [`hard_delete`](AccountWrites::hard_delete)
-    /// port doc.
+    /// membership and invitation belonging to it, and **severs the account's
+    /// positioning rails** — the placements it held, the current-placement pointers
+    /// aimed at it, and its view grants (ZMVP-57 AC1). This mirrors pg's delete: the
+    /// membership/invitation FKs are removed children-first, while the positioning FKs
+    /// onto `accounts` are `ON DELETE CASCADE`. The **commissions themselves are
+    /// untouched** — they are User-owned and survive account deletion (Ownership
+    /// Separation DD `29130754`); only the account-side positioning goes. The custody
+    /// keys are not modeled here. Removing an absent account is a no-op. See the
+    /// [`hard_delete`](AccountWrites::hard_delete) port doc.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
         self.0
             .accounts
@@ -1163,6 +1168,28 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend invitations mutex poisoned")
             .retain(|_, invitation| invitation.account != account);
+
+        // Sever the account's positioning rails (the mem mirror of the ZMVP-70
+        // `ON DELETE CASCADE` on each positioning FK onto `accounts`): drop every
+        // placement-log row and current-placement pointer aimed at this account, and
+        // every view grant it held. The commissions they referenced are left in place.
+        self.0
+            .placements
+            .lock()
+            .expect("MemBackend placements mutex poisoned")
+            .retain(|placement| placement.account_id != account);
+
+        self.0
+            .current_placements
+            .lock()
+            .expect("MemBackend current_placements mutex poisoned")
+            .retain(|_, placement| placement.account_id != account);
+
+        self.0
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
+            .retain(|(_, grant_account), _| *grant_account != account);
 
         Ok(())
     }

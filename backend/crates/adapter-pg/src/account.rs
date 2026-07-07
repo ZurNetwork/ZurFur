@@ -20,6 +20,73 @@ use domain::{
 };
 use sqlx::{PgConnection, PgPool, query};
 
+/// THE ACCOUNT-FACT REGISTRY (ZMVP-57; Account Deletion DD `23003138`): the tables
+/// whose rows are **account-anchored facts** — evidence that would be *orphaned* by
+/// removing the account, so an account bearing one is **soft-deleted** (row kept,
+/// handle stays reserved, `did:plc` stays live) and never hard-deleted. The
+/// `account_has_facts` seam in `api/src/routes/accounts.rs` must query **every**
+/// table listed here.
+///
+/// It is **empty by design**: no account-anchored fact store exists yet. The
+/// enumeration of the fact classes is owned by the Account Deletion DD, not this
+/// list — commissions are conspicuously **not** among them (they are User-owned and
+/// survive account deletion, Ownership Separation DD `29130754`), and they carry no
+/// foreign key onto `accounts` at all, so they can never enter the account-fact
+/// scan.
+///
+/// Registering a table here is a **deliberate act with teeth**: the schema tripwire
+/// test (`adapter-pg/tests/account.rs`) fails the moment a migration adds an
+/// `accounts`-referencing table classified in neither this list nor
+/// [`ACCOUNT_NON_FACT_TABLES`], and the compile-time guards below (here and beside
+/// `account_has_facts` in the `api` crate) refuse to build while this list is
+/// non-empty but that seam still returns its unexamined constant `false`. A future
+/// account-fact minter therefore wires its storage into the seam in the same change
+/// that creates it — it cannot merge past either trip by accident.
+pub const ACCOUNT_FACT_TABLES: &[&str] = &[];
+
+/// Tables that hold a foreign key onto `accounts(id)` but whose rows are
+/// **deliberately not account facts** — account-scoped bookkeeping that is **severed**
+/// with the account (by explicit child-delete or `ON DELETE CASCADE`) instead of
+/// blocking its deletion. Every `accounts`-referencing table must appear in exactly
+/// one of this list or [`ACCOUNT_FACT_TABLES`]; the schema tripwire test enforces the
+/// classification.
+///
+/// - `account_members` / `account_invitations` (ZMVP-14/32): membership bookkeeping,
+///   deleted children-first by [`hard_delete`](AccountWrites::hard_delete) (their FKs
+///   do not cascade). Kept across a *soft*-delete for reactivation, but never a fact
+///   that forces one.
+/// - `account_handle_changes` (ZMVP-46): the handle-change audit log — `ON DELETE
+///   CASCADE`, gone with the account.
+/// - `commission_placement` / `commission_current_placement` / `commission_view_grant`
+///   (ZMVP-70): the account's **positioning rails** — where a User-owned commission is
+///   placed and the revocable view keys held. Each FK onto `accounts` is `ON DELETE
+///   CASCADE`, so account hard-delete **severs** them while the commission itself
+///   survives untouched (Ownership Separation DD `29130754`; ZMVP-57 AC1). Positioning
+///   is environmental — never an account-anchored fact.
+pub const ACCOUNT_NON_FACT_TABLES: &[&str] = &[
+    "account_members",
+    "account_invitations",
+    "account_handle_changes",
+    "commission_placement",
+    "commission_current_placement",
+    "commission_view_grant",
+];
+
+// Tripwire (ZMVP-57 AC4, mirroring ZMVP-67's commission guard): the constant-`false`
+// body of `account_has_facts` (`api/src/routes/accounts.rs`) is sound ONLY while the
+// account-fact registry is empty. Registering the first account-fact table makes this
+// fail to compile, forcing whoever wires an account-fact store to replace that constant
+// with a real EXISTS query over every registered table — and to delete this guard in the
+// same, deliberate edit. The `api` crate carries a mirror of this assertion right beside
+// the seam it protects.
+const _: () = assert!(
+    ACCOUNT_FACT_TABLES.is_empty(),
+    "ACCOUNT_FACT_TABLES gained an entry: replace the constant-`false` body of \
+     account_has_facts in api/src/routes/accounts.rs with a real query over every \
+     registered account-fact table (soft-delete an account that bears one), then \
+     remove this guard and its mirror in the api crate"
+);
+
 /// PostgreSQL read store for accounts and memberships (the [`AccountStore`] read
 /// surface). Soft deletes are honored on read ([`find`](PgAccountStore::find)
 /// filters `deleted_at IS NULL`). Holds the pool directly — reads pay no
@@ -703,12 +770,19 @@ impl AccountWrites for PgAccountWrites<'_> {
     }
 
     /// Deletes the account's `account_invitations`, then `account_members`, then the
-    /// `accounts` row — children first, since neither child FK cascades. Removing the
-    /// `accounts` row **frees its handle** from the global unique index for reuse. The
-    /// custody `account_keys` row is deliberately **not** touched here (the ~72h PLC
-    /// recovery window can still reverse the tombstone). All three deletes run on the
-    /// open transaction, so an empty account is removed atomically; a `DELETE` matching
-    /// no row is a no-op. See the [`hard_delete`](AccountWrites::hard_delete) port doc.
+    /// `accounts` row — those two child FKs do not cascade, so they are removed
+    /// children-first. The account's other children **do** cascade on the final
+    /// `DELETE accounts`: the `account_handle_changes` audit log (ZMVP-46) and the
+    /// positioning rails — `commission_placement`, `commission_current_placement`, and
+    /// `commission_view_grant` (ZMVP-70) — each carry `ON DELETE CASCADE` on their FK
+    /// onto `accounts`, so they are **severed** with the account while the placed
+    /// commissions survive untouched (Ownership Separation DD `29130754`; ZMVP-57 AC1).
+    /// Removing the `accounts` row **frees its handle** from the global unique index for
+    /// reuse. The custody `account_keys` row is deliberately **not** touched here (the
+    /// ~72h PLC recovery window can still reverse the tombstone). All the deletes run on
+    /// the open transaction, so an empty account is removed atomically; a `DELETE`
+    /// matching no row is a no-op. See the [`hard_delete`](AccountWrites::hard_delete)
+    /// port doc.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
         query!(
             r#"DELETE FROM account_invitations WHERE account_id = $1"#,

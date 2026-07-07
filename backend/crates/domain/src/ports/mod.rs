@@ -445,20 +445,26 @@ pub trait AccountWrites: Send {
     /// restores the account intact. In v1 (identity-only, no PDS — DD `26935298`)
     /// deactivation is purely this private-store state: the DID is untouched, so there
     /// is **no** atproto operation, and handle resolution stays truthful for the live
-    /// DID. Owner-only, and gated on the account holding facts (commissions, …) — that
-    /// policy is the caller's. Idempotent: re-soft-deleting a soft-deleted account is a
-    /// no-op. A private-side write, never a cross-store dual write.
+    /// DID. Owner-only, and gated on the account holding an **account-anchored fact**
+    /// (per the Account Deletion DD `23003138` — **not** a commission, which is
+    /// User-owned and survives account deletion, Ownership Separation DD `29130754`) —
+    /// that policy is the caller's. Idempotent: re-soft-deleting a soft-deleted account
+    /// is a no-op. A private-side write, never a cross-store dual write.
     async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
 
     /// **Hard-delete** an empty account: remove its `account_invitations`,
     /// `account_members`, and `accounts` rows in one unit of work (ZMVP-34, DD
     /// `23003138`). Removing the `accounts` row **frees the handle** for reuse — the
     /// global unique index no longer sees it — which is safe only because an account
-    /// with no facts carries no reputation. Only ever called for an account the caller
-    /// has established holds **no facts** (no commissions, products, or recurring
-    /// billing); that gate is the caller's. The custody keys (`account_keys`) are left
-    /// in place so the native ~72h `did:plc` tombstone recovery window can still reverse
-    /// the deletion. **Tombstoning the DID is a separate retryable atproto step**, never
+    /// with no account-anchored fact carries no reputation. Only ever called for an
+    /// account the caller has established holds **no account-anchored fact** (per the
+    /// Account Deletion DD `23003138`); that gate is the caller's. The account's
+    /// **positioning rails** — its commission placements and view grants (ZMVP-70) — are
+    /// severed with it via `ON DELETE CASCADE`, but the placed **commissions survive
+    /// untouched**: they are User-owned, never account facts (Ownership Separation DD
+    /// `29130754`; ZMVP-57 AC1). The custody keys (`account_keys`) are left in place so
+    /// the native ~72h `did:plc` tombstone recovery window can still reverse the
+    /// deletion. **Tombstoning the DID is a separate retryable atproto step**, never
     /// part of this private transaction (no cross-store dual write — the mint path's
     /// mirror). Idempotent: hard-deleting an absent account is a no-op.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
