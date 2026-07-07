@@ -1,5 +1,7 @@
-//! `PUT`/`DELETE /commissions/{id}/archive` — the owner archives, or
-//! un-archives, a commission (ZMVP-68).
+//! `POST /commissions/{id}/archive` / `POST /commissions/{id}/unarchive` — the
+//! owner archives, or un-archives, a commission (ZMVP-68). Two named acts
+//! rather than a PUT/DELETE flag resource (Engineer ruling 2026-07-06 on PR
+//! #104): the routes say what the changelog entries say.
 //!
 //! Archive is the **soft** path of the Deletion DD (`3014657`) — the mandatory
 //! one once facts exist, and available regardless of facts (hard delete,

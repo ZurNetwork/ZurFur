@@ -9,8 +9,8 @@
 //!   pointer).
 //! - [`delete`] — `DELETE /commissions/{id}` (the fact-free hard delete,
 //!   ZMVP-66).
-//! - [`archive`] — `PUT`/`DELETE /commissions/{id}/archive` (the soft
-//!   archive/un-archive flag, ZMVP-68).
+//! - [`archive`] — `POST /commissions/{id}/archive` / `POST
+//!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -72,7 +72,11 @@ pub(crate) fn commissions_router() -> Router<AppState> {
         )
         .route(
             "/commissions/{id}/archive",
-            put(archive::archive_commission).delete(archive::unarchive_commission),
+            post(archive::archive_commission),
+        )
+        .route(
+            "/commissions/{id}/unarchive",
+            post(archive::unarchive_commission),
         )
 }
 

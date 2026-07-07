@@ -169,10 +169,10 @@ async fn the_owner_archives_and_the_record_survives() {
     let id = create_commission(&client, &base, &backend).await;
 
     let res = client
-        .put(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/archive"))
         .send()
         .await
-        .expect("PUT archive");
+        .expect("POST archive");
     assert_eq!(res.status(), 204, "the owner archives the commission");
 
     let stored = backend
@@ -221,17 +221,17 @@ async fn the_owner_unarchives_back_to_active() {
     let id = create_commission(&client, &base, &backend).await;
 
     let res = client
-        .put(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/archive"))
         .send()
         .await
-        .expect("PUT archive");
+        .expect("POST archive");
     assert_eq!(res.status(), 204);
 
     let res = client
-        .delete(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/unarchive"))
         .send()
         .await
-        .expect("DELETE archive");
+        .expect("POST unarchive");
     assert_eq!(res.status(), 204, "the owner un-archives the commission");
 
     let stored = backend
@@ -269,10 +269,10 @@ async fn repeat_archive_and_unarchive_append_no_duplicate_entries() {
 
     // Un-archiving a never-archived commission: no-op, no entry.
     let res = client
-        .delete(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/unarchive"))
         .send()
         .await
-        .expect("DELETE archive on active");
+        .expect("POST unarchive on active");
     assert_eq!(
         res.status(),
         204,
@@ -282,10 +282,10 @@ async fn repeat_archive_and_unarchive_append_no_duplicate_entries() {
     // Archive twice: one entry.
     for _ in 0..2 {
         let res = client
-            .put(format!("{base}/commissions/{id}/archive"))
+            .post(format!("{base}/commissions/{id}/archive"))
             .send()
             .await
-            .expect("PUT archive");
+            .expect("POST archive");
         assert_eq!(res.status(), 204);
     }
 
@@ -313,10 +313,10 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     let foreign = seed_foreign_commission(&backend).await;
 
     let res = client
-        .put(format!("{base}/commissions/{foreign}/archive"))
+        .post(format!("{base}/commissions/{foreign}/archive"))
         .send()
         .await
-        .expect("PUT foreign archive");
+        .expect("POST foreign archive");
     assert_eq!(
         res.status(),
         404,
@@ -326,10 +326,10 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
 
     let missing = uuid::Uuid::now_v7();
     let res = client
-        .put(format!("{base}/commissions/{missing}/archive"))
+        .post(format!("{base}/commissions/{missing}/archive"))
         .send()
         .await
-        .expect("PUT missing archive");
+        .expect("POST missing archive");
     assert_eq!(res.status(), 404);
     let missing_body = res.text().await.expect("body");
     assert_eq!(
@@ -338,10 +338,10 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     );
 
     let res = client
-        .delete(format!("{base}/commissions/{foreign}/archive"))
+        .post(format!("{base}/commissions/{foreign}/unarchive"))
         .send()
         .await
-        .expect("DELETE foreign archive");
+        .expect("POST foreign unarchive");
     common::assert_problem(res, 404, "commission_not_found").await;
 
     let stored = backend
@@ -371,16 +371,16 @@ async fn unauthenticated_archive_is_401() {
 
     let anonymous = client();
     let res = anonymous
-        .put(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/archive"))
         .send()
         .await
-        .expect("PUT archive unauthenticated");
+        .expect("POST archive unauthenticated");
     common::assert_problem(res, 401, "not_authenticated").await;
 
     let res = anonymous
-        .delete(format!("{base}/commissions/{id}/archive"))
+        .post(format!("{base}/commissions/{id}/unarchive"))
         .send()
         .await
-        .expect("DELETE archive unauthenticated");
+        .expect("POST unarchive unauthenticated");
     common::assert_problem(res, 401, "not_authenticated").await;
 }
