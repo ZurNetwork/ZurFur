@@ -17,7 +17,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewSurface, NodeId},
-    ports::{ParentNodeNotFound, transaction},
+    ports::{ParentNodeNotFound, ParentNotASurface, transaction},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -44,7 +44,10 @@ pub(super) struct AddSurfaceBody {
 /// existence oracle). A parent node that doesn't exist in **this** commission's
 /// tree — fabricated, or belonging to some other commission — is refused by the
 /// store as one indistinguishable [`ParentNodeNotFound`], answered
-/// [`node_not_found`](Problem::node_not_found); a malformed body is a `422`.
+/// [`node_not_found`](Problem::node_not_found); a parent that exists here but
+/// is a component is [`ParentNotASurface`], answered
+/// [`parent_not_a_surface`](Problem::parent_not_a_surface) (ZMVP-72:
+/// components never have children); a malformed body is a `422`.
 /// The insert runs in one unit of work; sibling order is assigned there
 /// (append = max + 1, on the transaction). Returns `201 Created` with the new
 /// node's id — `{"id": "…"}` — since no tree read exposes ids until the
@@ -70,6 +73,8 @@ pub(super) async fn add_surface(
     .map_err(|err| {
         if err.downcast_ref::<ParentNodeNotFound>().is_some() {
             Problem::node_not_found()
+        } else if err.downcast_ref::<ParentNotASurface>().is_some() {
+            Problem::parent_not_a_surface()
         } else {
             err.into()
         }

@@ -6,7 +6,9 @@
 //! type, created_by, created_at, mode on surfaces) is what authorization and
 //! audit read; the payload is opaque JSON the core never interprets (the type
 //! catalog interprets it later). v1 grows the tree with **Surfaces** — interior,
-//! visibility-bearing nodes; Components (leaves) arrive with ZMVP-72.
+//! visibility-bearing nodes — and **Components** (ZMVP-72) — leaves, always the
+//! child of a surface, mode-less (they project with their parent), their
+//! substance in the opaque payload.
 //!
 //! **The raw tree never serializes.** [`CommissionTree`]/[`CommissionNode`]
 //! deliberately do **not** implement `serde::Serialize`, so "serialize the
@@ -106,18 +108,25 @@ impl SurfaceMode {
 /// What a node *is* — the typed half of the envelope, carrying exactly the
 /// mode-bearing rule of the Surfaces DD amendment by construction: a
 /// **Surface always carries a mode** (it's inside the variant, not an `Option`
-/// beside it), and when Components land (ZMVP-72) their variant simply has no
-/// mode to carry — "a component inherits its parent's visibility" becomes
-/// unrepresentable to violate.
+/// beside it), and a **Component carries none at all** (ZMVP-72) — its variant
+/// simply has no mode field, so "a component inherits its parent's visibility"
+/// is unrepresentable to violate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
     /// An interior node: grouping/layout, visibility-bearing, may contain
-    /// children (Surfaces and, from ZMVP-72, Components).
+    /// children (Surfaces and Components).
     Surface {
         /// The surface's own visibility mode; effective visibility is
         /// min-of-ancestors, computed at read (ZMVP-75).
         mode: SurfaceMode,
     },
+    /// A leaf (ZMVP-72): always the child of a surface, never with children,
+    /// projecting with its parent (no mode of its own). v1 is the generic,
+    /// untyped contract — one tag for every component, the substance in the
+    /// opaque payload; the type catalog (typed payload schemas, per-type
+    /// behavior) is deliberately deferred per the Surfaces DD. Seats and Slots
+    /// later couple onto this contract as (eventually typed) components.
+    Component,
 }
 
 impl NodeKind {
@@ -125,28 +134,30 @@ impl NodeKind {
     pub fn type_tag(&self) -> &'static str {
         match self {
             Self::Surface { .. } => "surface",
+            Self::Component => "component",
         }
     }
 
     /// The surface mode this node carries, or `None` for kinds that inherit
-    /// (none yet; Components arrive with ZMVP-72). This is the value the
-    /// nullable `mode` column stores.
+    /// (Components). This is the value the nullable `mode` column stores.
     pub fn mode(&self) -> Option<SurfaceMode> {
         match self {
             Self::Surface { mode } => Some(*mode),
+            Self::Component => None,
         }
     }
 
     /// Rebuild a kind from its stored `(type, mode)` column pair, or `None` for
     /// a pair outside the vocabulary — an unknown tag, a surface without a
-    /// mode, or a mode token nothing parses. On a read path any of those means
-    /// row tampering or a missed migration and surfaces as an error, never a
-    /// silent default.
+    /// mode, a component *with* one, or a mode token nothing parses. On a read
+    /// path any of those means row tampering or a missed migration and surfaces
+    /// as an error, never a silent default.
     pub fn from_columns(type_tag: &str, mode: Option<&str>) -> Option<Self> {
         match (type_tag, mode) {
             ("surface", Some(token)) => Some(Self::Surface {
                 mode: SurfaceMode::parse(token)?,
             }),
+            ("component", None) => Some(Self::Component),
             _ => None,
         }
     }
@@ -213,6 +224,78 @@ impl NewSurface {
             id: NodeId::mint(),
             commission_id: commission,
             parent,
+            created_by,
+            created_at: now,
+        }
+    }
+}
+
+/// A freshly grown component — the tree's leaf — ready to persist under an
+/// existing **surface**
+/// ([`CommissionWrites::add_component`](crate::ports::CommissionWrites::add_component),
+/// ZMVP-72).
+///
+/// Built with [`NewComponent::under`]. The envelope is core-owned (id, parent,
+/// creator, instant); the `payload` is the type-owned half, carried **opaque**
+/// — v1 is the generic, untyped contract, so the core neither validates nor
+/// interprets it, and it round-trips unmodified (AC3). There is no mode field
+/// anywhere: a component projects with its parent ([`NodeKind::Component`]).
+/// Sibling `position` is deliberately absent: the store assigns append order
+/// in-transaction, exactly as for [`NewSurface`].
+#[derive(Debug)]
+pub struct NewComponent {
+    /// The freshly minted node key (UUIDv7).
+    pub id: NodeId,
+    /// The commission whose tree this grows. The store verifies `parent`
+    /// belongs to this same commission.
+    pub commission_id: CommissionId,
+    /// The existing **surface** to grow under. Components are leaves: the store
+    /// refuses a parent that is itself a component
+    /// ([`ParentNotASurface`](crate::ports::ParentNotASurface)), so a component
+    /// can never gain children (AC1/AC2).
+    pub parent: NodeId,
+    /// The type-owned payload, opaque to the core; stored and returned
+    /// unmodified (AC3).
+    pub payload: serde_json::Value,
+    /// The acting User (the owner; the route's authority gate settles that
+    /// before this is built).
+    pub created_by: UserId,
+    /// When the component was added.
+    pub created_at: DateTimeUtc,
+}
+
+impl NewComponent {
+    /// A new component under `parent`, carrying `payload` verbatim. Mints the
+    /// node id; authority (owner-only in v1) and the parent-is-a-surface rule
+    /// are the store's/route's concern, settled when this is persisted.
+    ///
+    /// ```
+    /// use chrono::Utc;
+    /// use domain::elements::{
+    ///     commission::{CommissionId, NewComponent, NodeId},
+    ///     user::UserId,
+    /// };
+    ///
+    /// let commission = CommissionId::new(uuid::Uuid::now_v7());
+    /// let parent = NodeId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let payload = serde_json::json!({ "kind": "text", "body": "hi" });
+    /// let component = NewComponent::under(commission, parent, payload.clone(), owner, Utc::now());
+    /// assert_eq!(component.payload, payload); // opaque, verbatim
+    /// assert_eq!(component.parent, parent);
+    /// ```
+    pub fn under(
+        commission: CommissionId,
+        parent: NodeId,
+        payload: serde_json::Value,
+        created_by: UserId,
+        now: DateTimeUtc,
+    ) -> Self {
+        Self {
+            id: NodeId::mint(),
+            commission_id: commission,
+            parent,
+            payload,
             created_by,
             created_at: now,
         }
@@ -468,6 +551,40 @@ mod tests {
         assert_eq!(
             root.created_at, commission.created_at,
             "the root is born with the commission"
+        );
+    }
+
+    // ZMVP-72 AC2/AC3 — a new component's envelope: fresh id, the surface it
+    // grows under, the acting user, its opaque payload carried verbatim — and
+    // NO mode anywhere (the Component variant has none to set; it projects
+    // with its parent).
+    #[test]
+    fn a_new_component_carries_its_payload_and_no_mode() {
+        let commission = CommissionId::new(uuid::Uuid::now_v7());
+        let parent = NodeId::new(uuid::Uuid::now_v7());
+        let owner = UserId::new(uuid::Uuid::now_v7());
+        let payload = json!({ "kind": "text", "body": "Reference: 三毛猫 🐾", "revision": 3 });
+
+        let component = NewComponent::under(commission, parent, payload.clone(), owner, Utc::now());
+
+        assert_eq!(component.payload, payload, "the payload is carried opaque");
+        assert_eq!(component.parent, parent);
+        assert_eq!(component.commission_id, commission);
+        assert_eq!(component.created_by, owner);
+    }
+
+    // ZMVP-72 AC2 — the component kind bears no mode by construction and maps
+    // to the 'component' type tag with a NULL mode column.
+    #[test]
+    fn a_component_kind_has_no_mode() {
+        let kind = NodeKind::Component;
+        assert_eq!(kind.type_tag(), "component");
+        assert_eq!(kind.mode(), None, "a component carries no mode of its own");
+        assert_eq!(NodeKind::from_columns("component", None), Some(kind));
+        assert_eq!(
+            NodeKind::from_columns("component", Some("total")),
+            None,
+            "a component WITH a mode is tampering"
         );
     }
 

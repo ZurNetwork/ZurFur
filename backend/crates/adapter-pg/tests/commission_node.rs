@@ -1,21 +1,24 @@
-//! The commission content tree over PostgreSQL (ZMVP-71), against a throwaway
-//! container: every commission is born with (or backfilled to) a root surface,
-//! the owner grows surfaces under any existing surface in append order, and the
-//! whole tree loads back assembled. Requires a container runtime socket
-//! (DOCKER_HOST honored).
+//! The commission content tree over PostgreSQL (ZMVP-71/72), against a
+//! throwaway container: every commission is born with (or backfilled to) a root
+//! surface, the owner grows surfaces under any existing surface in append
+//! order, components grow as leaves whose opaque payload round-trips (and under
+//! which nothing grows), and the whole tree loads back assembled. Requires a
+//! container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, NewSurface, NodeId, NodeKind, SurfaceMode,
+            Commission, CommissionId, CommissionTitle, NewComponent, NewSurface, NodeId, NodeKind,
+            SurfaceMode,
         },
         did::Did,
         user::User,
     },
-    ports::{CommissionStore, Database, ParentNodeNotFound},
+    ports::{CommissionStore, Database, ParentNodeNotFound, ParentNotASurface},
 };
+use serde_json::json;
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
 /// The ZMVP-71 migration (create `commission_node` + root backfill), as sqlx
@@ -243,6 +246,208 @@ async fn load_tree_answers_none_for_an_unknown_commission() {
             .expect("load")
             .is_none()
     );
+}
+
+// ZMVP-72 AC1/AC2/AC3 (pg) — a component grows as a leaf under a surface (root
+// and non-root alike), stores a NULL mode (the surface-XOR-mode CHECK holds),
+// and its opaque jsonb payload reads back exactly as written — nested
+// structure, unicode, numbers, booleans, in-payload nulls, even a top-level
+// JSON null (jsonb 'null', not SQL NULL).
+#[tokio::test]
+async fn add_component_grows_a_leaf_whose_payload_round_trips() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:componenter").await;
+    let commission = create_commission(&pool, &owner, "Componented").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let surface = NewSurface::under(commission.id, root, owner.id, Utc::now());
+    let payload = json!({
+        "kind": "text",
+        "body": "Reference: 三毛猫 🐾 — \"line\\break\"",
+        "revision": 3,
+        "ratio": 1.5,
+        "flags": [true, false, null],
+        "nested": { "empty": {}, "list": [] },
+    });
+    let on_root = NewComponent::under(commission.id, root, payload.clone(), owner.id, Utc::now());
+    let nested = NewComponent::under(commission.id, surface.id, json!(null), owner.id, Utc::now());
+    let (surface_id, on_root_id, nested_id) = (surface.id, on_root.id, nested.id);
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    {
+        let mut commissions = uow.commissions();
+        commissions.add_surface(&surface).await.expect("surface");
+        commissions.add_component(&on_root).await.expect("on root");
+        commissions.add_component(&nested).await.expect("nested");
+    }
+    uow.commit().await.expect("commit");
+
+    let tree = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert_eq!(tree.root.children.len(), 2);
+    assert_eq!(tree.root.children[0].id, surface_id, "append order holds");
+    let component = &tree.root.children[1];
+    assert_eq!(component.id, on_root_id);
+    assert!(
+        matches!(component.kind, NodeKind::Component),
+        "a component carries no mode of its own, got {:?}",
+        component.kind
+    );
+    assert_eq!(component.created_by, owner.id);
+    assert_eq!(component.payload, payload, "the payload is opaque (AC3)");
+    assert!(component.children.is_empty());
+
+    let nested = &tree.root.children[0].children[0];
+    assert_eq!(nested.id, nested_id, "grows under a non-root surface too");
+    assert_eq!(
+        nested.payload,
+        json!(null),
+        "even a top-level JSON null round-trips verbatim"
+    );
+}
+
+// ZMVP-72 AC1/AC2 (pg) — components are leaves: growing ANYTHING under one —
+// another component or a surface — refuses with ParentNotASurface, and the
+// refused unit leaves no row behind.
+#[tokio::test]
+async fn nothing_grows_under_a_component() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:leaf-prober").await;
+    let commission = create_commission(&pool, &owner, "Leafy").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let component = NewComponent::under(commission.id, root, json!({}), owner.id, Utc::now());
+    let component_id = component.id;
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions()
+        .add_component(&component)
+        .await
+        .expect("component lands");
+    uow.commit().await.expect("commit");
+
+    let child_component =
+        NewComponent::under(commission.id, component_id, json!({}), owner.id, Utc::now());
+    let mut uow = db.begin().await.expect("begin");
+    let err = uow
+        .commissions()
+        .add_component(&child_component)
+        .await
+        .expect_err("a component under a component refuses");
+    assert!(
+        err.downcast_ref::<ParentNotASurface>().is_some(),
+        "expected ParentNotASurface, got: {err:?}"
+    );
+    uow.rollback().await.expect("rollback");
+
+    let child_surface = NewSurface::under(commission.id, component_id, owner.id, Utc::now());
+    let mut uow = db.begin().await.expect("begin");
+    let err = uow
+        .commissions()
+        .add_surface(&child_surface)
+        .await
+        .expect_err("a surface under a component refuses too");
+    assert!(
+        err.downcast_ref::<ParentNotASurface>().is_some(),
+        "expected ParentNotASurface, got: {err:?}"
+    );
+    uow.rollback().await.expect("rollback");
+
+    let tree = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert_eq!(tree.root.children.len(), 1);
+    assert!(
+        tree.root.children[0].children.is_empty(),
+        "a component never has children"
+    );
+}
+
+// ZMVP-72 (pg) — the component's parent must exist in THIS commission's tree:
+// a fabricated parent id and a surface belonging to another commission both
+// refuse with ParentNodeNotFound (indistinguishably — never ParentNotASurface,
+// which would leak what a foreign node is), and no row lands.
+#[tokio::test]
+async fn add_component_refuses_absent_and_foreign_parents() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:component-prober").await;
+    let mine = create_commission(&pool, &owner, "Mine").await;
+    let theirs = {
+        let other = provision(&pool, "did:plc:component-victim").await;
+        create_commission(&pool, &other, "Theirs").await
+    };
+
+    let store = PgCommissionStore::new(pool.clone());
+    let their_root = store
+        .load_tree(theirs.id)
+        .await
+        .expect("load")
+        .expect("their tree exists")
+        .root
+        .id;
+
+    let db = PgDatabase::new(pool.clone());
+
+    let fabricated = NewComponent::under(
+        mine.id,
+        NodeId::new(uuid::Uuid::now_v7()),
+        json!({}),
+        owner.id,
+        Utc::now(),
+    );
+    let mut uow = db.begin().await.expect("begin");
+    let err = uow
+        .commissions()
+        .add_component(&fabricated)
+        .await
+        .expect_err("absent parent refuses");
+    assert!(
+        err.downcast_ref::<ParentNodeNotFound>().is_some(),
+        "absent parent surfaces as ParentNodeNotFound, got: {err:?}"
+    );
+    uow.rollback().await.expect("rollback");
+
+    let cross = NewComponent::under(mine.id, their_root, json!({}), owner.id, Utc::now());
+    let mut uow = db.begin().await.expect("begin");
+    let err = uow
+        .commissions()
+        .add_component(&cross)
+        .await
+        .expect_err("foreign parent refuses");
+    assert!(
+        err.downcast_ref::<ParentNodeNotFound>().is_some(),
+        "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+    );
+    uow.rollback().await.expect("rollback");
+
+    let tree = store
+        .load_tree(mine.id)
+        .await
+        .expect("load")
+        .expect("tree exists");
+    assert!(tree.root.children.is_empty(), "no refused write landed");
 }
 
 // AC1, the retroactive half — commissions created BEFORE the tree existed get a

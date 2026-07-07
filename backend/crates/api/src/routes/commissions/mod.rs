@@ -14,6 +14,8 @@
 //!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
 //! - [`surfaces`] — `POST /commissions/{id}/surfaces` (ZMVP-71: the owner grows
 //!   the content tree).
+//! - [`components`] — `POST /commissions/{id}/components` (ZMVP-72: the owner
+//!   adds a leaf under a surface).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -46,6 +48,7 @@ use crate::{AppState, SESSION_USER_KEY, problem::Problem};
 mod archive;
 mod changelog;
 mod channel;
+mod components;
 mod create;
 mod delete;
 mod notes;
@@ -93,6 +96,10 @@ pub(crate) fn commissions_router() -> Router<AppState> {
             delete(positioning::revoke_view),
         )
         .route("/commissions/{id}/surfaces", post(surfaces::add_surface))
+        .route(
+            "/commissions/{id}/components",
+            post(components::add_component),
+        )
 }
 
 /// Resolve the session to the acting [`User`] — the shared authentication step

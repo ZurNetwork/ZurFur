@@ -6,23 +6,61 @@
 //! of the backend file along the domain seam (the `public_records` precedent) so
 //! later commission tickets extend this module instead of one shared hotspot.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::AccountId,
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, CommissionTree, GrantLevel, LifecycleStep, NewChangelogEntry, NewSurface,
-        NodeId, NodeKind, NodeRow, Placement, RootSurface, Visibility,
+        CommissionTitle, CommissionTree, GrantLevel, LifecycleStep, NewChangelogEntry,
+        NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, SurfaceMode,
+        Visibility,
     },
     user::UserId,
 };
 use domain::ports::{
     ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, ParentNodeNotFound,
+    ParentNotASurface,
 };
 use serde_json::Value;
 
 use crate::MemBackend;
+
+/// The shared **parent gate** of every tree-growing write — the mem mirror of
+/// `PgCommissionWrites::require_surface_parent` (ZMVP-71/72): the named parent
+/// must exist in `commission`'s own tree (an absent id and a node from another
+/// commission both refuse with [`ParentNodeNotFound`], indistinguishably,
+/// *before* anything about the node is revealed) and must be a surface, else
+/// [`ParentNotASurface`] (components are leaves; nothing grows under one). One
+/// path, so the two add ops can't drift apart on either rule. Returns the
+/// parent's [`SurfaceMode`] on success — the mode `add_surface` inherits;
+/// `add_component` has no use for it.
+fn require_surface_parent(
+    nodes: &HashMap<NodeId, StoredNode>,
+    parent: NodeId,
+    commission: CommissionId,
+) -> anyhow::Result<SurfaceMode> {
+    match nodes.get(&parent) {
+        Some(node) if node.commission_id == commission => match node.kind {
+            NodeKind::Surface { mode } => Ok(mode),
+            NodeKind::Component => Err(ParentNotASurface.into()),
+        },
+        _ => Err(ParentNodeNotFound.into()),
+    }
+}
+
+/// The next append `position` within `parent`'s sibling group — the mem mirror
+/// of the pg `COALESCE(MAX(position) + 1, 0)` subquery.
+fn next_position(nodes: &HashMap<NodeId, StoredNode>, parent: NodeId) -> i32 {
+    nodes
+        .values()
+        .filter(|node| node.parent == Some(parent))
+        .map(|node| node.position + 1)
+        .max()
+        .unwrap_or(0)
+}
 
 /// The fields of a [`Commission`] we keep behind the lock. Like `Account`,
 /// `Commission` isn't `Clone` (an aggregate root, not a value), so we store its
@@ -224,35 +262,22 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Grow the tree under an existing parent — the mem mirror of the pg
-    /// `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2), with the mode
-    /// **inherited from the parent** (Engineer ruling 2026-07-07, PR #103).
-    /// The parent must exist in `surface.commission_id`'s tree as a surface:
-    /// an absent id and a node from another commission both refuse with
-    /// [`ParentNodeNotFound`] (one indistinguishable answer, per the port
-    /// contract).
+    /// Grow the tree under an existing parent surface — the mem mirror of the
+    /// pg `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2), behind the same
+    /// shared parent gate ([`require_surface_parent`]): absent/foreign refuses
+    /// with [`ParentNodeNotFound`], a component parent with
+    /// [`ParentNotASurface`] (ZMVP-72 — components are leaves). The mode is
+    /// **inherited from the parent** (Engineer ruling 2026-07-07, PR #103) —
+    /// the gate hands it back on success, since a surface parent always
+    /// carries one.
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
         let mut nodes = self
             .0
             .nodes
             .lock()
             .expect("MemBackend nodes mutex poisoned");
-        let parent_mode = nodes.get(&surface.parent).and_then(|parent| {
-            (parent.commission_id == surface.commission_id)
-                .then_some(match parent.kind {
-                    NodeKind::Surface { mode } => Some(mode),
-                })
-                .flatten()
-        });
-        let Some(mode) = parent_mode else {
-            return Err(ParentNodeNotFound.into());
-        };
-        let position = nodes
-            .values()
-            .filter(|node| node.parent == Some(surface.parent))
-            .map(|node| node.position + 1)
-            .max()
-            .unwrap_or(0);
+        let mode = require_surface_parent(&nodes, surface.parent, surface.commission_id)?;
+        let position = next_position(&nodes, surface.parent);
         nodes.insert(
             surface.id,
             StoredNode {
@@ -263,6 +288,34 @@ impl CommissionWrites for MemCommissionWrites {
                 created_by: surface.created_by,
                 created_at: surface.created_at,
                 payload: Value::Object(Default::default()),
+            },
+        );
+        Ok(())
+    }
+
+    /// Grow a leaf under an existing parent surface — the mem mirror of the pg
+    /// component insert (ZMVP-72 AC1): the same shared parent gate, the same
+    /// append order, kind [`NodeKind::Component`] (no mode exists to store —
+    /// AC2), and the opaque payload held verbatim so it reads back exactly as
+    /// written (AC3).
+    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
+        let mut nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        require_surface_parent(&nodes, component.parent, component.commission_id)?;
+        let position = next_position(&nodes, component.parent);
+        nodes.insert(
+            component.id,
+            StoredNode {
+                commission_id: component.commission_id,
+                parent: Some(component.parent),
+                kind: NodeKind::Component,
+                position,
+                created_by: component.created_by,
+                created_at: component.created_at,
+                payload: component.payload.clone(),
             },
         );
         Ok(())
@@ -642,7 +695,7 @@ impl MemBackend {
 mod tests {
     use chrono::Utc;
     use domain::elements::commission::{NodeId, NodeKind, SurfaceMode};
-    use domain::ports::ParentNodeNotFound;
+    use domain::ports::{ParentNodeNotFound, ParentNotASurface};
     use serde_json::json;
 
     use super::*;
@@ -1381,5 +1434,189 @@ mod tests {
                 .is_none(),
             "the pointer clears"
         );
+    }
+
+    /// Seeds a committed commission and returns `(its id, its root node id)`.
+    async fn rooted_commission(backend: &MemBackend, owner: UserId) -> (CommissionId, NodeId) {
+        let created = commission("Componented", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let root = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists")
+            .root
+            .id;
+        (id, root)
+    }
+
+    // ZMVP-72 AC1/AC2/AC3 (store layer) — a component grows as a leaf under a
+    // surface (root and non-root alike), carries kind Component (no mode is
+    // even representable), and its opaque payload reads back exactly as
+    // written — semantically byte-for-byte, nested structure, unicode, numbers,
+    // booleans, in-payload nulls and all.
+    #[tokio::test]
+    async fn add_component_grows_a_leaf_whose_payload_round_trips() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let surface = NewSurface::under(id, root, owner, Utc::now());
+        let surface_id = surface.id;
+        let payload = json!({
+            "kind": "text",
+            "body": "Reference: 三毛猫 🐾 — \"line\\break\"",
+            "revision": 3,
+            "ratio": 1.5,
+            "flags": [true, false, null],
+            "nested": { "empty": {}, "list": [] },
+        });
+        let on_root = NewComponent::under(id, root, payload.clone(), owner, Utc::now());
+        let nested = NewComponent::under(id, surface_id, json!(null), owner, Utc::now());
+        let (on_root_id, nested_id) = (on_root.id, nested.id);
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_surface(&surface).await.unwrap();
+        uow.commissions().add_component(&on_root).await.unwrap();
+        uow.commissions().add_component(&nested).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 2);
+        assert_eq!(tree.root.children[0].id, surface_id, "append order");
+        let component = &tree.root.children[1];
+        assert_eq!(component.id, on_root_id);
+        assert!(
+            matches!(component.kind, NodeKind::Component),
+            "a component carries no mode of its own"
+        );
+        assert_eq!(component.created_by, owner);
+        assert_eq!(component.payload, payload, "the payload is opaque (AC3)");
+        assert!(component.children.is_empty());
+
+        let nested = &tree.root.children[0].children[0];
+        assert_eq!(nested.id, nested_id, "grows under a non-root surface too");
+        assert_eq!(
+            nested.payload,
+            json!(null),
+            "even a top-level JSON null round-trips verbatim"
+        );
+    }
+
+    // ZMVP-72 AC1/AC2 — components are leaves: growing ANYTHING under one —
+    // another component or a surface — refuses with ParentNotASurface, and the
+    // refused write leaves nothing behind.
+    #[tokio::test]
+    async fn nothing_grows_under_a_component() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        let component = NewComponent::under(id, root, json!({}), owner, Utc::now());
+        let component_id = component.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_component(&component).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let child_component = NewComponent::under(id, component_id, json!({}), owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .add_component(&child_component)
+            .await
+            .expect_err("a component under a component refuses");
+        assert!(
+            err.downcast_ref::<ParentNotASurface>().is_some(),
+            "expected ParentNotASurface, got: {err:?}"
+        );
+        drop(uow);
+
+        let child_surface = NewSurface::under(id, component_id, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .add_surface(&child_surface)
+            .await
+            .expect_err("a surface under a component refuses too");
+        assert!(
+            err.downcast_ref::<ParentNotASurface>().is_some(),
+            "expected ParentNotASurface, got: {err:?}"
+        );
+        drop(uow);
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 1);
+        assert!(
+            tree.root.children[0].children.is_empty(),
+            "a component never has children"
+        );
+    }
+
+    // ZMVP-72 — the component's parent must exist in THIS commission's tree: a
+    // fabricated parent id and a surface belonging to another commission both
+    // fail with ParentNodeNotFound (one indistinguishable answer), never
+    // ParentNotASurface (which would leak that a foreign node exists and is a
+    // component or not).
+    #[tokio::test]
+    async fn add_component_refuses_absent_and_foreign_parents() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (mine, _) = rooted_commission(&backend, owner).await;
+        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+
+        let fabricated = NewComponent::under(
+            mine,
+            NodeId::new(uuid::Uuid::now_v7()),
+            json!({}),
+            owner,
+            Utc::now(),
+        );
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .add_component(&fabricated)
+            .await
+            .expect_err("absent parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "expected ParentNodeNotFound, got: {err:?}"
+        );
+        drop(uow);
+
+        let cross = NewComponent::under(mine, their_root, json!({}), owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .add_component(&cross)
+            .await
+            .expect_err("foreign parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+        );
+        drop(uow);
+
+        let tree = backend
+            .commission_store()
+            .load_tree(mine)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert!(tree.root.children.is_empty(), "no refused write landed");
     }
 }

@@ -9,8 +9,8 @@ use crate::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewSurface,
-            Placement,
+            ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewComponent,
+            NewSurface, Placement,
         },
         user::UserId,
     },
@@ -114,6 +114,26 @@ impl std::fmt::Display for ParentNodeNotFound {
 
 impl std::error::Error for ParentNodeNotFound {}
 
+/// The error a tree-growing write carries (as the source of its
+/// `anyhow::Error`) when the named parent node **exists in the caller's own
+/// commission** but is a component, not a surface (ZMVP-72): components are
+/// leaves — always the child of a surface, never with children — so nothing
+/// grows under one. Distinct from [`ParentNodeNotFound`] and deliberately
+/// reachable **only past** it: a parent outside the caller's tree always
+/// answers not-found first, so this error never confirms what a foreign node
+/// is. Adapters return it so the route can `downcast_ref` and answer an honest
+/// `409` (the caller owns the commission and already sees the node).
+#[derive(Debug)]
+pub struct ParentNotASurface;
+
+impl std::fmt::Display for ParentNotASurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the parent node is a component, not a surface")
+    }
+}
+
+impl std::error::Error for ParentNotASurface {}
+
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`), so no
 /// private-store commission write can skip a transaction (ZMVP-65; DD `24150017`).
@@ -139,11 +159,25 @@ pub trait CommissionWrites: Send {
     /// `surface.commission_id`'s tree as a surface: an absent parent, one
     /// belonging to another commission, *or* a modeless node all fail with
     /// [`ParentNodeNotFound`] as the error source (one indistinguishable
-    /// answer — see its docs). Authority (owner-only in v1) and the
-    /// commission's own existence are the caller's checks, settled before this
-    /// is reached. Deliberately **not** changelog-recorded: tree edits are not
-    /// in the frozen entry taxonomy (ZMVP-87).
+    /// answer — see its docs); a parent that exists there but is a component
+    /// fails with [`ParentNotASurface`] (components never have children —
+    /// ZMVP-72). Authority (owner-only in v1) and the commission's own
+    /// existence are the caller's checks, settled before this is reached.
+    /// Deliberately **not** changelog-recorded: tree edits are not in the
+    /// frozen entry taxonomy (ZMVP-87).
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()>;
+
+    /// Grow the commission's tree with a leaf: persist a [`NewComponent`] under
+    /// its parent **surface** (ZMVP-72 AC1). The same contract as
+    /// [`add_surface`](Self::add_surface) — append sibling order assigned on
+    /// the open transaction, an absent/foreign parent refusing with
+    /// [`ParentNodeNotFound`], a component parent refusing with
+    /// [`ParentNotASurface`], authority and commission existence settled by the
+    /// caller, and no changelog entry (tree edits are not in the frozen
+    /// taxonomy) — plus the leaf's own half: the row stores **no mode**
+    /// (a component projects with its parent) and the opaque payload
+    /// semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving) (AC3).
+    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD

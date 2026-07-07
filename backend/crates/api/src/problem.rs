@@ -222,6 +222,23 @@ impl Problem {
         )
     }
 
+    /// `409` — the named parent node exists (in the caller's own commission)
+    /// but is a component, and components never have children (ZMVP-72:
+    /// "always the child of a surface, never with children"). A state
+    /// conflict, not an authority failure — and honest by construction: it is
+    /// only ever reachable past the owner gate *and* past the absent/foreign
+    /// parent check ([`node_not_found`](Problem::node_not_found)), so it can
+    /// never reveal anything about another commission's tree.
+    pub fn parent_not_a_surface() -> Self {
+        Self::new(
+            "urn:zurfur:error:parent-not-a-surface",
+            "parent_not_a_surface",
+            "Parent is not a surface",
+            409,
+            "Components are leaves: nothing can be added under a component.",
+        )
+    }
+
     /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
     /// nowhere to re-home its members, so leaving is refused as a state conflict (not
     /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.
