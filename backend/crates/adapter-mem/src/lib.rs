@@ -43,7 +43,7 @@ pub use commission::{
 };
 pub use public_records::MemPublicRecords;
 
-pub(crate) use commission::{StoredChangelogEntry, StoredCommission};
+pub(crate) use commission::{StoredChangelogEntry, StoredCommission, StoredPlacement};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
-    commission::CommissionId,
+    commission::{CommissionId, GrantLevel},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -111,6 +111,20 @@ pub struct MemBackend {
     /// an entry commits atomically with the domain write it records (Changelog DD
     /// D4). Nothing here ever mutates or removes a pushed entry (append-only).
     pub(crate) changelog: Arc<Mutex<Vec<StoredChangelogEntry>>>,
+    /// The append-only commission **placement** log (ZMVP-70), in append (= `seq`)
+    /// order — the in-memory mirror of the pg `commission_placement` table. Staged
+    /// and applied by the Unit of Work like `changelog`; never rewritten.
+    pub(crate) placements: Arc<Mutex<Vec<StoredPlacement>>>,
+    /// The denormalized **current-placement** pointer keyed by commission (ZMVP-70)
+    /// — the mem mirror of `commission_current_placement`, upserted in the same
+    /// unit as each placement append so it always equals the latest log row.
+    pub(crate) current_placements: Arc<Mutex<HashMap<CommissionId, StoredPlacement>>>,
+    /// The commission **view grants** keyed by `(commission, account)`, valued by
+    /// the key's [`GrantLevel`] (ZMVP-70) — the mem mirror of `commission_view_grant`.
+    /// The grant is a pure key (just the level; who/when live in the changelog, DD
+    /// `29130754` D5). At most one key per pair (upsert on grant); a revoke removes
+    /// the entry (hard-delete).
+    pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, AccountId), GrantLevel>>>,
 }
 
 impl MemBackend {
@@ -205,6 +219,24 @@ impl MemBackend {
                     .expect("MemBackend changelog mutex poisoned")
                     .clone(),
             )),
+            placements: Arc::new(Mutex::new(
+                self.placements
+                    .lock()
+                    .expect("MemBackend placements mutex poisoned")
+                    .clone(),
+            )),
+            current_placements: Arc::new(Mutex::new(
+                self.current_placements
+                    .lock()
+                    .expect("MemBackend current_placements mutex poisoned")
+                    .clone(),
+            )),
+            view_grants: Arc::new(Mutex::new(
+                self.view_grants
+                    .lock()
+                    .expect("MemBackend view_grants mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -265,6 +297,30 @@ impl MemBackend {
             .changelog
             .lock()
             .expect("MemBackend changelog mutex poisoned")
+            .clone();
+        *self
+            .placements
+            .lock()
+            .expect("MemBackend placements mutex poisoned") = staged
+            .placements
+            .lock()
+            .expect("MemBackend placements mutex poisoned")
+            .clone();
+        *self
+            .current_placements
+            .lock()
+            .expect("MemBackend current_placements mutex poisoned") = staged
+            .current_placements
+            .lock()
+            .expect("MemBackend current_placements mutex poisoned")
+            .clone();
+        *self
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned") = staged
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
             .clone();
     }
 

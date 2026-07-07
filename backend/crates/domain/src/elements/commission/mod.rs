@@ -7,8 +7,10 @@
 //! created by any authenticated User with **no Account required** (a user-scoped
 //! write; ZMVP-47, DD 26247170). Everything else the glossary describes — the
 //! content tree of Surfaces/Components, Seats/Slots, participants beyond the
-//! creator, the managing-account association, and lifecycle/status transitions —
-//! materializes in later tickets, not here.
+//! creator, account [`positioning`] (placement + view grants, ZMVP-70), and
+//! lifecycle/status transitions — materializes in later tickets, not here. (There
+//! is no "managing-account association": Ownership Separation DD `29130754` deleted
+//! that concept — accounts own positioning, never the commission.)
 //!
 //! A commission is **isolated from accounts**: it survives account deletion and its
 //! participants are always Users, never accounts. Visibility is carried as a flat
@@ -21,15 +23,20 @@
 //! for a type to be commission-anchored evidence that blocks hard deletion. The
 //! [`changelog`] submodule carries the commission's append-only memory (ZMVP-87):
 //! the frozen [`ChangelogEntryKind`] taxonomy, the entry shapes, and the
-//! [`ChannelPointer`] "where we talk" value.
+//! [`ChannelPointer`] "where we talk" value. The [`positioning`] submodule carries
+//! the two account-facing rails (ZMVP-70): [`Placement`] (account-side, where the
+//! commission sits) and the [`GrantLevel`] key-to-see (commission-side) — neither
+//! confers in-commission authority (Ownership Separation DD `29130754`).
 
 pub mod changelog;
 pub mod fact;
+pub mod positioning;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
 };
 pub use fact::Fact;
+pub use positioning::{GrantLevel, Placement};
 
 use std::ops::Deref;
 

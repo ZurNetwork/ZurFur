@@ -7,10 +7,12 @@
 //! later commission tickets extend this module instead of one shared hotspot.
 
 use async_trait::async_trait;
+use domain::datetime::DateTimeUtc;
 use domain::elements::{
+    account::AccountId,
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, LifecycleStep, NewChangelogEntry, Visibility,
+        CommissionTitle, GrantLevel, LifecycleStep, NewChangelogEntry, Placement, Visibility,
     },
     user::UserId,
 };
@@ -98,6 +100,40 @@ impl StoredChangelogEntry {
             payload: self.payload.clone(),
             note: self.note.clone(),
             created_at: self.created_at,
+        }
+    }
+}
+
+/// One placement-log row as the mem backend keeps it — the in-memory mirror of a
+/// pg `commission_placement` row (ZMVP-70), and (with the latest `seq` per
+/// commission) of the `commission_current_placement` cache pointer. `Clone` so a
+/// unit of work can deep-copy the log/cache into its staging snapshot. Append-only
+/// like the pg log: nothing here mutates a pushed row.
+#[derive(Clone)]
+pub(crate) struct StoredPlacement {
+    /// The store-assigned ordering key — the mem mirror of the pg `bigserial`
+    /// (global, monotonic): the greatest `seq` for a commission is its current
+    /// placement, the least its origin.
+    pub(crate) seq: i64,
+    /// The commission being positioned.
+    pub(crate) commission_id: CommissionId,
+    /// The account into whose position the commission was placed.
+    pub(crate) account_id: AccountId,
+    /// The User who performed the placement (the owner in v1).
+    pub(crate) placed_by: UserId,
+    /// When the placement happened.
+    pub(crate) placed_at: DateTimeUtc,
+}
+
+impl StoredPlacement {
+    /// Rebuild the domain [`Placement`] from the stored parts.
+    fn rebuild(&self) -> Placement {
+        Placement {
+            seq: self.seq,
+            commission_id: self.commission_id,
+            account_id: self.account_id,
+            placed_by: self.placed_by,
+            placed_at: self.placed_at,
         }
     }
 }
@@ -228,6 +264,79 @@ impl CommissionWrites for MemCommissionWrites {
         stored.linked_channel = channel.cloned();
         Ok(true)
     }
+
+    /// Append a placement-log row and repoint the current-placement cache to it —
+    /// the mem mirror of the pg append + `commission_current_placement` upsert,
+    /// both on the unit's staged snapshot so they land atomically on commit. The
+    /// `seq` is the next over the whole placement log (the mem mirror of the pg
+    /// global `bigserial`), and the cache is overwritten with this row — so the
+    /// cache always equals the latest log row. Re-placement always appends; the
+    /// log is never rewritten.
+    async fn place(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        placed_by: UserId,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()> {
+        let mut placements = self
+            .0
+            .placements
+            .lock()
+            .expect("MemBackend placements mutex poisoned");
+        let seq = placements.last().map(|p| p.seq + 1).unwrap_or(1);
+        let row = StoredPlacement {
+            seq,
+            commission_id: commission,
+            account_id: account,
+            placed_by,
+            placed_at: at,
+        };
+        placements.push(row.clone());
+        drop(placements);
+
+        self.0
+            .current_placements
+            .lock()
+            .expect("MemBackend current_placements mutex poisoned")
+            .insert(commission, row);
+        Ok(())
+    }
+
+    /// Upsert the account's key on the unit's staged snapshot — the mem mirror of
+    /// the pg `commission_view_grant` upsert: one key per (commission, account),
+    /// re-granting replaces the level.
+    async fn grant_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        level: GrantLevel,
+    ) -> anyhow::Result<()> {
+        self.0
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
+            .insert((commission, account), level);
+        Ok(())
+    }
+
+    /// Remove the account's key on the staged snapshot (hard-delete, DD `29130754`
+    /// D5) — the mem mirror of the pg `DELETE`. Returns whether a key existed: a
+    /// revoke of a non-existent key is an idempotent no-op answering `false`, the
+    /// bool the caller keys its `view_grant_revoked` changelog append on.
+    async fn revoke_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<bool> {
+        Ok(self
+            .0
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
+            .remove(&(commission, account))
+            .is_some())
+    }
 }
 
 /// In-memory [`ChangelogWrites`] view: appends land on the unit's staged
@@ -276,9 +385,59 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
 
+    /// The current-placement pointer (ZMVP-70) from the cache map, or `None` if
+    /// the commission was never placed — the mem mirror of a
+    /// `commission_current_placement` read.
+    async fn current_placement(
+        &self,
+        commission: CommissionId,
+    ) -> anyhow::Result<Option<Placement>> {
+        Ok(self
+            .0
+            .current_placements
+            .lock()
+            .expect("MemBackend current_placements mutex poisoned")
+            .get(&commission)
+            .map(StoredPlacement::rebuild))
+    }
+
+    /// The commission's placement log in append order (ascending `seq`) — the
+    /// rows are pushed in seq order, so filtering preserves it (the mem mirror of
+    /// `ORDER BY seq`). An unplaced commission has an empty log.
+    async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>> {
+        Ok(self
+            .0
+            .placements
+            .lock()
+            .expect("MemBackend placements mutex poisoned")
+            .iter()
+            .filter(|p| p.commission_id == commission)
+            .map(StoredPlacement::rebuild)
+            .collect())
+    }
+
+    /// The [`GrantLevel`] `account` holds on `commission`, or `None` (ZMVP-70) —
+    /// the mem mirror of a `commission_view_grant` lookup.
+    async fn view_grant(
+        &self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<Option<GrantLevel>> {
+        Ok(self
+            .0
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
+            .get(&(commission, account))
+            .copied())
+    }
+
     /// The **owner arm** of participant-hood — the owner IS a Participant
     /// without holding a Seat (DESIGN/Commission); ZMVP-79 adds the seated arm.
     /// An unknown commission has no participants, so it answers `false`.
+    /// **Unaffected by placement or view grants** (Ownership Separation DD
+    /// Decision 8): positioning is environmental and a key is only a view, so
+    /// neither makes an account's members Participants.
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
         let commissions = self
             .0
@@ -632,6 +791,105 @@ mod tests {
             .await
             .unwrap();
         uow.commit().await.unwrap();
+    }
+
+    fn account_id() -> AccountId {
+        AccountId::new(uuid::Uuid::now_v7())
+    }
+
+    // ZMVP-70 (mem store layer) — placement appends to the log and repoints the
+    // current pointer to the latest row; a view grant upserts and revoke
+    // hard-deletes; ALL of it stages with the unit (drop = rollback) and confers
+    // NO participant-hood (Ownership Separation DD Decision 8).
+    #[tokio::test]
+    async fn placement_and_grants_stage_lift_nothing_and_roll_back() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Positioned", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let store = backend.commission_store();
+        let account = account_id();
+        let member = user_id();
+
+        // Place in `account` twice; the current pointer tracks the latest row.
+        for _ in 0..2 {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions()
+                .place(id, account, owner, Utc::now())
+                .await
+                .unwrap();
+            uow.commit().await.unwrap();
+        }
+        let log = store.placement_log(id).await.unwrap();
+        assert_eq!(
+            log.len(),
+            2,
+            "each placement appends (the log is never rewritten)"
+        );
+        let current = store.current_placement(id).await.unwrap().expect("current");
+        assert_eq!(
+            (current.seq, current.account_id),
+            (log.last().unwrap().seq, log.last().unwrap().account_id),
+            "the cached current pointer equals the latest log row",
+        );
+
+        // Grant Total, then revoke — the key is gone immediately.
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .grant_view(id, account, GrantLevel::Total)
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert_eq!(
+            store.view_grant(id, account).await.unwrap(),
+            Some(GrantLevel::Total)
+        );
+
+        // A view grant / placement makes the account's members no Participant (D8).
+        assert!(
+            !store.is_participant(id, member).await.unwrap(),
+            "positioning and keys confer no in-commission authority",
+        );
+        assert!(
+            store.is_participant(id, owner).await.unwrap(),
+            "the owner still is"
+        );
+
+        let mut uow = database.begin().await.unwrap();
+        assert!(
+            uow.commissions().revoke_view(id, account).await.unwrap(),
+            "revoking an existing key reports a transition",
+        );
+        uow.commit().await.unwrap();
+        assert!(
+            store.view_grant(id, account).await.unwrap().is_none(),
+            "a revoked key is gone immediately",
+        );
+
+        // A dropped unit rolls back a placement AND a grant.
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions()
+                .place(id, account_id(), owner, Utc::now())
+                .await
+                .unwrap();
+            uow.commissions()
+                .grant_view(id, account, GrantLevel::Description)
+                .await
+                .unwrap();
+            // drop without commit
+        }
+        assert_eq!(
+            store.placement_log(id).await.unwrap().len(),
+            2,
+            "the dropped placement left no row",
+        );
+        assert!(
+            store.view_grant(id, account).await.unwrap().is_none(),
+            "the dropped grant never landed",
+        );
     }
 
     // The owner-arm participant predicate and the linked-channel round-trip on

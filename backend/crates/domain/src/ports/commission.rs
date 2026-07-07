@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use crate::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChannelPointer, Commission, CommissionId},
+        account::AccountId,
+        commission::{ChannelPointer, Commission, CommissionId, GrantLevel, Placement},
         user::UserId,
     },
 };
@@ -28,6 +29,36 @@ pub trait CommissionStore: Send + Sync {
     /// from its Participants' reach (the record and its facts survive and stay
     /// queryable, and the owner resolves it here to un-archive it).
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// The commission's **current placement** — the latest row of its append-only
+    /// placement log (ZMVP-70; Ownership Separation DD `29130754`), read from the
+    /// denormalized current-placement pointer the write side keeps in step. `None`
+    /// when the commission has never been placed (a valid state — placement is
+    /// optional). Positioning is account-side view state and confers no
+    /// in-commission authority (Decision 8).
+    async fn current_placement(
+        &self,
+        commission: CommissionId,
+    ) -> anyhow::Result<Option<Placement>>;
+
+    /// The commission's whole **placement log** in append order (ascending `seq`),
+    /// so the current placement is the last row and the origin the first (ZMVP-70).
+    /// The log is append-only and never rewritten; an unplaced commission has an
+    /// empty log. Used to prove the current-placement pointer equals the latest row.
+    async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>>;
+
+    /// The [`GrantLevel`] an `account` currently holds on `commission`, or `None`
+    /// if it holds no key (ZMVP-70; Ownership Separation DD `29130754` Decision 3).
+    /// This is the building block of the read-side "best key via membership" lift
+    /// (the serializer, a later ticket); a revoked key hard-deletes, so this
+    /// answers `None` immediately after revocation (Decision 5). A key is only a
+    /// view — it never makes the account's members Participants (Decision 8), so
+    /// [`is_participant`](Self::is_participant) is unaffected by any grant.
+    async fn view_grant(
+        &self,
+        commission: CommissionId,
+        account: AccountId,
+    ) -> anyhow::Result<Option<GrantLevel>>;
 
     /// Whether `user` is a **Participant** of `commission` — the authorization
     /// predicate every "a Participant does X" endpoint consumes (the changelog
@@ -132,5 +163,65 @@ pub trait CommissionWrites: Send {
         &mut self,
         id: CommissionId,
         channel: Option<&ChannelPointer>,
+    ) -> anyhow::Result<bool>;
+
+    /// **Place** the commission into `account`'s position (ZMVP-70; Ownership
+    /// Separation DD `29130754` Decision 1/6): append one row to the append-only
+    /// placement log **and** repoint the denormalized current-placement pointer to
+    /// it, atomically on the open unit — so the cached pointer equals the latest
+    /// log row after every (re)placement, by construction (no second transaction).
+    /// Re-placement always appends; the log is never rewritten (AC2). The
+    /// commission and the account must exist — the caller settles that first (a
+    /// commission owner-only act; the account resolved to a live row) — and the FK
+    /// onto `commission`/`account` is the store-level backstop. Placement confers
+    /// **no** in-commission authority (Decision 8) and — deliberately — appends no
+    /// changelog entry (the placement log *is* the record; the Changelog DD
+    /// taxonomy has no placement variant). A private-side write, never a
+    /// cross-store dual write.
+    async fn place(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        placed_by: UserId,
+        at: DateTimeUtc,
+    ) -> anyhow::Result<()>;
+
+    /// Issue `account` a **view grant** — a key to see `commission` at `level`
+    /// (ZMVP-70; Ownership Separation DD `29130754` Decision 3). At most one key
+    /// per (commission, account): re-granting **replaces** the level (upsert —
+    /// "issuing anew", Decision 5, no soft-deleted rows). The grant row is a *pure
+    /// key* (just the level); who issued it and when live only in the changelog
+    /// (Decision 5), so the caller settles authority first (owner-only in v1;
+    /// Admin-capable once ZMVP-83 lands) and appends the [`ViewGrantIssued`]
+    /// changelog entry — carrying the actor — in **this same unit of work** (issue
+    /// is a recorded-but-not-broadcast fact), so the key and its record land
+    /// atomically. A key only lifts (Decision 4) and never makes the account's
+    /// members Participants (Decision 8). A private-side write, never a cross-store
+    /// dual write.
+    ///
+    /// [`ViewGrantIssued`]: crate::elements::commission::ChangelogEntryKind::ViewGrantIssued
+    async fn grant_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
+        level: GrantLevel,
+    ) -> anyhow::Result<()>;
+
+    /// **Revoke** `account`'s view grant on `commission` — **hard-delete** the key
+    /// row (ZMVP-70; Ownership Separation DD `29130754` Decision 5). Because
+    /// visibility is enforced server-side at serialization, revocation is effective
+    /// on the next render by construction — there is no session to invalidate.
+    /// Returns whether a key was actually removed: revoking an account that holds
+    /// none is an idempotent no-op answering `false`, so the caller keys its
+    /// [`ViewGrantRevoked`] changelog append on a real transition **in the same
+    /// unit of work** (the no-duplicate-entry posture of
+    /// [`set_archived`](Self::set_archived)). A private-side write, never a
+    /// cross-store dual write.
+    ///
+    /// [`ViewGrantRevoked`]: crate::elements::commission::ChangelogEntryKind::ViewGrantRevoked
+    async fn revoke_view(
+        &mut self,
+        commission: CommissionId,
+        account: AccountId,
     ) -> anyhow::Result<bool>;
 }
