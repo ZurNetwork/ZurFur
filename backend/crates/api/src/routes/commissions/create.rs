@@ -42,7 +42,10 @@ pub(super) struct CreateCommissionBody {
 /// `created` changelog entry in one unit of work** — the entry commits
 /// atomically with the row it records (Changelog DD D4), so a commission can
 /// never exist without its genesis entry from this ticket on (commissions
-/// created before ZMVP-87 landed are deliberately not backfilled). Returns
+/// created before ZMVP-87 landed are deliberately not backfilled). The root
+/// surface of the content tree is minted **inside** the store write itself
+/// ([`CommissionWrites::create`](domain::ports::CommissionWrites::create),
+/// ZMVP-71), not here — no handler can create a treeless commission. Returns
 /// `201 Created` on success. A missing/malformed JSON body — or a blank
 /// (empty/whitespace) title, rejected by
 /// [`CommissionTitle::try_new`](domain::elements::commission::CommissionTitle::try_new) —

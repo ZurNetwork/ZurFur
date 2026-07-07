@@ -43,7 +43,7 @@ pub use commission::{
 };
 pub use public_records::MemPublicRecords;
 
-pub(crate) use commission::{StoredChangelogEntry, StoredCommission, StoredPlacement};
+pub(crate) use commission::{StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
-    commission::{CommissionId, GrantLevel},
+    commission::{CommissionId, GrantLevel, NodeId},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -125,6 +125,11 @@ pub struct MemBackend {
     /// `29130754` D5). At most one key per pair (upsert on grant); a revoke removes
     /// the entry (hard-delete).
     pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, AccountId), GrantLevel>>>,
+    /// [`StoredNode`] parts keyed by [`NodeId`] — the commission content tree
+    /// (ZMVP-71), the in-memory mirror of the pg `commission_node` table. A
+    /// domain map, staged and applied by the Unit of Work exactly like
+    /// `commissions`: a commission and its root surface commit together.
+    pub(crate) nodes: Arc<Mutex<HashMap<NodeId, StoredNode>>>,
 }
 
 impl MemBackend {
@@ -237,6 +242,12 @@ impl MemBackend {
                     .expect("MemBackend view_grants mutex poisoned")
                     .clone(),
             )),
+            nodes: Arc::new(Mutex::new(
+                self.nodes
+                    .lock()
+                    .expect("MemBackend nodes mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -321,6 +332,11 @@ impl MemBackend {
             .view_grants
             .lock()
             .expect("MemBackend view_grants mutex poisoned")
+            .clone();
+        *self.nodes.lock().expect("MemBackend nodes mutex poisoned") = staged
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
             .clone();
     }
 

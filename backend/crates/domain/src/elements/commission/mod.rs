@@ -15,9 +15,10 @@
 //! A commission is **isolated from accounts**: it survives account deletion and its
 //! participants are always Users, never accounts. Visibility is carried as a flat
 //! [`Visibility`] field defaulting to `Private` (the closed-door policy) — the three
-//! values survive as the aliases the per-surface Surfaces DD (`28246028`) keeps for
-//! the future root-surface mode (`Private` = root at `Total`), so when the content
-//! tree lands the field is reinterpreted, not replaced.
+//! values are the aliases the per-surface Surfaces DD (`28246028`) keeps for the
+//! root surface's mode ([`Visibility::as_root_mode`]): since ZMVP-71 every
+//! commission's root surface is born from this field, and ZMVP-74 makes the root
+//! mode the authoritative direction (reconciling this flat column).
 //!
 //! The [`fact`] submodule carries the [`Fact`] contract (ZMVP-67) — what it means
 //! for a type to be commission-anchored evidence that blocks hard deletion. The
@@ -26,16 +27,24 @@
 //! [`ChannelPointer`] "where we talk" value. The [`positioning`] submodule carries
 //! the two account-facing rails (ZMVP-70): [`Placement`] (account-side, where the
 //! commission sits) and the [`GrantLevel`] key-to-see (commission-side) — neither
-//! confers in-commission authority (Ownership Separation DD `29130754`).
+//! confers in-commission authority (Ownership Separation DD `29130754`). The
+//! [`node`] submodule carries the content **tree** (ZMVP-71): every commission is
+//! born with a root surface, the owner grows surfaces under it, and the raw
+//! loaded tree deliberately never serializes (projection is ZMVP-75).
 
 pub mod changelog;
 pub mod fact;
+pub mod node;
 pub mod positioning;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
 };
 pub use fact::Fact;
+pub use node::{
+    CommissionNode, CommissionTree, NewSurface, NodeId, NodeKind, NodeRow, RootSurface,
+    SurfaceMode, TreeAssemblyError,
+};
 pub use positioning::{GrantLevel, Placement};
 
 use std::ops::Deref;
@@ -313,5 +322,21 @@ impl Visibility {
             "public" => Self::Public,
             _ => return None,
         })
+    }
+
+    /// The root-surface [`SurfaceMode`] this alias names (Surfaces DD `28246028`
+    /// amendment 2: the flat values are simply the root's mode — one mechanism):
+    /// `Private` = root `Total`, `Listed` = root `Presentation`, `Public` = root
+    /// `Description`. [`RootSurface::of`] uses this to give every commission its
+    /// root at creation and the ZMVP-71 migration applies the same mapping to
+    /// backfill roots for commissions that predate the tree; making the root
+    /// mode the *authoritative* direction (and reconciling this flat column) is
+    /// ZMVP-74.
+    pub fn as_root_mode(&self) -> SurfaceMode {
+        match self {
+            Self::Private => SurfaceMode::Total,
+            Self::Listed => SurfaceMode::Presentation,
+            Self::Public => SurfaceMode::Description,
+        }
     }
 }

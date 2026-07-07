@@ -2,7 +2,8 @@
 //! (ZMVP-65/87) so each later commission ticket adds a file here rather than
 //! growing one hotspot — the same seam-splitting move as [`super`] itself:
 //!
-//! - [`create`] — `POST /commissions` (ZMVP-65 + the creation changelog entry).
+//! - [`create`] — `POST /commissions` (ZMVP-65 + the creation changelog entry;
+//!   ZMVP-71 mints the root surface in the same unit of work).
 //! - [`changelog`] — `GET /commissions/{id}/changelog` (the ordered read).
 //! - [`notes`] — `POST /commissions/{id}/notes` (free text into the record).
 //! - [`channel`] — `PUT`/`DELETE /commissions/{id}/channel` (the linked-channel
@@ -11,6 +12,8 @@
 //!   ZMVP-66).
 //! - [`archive`] — `POST /commissions/{id}/archive` / `POST
 //!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
+//! - [`surfaces`] — `POST /commissions/{id}/surfaces` (ZMVP-71: the owner grows
+//!   the content tree).
 //!
 //! Commissions are user-scoped (no Account required — ZMVP-47, DD 26247170) and
 //! entirely Index-side. Like the rest of the JSON API the group returns status
@@ -47,6 +50,7 @@ mod create;
 mod delete;
 mod notes;
 mod positioning;
+mod surfaces;
 
 /// The commissions route group. On the cookie surface; the composition root
 /// wraps the group with the CSRF
@@ -88,6 +92,7 @@ pub(crate) fn commissions_router() -> Router<AppState> {
             "/commissions/{id}/grants/{account_id}",
             delete(positioning::revoke_view),
         )
+        .route("/commissions/{id}/surfaces", post(surfaces::add_surface))
 }
 
 /// Resolve the session to the acting [`User`] — the shared authentication step
@@ -137,7 +142,9 @@ async fn require_participant(
 /// who is not the owner already knows it exists, so refusing them managing
 /// authority is an honest `403` — today that arm is unreachable (the owner is
 /// the only participant until ZMVP-79 seats more). Consumed by every
-/// owner-gated commission handler ([`channel`], [`delete`], [`archive`]).
+/// owner-gated commission handler ([`channel`], [`delete`], [`archive`],
+/// [`surfaces`]). Returns the resolved [`Commission`] so callers needn't
+/// re-read it.
 async fn require_owner(
     state: &AppState,
     commission: CommissionId,

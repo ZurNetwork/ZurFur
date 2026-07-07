@@ -136,6 +136,24 @@ impl Problem {
         )
     }
 
+    /// `404` — the addressed tree node doesn't exist in this commission
+    /// (ZMVP-71). Reached only past the commission's own gate (the caller is
+    /// already its owner), so unlike
+    /// [`commission_not_found`](Problem::commission_not_found) it hides
+    /// nothing *about this commission* — but it deliberately answers a node id
+    /// that exists in **someone else's** tree identically to one that exists
+    /// nowhere (the store refuses both as one case), so node ids can't be used
+    /// to probe other commissions' trees.
+    pub fn node_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:node-not-found",
+            "node_not_found",
+            "Node not found",
+            404,
+            "No such node in this commission.",
+        )
+    }
+
     /// `404` — the addressed user holds no membership in the account.
     pub fn member_not_found() -> Self {
         Self::new(

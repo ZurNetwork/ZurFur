@@ -25,6 +25,8 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "time",
   "uuid",
   "chrono",
+  # jsonb columns <-> serde_json::Value (the commission tree's node payload).
+  "json",
   "sqlx-toml",
 ] }
 # Facade (axum layer + Session extractor) for the composition root; the adapter

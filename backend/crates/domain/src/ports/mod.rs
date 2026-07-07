@@ -9,7 +9,7 @@ pub mod changelog;
 pub mod commission;
 
 pub use changelog::{ChangelogStore, ChangelogWrites};
-pub use commission::{CommissionStore, CommissionWrites};
+pub use commission::{CommissionStore, CommissionWrites, ParentNodeNotFound};
 
 use std::future::Future;
 use std::pin::Pin;
