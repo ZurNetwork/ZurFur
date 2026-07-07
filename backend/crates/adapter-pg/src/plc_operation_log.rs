@@ -37,8 +37,8 @@ impl PlcOperationLog for PgPlcOperationLog {
     /// `jsonb`; `seq` and `created_at` order the chain. The `cid` unique index makes a
     /// duplicate append a constraint error, surfaced to the caller.
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
-        // The record carries the op as JSON text (the domain crate has no serde_json);
-        // parse it here so it lands as native `jsonb`.
+        // The record carries the op as JSON text (`PlcOperationRecord.operation_json`
+        // is a `String` by contract); parse it here so it lands as native `jsonb`.
         let operation: serde_json::Value = serde_json::from_str(&record.operation_json)?;
         query!(
             r#"

@@ -32,6 +32,8 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let addr = listener.local_addr().expect("local addr");
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,

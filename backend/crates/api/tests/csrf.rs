@@ -48,6 +48,8 @@ async fn spawn_app() -> String {
         })),
         profile_cache: backend.profile_cache(),
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         database: backend.database(),
         did_minter: Arc::new(MemDidMinter::new()),
     };

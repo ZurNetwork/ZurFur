@@ -18,10 +18,17 @@
 //! tree lands the field is reinterpreted, not replaced.
 //!
 //! The [`fact`] submodule carries the [`Fact`] contract (ZMVP-67) — what it means
-//! for a type to be commission-anchored evidence that blocks hard deletion.
+//! for a type to be commission-anchored evidence that blocks hard deletion. The
+//! [`changelog`] submodule carries the commission's append-only memory (ZMVP-87):
+//! the frozen [`ChangelogEntryKind`] taxonomy, the entry shapes, and the
+//! [`ChannelPointer`] "where we talk" value.
 
+pub mod changelog;
 pub mod fact;
 
+pub use changelog::{
+    ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
+};
 pub use fact::Fact;
 
 use std::ops::Deref;
@@ -135,6 +142,10 @@ pub struct Commission {
     /// The nullable-but-fixed deadline envelope field — `None` when the commission
     /// carries no deadline (DESIGN/Commission).
     pub deadline: Option<DateTimeUtc>,
+    /// The external **linked channel** pointer — "where we talk" (ZMVP-87,
+    /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
+    /// changelog-recorded on set/clear, rendered as an opaque pointer.
+    pub linked_channel: Option<ChannelPointer>,
     /// When the commission was created.
     pub created_at: DateTimeUtc,
 }
@@ -177,6 +188,7 @@ impl Commission {
             created_at: now,
             visibility: Visibility::Private,
             deadline,
+            linked_channel: None,
         }
     }
 }
@@ -217,6 +229,21 @@ impl LifecycleStep {
             Self::Disputed => "disputed",
         }
     }
+
+    /// Resolve a stored token back to its step, or `None` for a token outside the
+    /// vocabulary — on a read path that means row tampering or a missed migration
+    /// and surfaces as an error, never a silent default (ZMVP-87 read port).
+    pub fn parse(token: &str) -> Option<Self> {
+        Some(match token {
+            "draft" => Self::Draft,
+            "batched" => Self::Batched,
+            "active" => Self::Active,
+            "completed" => Self::Completed,
+            "cancelled" => Self::Cancelled,
+            "disputed" => Self::Disputed,
+            _ => return None,
+        })
+    }
 }
 
 /// Who may see a commission (DESIGN/Commission, the Closed-Door Policy).
@@ -250,5 +277,17 @@ impl Visibility {
             Self::Listed => "listed",
             Self::Public => "public",
         }
+    }
+
+    /// Resolve a stored token back to its value, or `None` for one outside the
+    /// vocabulary — the same tamper-surfacing contract as
+    /// [`LifecycleStep::parse`].
+    pub fn parse(token: &str) -> Option<Self> {
+        Some(match token {
+            "private" => Self::Private,
+            "listed" => Self::Listed,
+            "public" => Self::Public,
+            _ => return None,
+        })
     }
 }

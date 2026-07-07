@@ -1,14 +1,19 @@
-//! [`CommissionWrites`] over PostgreSQL: commissions in the `commission` table
-//! (ZMVP-65). Writes are reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
-//! (`uow.commissions()`), so no commission write can skip a transaction. There is no
-//! read store yet — the birth ticket only needs the create path. See DESIGN/Commission
-//! and DD `24150017` (compile-enforced Unit of Work).
+//! [`CommissionStore`] (reads) and [`CommissionWrites`] (writes) over PostgreSQL:
+//! commissions in the `commission` table (ZMVP-65/87). Reads are pool-backed;
+//! writes are reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
+//! (`uow.commissions()`), so no commission write can skip a transaction. See
+//! DESIGN/Commission and DD `24150017` (compile-enforced Unit of Work).
 
 use domain::{
-    elements::commission::{Commission, CommissionId},
-    ports::CommissionWrites,
+    elements::{
+        commission::{
+            ChannelPointer, Commission, CommissionId, CommissionTitle, LifecycleStep, Visibility,
+        },
+        user::UserId,
+    },
+    ports::{CommissionStore, CommissionWrites},
 };
-use sqlx::{PgConnection, query};
+use sqlx::{PgConnection, PgPool, query};
 
 /// THE FACT REGISTRY (ZMVP-67; Deletion DD `3014657`): the tables whose rows are
 /// commission [`Fact`](domain::elements::commission::Fact)s — evidence that blocks
@@ -28,11 +33,15 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 
 /// Tables that hold a foreign key onto `commission(id)` but whose rows are
 /// **deliberately not facts** — commission-owned bookkeeping that cascades away
-/// with the commission instead of blocking its deletion (a future changelog is the
-/// expected first entry). Every commission-referencing table must appear in
-/// exactly one of this list or [`COMMISSION_FACT_TABLES`]; the schema tripwire
-/// test enforces the classification.
-pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[];
+/// with the commission instead of blocking its deletion. Every
+/// commission-referencing table must appear in exactly one of this list or
+/// [`COMMISSION_FACT_TABLES`]; the schema tripwire test enforces the
+/// classification.
+///
+/// - `commission_changelog` (ZMVP-87): the commission's own memory. The Changelog
+///   DD's retention rule — entries hard-delete **only** with the commission itself
+///   (or legal duty) — is exactly `ON DELETE CASCADE`, not a deletion block.
+pub const COMMISSION_NON_FACT_TABLES: &[&str] = &["commission_changelog"];
 
 // Tripwire (conductor ruling E18): the constant-`false` body of
 // `commission_has_facts` below is sound ONLY while the fact registry is empty.
@@ -108,5 +117,109 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// table in the same change that mints the first fact (Deletion DD `3014657`).
     async fn commission_has_facts(&mut self, _id: CommissionId) -> anyhow::Result<bool> {
         Ok(false)
+    }
+
+    /// Repoint (or clear) the `commission.linked_channel` column — one
+    /// **conditional** `UPDATE` on the open transaction: the row matches only
+    /// when the stored value differs from the requested one
+    /// (`IS DISTINCT FROM`, so NULLs compare honestly), making rows-affected THE
+    /// changed answer. The caller keys its changelog append on the bool in this
+    /// same unit of work (ZMVP-87 AC3; Changelog DD D4), so a duplicate
+    /// `channel_linked`/`channel_unlinked` entry is unrepresentable even under
+    /// concurrent writers. An absent commission matches no row and answers
+    /// `false`, per the port contract (existence is the caller's check).
+    async fn set_linked_channel(
+        &mut self,
+        id: CommissionId,
+        channel: Option<&ChannelPointer>,
+    ) -> anyhow::Result<bool> {
+        let result = query!(
+            r#"
+            UPDATE commission
+            SET linked_channel = $2
+            WHERE id = $1 AND linked_channel IS DISTINCT FROM $2
+            "#,
+            *id,
+            channel.map(ChannelPointer::as_str),
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+/// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
+/// the one canonical commission read port, born with the changelog (ZMVP-87).
+/// Holds the pool directly — reads pay no transaction tax; the writes live on
+/// [`PgCommissionWrites`], reached through the [`UnitOfWork`](domain::ports::UnitOfWork).
+pub struct PgCommissionStore {
+    pool: PgPool,
+}
+
+impl PgCommissionStore {
+    /// Wraps a [`PgPool`] as a [`CommissionStore`]. Clones the pool handle (cheap —
+    /// it's an `Arc`), so the caller keeps its own.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommissionStore for PgCommissionStore {
+    /// Rebuild the [`Commission`] from its row. The stored `lifecycle`,
+    /// `visibility`, and `linked_channel` values are re-validated through their
+    /// domain gates ([`LifecycleStep::parse`] / [`Visibility::parse`] /
+    /// [`ChannelPointer::try_new`], with [`CommissionTitle::try_new`] for the
+    /// title); a value outside its vocabulary means row tampering and surfaces
+    /// as an `Err`, never a panic or a silent default.
+    async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
+        let Some(row) = query!(
+            r#"
+            SELECT title, owner_id, lifecycle, visibility, deadline, linked_channel, created_at
+            FROM commission
+            WHERE id = $1
+            "#,
+            *id,
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(Commission {
+            id,
+            title: CommissionTitle::try_new(row.title)?,
+            owner_id: UserId::new(row.owner_id),
+            lifecycle_step: LifecycleStep::parse(&row.lifecycle)
+                .ok_or_else(|| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?,
+            visibility: Visibility::parse(&row.visibility)
+                .ok_or_else(|| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
+            deadline: row.deadline,
+            linked_channel: row
+                .linked_channel
+                .map(ChannelPointer::try_new)
+                .transpose()?,
+            created_at: row.created_at,
+        }))
+    }
+
+    /// The **owner arm** of participant-hood (ZMVP-87): one `EXISTS` over the
+    /// owner column — the owner IS a Participant without holding a Seat
+    /// (DESIGN/Commission). ZMVP-79 extends this query with the seated arm; an
+    /// unknown commission matches nothing and answers `false`.
+    async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
+        let row = query!(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM commission WHERE id = $1 AND owner_id = $2
+            ) AS "is_participant!"
+            "#,
+            *commission,
+            *user,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.is_participant)
     }
 }

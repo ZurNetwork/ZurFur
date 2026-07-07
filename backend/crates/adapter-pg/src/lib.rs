@@ -22,6 +22,11 @@
 //!   ([`domain::ports::Database`] / [`domain::ports::UnitOfWork`]).
 //! - [`PgAccountStore`] — account/membership reads ([`domain::ports::AccountStore`]);
 //!   writes via [`PgAccountWrites`] ([`domain::ports::AccountWrites`]).
+//! - [`PgCommissionStore`] — commission reads incl. the participant predicate
+//!   ([`domain::ports::CommissionStore`]); writes via [`PgCommissionWrites`].
+//! - [`PgChangelogStore`] — the ordered commission-changelog read
+//!   ([`domain::ports::ChangelogStore`]); the append is a [`PgUnitOfWork`] view
+//!   ([`PgChangelogWrites`], [`domain::ports::ChangelogWrites`]).
 //! - [`PgUserStore`] — recognized-visitor reads ([`domain::ports::UserStore`]);
 //!   recognition via [`PgUserWrites`] ([`domain::ports::UserWrites`]).
 //! - [`PgProfileCache`] — read-through profile cache ([`domain::ports::ProfileCache`]);
@@ -43,6 +48,7 @@ pub use sqlx::PgPool;
 
 mod account;
 mod commission;
+mod commission_changelog;
 mod key_store;
 mod key_vault;
 mod plc_operation_log;
@@ -51,7 +57,10 @@ mod session_store;
 mod uow;
 mod user;
 pub use account::{PgAccountStore, PgAccountWrites};
-pub use commission::{COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionWrites};
+pub use commission::{
+    COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
+};
+pub use commission_changelog::{PgChangelogStore, PgChangelogWrites};
 pub use key_store::PgKeyStore;
 pub use key_vault::RootKey;
 pub use plc_operation_log::PgPlcOperationLog;

@@ -78,14 +78,17 @@ impl Problem {
     }
 
     /// `403` — a recognized caller who lacks the authority for the action (the
-    /// shared role floor; DESIGN/Roles). Action-neutral, like the grant/revoke seam.
+    /// shared role floor; DESIGN/Roles). Action- and resource-neutral: it serves
+    /// the account seams and the commission owner-only seams alike. **Never** the
+    /// answer for a caller who shouldn't learn the resource exists — that is the
+    /// uniform 404 (e.g. [`commission_not_found`](Problem::commission_not_found)).
     pub fn forbidden() -> Self {
         Self::new(
             "urn:zurfur:error:forbidden",
             "forbidden",
             "Forbidden",
             403,
-            "You don't have permission to perform this action on this account.",
+            "You don't have permission to perform this action.",
         )
     }
 
@@ -111,6 +114,25 @@ impl Problem {
             "Account not found",
             404,
             "No such account.",
+        )
+    }
+
+    /// `404` — the addressed commission "doesn't exist" **as far as this caller
+    /// may know**: the shared existence-hiding answer of the closed-door policy
+    /// (DESIGN/Commission; ZMVP-75/87). Returned identically whether the
+    /// commission is truly absent **or** exists but is hidden from the caller
+    /// (a non-participant), so the response can never be used as an existence
+    /// oracle — which is also why a non-participant is **never** answered
+    /// [`forbidden`](Problem::forbidden) (a 403 would confirm there is something
+    /// to be forbidden from). `detail` is a fixed string by construction: any
+    /// per-occurrence wording could leak which case produced it.
+    pub fn commission_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-not-found",
+            "commission_not_found",
+            "Commission not found",
+            404,
+            "No such commission.",
         )
     }
 

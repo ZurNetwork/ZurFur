@@ -25,7 +25,8 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use axum::{Router, middleware};
 use domain::ports::{
-    AccountStore, Authenticator, Database, DidMinter, ProfileCache, ProfileSource, UserStore,
+    AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter,
+    ProfileCache, ProfileSource, UserStore,
 };
 use figment::{
     Figment,
@@ -281,6 +282,18 @@ pub struct AppState {
     /// pool. Every account *write* lives on the [`UnitOfWork`](domain::ports::UnitOfWork)
     /// vended by [`database`](AppState::database). pg in `main`, mem in tests.
     pub accounts: Arc<dyn AccountStore>,
+    /// The [`CommissionStore`] read port (ZMVP-87): the canonical commission
+    /// reads — `find`, and the `is_participant` predicate every "a Participant
+    /// does X" endpoint authorizes through (owner-arm-only until ZMVP-79 adds
+    /// the seated arm). Commission *writes* live on the
+    /// [`UnitOfWork`](domain::ports::UnitOfWork) vended by
+    /// [`database`](AppState::database). pg in `main`, mem in tests.
+    pub commissions: Arc<dyn CommissionStore>,
+    /// The [`ChangelogStore`] read port (ZMVP-87): the ordered, participant-only
+    /// changelog read. The *append* is a [`UnitOfWork`](domain::ports::UnitOfWork)
+    /// view (`uow.changelog()`) — entries commit atomically with the domain
+    /// writes they record (Changelog DD D4). pg in `main`, mem in tests.
+    pub changelog: Arc<dyn ChangelogStore>,
     /// The [`Database`] write factory: the **only** way to reach a private-store
     /// domain write. A handler calls `begin()`, issues its writes through the
     /// returned [`UnitOfWork`](domain::ports::UnitOfWork)'s view accessors
@@ -318,7 +331,10 @@ pub struct AppState {
 /// (`POST /accounts`, `POST`/`DELETE /accounts/{id}/members`,
 /// `DELETE /accounts/{id}/members/me`, `POST`/`DELETE /accounts/{id}/invitations`,
 /// `POST /accounts/{id}/invitations/decline`, `POST /accounts/{id}/invitations/accept`);
-/// and `POST /commissions` (create a commission — user-scoped, no Account required).
+/// and the commissions tree (`POST /commissions` — user-scoped, no Account
+/// required; `GET /commissions/{id}/changelog`, `POST /commissions/{id}/notes`,
+/// `PUT`/`DELETE /commissions/{id}/channel` — participant-gated behind the
+/// closed-door uniform 404, ZMVP-87).
 ///
 /// Cross-persona unlinkability (ZMVP-17): this table is the public surface, and
 /// no route on it may correlate one person's separate handles — join one

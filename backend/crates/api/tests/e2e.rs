@@ -25,6 +25,8 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     let backend = MemBackend::new();
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         database: backend.database(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {

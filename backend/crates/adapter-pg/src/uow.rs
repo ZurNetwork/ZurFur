@@ -10,11 +10,14 @@
 //! see `PgProfileCache` and the `no_bare_pool_writes` guard.)
 
 use async_trait::async_trait;
-use domain::ports::{AccountWrites, CommissionWrites, Database, UnitOfWork, UserWrites};
+use domain::ports::{
+    AccountWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork, UserWrites,
+};
 use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::PgCommissionWrites;
 use crate::account::PgAccountWrites;
+use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
 
 /// The PostgreSQL [`Database`] factory: holds the pool and opens one transaction
@@ -69,6 +72,13 @@ impl UnitOfWork for PgUnitOfWork {
 
     fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
         Box::new(PgCommissionWrites { conn: &mut self.tx })
+    }
+
+    /// A view of the changelog append surface over this transaction (ZMVP-87):
+    /// an entry commits atomically with the domain write it records (Changelog
+    /// DD D4 — a pool-backed append would be a dual write).
+    fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
+        Box::new(PgChangelogWrites { conn: &mut self.tx })
     }
 
     /// A view of the user (recognition) write surface over this transaction.

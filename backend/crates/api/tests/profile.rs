@@ -63,6 +63,8 @@ async fn me_shows_profile_then_serves_it_from_cache() {
     let backend = MemBackend::new();
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
@@ -154,6 +156,8 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
     let backend = MemBackend::new();
     let state = AppState {
         accounts: backend.account_store(),
+        commissions: backend.commission_store(),
+        changelog: backend.changelog_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: config_for(addr),
         pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
