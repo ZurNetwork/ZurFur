@@ -1,9 +1,43 @@
 {
-  "uow": null,
-  "logbook": null,
-  "updated": "2026-07-02T01:20:00-06:00",
-  "_note": "No active unit of work — nothing in flight. Start the next one with /next-path (or /unit-of-work).",
-  "previous_unit": "8ef12a — COMPLETE. Single ticket ZMVP-50 'Signed did:plc UPDATE op + retryable outbox (reusable)' shipped: DidMinter::update_handle re-points alsoKnownAs (REPLACE), one byte-exact PlcOperation path shared with genesis (prev: Option), prev from own PlcOperationLog, gated no-op directory in v1; idempotent via content-address + UNIQUE(cid) (deterministic signing verified). Engineer forks: A1 (contract-only outbox, no worker → launch-gated ZMVP-51), B1 (extend DidMinter), faithful-primitive re-assert. Build on Fable 5 (did NOT refuse crypto build), Opus /security-review. Security fixes IN-TICKET: F1 partial UNIQUE(did,prev) (no chain fork), F2 latest_op carries public fields fwd + imports only operational key. /address-comments: Copilot identity-only guard (reject tombstone/non-identity-only prior, no silent field drop) + doc nit. Merged main f3268bc (#89), ZMVP-50 → Done. Unblocks ZMVP-46 (handle change, Engineer's lane, In Progress). Logbook: .understand/logbooks/8ef12a.md. OPEN FOLLOW-UPS: (1) F3 launch-gated — verify plc.directory resubmit idempotency before real submission (offer to file under ZMVP-51/launch checklist); (2) model-policy reconcile — RESOLVED 2026-07-02 via /optimize-memory: Engineer confirmed ZMVP-50's Fable-build was a ONE-OFF override, policy STANDS (Sonnet default builder, Fable opt-in non-security only, Opus all security+review); feedback_model_split_fable_impl_opus_design was a PHANTOM (never existed as a file). Recorded in feedback_model_assignment_policy.",
-  "next_action": "No unit in flight. Plan the next with /next-path. ZMVP-46 (Account handle-change flow) is now UNBLOCKED and is the Engineer's domain-heavy lane (In Progress, consumes update_handle).",
-  "tickets": []
+  "uow": "nniul4",
+  "logbook": ".understand/logbooks/nniul4.md",
+  "epic": "ZMVP-18",
+  "epic_title": "The Reason (Commissions)",
+  "updated": "2026-07-05T19:10:00-06:00",
+  "_note": "STACKED-BRANCH build, fully automatic except Engineer domain forks (Engineer away; forks batched in gate-a doc, each blocking only its tickets). Lanes per Engineer directive 2026-07-05: Fable plans+builds (myth agents), Opus builds security-nature tickets + per-ticket critique + ONE end-of-epic /security-review, Haiku all git/Jira. One PR per ticket targeting its parent branch; Copilot review on EVERY PR; Engineer merges bottom-up; Haiku rebase-cascades after each merge.",
+  "references": {
+    "gate_a": ".understand/gate-a-zmvp18-nniul4-20260705.md",
+    "interview_decisions": ".understand/decisions-zmvp18-interview-20260705.md",
+    "scout_output": "/tmp/claude-1000/-home-zuri-code-zurfur/86a0ab87-1d56-4b40-852c-c80d3a1fc1ef/tasks/wespauefq.output",
+    "scout_journal": "~/.claude/projects/-home-zuri-code-zurfur/2e4964c1-23a4-4d14-81a8-e88a0ac066bf/subagents/workflows/wf_0eae4cb5-d62/journal.jsonl",
+    "ticket_texts": "/tmp/claude-1000/-home-zuri-code-zurfur/2e4964c1-23a4-4d14-81a8-e88a0ac066bf/scratchpad/zmvp18-tickets.md"
+  },
+  "holds": "NONE — all 9 resolved by Engineer batch-2 interview 2026-07-05 evening (Jira comments 10041-10050; ZMVP-93 annotation corrected).",
+  "batch2_rulings": {
+    "B1": "FLIPPED: Commission Admin IS real in v1 (Structural Authority DD 29425666). 83 = three-variant enum Creator/Client/Admin, owner-only appoints, Admins never mint Admins; role grant/revoke authority stays owner-only; Admin-capable operational powers via ONE shared is_owner||has_role(Admin) helper, role arm inert until 83 lands, 83 activates + sweeps earlier call sites (incl. 87 channel pointer, 70 view grants). REVERSES part of interview ruling #2/#3 rationale.",
+    "B2": "Persisted commission_participant table, owner auto-insert at creation + backfill, born in 76; 79 adds seated arm + repoints port; 69 = pure owner_id move. S3 UNBLOCKED.",
+    "B3": "75 WIDENS to own view-grant READ enforcement (grant term + integration test).",
+    "B4": "CEILING WINS: effective = min(ceiling, max(standing, best grant key)) then min-of-ancestors. 96 UNBLOCKED.",
+    "B5": "PAID invoice mints the fact (Engineer chose vs rec) — 95 keys Fact on paid-mark; issued-unpaid stays hard-deletable; Invoices DD D1 amendment queued for /design-sync.",
+    "B6": "Lifecycle matrix: Draft->{Batched,Active,Cancelled}; Batched->{Active,Draft,Cancelled}; Active->{Batched,Completed,Cancelled}; Completed/Cancelled terminal; Disputed enum-only. 84 UNBLOCKED.",
+    "B7": "Capstone 91 EXTENDED with phases->approval->invoice->paid loop (witnesses paid-fact locking hard-delete).",
+    "B8": "66 wires FileStore blob deletion (idempotent, orphan-tolerant); second-lander of 66/88 owns the integration test.",
+    "B9": "Accepted application w/ dead invitation = TERMINAL. 82 fully specified."
+  },
+  "stacks": {
+    "S0": { "base": "main", "worktree": "~/code/zurfur-zmvp18-s0", "order": ["ZMVP-67", "ZMVP-87"], "status": "SHIPPED — PR #99 (67, base main) + PR #100 (87, base 67); critiques clean; Copilot confirmed on both via REST (gh pr view --json reviewRequests HIDES bot reviewers — always verify via gh api repos/../pulls/N --jq '.requested_reviewers[].login')" },
+    "S1": { "base": "S0-top (87 branch)", "order": ["ZMVP-71", "ZMVP-72", "ZMVP-73", "ZMVP-31", "ZMVP-74", "ZMVP-75"], "status": "planned (wave B)", "opus": ["ZMVP-75"] },
+    "S2": { "base": "S0-top", "order": ["ZMVP-66", "ZMVP-68", "ZMVP-70", "ZMVP-57"], "status": "planned (wave B)", "opus": ["ZMVP-70", "ZMVP-57"] },
+    "S4": { "base": "S0-top", "order": ["ZMVP-85", "ZMVP-86", "ZMVP-88", "ZMVP-89", "ZMVP-90", "ZMVP-84"], "status": "planned (wave B) — fully unblocked", "opus": ["ZMVP-88"] },
+    "S3": { "base": "S1@72, rebase onto S1-top before 96", "order": ["ZMVP-77", "ZMVP-76", "ZMVP-78", "ZMVP-79", "ZMVP-83", "ZMVP-69", "ZMVP-96", "ZMVP-80", "ZMVP-81", "ZMVP-82"], "status": "planned — fully unblocked (B2/B4/B9 ruled)", "opus": ["ZMVP-96", "ZMVP-80"] },
+    "S5": { "base": "after S3@83 + S4@88 merge", "order": ["ZMVP-93", "ZMVP-94", "ZMVP-95"], "status": "planned — unblocked (B5 ruled: paid=fact)" },
+    "SC": { "base": "merged main, last", "order": ["ZMVP-91", "ZMVP-92"], "status": "planned", "notes": "91 builds two-actor MemAuthenticator fixture; committed walkthrough tests + transcript (E34); B7 may extend 91" },
+    "ZMVP-65": { "status": "MERGED pre-epic (43d6112 / PR #93); verify done, Jira transition in wave A" }
+  },
+  "decisions": {
+    "interview_9": "see .understand/decisions-zmvp18-interview-20260705.md + Jira comments 10031-10039 (self-labels; owner-only authority; manual Delayed/system Late; un-archive EXISTS owner-only; re-apply allowed; Creator billing; 89 API+script no UI; 94 changelog-only; no Commission Admin v1 [re-flagged as B1 vs DD 29425666])",
+    "adopted_seams": "see gate-a doc 'Adopted' section (E3/E4/E5/E6/E12/E13/E14/E16/E17/E18/E20/E21/E23/E24/E25/E26/E29/E30/E31/E32/E34/E35 + module splits + non-Serialize raw tree + emitter pinning + fixture-to-91 + post-S3 cascade test)",
+    "order_fixes": "31 before 74 (field owner before gate enforcer); 84 to S4 tail (B6); S1 forks off S0-top for S3 lineage cleanliness (pre-gate: functionally optional)",
+    "lanes": "Opus builds: 75, 96, 70, 57, 88, 80 (exposure-critical surfaces). Scouts flagged a broader security set — deferred to the end-of-epic Opus /security-review scope, which covers the whole diff regardless."
+  }
 }

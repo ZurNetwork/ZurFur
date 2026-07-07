@@ -1,0 +1,45 @@
+# Gate A — Epic ZMVP-18 "The Reason (Commissions)" · uow `nniul4` · 2026-07-05
+
+Pre-gate verdict: **proceed** (no blocking carve). Scouts: 6/6; full evidence in the workflow output
+(`/tmp/claude-1000/-home-zuri-code-zurfur/86a0ab87-1d56-4b40-852c-c80d3a1fc1ef/tasks/wespauefq.output`, per-agent detail in
+`~/.claude/projects/-home-zuri-code-zurfur/2e4964c1-23a4-4d14-81a8-e88a0ac066bf/subagents/workflows/wf_0eae4cb5-d62/journal.jsonl`).
+Interview rulings (9, settled): `.understand/decisions-zmvp18-interview-20260705.md` + Jira comments 10031–10039.
+
+## Map v2 (stacked branches; 🔒 = Opus builds)
+
+- **ZMVP-65 — already MERGED** on main (43d6112, PR #93); 4 tests cover its 4 ACs → verify done, transition Jira Done. (Scout-verified.)
+- **S0 Spine** (off main): **67 → 87**. 67 = Fact contract + domain module split (ports/→dir, commission/→dir, pure moves). 87 = the load-bearing ticket: changelog core (UoW append, frozen TEXT+enum taxonomy, E6 envelope), `CommissionStore` read port + `is_participant` (owner-arm only), 404 existence-hiding helper, routes split, linked-channel pointer.
+- **S1 Tree+Projection** (off S0-top): **71 → 72 → 73 → 31 → 74 → 75🔒** (31 before 74: 31 owns maturity field/type, 74 enforces the widening gate).
+- **S2 Deletion+Placement** (off S0-top): **66 → 68 → 70🔒 → 57🔒**.
+- **S4 Work loop** (off S0-top): **85 → 86 → 88🔒 → 89 → 90 → 84⏸(B6)**.
+- **S3 Membership** (off S1@72): **77 → ⏸(B2) 76 → 78 → 79 → 83 → 69 → [rebase onto S1-top] → ⏸(B4) 96🔒 → 80🔒 → 81 → 82⏸(B9 edge only)**.
+- **S5 Phases+Invoices** (after S3@83 + S4@88 merge): **93 → 94 → 95⏸(B5 fact-wiring)**.
+- **SC Capstones** (last, off merged main): **91 → 92** (91 builds the multi-identity MemAuthenticator fixture; 92 reuses. "Shared link" = plain commission URL through 75's projection — scout-confirmed, no share-token feature).
+
+Lanes: Fable builds (myth agents), Opus builds 🔒 tickets + per-ticket critique + the single end-of-epic /security-review, Haiku does all git/Jira. One PR per ticket targeting its parent branch; Copilot review requested on every PR.
+
+## ⏸ HOLD BATCH — ✅ ALL RESOLVED 2026-07-05 evening (Engineer batch-2 interview; Jira comments 10041–10050)
+
+Rulings: **B1 FLIPPED** (Commission Admin real in v1 — 93 annotation corrected rev-2; shared `is_owner||has_role(Admin)` helper, role arm inert until 83, which sweeps earlier sites) · B2 persisted table ✓ · B3 widen 75 ✓ · B4 ceiling wins ✓ · **B5 PAID mints the fact** (against rec — Ask-for-Art governs; Invoices DD amendment queued) · B6 proposed matrix ✓ · B7 extend 91 ✓ · B8 wire blob deletion ✓ · B9 terminal ✓. Canonical detail: ledger `batch2_rulings`. Original questions kept below for the record.
+
+| # | Question | Recommendation on the table | Blocks |
+|---|----------|------------------------------|--------|
+| **B1** (E7) | **Commission Admin — your interview ruling conflicts with a decided DD.** You ruled "no Commission Admin role in v1" (comment on ZMVP-93), but **Structural Authority DD 29425666 (DECIDED, not in the local index) makes Commission Admin an MVP role** with a defined Admin-capable list, and the Changelog taxonomy lists "Admin grant/revoke". Confirm the descope (v1 authority checks written owner-only, Admin grant → follow-up ticket, changelog variant inert) or flip (83 gains a third variant, owner-only-appoints). | Standing = your ruling (owner-only, degrades cleanly, additive later). Building on it. | Nothing now; shapes 83's enum |
+| **B2** (E1) | **Participant persistence.** 69 AC2 ("prior owner remains a Participant") + owner-without-seat make computed owner∪seated unsound. Bless: persisted `commission_participant` table, owner auto-inserted at creation + backfill (71-root pattern), born in 76; 87's port stays owner-arm; 79 repoints + adds seated arm; 69 = pure owner_id move. | Persisted table as described. | **S3 from 76 onward** (77 builds) |
+| **B3** (E2) | **View-grant READ enforcement is owned by NO ticket** (70 = write-side, 75 = participant/world, capstones never exercise grants). Widen 75's ACs to include the max(standing, best-key-via-membership) term, or carve a small read-enforcement ticket after 70? | Widen 75 (+ integration test). 75 builds NOW with the additive seam (grant/ceiling terms defaulting to identity) either way. | The grant read-path only |
+| **B4** (E22) | **Ceiling vs grant composition** — can an account view-grant lift a ceilinged seat-holder above their ceiling? Seat-Ceilings DD says ceiling bounds the seat; Ownership Separation's literal max() says the key wins. Data-leak-if-wrong. | NO — ceiling is a hard cap (Golem scopes collapse otherwise). | 96 |
+| **B5** (E9) | **What mints the commission fact: an issued invoice or a paid one?** Invoices DD D1 says issued; Ask-for-Art D1 says payment mints. Cross-DD tension needing a one-line reconciliation. | Issued = fact (newer, more specific DD; voided invoices remain facts). | 95's fact-wiring + first real gate tests |
+| **B6** (E10) | **Legal Lifecycle transition matrix** (page gives only the nominal evolution). Proposed: Draft→{Batched,Active,Cancelled}; Batched→{Active,Draft,Cancelled}; Active→{Batched,Completed,Cancelled}; Completed/Cancelled terminal; Disputed unreachable this epic. | The proposed matrix; record on the Commission page. | 84 (moved to S4 tail) |
+| **B7** (E33) | **Extend capstone 91 with the phase→approve→invoice→paid loop?** S5 postdates the capstone dressing; otherwise S5 is capstone-exempt (record which). | Extend 91. | Nothing until SC |
+| **B8** (E13/gap) | **Hard-delete × blobs**: wire FileStore.delete into 66's cascade, or record "v1 mock orphans blobs, accepted until the blob walkthrough"? Must be *written, not defaulted*. | Wire deletion (idempotent, orphan-tolerant); whichever of 66/88 lands second owns the integration test. | The 66↔88 integration test only |
+| **B9** (S3 scout) | **Application accepted, then its invitation is revoked/declined** — terminal (new application required) or re-opens? | Terminal (simplest, append-only-friendly). | 82's edge-case AC only |
+
+## Adopted (mechanical/DD-forced; veto at PR review)
+
+E3 uniform-404 existence hiding (403/404 split = existence oracle) · E4 ChangelogWrites on UnitOfWork (Changelog DD D4 forbids dual-write) · E5 taxonomy frozen at 87, TEXT + Rust enum, unemitted variants inert · E6 envelope (seq order key; created_at carried; actor NULL=system) · E12 tokio-interval deadline sweeper (compute-on-read can't satisfy "Late lands in changelog") · E13 FileStore w/ UUIDv7 opaque keys — never BlobId(Cid) (boundary category error), attachment+nosniff headers · E14 typed markup enum, normalized 0–1 coords, jsonb (semantic not byte fidelity, noted) · E16 root mode = single source of truth, DROP flat visibility column in 74 (71 backfills) · E17 commission_has_facts on the UoW (TOCTOU) · E18 minimal Fact trait (marker + anchor) + tripwire test · E20 seat/slot satellite tables + dedicated endpoints · E21 seat kind = open enumeration (Seat≠Role per DD D3) · E23 parallel `commission_invitation` (singular), partial unique pending index · E24 Golem AC4 = explicitly handed-off failing/#[ignore] test, no fake green · E25 quota = count-by-query over UTC day, partial pending index · E26 transfer = guarded owner_id move · E29 status = two nullable columns (invariant by shape) · E30 channel pointer owner-only, raw text + cap, frontend renders · E31 `commission_phase` table w/ position · E32 approval once, no un-approve, owner-≠-Client adversarial test · E34 capstones = committed integration tests + transcript (106 precedent) · E35 ON DELETE CASCADE on every commission-child FK (departure from account precedent, justified: 66 merges first) · module de-collision splits in S0 · non-Serialize raw tree type (projection-only serialization, compile-enforced) · deadline set/extend entries pinned to 86; seat declare/invite/apply/decline entries pinned to 76/78/80/82 · post-S3 full-cascade integration test owned by /close-gaps --post · two-actor fixture owned by 91.
+
+Already ruled by interview (standing): self-labels + widening gate (E15) · manual Delayed (E11) · re-apply allowed (E25) · Creator billing (E8) · **un-archive EXISTS, owner-only, changelog both ways (overrides pre-gate's one-way lean — Engineer ruled with options in hand)** · changelog-only for 94 · no UI (89) · owner-only grants (83).
+
+## Design-sync queue (on your confirmation, later)
+
+Commission page: participant wording ("authority comes from being a Participant"); record the E10 matrix · Invoices DD: close the billing-authority row (Creator) + reconcile B5 with Ask-for-Art D1 · ZMVP-83's stale Roles-page ref · commission.rs module doc (managing-account mention) · 57 rewrites the stale account_has_facts SAFETY comment (in-ticket) · index additions: Structural Authority DD 29425666, Seat Visibility Ceilings DD 30277634 (+ the post-07-02 sweep already on offer).
