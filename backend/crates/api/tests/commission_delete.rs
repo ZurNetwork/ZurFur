@@ -35,6 +35,7 @@ use domain::elements::{
         NewSurface, NodeId,
     },
     did::Did,
+    maturity::Maturity,
     profile::Profile,
     user::UserId,
 };
@@ -344,6 +345,10 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
         self.0.remove_node(commission, node).await
+    }
+
+    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+        self.0.set_maturity(id, maturity).await
     }
 
     async fn place(

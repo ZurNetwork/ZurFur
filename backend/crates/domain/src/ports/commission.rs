@@ -12,6 +12,7 @@ use crate::{
             ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewComponent,
             NewSurface, NodeId, Placement,
         },
+        maturity::Maturity,
         user::UserId,
     },
 };
@@ -305,6 +306,21 @@ pub trait CommissionWrites: Send {
         id: CommissionId,
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
+
+    /// Set — or replace — the commission's maturity posture (ZMVP-31;
+    /// Maturity Vocabulary DD `29982722`): the four-tier rating plus the
+    /// orthogonal Graphic flag, one envelope write on the open unit of work.
+    ///
+    /// **Replace-only, deliberately**: the signature takes a [`Maturity`],
+    /// not an `Option`, so no call site can clear a rating back to unrated —
+    /// a commission widened past Private (which ZMVP-74 gates on a rating
+    /// being present) can therefore never *lose* its rating through this
+    /// port; the unrated state exists only between birth and the first
+    /// rating. Setting on an absent commission is a no-op write; existence
+    /// and authority (owner-only in v1) are the caller's checks, settled
+    /// before this is reached. Deliberately **not** changelog-recorded:
+    /// maturity edits are not in the frozen entry taxonomy (ZMVP-87).
+    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()>;
 
     /// Set (`Some`) or clear (`None`) the commission's external **linked
     /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). Returns whether

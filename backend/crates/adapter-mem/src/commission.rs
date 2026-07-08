@@ -18,6 +18,7 @@ use domain::elements::{
         NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, SurfaceMode,
         Visibility,
     },
+    maturity::Maturity,
     user::UserId,
 };
 use domain::ports::{
@@ -79,6 +80,10 @@ pub(crate) struct StoredCommission {
     pub(crate) visibility: Visibility,
     /// The nullable-but-fixed deadline envelope field.
     pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
+    /// The maturity posture, or `None` while unrated (ZMVP-31) — the mem
+    /// mirror of the pg `maturity` + `graphic` column pair (one field here:
+    /// the both-or-neither CHECK is a struct by construction).
+    pub(crate) maturity: Option<Maturity>,
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
     pub(crate) linked_channel: Option<ChannelPointer>,
@@ -100,6 +105,7 @@ impl StoredCommission {
             lifecycle_step: self.lifecycle_step.clone(),
             visibility: self.visibility.clone(),
             deadline: self.deadline,
+            maturity: self.maturity,
             linked_channel: self.linked_channel.clone(),
             archived_at: self.archived_at,
             created_at: self.created_at,
@@ -235,6 +241,7 @@ impl CommissionWrites for MemCommissionWrites {
                     lifecycle_step: commission.lifecycle_step.clone(),
                     visibility: commission.visibility.clone(),
                     deadline: commission.deadline,
+                    maturity: commission.maturity,
                     linked_channel: commission.linked_channel.clone(),
                     archived_at: commission.archived_at,
                     created_at: commission.created_at,
@@ -443,6 +450,21 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
+    /// Write the maturity posture — the mem mirror of the pg
+    /// `UPDATE commission SET maturity, graphic` (ZMVP-31). Replace-only by
+    /// signature (no clear arm exists); an absent commission is a no-op, per
+    /// the port contract (existence is the caller's check).
+    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        if let Some(stored) = commissions.get_mut(&id) {
+            stored.maturity = Some(maturity);
+        }
+        Ok(())
+    }
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
     /// the pg conditional `UPDATE`: the write applies only when the stored value
     /// differs from the requested one, so a repeat answers `false` and the
@@ -1491,6 +1513,92 @@ mod tests {
                 .is_none(),
             "the pointer clears"
         );
+    }
+
+    // ZMVP-31 (store layer) — a fresh commission is unrated (the birth
+    // invariant); set_maturity round-trips every axis/graphic pairing and a
+    // later write REPLACES the posture (replace-only — no clear exists);
+    // the write is unit-of-work-scoped (a dropped unit rates nothing); an
+    // absent commission is a no-op, per the port contract.
+    #[tokio::test]
+    async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
+        use domain::elements::maturity::MaturityRating;
+
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Rated", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        let unrated = backend.find_commission(id).await.unwrap().expect("exists");
+        assert_eq!(unrated.maturity, None, "born unrated (the invariant)");
+
+        for rating in MaturityRating::ALL {
+            for graphic in [true, false] {
+                let posture = Maturity {
+                    rating: *rating,
+                    graphic,
+                };
+                let mut uow = database.begin().await.unwrap();
+                uow.commissions().set_maturity(id, posture).await.unwrap();
+                uow.commit().await.unwrap();
+                assert_eq!(
+                    backend
+                        .find_commission(id)
+                        .await
+                        .unwrap()
+                        .expect("exists")
+                        .maturity,
+                    Some(posture),
+                    "each write replaces the whole posture",
+                );
+            }
+        }
+
+        // A dropped unit's write is discarded — the last committed posture holds.
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions()
+                .set_maturity(
+                    id,
+                    Maturity {
+                        rating: MaturityRating::Suggestive,
+                        graphic: true,
+                    },
+                )
+                .await
+                .unwrap();
+            // `uow` drops here without `commit` → the staged write is discarded.
+        }
+        assert_eq!(
+            backend
+                .find_commission(id)
+                .await
+                .unwrap()
+                .expect("exists")
+                .maturity,
+            Some(Maturity {
+                rating: MaturityRating::Adult,
+                graphic: false,
+            }),
+            "a dropped unit of work changes nothing — the loop's last committed posture holds",
+        );
+
+        // An absent commission is a no-op, not an error (existence is the
+        // caller's check).
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .set_maturity(
+                CommissionId::new(uuid::Uuid::now_v7()),
+                Maturity {
+                    rating: MaturityRating::Adult,
+                    graphic: false,
+                },
+            )
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
     }
 
     /// Seeds a committed commission and returns `(its id, its root node id)`.
