@@ -239,6 +239,24 @@ impl Problem {
         )
     }
 
+    /// `409` — the addressed node is the commission's root surface, which is
+    /// the fixed skeleton and cannot be removed (ZMVP-73 AC3; the Title is not
+    /// a tree node, so no node id even addresses it). A state conflict, not an
+    /// authority failure — and honest by construction: like
+    /// [`parent_not_a_surface`](Problem::parent_not_a_surface) it is only ever
+    /// reachable past the owner gate *and* past the absent/foreign target
+    /// check ([`node_not_found`](Problem::node_not_found)), so it can never
+    /// confirm that a foreign node is a root.
+    pub fn cannot_remove_root() -> Self {
+        Self::new(
+            "urn:zurfur:error:cannot-remove-root",
+            "cannot_remove_root",
+            "The root surface cannot be removed",
+            409,
+            "Every commission keeps its root surface; remove its children instead.",
+        )
+    }
+
     /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
     /// nowhere to re-home its members, so leaving is refused as a state conflict (not
     /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.

@@ -306,9 +306,11 @@ impl NewComponent {
 /// one; Surfaces DD amendment 2). Derived from the commission itself and
 /// persisted by [`CommissionWrites::create`](crate::ports::CommissionWrites::create)
 /// in the same insert — a treeless commission is unrepresentable, and no second
-/// code path exists that could forget it. It cannot be removed: no removal
-/// operation exists yet at all, and when pruning lands (ZMVP-73) the root is the
-/// guarded exception.
+/// code path exists that could forget it. It cannot be removed: pruning
+/// (ZMVP-73) guards it —
+/// [`CommissionWrites::remove_node`](crate::ports::CommissionWrites::remove_node)
+/// refuses the root with
+/// [`CannotRemoveRoot`](crate::ports::CannotRemoveRoot).
 #[derive(Debug)]
 pub struct RootSurface {
     /// The freshly minted node key (UUIDv7).

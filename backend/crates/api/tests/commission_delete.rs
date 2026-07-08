@@ -32,7 +32,7 @@ use domain::elements::{
     account::AccountId,
     commission::{
         ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, NewComponent,
-        NewSurface,
+        NewSurface, NodeId,
     },
     did::Did,
     profile::Profile,
@@ -340,6 +340,10 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
         self.0.add_component(component).await
+    }
+
+    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
+        self.0.remove_node(commission, node).await
     }
 
     async fn place(
