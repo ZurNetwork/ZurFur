@@ -14,9 +14,9 @@ use domain::elements::{
     account::AccountId,
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, CommissionTree, DirectionStatus, GrantLevel, LifecycleStep,
-        NewChangelogEntry, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
-        RootSurface, SurfaceMode, Visibility,
+        CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, GrantLevel,
+        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSurface, NodeId,
+        NodeKind, NodeRow, Placement, RootSurface, SurfaceMode, Visibility, derive_deadline_status,
     },
     maturity::Maturity,
     user::UserId,
@@ -88,6 +88,9 @@ pub(crate) struct StoredCommission {
     /// mem mirror of the pg `direction_status` column: one nullable slot, so a
     /// set replaces by construction.
     pub(crate) direction_status: Option<DirectionStatus>,
+    /// The deadline-axis Status, or `None` while none is held (ZMVP-86) — the
+    /// mem mirror of the pg `deadline_status` column: the same one-slot shape.
+    pub(crate) deadline_status: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
     pub(crate) linked_channel: Option<ChannelPointer>,
@@ -102,6 +105,15 @@ impl StoredCommission {
     /// Rebuild the aggregate from its stored parts (the commission analogue of
     /// how `find` rebuilds an `Account`).
     fn rebuild(&self, id: CommissionId) -> Commission {
+        // Late is derived fresh at lookup, never persisted — the pg `find`
+        // mirror (Engineer ruling 2026-07-08). The stored `deadline_status` is
+        // the manual `Delayed` flag only.
+        let deadline_status = derive_deadline_status(
+            self.deadline,
+            &self.lifecycle_step,
+            self.deadline_status,
+            chrono::Utc::now(),
+        );
         Commission {
             id,
             title: self.title.clone(),
@@ -111,6 +123,7 @@ impl StoredCommission {
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
+            deadline_status,
             linked_channel: self.linked_channel.clone(),
             archived_at: self.archived_at,
             created_at: self.created_at,
@@ -248,6 +261,7 @@ impl CommissionWrites for MemCommissionWrites {
                     deadline: commission.deadline,
                     maturity: commission.maturity,
                     direction_status: commission.direction_status,
+                    deadline_status: commission.deadline_status,
                     linked_channel: commission.linked_channel.clone(),
                     archived_at: commission.archived_at,
                     created_at: commission.created_at,
@@ -591,6 +605,113 @@ impl CommissionWrites for MemCommissionWrites {
         }
         stored.direction_status = status;
         Ok(true)
+    }
+
+    /// Repoint (or clear) the stored deadline — the mem mirror of the pg
+    /// `UPDATE commission SET deadline` (ZMVP-86). An absent commission is a
+    /// no-op, per the port contract (existence is the caller's check).
+    async fn set_deadline(
+        &mut self,
+        id: CommissionId,
+        deadline: Option<DateTimeUtc>,
+    ) -> anyhow::Result<()> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        if let Some(stored) = commissions.get_mut(&id) {
+            stored.deadline = deadline;
+        }
+        Ok(())
+    }
+
+    /// Repoint (or clear) the stored deadline-axis Status — the mem mirror of
+    /// the pg `UPDATE commission SET deadline_status` (ZMVP-86): one nullable
+    /// slot, so a set replaces whole. An absent commission is a no-op, per the
+    /// port contract.
+    async fn set_deadline_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DeadlineStatus>,
+    ) -> anyhow::Result<()> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        if let Some(stored) = commissions.get_mut(&id) {
+            stored.deadline_status = status;
+        }
+        Ok(())
+    }
+
+    /// The sweeper's candidate scan — the mem mirror of the pg query (ZMVP-86,
+    /// ruling E12), answered on the unit's staged snapshot so the scan already
+    /// sees this unit's writes (the same same-transaction semantics as
+    /// [`commission_has_facts`](CommissionWrites::commission_has_facts)):
+    /// deadline strictly before `now`, not already Late, lifecycle not
+    /// terminal; ordered by deadline (id tiebreak) like the pg `ORDER BY`.
+    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
+        // Late is never persisted, so dedup the log on the changelog itself (the
+        // pg anti-join mirror). A commission is skipped only if its latest `late`
+        // entry is *after* its latest deadline change — a `deadline_set` /
+        // `deadline_extended` re-arms the log, so each fresh miss is its own
+        // event. Its Late *state* is derived on lookup; this pass only decides
+        // what still needs an entry.
+        let logged_since_change: std::collections::HashSet<CommissionId> = {
+            let changelog = self
+                .0
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned");
+            let mut latest_late: std::collections::HashMap<CommissionId, i64> =
+                std::collections::HashMap::new();
+            let mut latest_change: std::collections::HashMap<CommissionId, i64> =
+                std::collections::HashMap::new();
+            for entry in changelog.iter() {
+                let target = match entry.kind {
+                    ChangelogEntryKind::Late => &mut latest_late,
+                    ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended => {
+                        &mut latest_change
+                    }
+                    _ => continue,
+                };
+                target
+                    .entry(entry.commission_id)
+                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
+                    .or_insert(entry.seq);
+            }
+            latest_late
+                .into_iter()
+                .filter(|(id, late_seq)| *late_seq > latest_change.get(id).copied().unwrap_or(0))
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let mut lapsed: Vec<LapsedDeadline> = commissions
+            .iter()
+            .filter_map(|(id, stored)| {
+                let deadline = stored.deadline?;
+                if deadline >= now
+                    || stored.lifecycle_step.is_terminal()
+                    || logged_since_change.contains(id)
+                {
+                    return None;
+                }
+                Some(LapsedDeadline {
+                    id: *id,
+                    deadline,
+                    status: stored.deadline_status,
+                })
+            })
+            .collect();
+        lapsed.sort_by_key(|lapse| (lapse.deadline, *lapse.id));
+        Ok(lapsed)
     }
 }
 
@@ -1548,6 +1669,183 @@ mod tests {
             .unwrap();
         uow.commit().await.unwrap();
         assert_eq!(status_of(&backend).await, None, "cleared");
+    }
+
+    // ZMVP-86 (store layer) — the deadline and the MANUAL Delayed flag set and
+    // clear through the unit of work; a dropped unit discards the staged change
+    // (the mem mirror of pg's drop = rollback). Late is derived on lookup, never
+    // persisted, so it is exercised separately below.
+    #[tokio::test]
+    async fn deadline_and_status_set_and_clear_through_the_unit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Deadlined", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        // A FUTURE deadline, so the derived Late never masks the manual flag.
+        let deadline = Utc::now() + chrono::Duration::days(30);
+        let mut uow = database.begin().await.unwrap();
+        {
+            let mut commissions = uow.commissions();
+            commissions.set_deadline(id, Some(deadline)).await.unwrap();
+            commissions
+                .set_deadline_status(id, Some(DeadlineStatus::Delayed))
+                .await
+                .unwrap();
+        }
+        uow.commit().await.unwrap();
+        let found = backend.find_commission(id).await.unwrap().expect("exists");
+        assert_eq!(found.deadline, Some(deadline));
+        assert_eq!(
+            found.deadline_status,
+            Some(DeadlineStatus::Delayed),
+            "the manual flag persists; a future deadline is not Late"
+        );
+
+        // A dropped (uncommitted) unit discards its staged writes.
+        {
+            let mut uow = database.begin().await.unwrap();
+            let mut commissions = uow.commissions();
+            commissions.set_deadline(id, None).await.unwrap();
+            commissions.set_deadline_status(id, None).await.unwrap();
+        }
+        let found = backend.find_commission(id).await.unwrap().expect("exists");
+        assert_eq!(found.deadline, Some(deadline), "the clear rolled back");
+        assert_eq!(found.deadline_status, Some(DeadlineStatus::Delayed));
+
+        // Clear commits; an absent commission is a no-op, not an error.
+        let mut uow = database.begin().await.unwrap();
+        {
+            let mut commissions = uow.commissions();
+            commissions.set_deadline(id, None).await.unwrap();
+            commissions.set_deadline_status(id, None).await.unwrap();
+            commissions
+                .set_deadline(CommissionId::new(uuid::Uuid::now_v7()), Some(deadline))
+                .await
+                .unwrap();
+        }
+        uow.commit().await.unwrap();
+        let found = backend.find_commission(id).await.unwrap().expect("exists");
+        assert_eq!(found.deadline, None);
+        assert_eq!(
+            found.deadline_status, None,
+            "no deadline ⇒ no axis status (AC4)"
+        );
+    }
+
+    // ZMVP-86 — Late is DERIVED on lookup from `deadline < now`, never persisted:
+    // a past deadline reads Late, and it supersedes a standing manual Delayed
+    // without overwriting it in storage.
+    #[tokio::test]
+    async fn late_is_derived_from_a_passed_deadline() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Slipping", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        let mut uow = database.begin().await.unwrap();
+        {
+            let mut commissions = uow.commissions();
+            commissions
+                .set_deadline(id, Some(Utc::now() - chrono::Duration::days(1)))
+                .await
+                .unwrap();
+            commissions
+                .set_deadline_status(id, Some(DeadlineStatus::Delayed))
+                .await
+                .unwrap();
+        }
+        uow.commit().await.unwrap();
+
+        let found = backend.find_commission(id).await.unwrap().expect("exists");
+        assert_eq!(
+            found.deadline_status,
+            Some(DeadlineStatus::Late),
+            "a passed deadline derives Late, superseding the stored Delayed"
+        );
+    }
+
+    // ZMVP-86 (store layer, ruling E12) — `lapsed_deadlines` returns exactly
+    // the sweepable set: past-deadline commissions that are not already Late
+    // and not in a terminal lifecycle, ordered by deadline; and it sees writes
+    // staged on the same open unit (the no-TOCTOU posture).
+    #[tokio::test]
+    async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let now = Utc::now();
+        let past = |days: i64| now - chrono::Duration::days(days);
+
+        let seed = |title: &str, deadline, step: Option<LifecycleStep>| {
+            let mut c = Commission::create(
+                CommissionTitle::try_new(title).unwrap(),
+                owner,
+                now,
+                deadline,
+            );
+            if let Some(step) = step {
+                c.lifecycle_step = step;
+            }
+            c
+        };
+        let missed = seed("Missed", Some(past(30)), None);
+        let slipping = seed("Slipping", Some(past(20)), None);
+        let already_late = seed("Late", Some(past(10)), None);
+        let future = seed("Future", Some(now + chrono::Duration::days(30)), None);
+        let no_deadline = seed("No deadline", None, None);
+        let completed = seed("Done", Some(past(30)), Some(LifecycleStep::Completed));
+        let cancelled = seed("Dropped", Some(past(30)), Some(LifecycleStep::Cancelled));
+        let disputed = seed("Contested", Some(past(5)), Some(LifecycleStep::Disputed));
+        for c in [
+            &missed,
+            &slipping,
+            &already_late,
+            &future,
+            &no_deadline,
+            &completed,
+            &cancelled,
+            &disputed,
+        ] {
+            backend.create_commission(c).await.unwrap();
+        }
+
+        let mut uow = database.begin().await.unwrap();
+        {
+            uow.commissions()
+                .set_deadline_status(slipping.id, Some(DeadlineStatus::Delayed))
+                .await
+                .unwrap();
+            // Late is deduped on the changelog (no persisted Late), staged on the
+            // SAME unit: a commission already logged Late is skipped by the scan.
+            uow.changelog()
+                .append(&NewChangelogEntry::system(
+                    already_late.id,
+                    ChangelogEntryKind::Late,
+                    serde_json::json!({}),
+                    now,
+                ))
+                .await
+                .unwrap();
+
+            let lapsed = uow.commissions().lapsed_deadlines(now).await.unwrap();
+            let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
+            assert_eq!(
+                ids,
+                vec![missed.id, slipping.id, disputed.id],
+                "exactly the sweepable set, ordered by deadline"
+            );
+            assert_eq!(lapsed[0].status, None);
+            assert_eq!(
+                lapsed[1].status,
+                Some(DeadlineStatus::Delayed),
+                "the scan carries the standing flag"
+            );
+        }
     }
 
     // The owner-arm participant predicate and the linked-channel round-trip on

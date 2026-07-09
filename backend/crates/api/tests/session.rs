@@ -49,6 +49,7 @@ async fn me_redirects_anonymous_visitor_to_sign_in() {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         pool,
         // An anonymous /me reaches neither PDS nor repo; the mem adapters suffice.

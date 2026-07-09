@@ -179,6 +179,14 @@ pub struct Commission {
     ///
     /// [`CommissionWrites::set_direction_status`]: crate::ports::CommissionWrites::set_direction_status
     pub direction_status: Option<DirectionStatus>,
+    /// The deadline-axis Status, or `None` while none is held (ZMVP-86). The
+    /// same one-nullable-slot shape as the direction axis (ruling E29), and the
+    /// two axes compose freely. Holds a value only while [`deadline`] is set —
+    /// a commission with no deadline never carries deadline-axis statuses
+    /// (AC4). See [`DeadlineStatus`] for who moves it.
+    ///
+    /// [`deadline`]: Commission::deadline
+    pub deadline_status: Option<DeadlineStatus>,
     /// The external **linked channel** pointer — "where we talk" (ZMVP-87,
     /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
     /// changelog-recorded on set/clear, rendered as an opaque pointer.
@@ -244,6 +252,7 @@ impl Commission {
             deadline,
             maturity: None,
             direction_status: None,
+            deadline_status: None,
             linked_channel: None,
             archived_at: None,
         }
@@ -273,6 +282,29 @@ pub enum LifecycleStep {
 }
 
 impl LifecycleStep {
+    /// Every state, in declaration order — the closed vocabulary. Lets tests
+    /// prove the token mapping round-trips, and lets adapters derive subsets
+    /// (e.g. the terminal tokens the deadline sweeper excludes) from the enum
+    /// instead of re-listing tokens.
+    pub const ALL: &[LifecycleStep] = &[
+        Self::Draft,
+        Self::Batched,
+        Self::Active,
+        Self::Completed,
+        Self::Cancelled,
+        Self::Disputed,
+    ];
+
+    /// Whether this state is **terminal** — closed work
+    /// ([`Completed`](Self::Completed) / [`Cancelled`](Self::Cancelled)), out of
+    /// scope for the deadline sweeper (ruling E12: a closed commission's missed
+    /// deadline is history, not lateness). [`Disputed`](Self::Disputed) is *not*
+    /// terminal; the dispute freeze ("deadlines freeze, Late pauses") is the
+    /// future Disputes epic and will earn its own exclusion when it lands.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+
     /// The stable, lowercase wire/storage token for this state — the value the pg
     /// adapter writes to the `commission.lifecycle` column. Stable across releases
     /// (it is persisted), so renaming a token is a migration, not a free edit.
@@ -390,11 +422,195 @@ impl TryFrom<&str> for DirectionStatus {
     }
 }
 
+/// The deadline-axis Status a commission may carry (DESIGN/Commission, Status;
+/// ZMVP-86) — how the work stands against its deadline. One nullable slot
+/// (ruling E29), so at most one value holds at a time and a set REPLACES the
+/// current one; the direction axis is separate and the two compose freely. A
+/// commission with **no deadline never carries** a deadline-axis status (AC4).
+///
+/// Who moves it (Engineer ruling 2026-07-05, recorded on the ticket):
+///
+/// - [`Delayed`](Self::Delayed) is a **manual Participant "slipping" flag** —
+///   an explicit act through the deadline-status endpoint, never derived (no
+///   threshold exists).
+/// - [`Late`](Self::Late) is **the system's word**: the deadline sweeper sets
+///   it when the deadline has passed — the one place the system acts — and a
+///   standing Delayed upgrades to Late. No participant sets Late by hand;
+///   it resolves through the deadline itself (extend or clear).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlineStatus {
+    /// The work is slipping — there may be delays, but not exactly lateness.
+    /// A manual Participant flag (Engineer ruling 2026-07-05).
+    Delayed,
+    /// The deadline passed — system-set by the sweeper (ZMVP-86), never by hand.
+    Late,
+}
+
+impl DeadlineStatus {
+    /// Every value, in declaration order — the closed two-value vocabulary.
+    pub const ALL: &[DeadlineStatus] = &[Self::Delayed, Self::Late];
+
+    /// The stable, lowercase wire/storage token for this value — what the pg
+    /// adapter writes to the `commission.deadline_status` column and the API
+    /// serves. Stable across releases (it is persisted), so renaming a token
+    /// is a migration, not a free edit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Delayed => "delayed",
+            Self::Late => "late",
+        }
+    }
+}
+
+/// Why a token failed to resolve to a [`DeadlineStatus`] — the same
+/// tamper-surfacing contract as [`UnknownLifecycleStep`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownDeadlineStatus;
+
+impl std::fmt::Display for UnknownDeadlineStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("token is not one of: delayed, late")
+    }
+}
+
+impl std::error::Error for UnknownDeadlineStatus {}
+
+impl TryFrom<&str> for DeadlineStatus {
+    type Error = UnknownDeadlineStatus;
+
+    /// Resolve a stored token back to its value — an explicit `match` on the
+    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    fn try_from(token: &str) -> Result<Self, Self::Error> {
+        Ok(match token {
+            "delayed" => Self::Delayed,
+            "late" => Self::Late,
+            _ => return Err(UnknownDeadlineStatus),
+        })
+    }
+}
+
+/// The effective deadline-axis status at `now` — **`Late` is derived, never
+/// persisted** (Engineer ruling 2026-07-08): a commission whose deadline has
+/// passed and whose lifecycle is not terminal *is* `Late`, recomputed fresh on
+/// every lookup from the same `deadline < now` math the sweeper's log pass uses.
+/// Otherwise the effective status is the stored manual flag — `Delayed` or
+/// `None`. The persisted `deadline_status` column only ever holds `Delayed`;
+/// `Late` supersedes a standing `Delayed` here without overwriting it in storage.
+/// The single home of the Late rule: both adapters call this while rebuilding a
+/// [`Commission`], so a `Late` that isn't derived from a passed deadline is
+/// unrepresentable.
+pub fn derive_deadline_status(
+    deadline: Option<DateTimeUtc>,
+    lifecycle_step: &LifecycleStep,
+    stored: Option<DeadlineStatus>,
+    now: DateTimeUtc,
+) -> Option<DeadlineStatus> {
+    // AC4: a commission with no deadline carries no deadline-axis status — even
+    // if a `Delayed` flag lingers in storage (it stays dormant, resurfacing only
+    // once a deadline is set again).
+    let deadline = deadline?;
+    if deadline < now && !lifecycle_step.is_terminal() {
+        Some(DeadlineStatus::Late)
+    } else {
+        stored
+    }
+}
+
+/// One commission the deadline sweep must **log** as Late (ZMVP-86 AC5): the row
+/// [`CommissionWrites::lapsed_deadlines`] returns for every commission whose
+/// deadline has passed, whose lifecycle is not terminal, and that has **not yet
+/// been logged Late** (there is no persisted Late to gate on — the sweep dedupes
+/// on the changelog itself). Carries what the system `late` changelog entry needs
+/// to render a sentence without joins — the missed deadline and the standing
+/// manual flag (if any). The sweep only *logs*; the Late state itself is derived
+/// on lookup ([`derive_deadline_status`]).
+///
+/// [`CommissionWrites::lapsed_deadlines`]: crate::ports::CommissionWrites::lapsed_deadlines
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LapsedDeadline {
+    /// The commission to log Late.
+    pub id: CommissionId,
+    /// The deadline that was missed (named in the Late entry's payload).
+    pub deadline: DateTimeUtc,
+    /// The standing manual flag at scan time — `None` or
+    /// [`DeadlineStatus::Delayed`], so the Late entry can record what it
+    /// supersedes.
+    pub status: Option<DeadlineStatus>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    // The deadline-status tokens are a closed, collision-free vocabulary that
+    // round-trips (ZMVP-86) — the same contract every persisted enum pins.
+    #[test]
+    fn deadline_status_tokens_round_trip_and_never_collide() {
+        let mut seen = BTreeSet::new();
+        for status in DeadlineStatus::ALL {
+            let token = status.as_str();
+            assert!(seen.insert(token), "duplicate token {token:?}");
+            assert_eq!(
+                DeadlineStatus::try_from(token),
+                Ok(*status),
+                "token {token:?} must round-trip back to its value",
+            );
+        }
+        assert_eq!(DeadlineStatus::ALL.len(), 2, "exactly the two values");
+    }
+
+    // A token outside the vocabulary is refused, not guessed at — the axes
+    // never bleed into each other.
+    #[test]
+    fn unknown_deadline_status_tokens_do_not_parse() {
+        assert_eq!(
+            DeadlineStatus::try_from("waiting_for_input"),
+            Err(UnknownDeadlineStatus),
+            "direction axis ≠ deadline axis"
+        );
+        assert_eq!(DeadlineStatus::try_from(""), Err(UnknownDeadlineStatus));
+        assert_eq!(DeadlineStatus::try_from("Late"), Err(UnknownDeadlineStatus));
+    }
+
+    // A fresh commission carries no deadline status, even when born with a
+    // deadline — statuses arrive only by explicit act or the sweeper.
+    #[test]
+    fn a_fresh_commission_has_no_deadline_status() {
+        let c = Commission::create(
+            CommissionTitle::try_new("Ref").unwrap(),
+            crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
+            chrono::Utc::now(),
+            Some(chrono::Utc::now()),
+        );
+        assert_eq!(c.deadline_status, None);
+    }
+
+    // The lifecycle tokens round-trip, and the terminal set is exactly
+    // {completed, cancelled} — Disputed is NOT terminal (the dispute freeze is
+    // the future Disputes epic).
+    #[test]
+    fn lifecycle_tokens_round_trip_and_terminal_is_exactly_closed_work() {
+        let mut seen = BTreeSet::new();
+        for step in LifecycleStep::ALL {
+            let token = step.as_str();
+            assert!(seen.insert(token), "duplicate token {token:?}");
+            assert_eq!(
+                LifecycleStep::try_from(token).map(|s| s.as_str()),
+                Ok(token),
+                "token {token:?} must round-trip back to its step",
+            );
+        }
+        assert_eq!(LifecycleStep::ALL.len(), 6, "exactly the six states");
+
+        let terminal: Vec<&str> = LifecycleStep::ALL
+            .iter()
+            .filter(|s| s.is_terminal())
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(terminal, vec!["completed", "cancelled"]);
+    }
 
     // The direction-status tokens are a closed, collision-free vocabulary that
     // round-trips (ZMVP-85) — the same contract the changelog kinds pin.

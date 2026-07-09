@@ -39,6 +39,7 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         // No route exercised here touches the database, so a lazy (never-connected)
         // pool keeps the test free of a container.

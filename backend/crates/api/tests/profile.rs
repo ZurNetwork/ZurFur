@@ -23,6 +23,7 @@ fn config_for(addr: std::net::SocketAddr) -> Config {
         did_key_root_key: "unused-in-tests".to_string(),
         plc_directory_endpoint: "https://plc.directory".to_string(),
         plc_directory_submit: false,
+        deadline_sweep_interval_secs: 60,
     }
 }
 

@@ -10,8 +10,9 @@ use domain::{
         account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree,
-            DirectionStatus, GrantLevel, LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind,
-            NodeRow, Placement, RootSurface, SurfaceMode, Visibility,
+            DeadlineStatus, DirectionStatus, GrantLevel, LapsedDeadline, LifecycleStep,
+            NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface,
+            SurfaceMode, Visibility, derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -565,6 +566,114 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         .await?;
         Ok(result.rows_affected() > 0)
     }
+
+    /// Repoint (or clear) the `commission.deadline` column — one `UPDATE` on
+    /// the open transaction, so the caller's matching
+    /// `deadline_set`/`deadline_extended` changelog entry lands atomically
+    /// with it (ZMVP-86; Changelog DD D4). An absent commission matches no
+    /// row: a no-op here, per the port contract (existence is the caller's
+    /// check).
+    async fn set_deadline(
+        &mut self,
+        id: CommissionId,
+        deadline: Option<DateTimeUtc>,
+    ) -> anyhow::Result<()> {
+        query!(
+            r#"UPDATE commission SET deadline = $2 WHERE id = $1"#,
+            *id,
+            deadline,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Repoint (or clear) the `commission.deadline_status` column — one
+    /// `UPDATE` on the open transaction, so the caller's matching entry (the
+    /// manual `delayed` flag or the system `late` mark) lands atomically with
+    /// it (ZMVP-86; Changelog DD D4). The value is stored as its stable
+    /// `as_str()` token; an absent commission matches no row: a no-op here,
+    /// per the port contract.
+    async fn set_deadline_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DeadlineStatus>,
+    ) -> anyhow::Result<()> {
+        query!(
+            r#"UPDATE commission SET deadline_status = $2 WHERE id = $1"#,
+            *id,
+            status.map(|s| s.as_str()),
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// The sweeper's candidate scan (ZMVP-86, ruling E12), **on the open
+    /// transaction** so the scan and the marks it feeds land in one unit (the
+    /// [`commission_has_facts`](CommissionWrites::commission_has_facts)
+    /// posture — no TOCTOU window). One `SELECT` filtered to: a deadline
+    /// strictly before `now`, not already `late`, and a non-terminal
+    /// lifecycle — the terminal tokens are derived from
+    /// [`LifecycleStep::ALL`]/[`is_terminal`](LifecycleStep::is_terminal), so
+    /// the enum (not this query) owns that vocabulary. A stored
+    /// `deadline_status` outside the vocabulary means row tampering and
+    /// surfaces as an `Err`, matching [`PgCommissionStore::find`].
+    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
+        let terminal: Vec<String> = LifecycleStep::ALL
+            .iter()
+            .filter(|step| step.is_terminal())
+            .map(|step| step.as_str().to_owned())
+            .collect();
+        // Late is never persisted, so dedup the log on the changelog itself
+        // (Engineer ruling 2026-07-08). A commission is skipped only if it has a
+        // `late` entry *since its latest deadline change* — a `deadline_set` /
+        // `deadline_extended` re-arms the log, so each fresh miss is its own
+        // event. Its Late *state* is derived on lookup ([`derive_deadline_status`]);
+        // this pass only appends the entry.
+        let rows = query!(
+            r#"
+            SELECT c.id, c.deadline AS "deadline!", c.deadline_status
+            FROM commission c
+            WHERE c.deadline IS NOT NULL
+              AND c.deadline < $1
+              AND NOT (c.lifecycle = ANY($2))
+              AND NOT EXISTS (
+                  SELECT 1 FROM commission_changelog e
+                  WHERE e.commission_id = c.id
+                    AND e.kind = 'late'
+                    AND e.seq > COALESCE((
+                        SELECT MAX(d.seq) FROM commission_changelog d
+                        WHERE d.commission_id = c.id
+                          AND d.kind IN ('deadline_set', 'deadline_extended')
+                    ), 0)
+              )
+            ORDER BY c.deadline, c.id
+            "#,
+            now,
+            &terminal,
+        )
+        .fetch_all(&mut *self.conn)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(LapsedDeadline {
+                    id: CommissionId::new(row.id),
+                    deadline: row.deadline,
+                    status: row
+                        .deadline_status
+                        .as_deref()
+                        .map(|token| {
+                            DeadlineStatus::try_from(token).map_err(|_| {
+                                anyhow::anyhow!("unknown deadline_status token {token:?}")
+                            })
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect()
+    }
 }
 
 /// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
@@ -586,11 +695,11 @@ impl PgCommissionStore {
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
     /// Rebuild the [`Commission`] from its row. The stored `lifecycle`,
-    /// `visibility`, `maturity`, `direction_status`, and `linked_channel` values
-    /// are re-validated through their domain gates (`TryFrom<&str>` on
-    /// [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`] /
-    /// [`DirectionStatus`], with [`ChannelPointer::try_new`] and
-    /// [`CommissionTitle::try_new`] for the
+    /// `visibility`, `maturity`, `direction_status`, `deadline_status`, and
+    /// `linked_channel` values are re-validated through their domain gates
+    /// (`TryFrom<&str>` on [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`]
+    /// / [`DirectionStatus`] / [`DeadlineStatus`], with [`ChannelPointer::try_new`]
+    /// and [`CommissionTitle::try_new`] for the
     /// title); a value outside its vocabulary means row tampering and surfaces
     /// as an `Err`, never a panic or a silent default — as does a half-set
     /// maturity posture, which the migration's CHECK already makes
@@ -599,7 +708,7 @@ impl CommissionStore for PgCommissionStore {
         let Some(row) = query!(
             r#"
             SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,
-                   direction_status, linked_channel, archived_at, created_at
+                   direction_status, deadline_status, linked_channel, archived_at, created_at
             FROM commission
             WHERE id = $1
             "#,
@@ -622,12 +731,31 @@ impl CommissionStore for PgCommissionStore {
                 anyhow::bail!("half-set maturity posture (maturity {token:?}, graphic {graphic:?})")
             }
         };
+        let lifecycle_step = LifecycleStep::try_from(row.lifecycle.as_str())
+            .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?;
+        // The stored `deadline_status` is the manual `Delayed` flag only — `Late`
+        // is never persisted (Engineer ruling 2026-07-08). Derive the effective
+        // status fresh at lookup from the deadline, the same math the sweep's log
+        // pass uses.
+        let stored_deadline_status = row
+            .deadline_status
+            .as_deref()
+            .map(|token| {
+                DeadlineStatus::try_from(token)
+                    .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
+            })
+            .transpose()?;
+        let deadline_status = derive_deadline_status(
+            row.deadline,
+            &lifecycle_step,
+            stored_deadline_status,
+            chrono::Utc::now(),
+        );
         Ok(Some(Commission {
             id,
             title: CommissionTitle::try_new(row.title)?,
             owner_id: UserId::new(row.owner_id),
-            lifecycle_step: LifecycleStep::try_from(row.lifecycle.as_str())
-                .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?,
+            lifecycle_step,
             visibility: Visibility::try_from(row.visibility.as_str())
                 .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
             deadline: row.deadline,
@@ -640,6 +768,7 @@ impl CommissionStore for PgCommissionStore {
                         .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
                 })
                 .transpose()?,
+            deadline_status,
             linked_channel: row
                 .linked_channel
                 .map(ChannelPointer::try_new)

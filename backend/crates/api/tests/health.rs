@@ -45,6 +45,7 @@ async fn health_is_green_against_fresh_postgres() {
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
+            deadline_sweep_interval_secs: 60,
         },
         pool,
         // /health touches neither the PDS nor the repo; the mem adapters keep both

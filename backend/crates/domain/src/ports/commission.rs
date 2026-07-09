@@ -9,8 +9,9 @@ use crate::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTree, DirectionStatus, GrantLevel,
-            NewComponent, NewSurface, NodeId, Placement,
+            ChannelPointer, Commission, CommissionId, CommissionTree, DeadlineStatus,
+            DirectionStatus, GrantLevel, LapsedDeadline, NewComponent, NewSurface, NodeId,
+            Placement,
         },
         maturity::Maturity,
         user::UserId,
@@ -424,4 +425,51 @@ pub trait CommissionWrites: Send {
         id: CommissionId,
         status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool>;
+
+    /// Set (`Some`) or clear (`None`) the commission's **deadline** — the
+    /// nullable-but-fixed envelope field (ZMVP-86 AC1; DESIGN/Commission). A
+    /// Participant act: the caller appends the matching
+    /// `deadline_set`/`deadline_extended` entry through
+    /// [`ChangelogWrites`](crate::ports::ChangelogWrites) **in this same unit
+    /// of work** (Changelog DD D4), and owns the axis recompute (a deadline
+    /// no longer passed clears Late; a cleared deadline wipes the axis via
+    /// [`set_deadline_status`](Self::set_deadline_status) — AC4). Setting on
+    /// an absent commission is a no-op write; existence and authority (any
+    /// Participant) are the caller's checks, settled before this is reached.
+    async fn set_deadline(
+        &mut self,
+        id: CommissionId,
+        deadline: Option<DateTimeUtc>,
+    ) -> anyhow::Result<()>;
+
+    /// Set (`Some`) or clear (`None`) the commission's **deadline-axis
+    /// Status** (ZMVP-86). One nullable slot (ruling E29): a set REPLACES the
+    /// value held — axis exclusivity by construction. Exactly **two writers**
+    /// exist, both changelog-recorded in the same unit of work (DD D4): the
+    /// deadline-status endpoint (the Participant's manual
+    /// [`Delayed`](DeadlineStatus::Delayed) flag and the deadline write's axis
+    /// recompute) and the deadline sweeper (the system
+    /// [`Late`](DeadlineStatus::Late) mark — the only system writer, scoped to
+    /// this axis and nothing else). The caller holds AC4: never leave a value
+    /// on a commission without a deadline. Setting on an absent commission is
+    /// a no-op write.
+    async fn set_deadline_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DeadlineStatus>,
+    ) -> anyhow::Result<()>;
+
+    /// The commissions the deadline sweeper must mark Late **as of `now`**
+    /// (ZMVP-86 AC2, ruling E12): deadline strictly before `now`, not already
+    /// [`Late`](DeadlineStatus::Late), lifecycle not terminal
+    /// ([`LifecycleStep::is_terminal`](crate::elements::commission::LifecycleStep::is_terminal)
+    /// — a closed commission's missed deadline is history, not lateness).
+    /// Commissions without a deadline never appear (AC4). Ordered by deadline
+    /// for determinism.
+    ///
+    /// A *read*, deliberately on the transactional write view (the
+    /// [`commission_has_facts`](Self::commission_has_facts) posture, ruling
+    /// E17): the sweeper scans and marks **in one unit of work**, so nothing
+    /// can slip between the scan and the mark — one sweep, one transaction.
+    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;
 }

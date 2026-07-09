@@ -36,6 +36,9 @@ use serde::Deserialize;
 
 mod problem;
 mod routes;
+mod sweep;
+
+pub use sweep::{run_deadline_sweeper, sweep_deadlines};
 
 /// Session key under which the recognized visitor's `UserId` is stored. The
 /// session carries our own key, not the DID: subsequent requests resolve
@@ -125,6 +128,25 @@ pub struct Config {
     /// intentional [`plc_directory_endpoint`](Config::plc_directory_endpoint).
     #[serde(default)]
     pub plc_directory_submit: bool,
+    /// How often the deadline sweep runs, in seconds (ZMVP-86, ruling E12).
+    /// Defaults to `300` (`default_deadline_sweep_interval_secs`); override via
+    /// `ZURFUR_DEADLINE_SWEEP_INTERVAL_SECS`. `main` spawns
+    /// [`run_deadline_sweeper`] on this cadence; the loop clamps the value to
+    /// at least one second. Late **state** is derived on every read, so
+    /// correctness never depends on this — the sweep only bounds how *promptly*
+    /// the system `late` **changelog entry** is appended (each sweep is one
+    /// atomic unit of work over whatever has lapsed by then).
+    #[serde(default = "default_deadline_sweep_interval_secs")]
+    pub deadline_sweep_interval_secs: u64,
+}
+
+/// Serde default for [`Config::deadline_sweep_interval_secs`]: every five
+/// minutes. The derived Late *state* is instant on read, so this only paces the
+/// changelog `late` entry, and the scan rides the partial `deadline` index.
+/// (Cadence vs. sweep cost at scale is a further-optimization axis — ZMVP-86
+/// review 2026-07-09.)
+fn default_deadline_sweep_interval_secs() -> u64 {
+    300
 }
 
 /// Serde default for [`Config::handle_domain`]: `zurfur.app`, the production
