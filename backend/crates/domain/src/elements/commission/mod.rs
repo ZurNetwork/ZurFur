@@ -171,6 +171,14 @@ pub struct Commission {
     /// `PUT /commissions/{id}/maturity`, replace-only — no path clears it back
     /// to `None`, so a widened commission can never lose its rating.
     pub maturity: Option<Maturity>,
+    /// The direction-axis Status, or `None` while none is set (ZMVP-85). One
+    /// nullable slot (ruling E29): a set replaces, a clear writes `None`, and
+    /// only an explicit Participant act through
+    /// [`CommissionWrites::set_direction_status`] ever moves it — never a
+    /// content event.
+    ///
+    /// [`CommissionWrites::set_direction_status`]: crate::ports::CommissionWrites::set_direction_status
+    pub direction_status: Option<DirectionStatus>,
     /// The external **linked channel** pointer — "where we talk" (ZMVP-87,
     /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
     /// changelog-recorded on set/clear, rendered as an opaque pointer.
@@ -235,6 +243,7 @@ impl Commission {
             visibility: Visibility::Private,
             deadline,
             maturity: None,
+            direction_status: None,
             linked_channel: None,
             archived_at: None,
         }
@@ -277,20 +286,158 @@ impl LifecycleStep {
             Self::Disputed => "disputed",
         }
     }
+}
 
-    /// Resolve a stored token back to its step, or `None` for a token outside the
-    /// vocabulary — on a read path that means row tampering or a missed migration
-    /// and surfaces as an error, never a silent default (ZMVP-87 read port).
-    pub fn parse(token: &str) -> Option<Self> {
-        Some(match token {
+/// Why a token failed to resolve to a [`LifecycleStep`] — on a read path a token
+/// outside the vocabulary means row tampering or a missed migration, surfaced as
+/// an error rather than a silent default (ZMVP-87 read port).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownLifecycleStep;
+
+impl std::fmt::Display for UnknownLifecycleStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("token is not one of: draft, batched, active, completed, cancelled, disputed")
+    }
+}
+
+impl std::error::Error for UnknownLifecycleStep {}
+
+impl TryFrom<&str> for LifecycleStep {
+    type Error = UnknownLifecycleStep;
+
+    /// Resolve a stored token back to its step — an explicit `match` on the closed
+    /// vocabulary, the mirror of [`as_str`](Self::as_str).
+    fn try_from(token: &str) -> Result<Self, Self::Error> {
+        Ok(match token {
             "draft" => Self::Draft,
             "batched" => Self::Batched,
             "active" => Self::Active,
             "completed" => Self::Completed,
             "cancelled" => Self::Cancelled,
             "disputed" => Self::Disputed,
-            _ => return None,
+            _ => return Err(UnknownLifecycleStep),
         })
+    }
+}
+
+/// The direction-axis Status a commission may carry (DESIGN/Commission, Status;
+/// ZMVP-85) — whose turn the work is waiting on, always set **explicitly by a
+/// Participant** (Engineer ruling 2026-07-01: the former markup/file-entry
+/// auto-transitions are removed from the design; no content event ever moves
+/// this). At most one value at a time: the commission stores it as one nullable
+/// column (ruling E29), so setting a value REPLACES the current one and axis
+/// exclusivity falls out of the shape — `None` is the cleared state. The
+/// deadline axis (Delayed/Late, system-set — ZMVP-86) is a separate axis; the
+/// two compose freely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectionStatus {
+    /// The work waits on input from the client side.
+    WaitingForInput,
+    /// The work waits on an approval.
+    WaitingForApproval,
+    /// Changes were requested on what was delivered.
+    ChangesRequested,
+}
+
+impl DirectionStatus {
+    /// Every value, in declaration order — the closed three-value vocabulary.
+    pub const ALL: &[DirectionStatus] = &[
+        Self::WaitingForInput,
+        Self::WaitingForApproval,
+        Self::ChangesRequested,
+    ];
+
+    /// The stable, lowercase wire/storage token for this value — what the pg
+    /// adapter writes to the `commission.direction_status` column and the API
+    /// accepts. Stable across releases (it is persisted), so renaming a token
+    /// is a migration, not a free edit.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::WaitingForInput => "waiting_for_input",
+            Self::WaitingForApproval => "waiting_for_approval",
+            Self::ChangesRequested => "changes_requested",
+        }
+    }
+}
+
+/// Why a token failed to resolve to a [`DirectionStatus`] — the same
+/// tamper-surfacing contract as [`UnknownLifecycleStep`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownDirectionStatus;
+
+impl std::fmt::Display for UnknownDirectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "token is not one of: waiting_for_input, waiting_for_approval, changes_requested",
+        )
+    }
+}
+
+impl std::error::Error for UnknownDirectionStatus {}
+
+impl TryFrom<&str> for DirectionStatus {
+    type Error = UnknownDirectionStatus;
+
+    /// Resolve a stored token back to its value — an explicit `match` on the
+    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    fn try_from(token: &str) -> Result<Self, Self::Error> {
+        Ok(match token {
+            "waiting_for_input" => Self::WaitingForInput,
+            "waiting_for_approval" => Self::WaitingForApproval,
+            "changes_requested" => Self::ChangesRequested,
+            _ => return Err(UnknownDirectionStatus),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    // The direction-status tokens are a closed, collision-free vocabulary that
+    // round-trips (ZMVP-85) — the same contract the changelog kinds pin.
+    #[test]
+    fn direction_status_tokens_round_trip_and_never_collide() {
+        let mut seen = BTreeSet::new();
+        for status in DirectionStatus::ALL {
+            let token = status.as_str();
+            assert!(seen.insert(token), "duplicate token {token:?}");
+            assert_eq!(
+                DirectionStatus::try_from(token),
+                Ok(*status),
+                "token {token:?} must round-trip back to its value",
+            );
+        }
+        assert_eq!(DirectionStatus::ALL.len(), 3, "exactly the three values");
+    }
+
+    // A token outside the vocabulary is refused, not guessed at.
+    #[test]
+    fn unknown_direction_status_tokens_do_not_parse() {
+        assert_eq!(
+            DirectionStatus::try_from("late"),
+            Err(UnknownDirectionStatus),
+            "deadline axis ≠ direction axis"
+        );
+        assert_eq!(DirectionStatus::try_from(""), Err(UnknownDirectionStatus));
+        assert_eq!(
+            DirectionStatus::try_from("Waiting for Input"),
+            Err(UnknownDirectionStatus)
+        );
+    }
+
+    // A fresh commission carries no direction status (the cleared state).
+    #[test]
+    fn a_fresh_commission_has_no_direction_status() {
+        let c = Commission::create(
+            CommissionTitle::try_new("Ref").unwrap(),
+            crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
+            chrono::Utc::now(),
+            None,
+        );
+        assert_eq!(c.direction_status, None);
     }
 }
 
@@ -327,18 +474,6 @@ impl Visibility {
         }
     }
 
-    /// Resolve a stored token back to its value, or `None` for one outside the
-    /// vocabulary — the same tamper-surfacing contract as
-    /// [`LifecycleStep::parse`].
-    pub fn parse(token: &str) -> Option<Self> {
-        Some(match token {
-            "private" => Self::Private,
-            "listed" => Self::Listed,
-            "public" => Self::Public,
-            _ => return None,
-        })
-    }
-
     /// The root-surface [`SurfaceMode`] this alias names (Surfaces DD `28246028`
     /// amendment 2: the flat values are simply the root's mode — one mechanism):
     /// `Private` = root `Total`, `Listed` = root `Presentation`, `Public` = root
@@ -353,5 +488,33 @@ impl Visibility {
             Self::Listed => SurfaceMode::Presentation,
             Self::Public => SurfaceMode::Description,
         }
+    }
+}
+
+/// Why a token failed to resolve to a [`Visibility`] — the same tamper-surfacing
+/// contract as [`UnknownLifecycleStep`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownVisibility;
+
+impl std::fmt::Display for UnknownVisibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("token is not one of: private, listed, public")
+    }
+}
+
+impl std::error::Error for UnknownVisibility {}
+
+impl TryFrom<&str> for Visibility {
+    type Error = UnknownVisibility;
+
+    /// Resolve a stored token back to its value — an explicit `match` on the
+    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    fn try_from(token: &str) -> Result<Self, Self::Error> {
+        Ok(match token {
+            "private" => Self::Private,
+            "listed" => Self::Listed,
+            "public" => Self::Public,
+            _ => return Err(UnknownVisibility),
+        })
     }
 }

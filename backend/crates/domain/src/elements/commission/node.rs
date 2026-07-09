@@ -94,7 +94,7 @@ impl SurfaceMode {
     /// Resolve a stored token back to its mode, or `None` for one outside the
     /// vocabulary — on a read path that means row tampering or a missed
     /// migration and surfaces as an error, never a silent default (the same
-    /// contract as [`Visibility::parse`](super::Visibility::parse)).
+    /// contract as [`Visibility`](super::Visibility)'s `TryFrom<&str>`).
     pub fn parse(token: &str) -> Option<Self> {
         Some(match token {
             "presentation" => Self::Presentation,

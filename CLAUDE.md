@@ -91,6 +91,8 @@ Conventions: Rust edition 2024; workspace-level dependency versions in root `Car
 
 Config is figment in `api`: `backend/config/{profile}.toml` then `ZURFUR_*` env (env wins), profile via `ZURFUR_ENV`. Postgres runs via Docker Compose; migrations live in `backend/crates/adapter-pg/migrations/` (embedded `sqlx::migrate!`, run on boot); `GET /health` reports DB reachability. **The full env-var catalogue + Postgres/runtime specifics are in the repo memory `config-and-runtime`** — check it when touching config, ports, or the DB.
 
+**Always create migrations with `just migrate-add <name>` — never hand-write the filename/version.** The recipe runs `sqlx migrate add`, which stamps a to-the-second UTC version; a hand-typed round timestamp (`…190000`) collides with another branch's migration on the version primary key, and the break only surfaces at rebase/integration (sqlx keys migrations by that number). If you ever see a migration whose `HHMMSS` is a round hour/half-hour, it was hand-authored — suspect a latent collision.
+
 ## Branch Strategy
 
 - `main` — stable; all feature PRs target this; **never push directly to `main`**.

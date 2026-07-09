@@ -14,9 +14,9 @@ use domain::elements::{
     account::AccountId,
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, CommissionTree, GrantLevel, LifecycleStep, NewChangelogEntry,
-        NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, SurfaceMode,
-        Visibility,
+        CommissionTitle, CommissionTree, DirectionStatus, GrantLevel, LifecycleStep,
+        NewChangelogEntry, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+        RootSurface, SurfaceMode, Visibility,
     },
     maturity::Maturity,
     user::UserId,
@@ -84,6 +84,10 @@ pub(crate) struct StoredCommission {
     /// mirror of the pg `maturity` + `graphic` column pair (one field here:
     /// the both-or-neither CHECK is a struct by construction).
     pub(crate) maturity: Option<Maturity>,
+    /// The direction-axis Status, or `None` while none is set (ZMVP-85) — the
+    /// mem mirror of the pg `direction_status` column: one nullable slot, so a
+    /// set replaces by construction.
+    pub(crate) direction_status: Option<DirectionStatus>,
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
     pub(crate) linked_channel: Option<ChannelPointer>,
@@ -106,6 +110,7 @@ impl StoredCommission {
             visibility: self.visibility.clone(),
             deadline: self.deadline,
             maturity: self.maturity,
+            direction_status: self.direction_status,
             linked_channel: self.linked_channel.clone(),
             archived_at: self.archived_at,
             created_at: self.created_at,
@@ -242,6 +247,7 @@ impl CommissionWrites for MemCommissionWrites {
                     visibility: commission.visibility.clone(),
                     deadline: commission.deadline,
                     maturity: commission.maturity,
+                    direction_status: commission.direction_status,
                     linked_channel: commission.linked_channel.clone(),
                     archived_at: commission.archived_at,
                     created_at: commission.created_at,
@@ -561,6 +567,30 @@ impl CommissionWrites for MemCommissionWrites {
             .expect("MemBackend view_grants mutex poisoned")
             .remove(&(commission, account))
             .is_some())
+    }
+
+    /// Repoint (or clear) the stored direction-axis Status — the mem mirror of
+    /// the pg `UPDATE commission SET direction_status` (ZMVP-85): one nullable
+    /// slot, so a set replaces whole. An absent commission is a no-op, per the
+    /// port contract (existence is the caller's check).
+    async fn set_direction_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DirectionStatus>,
+    ) -> anyhow::Result<bool> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.direction_status == status {
+            return Ok(false);
+        }
+        stored.direction_status = status;
+        Ok(true)
     }
 }
 
@@ -1436,6 +1466,88 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    // ZMVP-85 (store layer) — the direction status sets, replaces, and clears
+    // through the unit of work; a dropped unit discards the staged change (the
+    // mem mirror of pg's drop = rollback).
+    #[tokio::test]
+    async fn direction_status_sets_replaces_and_clears_through_the_unit() {
+        use domain::elements::commission::DirectionStatus;
+
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Statused", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        let status_of = |backend: &MemBackend| {
+            let backend = backend.clone();
+            async move {
+                backend
+                    .find_commission(id)
+                    .await
+                    .unwrap()
+                    .expect("exists")
+                    .direction_status
+            }
+        };
+        assert_eq!(status_of(&backend).await, None, "born clear");
+
+        // Set, then replace — one nullable slot, so the second set wins whole.
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .set_direction_status(id, Some(DirectionStatus::WaitingForInput))
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert_eq!(
+            status_of(&backend).await,
+            Some(DirectionStatus::WaitingForInput)
+        );
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .set_direction_status(id, Some(DirectionStatus::ChangesRequested))
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert_eq!(
+            status_of(&backend).await,
+            Some(DirectionStatus::ChangesRequested),
+            "a set replaces the current value"
+        );
+
+        // A dropped (uncommitted) unit discards its staged status write.
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions()
+                .set_direction_status(id, None)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            status_of(&backend).await,
+            Some(DirectionStatus::ChangesRequested),
+            "a dropped unit rolls the clear back"
+        );
+
+        // Clear commits to NULL; an absent commission is a no-op, not an error.
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .set_direction_status(id, None)
+            .await
+            .unwrap();
+        uow.commissions()
+            .set_direction_status(
+                CommissionId::new(uuid::Uuid::now_v7()),
+                Some(DirectionStatus::WaitingForApproval),
+            )
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert_eq!(status_of(&backend).await, None, "cleared");
     }
 
     // The owner-arm participant predicate and the linked-channel round-trip on

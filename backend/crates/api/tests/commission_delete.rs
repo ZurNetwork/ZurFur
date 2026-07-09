@@ -377,6 +377,14 @@ impl CommissionWrites for FactBearingCommissions<'_> {
     ) -> anyhow::Result<bool> {
         self.0.revoke_view(commission, account).await
     }
+
+    async fn set_direction_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<domain::elements::commission::DirectionStatus>,
+    ) -> anyhow::Result<bool> {
+        self.0.set_direction_status(id, status).await
+    }
 }
 
 // AC3 — deleting a fact-bearing commission is refused with the 409

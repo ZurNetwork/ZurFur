@@ -9,8 +9,8 @@ use crate::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTree, GrantLevel, NewComponent,
-            NewSurface, NodeId, Placement,
+            ChannelPointer, Commission, CommissionId, CommissionTree, DirectionStatus, GrantLevel,
+            NewComponent, NewSurface, NodeId, Placement,
         },
         maturity::Maturity,
         user::UserId,
@@ -401,5 +401,27 @@ pub trait CommissionWrites: Send {
         &mut self,
         commission: CommissionId,
         account: AccountId,
+    ) -> anyhow::Result<bool>;
+
+    /// Set (`Some`) or clear (`None`) the commission's **direction-axis
+    /// Status** (ZMVP-85; DESIGN/Commission, Status). One nullable slot
+    /// (ruling E29): a set REPLACES whatever value is held — axis exclusivity
+    /// by construction, never by check. This is the column's **only writer**:
+    /// direction transitions are always an explicit Participant act (Engineer
+    /// ruling 2026-07-01), so no content event or system sweep may reach for
+    /// it. The change is changelog-recorded — the caller appends the matching
+    /// `status_changed` entry through
+    /// [`ChangelogWrites`](crate::ports::ChangelogWrites) **in this same unit
+    /// of work** (Changelog DD D4). Setting on an absent commission is a no-op
+    /// write; existence and authority (any Participant) are the caller's
+    /// checks, settled before this is reached. Returns `true` iff the stored
+    /// value actually changed (`… IS DISTINCT FROM`), so the caller appends the
+    /// `status_changed` entry only on a real change — never a spurious entry
+    /// when the value already held is re-set, even under a concurrent racing
+    /// write (the [`set_linked_channel`](Self::set_linked_channel) contract).
+    async fn set_direction_status(
+        &mut self,
+        id: CommissionId,
+        status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool>;
 }
