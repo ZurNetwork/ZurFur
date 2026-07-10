@@ -18,6 +18,16 @@
 //! one unit of work, the `commission_file` link and the `file_added` changelog
 //! entry commit atomically (Changelog DD D4).
 //!
+//! **No coupled status write (ZMVP-89; Engineer rulings 2026-07-01 and
+//! 2026-07-05).** Uploading never mutates any status — not the direction axis,
+//! not the deadline axis, not the Lifecycle; anything status-shaped smuggled
+//! alongside the upload (an extra multipart field, a query parameter) is
+//! ignored, never applied. The future submission form's "optional Status choice"
+//! is frontend orchestration over **two explicit calls** — this upload plus
+//! `PUT /commissions/{id}/status/direction` (ZMVP-85) — each landing its own
+//! changelog entry; no coupled backend write exists, by design. The contract is
+//! pinned by `tests/commission_submission_contract.rs`.
+//!
 //! **Download hardening.** Stored content is user-controlled and may be an SVG or
 //! HTML file; served naively it could execute in the app origin (stored XSS). The
 //! response therefore always carries `Content-Disposition: attachment` (never
