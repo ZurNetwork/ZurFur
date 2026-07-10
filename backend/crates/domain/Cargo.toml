@@ -9,7 +9,9 @@ uuid = { workspace = true }
 cid = "0.11.3"
 async-trait = { workspace = true }
 anyhow = { workspace = true }
-# The changelog entry payload (ZMVP-87) is kind-specific JSON.
+# The changelog entry payload (ZMVP-87) is kind-specific JSON; the Markup
+# annotation shapes (ZMVP-90) derive their strict wire (de)serialization.
+serde = { workspace = true }
 serde_json = { workspace = true }
 # Wipe custody key material (AccountKeys/SecretKey) from memory on drop.
 zeroize = { workspace = true }
