@@ -40,6 +40,21 @@ if changed=$(jj diff --from 'trunk()' --to '@' --name-only 2>/dev/null); then
     fi
 fi
 
+# Deterministic convention check, independent of the cargo gate (a migration-only
+# diff has no .rs changes but must still be checked): migrations must be minted by
+# `just migrate-add` — sqlx stamps a to-the-second UTC version. A round hour or
+# half-hour HHMMSS means the filename was hand-typed, which risks a version-key
+# collision with another branch's migration at rebase/integration (see CLAUDE.md).
+# Only NEW migrations over trunk are checked, so already-merged offenders don't block.
+if new_migrations=$(jj diff --from 'trunk()' --to '@' --name-only 2>/dev/null | grep 'crates/adapter-pg/migrations/'); then
+    offenders=$(printf '%s\n' "$new_migrations" | grep -E '/[0-9]{8}[0-9]{2}(00|30)00_[^/]*\.sql$' || true)
+    if [ -n "$offenders" ]; then
+        echo "jj-push: migration timestamp looks hand-typed (round hour/half-hour) — mint it with 'just migrate-add <name>' and move the SQL over:"
+        printf '  %s\n' $offenders
+        exit 1
+    fi
+fi
+
 if [ "$run_gate" = 1 ]; then
     command -v cargo >/dev/null 2>&1 || { echo "jj-push: cargo not found (install the Rust toolchain)"; exit 1; }
     cargo fmt --version >/dev/null 2>&1 || { echo "jj-push: rustfmt not available (run: rustup component add rustfmt)"; exit 1; }

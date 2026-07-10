@@ -44,6 +44,7 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
+            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
         },
         // No route here touches the database, so a lazy (never-connected) pool keeps
         // the test free of a container.
@@ -61,6 +62,7 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),
+        files: backend.file_store(),
         did_minter: Arc::new(MemDidMinter::new()),
     };
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));

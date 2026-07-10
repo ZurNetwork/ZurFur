@@ -25,7 +25,7 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use axum::{Router, middleware};
 use domain::ports::{
-    AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter,
+    AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore,
     ProfileCache, ProfileSource, UserStore,
 };
 use figment::{
@@ -138,6 +138,22 @@ pub struct Config {
     /// atomic unit of work over whatever has lapsed by then).
     #[serde(default = "default_deadline_sweep_interval_secs")]
     pub deadline_sweep_interval_secs: u64,
+    /// The maximum size, in bytes, of a single uploaded commission file entry
+    /// (ZMVP-88, ruling E13). Defaults to [`Config::DEFAULT_MAX_UPLOAD_BYTES`]
+    /// (25 MiB); override via `ZURFUR_MAX_UPLOAD_BYTES`. The
+    /// upload route enforces this two ways: a body-size limit on the request (a
+    /// hard framework backstop, set a margin above this for the multipart
+    /// envelope) and an exact check on the file bytes that answers `413`
+    /// problem+json. The real limit/format policy is the future blob-architecture
+    /// walkthrough's; v1 only needs a cap so nothing ships uncapped.
+    #[serde(default = "default_max_upload_bytes")]
+    pub max_upload_bytes: u64,
+}
+
+/// Serde default for [`Config::max_upload_bytes`]:
+/// [`Config::DEFAULT_MAX_UPLOAD_BYTES`].
+fn default_max_upload_bytes() -> u64 {
+    Config::DEFAULT_MAX_UPLOAD_BYTES
 }
 
 /// Serde default for [`Config::deadline_sweep_interval_secs`]: every five
@@ -218,6 +234,12 @@ fn default_http_addr() -> SocketAddr {
 }
 
 impl Config {
+    /// Default for [`Config::max_upload_bytes`]: 25 MiB — generous for a
+    /// work-in-progress art file, bounded so no upload is uncapped (ZMVP-88).
+    /// The one home for the number; the serde default and every test fixture
+    /// reference it.
+    pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+
     /// Loads and validates the runtime [`Config`] from the layered figment
     /// sources, selecting the profile from `ZURFUR_ENV` (default `dev`).
     ///
@@ -316,6 +338,13 @@ pub struct AppState {
     /// view (`uow.changelog()`) — entries commit atomically with the domain
     /// writes they record (Changelog DD D4). pg in `main`, mem in tests.
     pub changelog: Arc<dyn ChangelogStore>,
+    /// The [`FileStore`] port (ZMVP-88): the private blob store behind a commission
+    /// file entry. Pool-backed and **outside** the Unit of Work — the blob write is
+    /// a step that precedes the unit recording the file entry (bytes cannot ride a
+    /// transaction; orphan-on-rollback accepted). v1 ships a mock/local
+    /// implementation (a pg `bytea` table in `main`, the in-memory fake in tests);
+    /// the real blob architecture is the future blob-architecture walkthrough.
+    pub files: Arc<dyn FileStore>,
     /// The [`Database`] write factory: the **only** way to reach a private-store
     /// domain write. A handler calls `begin()`, issues its writes through the
     /// returned [`UnitOfWork`](domain::ports::UnitOfWork)'s view accessors
@@ -380,7 +409,11 @@ pub fn app(state: AppState) -> Router {
     // this surface once — a state-changing request from a foreign `Origin` is refused.
     let cookie_surface = routes::session_router()
         .merge(routes::accounts_router())
-        .merge(routes::commissions_router())
+        .merge(routes::commissions_router(
+            // Checked, not `as`: on a 32-bit target an oversized configured cap
+            // saturates to usize::MAX instead of silently truncating the limit.
+            usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX),
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::require_first_party_origin,

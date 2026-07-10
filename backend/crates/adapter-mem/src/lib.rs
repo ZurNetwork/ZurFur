@@ -37,10 +37,12 @@
 //! the trait docs in [`domain::ports`].
 
 mod commission;
+mod file_store;
 mod public_records;
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
+pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
 
 pub(crate) use commission::{StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement};
@@ -56,7 +58,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
-    commission::{CommissionId, GrantLevel, NodeId},
+    commission::{CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, StoredFile},
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -68,8 +70,8 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountStore, AccountWrites, Authenticator, ChangelogStore, ChangelogWrites, CommissionStore,
-    CommissionWrites, Database, DidMinter, HandleTaken, KeyStore, PlcOperationLog, ProfileCache,
-    ProfileSource, UnitOfWork, UserStore, UserWrites,
+    CommissionWrites, Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -130,6 +132,19 @@ pub struct MemBackend {
     /// domain map, staged and applied by the Unit of Work exactly like
     /// `commissions`: a commission and its root surface commit together.
     pub(crate) nodes: Arc<Mutex<HashMap<NodeId, StoredNode>>>,
+    /// Commission file-entry **links** keyed by [`FileKey`] (ZMVP-88) — the
+    /// in-memory mirror of the pg `commission_file` table. A domain map, so it is
+    /// staged and applied by the Unit of Work exactly like `commissions`: the link
+    /// commits atomically with the `file_added` changelog entry it accompanies
+    /// (Changelog DD D4).
+    pub(crate) files: Arc<Mutex<HashMap<FileKey, CommissionFile>>>,
+    /// The file-entry **blob** store keyed by [`FileKey`] (ZMVP-88) — the
+    /// in-memory mirror of the pg `file_blob` table and the [`MemFileStore`] backing
+    /// map. **Shared, not staged** (its `Arc` is cloned like the profile cache): the
+    /// [`FileStore`] blob write is a step *outside* the Unit of Work (bytes cannot
+    /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
+    /// nor clobber it.
+    pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredFile>>>,
 }
 
 impl MemBackend {
@@ -163,6 +178,12 @@ impl MemBackend {
     /// The [`ProfileCache`] read port over this backend's shared state.
     pub fn profile_cache(&self) -> Arc<dyn ProfileCache> {
         Arc::new(MemProfileCache(self.clone()))
+    }
+
+    /// The [`FileStore`] port over this backend's shared blob map (ZMVP-88 — the
+    /// file-entry blob store's fake).
+    pub fn file_store(&self) -> Arc<dyn FileStore> {
+        Arc::new(MemFileStore(self.clone()))
     }
 
     /// The [`Database`] write factory over this backend's shared state.
@@ -248,6 +269,15 @@ impl MemBackend {
                     .expect("MemBackend nodes mutex poisoned")
                     .clone(),
             )),
+            files: Arc::new(Mutex::new(
+                self.files
+                    .lock()
+                    .expect("MemBackend files mutex poisoned")
+                    .clone(),
+            )),
+            // Shared, not copied: the blob store is a Unit-of-Work exemption (the
+            // blob write is a step outside the unit — the FileStore contract).
+            blobs: self.blobs.clone(),
         }
     }
 
@@ -337,6 +367,11 @@ impl MemBackend {
             .nodes
             .lock()
             .expect("MemBackend nodes mutex poisoned")
+            .clone();
+        *self.files.lock().expect("MemBackend files mutex poisoned") = staged
+            .files
+            .lock()
+            .expect("MemBackend files mutex poisoned")
             .clone();
     }
 

@@ -9,10 +9,10 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionId, CommissionTitle, CommissionTree,
-            DeadlineStatus, DirectionStatus, GrantLevel, LapsedDeadline, LifecycleStep,
-            NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface,
-            SurfaceMode, Visibility, derive_deadline_status,
+            ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
+            CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
+            LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+            RootSurface, SurfaceMode, Visibility, derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -59,8 +59,16 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   own composition, not evidence that work happened — the Tree Storage DD
 ///   (`28409880`) has the whole tree cascade with its commission, which is what
 ///   ZMVP-66's "gone entirely" relies on.
+/// - `commission_file` (ZMVP-88): the Index-canonical link for a file entry (an
+///   uploaded work-in-progress). A file entry is **not** a Product — no fact-lock —
+///   so it cascades away with the commission, keeping a commission with only file
+///   entries hard-deletable (AC2). Its bytes live in `file_blob`, which holds no
+///   commission foreign key (blobs know nothing of commissions) and so is not
+///   commission-referencing — the hard-delete cascade (ZMVP-66) severs them through
+///   [`FileStore::delete`](domain::ports::FileStore::delete), not the row cascade.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
+    "commission_file",
     "commission_node",
     "commission_placement",
     "commission_current_placement",
@@ -333,6 +341,27 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             "#,
             parent,
             *commission,
+        )
+        .execute(&mut *self.conn)
+        .await?;
+        Ok(())
+    }
+
+    /// Insert a file entry's link row (`INSERT INTO commission_file`) on the open
+    /// transaction, so it lands atomically with the caller's `file_added` changelog
+    /// entry (ZMVP-88; Changelog DD D4). The bytes were already stored through
+    /// [`FileStore`](domain::ports::FileStore) before this unit — never here. The id
+    /// is a caller-minted UUIDv7, so no conflict handling is needed.
+    async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
+        query!(
+            r#"
+            INSERT INTO commission_file (id, commission_id, uploaded_by, created_at)
+            VALUES ($1, $2, $3, $4)
+            "#,
+            *file.id,
+            *file.commission_id,
+            *file.uploaded_by,
+            file.created_at,
         )
         .execute(&mut *self.conn)
         .await?;
@@ -929,5 +958,39 @@ impl CommissionStore for PgCommissionStore {
         .fetch_one(&self.pool)
         .await?;
         Ok(row.is_participant)
+    }
+
+    /// The file-entry link `key` names **within `commission`** (ZMVP-88) — one
+    /// `SELECT` filtered by **both** id and commission_id, so a key belonging to a
+    /// different commission matches no row and answers `None` (never a
+    /// cross-commission existence oracle). The bytes live in `file_blob` behind the
+    /// [`FileStore`](domain::ports::FileStore); this settles only the link the
+    /// retrieval gate authorizes against.
+    async fn find_file(
+        &self,
+        commission: CommissionId,
+        key: FileKey,
+    ) -> anyhow::Result<Option<CommissionFile>> {
+        let Some(row) = query!(
+            r#"
+            SELECT id, commission_id, uploaded_by, created_at
+            FROM commission_file
+            WHERE id = $1 AND commission_id = $2
+            "#,
+            *key,
+            *commission,
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(CommissionFile {
+            id: FileKey::new(row.id),
+            commission_id: CommissionId::new(row.commission_id),
+            uploaded_by: UserId::new(row.uploaded_by),
+            created_at: row.created_at,
+        }))
     }
 }

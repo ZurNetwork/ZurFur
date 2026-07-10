@@ -154,6 +154,35 @@ impl Problem {
         )
     }
 
+    /// `404` — no such file entry **within this commission** (ZMVP-88). Reached
+    /// only *after* the participant gate has admitted the caller, so it does not
+    /// leak the commission's existence; and because the lookup is scoped to the
+    /// commission, a file key belonging to a *different* commission answers this
+    /// same 404 rather than confirming it exists elsewhere (no cross-commission
+    /// oracle).
+    pub fn file_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:file-not-found",
+            "file_not_found",
+            "File not found",
+            404,
+            "No such file entry on this commission.",
+        )
+    }
+
+    /// `413` — an uploaded file exceeds the configured size cap
+    /// ([`Config::max_upload_bytes`](crate::Config::max_upload_bytes), ZMVP-88).
+    /// The request was well-formed; the payload is simply too large.
+    pub fn payload_too_large(detail: impl Into<String>) -> Self {
+        Self::new(
+            "urn:zurfur:error:payload-too-large",
+            "payload_too_large",
+            "Payload too large",
+            413,
+            detail,
+        )
+    }
+
     /// `404` — the addressed user holds no membership in the account.
     pub fn member_not_found() -> Self {
         Self::new(

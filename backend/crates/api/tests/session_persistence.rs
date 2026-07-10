@@ -34,6 +34,7 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),
+        files: backend.file_store(),
         did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
         config: Config {
             env: Environment::DEV,
@@ -47,6 +48,7 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
+            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
         },
         pool: pool.clone(),
         auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),

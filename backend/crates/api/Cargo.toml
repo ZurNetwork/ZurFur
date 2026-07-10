@@ -28,4 +28,4 @@ adapter-mem = { path = "../adapter-mem" }
 # the ZMVP-66 delete tests) against the async port traits.
 async-trait = { workspace = true }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }

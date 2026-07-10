@@ -30,10 +30,14 @@
 //! confers in-commission authority (Ownership Separation DD `29130754`). The
 //! [`node`] submodule carries the content **tree** (ZMVP-71): every commission is
 //! born with a root surface, the owner grows surfaces under it, and the raw
-//! loaded tree deliberately never serializes (projection is ZMVP-75).
+//! loaded tree deliberately never serializes (projection is ZMVP-75). The
+//! [`file`] submodule carries the file-entry shapes (ZMVP-88): the opaque
+//! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
+//! Index-canonical link.
 
 pub mod changelog;
 pub mod fact;
+pub mod file;
 pub mod node;
 pub mod positioning;
 
@@ -41,6 +45,7 @@ pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
 };
 pub use fact::Fact;
+pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
 pub use node::{
     CommissionNode, CommissionTree, NewComponent, NewSurface, NodeId, NodeKind, NodeRow,
     RootSurface, SurfaceMode, TreeAssemblyError,

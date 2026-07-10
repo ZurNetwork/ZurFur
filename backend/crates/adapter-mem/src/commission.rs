@@ -13,10 +13,11 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::AccountId,
     commission::{
-        ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionId,
-        CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, GrantLevel,
-        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSurface, NodeId,
-        NodeKind, NodeRow, Placement, RootSurface, SurfaceMode, Visibility, derive_deadline_status,
+        ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
+        CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
+        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSurface,
+        NodeId, NodeKind, NodeRow, Placement, RootSurface, SurfaceMode, Visibility,
+        derive_deadline_status,
     },
     maturity::Maturity,
     user::UserId,
@@ -402,6 +403,21 @@ impl CommissionWrites for MemCommissionWrites {
                 .expect("sibling was just enumerated")
                 .position = index as i32;
         }
+        Ok(())
+    }
+
+    /// Record a file entry's link on the unit's staged snapshot (ZMVP-88) — the
+    /// in-memory mirror of the pg `INSERT INTO commission_file`, so the link commits
+    /// atomically with the `file_added` changelog entry the caller appends on the
+    /// same unit (drop = rollback). The bytes were stored separately, before this
+    /// unit, through [`FileStore`](domain::ports::FileStore).
+    async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
+        let mut files = self
+            .0
+            .files
+            .lock()
+            .expect("MemBackend files mutex poisoned");
+        files.insert(file.id, file.clone());
         Ok(())
     }
 
@@ -856,6 +872,26 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions
             .get(&commission)
             .is_some_and(|stored| stored.owner_id == user))
+    }
+
+    /// The file-entry link `key` names **within `commission`** (ZMVP-88) — the mem
+    /// mirror of the pg query filtered by both id and commission_id: a key that
+    /// belongs to a *different* commission answers `None` (never a cross-commission
+    /// existence oracle).
+    async fn find_file(
+        &self,
+        commission: CommissionId,
+        key: FileKey,
+    ) -> anyhow::Result<Option<CommissionFile>> {
+        let files = self
+            .0
+            .files
+            .lock()
+            .expect("MemBackend files mutex poisoned");
+        Ok(files
+            .get(&key)
+            .filter(|file| file.commission_id == commission)
+            .cloned())
     }
 }
 

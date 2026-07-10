@@ -116,6 +116,10 @@ async fn main() -> anyhow::Result<()> {
         // append is a UnitOfWork view, so it rides `database` like every write.
         commissions: std::sync::Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
         changelog: std::sync::Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
+        // ZMVP-88: the v1 local file-entry blob store — a pg `bytea` table behind
+        // the FileStore port. A mock/local implementation until the blob-architecture
+        // walkthrough replaces it (the port keeps the opaque keys valid).
+        files: std::sync::Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
         database: std::sync::Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
         pool,
     };

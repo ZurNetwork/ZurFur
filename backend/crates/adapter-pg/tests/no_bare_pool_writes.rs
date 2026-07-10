@@ -58,6 +58,15 @@ const BANNED: &str = ".execute(&self.pool)";
 ///   the keys); the *tombstone* op is logged during hard-delete as the private half of
 ///   the separate, retryable public submission step — by which point the account row is
 ///   already gone. Same-store, single-row, no cross-aggregate invariant.
+/// - `adapter-pg/src/file_store.rs` — the commission file-entry **blob** store
+///   (`PgFileStore::put`/`delete`, ZMVP-88, ruling E13). The blob write has **no
+///   transactional home**: bytes cannot ride a Postgres unit of work, and the file
+///   entry's atomicity lives in the *other* two writes — the `commission_file` link
+///   and the `file_added` changelog entry — which commit together in the UnitOfWork.
+///   The blob `put` runs **before** that unit as its own step (orphan-on-rollback is
+///   accepted and recorded — nothing points at an orphan), the same "public write is
+///   its own retryable step" posture the PDS mirror uses. Single-statement, no
+///   cross-aggregate invariant. (Ruling E13.)
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.
@@ -67,6 +76,7 @@ const EXEMPT: &[&str] = &[
     "adapter-pg/src/profile.rs",
     "adapter-pg/src/key_store.rs",
     "adapter-pg/src/plc_operation_log.rs",
+    "adapter-pg/src/file_store.rs",
 ];
 
 /// The private-store write adapters this guard scans, relative to this crate's

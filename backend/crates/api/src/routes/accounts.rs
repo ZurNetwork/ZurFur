@@ -1274,6 +1274,7 @@ mod tests {
                 plc_directory_endpoint: "https://plc.directory".to_string(),
                 plc_directory_submit: false,
                 deadline_sweep_interval_secs: 60,
+                max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
             },
             pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
             auth: Arc::new(MemAuthenticator::new(Did::new("did:plc:unit".to_string()))),
@@ -1289,6 +1290,7 @@ mod tests {
             accounts: backend.account_store(),
             commissions: backend.commission_store(),
             changelog: backend.changelog_store(),
+            files: backend.file_store(),
             did_minter: Arc::new(MemDidMinter::new()),
         };
         (state, backend)
