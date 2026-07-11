@@ -1,0 +1,1 @@
+DELETE FROM tower_sessions.session WHERE id = $1

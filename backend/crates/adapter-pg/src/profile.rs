@@ -7,13 +7,37 @@
 //! `UnitOfWork` handle — the same reasoning that exempts `session_store` and
 //! `auth_store` (see the `no_bare_pool_writes` guard). See ZMVP-10 and
 //! DESIGN/"Domains and Applications".
+//!
+//! The SQL lives in `queries/profile/`, embedded via `include_str!` and verified
+//! by the `query_files_prepare` test.
 
+use crate::queries::ProfileQuery;
 use chrono::{Duration, Utc};
 use domain::{
     elements::{did::Did, profile::Profile},
     ports::ProfileCache,
 };
-use sqlx::{PgPool, query};
+use sqlx::PgPool;
+
+/// A `profile_cache` row; the domain [`Profile`] is rebuilt from it via [`From`].
+#[derive(sqlx::FromRow)]
+struct ProfileRow {
+    did: String,
+    handle: String,
+    display_name: Option<String>,
+    avatar_url: Option<String>,
+}
+
+impl From<ProfileRow> for Profile {
+    fn from(row: ProfileRow) -> Self {
+        Profile {
+            did: Did::new(row.did),
+            handle: row.handle,
+            display_name: row.display_name,
+            avatar_url: row.avatar_url,
+        }
+    }
+}
 
 /// Postgres-backed read-through cache of public profiles (ZMVP-10). Freshness is
 /// this adapter's policy: `get` treats an entry older than `ttl` as a miss, so a
@@ -46,28 +70,13 @@ impl ProfileCache for PgProfileCache {
         // returned, so the caller sees a miss and refetches. Cutoff computed
         // app-side to keep the freshness window explicit and testable.
         let cutoff = Utc::now() - self.ttl;
-        let row = query!(
-            r#"
-            SELECT
-                did          AS "did!",
-                handle       AS "handle!",
-                display_name AS "display_name?",
-                avatar_url   AS "avatar_url?"
-            FROM profile_cache
-            WHERE did = $1 AND fetched_at > $2
-            "#,
-            did.as_str(),
-            cutoff,
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<ProfileRow> = sqlx::query_as(ProfileQuery::Get.sql())
+            .bind(did.as_str())
+            .bind(cutoff)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row.map(|row| Profile {
-            did: Did::new(row.did),
-            handle: row.handle,
-            display_name: row.display_name,
-            avatar_url: row.avatar_url,
-        }))
+        Ok(row.map(Into::into))
     }
 
     /// `INSERT ... ON CONFLICT (did) DO UPDATE`: a refetch overwrites the prior
@@ -81,24 +90,14 @@ impl ProfileCache for PgProfileCache {
     /// a read endpoint open one for nothing. So it is a documented exception to the
     /// bare-pool-write guard, alongside `session_store` and `auth_store`.
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
-        query!(
-            r#"
-            INSERT INTO profile_cache (did, handle, display_name, avatar_url, fetched_at)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (did) DO UPDATE SET
-                handle       = EXCLUDED.handle,
-                display_name = EXCLUDED.display_name,
-                avatar_url   = EXCLUDED.avatar_url,
-                fetched_at   = EXCLUDED.fetched_at
-            "#,
-            profile.did.as_str(),
-            profile.handle,
-            profile.display_name,
-            profile.avatar_url,
-            Utc::now(),
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(ProfileQuery::Put.sql())
+            .bind(profile.did.as_str())
+            .bind(&profile.handle)
+            .bind(&profile.display_name)
+            .bind(&profile.avatar_url)
+            .bind(Utc::now())
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 }

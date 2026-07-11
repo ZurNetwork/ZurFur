@@ -21,7 +21,11 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "runtime-tokio",
   "postgres",
   "migrate",
-  "macros",
+  # `derive` (FromRow/Type), deliberately NOT `macros`: the query!/query_as!
+  # compile-time macros are retired — SQL lives in queries/*.sql files, executed
+  # via the runtime API and verified by each adapter's prepare-all-files test.
+  # Reintroducing a query macro is a compile error by construction.
+  "derive",
   "time",
   "uuid",
   "chrono",

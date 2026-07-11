@@ -63,17 +63,16 @@ async fn keys_are_encrypted_at_rest_not_plaintext() {
 
     // Read the raw stored bytes and assert none of the three plaintext key runs
     // appear — the column holds ciphertext, never the secp256k1 scalars.
-    let row = sqlx::query!(
-        "SELECT wrapped_keys FROM account_keys WHERE did = $1",
-        did.as_str()
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let wrapped_keys: Vec<u8> =
+        sqlx::query_scalar("SELECT wrapped_keys FROM account_keys WHERE did = $1")
+            .bind(did.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     for byte in [0xAAu8, 0xBB, 0xCC] {
         let run = vec![byte; 32];
         assert!(
-            !row.wrapped_keys.windows(32).any(|w| w == run.as_slice()),
+            !wrapped_keys.windows(32).any(|w| w == run.as_slice()),
             "plaintext key bytes ({byte:#x}) found in wrapped_keys — not encrypted at rest"
         );
     }

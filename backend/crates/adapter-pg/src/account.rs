@@ -3,8 +3,15 @@
 //! Reads are pool-backed; writes are reachable only on an open [`UnitOfWork`]
 //! (`uow.accounts()`), so no account write can skip a transaction. See ZMVP-14,
 //! DESIGN/Account, and DD `24150017` (compile-enforced Unit of Work).
+//!
+//! The SQL lives in `queries/account/` (one statement per file, embedded via
+//! `include_str!`) and is verified against the migrated schema by the
+//! `query_files_prepare` test.
+//!
+//! [`UnitOfWork`]: domain::ports::UnitOfWork
 
-use chrono::Utc;
+use crate::queries::AccountQuery;
+use chrono::{DateTime, Utc};
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -18,7 +25,8 @@ use domain::{
     },
     ports::{AccountStore, AccountWrites, HandleTaken},
 };
-use sqlx::{PgConnection, PgPool, query};
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
 
 /// THE ACCOUNT-FACT REGISTRY (ZMVP-57; Account Deletion DD `23003138`): the tables
 /// whose rows are **account-anchored facts** — evidence that would be *orphaned* by
@@ -87,6 +95,63 @@ const _: () = assert!(
      remove this guard and its mirror in the api crate"
 );
 
+/// An `accounts` row; the domain [`Account`] is rebuilt from it in
+/// [`to_account`], re-validating the stored handle/name.
+#[derive(sqlx::FromRow)]
+struct AccountRow {
+    id: Uuid,
+    did: String,
+    handle: String,
+    name: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    deleted_at: Option<DateTime<Utc>>,
+}
+
+/// Rebuild a domain [`Account`] from its row. The stored name/handle were
+/// validated before they were written, so re-validation here only guards against
+/// tampering — surfaced as an error, never a panic.
+fn to_account(row: AccountRow) -> anyhow::Result<Account> {
+    Ok(Account {
+        id: AccountId::new(row.id),
+        did: Did::new(row.did),
+        handle: Handle::try_new(row.handle)?,
+        name: AccountName::try_new(row.name)?,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        deleted_at: row.deleted_at,
+    })
+}
+
+/// An `account_invitations` row; the domain [`Invitation`] is rebuilt from it in
+/// [`to_invitation`], re-validating the stored `role`/`state` discriminants.
+#[derive(sqlx::FromRow)]
+struct InvitationRow {
+    id: Uuid,
+    account_id: Uuid,
+    invited_user: Uuid,
+    role: String,
+    inviter: Uuid,
+    state: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+/// Rebuild a domain [`Invitation`] from its row — an `Err` on row tampering,
+/// never a panic (the [`to_account`] contract).
+fn to_invitation(row: InvitationRow) -> anyhow::Result<Invitation> {
+    Ok(Invitation {
+        id: InvitationId::new(row.id),
+        account: AccountId::new(row.account_id),
+        invited_user: UserId::new(row.invited_user),
+        role: Role::try_from(row.role)?,
+        inviter: UserId::new(row.inviter),
+        state: InvitationState::try_from(row.state)?,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
 /// PostgreSQL read store for accounts and memberships (the [`AccountStore`] read
 /// surface). Soft deletes are honored on read ([`find`](PgAccountStore::find)
 /// filters `deleted_at IS NULL`). Holds the pool directly — reads pay no
@@ -116,67 +181,67 @@ pub struct PgAccountWrites<'a> {
     pub(crate) conn: &'a mut PgConnection,
 }
 
-/// Settle a member's departure from `account` on an open transaction — shared by
-/// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role),
-/// which both remove a member with identical store effects and differ only in the
-/// caller's preconditions. Re-homes the member's children to their parent
-/// (DESIGN/Roles rule 3, scoped to this account), deletes the membership, and
-/// revokes the member's still-pending *issued* invitations so none can later seat a
-/// member under a non-member (DD "Auth Surfaces, the Plugin Trust Boundary & CSRF" /
-/// ZMVP-40 — the `Revoked` terminal state, never a hard delete). A membership that
-/// vanished under a concurrent removal is a no-op.
-async fn settle_member_departure(
-    conn: &mut PgConnection,
-    user: UserId,
-    account: AccountId,
-) -> anyhow::Result<()> {
-    // The member's parent is where their children re-home. If the membership is
-    // already gone, there is nothing to settle.
-    let Some(membership) = query!(
-        r#"SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2"#,
-        *account,
-        *user,
-    )
-    .fetch_optional(&mut *conn)
-    .await?
-    else {
-        return Ok(());
-    };
+impl PgAccountWrites<'_> {
+    /// Settle a member's departure from `account` on the open transaction — shared
+    /// by [`leave`](AccountWrites::leave) and
+    /// [`revoke_role`](AccountWrites::revoke_role), which both remove a member with
+    /// identical store effects and differ only in the caller's preconditions.
+    /// Re-homes the member's children to their parent (DESIGN/Roles rule 3, scoped
+    /// to this account), deletes the membership, and revokes the member's
+    /// still-pending *issued* invitations so none can later seat a member under a
+    /// non-member (DD "Invitation Validity & Issuer Departure" / ZMVP-40 — the
+    /// `Revoked` terminal state, never a hard delete). A membership that vanished
+    /// under a concurrent removal is a no-op.
+    ///
+    /// A method on the write view (not a free function taking a connection) so its
+    /// writes visibly execute on `self.conn` — the transaction-bound shape; a
+    /// helper that could be handed any connection would be a hole in that
+    /// property (found by the diesel-evaluation port's guard, back-ported here).
+    async fn settle_member_departure(
+        &mut self,
+        user: UserId,
+        account: AccountId,
+    ) -> anyhow::Result<()> {
+        // The member's parent is where their children re-home. If the membership is
+        // already gone, there is nothing to settle.
+        let Some(parent) =
+            sqlx::query_scalar::<_, Option<Uuid>>(AccountQuery::DepartureMembership.sql())
+                .bind(*account)
+                .bind(*user)
+                .fetch_optional(&mut *self.conn)
+                .await?
+        else {
+            return Ok(());
+        };
 
-    // Re-home the member's children to the member's parent — scoped to THIS account
-    // (`parent` is a `users(id)`, so the same user may be a parent elsewhere).
-    query!(
-        r#"UPDATE account_members SET parent = $1 WHERE account_id = $2 AND parent = $3"#,
-        membership.parent,
-        *account,
-        *user,
-    )
-    .execute(&mut *conn)
-    .await?;
+        // Re-home the member's children to the member's parent — scoped to THIS account
+        // (`parent` is a `users(id)`, so the same user may be a parent elsewhere).
+        sqlx::query(AccountQuery::DepartureRehomeChildren.sql())
+            .bind(parent)
+            .bind(*account)
+            .bind(*user)
+            .execute(&mut *self.conn)
+            .await?;
 
-    // The membership itself is removed.
-    query!(
-        r#"DELETE FROM account_members WHERE account_id = $1 AND user_id = $2"#,
-        *account,
-        *user,
-    )
-    .execute(&mut *conn)
-    .await?;
+        // The membership itself is removed.
+        sqlx::query(AccountQuery::DepartureDeleteMembership.sql())
+            .bind(*account)
+            .bind(*user)
+            .execute(&mut *self.conn)
+            .await?;
 
-    // Revoke the member's still-pending issued invitations.
-    query!(
-        r#"UPDATE account_invitations SET state = $1, updated_at = $2
-           WHERE account_id = $3 AND inviter = $4 AND state = $5"#,
-        InvitationState::Revoked.as_str(),
-        Utc::now(),
-        *account,
-        *user,
-        InvitationState::Pending.as_str(),
-    )
-    .execute(&mut *conn)
-    .await?;
+        // Revoke the member's still-pending issued invitations.
+        sqlx::query(AccountQuery::DepartureRevokeInvitations.sql())
+            .bind(InvitationState::Revoked.as_str())
+            .bind(Utc::now())
+            .bind(*account)
+            .bind(*user)
+            .bind(InvitationState::Pending.as_str())
+            .execute(&mut *self.conn)
+            .await?;
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -186,60 +251,22 @@ impl AccountStore for PgAccountStore {
     /// re-validated through [`AccountName`]; that only guards against row
     /// tampering and surfaces as an `Err`, never a panic.
     async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>> {
-        let row = query!(
-            r#"
-        SELECT
-            id      AS "id!",
-            did     AS "did!",
-            handle  AS "handle!",
-            name    AS "name!",
-            created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
-            updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>",
-            deleted_at AS "deleted_at?: chrono::DateTime<chrono::Utc>"
-            FROM accounts
-            WHERE id = $1
-            AND deleted_at IS NULL
-        "#,
-            *id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<AccountRow> = sqlx::query_as(AccountQuery::Find.sql())
+            .bind(*id)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        // The stored name/handle were validated before they were written, so
-        // re-validation here only guards against tampering — surfaced as an error,
-        // never a panic.
-        row.map(|row| {
-            Ok(Account {
-                id: AccountId::new(row.id),
-                did: Did::new(row.did),
-                handle: Handle::try_new(row.handle)?,
-                name: AccountName::try_new(row.name)?,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                deleted_at: row.deleted_at,
-            })
-        })
-        .transpose()
+        row.map(to_account).transpose()
     }
 
     async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>> {
-        let row = query!(
-            r#"
-        SELECT
-            role as "role!"
-        FROM account_members
-        WHERE 
-            user_id = $1 
-            AND account_id = $2
-        LIMIT 1
-        "#,
-            *user,
-            *account,
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let role: Option<String> = sqlx::query_scalar(AccountQuery::RoleOf.sql())
+            .bind(*user)
+            .bind(*account)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row.map(|m| Role::try_from(m.role)).transpose()?)
+        Ok(role.map(Role::try_from).transpose()?)
     }
 
     /// Selects the lone `state = 'pending'` offer for `(account, invited_user)`, or
@@ -252,66 +279,27 @@ impl AccountStore for PgAccountStore {
         account: AccountId,
         invited_user: UserId,
     ) -> anyhow::Result<Option<Invitation>> {
-        let invitation = query!(
-            r#"
-            SELECT id, account_id, invited_user, role, inviter, state, created_at, updated_at
-            FROM account_invitations
-            WHERE account_id = $1 AND invited_user = $2 AND state = $3
-            LIMIT 1
-        "#,
-            *account,
-            *invited_user,
-            InvitationState::Pending.as_str()
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let invitation: Option<InvitationRow> =
+            sqlx::query_as(AccountQuery::FindPendingInvitation.sql())
+                .bind(*account)
+                .bind(*invited_user)
+                .bind(InvitationState::Pending.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
 
-        invitation
-            .map(|i| {
-                Ok(Invitation {
-                    id: InvitationId::new(i.id),
-                    account: AccountId::new(i.account_id),
-                    invited_user: UserId::new(i.invited_user),
-                    role: Role::try_from(i.role)?,
-                    inviter: UserId::new(i.inviter),
-                    state: InvitationState::try_from(i.state)?,
-                    created_at: i.created_at,
-                    updated_at: i.updated_at,
-                })
-            })
-            .transpose()
+        invitation.map(to_invitation).transpose()
     }
 
     /// Loads the invitation for `id` in whatever state it holds (the revoke path
     /// reads it back to weigh authority and current state), or `None`. Stored
     /// discriminants are re-validated on read — an `Err` on tampering, never a panic.
     async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>> {
-        let invitation = query!(
-            r#"
-        SELECT id, account_id, invited_user, role, inviter, state, created_at, updated_at
-        FROM account_invitations
-        WHERE id = $1
-        LIMIT 1
-        "#,
-            *id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let invitation: Option<InvitationRow> = sqlx::query_as(AccountQuery::FindInvitation.sql())
+            .bind(*id)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        invitation
-            .map(|i| {
-                Ok(Invitation {
-                    id: InvitationId::new(i.id),
-                    account: AccountId::new(i.account_id),
-                    invited_user: UserId::new(i.invited_user),
-                    role: Role::try_from(i.role)?,
-                    inviter: UserId::new(i.inviter),
-                    state: InvitationState::try_from(i.state)?,
-                    created_at: i.created_at,
-                    updated_at: i.updated_at,
-                })
-            })
-            .transpose()
+        invitation.map(to_invitation).transpose()
     }
 
     /// Exact-match lookup of a live account's `did` by its normalized `handle`,
@@ -320,36 +308,28 @@ impl AccountStore for PgAccountStore {
     /// resolver and the founding-time duplicate-handle pre-check. The `UNIQUE`
     /// handle index makes at most one row possible.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
-        let row = query!(
-            r#"SELECT did AS "did!" FROM accounts WHERE handle = $1 AND deleted_at IS NULL"#,
-            handle.as_str(),
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let did: Option<String> = sqlx::query_scalar(AccountQuery::FindDidByHandle.sql())
+            .bind(handle.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row.map(|row| Did::new(row.did)))
+        Ok(did.map(Did::new))
     }
 
     /// Counts the account's `account_handle_changes` rows at or after `since` — the
     /// recent-change tally the change handler weighs against the rate limit. Uses the
-    /// `(account_id, changed_at)` index; `count(*)` is never null (forced non-null).
+    /// `(account_id, changed_at)` index; `count(*)` is never null.
     async fn count_handle_changes_since(
         &self,
         account: AccountId,
         since: DateTimeUtc,
     ) -> anyhow::Result<i64> {
-        let row = query!(
-            r#"
-            SELECT count(*) AS "count!"
-            FROM account_handle_changes
-            WHERE account_id = $1 AND changed_at >= $2
-            "#,
-            *account,
-            since,
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.count)
+        let count: i64 = sqlx::query_scalar(AccountQuery::CountHandleChangesSince.sql())
+            .bind(*account)
+            .bind(since)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
     }
 
     /// `EXISTS` a recent vacation of `handle` by an account other than `excluding` —
@@ -364,23 +344,22 @@ impl AccountStore for PgAccountStore {
         since: DateTimeUtc,
     ) -> anyhow::Result<bool> {
         let excluding = excluding.map(|account| *account);
-        let row = query!(
-            r#"
-            SELECT EXISTS (
-                SELECT 1
-                FROM account_handle_changes
-                WHERE old_handle = $1
-                  AND changed_at >= $2
-                  AND ($3::uuid IS NULL OR account_id <> $3)
-            ) AS "reserved!"
-            "#,
-            handle.as_str(),
-            since,
-            excluding,
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.reserved)
+        let reserved: bool = sqlx::query_scalar(AccountQuery::HandleReservedForOther.sql())
+            .bind(handle.as_str())
+            .bind(since)
+            .bind(excluding)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(reserved)
+    }
+}
+
+/// The unique-violation constraint name carried by an sqlx database error, if
+/// any — the receiver for mapping `accounts_handle_key` onto [`HandleTaken`].
+fn constraint_of(err: &sqlx::Error) -> Option<&str> {
+    match err {
+        sqlx::Error::Database(db_err) => db_err.constraint(),
+        _ => None,
     }
 }
 
@@ -400,41 +379,31 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// duplicate `id` or `did` (both machine-minted, never user-facing) stays an
     /// opaque store error.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
-        let insert = query!(
-            r#"
-        INSERT INTO accounts (id, did, handle, name, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
-            *account.id,
-            account.did.as_str(),
-            account.handle.as_str(),
-            account.name.as_str(),
-            account.created_at,
-            account.updated_at
-        )
-        .execute(&mut *self.conn)
-        .await;
+        let insert = sqlx::query(AccountQuery::CreateAccount.sql())
+            .bind(*account.id)
+            .bind(account.did.as_str())
+            .bind(account.handle.as_str())
+            .bind(account.name.as_str())
+            .bind(account.created_at)
+            .bind(account.updated_at)
+            .execute(&mut *self.conn)
+            .await;
 
         // Map a handle-uniqueness violation to the typed `HandleTaken` so the caller
         // can answer 409; any other database error stays opaque (→ 500).
-        if let Err(sqlx::Error::Database(ref db_err)) = insert
-            && db_err.constraint() == Some("accounts_handle_key")
+        if let Err(ref err) = insert
+            && constraint_of(err) == Some("accounts_handle_key")
         {
             return Err(anyhow::Error::new(HandleTaken));
         }
         insert?;
 
-        query!(
-            r#"
-        INSERT INTO account_members (account_id, user_id, role)
-        VALUES ($1, $2, $3)
-        "#,
-            *owner.account_id,
-            *owner.user_id,
-            owner.role.as_str()
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::CreateOwnerMembership.sql())
+            .bind(*owner.account_id)
+            .bind(*owner.user_id)
+            .bind(owner.role.as_str())
+            .execute(&mut *self.conn)
+            .await?;
 
         Ok(())
     }
@@ -467,24 +436,18 @@ impl AccountWrites for PgAccountWrites<'_> {
         new: &Handle,
         at: DateTimeUtc,
     ) -> anyhow::Result<()> {
-        let updated = query!(
-            r#"
-            UPDATE accounts
-            SET handle = $1, updated_at = $2
-            WHERE id = $3 AND deleted_at IS NULL AND handle = $4
-            "#,
-            new.as_str(),
-            at,
-            *account,
-            old.as_str(),
-        )
-        .execute(&mut *self.conn)
-        .await;
+        let updated = sqlx::query(AccountQuery::ChangeHandleRepoint.sql())
+            .bind(new.as_str())
+            .bind(at)
+            .bind(*account)
+            .bind(old.as_str())
+            .execute(&mut *self.conn)
+            .await;
 
         // Map a handle-uniqueness violation to the typed `HandleTaken` (→ 409), exactly
         // as `create` does; any other database error stays opaque (→ 500).
-        if let Err(sqlx::Error::Database(ref db_err)) = updated
-            && db_err.constraint() == Some("accounts_handle_key")
+        if let Err(ref err) = updated
+            && constraint_of(err) == Some("accounts_handle_key")
         {
             return Err(anyhow::Error::new(HandleTaken));
         }
@@ -500,19 +463,14 @@ impl AccountWrites for PgAccountWrites<'_> {
             );
         }
 
-        query!(
-            r#"
-            INSERT INTO account_handle_changes (id, account_id, old_handle, new_handle, changed_at)
-            VALUES ($1, $2, $3, $4, $5)
-            "#,
-            uuid::Uuid::now_v7(),
-            *account,
-            old.as_str(),
-            new.as_str(),
-            at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::ChangeHandleAudit.sql())
+            .bind(uuid::Uuid::now_v7())
+            .bind(*account)
+            .bind(old.as_str())
+            .bind(new.as_str())
+            .bind(at)
+            .execute(&mut *self.conn)
+            .await?;
 
         Ok(())
     }
@@ -526,19 +484,12 @@ impl AccountWrites for PgAccountWrites<'_> {
         // role (DESIGN/Roles — a grant is how a user joins). `parent` is left to
         // its default NULL: the role-hierarchy tree is deferred ("dress when The
         // Who closes"), same as the founder row written by `create`.
-        query!(
-            r#"
-        INSERT INTO account_members (account_id, user_id, role)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (account_id, user_id) DO UPDATE
-            SET role = EXCLUDED.role
-        "#,
-            *member.account_id,
-            *member.user_id,
-            member.role.as_str()
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::GrantRole.sql())
+            .bind(*member.account_id)
+            .bind(*member.user_id)
+            .bind(member.role.as_str())
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -548,7 +499,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// and revoke the member's pending issued invitations — atomically on the open
     /// transaction. Revoking a non-member is a harmless no-op.
     async fn revoke_role(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        settle_member_departure(self.conn, user, account).await
+        self.settle_member_departure(user, account).await
     }
 
     /// Settle a member leaving the account on the open transaction (ZMVP-21): re-home
@@ -557,7 +508,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// can't be the `Owner`) are the caller's; a membership that vanished under a
     /// concurrent removal is a no-op. See the [`leave`](AccountWrites::leave) port doc.
     async fn leave(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
-        settle_member_departure(self.conn, user, account).await
+        self.settle_member_departure(user, account).await
     }
 
     /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
@@ -567,23 +518,17 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// for the idempotent re-invite the handler also guards by checking
     /// [`find_pending_invitation`](AccountStore::find_pending_invitation) first.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<()> {
-        query!(r#"
-            INSERT INTO account_invitations (id, account_id, invited_user, role, inviter, state, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
-            DO NOTHING
-        "#,
-            *invitation.id,
-            *invitation.account,
-            *invitation.invited_user,
-            invitation.role.as_str(),
-            *invitation.inviter,
-            invitation.state.as_str(),
-            invitation.created_at,
-            invitation.updated_at
-        )
+        sqlx::query(AccountQuery::CreateInvitation.sql())
+            .bind(*invitation.id)
+            .bind(*invitation.account)
+            .bind(*invitation.invited_user)
+            .bind(invitation.role.as_str())
+            .bind(*invitation.inviter)
+            .bind(invitation.state.as_str())
+            .bind(invitation.created_at)
+            .bind(invitation.updated_at)
             .execute(&mut *self.conn)
-        .await?;
+            .await?;
         Ok(())
     }
 
@@ -593,20 +538,13 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// no-op, not an error (the handler decides whether that's a 404/409). Mirrors
     /// [`revoke_role`](PgAccountWrites::revoke_role)'s no-op-on-no-match shape.
     async fn revoke_invitation(&mut self, id: InvitationId) -> anyhow::Result<()> {
-        let now = Utc::now();
-        query!(
-            r#"
-            UPDATE account_invitations
-            SET state = $1, updated_at = $2
-            WHERE id = $3 AND state = $4
-            "#,
-            InvitationState::Revoked.as_str(),
-            now,
-            *id,
-            InvitationState::Pending.as_str(),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::RevokeInvitation.sql())
+            .bind(InvitationState::Revoked.as_str())
+            .bind(Utc::now())
+            .bind(*id)
+            .bind(InvitationState::Pending.as_str())
+            .execute(&mut *self.conn)
+            .await?;
 
         Ok(())
     }
@@ -626,21 +564,13 @@ impl AccountWrites for PgAccountWrites<'_> {
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
-        let now = Utc::now();
-
-        let accepted = query!(
-            r#"
-        UPDATE account_invitations
-        SET state = $1, updated_at = $2
-        WHERE id = $3 AND state = $4
-        "#,
-            InvitationState::Accepted.as_str(),
-            now,
-            *invitation.id,
-            InvitationState::Pending.as_str(),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let accepted = sqlx::query(AccountQuery::AcceptInvitationFlip.sql())
+            .bind(InvitationState::Accepted.as_str())
+            .bind(Utc::now())
+            .bind(*invitation.id)
+            .bind(InvitationState::Pending.as_str())
+            .execute(&mut *self.conn)
+            .await?;
 
         // The guarded UPDATE is the atomic backstop for the handler's in-memory
         // `Invitation::accept` check: matching no pending row means the offer was
@@ -653,27 +583,23 @@ impl AccountWrites for PgAccountWrites<'_> {
             ));
         }
 
-        let new_member = query!(
-            r#"
-                INSERT INTO account_members (account_id, user_id, parent, "role", listed_on_profile)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING account_id, user_id, "role"
-        "#,
-            *invitation.account,
-            *invitation.invited_user,
-            *invitation.inviter,
-            invitation.role.as_str(),
-            listed_on_profile
-        )
-        .fetch_one(&mut *self.conn)
-        .await?;
+        let (account_id, user_id, role): (Uuid, Uuid, String) =
+            sqlx::query_as(AccountQuery::AcceptInvitationSeat.sql())
+                .bind(*invitation.account)
+                .bind(*invitation.invited_user)
+                .bind(*invitation.inviter)
+                .bind(invitation.role.as_str())
+                .bind(listed_on_profile)
+                .fetch_one(&mut *self.conn)
+                .await?;
 
         Ok(UserAccount {
-            account_id: AccountId::new(new_member.account_id),
-            user_id: UserId::new(new_member.user_id),
-            role: Role::try_from(new_member.role)?,
+            account_id: AccountId::new(account_id),
+            user_id: UserId::new(user_id),
+            role: Role::try_from(role)?,
         })
     }
+
     /// Transfer ownership atomically (DESIGN/Roles rule 8): demote the outgoing
     /// Owner to Admin re-homed under the incoming Owner, and promote the incoming
     /// member to Owner with no parent (rule 5). Both `UPDATE`s ride the one
@@ -698,20 +624,14 @@ impl AccountWrites for PgAccountWrites<'_> {
         // Demote the outgoing Owner to Admin, re-homed under the incoming Owner — but
         // only while they are *still* the Owner. A race that already moved ownership
         // leaves this matching zero rows, so we error and roll back.
-        let demoted = query!(
-            r#"
-            UPDATE account_members
-            SET "role" = $1, parent = $4
-            WHERE account_id = $2 AND user_id = $3 AND "role" = $5
-        "#,
-            Role::Admin(None).as_str(),
-            *account,
-            *old_owner,
-            *new_owner,
-            Role::Owner(None).as_str()
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let demoted = sqlx::query(AccountQuery::TransferDemoteOwner.sql())
+            .bind(Role::Admin(None).as_str())
+            .bind(*account)
+            .bind(*old_owner)
+            .bind(*new_owner)
+            .bind(Role::Owner(None).as_str())
+            .execute(&mut *self.conn)
+            .await?;
         if demoted.rows_affected() != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not the current Owner of account {}; nothing transferred",
@@ -723,18 +643,12 @@ impl AccountWrites for PgAccountWrites<'_> {
         // Promote the incoming member to sole Owner with no parent — but only while
         // they are *still* a member. Zero rows means they vanished mid-transfer, so we
         // error and roll back rather than leave the account with no Owner.
-        let promoted = query!(
-            r#"
-            UPDATE account_members
-            SET "role" = $1, parent = NULL
-            WHERE account_id = $2 AND user_id = $3
-        "#,
-            Role::Owner(None).as_str(),
-            *account,
-            *new_owner
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let promoted = sqlx::query(AccountQuery::TransferPromoteHeir.sql())
+            .bind(Role::Owner(None).as_str())
+            .bind(*account)
+            .bind(*new_owner)
+            .execute(&mut *self.conn)
+            .await?;
         if promoted.rows_affected() != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not a member of account {}; nothing transferred",
@@ -754,18 +668,11 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// `deleted_at IS NULL` guard makes a repeat soft-delete a harmless no-op. See the
     /// [`soft_delete`](AccountWrites::soft_delete) port doc.
     async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
-        let now = Utc::now();
-        query!(
-            r#"
-            UPDATE accounts
-            SET deleted_at = $1, updated_at = $1
-            WHERE id = $2 AND deleted_at IS NULL
-            "#,
-            now,
-            *account,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::SoftDelete.sql())
+            .bind(Utc::now())
+            .bind(*account)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -784,21 +691,18 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// matching no row is a no-op. See the [`hard_delete`](AccountWrites::hard_delete)
     /// port doc.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
-        query!(
-            r#"DELETE FROM account_invitations WHERE account_id = $1"#,
-            *account,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::HardDeleteInvitations.sql())
+            .bind(*account)
+            .execute(&mut *self.conn)
+            .await?;
 
-        query!(
-            r#"DELETE FROM account_members WHERE account_id = $1"#,
-            *account,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(AccountQuery::HardDeleteMemberships.sql())
+            .bind(*account)
+            .execute(&mut *self.conn)
+            .await?;
 
-        query!(r#"DELETE FROM accounts WHERE id = $1"#, *account)
+        sqlx::query(AccountQuery::HardDeleteAccount.sql())
+            .bind(*account)
             .execute(&mut *self.conn)
             .await?;
 

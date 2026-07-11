@@ -2,6 +2,9 @@
 //! cookie with the `tower_sessions.session` table. Sessions are app-owned rows,
 //! so they live in the private boundary; persisting them is what lets a
 //! signed-in session survive a reload (ZMVP-8).
+//!
+//! The SQL lives in `queries/session/`, embedded via `include_str!` and verified
+//! by the `query_files_prepare` test.
 
 use async_trait::async_trait;
 use time::OffsetDateTime;
@@ -12,6 +15,7 @@ use tower_sessions_core::{
 };
 
 use crate::PgPool;
+use crate::queries::SessionQuery;
 
 /// Durable tower-sessions store backing the session cookie with the
 /// `tower_sessions.session` table from this crate's migration. It lives in the
@@ -64,17 +68,13 @@ impl SessionStore for PgSessionStore {
         // key collision rather than overwriting an unrelated session.
         loop {
             let data = encode(record)?;
-            let inserted = sqlx::query(
-                "INSERT INTO tower_sessions.session (id, data, expiry_date)
-                 VALUES ($1, $2, $3)
-                 ON CONFLICT (id) DO NOTHING",
-            )
-            .bind(record.id.to_string())
-            .bind(data)
-            .bind(record.expiry_date)
-            .execute(&self.pool)
-            .await
-            .map_err(backend)?;
+            let inserted = sqlx::query(SessionQuery::Create.sql())
+                .bind(record.id.to_string())
+                .bind(data)
+                .bind(record.expiry_date)
+                .execute(&self.pool)
+                .await
+                .map_err(backend)?;
 
             if inserted.rows_affected() == 1 {
                 return Ok(());
@@ -89,18 +89,13 @@ impl SessionStore for PgSessionStore {
     /// key being saved.
     async fn save(&self, record: &Record) -> session_store::Result<()> {
         let data = encode(record)?;
-        sqlx::query(
-            "INSERT INTO tower_sessions.session (id, data, expiry_date)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (id) DO UPDATE
-             SET data = excluded.data, expiry_date = excluded.expiry_date",
-        )
-        .bind(record.id.to_string())
-        .bind(data)
-        .bind(record.expiry_date)
-        .execute(&self.pool)
-        .await
-        .map_err(backend)?;
+        sqlx::query(SessionQuery::Save.sql())
+            .bind(record.id.to_string())
+            .bind(data)
+            .bind(record.expiry_date)
+            .execute(&self.pool)
+            .await
+            .map_err(backend)?;
         Ok(())
     }
 
@@ -108,15 +103,12 @@ impl SessionStore for PgSessionStore {
     /// row reads as `None` even before [`delete_expired`](#method.delete_expired)
     /// sweeps it — enforcing the expiry policy on every read (ZMVP-12).
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(
-            "SELECT data FROM tower_sessions.session
-             WHERE id = $1 AND expiry_date > $2",
-        )
-        .bind(session_id.to_string())
-        .bind(OffsetDateTime::now_utc())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(backend)?;
+        let row: Option<(Vec<u8>,)> = sqlx::query_as(SessionQuery::Load.sql())
+            .bind(session_id.to_string())
+            .bind(OffsetDateTime::now_utc())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend)?;
 
         row.map(|(data,)| decode(&data)).transpose()
     }
@@ -124,7 +116,7 @@ impl SessionStore for PgSessionStore {
     /// Deletes the session by id (e.g. on sign-out, ZMVP-11). Deleting an absent
     /// id matches no row and still succeeds — a harmless no-op.
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        sqlx::query("DELETE FROM tower_sessions.session WHERE id = $1")
+        sqlx::query(SessionQuery::Delete.sql())
             .bind(session_id.to_string())
             .execute(&self.pool)
             .await
@@ -139,7 +131,7 @@ impl ExpiredDeletion for PgSessionStore {
     /// tower-sessions deletion task runs periodically. Read-time expiry is already
     /// enforced by [`load`](#method.load); this just reclaims the dead rows.
     async fn delete_expired(&self) -> session_store::Result<()> {
-        sqlx::query("DELETE FROM tower_sessions.session WHERE expiry_date < $1")
+        sqlx::query(SessionQuery::DeleteExpired.sql())
             .bind(OffsetDateTime::now_utc())
             .execute(&self.pool)
             .await

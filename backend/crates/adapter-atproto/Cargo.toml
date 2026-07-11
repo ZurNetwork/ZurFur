@@ -40,6 +40,10 @@ serde_json = { workspace = true }
 # leaves to the consumer (jacquard-common enables only json/charset on reqwest).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
+[build-dependencies]
+# Generates the typed query registry (enums + sql() + ALL_QUERIES) from queries/.
+query-registry-build = { path = "../query-registry-build" }
+
 [dev-dependencies]
 # Boots a throwaway Postgres so the store round-trips against the real migration.
 # adapter-pg (test-only) supplies connect + migrate; this is not a runtime edge.

@@ -3,7 +3,13 @@
 //! writes are reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
 //! (`uow.commissions()`), so no commission write can skip a transaction. See
 //! DESIGN/Commission and DD `24150017` (compile-enforced Unit of Work).
+//!
+//! The SQL lives in `queries/commission/` (one statement per file, embedded via
+//! `include_str!`) and is verified against the migrated schema by the
+//! `query_files_prepare` test.
 
+use crate::queries::CommissionQuery;
+use chrono::{DateTime, Utc};
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -22,7 +28,8 @@ use domain::{
         ParentNotASurface,
     },
 };
-use sqlx::{PgConnection, PgPool, query};
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
 
 /// THE FACT REGISTRY (ZMVP-67; Deletion DD `3014657`): the tables whose rows are
 /// commission [`Fact`](domain::elements::commission::Fact)s — evidence that blocks
@@ -118,27 +125,22 @@ impl PgCommissionWrites<'_> {
         parent: NodeId,
         commission: CommissionId,
     ) -> anyhow::Result<SurfaceMode> {
-        let row = query!(
-            r#"
-            SELECT type AS type_tag, mode FROM commission_node
-            WHERE id = $1 AND commission_id = $2
-            FOR UPDATE
-            "#,
-            *parent,
-            *commission,
-        )
-        .fetch_optional(&mut *self.conn)
-        .await?;
-        let Some(row) = row else {
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as(CommissionQuery::RequireSurfaceParent.sql())
+                .bind(*parent)
+                .bind(*commission)
+                .fetch_optional(&mut *self.conn)
+                .await?;
+        let Some((type_tag, mode)) = row else {
             return Err(ParentNodeNotFound.into());
         };
-        match NodeKind::from_columns(&row.type_tag, row.mode.as_deref()) {
+        match NodeKind::from_columns(&type_tag, mode.as_deref()) {
             Some(NodeKind::Surface { mode }) => Ok(mode),
             Some(NodeKind::Component) => Err(ParentNotASurface.into()),
             None => Err(anyhow::anyhow!(
                 "unknown node envelope ({:?}, {:?})",
-                row.type_tag,
-                row.mode
+                type_tag,
+                mode
             )),
         }
     }
@@ -158,50 +160,28 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// caller-/adapter-minted UUIDv7, so no conflict handling is needed; any store
     /// failure surfaces as an opaque error.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
-        query!(
-            r#"
-            INSERT INTO
-            commission (
-                id,
-                title,
-                owner_id,
-                lifecycle,
-                visibility,
-                deadline,
-                maturity,
-                graphic,
-                created_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        "#,
-            *commission.id,
-            commission.title.as_str(),
-            *commission.owner_id,
-            commission.lifecycle_step.as_str(),
-            commission.visibility.as_str(),
-            commission.deadline,
-            commission.maturity.map(|m| m.rating.as_str()),
-            commission.maturity.map(|m| m.graphic),
-            commission.created_at
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::CreateCommission.sql())
+            .bind(*commission.id)
+            .bind(commission.title.as_str())
+            .bind(*commission.owner_id)
+            .bind(commission.lifecycle_step.as_str())
+            .bind(commission.visibility.as_str())
+            .bind(commission.deadline)
+            .bind(commission.maturity.map(|m| m.rating.as_str()))
+            .bind(commission.maturity.map(|m| m.graphic))
+            .bind(commission.created_at)
+            .execute(&mut *self.conn)
+            .await?;
 
         let root = RootSurface::of(commission);
-        query!(
-            r#"
-            INSERT INTO commission_node
-                (id, commission_id, parent, type, mode, position, created_by, created_at)
-            VALUES ($1, $2, NULL, 'surface', $3, 0, $4, $5)
-            "#,
-            *root.id,
-            *commission.id,
-            root.mode.as_str(),
-            *root.created_by,
-            root.created_at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::CreateRootSurface.sql())
+            .bind(*root.id)
+            .bind(*commission.id)
+            .bind(root.mode.as_str())
+            .bind(*root.created_by)
+            .bind(root.created_at)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -219,25 +199,15 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             .require_surface_parent(surface.parent, surface.commission_id)
             .await?;
 
-        query!(
-            r#"
-            INSERT INTO commission_node
-                (id, commission_id, parent, type, mode, position, created_by, created_at)
-            VALUES (
-                $1, $2, $3, 'surface', $4,
-                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
-                $5, $6
-            )
-            "#,
-            *surface.id,
-            *surface.commission_id,
-            *surface.parent,
-            mode.as_str(),
-            *surface.created_by,
-            surface.created_at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::AddSurface.sql())
+            .bind(*surface.id)
+            .bind(*surface.commission_id)
+            .bind(*surface.parent)
+            .bind(mode.as_str())
+            .bind(*surface.created_by)
+            .bind(surface.created_at)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -246,32 +216,22 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// the same shared parent gate, the same racing-proof append `position`
     /// subquery. The row stores `type = 'component'` with a **NULL `mode`**
     /// (the surface-XOR-mode CHECK's other arm — a component projects with its
-    /// parent, AC2) and the opaque payload as jsonb, semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving)
-    /// (AC3; a top-level JSON `null` lands as jsonb `'null'`, never
-    /// SQL `NULL`).
+    /// parent, AC2) and the opaque payload as jsonb, semantically unmodified —
+    /// round-trips as an equal JSON value (jsonb is not byte-preserving)
+    /// (AC3; a top-level JSON `null` lands as jsonb `'null'`, never SQL `NULL`).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
         self.require_surface_parent(component.parent, component.commission_id)
             .await?;
 
-        query!(
-            r#"
-            INSERT INTO commission_node
-                (id, commission_id, parent, type, mode, position, created_by, created_at, payload)
-            VALUES (
-                $1, $2, $3, 'component', NULL,
-                (SELECT COALESCE(MAX(position) + 1, 0) FROM commission_node WHERE parent = $3),
-                $4, $5, $6
-            )
-            "#,
-            *component.id,
-            *component.commission_id,
-            *component.parent,
-            *component.created_by,
-            component.created_at,
-            component.payload,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::AddComponent.sql())
+            .bind(*component.id)
+            .bind(*component.commission_id)
+            .bind(*component.parent)
+            .bind(*component.created_by)
+            .bind(component.created_at)
+            .bind(&component.payload)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -293,17 +253,15 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// can't trip it. Every write is scoped by `commission_id`, not just the
     /// unique `id`/`parent`, so each statement is self-contained (PR #109 review).
     async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
-        let row = query!(
-            r#"SELECT parent FROM commission_node WHERE id = $1 AND commission_id = $2"#,
-            *node,
-            *commission,
-        )
-        .fetch_optional(&mut *self.conn)
-        .await?;
-        let Some(row) = row else {
+        let row: Option<Option<Uuid>> = sqlx::query_scalar(CommissionQuery::RemoveNodeGate.sql())
+            .bind(*node)
+            .bind(*commission)
+            .fetch_optional(&mut *self.conn)
+            .await?;
+        let Some(parent) = row else {
             return Err(NodeNotFound.into());
         };
-        let Some(parent) = row.parent else {
+        let Some(parent) = parent else {
             return Err(CannotRemoveRoot.into());
         };
 
@@ -314,13 +272,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         // as `NodeNotFound` instead of silently proceeding to renumber (PR #109
         // review). The subtree still leaves via `ON DELETE CASCADE`, whose rows the
         // command count does not include.
-        let deleted = query!(
-            r#"DELETE FROM commission_node WHERE id = $1 AND commission_id = $2"#,
-            *node,
-            *commission,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let deleted = sqlx::query(CommissionQuery::RemoveNodeDelete.sql())
+            .bind(*node)
+            .bind(*commission)
+            .execute(&mut *self.conn)
+            .await?;
         if deleted.rows_affected() != 1 {
             return Err(NodeNotFound.into());
         }
@@ -328,22 +284,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         // Renumber the vacated sibling group, scoped by `commission_id` as well so
         // the subquery matches the gate above and never leans on `parent` UUID
         // uniqueness as the sole scoping mechanism (PR #109 review).
-        query!(
-            r#"
-            UPDATE commission_node AS node
-            SET position = renumbered.position
-            FROM (
-                SELECT id, (ROW_NUMBER() OVER (ORDER BY position))::int - 1 AS position
-                FROM commission_node
-                WHERE parent = $1 AND commission_id = $2
-            ) AS renumbered
-            WHERE node.id = renumbered.id AND node.position <> renumbered.position
-            "#,
-            parent,
-            *commission,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::RemoveNodeRenumber.sql())
+            .bind(parent)
+            .bind(*commission)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -353,18 +298,13 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// [`FileStore`](domain::ports::FileStore) before this unit — never here. The id
     /// is a caller-minted UUIDv7, so no conflict handling is needed.
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
-        query!(
-            r#"
-            INSERT INTO commission_file (id, commission_id, uploaded_by, created_at)
-            VALUES ($1, $2, $3, $4)
-            "#,
-            *file.id,
-            *file.commission_id,
-            *file.uploaded_by,
-            file.created_at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::AddFile.sql())
+            .bind(*file.id)
+            .bind(*file.commission_id)
+            .bind(*file.uploaded_by)
+            .bind(file.created_at)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -392,7 +332,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// tripwire keeps every future child classified). An absent commission
     /// matches no row: a no-op, per the port contract.
     async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
-        query!(r#"DELETE FROM commission WHERE id = $1"#, *id)
+        sqlx::query(CommissionQuery::Delete.sql())
+            .bind(*id)
             .execute(&mut *self.conn)
             .await?;
         Ok(())
@@ -411,17 +352,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: CommissionId,
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
-        let result = query!(
-            r#"
-            UPDATE commission
-            SET archived_at = $2
-            WHERE id = $1 AND (archived_at IS NULL) <> ($2::timestamptz IS NULL)
-            "#,
-            *id,
-            archived_at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let result = sqlx::query(CommissionQuery::SetArchived.sql())
+            .bind(*id)
+            .bind(archived_at)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -432,14 +367,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// row is unrepresentable from any direction. An absent commission
     /// matches no row: a no-op here, per the port contract.
     async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        query!(
-            r#"UPDATE commission SET maturity = $2, graphic = $3 WHERE id = $1"#,
-            *id,
-            maturity.rating.as_str(),
-            maturity.graphic,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::SetMaturity.sql())
+            .bind(*id)
+            .bind(maturity.rating.as_str())
+            .bind(maturity.graphic)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -457,17 +390,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool> {
-        let result = query!(
-            r#"
-            UPDATE commission
-            SET linked_channel = $2
-            WHERE id = $1 AND linked_channel IS DISTINCT FROM $2
-            "#,
-            *id,
-            channel.map(ChannelPointer::as_str),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let result = sqlx::query(CommissionQuery::SetLinkedChannel.sql())
+            .bind(*id)
+            .bind(channel.map(ChannelPointer::as_str))
+            .execute(&mut *self.conn)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -486,39 +413,22 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         placed_by: UserId,
         at: DateTimeUtc,
     ) -> anyhow::Result<()> {
-        let seq = query!(
-            r#"
-            INSERT INTO commission_placement (commission_id, account_id, placed_by, placed_at)
-            VALUES ($1, $2, $3, $4)
-            RETURNING seq
-            "#,
-            *commission,
-            *account,
-            *placed_by,
-            at,
-        )
-        .fetch_one(&mut *self.conn)
-        .await?
-        .seq;
+        let seq: i64 = sqlx::query_scalar(CommissionQuery::PlaceAppend.sql())
+            .bind(*commission)
+            .bind(*account)
+            .bind(*placed_by)
+            .bind(at)
+            .fetch_one(&mut *self.conn)
+            .await?;
 
-        query!(
-            r#"
-            INSERT INTO commission_current_placement (commission_id, account_id, seq, placed_by, placed_at)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (commission_id)
-            DO UPDATE SET account_id = EXCLUDED.account_id,
-                          seq = EXCLUDED.seq,
-                          placed_by = EXCLUDED.placed_by,
-                          placed_at = EXCLUDED.placed_at
-            "#,
-            *commission,
-            *account,
-            seq,
-            *placed_by,
-            at,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::PlaceRepointCurrent.sql())
+            .bind(*commission)
+            .bind(*account)
+            .bind(seq)
+            .bind(*placed_by)
+            .bind(at)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -532,19 +442,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         account: AccountId,
         level: GrantLevel,
     ) -> anyhow::Result<()> {
-        query!(
-            r#"
-            INSERT INTO commission_view_grant (commission_id, account_id, level)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (commission_id, account_id)
-            DO UPDATE SET level = EXCLUDED.level
-            "#,
-            *commission,
-            *account,
-            level.as_str(),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::GrantView.sql())
+            .bind(*commission)
+            .bind(*account)
+            .bind(level.as_str())
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -558,16 +461,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         commission: CommissionId,
         account: AccountId,
     ) -> anyhow::Result<bool> {
-        let result = query!(
-            r#"
-            DELETE FROM commission_view_grant
-            WHERE commission_id = $1 AND account_id = $2
-            "#,
-            *commission,
-            *account,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let result = sqlx::query(CommissionQuery::RevokeView.sql())
+            .bind(*commission)
+            .bind(*account)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -582,17 +480,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: CommissionId,
         status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool> {
-        let result = query!(
-            r#"
-            UPDATE commission
-            SET direction_status = $2
-            WHERE id = $1 AND direction_status IS DISTINCT FROM $2
-            "#,
-            *id,
-            status.map(|s| s.as_str()),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        let result = sqlx::query(CommissionQuery::SetDirectionStatus.sql())
+            .bind(*id)
+            .bind(status.map(|s| s.as_str()))
+            .execute(&mut *self.conn)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -607,13 +499,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: CommissionId,
         deadline: Option<DateTimeUtc>,
     ) -> anyhow::Result<()> {
-        query!(
-            r#"UPDATE commission SET deadline = $2 WHERE id = $1"#,
-            *id,
-            deadline,
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::SetDeadline.sql())
+            .bind(*id)
+            .bind(deadline)
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -628,13 +518,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: CommissionId,
         status: Option<DeadlineStatus>,
     ) -> anyhow::Result<()> {
-        query!(
-            r#"UPDATE commission SET deadline_status = $2 WHERE id = $1"#,
-            *id,
-            status.map(|s| s.as_str()),
-        )
-        .execute(&mut *self.conn)
-        .await?;
+        sqlx::query(CommissionQuery::SetDeadlineStatus.sql())
+            .bind(*id)
+            .bind(status.map(|s| s.as_str()))
+            .execute(&mut *self.conn)
+            .await?;
         Ok(())
     }
 
@@ -660,30 +548,11 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         // `deadline_extended` re-arms the log, so each fresh miss is its own
         // event. Its Late *state* is derived on lookup ([`derive_deadline_status`]);
         // this pass only appends the entry.
-        let rows = query!(
-            r#"
-            SELECT c.id, c.deadline AS "deadline!", c.deadline_status
-            FROM commission c
-            WHERE c.deadline IS NOT NULL
-              AND c.deadline < $1
-              AND NOT (c.lifecycle = ANY($2))
-              AND NOT EXISTS (
-                  SELECT 1 FROM commission_changelog e
-                  WHERE e.commission_id = c.id
-                    AND e.kind = 'late'
-                    AND e.seq > COALESCE((
-                        SELECT MAX(d.seq) FROM commission_changelog d
-                        WHERE d.commission_id = c.id
-                          AND d.kind IN ('deadline_set', 'deadline_extended')
-                    ), 0)
-              )
-            ORDER BY c.deadline, c.id
-            "#,
-            now,
-            &terminal,
-        )
-        .fetch_all(&mut *self.conn)
-        .await?;
+        let rows: Vec<LapsedRow> = sqlx::query_as(CommissionQuery::LapsedDeadlines.sql())
+            .bind(now)
+            .bind(&terminal)
+            .fetch_all(&mut *self.conn)
+            .await?;
 
         rows.into_iter()
             .map(|row| {
@@ -703,6 +572,69 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             })
             .collect()
     }
+}
+
+/// The sweeper scan's row shape (`lapsed_deadlines.sql`).
+#[derive(sqlx::FromRow)]
+struct LapsedRow {
+    id: Uuid,
+    deadline: DateTime<Utc>,
+    deadline_status: Option<String>,
+}
+
+/// The commission envelope row (`find.sql`); [`Commission`] is rebuilt from it
+/// with every stored token re-validated through its domain gate.
+#[derive(sqlx::FromRow)]
+struct CommissionRow {
+    title: String,
+    owner_id: Uuid,
+    lifecycle: String,
+    visibility: String,
+    deadline: Option<DateTime<Utc>>,
+    maturity: Option<String>,
+    graphic: Option<bool>,
+    direction_status: Option<String>,
+    deadline_status: Option<String>,
+    linked_channel: Option<String>,
+    archived_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+/// A placement row as both placement reads select it.
+#[derive(sqlx::FromRow)]
+struct PlacementRow {
+    seq: i64,
+    account_id: Uuid,
+    placed_by: Uuid,
+    placed_at: DateTime<Utc>,
+}
+
+impl PlacementRow {
+    /// Attach the commission id the row was queried by, yielding the domain
+    /// [`Placement`].
+    fn into_placement(self, commission_id: CommissionId) -> Placement {
+        Placement {
+            seq: self.seq,
+            commission_id,
+            account_id: AccountId::new(self.account_id),
+            placed_by: UserId::new(self.placed_by),
+            placed_at: self.placed_at,
+        }
+    }
+}
+
+/// A `commission_node` row (`load_tree.sql`); the domain [`NodeRow`] is rebuilt
+/// from it with the envelope re-validated through [`NodeKind::from_columns`].
+#[derive(sqlx::FromRow)]
+struct TreeNodeRow {
+    id: Uuid,
+    parent: Option<Uuid>,
+    type_tag: String,
+    mode: Option<String>,
+    position: i32,
+    created_by: Uuid,
+    created_at: DateTime<Utc>,
+    payload: serde_json::Value,
 }
 
 /// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
@@ -734,17 +666,10 @@ impl CommissionStore for PgCommissionStore {
     /// maturity posture, which the migration's CHECK already makes
     /// unrepresentable at the database.
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
-        let Some(row) = query!(
-            r#"
-            SELECT title, owner_id, lifecycle, visibility, deadline, maturity, graphic,
-                   direction_status, deadline_status, linked_channel, archived_at, created_at
-            FROM commission
-            WHERE id = $1
-            "#,
-            *id,
-        )
-        .fetch_optional(&self.pool)
-        .await?
+        let Some(row) = sqlx::query_as::<_, CommissionRow>(CommissionQuery::Find.sql())
+            .bind(*id)
+            .fetch_optional(&self.pool)
+            .await?
         else {
             return Ok(None);
         };
@@ -815,52 +740,24 @@ impl CommissionStore for PgCommissionStore {
         &self,
         commission: CommissionId,
     ) -> anyhow::Result<Option<Placement>> {
-        let Some(row) = query!(
-            r#"
-            SELECT seq, account_id, placed_by, placed_at
-            FROM commission_current_placement
-            WHERE commission_id = $1
-            "#,
-            *commission,
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(Placement {
-            seq: row.seq,
-            commission_id: commission,
-            account_id: AccountId::new(row.account_id),
-            placed_by: UserId::new(row.placed_by),
-            placed_at: row.placed_at,
-        }))
+        let row: Option<PlacementRow> = sqlx::query_as(CommissionQuery::CurrentPlacement.sql())
+            .bind(*commission)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|row| row.into_placement(commission)))
     }
 
     /// The whole placement log in append order (ascending `seq`) — the current
     /// placement is the last row, the origin the first (ZMVP-70). An unplaced
     /// commission has an empty log.
     async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>> {
-        let rows = query!(
-            r#"
-            SELECT seq, account_id, placed_by, placed_at
-            FROM commission_placement
-            WHERE commission_id = $1
-            ORDER BY seq
-            "#,
-            *commission,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<PlacementRow> = sqlx::query_as(CommissionQuery::PlacementLog.sql())
+            .bind(*commission)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .into_iter()
-            .map(|row| Placement {
-                seq: row.seq,
-                commission_id: commission,
-                account_id: AccountId::new(row.account_id),
-                placed_by: UserId::new(row.placed_by),
-                placed_at: row.placed_at,
-            })
+            .map(|row| row.into_placement(commission))
             .collect())
     }
 
@@ -873,22 +770,16 @@ impl CommissionStore for PgCommissionStore {
         commission: CommissionId,
         account: AccountId,
     ) -> anyhow::Result<Option<GrantLevel>> {
-        let Some(row) = query!(
-            r#"
-            SELECT level
-            FROM commission_view_grant
-            WHERE commission_id = $1 AND account_id = $2
-            "#,
-            *commission,
-            *account,
-        )
-        .fetch_optional(&self.pool)
-        .await?
+        let Some(level) = sqlx::query_scalar::<_, String>(CommissionQuery::ViewGrant.sql())
+            .bind(*commission)
+            .bind(*account)
+            .fetch_optional(&self.pool)
+            .await?
         else {
             return Ok(None);
         };
-        GrantLevel::parse(&row.level)
-            .ok_or_else(|| anyhow::anyhow!("unknown grant level token {:?}", row.level))
+        GrantLevel::parse(&level)
+            .ok_or_else(|| anyhow::anyhow!("unknown grant level token {:?}", level))
             .map(Some)
     }
 
@@ -900,16 +791,10 @@ impl CommissionStore for PgCommissionStore {
     /// [`CommissionTree::assemble`] in Rust. `None` when no rows exist — no
     /// commission (a created one always has its root).
     async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>> {
-        let rows = query!(
-            r#"
-            SELECT id, parent, type AS type_tag, mode, position, created_by, created_at, payload
-            FROM commission_node
-            WHERE commission_id = $1
-            "#,
-            *id,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<TreeNodeRow> = sqlx::query_as(CommissionQuery::LoadTree.sql())
+            .bind(*id)
+            .fetch_all(&self.pool)
+            .await?;
         if rows.is_empty() {
             return Ok(None);
         }
@@ -946,18 +831,12 @@ impl CommissionStore for PgCommissionStore {
     /// only a view, and positioning is environmental — neither makes an account's
     /// members Participants.
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
-        let row = query!(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM commission WHERE id = $1 AND owner_id = $2
-            ) AS "is_participant!"
-            "#,
-            *commission,
-            *user,
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.is_participant)
+        let is_participant: bool = sqlx::query_scalar(CommissionQuery::IsParticipant.sql())
+            .bind(*commission)
+            .bind(*user)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(is_participant)
     }
 
     /// The file-entry link `key` names **within `commission`** (ZMVP-88) — one
@@ -971,26 +850,20 @@ impl CommissionStore for PgCommissionStore {
         commission: CommissionId,
         key: FileKey,
     ) -> anyhow::Result<Option<CommissionFile>> {
-        let Some(row) = query!(
-            r#"
-            SELECT id, commission_id, uploaded_by, created_at
-            FROM commission_file
-            WHERE id = $1 AND commission_id = $2
-            "#,
-            *key,
-            *commission,
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        else {
-            return Ok(None);
-        };
+        let row: Option<(Uuid, Uuid, Uuid, DateTime<Utc>)> =
+            sqlx::query_as(CommissionQuery::FindFile.sql())
+                .bind(*key)
+                .bind(*commission)
+                .fetch_optional(&self.pool)
+                .await?;
 
-        Ok(Some(CommissionFile {
-            id: FileKey::new(row.id),
-            commission_id: CommissionId::new(row.commission_id),
-            uploaded_by: UserId::new(row.uploaded_by),
-            created_at: row.created_at,
-        }))
+        Ok(row.map(
+            |(id, commission_id, uploaded_by, created_at)| CommissionFile {
+                id: FileKey::new(id),
+                commission_id: CommissionId::new(commission_id),
+                uploaded_by: UserId::new(uploaded_by),
+                created_at,
+            },
+        ))
     }
 }
