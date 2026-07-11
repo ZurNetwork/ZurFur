@@ -3,7 +3,7 @@
 //! DESIGN/Commission, Status). Direction transitions are ALWAYS an explicit
 //! Participant act (Engineer ruling 2026-07-01): no content event or system
 //! sweep moves this axis — this endpoint is the column's only writer. One
-//! nullable slot (ruling E29), so a set REPLACES the current value and axis
+//! nullable cell (ruling E29), so a set REPLACES the current value and axis
 //! exclusivity holds by construction; the deadline axis (ZMVP-86) is separate
 //! and the two compose freely. Every change is changelog-recorded, atomically.
 

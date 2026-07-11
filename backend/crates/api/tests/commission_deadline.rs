@@ -13,7 +13,7 @@
 //!   changelog entries).
 //! - **AC2** — a missed deadline sets Late on the deadline axis; a standing
 //!   Delayed upgrades to Late.
-//! - **AC3** — deadline-axis values are mutually exclusive (one slot); the
+//! - **AC3** — deadline-axis values are mutually exclusive (one cell); the
 //!   axis composes freely with the direction axis.
 //! - **AC4** — a commission with no deadline never receives deadline-axis
 //!   statuses.
@@ -590,7 +590,7 @@ async fn the_sweeper_marks_missed_deadlines_late() {
 }
 
 // AC2 — a standing (manual) Delayed upgrades to Late when the deadline passes;
-// one slot, so Late REPLACES Delayed (mutual exclusivity by construction) and
+// one cell, so Late REPLACES Delayed (mutual exclusivity by construction) and
 // the system entry records what it upgraded from.
 #[tokio::test]
 async fn a_standing_delayed_upgrades_to_late() {

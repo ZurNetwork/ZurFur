@@ -185,7 +185,7 @@ pub struct Commission {
     /// to `None`, so a widened commission can never lose its rating.
     pub maturity: Option<Maturity>,
     /// The direction-axis Status, or `None` while none is set (ZMVP-85). One
-    /// nullable slot (ruling E29): a set replaces, a clear writes `None`, and
+    /// nullable cell (ruling E29): a set replaces, a clear writes `None`, and
     /// only an explicit Participant act through
     /// [`CommissionWrites::set_direction_status`] ever moves it — never a
     /// content event.
@@ -436,7 +436,7 @@ impl TryFrom<&str> for DirectionStatus {
 }
 
 /// The deadline-axis Status a commission may carry (DESIGN/Commission, Status;
-/// ZMVP-86) — how the work stands against its deadline. One nullable slot
+/// ZMVP-86) — how the work stands against its deadline. One nullable cell
 /// (ruling E29), so at most one value holds at a time and a set REPLACES the
 /// current one; the direction axis is separate and the two compose freely. A
 /// commission with **no deadline never carries** a deadline-axis status (AC4).

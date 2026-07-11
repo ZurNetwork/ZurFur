@@ -1,18 +1,19 @@
 //! `POST /commissions/{id}/slots` — the owner **declares Slots**: Character
 //! positions with a required title and optional freeform notes (ZMVP-77;
 //! DESIGN/Slots `5931025`, Referenceable/Slot/Seat DD `28311564`). The body is
-//! an **array** — a commission's slots usually arrive several at a time
+//! an **array** — a commission's Slots usually arrive several at a time
 //! (Engineer ruling, PR #108) — and the batch lands all-or-nothing.
 //!
-//! A Slot is a component in the tree whose substance lives in a satellite
-//! (`commission_slot`, keyed by the slot node's id — the slot mirror of the
-//! Seat satellite ruling, Gate A E20); the generic component add cannot
-//! populate the satellite, hence this dedicated declaration route. **No fill
+//! A Slot is not a kind of tree node: declaring one plants an ordinary
+//! component under the chosen surface, while the Slot itself lives in a
+//! satellite (`commission_slot`, keyed by that component's node id — the Slot
+//! mirror of the Seat satellite ruling, Gate A E20); the generic component add
+//! cannot populate the satellite, hence this dedicated declaration route. **No fill
 //! surface exists here or anywhere** (AC3): nothing in the request, the
 //! storage, or the domain shapes can name an occupant — an empty Slot is a
 //! valid, permanent state (AC2). The assignment surface arrives with the
 //! Character epic. Declaring Slots appends **no** changelog entry: the frozen
-//! ZMVP-87 taxonomy carries `seat_declared` for Seats but no slot variant.
+//! ZMVP-87 taxonomy carries `seat_declared` for Seats but no Slot variant.
 
 use axum::{
     Json,
@@ -33,12 +34,12 @@ use uuid::Uuid;
 use super::require_owner;
 use crate::{AppState, problem::Problem};
 
-/// One slot of the `POST /commissions/{id}/slots` request body (a JSON array
+/// One Slot of the `POST /commissions/{id}/slots` request body (a JSON array
 /// of these): the existing **surface** to grow under, the Slot's required
 /// title, and optional freeform notes. There is deliberately no
 /// occupant/character field — fill is not offered (AC3) — and no payload: the
-/// slot node's payload is the empty object, its substance being the
-/// satellite's.
+/// carrying component's payload is the empty object, the Slot's substance
+/// being the satellite's.
 #[derive(Deserialize)]
 pub(super) struct DeclareSlotBody {
     parent: Uuid,
@@ -47,11 +48,13 @@ pub(super) struct DeclareSlotBody {
     notes: Option<String>,
 }
 
-/// Declare a batch of Slots under existing **surfaces** of the commission's
-/// tree (ZMVP-77 AC1), as its owner. The body is a JSON array of slot objects
-/// — one request declares a commission's slots together (Engineer ruling, PR
-/// #108) — and the batch is **all-or-nothing**: node and satellite land in one
-/// unit of work for the whole array, so a refused slot leaves nothing behind.
+/// Declare a batch of Slots (ZMVP-77 AC1), as the commission's owner. Each
+/// entry plants an ordinary component under the existing **surface** named by
+/// its `parent`; the Slot itself (title, notes) lands in the satellite. The
+/// body is a JSON array of Slot objects — one request declares a commission's
+/// Slots together (Engineer ruling, PR #108) — and the batch is
+/// **all-or-nothing**: every component and satellite land in one unit of work
+/// for the whole array, so a refused Slot leaves nothing behind.
 ///
 /// Owner-only via the shared [`require_owner`] gate: a non-participant — and a
 /// truly absent commission — gets the uniform
@@ -63,9 +66,9 @@ pub(super) struct DeclareSlotBody {
 /// write: absent/foreign is the indistinguishable
 /// [`node_not_found`](Problem::node_not_found) 404, a component parent the
 /// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a
-/// malformed body is a `422`. Returns `201 Created` with the new slot node ids
-/// in request order — `{"ids": ["…", …]}` — since no tree read exposes ids
-/// until the projection lands (ZMVP-75).
+/// malformed body is a `422`. Returns `201 Created` with the node ids of the
+/// new Slots' carrying components, in request order — `{"ids": ["…", …]}` —
+/// since no tree read exposes ids until the projection lands (ZMVP-75).
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

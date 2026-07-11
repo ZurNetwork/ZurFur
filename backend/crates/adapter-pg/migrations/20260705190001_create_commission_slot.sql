@@ -1,17 +1,18 @@
 -- Declared Slots (ZMVP-77; DESIGN/Slots 5931025, Referenceable/Slot/Seat DD
--- 28311564): the SATELLITE half of a Slot. The tree half is an ordinary
--- commission_node component leaf; this table carries the slot's substance —
--- the required title and optional freeform notes — keyed by that node's id
--- (the slot mirror of the Seat satellite ruling, Gate A E20). The generic
--- component add cannot populate this, which is why declaration has its own
--- port/endpoint.
+-- 28311564): the Slot itself. A Slot is not a kind of tree node — declaring
+-- one plants an ordinary commission_node component leaf, and this table
+-- carries the Slot — the required title and optional freeform notes — keyed
+-- by that component's node id (the Slot mirror of the Seat satellite ruling,
+-- Gate A E20). The generic component add cannot populate this, which is why
+-- declaration has its own port/endpoint.
 --
 -- Deliberately NO occupant column of any kind: filling a Slot is the Character
 -- epic's, and an empty Slot is a valid, PERMANENT state (nothing here expires
 -- or auto-fills). Adding the occupant is that epic's migration, not a NULL
 -- column waiting here.
 --
--- node_id        The slot's commission_node row — satellite key = node key.
+-- node_id        The carrying component's commission_node row — satellite
+--                key = node key.
 --                ON DELETE CASCADE: the satellite is meaningless without its
 --                node (subtree pruning, ZMVP-73, sweeps it for free).
 -- commission_id  The owning commission, denormalized from the node for direct
@@ -32,5 +33,5 @@ CREATE TABLE commission_slot (
     notes         text
 );
 
--- The "slots of this commission" read (and the zero-or-more count).
+-- The "Slots of this commission" read (and the zero-or-more count).
 CREATE INDEX commission_slot_by_commission ON commission_slot (commission_id);

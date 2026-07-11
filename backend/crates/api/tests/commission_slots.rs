@@ -5,12 +5,12 @@
 //! covered in `adapter-mem`/`adapter-pg`):
 //!
 //! - **AC1** — the owner declares Slots with `POST /commissions/{id}/slots`,
-//!   whose body is an **array** of slot objects (PR #108 ruling: slots usually
+//!   whose body is an **array** of Slot objects (PR #108 ruling: Slots usually
 //!   arrive several at a time; the batch lands all-or-nothing, an empty array
 //!   is a `422`): each with a required title (trimmed, blank refused with a
 //!   `422`) and optional freeform notes (trimmed; blank normalizes to absent).
-//!   Each Slot lands as a component leaf in the tree plus its title/notes
-//!   satellite.
+//!   Each Slot is carried by an ordinary component leaf in the tree, its
+//!   title/notes riding in the satellite.
 //! - **AC2** — a commission holds zero or more Slots; an empty (unfilled) Slot
 //!   is a valid, permanent state — there is no occupant anywhere to be missing.
 //! - **AC3** — filling is not offered: no fill surface exists on this route (or
@@ -21,7 +21,7 @@
 //!   parent is a `node_not_found` 404; a component parent is a `409`
 //!   `parent_not_a_surface`; a malformed body is a `422`. Declaring a Slot
 //!   appends **no** changelog entry — the frozen ZMVP-87 taxonomy carries
-//!   `seat_declared` for Seats but no slot variant.
+//!   `seat_declared` for Seats but no Slot variant.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -148,8 +148,8 @@ async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .id
 }
 
-/// POSTs a slot-declaration batch (a JSON array of slot objects) and returns
-/// the created node ids from the `201` body, in request order.
+/// POSTs a Slot-declaration batch (a JSON array of Slot objects) and returns
+/// the carrying components' node ids from the `201` body, in request order.
 async fn declare_slots(
     client: &reqwest::Client,
     base: &str,
@@ -198,7 +198,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 // each lands as a component leaf (no mode, empty payload, the owner's envelope)
 // whose satellite carries the trimmed title and the notes (present on one,
 // absent on the other) — a commission going from zero Slots to two. No
-// changelog entry is appended (the frozen taxonomy has no slot variant).
+// changelog entry is appended (the frozen taxonomy has no Slot variant).
 #[tokio::test]
 async fn the_owner_declares_slots_with_title_and_optional_notes() {
     let (base, backend) = spawn_app("did:plc:artist").await;
@@ -263,18 +263,21 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     assert_eq!(*on_root.id, noted, "the 201 id reappears in the tree");
     assert!(
         matches!(on_root.kind, NodeKind::Component),
-        "a slot is a component in the tree (no mode of its own)"
+        "the Slot's carrying node is a component (no mode of its own)"
     );
     assert_eq!(on_root.created_by, me.id, "the envelope names the creator");
     assert_eq!(
         on_root.payload,
         json!({}),
-        "the slot node's payload is empty — the substance lives in the satellite"
+        "the carrying component's payload is empty — the Slot lives in the satellite"
     );
-    assert!(on_root.children.is_empty(), "a slot is a leaf");
+    assert!(
+        on_root.children.is_empty(),
+        "the carrying component is a leaf"
+    );
     assert_eq!(
         *tree.root.children[0].children[0].id, bare,
-        "slots grow under non-root surfaces too"
+        "Slots grow under non-root surfaces too"
     );
 
     // The satellite half: trimmed title, notes present/absent as declared.
@@ -306,8 +309,8 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         .expect("list slots");
     assert_eq!(slots.len(), 2, "the commission holds two declared Slots");
 
-    // Declaring slots appends NO changelog entry (the taxonomy's seat_declared
-    // is seat-specific; no slot variant exists): only creation is in the stream.
+    // Declaring Slots appends NO changelog entry (the taxonomy's seat_declared
+    // is seat-specific; no Slot variant exists): only creation is in the stream.
     let entries = backend
         .changelog_entries(CommissionId::new(id))
         .await
@@ -396,8 +399,8 @@ async fn blank_notes_normalize_to_absent() {
     assert!(slot.notes.is_none(), "blank notes are not stored");
 }
 
-// AC1 — declaring under a component (slots included: a slot is a component) is
-// rejected with a 409 parent_not_a_surface, and nothing lands.
+// AC1 — declaring under a component (a Slot's own carrying component included)
+// is rejected with a 409 parent_not_a_surface, and nothing lands.
 #[tokio::test]
 async fn declaring_under_a_component_is_rejected() {
     let (base, backend) = spawn_app("did:plc:artist").await;

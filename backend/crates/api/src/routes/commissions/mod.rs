@@ -21,8 +21,9 @@
 //! - [`remove`] — `DELETE /commissions/{id}/nodes/{node}` (ZMVP-73: the owner
 //!   prunes a node and its subtree; the root refuses).
 //! - [`slots`] — `POST /commissions/{id}/slots` (ZMVP-77: the owner declares a
-//!   batch of Slots — components plus their title/notes satellites, an
-//!   all-or-nothing array; fill deferred to the Character epic).
+//!   batch of Slots — each carried by an ordinary component, its title/notes
+//!   in the satellite; an all-or-nothing array; fill deferred to the Character
+//!   epic).
 //! - [`status`] — `PUT`/`DELETE /commissions/{id}/status/direction` (the
 //!   direction-axis Status, ZMVP-85).
 //! - [`deadline`] — `PUT`/`DELETE /commissions/{id}/deadline` and

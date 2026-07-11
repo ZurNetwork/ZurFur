@@ -1,8 +1,8 @@
 //! Declared Slots over PostgreSQL (ZMVP-77), against a throwaway container:
-//! `declare_slots` persists an ordinary component leaf in `commission_node`
-//! **plus** its `commission_slot` satellite (required title, optional notes,
-//! keyed by the slot node's id — the slot mirror of the Seat satellite ruling,
-//! Gate A E20) in one transaction; the parent gates match the other tree
+//! `declare_slots` plants an ordinary component leaf in `commission_node`
+//! **plus** the Slot itself as its `commission_slot` satellite (required
+//! title, optional notes, keyed by the carrying component's node id — the
+//! Slot mirror of the Seat satellite ruling, Gate A E20) in one transaction; the parent gates match the other tree
 //! writes; and the satellite cascades away with its commission (ruling E35 —
 //! what ZMVP-66's "gone entirely" relies on). Requires a container runtime
 //! socket (DOCKER_HOST honored).

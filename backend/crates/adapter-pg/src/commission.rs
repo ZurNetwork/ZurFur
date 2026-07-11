@@ -300,17 +300,17 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
-    /// ruling): per slot, two inserts on the open transaction behind the
-    /// shared parent gate — the slot's tree half as an ordinary component row
+    /// ruling): per Slot, two inserts on the open transaction behind the
+    /// shared parent gate — an ordinary component row for the tree
     /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
-    /// subquery, the empty payload: the substance is the satellite's) and the
-    /// `commission_slot` satellite (title, notes) keyed by the same node id (the
-    /// slot mirror of the Seat satellite ruling, Gate A E20). One transaction
-    /// for the whole batch, so every leaf and satellite lands or none does —
-    /// the first refusing slot aborts and the caller's rollback takes the
-    /// earlier inserts with it. There is no occupant column to write (fill is
-    /// the Character epic's), and no changelog entry (the frozen taxonomy has
-    /// no slot variant).
+    /// subquery, the empty payload) and the Slot itself as the
+    /// `commission_slot` satellite (title, notes), keyed by that component's
+    /// node id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
+    /// transaction for the whole batch, so every component and satellite lands
+    /// or none does — the first refused Slot aborts and the caller's rollback
+    /// takes the earlier inserts with it. There is no occupant column to write
+    /// (fill is the Character epic's), and no changelog entry (the frozen
+    /// taxonomy has no Slot variant).
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in slots {
             self.require_surface_parent(slot.parent, slot.commission_id)

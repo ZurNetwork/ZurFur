@@ -147,10 +147,11 @@ pub struct MemBackend {
     /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
     /// nor clobber it.
     pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredFile>>>,
-    /// [`StoredSlot`] satellites keyed by the slot node's [`NodeId`] (ZMVP-77) —
-    /// the in-memory mirror of the pg `commission_slot` table. A domain map,
-    /// staged and applied by the Unit of Work exactly like `nodes`: a slot's
-    /// component leaf and its satellite commit (or vanish) together.
+    /// [`StoredSlot`] satellites keyed by the carrying component's [`NodeId`]
+    /// (ZMVP-77) — the in-memory mirror of the pg `commission_slot` table. A
+    /// domain map, staged and applied by the Unit of Work exactly like
+    /// `nodes`: a Slot's carrying component and its satellite commit (or
+    /// vanish) together.
     pub(crate) slots: Arc<Mutex<HashMap<NodeId, StoredSlot>>>,
 }
 

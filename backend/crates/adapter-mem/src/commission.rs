@@ -86,11 +86,11 @@ pub(crate) struct StoredCommission {
     /// the both-or-neither CHECK is a struct by construction).
     pub(crate) maturity: Option<Maturity>,
     /// The direction-axis Status, or `None` while none is set (ZMVP-85) — the
-    /// mem mirror of the pg `direction_status` column: one nullable slot, so a
+    /// mem mirror of the pg `direction_status` column: one nullable cell, so a
     /// set replaces by construction.
     pub(crate) direction_status: Option<DirectionStatus>,
     /// The deadline-axis Status, or `None` while none is held (ZMVP-86) — the
-    /// mem mirror of the pg `deadline_status` column: the same one-slot shape.
+    /// mem mirror of the pg `deadline_status` column: the same one-cell shape.
     pub(crate) deadline_status: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
@@ -155,9 +155,9 @@ pub(crate) struct StoredNode {
 }
 
 /// One declared Slot's **satellite** as the mem backend keeps it — the
-/// in-memory mirror of a pg `commission_slot` row (ZMVP-77). Keyed by the slot
-/// node's [`NodeId`] in the backend map (the satellite's own key), exactly like
-/// the pg table. Deliberately occupant-less: fill is unrepresentable until the
+/// in-memory mirror of a pg `commission_slot` row (ZMVP-77). Keyed in the
+/// backend map by the [`NodeId`] of the component that carries the Slot (the
+/// satellite's own key), exactly like the pg table. Deliberately occupant-less: fill is unrepresentable until the
 /// Character epic adds it. `Clone` so a unit of work can deep-copy the map into
 /// its staging snapshot.
 #[derive(Clone)]
@@ -171,7 +171,8 @@ pub(crate) struct StoredSlot {
 }
 
 impl StoredSlot {
-    /// Rebuild the read shape for the slot node `id` that keys this satellite.
+    /// Rebuild the read shape for the component node `id` that keys this
+    /// satellite.
     fn rebuild(&self, id: NodeId) -> Slot {
         Slot {
             node_id: id,
@@ -449,16 +450,16 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Declare a batch of Slots — the mem mirror of the pg per-slot two-insert
+    /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
     /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
-    /// slot, the same shared parent gate ([`require_surface_parent`]) and
-    /// append order as [`add_component`](Self::add_component), an ordinary
-    /// [`NodeKind::Component`] leaf with the empty payload, plus the
-    /// [`StoredSlot`] satellite keyed by the same node id. All maps belong to
-    /// this unit's staging snapshot, so the whole batch commits or vanishes
-    /// together — a refusing slot mid-batch errors the unit and nothing is
-    /// applied. No changelog entry (the frozen taxonomy has no slot variant),
-    /// and no occupant exists to store.
+    /// Slot, the same shared parent gate ([`require_surface_parent`]) and
+    /// append order as [`add_component`](Self::add_component) plant an
+    /// ordinary [`NodeKind::Component`] leaf with the empty payload, and the
+    /// Slot itself lands as the [`StoredSlot`] satellite keyed by that
+    /// component's node id. All maps belong to this unit's staging snapshot,
+    /// so the whole batch commits or vanishes together — a refusal mid-batch
+    /// errors the unit and nothing is applied. No changelog entry (the frozen
+    /// taxonomy has no Slot variant), and no occupant exists to store.
     async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in new_slots {
             {
@@ -1042,9 +1043,9 @@ impl MemBackend {
         Ok(slots.get(&node).map(|stored| stored.rebuild(node)))
     }
 
-    /// Every Slot declared on `commission`, in declaration order (slot node ids
-    /// are UUIDv7, so sorting by node id is creation order) — the "zero or
-    /// more" count of ZMVP-77 AC2 (inspect helper).
+    /// Every Slot declared on `commission`, in declaration order (the carrying
+    /// components' node ids are UUIDv7, so sorting by node id is creation
+    /// order) — the "zero or more" count of ZMVP-77 AC2 (inspect helper).
     pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
         let mut found: Vec<Slot> = slots
@@ -1752,7 +1753,7 @@ mod tests {
         };
         assert_eq!(status_of(&backend).await, None, "born clear");
 
-        // Set, then replace — one nullable slot, so the second set wins whole.
+        // Set, then replace — one nullable cell, so the second set wins whole.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
             .set_direction_status(id, Some(DirectionStatus::WaitingForInput))
@@ -2630,7 +2631,7 @@ mod tests {
         for child in &tree.root.children {
             assert!(
                 matches!(child.kind, NodeKind::Component),
-                "a slot is an ordinary component leaf"
+                "each Slot's carrying node is an ordinary component leaf"
             );
             assert_eq!(child.payload, json!({}), "the substance is the satellite's");
             assert!(child.children.is_empty());
@@ -2724,7 +2725,7 @@ mod tests {
         );
         drop(uow);
 
-        // The batch is all-or-nothing (PR #108 ruling): a refusing slot
+        // The batch is all-or-nothing (PR #108 ruling): a refused Slot
         // mid-batch takes the valid ones down with it.
         let good = NewSlot::under(mine, my_root, title(), None, owner, Utc::now());
         let bad = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
@@ -2732,7 +2733,7 @@ mod tests {
         uow.commissions()
             .declare_slots(&[good, bad])
             .await
-            .expect_err("a refusing slot fails the whole batch");
+            .expect_err("a refused Slot fails the whole batch");
         drop(uow);
 
         assert!(
@@ -2765,7 +2766,7 @@ mod tests {
             uow.commissions().declare_slots(&[slot]).await.unwrap();
             assert!(
                 backend.find_slot(slot_id).await.unwrap().is_none(),
-                "an open unit's staged slot is invisible to a shared read"
+                "an open unit's staged Slot is invisible to a shared read"
             );
             // `uow` drops here without `commit` -> both halves are discarded.
         }

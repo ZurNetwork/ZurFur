@@ -3,11 +3,12 @@
 //! define them, title them, count them — whose *filling* is deferred wholesale
 //! to the Character epic.
 //!
-//! A Slot is a **component in the tree** (ruling: the slot's substance — a
-//! required title, optional freeform notes — lives in a satellite
-//! `commission_slot` table keyed by the slot node's id, mirroring the Seat
-//! satellite of Gate A ruling E20; the node itself is an ordinary
-//! [`NodeKind::Component`] leaf). "Deliberately not Participants" stands: a
+//! A Slot is not a kind of tree node. Declaring one plants an ordinary
+//! [`NodeKind::Component`] leaf under the chosen surface — plain tree
+//! mechanics — while the Slot itself (the required title, optional freeform
+//! notes) lives in the satellite `commission_slot` table keyed by that
+//! component's node id (mirroring the Seat satellite of Gate A ruling E20).
+//! "Deliberately not Participants" stands: a
 //! Slot holds a Character, never a User, so nothing here touches seats, roles,
 //! or the participant set.
 //!
@@ -91,23 +92,23 @@ impl SlotTitle {
 /// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots),
 /// ZMVP-77).
 ///
-/// Built with [`NewSlot::under`]. The tree half is exactly a
-/// [`NewComponent`](super::NewComponent)'s envelope (the store persists an
-/// ordinary component leaf — no mode, append sibling order, the empty payload);
-/// the slot half — the required [`SlotTitle`] and optional freeform notes — is
-/// the satellite the store persists beside it, keyed by this same node id.
+/// Built with [`NewSlot::under`]. The store plants an ordinary component leaf
+/// — exactly a [`NewComponent`](super::NewComponent)'s envelope: no mode,
+/// append sibling order, the empty payload — and persists the Slot itself —
+/// the required [`SlotTitle`] and optional freeform notes — as the satellite
+/// beside it, keyed by that component's node id.
 /// There is deliberately **no occupant field of any kind**: fill is the
 /// Character epic's, and an undeclarable field can't be filled by accident.
 #[derive(Debug)]
 pub struct NewSlot {
-    /// The freshly minted node key (UUIDv7) — the slot node's id, which also
-    /// keys the satellite row.
+    /// The freshly minted node key (UUIDv7) of the component that will carry
+    /// this Slot — it also keys the satellite row.
     pub id: NodeId,
     /// The commission whose tree this grows. The store verifies `parent`
     /// belongs to this same commission.
     pub commission_id: CommissionId,
-    /// The existing **surface** to grow under. Slots are components — leaves —
-    /// so the store refuses a parent that is itself a component
+    /// The existing **surface** to grow under. A Slot's carrying component is
+    /// a leaf, so the store refuses a parent that is itself a component
     /// ([`ParentNotASurface`](crate::ports::ParentNotASurface)).
     pub parent: NodeId,
     /// The Slot's required title (AC1), validated at the boundary.
@@ -173,7 +174,7 @@ impl NewSlot {
 /// (and its storage) in that change, not before.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slot {
-    /// The slot node's id — the tree component this Slot decorates, and the
+    /// The id of the component that carries this Slot in the tree — also the
     /// satellite row's key.
     pub node_id: NodeId,
     /// The commission the Slot belongs to.
