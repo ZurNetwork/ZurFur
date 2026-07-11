@@ -14,12 +14,25 @@
 //! bare-pool-write guard (`tests/no_bare_pool_writes.rs`): its writes have no
 //! transactional home, the same reasoning that exempts the profile cache and the
 //! key store.
+//!
+//! The SQL lives in `queries/file/`, embedded via `include_str!` and verified by
+//! the `query_files_prepare` test.
 
+use crate::queries::FileQuery;
 use domain::{
     elements::commission::{FileKey, FileMetadata, FileName, StoredFile},
     ports::FileStore,
 };
-use sqlx::{PgPool, query};
+use sqlx::PgPool;
+
+/// A `file_blob` row minus the key; [`StoredFile`] is rebuilt from it in `get`.
+#[derive(sqlx::FromRow)]
+struct FileBlobRow {
+    filename: String,
+    content_type: String,
+    byte_size: i64,
+    bytes: Vec<u8>,
+}
 
 /// PostgreSQL [`FileStore`] — the v1 local blob store. Holds the pool directly
 /// (`&self`, like the profile cache): its writes are a step outside the domain Unit
@@ -45,24 +58,14 @@ impl FileStore for PgFileStore {
     /// row (PR #110 review). A single-statement write on the pool, deliberately
     /// outside any unit of work (see the module docs).
     async fn put(&self, key: FileKey, metadata: &FileMetadata, bytes: &[u8]) -> anyhow::Result<()> {
-        query!(
-            r#"
-            INSERT INTO file_blob (key, filename, content_type, byte_size, bytes, created_at)
-            VALUES ($1, $2, $3, $4, $5, now())
-            ON CONFLICT (key) DO UPDATE
-              SET filename = EXCLUDED.filename,
-                  content_type = EXCLUDED.content_type,
-                  byte_size = EXCLUDED.byte_size,
-                  bytes = EXCLUDED.bytes
-            "#,
-            *key,
-            metadata.filename.as_str(),
-            metadata.content_type,
-            metadata.byte_size,
-            bytes,
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(FileQuery::Put.sql())
+            .bind(*key)
+            .bind(metadata.filename.as_str())
+            .bind(&metadata.content_type)
+            .bind(metadata.byte_size)
+            .bind(bytes)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -71,17 +74,11 @@ impl FileStore for PgFileStore {
     /// tamper-surfacing contract the commission read store uses): a value outside
     /// the gate means row tampering and surfaces as an `Err`, never a panic.
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<StoredFile>> {
-        let Some(row) = query!(
-            r#"
-            SELECT filename, content_type, byte_size, bytes
-            FROM file_blob
-            WHERE key = $1
-            "#,
-            *key,
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        else {
+        let row: Option<FileBlobRow> = sqlx::query_as(FileQuery::Get.sql())
+            .bind(*key)
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(row) = row else {
             return Ok(None);
         };
 
@@ -98,7 +95,8 @@ impl FileStore for PgFileStore {
     /// Remove the bytes under `key`. Idempotent: an absent key matches no row and is
     /// a no-op, the shape the commission hard-delete cascade (ZMVP-66) needs.
     async fn delete(&self, key: FileKey) -> anyhow::Result<()> {
-        query!(r#"DELETE FROM file_blob WHERE key = $1"#, *key)
+        sqlx::query(FileQuery::Delete.sql())
+            .bind(*key)
             .execute(&self.pool)
             .await?;
         Ok(())

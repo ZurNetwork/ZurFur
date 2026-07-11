@@ -3,7 +3,14 @@
 //! sovereign `did`. Reads are pool-backed; recognition (`provision`) is a write
 //! and so is reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
 //! (`uow.users()`). See ZMVP-9, DESIGN/User, and DD `24150017`.
+//!
+//! The SQL lives in `queries/user/` (one statement per file, embedded via
+//! `include_str!`) and is verified against the migrated schema by the
+//! `query_files_prepare` test — the crate-wide convention replacing the
+//! `sqlx::query!` compile-time macros.
 
+use crate::queries::UserQuery;
+use chrono::{DateTime, Utc};
 use domain::{
     elements::{
         did::Did,
@@ -11,7 +18,27 @@ use domain::{
     },
     ports::{UserStore, UserWrites},
 };
-use sqlx::{PgConnection, PgPool, query};
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
+
+/// A `users` row as its columns come back from Postgres; the domain [`User`] is
+/// rebuilt from it via [`From`].
+#[derive(sqlx::FromRow)]
+struct UserRow {
+    id: Uuid,
+    did: String,
+    created_at: DateTime<Utc>,
+}
+
+impl From<UserRow> for User {
+    fn from(row: UserRow) -> Self {
+        User {
+            id: UserId::new(row.id),
+            did: Did::new(row.did),
+            created_at: row.created_at,
+        }
+    }
+}
 
 /// PostgreSQL read store for recognized visitors (the [`UserStore`] read surface).
 /// Resolves a User by id or DID off the pool; recognition (the write) lives on
@@ -41,52 +68,24 @@ pub struct PgUserWrites<'a> {
 #[async_trait::async_trait]
 impl UserStore for PgUserStore {
     async fn find(&self, id: UserId) -> anyhow::Result<Option<User>> {
-        let row = query!(
-            r#"
-            SELECT
-                id          AS "id!",
-                did         AS "did!",
-                created_at  AS "created_at!: chrono::DateTime<chrono::Utc>"
-            FROM users
-            WHERE id = $1
-            "#,
-            *id,
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<UserRow> = sqlx::query_as(UserQuery::Find.sql())
+            .bind(*id)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row.map(|row| User {
-            id: UserId::new(row.id),
-            did: Did::new(row.did),
-            created_at: row.created_at,
-        }))
+        Ok(row.map(Into::into))
     }
 
     /// Read-only lookup by the unique `did` — no INSERT, so an unknown DID
     /// resolves to `None` rather than recognizing a new visitor (the no-mint
     /// counterpart to [`UserWrites::provision`]).
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
-        // Read-only lookup by the unique `did` — no INSERT, so an unknown DID
-        // resolves to None rather than recognizing a new visitor.
-        let row = query!(
-            r#"
-            SELECT
-                id          AS "id!",
-                did         AS "did!",
-                created_at  AS "created_at!: chrono::DateTime<chrono::Utc>"
-            FROM users
-            WHERE did = $1
-            "#,
-            did.as_str(),
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<UserRow> = sqlx::query_as(UserQuery::FindByDid.sql())
+            .bind(did.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row.map(|row| User {
-            id: UserId::new(row.id),
-            did: Did::new(row.did),
-            created_at: row.created_at,
-        }))
+        Ok(row.map(Into::into))
     }
 }
 
@@ -105,27 +104,13 @@ impl UserWrites for PgUserWrites<'_> {
         // constraint is the arbiter, not a check-then-insert.
         let candidate = User::recognize(did.clone(), chrono::Utc::now());
 
-        let row = query!(
-            r#"
-            INSERT INTO users (id, did, created_at)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (did) DO UPDATE SET did = EXCLUDED.did
-            RETURNING
-                id          AS "id!",
-                did         AS "did!",
-                created_at  AS "created_at!: chrono::DateTime<chrono::Utc>"
-            "#,
-            *candidate.id,
-            did.as_str(),
-            candidate.created_at,
-        )
-        .fetch_one(&mut *self.conn)
-        .await?;
+        let row: UserRow = sqlx::query_as(UserQuery::Provision.sql())
+            .bind(*candidate.id)
+            .bind(did.as_str())
+            .bind(candidate.created_at)
+            .fetch_one(&mut *self.conn)
+            .await?;
 
-        Ok(User {
-            id: UserId::new(row.id),
-            did: Did::new(row.did),
-            created_at: row.created_at,
-        })
+        Ok(row.into())
     }
 }

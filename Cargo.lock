@@ -23,6 +23,7 @@ dependencies = [
  "jacquard-common",
  "jacquard-oauth",
  "k256",
+ "query-registry-build",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "serde",
@@ -57,11 +58,13 @@ dependencies = [
 name = "adapter-pg"
 version = "0.1.0"
 dependencies = [
+ "adapter-atproto",
  "anyhow",
  "async-trait",
  "chacha20poly1305",
  "chrono",
  "domain",
+ "query-registry-build",
  "rmp-serde",
  "serde_json",
  "sqlx",
@@ -3453,6 +3456,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "query-registry-build"
+version = "0.1.0"
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4397,7 +4404,6 @@ dependencies = [
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn",
- "thiserror 2.0.18",
  "tokio",
  "url",
 ]
