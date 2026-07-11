@@ -22,11 +22,9 @@ chacha20poly1305 = { workspace = true }
 # Wipe intermediate plaintext key buffers after wrap/unwrap.
 zeroize = { workspace = true }
 
-[build-dependencies]
-# Generates the typed query registry (enums + sql() + ALL_QUERIES) from queries/.
-query-registry-build = { path = "../query-registry-build" }
-
 [dev-dependencies]
+# The codegen staleness gate regenerates against a fresh container and diffs.
+query-codegen = { path = "../query-codegen" }
 # The prepare-test gate also iterates adapter-atproto's registry (its queries run
 # against tables these migrations create).
 adapter-atproto = { path = "../adapter-atproto/" }

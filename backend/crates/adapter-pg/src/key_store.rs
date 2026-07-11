@@ -13,8 +13,8 @@
 //! distinct step — submits the operation to a public directory (that latter pair
 //! *is* the cross-boundary dual write, run as separate retryable steps).
 //!
-//! The SQL lives in `queries/key_store/`, embedded via `include_str!` and
-//! verified by the `query_files_prepare` test.
+//! The SQL lives in `queries/key_store/`; the typed functions are generated
+//! against the migrated schema (see [`crate::queries`]).
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -25,7 +25,7 @@ use domain::{
 use sqlx::PgPool;
 
 use crate::key_vault::RootKey;
-use crate::queries::KeyStoreQuery;
+use crate::queries::key_store as sql;
 
 /// PostgreSQL [`KeyStore`]: wraps custody keys under a [`RootKey`] and persists the
 /// sealed blob in `account_keys`. Holds the pool and the root key; both are cheap
@@ -52,13 +52,7 @@ impl KeyStore for PgKeyStore {
     /// constraint error (the PK), surfaced to the caller.
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
         let wrapped = self.root.wrap(did.as_str(), keys)?;
-        sqlx::query(KeyStoreQuery::Put.sql())
-            .bind(did.as_str())
-            .bind(wrapped)
-            .bind(1i32)
-            .bind(Utc::now())
-            .execute(&self.pool)
-            .await?;
+        sql::put(&self.pool, did.as_str(), &wrapped, 1i32, Utc::now()).await?;
         Ok(())
     }
 
@@ -66,10 +60,7 @@ impl KeyStore for PgKeyStore {
     /// `None` if unknown. Decryption failure (wrong root key or tampering) is an
     /// error, not a `None`.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
-        let wrapped: Option<Vec<u8>> = sqlx::query_scalar(KeyStoreQuery::Get.sql())
-            .bind(did.as_str())
-            .fetch_optional(&self.pool)
-            .await?;
+        let wrapped = sql::get(&self.pool, did.as_str()).await?;
 
         match wrapped {
             Some(wrapped) => Ok(Some(self.root.unwrap(did.as_str(), &wrapped)?)),

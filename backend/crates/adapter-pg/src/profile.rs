@@ -8,10 +8,9 @@
 //! `auth_store` (see the `no_bare_pool_writes` guard). See ZMVP-10 and
 //! DESIGN/"Domains and Applications".
 //!
-//! The SQL lives in `queries/profile/`, embedded via `include_str!` and verified
-//! by the `query_files_prepare` test.
+//! The SQL lives in `queries/profile/`; the typed functions are generated
+//! against the migrated schema (see [`crate::queries`]).
 
-use crate::queries::ProfileQuery;
 use chrono::{Duration, Utc};
 use domain::{
     elements::{did::Did, profile::Profile},
@@ -19,25 +18,7 @@ use domain::{
 };
 use sqlx::PgPool;
 
-/// A `profile_cache` row; the domain [`Profile`] is rebuilt from it via [`From`].
-#[derive(sqlx::FromRow)]
-struct ProfileRow {
-    did: String,
-    handle: String,
-    display_name: Option<String>,
-    avatar_url: Option<String>,
-}
-
-impl From<ProfileRow> for Profile {
-    fn from(row: ProfileRow) -> Self {
-        Profile {
-            did: Did::new(row.did),
-            handle: row.handle,
-            display_name: row.display_name,
-            avatar_url: row.avatar_url,
-        }
-    }
-}
+use crate::queries::profile as sql;
 
 /// Postgres-backed read-through cache of public profiles (ZMVP-10). Freshness is
 /// this adapter's policy: `get` treats an entry older than `ttl` as a miss, so a
@@ -70,13 +51,14 @@ impl ProfileCache for PgProfileCache {
         // returned, so the caller sees a miss and refetches. Cutoff computed
         // app-side to keep the freshness window explicit and testable.
         let cutoff = Utc::now() - self.ttl;
-        let row: Option<ProfileRow> = sqlx::query_as(ProfileQuery::Get.sql())
-            .bind(did.as_str())
-            .bind(cutoff)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sql::get(&self.pool, did.as_str(), cutoff).await?;
 
-        Ok(row.map(Into::into))
+        Ok(row.map(|row| Profile {
+            did: Did::new(row.did),
+            handle: row.handle,
+            display_name: row.display_name,
+            avatar_url: row.avatar_url,
+        }))
     }
 
     /// `INSERT ... ON CONFLICT (did) DO UPDATE`: a refetch overwrites the prior
@@ -90,14 +72,15 @@ impl ProfileCache for PgProfileCache {
     /// a read endpoint open one for nothing. So it is a documented exception to the
     /// bare-pool-write guard, alongside `session_store` and `auth_store`.
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
-        sqlx::query(ProfileQuery::Put.sql())
-            .bind(profile.did.as_str())
-            .bind(&profile.handle)
-            .bind(&profile.display_name)
-            .bind(&profile.avatar_url)
-            .bind(Utc::now())
-            .execute(&self.pool)
-            .await?;
+        sql::put(
+            &self.pool,
+            profile.did.as_str(),
+            &profile.handle,
+            profile.display_name.as_deref(),
+            profile.avatar_url.as_deref(),
+            Utc::now(),
+        )
+        .await?;
         Ok(())
     }
 }

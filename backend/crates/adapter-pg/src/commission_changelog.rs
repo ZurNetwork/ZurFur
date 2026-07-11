@@ -7,11 +7,9 @@
 //! holds even past the ports; `DELETE` stays ungoverned for the commission
 //! hard-delete cascade and legal-duty redaction.
 //!
-//! The SQL lives in `queries/changelog/`, embedded via `include_str!` and
-//! verified by the `query_files_prepare` test.
+//! The SQL lives in `queries/changelog/`; the typed functions and the row shape
+//! are generated against the migrated schema (see [`crate::queries`]).
 
-use crate::queries::ChangelogQuery;
-use chrono::{DateTime, Utc};
 use domain::{
     elements::{
         commission::{ChangelogEntry, ChangelogEntryKind, CommissionId, NewChangelogEntry},
@@ -20,19 +18,8 @@ use domain::{
     ports::{ChangelogStore, ChangelogWrites},
 };
 use sqlx::{PgConnection, PgPool};
-use uuid::Uuid;
 
-/// A `commission_changelog` row; [`ChangelogEntry`] is rebuilt from it with the
-/// `kind` token re-validated through the domain enum.
-#[derive(sqlx::FromRow)]
-struct ChangelogRow {
-    seq: i64,
-    kind: String,
-    actor_id: Option<Uuid>,
-    payload: serde_json::Value,
-    note: Option<String>,
-    created_at: DateTime<Utc>,
-}
+use crate::queries::changelog as sql;
 
 /// PostgreSQL append view over an open transaction (the [`ChangelogWrites`]
 /// surface). Holds **only** a borrowed `&mut PgConnection` — the transaction
@@ -53,15 +40,16 @@ impl ChangelogWrites for PgChangelogWrites<'_> {
     /// [`as_str`](ChangelogEntryKind::as_str) token; a `None` actor lands as SQL
     /// `NULL` (a system entry). Any store failure surfaces as an opaque error.
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
-        sqlx::query(ChangelogQuery::Append.sql())
-            .bind(*entry.commission_id)
-            .bind(entry.kind.as_str())
-            .bind(entry.actor_id.as_deref().copied())
-            .bind(&entry.payload)
-            .bind(entry.note.as_deref())
-            .bind(entry.created_at)
-            .execute(&mut *self.conn)
-            .await?;
+        sql::append(
+            &mut *self.conn,
+            *entry.commission_id,
+            entry.kind.as_str(),
+            entry.actor_id.as_deref().copied(),
+            &entry.payload,
+            entry.note.as_deref(),
+            entry.created_at,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -89,10 +77,7 @@ impl ChangelogStore for PgChangelogStore {
     /// means row tampering or a missed migration and surfaces as an error, never
     /// a silent skip.
     async fn entries(&self, commission: CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
-        let rows: Vec<ChangelogRow> = sqlx::query_as(ChangelogQuery::Entries.sql())
-            .bind(*commission)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sql::entries(&self.pool, *commission).await?;
 
         rows.into_iter()
             .map(|row| {

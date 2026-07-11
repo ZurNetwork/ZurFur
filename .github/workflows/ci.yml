@@ -2,7 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # Base-branch filter: include feature/bug branches so STACKED PRs (a PR
+    # targeting another PR's branch) run the same gate as PRs into main.
+    branches: [main, "feature/**", "bug/**"]
   push:
     branches: [main]
 

@@ -1,3 +1,5 @@
+-- params: commission_id, account_id, seq, placed_by, placed_at
+-- fetch: execute
 INSERT INTO commission_current_placement (commission_id, account_id, seq, placed_by, placed_at)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (commission_id)

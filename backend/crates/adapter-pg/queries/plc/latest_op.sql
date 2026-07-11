@@ -1,3 +1,6 @@
+-- params: did
+-- fetch: optional
+-- row: PlcOperationRow
 SELECT cid, "type" AS op_type, prev, operation
 FROM plc_operations
 WHERE did = $1

@@ -5,7 +5,7 @@
 //! single process. It holds no protocol logic: jacquard owns refresh, expiry
 //! skew, and the single-flight lock; this is just durable storage (ZMVP-12).
 
-use crate::queries::AuthStoreQuery;
+use crate::queries::auth_store as sql;
 use jacquard_common::{bos::BosStr, session::SessionStoreError, types::did::Did};
 use jacquard_oauth::{
     authstore::ClientAuthStore,
@@ -69,13 +69,10 @@ impl ClientAuthStore for AtprotoAuthStore {
         did: &Did<D>,
         session_id: &str,
     ) -> Result<Option<ClientSessionData>, SessionStoreError> {
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(AuthStoreQuery::GetSession.sql())
-            .bind(did.as_ref())
-            .bind(session_id)
-            .fetch_optional(&self.pool)
+        let data = sql::get_session(&self.pool, did.as_ref(), session_id)
             .await
             .map_err(backend)?;
-        row.map(|(data,)| decode(&data)).transpose()
+        data.map(|data| decode(&data)).transpose()
     }
 
     /// Insert-or-replace the session keyed by (DID, session id). The upsert is
@@ -84,13 +81,14 @@ impl ClientAuthStore for AtprotoAuthStore {
     /// reads the freshest grant (ZMVP-12).
     async fn upsert_session(&self, session: ClientSessionData) -> Result<(), SessionStoreError> {
         let data = encode(&session)?;
-        sqlx::query(AuthStoreQuery::UpsertSession.sql())
-            .bind(session.account_did.as_ref())
-            .bind(AsRef::<str>::as_ref(&session.session_id))
-            .bind(data)
-            .execute(&self.pool)
-            .await
-            .map_err(backend)?;
+        sql::upsert_session(
+            &self.pool,
+            session.account_did.as_ref(),
+            AsRef::<str>::as_ref(&session.session_id),
+            &data,
+        )
+        .await
+        .map_err(backend)?;
         Ok(())
     }
 
@@ -99,10 +97,7 @@ impl ClientAuthStore for AtprotoAuthStore {
         did: &Did<D>,
         session_id: &str,
     ) -> Result<(), SessionStoreError> {
-        sqlx::query(AuthStoreQuery::DeleteSession.sql())
-            .bind(did.as_ref())
-            .bind(session_id)
-            .execute(&self.pool)
+        sql::delete_session(&self.pool, did.as_ref(), session_id)
             .await
             .map_err(backend)?;
         Ok(())
@@ -112,12 +107,10 @@ impl ClientAuthStore for AtprotoAuthStore {
         &self,
         state: &str,
     ) -> Result<Option<AuthRequestData>, SessionStoreError> {
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(AuthStoreQuery::GetAuthReqInfo.sql())
-            .bind(state)
-            .fetch_optional(&self.pool)
+        let data = sql::get_auth_req_info(&self.pool, state)
             .await
             .map_err(backend)?;
-        row.map(|(data,)| decode(&data)).transpose()
+        data.map(|data| decode(&data)).transpose()
     }
 
     async fn save_auth_req_info(
@@ -125,19 +118,18 @@ impl ClientAuthStore for AtprotoAuthStore {
         auth_req_info: &AuthRequestData,
     ) -> Result<(), SessionStoreError> {
         let data = encode(auth_req_info)?;
-        sqlx::query(AuthStoreQuery::SaveAuthReqInfo.sql())
-            .bind(AsRef::<str>::as_ref(&auth_req_info.state))
-            .bind(data)
-            .execute(&self.pool)
-            .await
-            .map_err(backend)?;
+        sql::save_auth_req_info(
+            &self.pool,
+            AsRef::<str>::as_ref(&auth_req_info.state),
+            &data,
+        )
+        .await
+        .map_err(backend)?;
         Ok(())
     }
 
     async fn delete_auth_req_info(&self, state: &str) -> Result<(), SessionStoreError> {
-        sqlx::query(AuthStoreQuery::DeleteAuthReqInfo.sql())
-            .bind(state)
-            .execute(&self.pool)
+        sql::delete_auth_req_info(&self.pool, state)
             .await
             .map_err(backend)?;
         Ok(())
