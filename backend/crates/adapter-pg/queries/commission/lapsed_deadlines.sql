@@ -1,3 +1,7 @@
+-- params: now, terminal_lifecycles
+-- fetch: many
+-- row: LapsedRow
+-- not_null: deadline
 SELECT c.id, c.deadline, c.deadline_status
 FROM commission c
 WHERE c.deadline IS NOT NULL

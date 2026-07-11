@@ -23,7 +23,6 @@ dependencies = [
  "jacquard-common",
  "jacquard-oauth",
  "k256",
- "query-registry-build",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "serde",
@@ -64,7 +63,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "domain",
- "query-registry-build",
+ "query-codegen",
  "rmp-serde",
  "serde_json",
  "sqlx",
@@ -3456,8 +3455,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "query-registry-build"
+name = "query-codegen"
 version = "0.1.0"
+dependencies = [
+ "adapter-pg",
+ "anyhow",
+ "sqlx",
+ "sqlx-core",
+ "sqlx-postgres",
+ "testcontainers-modules",
+ "tokio",
+]
 
 [[package]]
 name = "quinn"

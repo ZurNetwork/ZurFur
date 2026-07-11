@@ -10,10 +10,9 @@
 //! written during minting (genesis) and hard-delete (tombstone), both outside the
 //! account [`UnitOfWork`](domain::ports::UnitOfWork).
 //!
-//! The SQL lives in `queries/plc/`, embedded via `include_str!` and verified by
-//! the `query_files_prepare` test.
+//! The SQL lives in `queries/plc/`; the typed functions are generated against
+//! the migrated schema (see [`crate::queries`]).
 
-use crate::queries::PlcQuery;
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::{
@@ -22,15 +21,7 @@ use domain::{
 };
 use sqlx::PgPool;
 
-/// A `plc_operations` row as [`latest_op`](PlcOperationLog::latest_op) reads it;
-/// the `operation` jsonb is re-serialized to the JSON text the record carries.
-#[derive(sqlx::FromRow)]
-struct PlcOperationRow {
-    cid: String,
-    op_type: String,
-    prev: Option<String>,
-    operation: serde_json::Value,
-}
+use crate::queries::plc as sql;
 
 /// PostgreSQL [`PlcOperationLog`]: appends operation rows and reads back a DID's most
 /// recent CID. Holds the pool directly (cheap to clone).
@@ -54,26 +45,22 @@ impl PlcOperationLog for PgPlcOperationLog {
         // The record carries the op as JSON text (`PlcOperationRecord.operation_json`
         // is a `String` by contract); parse it here so it lands as native `jsonb`.
         let operation: serde_json::Value = serde_json::from_str(&record.operation_json)?;
-        sqlx::query(PlcQuery::Append.sql())
-            .bind(record.did.as_str())
-            .bind(&record.cid)
-            .bind(&record.op_type)
-            .bind(&record.prev)
-            .bind(operation)
-            .bind(Utc::now())
-            .execute(&self.pool)
-            .await?;
+        sql::append(
+            &self.pool,
+            record.did.as_str(),
+            &record.cid,
+            &record.op_type,
+            record.prev.as_deref(),
+            &operation,
+            Utc::now(),
+        )
+        .await?;
         Ok(())
     }
 
     /// The `cid` of the DID's highest-`seq` (most recent) operation, or `None`.
     async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
-        let cid: Option<String> = sqlx::query_scalar(PlcQuery::LatestCid.sql())
-            .bind(did.as_str())
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(cid)
+        Ok(sql::latest_cid(&self.pool, did.as_str()).await?)
     }
 
     /// The DID's highest-`seq` (most recent) operation as a full record, or `None`.
@@ -81,10 +68,7 @@ impl PlcOperationLog for PgPlcOperationLog {
     /// record carries. Used by an update to carry the prior op's public fields
     /// forward without touching custody's non-signing private keys (F2).
     async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
-        let row: Option<PlcOperationRow> = sqlx::query_as(PlcQuery::LatestOp.sql())
-            .bind(did.as_str())
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sql::latest_op(&self.pool, did.as_str()).await?;
 
         Ok(row.map(|row| PlcOperationRecord {
             did: did.clone(),

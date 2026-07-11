@@ -1,3 +1,5 @@
+-- params: did
+-- fetch: optional
 SELECT cid
 FROM plc_operations
 WHERE did = $1

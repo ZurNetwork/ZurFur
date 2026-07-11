@@ -1,3 +1,6 @@
+-- params: old_handle, since, excluding?
+-- fetch: one
+-- not_null: reserved
 SELECT EXISTS (
     SELECT 1
     FROM account_handle_changes

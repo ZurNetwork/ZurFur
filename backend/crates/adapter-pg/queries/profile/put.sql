@@ -1,3 +1,5 @@
+-- params: did, handle, display_name?, avatar_url?, fetched_at
+-- fetch: execute
 INSERT INTO profile_cache (did, handle, display_name, avatar_url, fetched_at)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (did) DO UPDATE SET

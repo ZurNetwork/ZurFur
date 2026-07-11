@@ -81,6 +81,13 @@ pds-smoke:
 test:
     cargo test --workspace
 
+# Regenerate both adapters' src/queries.rs (typed query functions) from the
+# queries/*.sql trees, described against a throwaway migrated Postgres. Run
+# after adding/changing a .sql file or a migration, then commit the result —
+# the codegen_current test fails CI while the committed output is stale.
+gen-queries:
+    cargo run -p query-codegen
+
 # --- Worktrees (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
