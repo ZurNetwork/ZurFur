@@ -14,7 +14,7 @@ use domain::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+            LifecycleStep, NewComponent, NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement,
             RootSurface, SurfaceMode, Visibility, derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
@@ -71,10 +71,15 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   commission foreign key (blobs know nothing of commissions) and so is not
 ///   commission-referencing — the hard-delete cascade (ZMVP-66) severs them through
 ///   [`FileStore::delete`](domain::ports::FileStore::delete), not the row cascade.
+/// - `commission_slot` (ZMVP-77): the declared-Slot satellite (title/notes on a
+///   slot's component node). A declaration is composition like the node it
+///   decorates, not evidence that work happened; it cascades with the
+///   commission (ruling E35) and with its own node.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
     "commission_file",
     "commission_node",
+    "commission_slot",
     "commission_placement",
     "commission_current_placement",
     "commission_view_grant",
@@ -291,6 +296,45 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             file.created_at,
         )
         .await?;
+        Ok(())
+    }
+
+    /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
+    /// ruling): per Slot, two inserts on the open transaction behind the
+    /// shared parent gate — an ordinary component row for the tree
+    /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
+    /// subquery, the empty payload) and the Slot itself as the
+    /// `commission_slot` satellite (title, notes), keyed by that component's
+    /// node id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
+    /// transaction for the whole batch, so every component and satellite lands
+    /// or none does — the first refused Slot aborts and the caller's rollback
+    /// takes the earlier inserts with it. There is no occupant column to write
+    /// (fill is the Character epic's), and no changelog entry (the frozen
+    /// taxonomy has no Slot variant).
+    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
+        for slot in slots {
+            self.require_surface_parent(slot.parent, slot.commission_id)
+                .await?;
+
+            sql::declare_slot_node(
+                &mut *self.conn,
+                *slot.id,
+                *slot.commission_id,
+                *slot.parent,
+                *slot.created_by,
+                slot.created_at,
+            )
+            .await?;
+
+            sql::declare_slot_satellite(
+                &mut *self.conn,
+                *slot.id,
+                *slot.commission_id,
+                slot.title.as_str(),
+                slot.notes.as_deref(),
+            )
+            .await?;
+        }
         Ok(())
     }
 

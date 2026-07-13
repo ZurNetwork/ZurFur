@@ -707,6 +707,46 @@ pub mod commission {
             .await
     }
 
+    /// `queries/commission/declare_slot_node.sql`, typed against the migrated schema at generation time.
+    pub async fn declare_slot_node(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        parent: uuid::Uuid,
+        created_by: uuid::Uuid,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/declare_slot_node.sql"))
+            .bind(id)
+            .bind(commission_id)
+            .bind(parent)
+            .bind(created_by)
+            .bind(created_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/declare_slot_satellite.sql`, typed against the migrated schema at generation time.
+    pub async fn declare_slot_satellite(
+        conn: impl sqlx::PgExecutor<'_>,
+        node_id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        title: &str,
+        notes: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/commission/declare_slot_satellite.sql"
+        ))
+        .bind(node_id)
+        .bind(commission_id)
+        .bind(title)
+        .bind(notes)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/delete.sql`, typed against the migrated schema at generation time.
     pub async fn delete(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/delete.sql"))
@@ -1348,6 +1388,8 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::add_surface",
     "commission::create_commission",
     "commission::create_root_surface",
+    "commission::declare_slot_node",
+    "commission::declare_slot_satellite",
     "commission::delete",
     "commission::grant_view",
     "commission::place_append",

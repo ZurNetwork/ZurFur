@@ -11,7 +11,7 @@
 //! **Late is the system's word**: only the deadline sweeper
 //! ([`crate::sweep_deadlines`]) sets it, and no handler here accepts or erases
 //! it — a Participant resolves Late through the deadline itself (extend or
-//! clear). One nullable slot per axis (ruling E29), so exclusivity holds by
+//! clear). One nullable cell per axis (ruling E29), so exclusivity holds by
 //! construction; the direction axis (ZMVP-85) is separate and the two compose
 //! freely. A commission with no deadline never carries a deadline-axis status
 //! (AC4): the flag is refused without a deadline, and clearing the deadline
@@ -221,7 +221,7 @@ pub(super) async fn clear_deadline_status(
 /// The shared Delayed-flag set/clear tail: enforce the axis preconditions
 /// (a deadline must exist to flag against — AC4; a standing Late is the
 /// system's and conflicts either way), drop a no-op early, otherwise write the
-/// one nullable slot and append the `delayed` entry **in one unit of work**.
+/// one nullable cell and append the `delayed` entry **in one unit of work**.
 async fn apply_deadline_status(
     state: &AppState,
     commission: CommissionId,

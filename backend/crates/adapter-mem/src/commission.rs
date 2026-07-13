@@ -15,9 +15,9 @@ use domain::elements::{
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
         CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
-        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSurface,
-        NodeId, NodeKind, NodeRow, Placement, RootSurface, SurfaceMode, Visibility,
-        derive_deadline_status,
+        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSlot,
+        NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Slot, SlotTitle,
+        SurfaceMode, Visibility, derive_deadline_status,
     },
     maturity::Maturity,
     user::UserId,
@@ -86,11 +86,11 @@ pub(crate) struct StoredCommission {
     /// the both-or-neither CHECK is a struct by construction).
     pub(crate) maturity: Option<Maturity>,
     /// The direction-axis Status, or `None` while none is set (ZMVP-85) — the
-    /// mem mirror of the pg `direction_status` column: one nullable slot, so a
+    /// mem mirror of the pg `direction_status` column: one nullable cell, so a
     /// set replaces by construction.
     pub(crate) direction_status: Option<DirectionStatus>,
     /// The deadline-axis Status, or `None` while none is held (ZMVP-86) — the
-    /// mem mirror of the pg `deadline_status` column: the same one-slot shape.
+    /// mem mirror of the pg `deadline_status` column: the same one-cell shape.
     pub(crate) deadline_status: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared
     /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
@@ -152,6 +152,35 @@ pub(crate) struct StoredNode {
     pub(crate) created_at: domain::datetime::DateTimeUtc,
     /// The type-owned payload, opaque here exactly as in pg.
     pub(crate) payload: Value,
+}
+
+/// One declared Slot's **satellite** as the mem backend keeps it — the
+/// in-memory mirror of a pg `commission_slot` row (ZMVP-77). Keyed in the
+/// backend map by the [`NodeId`] of the component that carries the Slot (the
+/// satellite's own key), exactly like the pg table. Deliberately occupant-less: fill is unrepresentable until the
+/// Character epic adds it. `Clone` so a unit of work can deep-copy the map into
+/// its staging snapshot.
+#[derive(Clone)]
+pub(crate) struct StoredSlot {
+    /// The commission the Slot belongs to (the pg row's own commission FK).
+    pub(crate) commission_id: CommissionId,
+    /// The Slot's required title, validated at the boundary.
+    pub(crate) title: SlotTitle,
+    /// The optional freeform notes, exactly as declared.
+    pub(crate) notes: Option<String>,
+}
+
+impl StoredSlot {
+    /// Rebuild the read shape for the component node `id` that keys this
+    /// satellite.
+    fn rebuild(&self, id: NodeId) -> Slot {
+        Slot {
+            node_id: id,
+            commission_id: self.commission_id,
+            title: self.title.clone(),
+            notes: self.notes.clone(),
+        }
+    }
 }
 
 /// One appended changelog entry as the mem backend keeps it — the in-memory
@@ -418,6 +447,56 @@ impl CommissionWrites for MemCommissionWrites {
             .lock()
             .expect("MemBackend files mutex poisoned");
         files.insert(file.id, file.clone());
+        Ok(())
+    }
+
+    /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
+    /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
+    /// Slot, the same shared parent gate ([`require_surface_parent`]) and
+    /// append order as [`add_component`](Self::add_component) plant an
+    /// ordinary [`NodeKind::Component`] leaf with the empty payload, and the
+    /// Slot itself lands as the [`StoredSlot`] satellite keyed by that
+    /// component's node id. All maps belong to this unit's staging snapshot,
+    /// so the whole batch commits or vanishes together — a refusal mid-batch
+    /// errors the unit and nothing is applied. No changelog entry (the frozen
+    /// taxonomy has no Slot variant), and no occupant exists to store.
+    async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
+        for slot in new_slots {
+            {
+                let mut nodes = self
+                    .0
+                    .nodes
+                    .lock()
+                    .expect("MemBackend nodes mutex poisoned");
+                require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
+                let position = next_position(&nodes, slot.parent);
+                nodes.insert(
+                    slot.id,
+                    StoredNode {
+                        commission_id: slot.commission_id,
+                        parent: Some(slot.parent),
+                        kind: NodeKind::Component,
+                        position,
+                        created_by: slot.created_by,
+                        created_at: slot.created_at,
+                        payload: Value::Object(Default::default()),
+                    },
+                );
+            }
+            let mut slots = self
+                .0
+                .slots
+                .lock()
+                .expect("MemBackend slots mutex poisoned");
+            slots.insert(
+                slot.id,
+                StoredSlot {
+                    commission_id: slot.commission_id,
+                    title: slot.title.clone(),
+                    notes: slot.notes.clone(),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -955,12 +1034,34 @@ impl MemBackend {
     ) -> anyhow::Result<Vec<ChangelogEntry>> {
         MemChangelogStore(self.clone()).entries(commission).await
     }
+
+    /// The declared Slot whose component node is `node`, or `None` (inspect
+    /// helper — the satellite read; ZMVP-77 exposes no read port yet, the
+    /// viewer-facing surface being ZMVP-75's projection).
+    pub async fn find_slot(&self, node: NodeId) -> anyhow::Result<Option<Slot>> {
+        let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
+        Ok(slots.get(&node).map(|stored| stored.rebuild(node)))
+    }
+
+    /// Every Slot declared on `commission`, in declaration order (the carrying
+    /// components' node ids are UUIDv7, so sorting by node id is creation
+    /// order) — the "zero or more" count of ZMVP-77 AC2 (inspect helper).
+    pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
+        let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
+        let mut found: Vec<Slot> = slots
+            .iter()
+            .filter(|(_, stored)| stored.commission_id == commission)
+            .map(|(id, stored)| stored.rebuild(*id))
+            .collect();
+        found.sort_by_key(|slot| *slot.node_id);
+        Ok(found)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use domain::elements::commission::{NodeId, NodeKind, SurfaceMode};
+    use domain::elements::commission::{NewSlot, NodeId, NodeKind, SlotTitle, SurfaceMode};
     use domain::ports::{CannotRemoveRoot, NodeNotFound, ParentNodeNotFound, ParentNotASurface};
     use serde_json::json;
 
@@ -1652,7 +1753,7 @@ mod tests {
         };
         assert_eq!(status_of(&backend).await, None, "born clear");
 
-        // Set, then replace — one nullable slot, so the second set wins whole.
+        // Set, then replace — one nullable cell, so the second set wins whole.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
             .set_direction_status(id, Some(DirectionStatus::WaitingForInput))
@@ -2474,5 +2575,212 @@ mod tests {
             .unwrap()
             .expect("tree exists");
         assert!(tree.root.children.is_empty(), "no refused write landed");
+    }
+
+    // ZMVP-77 AC1/AC2 (store layer) — declaring a Slot lands an ordinary
+    // component leaf (empty payload; the substance is the satellite's) PLUS the
+    // satellite carrying the title and optional notes, keyed by the node id. A
+    // commission holds zero, then several, Slots; nothing about an occupant is
+    // representable anywhere (fill is the Character epic's).
+    #[tokio::test]
+    async fn declare_slot_creates_a_leaf_with_its_satellite() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        assert!(
+            backend.slots_of(id).await.unwrap().is_empty(),
+            "a fresh commission holds zero Slots (a valid state)"
+        );
+
+        let noted = NewSlot::under(
+            id,
+            root,
+            SlotTitle::try_from("The knight").unwrap(),
+            Some("full plate, no cape".to_string()),
+            owner,
+            Utc::now(),
+        );
+        let bare = NewSlot::under(
+            id,
+            root,
+            SlotTitle::try_from("The mage").unwrap(),
+            None,
+            owner,
+            Utc::now(),
+        );
+        let (noted_id, bare_id) = (noted.id, bare.id);
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .declare_slots(&[noted, bare])
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert_eq!(tree.root.children.len(), 2);
+        assert_eq!(tree.root.children[0].id, noted_id, "append order holds");
+        assert_eq!(tree.root.children[1].id, bare_id);
+        for child in &tree.root.children {
+            assert!(
+                matches!(child.kind, NodeKind::Component),
+                "each Slot's carrying node is an ordinary component leaf"
+            );
+            assert_eq!(child.payload, json!({}), "the substance is the satellite's");
+            assert!(child.children.is_empty());
+        }
+
+        let noted_slot = backend
+            .find_slot(noted_id)
+            .await
+            .unwrap()
+            .expect("satellite exists");
+        assert_eq!(noted_slot.title.as_str(), "The knight");
+        assert_eq!(noted_slot.notes.as_deref(), Some("full plate, no cape"));
+        assert_eq!(noted_slot.commission_id, id);
+        let bare_slot = backend
+            .find_slot(bare_id)
+            .await
+            .unwrap()
+            .expect("satellite exists");
+        assert!(bare_slot.notes.is_none(), "omitted notes stay absent");
+
+        assert_eq!(
+            backend.slots_of(id).await.unwrap().len(),
+            2,
+            "the commission holds two declared Slots (zero or more, AC2)"
+        );
+    }
+
+    // ZMVP-77 — the parent gates match every other tree write: absent and
+    // foreign parents are one indistinguishable ParentNodeNotFound, a component
+    // parent is ParentNotASurface, and no refused declaration leaves a node or
+    // a satellite behind.
+    #[tokio::test]
+    async fn declare_slot_refuses_bad_parents() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (mine, my_root) = rooted_commission(&backend, owner).await;
+        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+
+        let component = NewComponent::under(mine, my_root, json!({}), owner, Utc::now());
+        let component_id = component.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_component(&component).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let title = || SlotTitle::try_from("The knight").unwrap();
+
+        let fabricated = NewSlot::under(
+            mine,
+            NodeId::new(uuid::Uuid::now_v7()),
+            title(),
+            None,
+            owner,
+            Utc::now(),
+        );
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_slots(&[fabricated])
+            .await
+            .expect_err("absent parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "expected ParentNodeNotFound, got: {err:?}"
+        );
+        drop(uow);
+
+        let cross = NewSlot::under(mine, their_root, title(), None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_slots(&[cross])
+            .await
+            .expect_err("foreign parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNodeNotFound>().is_some(),
+            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+        );
+        drop(uow);
+
+        let nested = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_slots(&[nested])
+            .await
+            .expect_err("component parent refuses");
+        assert!(
+            err.downcast_ref::<ParentNotASurface>().is_some(),
+            "expected ParentNotASurface, got: {err:?}"
+        );
+        drop(uow);
+
+        // The batch is all-or-nothing (PR #108 ruling): a refused Slot
+        // mid-batch takes the valid ones down with it.
+        let good = NewSlot::under(mine, my_root, title(), None, owner, Utc::now());
+        let bad = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions()
+            .declare_slots(&[good, bad])
+            .await
+            .expect_err("a refused Slot fails the whole batch");
+        drop(uow);
+
+        assert!(
+            backend.slots_of(mine).await.unwrap().is_empty(),
+            "no refused declaration — including a batch's valid half — left a satellite behind"
+        );
+    }
+
+    // ZMVP-77 (transactionality) — the node and its satellite land (or vanish)
+    // together: staged writes are invisible until commit and a dropped unit
+    // discards both halves.
+    #[tokio::test]
+    async fn declare_slot_commits_and_rolls_back_with_the_unit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let (id, root) = rooted_commission(&backend, owner).await;
+
+        {
+            let slot = NewSlot::under(
+                id,
+                root,
+                SlotTitle::try_from("Never lands").unwrap(),
+                None,
+                owner,
+                Utc::now(),
+            );
+            let slot_id = slot.id;
+            let mut uow = database.begin().await.unwrap();
+            uow.commissions().declare_slots(&[slot]).await.unwrap();
+            assert!(
+                backend.find_slot(slot_id).await.unwrap().is_none(),
+                "an open unit's staged Slot is invisible to a shared read"
+            );
+            // `uow` drops here without `commit` -> both halves are discarded.
+        }
+
+        assert!(backend.slots_of(id).await.unwrap().is_empty());
+        let tree = backend
+            .commission_store()
+            .load_tree(id)
+            .await
+            .unwrap()
+            .expect("tree exists");
+        assert!(
+            tree.root.children.is_empty(),
+            "a dropped unit of work persists neither the node nor the satellite"
+        );
     }
 }

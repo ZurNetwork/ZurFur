@@ -11,7 +11,7 @@ use crate::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
             DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
-            NewSurface, NodeId, Placement,
+            NewSlot, NewSurface, NodeId, Placement,
         },
         maturity::Maturity,
         user::UserId,
@@ -210,8 +210,8 @@ pub trait CommissionWrites: Send {
     /// transaction** — append = max sibling `position` + 1 — and
     /// implementations must **serialize same-parent appends** (the pg adapter
     /// locks the parent row `FOR UPDATE`; the mem fake's single lock is
-    /// coarser), so concurrent adds cannot race to one slot NOR abort on the
-    /// slot uniqueness at commit (Tree Storage DD `28409880` Decision 3;
+    /// coarser), so concurrent adds cannot race to one position NOR abort on
+    /// the position uniqueness at commit (Tree Storage DD `28409880` Decision 3;
     /// hardened per the PR #103 review). The birth mode is inherited from the
     /// parent (see [`NewSurface::under`]). The parent must exist in
     /// `surface.commission_id`'s tree as a surface: an absent parent, one
@@ -275,6 +275,35 @@ pub trait CommissionWrites: Send {
     /// [`Fact`](crate::elements::commission::Fact)**: it cascades away with the
     /// commission, so a commission with only file entries stays hard-deletable (AC2).
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()>;
+
+    /// Declare **Slots** on the commission — a batch, all in this one write
+    /// (Engineer ruling, PR #108: a commission's Slots usually arrive several
+    /// at a time, so declaration is an array operation). A Slot is not a kind
+    /// of node: for each [`NewSlot`] the store plants an ordinary component
+    /// leaf under the parent **surface**, and persists the Slot itself — the
+    /// required title and optional notes — as its satellite row, keyed by that
+    /// component's node id (ZMVP-77 AC1; the Slot mirror of the Seat satellite
+    /// ruling, Gate A E20). The whole batch lands or none of it does: the
+    /// first refused Slot aborts the write, and the open transaction takes
+    /// the earlier inserts with it.
+    ///
+    /// The carrying component follows exactly the
+    /// [`add_component`](Self::add_component) contract: append sibling order
+    /// assigned on the open transaction, an absent/foreign parent refusing with
+    /// [`ParentNodeNotFound`], a component parent refusing with
+    /// [`ParentNotASurface`], authority and commission existence settled by the
+    /// caller. The component's payload is the empty object — the Slot's
+    /// substance lives in the satellite, which is why the generic component
+    /// add cannot declare one.
+    ///
+    /// **No changelog entry**: the frozen ZMVP-87 taxonomy carries
+    /// `seat_declared` for Seats but no Slot variant, and the taxonomy is not
+    /// this ticket's to grow (flagged to the Engineer rather than invented).
+    ///
+    /// Nothing here fills a Slot — no occupant is even representable on
+    /// [`NewSlot`] or in its storage (AC2/AC3: an empty Slot is a valid,
+    /// permanent state; the assignment surface is the Character epic's).
+    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality (ZMVP-67; Deletion DD
@@ -432,7 +461,7 @@ pub trait CommissionWrites: Send {
     ) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's **direction-axis
-    /// Status** (ZMVP-85; DESIGN/Commission, Status). One nullable slot
+    /// Status** (ZMVP-85; DESIGN/Commission, Status). One nullable cell
     /// (ruling E29): a set REPLACES whatever value is held — axis exclusivity
     /// by construction, never by check. This is the column's **only writer**:
     /// direction transitions are always an explicit Participant act (Engineer
@@ -470,7 +499,7 @@ pub trait CommissionWrites: Send {
     ) -> anyhow::Result<()>;
 
     /// Set (`Some`) or clear (`None`) the commission's **deadline-axis
-    /// Status** (ZMVP-86). One nullable slot (ruling E29): a set REPLACES the
+    /// Status** (ZMVP-86). One nullable cell (ruling E29): a set REPLACES the
     /// value held — axis exclusivity by construction. Exactly **two writers**
     /// exist, both changelog-recorded in the same unit of work (DD D4): the
     /// deadline-status endpoint (the Participant's manual
