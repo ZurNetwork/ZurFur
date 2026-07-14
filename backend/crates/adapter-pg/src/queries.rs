@@ -483,6 +483,7 @@ pub mod actor_identity {
         pub did: Option<String>,
         pub state: String,
         pub handle: Option<String>,
+        pub first_seen: chrono::DateTime<chrono::Utc>,
     }
 
     /// `queries/actor_identity/cache_handle.sql`, typed against the migrated schema at generation time.
@@ -505,11 +506,13 @@ pub mod actor_identity {
         id: uuid::Uuid,
         kind: &str,
         state: &str,
+        first_seen: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/actor_identity/create.sql"))
             .bind(id)
             .bind(kind)
             .bind(state)
+            .bind(first_seen)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -544,12 +547,14 @@ pub mod actor_identity {
         kind: &str,
         did: &str,
         state: &str,
+        first_seen: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<ActorIdentityRow> {
         sqlx::query_as(include_str!("../queries/actor_identity/intern.sql"))
             .bind(id)
             .bind(kind)
             .bind(did)
             .bind(state)
+            .bind(first_seen)
             .fetch_one(conn)
             .await
     }

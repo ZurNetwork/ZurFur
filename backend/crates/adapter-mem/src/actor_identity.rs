@@ -7,6 +7,7 @@
 //! immortal.
 
 use async_trait::async_trait;
+use domain::datetime::DateTimeUtc;
 use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind, ActorState};
 use domain::elements::did::Did;
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
@@ -27,6 +28,9 @@ pub struct StoredActorIdentity {
     /// The refreshable display-handle cache (slice 5) — foreign data, plain
     /// string, born `None`.
     pub handle: Option<String>,
+    /// When the Index first saw the actor (slice 7) — immutable; a re-intern
+    /// keeps the original stamp.
+    pub first_seen: DateTimeUtc,
 }
 
 /// Rebuild the domain row from its stored parts.
@@ -37,6 +41,7 @@ fn rebuild(id: ActorIdentityId, stored: &StoredActorIdentity) -> ActorIdentity {
         did: stored.did.clone(),
         state: stored.state,
         handle: stored.handle.clone(),
+        first_seen: stored.first_seen,
     }
 }
 
@@ -105,19 +110,26 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
                 did: None,
                 state: identity.state,
                 handle: None,
+                first_seen: identity.first_seen,
             },
         );
         Ok(())
     }
 
-    async fn intern(&mut self, did: &Did, kind: ActorKind) -> anyhow::Result<ActorIdentity> {
+    async fn intern(
+        &mut self,
+        did: &Did,
+        kind: ActorKind,
+        now: DateTimeUtc,
+    ) -> anyhow::Result<ActorIdentity> {
         let mut identities = self
             .0
             .actor_identities
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
         // The mem mirror of ON CONFLICT (did): an existing DID wins as-is —
-        // its stored kind is deliberately not rewritten (ZMVP-126 refines).
+        // its stored kind is not rewritten (ZMVP-126 refines) and its
+        // first_seen keeps the original sighting.
         if let Some((id, stored)) = identities
             .iter()
             .find(|(_, stored)| stored.did.as_deref() == Some(&**did))
@@ -130,6 +142,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             did: Some(did.clone()),
             state: ActorState::Active,
             handle: None,
+            first_seen: now,
         };
         identities.insert(
             minted.id,
@@ -138,6 +151,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
                 did: Some(did.clone()),
                 state: ActorState::Active,
                 handle: None,
+                first_seen: now,
             },
         );
         Ok(minted)
@@ -163,6 +177,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use domain::elements::actor_identity::{ActorIdentity, ActorKind, ActorState};
     use domain::elements::did::Did;
 
@@ -172,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn create_commit_find_round_trips() {
         let backend = MemBackend::new();
-        let identity = ActorIdentity::mint(ActorKind::User);
+        let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
         let mut uow = backend.database().begin().await.expect("begin");
         uow.actor_identities()
@@ -193,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn uncommitted_create_rolls_back() {
         let backend = MemBackend::new();
-        let identity = ActorIdentity::mint(ActorKind::User);
+        let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
         {
             let mut uow = backend.database().begin().await.expect("begin");
@@ -216,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_create_errors() {
         let backend = MemBackend::new();
-        let identity = ActorIdentity::mint(ActorKind::User);
+        let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
         let mut uow = backend.database().begin().await.expect("begin");
         uow.actor_identities()
@@ -237,18 +252,24 @@ mod tests {
         let backend = MemBackend::new();
         let did = Did::new("did:plc:intern-me".to_string());
 
+        let first_sighting = Utc::now();
         let mut uow = backend.database().begin().await.expect("begin");
         let first = uow
             .actor_identities()
-            .intern(&did, ActorKind::User)
+            .intern(&did, ActorKind::User, first_sighting)
             .await
             .expect("first intern");
         uow.commit().await.expect("commit");
 
+        // Different kind AND different clock on re-sight: row untouched.
         let mut uow = backend.database().begin().await.expect("begin");
         let again = uow
             .actor_identities()
-            .intern(&did, ActorKind::Account)
+            .intern(
+                &did,
+                ActorKind::Account,
+                first_sighting + chrono::Duration::days(1),
+            )
             .await
             .expect("re-intern");
         uow.commit().await.expect("commit");
@@ -259,7 +280,7 @@ mod tests {
         let mut uow = backend.database().begin().await.expect("begin");
         let second = uow
             .actor_identities()
-            .intern(&other, ActorKind::User)
+            .intern(&other, ActorKind::User, Utc::now())
             .await
             .expect("intern other");
         uow.commit().await.expect("commit");
@@ -283,7 +304,7 @@ mod tests {
         let mut uow = backend.database().begin().await.expect("begin");
         let interned = uow
             .actor_identities()
-            .intern(&did, ActorKind::User)
+            .intern(&did, ActorKind::User, Utc::now())
             .await
             .expect("intern");
         uow.actor_identities()
@@ -307,7 +328,10 @@ mod tests {
             .expect("clear");
         let missing = uow
             .actor_identities()
-            .cache_handle(ActorIdentity::mint(ActorKind::User).id, Some("ghost"))
+            .cache_handle(
+                ActorIdentity::mint(ActorKind::User, Utc::now()).id,
+                Some("ghost"),
+            )
             .await;
         assert!(
             missing.is_err(),
@@ -328,7 +352,7 @@ mod tests {
     #[tokio::test]
     async fn create_refuses_did_bearing_rows() {
         let backend = MemBackend::new();
-        let mut identity = ActorIdentity::mint(ActorKind::User);
+        let mut identity = ActorIdentity::mint(ActorKind::User, Utc::now());
         identity.did = Some(Did::new("did:plc:sneaky".to_string()));
 
         let mut uow = backend.database().begin().await.expect("begin");
@@ -341,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn create_refuses_non_active_rows() {
         let backend = MemBackend::new();
-        let mut identity = ActorIdentity::mint(ActorKind::User);
+        let mut identity = ActorIdentity::mint(ActorKind::User, Utc::now());
         identity.state = ActorState::Tombstoned;
 
         let mut uow = backend.database().begin().await.expect("begin");

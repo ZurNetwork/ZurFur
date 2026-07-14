@@ -1,11 +1,12 @@
-//! The actor super-table over PostgreSQL (ZMVP-122 slices 1–4, DD 34013187),
-//! against a throwaway container: round-trips through the Unit of Work,
-//! rollback-on-drop, the duplicate-id PK, the kind and state CHECKs, the
-//! race-safe idempotent intern by DID, and NULL-did coexistence next to
-//! DB-enforced DID uniqueness. The cached handle lands in a later slice.
-//! Requires a container runtime socket (DOCKER_HOST honored).
+//! The actor super-table over PostgreSQL (ZMVP-122, DD 34013187), against a
+//! throwaway container: round-trips through the Unit of Work, rollback-on-drop,
+//! the duplicate-id PK, the kind and state CHECKs, the race-safe idempotent
+//! intern by DID (kind un-rewritten, first_seen never restamped), NULL-did
+//! coexistence next to DB-enforced DID uniqueness, and the refreshable handle
+//! cache. Requires a container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgActorIdentityStore, PgDatabase, PgPool};
+use chrono::Utc;
 use domain::{
     elements::{
         actor_identity::{ActorIdentity, ActorKind, ActorState},
@@ -38,7 +39,7 @@ async fn fresh_pool() -> (PgPool, impl Sized) {
 #[tokio::test]
 async fn create_commit_find_round_trips() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User);
+    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
@@ -49,15 +50,30 @@ async fn create_commit_find_round_trips() {
     uow.commit().await.expect("commit");
 
     let store = PgActorIdentityStore::new(pool.clone());
-    let found = store.find(identity.id).await.expect("find");
-    assert_eq!(found, Some(identity));
+    let found = store
+        .find(identity.id)
+        .await
+        .expect("find")
+        .expect("row exists");
+    assert_eq!(
+        found.first_seen.timestamp_micros(),
+        identity.first_seen.timestamp_micros(),
+        "first_seen round-trips (at the column's microsecond precision)",
+    );
+    assert_eq!(
+        found,
+        ActorIdentity {
+            first_seen: found.first_seen,
+            ..identity
+        }
+    );
 }
 
 /// Dropping the unit uncommitted rolls the create back (DD 24150017).
 #[tokio::test]
 async fn uncommitted_create_rolls_back() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User);
+    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     {
@@ -84,7 +100,7 @@ async fn kind_round_trips_and_check_rejects_unknown() {
     let store = PgActorIdentityStore::new(pool.clone());
 
     for kind in [ActorKind::User, ActorKind::Account, ActorKind::Character] {
-        let identity = ActorIdentity::mint(kind);
+        let identity = ActorIdentity::mint(kind, Utc::now());
         let mut uow = db.begin().await.expect("begin");
         uow.actor_identities()
             .create(&identity)
@@ -92,15 +108,28 @@ async fn kind_round_trips_and_check_rejects_unknown() {
             .expect("create");
         uow.commit().await.expect("commit");
 
-        let found = store.find(identity.id).await.expect("find");
-        assert_eq!(found, Some(identity), "{kind:?} must round-trip");
+        let found = store
+            .find(identity.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(
+            found,
+            ActorIdentity {
+                first_seen: found.first_seen,
+                ..identity
+            },
+            "{kind:?} must round-trip"
+        );
     }
 
-    let rejected =
-        sqlx::query("INSERT INTO actor_identity (id, kind, state) VALUES ($1, 'golem', 'active')")
-            .bind(uuid::Uuid::now_v7())
-            .execute(&pool)
-            .await;
+    let rejected = sqlx::query(
+        "INSERT INTO actor_identity (id, kind, state, first_seen) \
+             VALUES ($1, 'golem', 'active', now())",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .execute(&pool)
+    .await;
     assert!(
         rejected.is_err(),
         "the kind CHECK must reject a spelling outside the closed vocabulary"
@@ -117,18 +146,25 @@ async fn intern_is_idempotent_by_did() {
     let store = PgActorIdentityStore::new(pool.clone());
     let did = Did::new("did:plc:intern-me".to_string());
 
+    let first_sighting = Utc::now();
     let mut uow = db.begin().await.expect("begin");
     let first = uow
         .actor_identities()
-        .intern(&did, ActorKind::User)
+        .intern(&did, ActorKind::User, first_sighting)
         .await
         .expect("first intern");
     uow.commit().await.expect("commit");
 
+    // A later re-sight with a different kind AND a different clock: the row
+    // comes back untouched — kind un-rewritten, first_seen the original.
     let mut uow = db.begin().await.expect("begin");
     let again = uow
         .actor_identities()
-        .intern(&did, ActorKind::Account)
+        .intern(
+            &did,
+            ActorKind::Account,
+            first_sighting + chrono::Duration::days(1),
+        )
         .await
         .expect("re-intern");
     uow.commit().await.expect("commit");
@@ -141,7 +177,7 @@ async fn intern_is_idempotent_by_did() {
     let mut uow = db.begin().await.expect("begin");
     let second = uow
         .actor_identities()
-        .intern(&other, ActorKind::User)
+        .intern(&other, ActorKind::User, Utc::now())
         .await
         .expect("intern other");
     uow.commit().await.expect("commit");
@@ -158,22 +194,27 @@ async fn null_dids_coexist_and_present_dids_are_unique() {
 
     let mut uow = db.begin().await.expect("begin");
     uow.actor_identities()
-        .create(&ActorIdentity::mint(ActorKind::Character))
+        .create(&ActorIdentity::mint(ActorKind::Character, Utc::now()))
         .await
         .expect("first DID-less create");
     uow.actor_identities()
-        .create(&ActorIdentity::mint(ActorKind::Character))
+        .create(&ActorIdentity::mint(ActorKind::Character, Utc::now()))
         .await
         .expect("second DID-less create — NULLs never collide");
     let interned = uow
         .actor_identities()
-        .intern(&Did::new("did:plc:unique-me".to_string()), ActorKind::User)
+        .intern(
+            &Did::new("did:plc:unique-me".to_string()),
+            ActorKind::User,
+            Utc::now(),
+        )
         .await
         .expect("intern");
     uow.commit().await.expect("commit");
 
     let raw_duplicate = sqlx::query(
-        "INSERT INTO actor_identity (id, kind, did, state) VALUES ($1, 'user', $2, 'active')",
+        "INSERT INTO actor_identity (id, kind, did, state, first_seen) \
+             VALUES ($1, 'user', $2, 'active', now())",
     )
     .bind(uuid::Uuid::now_v7())
     .bind("did:plc:unique-me")
@@ -200,7 +241,7 @@ async fn rows_are_born_active_and_state_check_holds() {
     let db = PgDatabase::new(pool.clone());
     let store = PgActorIdentityStore::new(pool.clone());
 
-    let created = ActorIdentity::mint(ActorKind::Character);
+    let created = ActorIdentity::mint(ActorKind::Character, Utc::now());
     let mut uow = db.begin().await.expect("begin");
     uow.actor_identities()
         .create(&created)
@@ -211,6 +252,7 @@ async fn rows_are_born_active_and_state_check_holds() {
         .intern(
             &Did::new("did:plc:born-active".to_string()),
             ActorKind::User,
+            Utc::now(),
         )
         .await
         .expect("intern");
@@ -225,11 +267,13 @@ async fn rows_are_born_active_and_state_check_holds() {
         assert_eq!(found.state, ActorState::Active);
     }
 
-    let rejected =
-        sqlx::query("INSERT INTO actor_identity (id, kind, state) VALUES ($1, 'user', 'deleted')")
-            .bind(uuid::Uuid::now_v7())
-            .execute(&pool)
-            .await;
+    let rejected = sqlx::query(
+        "INSERT INTO actor_identity (id, kind, state, first_seen) \
+             VALUES ($1, 'user', 'deleted', now())",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .execute(&pool)
+    .await;
     assert!(
         rejected.is_err(),
         "the state CHECK must reject a spelling outside the closed vocabulary"
@@ -247,7 +291,11 @@ async fn handle_cache_fills_refreshes_and_clears() {
     let mut uow = db.begin().await.expect("begin");
     let interned = uow
         .actor_identities()
-        .intern(&Did::new("did:plc:cache-me".to_string()), ActorKind::User)
+        .intern(
+            &Did::new("did:plc:cache-me".to_string()),
+            ActorKind::User,
+            Utc::now(),
+        )
         .await
         .expect("intern");
     uow.commit().await.expect("commit");
@@ -277,7 +325,7 @@ async fn handle_cache_fills_refreshes_and_clears() {
     let missing = uow
         .actor_identities()
         .cache_handle(
-            domain::elements::actor_identity::ActorIdentity::mint(ActorKind::User).id,
+            domain::elements::actor_identity::ActorIdentity::mint(ActorKind::User, Utc::now()).id,
             Some("ghost.example.com"),
         )
         .await;
@@ -291,7 +339,7 @@ async fn handle_cache_fills_refreshes_and_clears() {
 #[tokio::test]
 async fn duplicate_create_errors() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User);
+    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
