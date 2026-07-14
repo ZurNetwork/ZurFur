@@ -5,10 +5,12 @@
 //! submodules ([`commission`], [`changelog`]) and are re-exported flat here, so
 //! a new area adds a file rather than growing this one.
 
+pub mod actor_identity;
 pub mod changelog;
 pub mod commission;
 pub mod file;
 
+pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
     CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
@@ -83,6 +85,11 @@ pub trait UnitOfWork: Send {
 
     /// A view of the [`User`] write surface (recognition) over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_>;
+
+    /// A view of the actor-super-table write surface over this transaction
+    /// (ZMVP-122, DD `34013187`). No delete exists on it — identity rows are
+    /// immortal by construction.
+    fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_>;
 
     /// Commit the unit, consuming the handle. Every write issued through the view
     /// accessors lands atomically. Not calling this — dropping the handle — rolls

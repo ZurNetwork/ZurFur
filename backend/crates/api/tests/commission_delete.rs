@@ -40,7 +40,8 @@ use domain::elements::{
     user::UserId,
 };
 use domain::ports::{
-    AccountWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork, UserWrites,
+    AccountWrites, ActorIdentityWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork,
+    UserWrites,
 };
 use reqwest::redirect::Policy;
 use serde_json::json;
@@ -292,6 +293,10 @@ impl UnitOfWork for FactBearingUow {
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
         self.0.users()
+    }
+
+    fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
+        self.0.actor_identities()
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {

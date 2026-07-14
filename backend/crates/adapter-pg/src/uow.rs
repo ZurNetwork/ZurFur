@@ -11,12 +11,14 @@
 
 use async_trait::async_trait;
 use domain::ports::{
-    AccountWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork, UserWrites,
+    AccountWrites, ActorIdentityWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork,
+    UserWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::PgCommissionWrites;
 use crate::account::PgAccountWrites;
+use crate::actor_identity::PgActorIdentityWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
 
@@ -84,6 +86,12 @@ impl UnitOfWork for PgUnitOfWork {
     /// A view of the user (recognition) write surface over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
         Box::new(PgUserWrites { conn: &mut self.tx })
+    }
+
+    /// A view of the actor-super-table write surface over this transaction
+    /// (ZMVP-122). No delete exists on it — identity rows are immortal.
+    fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
+        Box::new(PgActorIdentityWrites { conn: &mut self.tx })
     }
 
     /// Commit the unit, consuming the handle so it can't be reused. Every write

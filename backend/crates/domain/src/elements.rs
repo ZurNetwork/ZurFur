@@ -7,6 +7,8 @@
 //! source of truth for what each element *means*.
 //!
 //! The live elements drive the current MVP tickets:
+//! - [`actor_identity`] — a row in the actor super-table, built incrementally
+//!   (ZMVP-122, DD 34013187).
 //! - [`account`] — an [`account::Account`], its own sovereign identity, founded
 //!   with an Owner (ZMVP-14, DESIGN/Account).
 //! - [`user`] — a recognized visitor (ZMVP-9, DESIGN/User).
@@ -29,6 +31,7 @@
 pub mod account;
 pub mod account_keys;
 pub mod achievement;
+pub mod actor_identity;
 pub mod blob;
 pub mod character;
 pub mod commission;

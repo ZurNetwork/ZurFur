@@ -474,6 +474,28 @@ pub mod account {
     }
 }
 
+pub mod actor_identity {
+    /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
+    pub async fn create(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/actor_identity/create.sql"))
+            .bind(id)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/actor_identity/find.sql`, typed against the migrated schema at generation time.
+    pub async fn find(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<uuid::Uuid>> {
+        sqlx::query_scalar(include_str!("../queries/actor_identity/find.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+}
+
 pub mod changelog {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
@@ -1461,6 +1483,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::soft_delete",
     "account::transfer_demote_owner",
     "account::transfer_promote_heir",
+    "actor_identity::create",
     "changelog::append",
     "commission::add_component",
     "commission::add_file",
