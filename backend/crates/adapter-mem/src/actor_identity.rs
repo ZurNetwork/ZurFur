@@ -24,6 +24,9 @@ pub struct StoredActorIdentity {
     pub did: Option<Did>,
     /// Liveness (slice 4) — born Active; transitions are ZMVP-125.
     pub state: ActorState,
+    /// The refreshable display-handle cache (slice 5) — foreign data, plain
+    /// string, born `None`.
+    pub handle: Option<String>,
 }
 
 /// Rebuild the domain row from its stored parts.
@@ -33,6 +36,7 @@ fn rebuild(id: ActorIdentityId, stored: &StoredActorIdentity) -> ActorIdentity {
         kind: stored.kind,
         did: stored.did.clone(),
         state: stored.state,
+        handle: stored.handle.clone(),
     }
 }
 
@@ -100,6 +104,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
                 kind: identity.kind,
                 did: None,
                 state: identity.state,
+                handle: None,
             },
         );
         Ok(())
@@ -124,6 +129,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             kind,
             did: Some(did.clone()),
             state: ActorState::Active,
+            handle: None,
         };
         identities.insert(
             minted.id,
@@ -131,9 +137,27 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
                 kind,
                 did: Some(did.clone()),
                 state: ActorState::Active,
+                handle: None,
             },
         );
         Ok(minted)
+    }
+
+    async fn cache_handle(
+        &mut self,
+        id: ActorIdentityId,
+        handle: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut identities = self
+            .0
+            .actor_identities
+            .lock()
+            .expect("MemBackend actor_identities mutex poisoned");
+        let stored = identities
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("actor identity not found: {}", *id))?;
+        stored.handle = handle.map(str::to_string);
+        Ok(())
     }
 }
 
@@ -247,6 +271,57 @@ mod tests {
             .await
             .expect("find_by_did");
         assert_eq!(by_did, Some(first));
+    }
+
+    /// Slice 5: the handle cache fills, refreshes, clears — and errors for a
+    /// never-seen actor.
+    #[tokio::test]
+    async fn handle_cache_fills_refreshes_and_clears() {
+        let backend = MemBackend::new();
+        let did = Did::new("did:plc:cache-me".to_string());
+
+        let mut uow = backend.database().begin().await.expect("begin");
+        let interned = uow
+            .actor_identities()
+            .intern(&did, ActorKind::User)
+            .await
+            .expect("intern");
+        uow.actor_identities()
+            .cache_handle(interned.id, Some("alice.bsky.social"))
+            .await
+            .expect("cache");
+        uow.commit().await.expect("commit");
+
+        let found = backend
+            .actor_identity_store()
+            .find(interned.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(found.handle.as_deref(), Some("alice.bsky.social"));
+
+        let mut uow = backend.database().begin().await.expect("begin");
+        uow.actor_identities()
+            .cache_handle(interned.id, None)
+            .await
+            .expect("clear");
+        let missing = uow
+            .actor_identities()
+            .cache_handle(ActorIdentity::mint(ActorKind::User).id, Some("ghost"))
+            .await;
+        assert!(
+            missing.is_err(),
+            "caching for a never-seen actor must error"
+        );
+        uow.commit().await.expect("commit");
+
+        let cleared = backend
+            .actor_identity_store()
+            .find(interned.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(cleared.handle, None);
     }
 
     /// Slice 3: create refuses a DID-bearing identity — intern owns that path.

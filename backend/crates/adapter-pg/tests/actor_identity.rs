@@ -236,6 +236,57 @@ async fn rows_are_born_active_and_state_check_holds() {
     );
 }
 
+/// Slice 5: the handle cache is born empty, refreshable, clearable — and
+/// caching for a never-seen actor is a loud error, not a silent no-op.
+#[tokio::test]
+async fn handle_cache_fills_refreshes_and_clears() {
+    let (pool, _container) = fresh_pool().await;
+    let db = PgDatabase::new(pool.clone());
+    let store = PgActorIdentityStore::new(pool.clone());
+
+    let mut uow = db.begin().await.expect("begin");
+    let interned = uow
+        .actor_identities()
+        .intern(&Did::new("did:plc:cache-me".to_string()), ActorKind::User)
+        .await
+        .expect("intern");
+    uow.commit().await.expect("commit");
+    assert_eq!(interned.handle, None, "born uncached");
+
+    for (set_to, expect) in [
+        (Some("alice.bsky.social"), Some("alice.bsky.social")),
+        (Some("alice.zurfur.app"), Some("alice.zurfur.app")),
+        (None, None),
+    ] {
+        let mut uow = db.begin().await.expect("begin");
+        uow.actor_identities()
+            .cache_handle(interned.id, set_to)
+            .await
+            .expect("cache_handle");
+        uow.commit().await.expect("commit");
+
+        let found = store
+            .find(interned.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(found.handle.as_deref(), expect);
+    }
+
+    let mut uow = db.begin().await.expect("begin");
+    let missing = uow
+        .actor_identities()
+        .cache_handle(
+            domain::elements::actor_identity::ActorIdentity::mint(ActorKind::User).id,
+            Some("ghost.example.com"),
+        )
+        .await;
+    assert!(
+        missing.is_err(),
+        "caching for a never-seen actor must error"
+    );
+}
+
 /// The primary key holds: creating the same id twice across two units errors.
 #[tokio::test]
 async fn duplicate_create_errors() {
