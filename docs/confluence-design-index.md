@@ -7,7 +7,7 @@ Canonical design lives in the **zurnetwork** Confluence, space **DESIGN** — th
 - cloudId: `cafe5eef-9c51-4800-85df-ef42187f9414`
 - DESIGN space id: `98310`
 - Fetch a page: `getConfluencePage` with the `pageId` below. Web URL: `https://zurnetwork.atlassian.net/wiki/spaces/DESIGN/pages/{id}`
-- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573) — a full `getPagesInConfluenceSpace` re-list of space `98310` is due at the next larger sweep to catch anything else since 2026-06-30.
+- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573). **Full `getPagesInConfluenceSpace` re-list done 2026-07-11** (space held 102 pages; 35 added below in "2026-07 wave" sections) during the full-space `/design-sync` audit.
 
 ## Settled-decision quick facts
 
@@ -80,6 +80,45 @@ Know these without fetching; fetch the linked DD page for detail.
 - `8978453` — Where should Portfolios, Batches, Commissions and Collections live? (in progress)
 - `8978501` — Portfolio Live vs Static
 - `9863207` — Arrangement — SUPERSEDED, folded into Workflow (`9895957`)
+
+### Core entities / glossary — 2026-07 wave (added at the 2026-07-11 re-list)
+- `30507036` — Seat
+- `30769256` — Application
+- `30507068` — Phase
+- `30507094` — Invoice
+- `30507120` — Changelog
+- `30507148` — Seal
+- `30507178` — Comment — SUPERSEDED → Post (`8978492`); no comment lexicon (DD 30572573)
+- `28409858` — Provider — stub, superseded by Seals DD `29622321`
+- `30605402` — Friendship
+
+### Design decisions (DDs) — 2026-07 wave (added at the 2026-07-11 re-list)
+- `28311564` — Referenceable, Slot & Seat — Typed Positions & the Application Handshake (the typed-position pattern: Slot holds a Character, Seat a participant; three-way application handshake; "Spot" rename rejected)
+- `28246028` — Commission Surfaces — the Commission as a Tree of Typed Surfaces
+- `28409880` — Commission Tree Storage — Adjacency Rows, Integer Position, Whole-Tree Load
+- `29458433` — Commission Trees & Relationships — Hierarchical Derivation & Semantic Edges
+- `30015490` — Semantic Edges — The Initial Catalog
+- `29425666` — Commission Structural Authority — the Commission Admin Role
+- `29130754` — Commission Ownership Separation — View Grants & Account Placement
+- `30277634` — Seat Visibility Ceilings — Golem Scopes Made Explicit
+- `28114957` — Ask-for-Art — the Commissioner-First Flow
+- `30408741` — The Changelog — Structured Comms, Notes & the Linked Channel
+- `32178178` — The Eventlog — the Derived Timeline & Source Streams (changelog = explicit facts; the composed timeline is the Eventlog)
+- `32112642` — The Linked Channel — Pointer Custody & Chat-Tracking Placement (external chat = plugin)
+- `30408706` — Phases — Work Stages & Client Approval
+- `30048258` — Invoices — Manual Settlement at MVP (invoices only, no payment processing)
+- `30441473` — EXP & Levels — Source Catalog, Multipliers & the Deadline Stake
+- `28049410` — Golem as User — Identity, Registration & the Act-As Boundary (identity-only did:plc, no PDS)
+- `29458464` — Plugin Forms — Golems & Portals (Reactor form deleted — a webhook is a read/notify-scoped Golem)
+- `30572603` — Plugin Security — Scopes, Keys, Limits & the Trust Ladder (per-binding plugin×account keys)
+- `29884417` — Friendship & Double-Sided Relationships
+- `30769154` — Blocks — Social Severance, Business Stands
+- `30605313` — Notifications — Two Intakes, Rules, One Table (storage RULED 2026-07-11: follows fan-out-on-read DD 23101442, cursor-based/derived-at-read; the intake+rules taxonomy stands)
+- `30572545` — Design Principles — The Non-Toxic Path
+- `30343170` — Inventory Closures — Deletion Ripples, Blob Store, Markup & Deferrals
+- `34013187` — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban (super-table named `actor_identity`, Engineer 2026-07-14; ZMVP-124/-109 consume it)
+- `33947651` — Private-store query layer — Diesel vs SeaORM (RESOLVED 2026-07-11 by events: #118/#119 SQL-file separation settled the layer; spike ZMVP-127 closed)
+- `34308097` — Query census — 2026-07-10 (HEAD 236dd0f; snapshot overtaken by #118/#119)
 
 ### Data layer / infrastructure
 - `9994298` — Where does Data live?
