@@ -1,13 +1,14 @@
 //! PostgreSQL adapter for the actor super-table (ZMVP-122, DD `34013187`).
 //!
-//! Slices 1–3: existence, kind, and the optional DID — `create` for DID-less
-//! actors (Characters), the race-safe `intern` upsert for DID-bearing ones,
-//! reads by id and by DID. The module deliberately exposes **no delete**:
-//! identity rows are immortal, so an FK into `actor_identity` can never break.
+//! Slices 1–4: existence, kind, the optional DID, and liveness state —
+//! `create` for DID-less actors (Characters), the race-safe `intern` upsert
+//! for DID-bearing ones, reads by id and by DID. The module deliberately
+//! exposes **no delete**: identity rows are immortal — liveness is a state
+//! (whose transitions are ZMVP-125), never a removal.
 
 use anyhow::Context;
 use async_trait::async_trait;
-use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
+use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind, ActorState};
 use domain::elements::did::Did;
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 use sqlx::{PgConnection, PgPool};
@@ -21,10 +22,13 @@ use crate::queries::actor_identity::ActorIdentityRow;
 fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
     let kind = ActorKind::try_from(row.kind.as_str())
         .with_context(|| format!("actor_identity {}: corrupted kind", row.id))?;
+    let state = ActorState::try_from(row.state.as_str())
+        .with_context(|| format!("actor_identity {}: corrupted state", row.id))?;
     Ok(ActorIdentity {
         id: ActorIdentityId::new(row.id),
         kind,
         did: row.did.map(Did::new),
+        state,
     })
 }
 
@@ -43,7 +47,19 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             identity.did.is_none(),
             "create is the DID-less path; intern DID-bearing actors instead"
         );
-        sql::create(&mut *self.conn, *identity.id, identity.kind.as_str()).await?;
+        // Born active by invariant (DD 34013187 decisions 3/5): transitions
+        // are ZMVP-125's machinery and never pass through creation.
+        anyhow::ensure!(
+            identity.state == ActorState::Active,
+            "create only persists born-active identities"
+        );
+        sql::create(
+            &mut *self.conn,
+            *identity.id,
+            identity.kind.as_str(),
+            identity.state.as_str(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -51,7 +67,14 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         // A freshly minted candidate loses to an existing DID at the unique
         // index; RETURNING yields whichever row survived (DD decision 6).
         let candidate = uuid::Uuid::now_v7();
-        let row = sql::intern(&mut *self.conn, candidate, kind.as_str(), did.as_str()).await?;
+        let row = sql::intern(
+            &mut *self.conn,
+            candidate,
+            kind.as_str(),
+            did.as_str(),
+            ActorState::Active.as_str(),
+        )
+        .await?;
         rebuild(row)
     }
 }

@@ -481,6 +481,7 @@ pub mod actor_identity {
         pub id: uuid::Uuid,
         pub kind: String,
         pub did: Option<String>,
+        pub state: String,
     }
 
     /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
@@ -488,10 +489,12 @@ pub mod actor_identity {
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         kind: &str,
+        state: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/actor_identity/create.sql"))
             .bind(id)
             .bind(kind)
+            .bind(state)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -525,11 +528,13 @@ pub mod actor_identity {
         id: uuid::Uuid,
         kind: &str,
         did: &str,
+        state: &str,
     ) -> sqlx::Result<ActorIdentityRow> {
         sqlx::query_as(include_str!("../queries/actor_identity/intern.sql"))
             .bind(id)
             .bind(kind)
             .bind(did)
+            .bind(state)
             .fetch_one(conn)
             .await
     }
