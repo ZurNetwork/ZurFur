@@ -14,8 +14,9 @@ use domain::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement,
-            RootSurface, SurfaceMode, Visibility, derive_deadline_status,
+            LifecycleStep, NewComponent, NewSeat, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
+            Placement, RootSurface, Seat, SeatKind, SeatLink, SeatPrompt, SurfaceMode, Visibility,
+            derive_deadline_status,
         },
         maturity::{Maturity, MaturityRating},
         user::UserId,
@@ -75,10 +76,19 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   slot's component node). A declaration is composition like the node it
 ///   decorates, not evidence that work happened; it cascades with the
 ///   commission (ruling E35) and with its own node.
+/// - `commission_participant` (ZMVP-76): who is inside the closed door — living
+///   membership, not evidence of work; it cascades away (the owner-floor trigger
+///   deliberately lets cascaded deletes through).
+/// - `commission_seat` (ZMVP-76): the declared positions themselves. A Seat is
+///   structure a commission offers, not work performed on it; the Referenceable/
+///   Slot/Seat DD's "gone entirely — seats, applications" (ZMVP-66) relies on
+///   this cascade.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
     "commission_file",
     "commission_node",
+    "commission_participant",
+    "commission_seat",
     "commission_slot",
     "commission_placement",
     "commission_current_placement",
@@ -147,9 +157,13 @@ impl PgCommissionWrites<'_> {
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
     /// Insert a freshly created commission as one row (`INSERT INTO commission`)
-    /// **plus its root surface** as one `commission_node` row ([`RootSurface::of`]),
-    /// on this same open transaction (ZMVP-71 AC1) — a commission can never land
-    /// without its tree. The [`LifecycleStep`](domain::elements::commission::LifecycleStep)
+    /// **plus its root surface** as one `commission_node` row ([`RootSurface::of`],
+    /// ZMVP-71 AC1) **plus its owner's participant row** as one
+    /// `commission_participant` row (ZMVP-76: the owner is a permanent
+    /// Participant from birth, stamped with the commission's own creation
+    /// instant), all on this same open transaction — a commission can never
+    /// land without its tree or its owner's membership. The
+    /// [`LifecycleStep`](domain::elements::commission::LifecycleStep)
     /// and [`Visibility`](domain::elements::commission::Visibility) are each stored as
     /// their stable `as_str()` token in the `lifecycle` / `visibility` text columns,
     /// the root's `mode` token is the visibility's alias mapping
@@ -180,6 +194,14 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             root.mode.as_str(),
             *root.created_by,
             root.created_at,
+        )
+        .await?;
+
+        sql::add_participant(
+            &mut *self.conn,
+            *commission.id,
+            *commission.owner_id,
+            commission.created_at,
         )
         .await?;
         Ok(())
@@ -395,6 +417,41 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *id,
             maturity.rating.as_str(),
             maturity.graphic,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Declare a seat under an existing parent surface (ZMVP-76), on the open
+    /// transaction — one identity, two inserts that land or vanish together:
+    /// the tree grows an ordinary **component** node (the untyped ZMVP-72
+    /// contract — the same shared parent gate as every tree-growing write, the
+    /// same racing-proof append `position` subquery, `NULL` mode, empty
+    /// payload), and the interpreted seat data lands in the `commission_seat`
+    /// satellite keyed by that node's id (Gate A ruling E20). The satellite's
+    /// `occupant` column is never written here: **every seat is born vacant**
+    /// (AC3; ZMVP-79 fills it).
+    async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
+        self.require_surface_parent(seat.parent, seat.commission_id)
+            .await?;
+
+        sql::declare_seat_node(
+            &mut *self.conn,
+            *seat.id,
+            *seat.commission_id,
+            *seat.parent,
+            *seat.created_by,
+            seat.created_at,
+        )
+        .await?;
+
+        sql::declare_seat_satellite(
+            &mut *self.conn,
+            *seat.id,
+            *seat.commission_id,
+            seat.kind.as_str(),
+            seat.prompt.as_ref().map(|p| p.as_str()),
+            seat.link.as_ref().map(|l| l.as_str()),
         )
         .await?;
         Ok(())
@@ -740,13 +797,15 @@ impl CommissionStore for PgCommissionStore {
         Ok(Some(CommissionTree::assemble(rows)?))
     }
 
-    /// The **owner arm** of participant-hood (ZMVP-87): one `EXISTS` over the
-    /// owner column — the owner IS a Participant without holding a Seat
-    /// (DESIGN/Commission). ZMVP-79 extends this query with the seated arm; an
-    /// unknown commission matches nothing and answers `false`. **Unaffected by
-    /// placement or view grants** (Ownership Separation DD Decision 8): a key is
-    /// only a view, and positioning is environmental — neither makes an account's
-    /// members Participants.
+    /// One `EXISTS` over the **persisted membership record** (ZMVP-76,
+    /// Engineer ruling: `commission_participant`, never a computed
+    /// owner-∪-seated union): the owner's row is inserted with the commission
+    /// (and backfilled), ZMVP-79's accepted invitations add seated rows behind
+    /// this same query, and ZMVP-69's transfer leaves the prior owner's row in
+    /// place. An unknown commission matches nothing and answers `false`.
+    /// **Unaffected by placement or view grants** (Ownership Separation DD
+    /// Decision 8): a key is only a view, and positioning is environmental —
+    /// neither makes an account's members Participants.
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
         Ok(sql::is_participant(&self.pool, *commission, *user).await?)
     }
@@ -770,5 +829,26 @@ impl CommissionStore for PgCommissionStore {
             uploaded_by: UserId::new(row.uploaded_by),
             created_at: row.created_at,
         }))
+    }
+
+    /// The commission's seat satellites (ZMVP-76) in declaration order (node
+    /// ids are UUIDv7, so id order is declaration order): one indexed query
+    /// over `commission_seat`, each row's `kind`/`prompt`/`link` re-validated
+    /// through its domain gate ([`SeatKind::try_new`] & co.) — a stored value
+    /// outside its rules means row tampering and surfaces as an `Err`, never a
+    /// silent default. No seats (or no commission) is simply the empty list.
+    async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>> {
+        let rows = sql::seats(&self.pool, *commission).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(Seat {
+                    id: NodeId::new(row.id),
+                    kind: SeatKind::try_new(row.kind)?,
+                    prompt: row.prompt.map(SeatPrompt::try_new).transpose()?,
+                    link: row.link.map(SeatLink::try_new).transpose()?,
+                    occupant: row.occupant.map(UserId::new),
+                })
+            })
+            .collect()
     }
 }

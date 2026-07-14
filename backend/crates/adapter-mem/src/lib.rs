@@ -46,7 +46,7 @@ pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
 
 pub(crate) use commission::{
-    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSlot,
+    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSeat, StoredSlot,
 };
 
 use std::collections::HashMap;
@@ -153,6 +153,19 @@ pub struct MemBackend {
     /// `nodes`: a Slot's carrying component and its satellite commit (or
     /// vanish) together.
     pub(crate) slots: Arc<Mutex<HashMap<NodeId, StoredSlot>>>,
+    /// Participant membership keyed by `(commission, user)` → when it began —
+    /// the in-memory mirror of the pg `commission_participant` table (ZMVP-76).
+    /// The owner's row is inserted with the commission itself and is the
+    /// permanent floor: no write here removes a participant at all (the pg
+    /// trigger's guarantee holds in mem by there being no removal path). A
+    /// domain map, staged and applied by the Unit of Work like `commissions`.
+    pub(crate) participants: Arc<Mutex<HashMap<(CommissionId, UserId), DateTimeUtc>>>,
+    /// [`StoredSeat`] parts keyed by the seat's [`NodeId`] — the in-memory
+    /// mirror of the pg `commission_seat` satellite (ZMVP-76): the node map
+    /// carries the seat's tree half, this map its interpreted half, sharing
+    /// the id. A domain map, staged and applied by the Unit of Work like
+    /// `nodes`: a seat's node and satellite commit together.
+    pub(crate) seats: Arc<Mutex<HashMap<NodeId, StoredSeat>>>,
 }
 
 impl MemBackend {
@@ -292,6 +305,18 @@ impl MemBackend {
                     .expect("MemBackend slots mutex poisoned")
                     .clone(),
             )),
+            participants: Arc::new(Mutex::new(
+                self.participants
+                    .lock()
+                    .expect("MemBackend participants mutex poisoned")
+                    .clone(),
+            )),
+            seats: Arc::new(Mutex::new(
+                self.seats
+                    .lock()
+                    .expect("MemBackend seats mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -391,6 +416,19 @@ impl MemBackend {
             .slots
             .lock()
             .expect("MemBackend slots mutex poisoned")
+            .clone();
+        *self
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned") = staged
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .clone();
+        *self.seats.lock().expect("MemBackend seats mutex poisoned") = staged
+            .seats
+            .lock()
+            .expect("MemBackend seats mutex poisoned")
             .clone();
     }
 

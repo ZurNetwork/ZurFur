@@ -425,6 +425,13 @@ impl CommissionWrites for FactBearingCommissions<'_> {
     ) -> anyhow::Result<()> {
         self.0.declare_slots(slots).await
     }
+
+    async fn declare_seat(
+        &mut self,
+        seat: &domain::elements::commission::NewSeat,
+    ) -> anyhow::Result<()> {
+        self.0.declare_seat(seat).await
+    }
 }
 
 // AC3 — deleting a fact-bearing commission is refused with the 409

@@ -37,7 +37,10 @@
 //! annotation shapes (ZMVP-90) that ride the `markup_added` changelog entry's
 //! payload. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
 //! Character positions as tree components with a title/notes satellite — fill
-//! deferred wholesale to the Character epic.
+//! deferred wholesale to the Character epic. The [`seat`] submodule carries the
+//! **Seat** (ZMVP-76): the 1:1 structural participant position declared vacant,
+//! and — with it — the persisted participant-membership model whose permanent
+//! floor is the owner.
 
 pub mod changelog;
 pub mod fact;
@@ -45,6 +48,7 @@ pub mod file;
 pub mod markup;
 pub mod node;
 pub mod positioning;
+pub mod seat;
 pub mod slot;
 
 pub use changelog::{
@@ -58,6 +62,9 @@ pub use node::{
     RootSurface, SurfaceMode, TreeAssemblyError,
 };
 pub use positioning::{GrantLevel, Placement};
+pub use seat::{
+    NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
+};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
 
 use std::ops::Deref;

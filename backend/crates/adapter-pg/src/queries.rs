@@ -566,6 +566,16 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct SeatRow {
+        pub id: uuid::Uuid,
+        pub kind: String,
+        pub prompt: Option<String>,
+        pub link: Option<String>,
+        pub occupant: Option<uuid::Uuid>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct SurfaceParentRow {
         pub type_tag: String,
         pub mode: Option<String>,
@@ -618,6 +628,22 @@ pub mod commission {
             .bind(id)
             .bind(commission_id)
             .bind(uploaded_by)
+            .bind(created_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/add_participant.sql`, typed against the migrated schema at generation time.
+    pub async fn add_participant(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/add_participant.sql"))
+            .bind(commission_id)
+            .bind(user_id)
             .bind(created_at)
             .execute(conn)
             .await
@@ -705,6 +731,48 @@ pub mod commission {
             .bind(commission_id)
             .fetch_optional(conn)
             .await
+    }
+
+    /// `queries/commission/declare_seat_node.sql`, typed against the migrated schema at generation time.
+    pub async fn declare_seat_node(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        parent: uuid::Uuid,
+        created_by: uuid::Uuid,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/declare_seat_node.sql"))
+            .bind(id)
+            .bind(commission_id)
+            .bind(parent)
+            .bind(created_by)
+            .bind(created_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/declare_seat_satellite.sql`, typed against the migrated schema at generation time.
+    pub async fn declare_seat_satellite(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        kind: &str,
+        prompt: Option<&str>,
+        link: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/commission/declare_seat_satellite.sql"
+        ))
+        .bind(id)
+        .bind(commission_id)
+        .bind(kind)
+        .bind(prompt)
+        .bind(link)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/declare_slot_node.sql`, typed against the migrated schema at generation time.
@@ -953,6 +1021,17 @@ pub mod commission {
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/seats.sql`, typed against the migrated schema at generation time.
+    pub async fn seats(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<SeatRow>> {
+        sqlx::query_as(include_str!("../queries/commission/seats.sql"))
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
     }
 
     /// `queries/commission/set_archived.sql`, typed against the migrated schema at generation time.
@@ -1385,9 +1464,12 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "changelog::append",
     "commission::add_component",
     "commission::add_file",
+    "commission::add_participant",
     "commission::add_surface",
     "commission::create_commission",
     "commission::create_root_surface",
+    "commission::declare_seat_node",
+    "commission::declare_seat_satellite",
     "commission::declare_slot_node",
     "commission::declare_slot_satellite",
     "commission::delete",

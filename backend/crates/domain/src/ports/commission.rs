@@ -11,7 +11,7 @@ use crate::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
             DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
-            NewSlot, NewSurface, NodeId, Placement,
+            NewSeat, NewSlot, NewSurface, NodeId, Placement, Seat,
         },
         maturity::Maturity,
         user::UserId,
@@ -69,17 +69,36 @@ pub trait CommissionStore: Send + Sync {
     /// predicate every "a Participant does X" endpoint consumes (the changelog
     /// read/note write here; lifecycle/status moves in ZMVP-84/85; …).
     ///
-    /// **Owner-arm only in v1**: the owner IS a Participant without holding any
-    /// Seat (DESIGN/Commission — "a commission has at least one Participant: its
-    /// owner, who is permanent"), and no other way in exists yet. ZMVP-79 extends
-    /// the *implementations* with the seated arm behind this same signature; the
-    /// participant-persistence model (a `commission_participant` table) is an
-    /// open Engineer fork recorded there — do not grow a second predicate.
+    /// **Persisted membership** (ZMVP-76, Engineer ruling): the predicate reads
+    /// the explicit `commission_participant` membership record, not a computed
+    /// owner-∪-seated union. The owner's row is inserted with the commission
+    /// itself (and backfilled for commissions that predate the table) and is the
+    /// **permanent floor** — the owner IS a Participant without holding any Seat
+    /// (DESIGN/Commission — "a commission has at least one Participant: its
+    /// owner, who is permanent"), and the row is irremovable: no write removes a
+    /// participant, and the pg store additionally refuses deleting the owner's
+    /// row at the database. Membership independent of both the `owner_id` column
+    /// and seat occupancy is what lets ZMVP-69's prior owner *remain* a
+    /// Participant and ZMVP-79 add seated members behind this same signature —
+    /// do not grow a second predicate.
     ///
     /// An unknown commission has no participants, so it answers `false` — which
     /// is what lets a caller collapse "absent" and "hidden" into one uniform 404
     /// (the closed-door policy: existence is never leaked to outsiders).
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool>;
+
+    /// The commission's declared [`Seat`]s (ZMVP-76) — the interpreted satellite
+    /// rows, keyed by their tree node ids, in declaration order. An unknown
+    /// commission (or one with no seats) is simply the empty list.
+    ///
+    /// **This is the ask-projection hook (AC4):** the viewer projection
+    /// (ZMVP-75) joins these rows against the projected tree by node id, so a
+    /// vacant Seat under a Description-visible surface renders as the published
+    /// ask — and a seat under a hidden surface never leaves the server. The
+    /// rows themselves are raw and Total-tier (they include `occupant`);
+    /// authorization/projection is the caller's concern, settled before this
+    /// is read.
+    async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>>;
 
     /// Load the commission's **whole content tree** — one indexed read of every
     /// node row, assembled into the nested [`CommissionTree`] in Rust (ZMVP-71;
@@ -198,12 +217,33 @@ impl std::error::Error for CannotRemoveRoot {}
 #[async_trait]
 pub trait CommissionWrites: Send {
     /// Persist a freshly created [`Commission`] — **together with its root
-    /// surface** ([`RootSurface::of`](crate::elements::commission::RootSurface::of)),
-    /// in this same write (ZMVP-71 AC1). The root is minted *inside* the
-    /// implementation, not by the caller, so a treeless commission is
-    /// unrepresentable: no call site exists that could persist the row and
-    /// forget the root. One private-side write on the open unit of work.
+    /// surface** ([`RootSurface::of`](crate::elements::commission::RootSurface::of),
+    /// ZMVP-71 AC1) **and its owner's participant row** (ZMVP-76, Engineer
+    /// ruling: participant-hood is persisted; the owner is a permanent
+    /// Participant from birth), in this same write. Both are minted *inside*
+    /// the implementation, not by the caller, so a treeless — or owner-less —
+    /// commission is unrepresentable: no call site exists that could persist
+    /// the row and forget either. One private-side write on the open unit of
+    /// work.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
+
+    /// Declare a [`NewSeat`] under an existing parent **surface** (ZMVP-76
+    /// AC1/AC2), atomically as **one node + one satellite row sharing the seat's
+    /// id**, on the open transaction: the tree grows a component (the untyped
+    /// ZMVP-72 contract — empty payload, append sibling order, no mode; the
+    /// node is position + visibility inheritance) and the interpreted seat data
+    /// (kind, requirements, the vacant occupant slot) lands in the
+    /// `commission_seat` satellite keyed by that node's id (Gate A ruling E20).
+    /// The same parent gate as every tree-growing write: an absent/foreign
+    /// parent refuses with [`ParentNodeNotFound`], a component parent with
+    /// [`ParentNotASurface`]. Authority (owner-only in v1) and the commission's
+    /// own existence are the caller's checks. The declaration is
+    /// changelog-recorded ([`SeatDeclared`]): the caller appends the matching
+    /// entry through [`ChangelogWrites`](crate::ports::ChangelogWrites) **in
+    /// this same unit of work**, so the seat and its record land atomically.
+    ///
+    /// [`SeatDeclared`]: crate::elements::commission::ChangelogEntryKind::SeatDeclared
+    async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()>;
 
     /// Grow the commission's tree: persist a [`NewSurface`] under its parent
     /// (ZMVP-71 AC2). Sibling order is assigned here, **on the open
