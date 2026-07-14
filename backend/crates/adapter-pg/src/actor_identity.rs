@@ -1,16 +1,32 @@
 //! PostgreSQL adapter for the actor super-table (ZMVP-122, DD `34013187`).
 //!
-//! Slices 1–2: existence + kind — create and find by the app-private id. The
-//! module deliberately exposes **no delete**: identity rows are immortal, so an
-//! FK into `actor_identity` can never break.
+//! Slices 1–3: existence, kind, and the optional DID — `create` for DID-less
+//! actors (Characters), the race-safe `intern` upsert for DID-bearing ones,
+//! reads by id and by DID. The module deliberately exposes **no delete**:
+//! identity rows are immortal, so an FK into `actor_identity` can never break.
 
 use anyhow::Context;
 use async_trait::async_trait;
 use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
+use domain::elements::did::Did;
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 use sqlx::{PgConnection, PgPool};
 
 use crate::queries::actor_identity as sql;
+use crate::queries::actor_identity::ActorIdentityRow;
+
+/// Rebuild the domain row from its stored columns. The schema's CHECK admits
+/// only the known kind spellings, so a parse failure here is a corrupted row —
+/// surfaced loudly, never a guess.
+fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
+    let kind = ActorKind::try_from(row.kind.as_str())
+        .with_context(|| format!("actor_identity {}: corrupted kind", row.id))?;
+    Ok(ActorIdentity {
+        id: ActorIdentityId::new(row.id),
+        kind,
+        did: row.did.map(Did::new),
+    })
+}
 
 /// The actor-super-table write view over one open transaction — vended only by
 /// [`PgUnitOfWork::actor_identities`](crate::PgUnitOfWork), so a write cannot
@@ -22,8 +38,21 @@ pub struct PgActorIdentityWrites<'a> {
 #[async_trait]
 impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()> {
+        // The DID-less path by contract: intern owns DID-bearing rows.
+        anyhow::ensure!(
+            identity.did.is_none(),
+            "create is the DID-less path; intern DID-bearing actors instead"
+        );
         sql::create(&mut *self.conn, *identity.id, identity.kind.as_str()).await?;
         Ok(())
+    }
+
+    async fn intern(&mut self, did: &Did, kind: ActorKind) -> anyhow::Result<ActorIdentity> {
+        // A freshly minted candidate loses to an existing DID at the unique
+        // index; RETURNING yields whichever row survived (DD decision 6).
+        let candidate = uuid::Uuid::now_v7();
+        let row = sql::intern(&mut *self.conn, candidate, kind.as_str(), did.as_str()).await?;
+        rebuild(row)
     }
 }
 
@@ -43,16 +72,11 @@ impl PgActorIdentityStore {
 impl ActorIdentityStore for PgActorIdentityStore {
     async fn find(&self, id: ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
         let row = sql::find(&self.pool, *id).await?;
-        row.map(|row| {
-            // The schema's CHECK admits only the known spellings, so a parse
-            // failure here is a corrupted row — surfaced loudly, never a guess.
-            let kind = ActorKind::try_from(row.kind.as_str())
-                .with_context(|| format!("actor_identity {}: corrupted kind", row.id))?;
-            Ok(ActorIdentity {
-                id: ActorIdentityId::new(row.id),
-                kind,
-            })
-        })
-        .transpose()
+        row.map(rebuild).transpose()
+    }
+
+    async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
+        let row = sql::find_by_did(&self.pool, did.as_str()).await?;
+        row.map(rebuild).transpose()
     }
 }
