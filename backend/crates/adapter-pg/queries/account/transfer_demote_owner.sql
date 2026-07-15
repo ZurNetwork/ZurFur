@@ -1,5 +1,5 @@
--- params: admin_role, account_id, old_owner, new_owner, owner_role
--- fetch: execute
-UPDATE account_members
+-- role receives the demoted (admin) role and parent the new owner to re-home
+-- under; m_role guards that the demoted member still holds the owner role.
+UPDATE account_members AS m
 SET "role" = $1, parent = $4
-WHERE account_id = $2 AND user_id = $3 AND "role" = $5
+WHERE m.account_id = $2 AND m.user_id = $3 AND m."role" = $5

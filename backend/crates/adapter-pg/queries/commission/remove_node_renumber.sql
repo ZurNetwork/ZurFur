@@ -1,5 +1,3 @@
--- params: parent, commission_id
--- fetch: execute
 UPDATE commission_node AS node
 SET position = renumbered.position
 FROM (

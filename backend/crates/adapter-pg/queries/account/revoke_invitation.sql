@@ -1,5 +1,5 @@
--- params: revoked_state, updated_at, id, pending_state
--- fetch: execute
-UPDATE account_invitations
+-- state receives the revoked state; inv_state guards the expected current
+-- (pending) state, so a concurrent flip loses.
+UPDATE account_invitations AS inv
 SET state = $1, updated_at = $2
-WHERE id = $3 AND state = $4
+WHERE inv.id = $3 AND inv.state = $4

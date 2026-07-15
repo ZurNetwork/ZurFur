@@ -4,10 +4,10 @@
 //! and so is reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
 //! (`uow.users()`). See ZMVP-9, DESIGN/User, and DD `24150017`.
 //!
-//! The SQL lives in `queries/user/`; the typed functions and the [`UserRow`]
+//! The SQL lives in `queries/user/`; the typed functions and the [`UsersRow`]
 //! shape are generated against the migrated schema (see [`crate::queries`]).
 //!
-//! [`UserRow`]: crate::queries::user::UserRow
+//! [`UsersRow`]: crate::queries::user::UsersRow
 
 use domain::{
     elements::{
@@ -21,7 +21,7 @@ use sqlx::{PgConnection, PgPool};
 use crate::queries::user as sql;
 
 /// Rebuild the domain [`User`] from its generated row.
-fn to_user(row: sql::UserRow) -> User {
+fn to_user(row: sql::UsersRow) -> User {
     User {
         id: UserId::new(row.id),
         did: Did::new(row.did),

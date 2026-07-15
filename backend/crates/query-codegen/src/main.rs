@@ -25,10 +25,11 @@ async fn main() -> anyhow::Result<()> {
     adapter_pg::migrate(&pool).await?;
     let mut conn = pool.acquire().await?;
 
+    let config = query_codegen::config();
     let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     for adapter in ["adapter-pg", "adapter-atproto"] {
         let queries = crates_dir.join(adapter).join("queries");
-        let generated = sqlx_rust_codegen::generate(&mut conn, &queries).await?;
+        let generated = sqlx_rust_codegen::generate(&mut conn, &queries, &config).await?;
         let dest = crates_dir.join(adapter).join("src/queries.rs");
         std::fs::write(&dest, generated)
             .with_context(|| format!("cannot write {}", dest.display()))?;

@@ -1,6 +1,5 @@
--- params: old_handle, since, excluding?
--- fetch: one
--- not_null: reserved
+-- changed_at receives the reservation-window start (now - quarantine window);
+-- account_id optionally excludes the renaming account itself.
 SELECT EXISTS (
     SELECT 1
     FROM account_handle_changes

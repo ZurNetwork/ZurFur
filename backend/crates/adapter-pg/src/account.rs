@@ -97,7 +97,7 @@ const _: () = assert!(
 /// Rebuild a domain [`Account`] from its generated row. The stored name/handle
 /// were validated before they were written, so re-validation here only guards
 /// against tampering — surfaced as an error, never a panic.
-fn to_account(row: sql::AccountRow) -> anyhow::Result<Account> {
+fn to_account(row: sql::AccountsRow) -> anyhow::Result<Account> {
     Ok(Account {
         id: AccountId::new(row.id),
         did: Did::new(row.did),
@@ -111,7 +111,7 @@ fn to_account(row: sql::AccountRow) -> anyhow::Result<Account> {
 
 /// Rebuild a domain [`Invitation`] from its generated row, re-validating the
 /// stored `role`/`state` discriminants — an `Err` on row tampering, never a panic.
-fn to_invitation(row: sql::InvitationRow) -> anyhow::Result<Invitation> {
+fn to_invitation(row: sql::AccountInvitationsRow) -> anyhow::Result<Invitation> {
     Ok(Invitation {
         id: InvitationId::new(row.id),
         account: AccountId::new(row.account_id),
@@ -523,7 +523,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             *invitation.account,
             *invitation.invited_user,
-            *invitation.inviter,
+            Some(*invitation.inviter),
             invitation.role.as_str(),
             listed_on_profile,
         )
@@ -565,7 +565,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             Role::Admin(None).as_str(),
             *account,
             *old_owner,
-            *new_owner,
+            Some(*new_owner),
             Role::Owner(None).as_str(),
         )
         .await?;
@@ -606,7 +606,8 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// `deleted_at IS NULL` guard makes a repeat soft-delete a harmless no-op. See the
     /// [`soft_delete`](AccountWrites::soft_delete) port doc.
     async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
-        sql::soft_delete(&mut *self.conn, Utc::now(), *account).await?;
+        let now = Utc::now();
+        sql::soft_delete(&mut *self.conn, Some(now), now, *account).await?;
         Ok(())
     }
 
