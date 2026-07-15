@@ -29,6 +29,7 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
         kind,
         did: row.did.map(Did::new),
         state,
+        handle: row.handle,
     })
 }
 
@@ -76,6 +77,16 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         )
         .await?;
         rebuild(row)
+    }
+
+    async fn cache_handle(
+        &mut self,
+        id: ActorIdentityId,
+        handle: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let affected = sql::cache_handle(&mut *self.conn, *id, handle).await?;
+        anyhow::ensure!(affected == 1, "actor identity not found: {}", *id);
+        Ok(())
     }
 }
 

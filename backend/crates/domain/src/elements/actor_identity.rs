@@ -28,6 +28,11 @@
 //! that replaces deletion (DD decisions 3/5): every row is born
 //! [`ActorState::Active`]; `pulled`/`tombstoned` are recorded endings, never
 //! removals. The transitions and the read-path predicate are ZMVP-125's.
+//!
+//! Slice 5 adds the cached handle — a refreshable **display cache** of the
+//! actor's atproto handle, deliberately a plain string: external handles are
+//! foreign data and never pass through Zurfur's claim-validation
+//! ([`crate::elements::handle::Handle`] stays the claim gate's type).
 
 use std::ops::Deref;
 
@@ -175,6 +180,12 @@ pub struct ActorIdentity {
     /// Liveness. Every row is born [`ActorState::Active`]; the transitions
     /// (and the read predicate that ghosts non-active actors) are ZMVP-125.
     pub state: ActorState,
+    /// A refreshable display **cache** of the actor's atproto handle — foreign
+    /// data, so a plain string, never the claim-validated
+    /// [`Handle`](crate::elements::handle::Handle). `None` = nothing cached
+    /// (DID-less actors, or not fetched yet). Rows are born uncached; the
+    /// cache fills via [`crate::ports::ActorIdentityWrites::cache_handle`].
+    pub handle: Option<String>,
 }
 
 impl ActorIdentity {
@@ -203,6 +214,7 @@ impl ActorIdentity {
             kind,
             did: None,
             state: ActorState::Active,
+            handle: None,
         }
     }
 }

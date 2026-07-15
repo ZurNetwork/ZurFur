@@ -51,4 +51,14 @@ pub trait ActorIdentityWrites: Send {
     /// stored kind is returned as-is and **not** rewritten — kind refinement is
     /// intake's business (ZMVP-126), not a side effect of re-seeing a DID.
     async fn intern(&mut self, did: &Did, kind: ActorKind) -> anyhow::Result<ActorIdentity>;
+
+    /// Refresh (or clear, with `None`) the actor's cached display handle — a
+    /// cache fill, not a claim: the value is foreign network data and is never
+    /// validated against Zurfur's handle rules. Errors if no such identity
+    /// exists (caching for a never-seen actor is a caller bug).
+    async fn cache_handle(
+        &mut self,
+        id: ActorIdentityId,
+        handle: Option<&str>,
+    ) -> anyhow::Result<()>;
 }
