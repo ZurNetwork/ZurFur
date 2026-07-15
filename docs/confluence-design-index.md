@@ -13,7 +13,7 @@ Canonical design lives in the **zurnetwork** Confluence, space **DESIGN** — th
 
 Know these without fetching; fetch the linked DD page for detail.
 
-- `did:plc` everywhere · Character has its own DID day one · ratings anchored to commission membership (2-dim Creator/Commissioner, 1–10★ positive-only) · fact-anchored deletion · payments = pre-alpha manual mark-as-paid.
+- `did:plc` everywhere · ~~Character has its own DID day one~~ **superseded 2026-07-14: Characters are actors with NO DID** (actor-ness anchors on the internal id; Character-page/26935298 reconciliation pending — DD 34013187 amendment) · ratings anchored to commission membership (2-dim Creator/Commissioner, 1–10★ positive-only) · fact-anchored deletion · payments = pre-alpha manual mark-as-paid.
 
 ## Page index
 
@@ -116,7 +116,7 @@ Know these without fetching; fetch the linked DD page for detail.
 - `30605313` — Notifications — Two Intakes, Rules, One Table (storage RULED 2026-07-11: follows fan-out-on-read DD 23101442, cursor-based/derived-at-read; the intake+rules taxonomy stands)
 - `30572545` — Design Principles — The Non-Toxic Path
 - `30343170` — Inventory Closures — Deletion Ripples, Blob Store, Markup & Deferrals
-- `34013187` — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban (super-table named `actor_identity`, Engineer 2026-07-14; ZMVP-124/-109 consume it)
+- `34013187` — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban (super-table named `actor_identity`, Engineer 2026-07-14; amended same day: `did` NULLABLE — actor-ness ≠ DID-ness, Characters carry no DID; ZMVP-124/-109 consume it)
 - `33947651` — Private-store query layer — Diesel vs SeaORM (RESOLVED 2026-07-11 by events: #118/#119 SQL-file separation settled the layer; spike ZMVP-127 closed)
 - `34308097` — Query census — 2026-07-10 (HEAD 236dd0f; snapshot overtaken by #118/#119)
 
