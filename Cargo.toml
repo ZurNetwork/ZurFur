@@ -12,6 +12,12 @@ exclude = [
 ]
 
 [workspace.dependencies]
+# The extracted codegen library (was the in-tree `query-codegen` lib); the
+# in-tree crate is now just the Zurfur-specific runner binary. Pinned by tag —
+# generator output is committed (src/queries.rs) and diffed by the
+# codegen_current gate, so upgrading the pin is an explicit PR that also
+# regenerates.
+sqlx-rust-codegen = { git = "https://github.com/ZurNetwork/sqlx-rust-codegen.git", tag = "v0.1.0" }
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.20.0", features = ["v7", "serde"] }

@@ -24,7 +24,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 # The codegen staleness gate regenerates against a fresh container and diffs.
-query-codegen = { path = "../query-codegen" }
+sqlx-rust-codegen = { workspace = true }
 # The prepare-test gate also iterates adapter-atproto's registry (its queries run
 # against tables these migrations create).
 adapter-atproto = { path = "../adapter-atproto/" }

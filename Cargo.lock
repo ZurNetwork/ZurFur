@@ -63,10 +63,10 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "domain",
- "query-codegen",
  "rmp-serde",
  "serde_json",
  "sqlx",
+ "sqlx-rust-codegen",
  "testcontainers-modules",
  "time",
  "tokio",
@@ -3460,9 +3460,7 @@ version = "0.1.0"
 dependencies = [
  "adapter-pg",
  "anyhow",
- "sqlx",
- "sqlx-core",
- "sqlx-postgres",
+ "sqlx-rust-codegen",
  "testcontainers-modules",
  "tokio",
 ]
@@ -4481,6 +4479,17 @@ dependencies = [
  "tracing",
  "uuid",
  "whoami",
+]
+
+[[package]]
+name = "sqlx-rust-codegen"
+version = "0.1.0"
+source = "git+https://github.com/ZurNetwork/sqlx-rust-codegen.git?tag=v0.1.0#2091aca954490b94ffaf065677491b11672b916a"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "sqlx-core",
+ "sqlx-postgres",
 ]
 
 [[package]]

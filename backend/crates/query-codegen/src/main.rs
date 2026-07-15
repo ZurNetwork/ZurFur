@@ -1,10 +1,11 @@
 //! `just gen-queries` — regenerate both adapters' `src/queries.rs`.
 //!
-//! Boots a throwaway PostgreSQL (testcontainers), runs the real embedded
-//! migration set, then describes every statement under each crate's `queries/`
-//! tree and rewrites its committed `src/queries.rs`. The workspace build never
-//! needs this to run — the output is committed; the `codegen_current` test
-//! fails loudly (with a diff) when it's stale.
+//! The Zurfur-specific runner around the extracted `sqlx-rust-codegen`
+//! library: boots a throwaway PostgreSQL (testcontainers), runs the real
+//! embedded migration set, then describes every statement under each crate's
+//! `queries/` tree and rewrites its committed `src/queries.rs`. The workspace
+//! build never needs this to run — the output is committed; the
+//! `codegen_current` test fails loudly (with a diff) when it's stale.
 
 use std::path::PathBuf;
 
@@ -27,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     for adapter in ["adapter-pg", "adapter-atproto"] {
         let queries = crates_dir.join(adapter).join("queries");
-        let generated = query_codegen::generate(&mut conn, &queries).await?;
+        let generated = sqlx_rust_codegen::generate(&mut conn, &queries).await?;
         let dest = crates_dir.join(adapter).join("src/queries.rs");
         std::fs::write(&dest, generated)
             .with_context(|| format!("cannot write {}", dest.display()))?;
