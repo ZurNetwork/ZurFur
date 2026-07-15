@@ -474,6 +474,92 @@ pub mod account {
     }
 }
 
+pub mod actor_identity {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ActorIdentityRow {
+        pub id: uuid::Uuid,
+        pub kind: String,
+        pub did: Option<String>,
+        pub state: String,
+        pub handle: Option<String>,
+        pub first_seen: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// `queries/actor_identity/cache_handle.sql`, typed against the migrated schema at generation time.
+    pub async fn cache_handle(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        handle: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/actor_identity/cache_handle.sql"))
+            .bind(id)
+            .bind(handle)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
+    pub async fn create(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        kind: &str,
+        state: &str,
+        first_seen: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/actor_identity/create.sql"))
+            .bind(id)
+            .bind(kind)
+            .bind(state)
+            .bind(first_seen)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/actor_identity/find.sql`, typed against the migrated schema at generation time.
+    pub async fn find(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<ActorIdentityRow>> {
+        sqlx::query_as(include_str!("../queries/actor_identity/find.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/actor_identity/find_by_did.sql`, typed against the migrated schema at generation time.
+    pub async fn find_by_did(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+    ) -> sqlx::Result<Option<ActorIdentityRow>> {
+        sqlx::query_as(include_str!("../queries/actor_identity/find_by_did.sql"))
+            .bind(did)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/actor_identity/intern.sql`, typed against the migrated schema at generation time.
+    pub async fn intern(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        kind: &str,
+        did: &str,
+        state: &str,
+        first_seen: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<ActorIdentityRow> {
+        sqlx::query_as(include_str!("../queries/actor_identity/intern.sql"))
+            .bind(id)
+            .bind(kind)
+            .bind(did)
+            .bind(state)
+            .bind(first_seen)
+            .fetch_one(conn)
+            .await
+    }
+}
+
 pub mod changelog {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
@@ -1461,6 +1547,9 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::soft_delete",
     "account::transfer_demote_owner",
     "account::transfer_promote_heir",
+    "actor_identity::cache_handle",
+    "actor_identity::create",
+    "actor_identity::intern",
     "changelog::append",
     "commission::add_component",
     "commission::add_file",

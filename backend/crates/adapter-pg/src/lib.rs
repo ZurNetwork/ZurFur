@@ -65,6 +65,7 @@ pub use sqlx::PgPool;
 pub mod queries;
 
 mod account;
+mod actor_identity;
 mod commission;
 mod commission_changelog;
 mod file_store;
@@ -76,6 +77,7 @@ mod session_store;
 mod uow;
 mod user;
 pub use account::{ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgAccountWrites};
+pub use actor_identity::{PgActorIdentityStore, PgActorIdentityWrites};
 pub use commission::{
     COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
 };
