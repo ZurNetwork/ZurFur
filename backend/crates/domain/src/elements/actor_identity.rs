@@ -13,6 +13,10 @@
 //! - **Actor-ness is anchored on the internal id, not a DID.** Characters are
 //!   actors and carry no DID (Engineer ruling 2026-07-14), so the DID — when it
 //!   arrives — is an optional external alias, never the essence.
+//!
+//! Slice 2 adds [`ActorKind`] — the closed vocabulary (`user | account |
+//! character`) and, with `UNIQUE (id, kind)` in the schema, the anchor every
+//! kind-checked reference site's composite FK targets (DD decisions 2 and 4).
 
 use std::ops::Deref;
 
@@ -42,31 +46,82 @@ impl Deref for ActorIdentityId {
     }
 }
 
-/// One actor's row in the super-table. In this slice the identity **is** its id —
-/// pure existence; every attribute (kind, optional DID, cached handle, liveness
-/// state) lands in a later slice.
+/// What kind of actor an identity row is — the closed vocabulary of DD
+/// `34013187` decision 2. A seated Golem acts as a User, so there is no `golem`
+/// variant and no occupant union. The unknown-kind representation for bare
+/// network DIDs is deliberately **not** modelled yet (ZMVP-126 decides it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActorKind {
+    User,
+    Account,
+    Character,
+}
+
+impl ActorKind {
+    /// The stored spelling — exactly the values the schema's `CHECK` admits.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActorKind::User => "user",
+            ActorKind::Account => "account",
+            ActorKind::Character => "character",
+        }
+    }
+}
+
+/// The error a stored string that names no [`ActorKind`] parses to.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnknownActorKind(pub String);
+
+impl std::fmt::Display for UnknownActorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown actor kind: {}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActorKind {}
+
+impl TryFrom<&str> for ActorKind {
+    type Error = UnknownActorKind;
+
+    /// Parse the stored spelling back. The schema's `CHECK` admits only the
+    /// three variants, so an error here means a corrupted row, not user input.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        match raw {
+            "user" => Ok(ActorKind::User),
+            "account" => Ok(ActorKind::Account),
+            "character" => Ok(ActorKind::Character),
+            other => Err(UnknownActorKind(other.to_string())),
+        }
+    }
+}
+
+/// One actor's row in the super-table: its id and what kind of actor it is.
+/// The optional DID, cached handle, and liveness state land in later slices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActorIdentity {
     pub id: ActorIdentityId,
+    pub kind: ActorKind,
 }
 
 impl ActorIdentity {
-    /// Mint a brand-new actor identity with a fresh UUIDv7 key.
+    /// Mint a brand-new actor identity of `kind` with a fresh UUIDv7 key.
     ///
     /// Pure: this only builds the value — persisting it is
     /// [`crate::ports::ActorIdentityWrites::create`]'s job. Each call mints a
     /// distinct identity.
     ///
     /// ```
-    /// use domain::elements::actor_identity::ActorIdentity;
+    /// use domain::elements::actor_identity::{ActorIdentity, ActorKind};
     ///
-    /// let a = ActorIdentity::mint();
-    /// let b = ActorIdentity::mint();
+    /// let a = ActorIdentity::mint(ActorKind::User);
+    /// let b = ActorIdentity::mint(ActorKind::Character);
     /// assert_ne!(a.id, b.id);
+    /// assert_eq!(b.kind, ActorKind::Character);
     /// ```
-    pub fn mint() -> Self {
+    pub fn mint(kind: ActorKind) -> Self {
         Self {
             id: ActorIdentityId(uuid::Uuid::now_v7()),
+            kind,
         }
     }
 }
@@ -78,13 +133,29 @@ mod tests {
     /// Slice-1 base: every mint is a distinct row-to-be.
     #[test]
     fn mint_yields_distinct_ids() {
-        assert_ne!(ActorIdentity::mint().id, ActorIdentity::mint().id);
+        assert_ne!(
+            ActorIdentity::mint(ActorKind::User).id,
+            ActorIdentity::mint(ActorKind::User).id
+        );
     }
 
     /// The id round-trips through its stored UUID (the read-back path).
     #[test]
     fn id_rebuilds_from_stored_uuid() {
-        let minted = ActorIdentity::mint();
+        let minted = ActorIdentity::mint(ActorKind::Account);
         assert_eq!(ActorIdentityId::new(*minted.id), minted.id);
+    }
+
+    /// Slice 2: every kind's stored spelling parses back to itself, and an
+    /// unknown spelling is a loud error (a corrupted row, never a silent kind).
+    #[test]
+    fn kind_spelling_round_trips() {
+        for kind in [ActorKind::User, ActorKind::Account, ActorKind::Character] {
+            assert_eq!(ActorKind::try_from(kind.as_str()), Ok(kind));
+        }
+        assert_eq!(
+            ActorKind::try_from("golem"),
+            Err(UnknownActorKind("golem".to_string()))
+        );
     }
 }

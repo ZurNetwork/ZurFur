@@ -1,11 +1,12 @@
 //! PostgreSQL adapter for the actor super-table (ZMVP-122, DD `34013187`).
 //!
-//! Slice 1: existence only — create and find by the app-private id. The module
-//! deliberately exposes **no delete**: identity rows are immortal, so an FK into
-//! `actor_identity` can never break.
+//! Slices 1–2: existence + kind — create and find by the app-private id. The
+//! module deliberately exposes **no delete**: identity rows are immortal, so an
+//! FK into `actor_identity` can never break.
 
+use anyhow::Context;
 use async_trait::async_trait;
-use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId};
+use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 use sqlx::{PgConnection, PgPool};
 
@@ -21,7 +22,7 @@ pub struct PgActorIdentityWrites<'a> {
 #[async_trait]
 impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()> {
-        sql::create(&mut *self.conn, *identity.id).await?;
+        sql::create(&mut *self.conn, *identity.id, identity.kind.as_str()).await?;
         Ok(())
     }
 }
@@ -42,8 +43,16 @@ impl PgActorIdentityStore {
 impl ActorIdentityStore for PgActorIdentityStore {
     async fn find(&self, id: ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
         let row = sql::find(&self.pool, *id).await?;
-        Ok(row.map(|id| ActorIdentity {
-            id: ActorIdentityId::new(id),
-        }))
+        row.map(|row| {
+            // The schema's CHECK admits only the known spellings, so a parse
+            // failure here is a corrupted row — surfaced loudly, never a guess.
+            let kind = ActorKind::try_from(row.kind.as_str())
+                .with_context(|| format!("actor_identity {}: corrupted kind", row.id))?;
+            Ok(ActorIdentity {
+                id: ActorIdentityId::new(row.id),
+                kind,
+            })
+        })
+        .transpose()
     }
 }
