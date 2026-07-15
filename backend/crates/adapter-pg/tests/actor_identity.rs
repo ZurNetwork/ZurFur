@@ -1,14 +1,14 @@
-//! The actor super-table over PostgreSQL (ZMVP-122 slice 1, DD 34013187),
-//! against a throwaway container: a minted identity created through the Unit of
-//! Work round-trips (id + kind), an uncommitted create rolls back, the primary
-//! key rejects a duplicate id, and the kind CHECK rejects a spelling outside
-//! the closed vocabulary. did/handle/state land in later slices with their own
-//! tests. Requires a container runtime socket (DOCKER_HOST honored).
+//! The actor super-table over PostgreSQL (ZMVP-122 slices 1–4, DD 34013187),
+//! against a throwaway container: round-trips through the Unit of Work,
+//! rollback-on-drop, the duplicate-id PK, the kind and state CHECKs, the
+//! race-safe idempotent intern by DID, and NULL-did coexistence next to
+//! DB-enforced DID uniqueness. The cached handle lands in a later slice.
+//! Requires a container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgActorIdentityStore, PgDatabase, PgPool};
 use domain::{
     elements::{
-        actor_identity::{ActorIdentity, ActorKind},
+        actor_identity::{ActorIdentity, ActorKind, ActorState},
         did::Did,
     },
     ports::{ActorIdentityStore, Database},
@@ -96,10 +96,11 @@ async fn kind_round_trips_and_check_rejects_unknown() {
         assert_eq!(found, Some(identity), "{kind:?} must round-trip");
     }
 
-    let rejected = sqlx::query("INSERT INTO actor_identity (id, kind) VALUES ($1, 'golem')")
-        .bind(uuid::Uuid::now_v7())
-        .execute(&pool)
-        .await;
+    let rejected =
+        sqlx::query("INSERT INTO actor_identity (id, kind, state) VALUES ($1, 'golem', 'active')")
+            .bind(uuid::Uuid::now_v7())
+            .execute(&pool)
+            .await;
     assert!(
         rejected.is_err(),
         "the kind CHECK must reject a spelling outside the closed vocabulary"
@@ -171,12 +172,13 @@ async fn null_dids_coexist_and_present_dids_are_unique() {
         .expect("intern");
     uow.commit().await.expect("commit");
 
-    let raw_duplicate =
-        sqlx::query("INSERT INTO actor_identity (id, kind, did) VALUES ($1, 'user', $2)")
-            .bind(uuid::Uuid::now_v7())
-            .bind("did:plc:unique-me")
-            .execute(&pool)
-            .await;
+    let raw_duplicate = sqlx::query(
+        "INSERT INTO actor_identity (id, kind, did, state) VALUES ($1, 'user', $2, 'active')",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind("did:plc:unique-me")
+    .execute(&pool)
+    .await;
     assert!(
         raw_duplicate.is_err(),
         "did UNIQUE must hold even against a raw insert"
@@ -187,6 +189,50 @@ async fn null_dids_coexist_and_present_dids_are_unique() {
             .await
             .expect("find"),
         Some(interned)
+    );
+}
+
+/// Slice 4: rows are born active through both write paths, and the state
+/// CHECK holds the closed vocabulary at the DB.
+#[tokio::test]
+async fn rows_are_born_active_and_state_check_holds() {
+    let (pool, _container) = fresh_pool().await;
+    let db = PgDatabase::new(pool.clone());
+    let store = PgActorIdentityStore::new(pool.clone());
+
+    let created = ActorIdentity::mint(ActorKind::Character);
+    let mut uow = db.begin().await.expect("begin");
+    uow.actor_identities()
+        .create(&created)
+        .await
+        .expect("create");
+    let interned = uow
+        .actor_identities()
+        .intern(
+            &Did::new("did:plc:born-active".to_string()),
+            ActorKind::User,
+        )
+        .await
+        .expect("intern");
+    uow.commit().await.expect("commit");
+
+    for identity in [&created, &interned] {
+        let found = store
+            .find(identity.id)
+            .await
+            .expect("find")
+            .expect("row exists");
+        assert_eq!(found.state, ActorState::Active);
+    }
+
+    let rejected =
+        sqlx::query("INSERT INTO actor_identity (id, kind, state) VALUES ($1, 'user', 'deleted')")
+            .bind(uuid::Uuid::now_v7())
+            .execute(&pool)
+            .await;
+    assert!(
+        rejected.is_err(),
+        "the state CHECK must reject a spelling outside the closed vocabulary"
     );
 }
 
