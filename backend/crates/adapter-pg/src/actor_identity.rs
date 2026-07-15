@@ -56,6 +56,12 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             identity.state == ActorState::Active,
             "create only persists born-active identities"
         );
+        // Born uncached by invariant: the handle is a display cache filled
+        // via cache_handle, never supplied at creation.
+        anyhow::ensure!(
+            identity.handle.is_none(),
+            "create only persists born-uncached identities; fill via cache_handle"
+        );
         sql::create(
             &mut *self.conn,
             *identity.id,

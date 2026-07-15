@@ -91,6 +91,12 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             identity.state == ActorState::Active,
             "create only persists born-active identities"
         );
+        // Born uncached by invariant: the handle is a display cache filled
+        // via cache_handle, never supplied at creation.
+        anyhow::ensure!(
+            identity.handle.is_none(),
+            "create only persists born-uncached identities; fill via cache_handle"
+        );
         let mut identities = self
             .0
             .actor_identities
@@ -371,5 +377,19 @@ mod tests {
         let mut uow = backend.database().begin().await.expect("begin");
         let result = uow.actor_identities().create(&identity).await;
         assert!(result.is_err(), "create persists born-active rows only");
+    }
+
+    /// Create refuses a pre-cached handle — rows are born uncached, and the
+    /// cache fills only via `cache_handle` (a silent drop would hide the
+    /// caller bug).
+    #[tokio::test]
+    async fn create_refuses_pre_cached_handles() {
+        let backend = MemBackend::new();
+        let mut identity = ActorIdentity::mint(ActorKind::User, Utc::now());
+        identity.handle = Some("sneaky.example.com".to_string());
+
+        let mut uow = backend.database().begin().await.expect("begin");
+        let result = uow.actor_identities().create(&identity).await;
+        assert!(result.is_err(), "create persists born-uncached rows only");
     }
 }
