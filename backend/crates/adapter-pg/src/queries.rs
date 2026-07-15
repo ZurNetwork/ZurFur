@@ -482,6 +482,21 @@ pub mod actor_identity {
         pub kind: String,
         pub did: Option<String>,
         pub state: String,
+        pub handle: Option<String>,
+    }
+
+    /// `queries/actor_identity/cache_handle.sql`, typed against the migrated schema at generation time.
+    pub async fn cache_handle(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        handle: Option<&str>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/actor_identity/cache_handle.sql"))
+            .bind(id)
+            .bind(handle)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
     }
 
     /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
@@ -1527,6 +1542,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::soft_delete",
     "account::transfer_demote_owner",
     "account::transfer_promote_heir",
+    "actor_identity::cache_handle",
     "actor_identity::create",
     "actor_identity::intern",
     "changelog::append",
