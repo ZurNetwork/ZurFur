@@ -17,8 +17,16 @@
 //! Slice 2 adds [`ActorKind`] — the closed vocabulary (`user | account |
 //! character`) and, with `UNIQUE (id, kind)` in the schema, the anchor every
 //! kind-checked reference site's composite FK targets (DD decisions 2 and 4).
+//!
+//! Slice 3 adds the **optional** [`Did`] — an external alias, never the
+//! essence: `UNIQUE` where present (one DID = one actor, ever, DB-enforced),
+//! absent on DID-less actors (Characters). DID-bearing actors are created by
+//! [`crate::ports::ActorIdentityWrites::intern`] — race-safe and idempotent by
+//! DID; DID-less ones by [`crate::ports::ActorIdentityWrites::create`].
 
 use std::ops::Deref;
+
+use crate::elements::did::Did;
 
 /// The app-private, stable handle for an [`ActorIdentity`] row.
 ///
@@ -95,33 +103,44 @@ impl TryFrom<&str> for ActorKind {
     }
 }
 
-/// One actor's row in the super-table: its id and what kind of actor it is.
-/// The optional DID, cached handle, and liveness state land in later slices.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One actor's row in the super-table: its id, what kind of actor it is, and —
+/// for actors the network can name — its optional [`Did`]. The cached handle
+/// and liveness state land in later slices.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorIdentity {
     pub id: ActorIdentityId,
     pub kind: ActorKind,
+    /// The actor's DID, when it has one. `None` is a designed state, not a
+    /// gap: Characters are actors and carry no DID (Engineer ruling
+    /// 2026-07-14) — actor-ness is anchored on [`ActorIdentityId`].
+    pub did: Option<Did>,
 }
 
 impl ActorIdentity {
-    /// Mint a brand-new actor identity of `kind` with a fresh UUIDv7 key.
+    /// Mint a brand-new **DID-less** actor identity of `kind` with a fresh
+    /// UUIDv7 key. Any kind mints — the invariant is `did: None`, not the
+    /// kind (in the domain, Characters are the actors born DID-less,
+    /// DD `34013187`).
     ///
     /// Pure: this only builds the value — persisting it is
     /// [`crate::ports::ActorIdentityWrites::create`]'s job. Each call mints a
-    /// distinct identity.
+    /// distinct identity. DID-bearing actors go through
+    /// [`crate::ports::ActorIdentityWrites::intern`] instead, which owns the
+    /// race-safe one-DID-one-actor upsert.
     ///
     /// ```
     /// use domain::elements::actor_identity::{ActorIdentity, ActorKind};
     ///
-    /// let a = ActorIdentity::mint(ActorKind::User);
+    /// let a = ActorIdentity::mint(ActorKind::Character);
     /// let b = ActorIdentity::mint(ActorKind::Character);
     /// assert_ne!(a.id, b.id);
-    /// assert_eq!(b.kind, ActorKind::Character);
+    /// assert_eq!(a.did, None);
     /// ```
     pub fn mint(kind: ActorKind) -> Self {
         Self {
             id: ActorIdentityId(uuid::Uuid::now_v7()),
             kind,
+            did: None,
         }
     }
 }
