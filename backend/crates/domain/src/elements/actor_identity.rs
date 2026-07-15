@@ -1,42 +1,35 @@
 //! The [`ActorIdentity`] — a row in the actor super-table (ZMVP-122, DD `34013187`).
 //!
 //! One row per actor the Index has ever seen (User, Account, Character; a seated
-//! Golem is a User), the single table every actor reference FKs into. Built
-//! **incrementally**: this slice is existence only — the identity is just its
-//! app-private id. `kind`, the optional `did`, `handle`, and liveness `state`
-//! arrive in later slices, each with its own tests.
+//! Golem is a User), the single table every actor reference FKs into: the
+//! app-private id anchor, the closed [`ActorKind`] vocabulary, the optional
+//! [`Did`], liveness [`ActorState`], the cached display handle, and
+//! `first_seen`.
 //!
-//! Two invariants are born here, ahead of the columns:
+//! The invariants:
 //! - **Rows are immortal.** There is no delete anywhere on the port
-//!   ([`crate::ports::ActorIdentityWrites`]); liveness will be a *state* on the
+//!   ([`crate::ports::ActorIdentityWrites`]); liveness is a *state* on the
 //!   row, never a removal, so an FK into `actor_identity` can never break.
 //! - **Actor-ness is anchored on the internal id, not a DID.** Characters are
-//!   actors and carry no DID (Engineer ruling 2026-07-14), so the DID — when it
-//!   arrives — is an optional external alias, never the essence.
-//!
-//! Slice 2 adds [`ActorKind`] — the closed vocabulary (`user | account |
-//! character`) and, with `UNIQUE (id, kind)` in the schema, the anchor every
-//! kind-checked reference site's composite FK targets (DD decisions 2 and 4).
-//!
-//! Slice 3 adds the **optional** [`Did`] — an external alias, never the
-//! essence: `UNIQUE` where present (one DID = one actor, ever, DB-enforced),
-//! absent on DID-less actors (Characters). DID-bearing actors are created by
-//! [`crate::ports::ActorIdentityWrites::intern`] — race-safe and idempotent by
-//! DID; DID-less ones by [`crate::ports::ActorIdentityWrites::create`].
-//!
-//! Slice 4 adds [`ActorState`] — liveness as a state on the row, the split
-//! that replaces deletion (DD decisions 3/5): every row is born
-//! [`ActorState::Active`]; `pulled`/`tombstoned` are recorded endings, never
-//! removals. The transitions and the read-path predicate are ZMVP-125's.
-//!
-//! Slice 5 adds the cached handle — a refreshable **display cache** of the
-//! actor's atproto handle, deliberately a plain string: external handles are
-//! foreign data and never pass through Zurfur's claim-validation
-//! ([`crate::elements::handle::Handle`] stays the claim gate's type).
-//!
-//! Slice 7 adds `first_seen` — when the Index first saw the actor, stamped at
-//! create/intern and immutable thereafter (re-interning a DID keeps the
-//! original stamp). Injected, never `now()`-defaulted, per house convention.
+//!   actors and carry no DID (Engineer ruling 2026-07-14) — the DID is an
+//!   optional external alias, never the essence: `UNIQUE` where present (one
+//!   DID = one actor, ever, DB-enforced). DID-bearing actors are created by
+//!   [`crate::ports::ActorIdentityWrites::intern`] — race-safe and idempotent
+//!   by DID; DID-less ones by [`crate::ports::ActorIdentityWrites::create`].
+//! - **Kind-checked references.** [`ActorKind`] is the closed vocabulary
+//!   (`user | account | character`) and, with `UNIQUE (id, kind)` in the
+//!   schema, the anchor every kind-checked reference site's composite FK
+//!   targets (DD decisions 2 and 4).
+//! - **Liveness replaces deletion** (DD decisions 3/5): every row is born
+//!   [`ActorState::Active`]; `pulled`/`tombstoned` are recorded endings, never
+//!   removals. The transitions and the read-path predicate are ZMVP-125's.
+//! - **The handle is a refreshable display cache** — deliberately a plain
+//!   string: external handles are foreign data and never pass through
+//!   Zurfur's claim-validation ([`crate::elements::handle::Handle`] stays the
+//!   claim gate's type). Rows are born uncached.
+//! - **`first_seen` is immutable** — when the Index first saw the actor,
+//!   stamped at create/intern (re-interning a DID keeps the original stamp).
+//!   Injected, never `now()`-defaulted, per house convention.
 
 use std::ops::Deref;
 

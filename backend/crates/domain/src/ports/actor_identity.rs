@@ -5,9 +5,8 @@
 //! [`UnitOfWork`](crate::ports::UnitOfWork) (DD `24150017`).
 //!
 //! **Deliberately no delete on either trait** — identity rows are immortal
-//! (DD `34013187` decision 3); liveness arrives in a later slice as a *state*
-//! whose transition machinery is ticket ZMVP-125's scope (a Jira key, not a
-//! slice number of this PR series) — never as a removal.
+//! (DD `34013187` decision 3); liveness is a *state* on the row, never a
+//! removal. Its transition machinery is ticket ZMVP-125's scope.
 
 use async_trait::async_trait;
 
@@ -36,9 +35,10 @@ pub trait ActorIdentityStore: Send + Sync {
 pub trait ActorIdentityWrites: Send {
     /// Persist a freshly minted **DID-less** [`ActorIdentity`]. The contract
     /// is `did == None` (adapter-enforced), not any particular kind — in the
-    /// domain, Characters are the actors born DID-less (DD `34013187`).
-    /// Creating the same id twice is an error (PK) — ids are always freshly
-    /// minted, so a collision is a caller bug, not a race to absorb.
+    /// domain, Characters are the actors born DID-less (DD `34013187`) — and
+    /// the row must arrive as minted: born-active, handle uncached (also
+    /// enforced). Creating the same id twice is an error (PK) — ids are always
+    /// freshly minted, so a collision is a caller bug, not a race to absorb.
     /// DID-bearing actors go through [`intern`](ActorIdentityWrites::intern).
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()>;
 

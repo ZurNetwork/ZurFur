@@ -1,10 +1,9 @@
 //! In-memory fakes for the actor super-table (ZMVP-122, DD `34013187`).
 //!
 //! The map mirrors the pg `actor_identity` table — a [`StoredActorIdentity`]
-//! parts struct per id, growing a field per slice (kind in slice 2, the
-//! optional did in slice 3; handle, state follow) exactly as the table grows
-//! columns. No removal path exists anywhere in this module: identity rows are
-//! immortal.
+//! parts struct per id, one field per column (kind, the optional did, state,
+//! handle, first_seen). No removal path exists anywhere in this module:
+//! identity rows are immortal.
 
 use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;

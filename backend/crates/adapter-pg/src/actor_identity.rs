@@ -1,10 +1,10 @@
 //! PostgreSQL adapter for the actor super-table (ZMVP-122, DD `34013187`).
 //!
-//! Slices 1–4: existence, kind, the optional DID, and liveness state —
 //! `create` for DID-less actors (Characters), the race-safe `intern` upsert
-//! for DID-bearing ones, reads by id and by DID. The module deliberately
-//! exposes **no delete**: identity rows are immortal — liveness is a state
-//! (whose transitions are ZMVP-125), never a removal.
+//! for DID-bearing ones, reads by id and by DID, and the `cache_handle`
+//! display-cache fill. The module deliberately exposes **no delete**: identity
+//! rows are immortal — liveness is a state (whose transitions are ZMVP-125),
+//! never a removal.
 
 use anyhow::Context;
 use async_trait::async_trait;
