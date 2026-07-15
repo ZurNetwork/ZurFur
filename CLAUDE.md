@@ -95,11 +95,13 @@ Config is figment in `api`: `backend/config/{profile}.toml` then `ZURFUR_*` env 
 
 ## Branch Strategy
 
-- `main` — stable; all feature PRs target this; **never push directly to `main`**.
-- `feature/*` / `bug/*` — one ticket each, branched from `main`, **squash-merged** back (one `[ZMVP-N]` commit per ticket on `main`).
+- `main` — stable; **never push directly to `main`**; one `[ZMVP-N]` squash commit per ticket.
+- `feature/*` / `bug/*` — one ticket each: the **integration branch**, created **exactly at `main`'s tip, nothing else on it**. Work lands on it as **bite-sized slice PRs** (slice branch → PR **into the feature branch**, line-reviewed + Copilot there, squash-merged). The feature branch gets its PR to `main` **only when the ticket is ready — every slice merged**; that PR is a **rubber-stamp squash**, no line re-review (the slices already had it). (Engineer ruling 2026-07-14; prototype: ZMVP-122 / slice PRs #127 + #122–#126.) CI runs on PRs into `feature/**` by design — name slice branches `feature/…` so *their* children also trigger it.
+- **The working-state contract lives on the feature branch (and `main`)**: every commit *on the integration branch* is gate-green (fmt, clippy, full test suite) — incomplete is fine, broken never. Slice branches may hold work-in-progress that doesn't stand alone; the enforcement seam is the merge: a slice PR's CI runs against the merge preview (feature + slice), so green slice CI ⇒ the feature branch stays working after the merge.
+- Stacked slice PRs: after a slice squash-merges into the feature branch, the next slice rebases onto it (jj) and force-pushes — mechanical restack of Claude's own slice chain, distinct from the Engineer-owned cross-branch restacks.
 
 ### Parallel work — worktrees & units of work
 
 - **Parallel branches use isolated git worktrees** under `~/code/zurfur-<slug>`. Tests are already isolated (each spins up its own testcontainers Postgres on a random port); the **dev stack is not** — run `just worktree-init` once in a new worktree to give it its own DB/HTTP ports + compose project (mechanics live in `scripts/worktree-init.sh` and `.env.example`). `/start` offers a worktree on demand.
 - **A unit of work** is one pass through the lifecycle — a ticket, or a `/next-path` set worked in parallel — driven by **`/unit-of-work`**, which owns the canonical command order and the gates. The active set is recorded (tracked, under `.understand/`) in `.understand/parallel-set.json`.
-- **Commit convention.** Each unit gets a short **random** id (the ledger's `uow`, unrelated to the Jira key). The **first commit on each branch** carries both — `[ZMVP-N][uow:<id>] <subject>` — later commits just `[ZMVP-N]`.
+- **Commit convention.** Slice commits and their PRs are numbered — `[ZMVP-N][<slice#>] <Name>` (e.g. `[ZMVP-122][3] did: …`) — so a ticket's pieces are tellable apart at a glance. Each unit also gets a short **random** id (the ledger's `uow`, unrelated to the Jira key); the **first commit of the unit** additionally carries it: `[ZMVP-N][1][uow:<id>] <Name>`.
