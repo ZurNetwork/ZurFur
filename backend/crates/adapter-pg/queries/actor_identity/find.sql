@@ -1,5 +1,6 @@
 -- params: id
 -- fetch: optional
-SELECT id
+-- row: ActorIdentityRow
+SELECT id, kind
 FROM actor_identity
 WHERE id = $1

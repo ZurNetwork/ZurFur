@@ -1,4 +1,4 @@
--- params: id
+-- params: id, kind
 -- fetch: execute
-INSERT INTO actor_identity (id)
-VALUES ($1)
+INSERT INTO actor_identity (id, kind)
+VALUES ($1, $2)

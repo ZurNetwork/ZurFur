@@ -475,10 +475,22 @@ pub mod account {
 }
 
 pub mod actor_identity {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ActorIdentityRow {
+        pub id: uuid::Uuid,
+        pub kind: String,
+    }
+
     /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
-    pub async fn create(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
+    pub async fn create(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        kind: &str,
+    ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/actor_identity/create.sql"))
             .bind(id)
+            .bind(kind)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -488,8 +500,8 @@ pub mod actor_identity {
     pub async fn find(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-    ) -> sqlx::Result<Option<uuid::Uuid>> {
-        sqlx::query_scalar(include_str!("../queries/actor_identity/find.sql"))
+    ) -> sqlx::Result<Option<ActorIdentityRow>> {
+        sqlx::query_as(include_str!("../queries/actor_identity/find.sql"))
             .bind(id)
             .fetch_optional(conn)
             .await
