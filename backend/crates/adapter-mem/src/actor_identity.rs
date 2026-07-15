@@ -7,7 +7,7 @@
 //! immortal.
 
 use async_trait::async_trait;
-use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
+use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind, ActorState};
 use domain::elements::did::Did;
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 
@@ -22,6 +22,8 @@ pub struct StoredActorIdentity {
     /// The actor's DID, when it has one (slice 3) — `None` is the designed
     /// DID-less state (Characters), and uniqueness binds only present DIDs.
     pub did: Option<Did>,
+    /// Liveness (slice 4) — born Active; transitions are ZMVP-125.
+    pub state: ActorState,
 }
 
 /// Rebuild the domain row from its stored parts.
@@ -30,6 +32,7 @@ fn rebuild(id: ActorIdentityId, stored: &StoredActorIdentity) -> ActorIdentity {
         id,
         kind: stored.kind,
         did: stored.did.clone(),
+        state: stored.state,
     }
 }
 
@@ -73,6 +76,12 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             identity.did.is_none(),
             "create is the DID-less path; intern DID-bearing actors instead"
         );
+        // Born active by invariant (DD 34013187 decisions 3/5): transitions
+        // are ZMVP-125's machinery and never pass through creation.
+        anyhow::ensure!(
+            identity.state == ActorState::Active,
+            "create only persists born-active identities"
+        );
         let mut identities = self
             .0
             .actor_identities
@@ -90,6 +99,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             StoredActorIdentity {
                 kind: identity.kind,
                 did: None,
+                state: identity.state,
             },
         );
         Ok(())
@@ -113,12 +123,14 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             id: ActorIdentityId::new(uuid::Uuid::now_v7()),
             kind,
             did: Some(did.clone()),
+            state: ActorState::Active,
         };
         identities.insert(
             minted.id,
             StoredActorIdentity {
                 kind,
                 did: Some(did.clone()),
+                state: ActorState::Active,
             },
         );
         Ok(minted)
@@ -127,7 +139,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
 
 #[cfg(test)]
 mod tests {
-    use domain::elements::actor_identity::{ActorIdentity, ActorKind};
+    use domain::elements::actor_identity::{ActorIdentity, ActorKind, ActorState};
     use domain::elements::did::Did;
 
     use crate::MemBackend;
@@ -247,5 +259,18 @@ mod tests {
         let mut uow = backend.database().begin().await.expect("begin");
         let result = uow.actor_identities().create(&identity).await;
         assert!(result.is_err(), "create is the DID-less path only");
+    }
+
+    /// Slice 4: create refuses a non-active identity — rows are born active,
+    /// and liveness transitions never pass through creation.
+    #[tokio::test]
+    async fn create_refuses_non_active_rows() {
+        let backend = MemBackend::new();
+        let mut identity = ActorIdentity::mint(ActorKind::User);
+        identity.state = ActorState::Tombstoned;
+
+        let mut uow = backend.database().begin().await.expect("begin");
+        let result = uow.actor_identities().create(&identity).await;
+        assert!(result.is_err(), "create persists born-active rows only");
     }
 }

@@ -23,6 +23,11 @@
 //! absent on DID-less actors (Characters). DID-bearing actors are created by
 //! [`crate::ports::ActorIdentityWrites::intern`] — race-safe and idempotent by
 //! DID; DID-less ones by [`crate::ports::ActorIdentityWrites::create`].
+//!
+//! Slice 4 adds [`ActorState`] — liveness as a state on the row, the split
+//! that replaces deletion (DD decisions 3/5): every row is born
+//! [`ActorState::Active`]; `pulled`/`tombstoned` are recorded endings, never
+//! removals. The transitions and the read-path predicate are ZMVP-125's.
 
 use std::ops::Deref;
 
@@ -103,9 +108,62 @@ impl TryFrom<&str> for ActorKind {
     }
 }
 
-/// One actor's row in the super-table: its id, what kind of actor it is, and —
-/// for actors the network can name — its optional [`Did`]. The cached handle
-/// and liveness state land in later slices.
+/// An actor identity's liveness — a *state* on the immortal row, never a
+/// removal (DD `34013187` decisions 3/5). Identity is permanent and
+/// FK-enforced; liveness is soft and consulted per-read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActorState {
+    /// The normal case: the actor is live.
+    Active,
+    /// The DID/PDS stopped resolving — the reference is kept, the content is
+    /// absent (the Data Boundaries `Pulled` semantics).
+    Pulled,
+    /// Deleted per the tombstone ruling: the identity is anonymized, the
+    /// facts that reference it stay.
+    Tombstoned,
+}
+
+impl ActorState {
+    /// The stored spelling — exactly the values the schema's `CHECK` admits.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActorState::Active => "active",
+            ActorState::Pulled => "pulled",
+            ActorState::Tombstoned => "tombstoned",
+        }
+    }
+}
+
+/// The error a stored string that names no [`ActorState`] parses to.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnknownActorState(pub String);
+
+impl std::fmt::Display for UnknownActorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown actor state: {}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownActorState {}
+
+impl TryFrom<&str> for ActorState {
+    type Error = UnknownActorState;
+
+    /// Parse the stored spelling back. The schema's `CHECK` admits only the
+    /// three variants, so an error here means a corrupted row, not user input.
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        match raw {
+            "active" => Ok(ActorState::Active),
+            "pulled" => Ok(ActorState::Pulled),
+            "tombstoned" => Ok(ActorState::Tombstoned),
+            other => Err(UnknownActorState(other.to_string())),
+        }
+    }
+}
+
+/// One actor's row in the super-table: its id, what kind of actor it is, its
+/// optional [`Did`], and its liveness [`ActorState`]. The cached handle lands
+/// in a later slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorIdentity {
     pub id: ActorIdentityId,
@@ -114,6 +172,9 @@ pub struct ActorIdentity {
     /// gap: Characters are actors and carry no DID (Engineer ruling
     /// 2026-07-14) — actor-ness is anchored on [`ActorIdentityId`].
     pub did: Option<Did>,
+    /// Liveness. Every row is born [`ActorState::Active`]; the transitions
+    /// (and the read predicate that ghosts non-active actors) are ZMVP-125.
+    pub state: ActorState,
 }
 
 impl ActorIdentity {
@@ -141,6 +202,7 @@ impl ActorIdentity {
             id: ActorIdentityId(uuid::Uuid::now_v7()),
             kind,
             did: None,
+            state: ActorState::Active,
         }
     }
 }
@@ -175,6 +237,27 @@ mod tests {
         assert_eq!(
             ActorKind::try_from("golem"),
             Err(UnknownActorKind("golem".to_string()))
+        );
+    }
+
+    /// Slice 4: every state's stored spelling parses back; rows are born
+    /// Active; an unknown spelling is a loud error.
+    #[test]
+    fn state_spelling_round_trips_and_mint_is_active() {
+        for state in [
+            ActorState::Active,
+            ActorState::Pulled,
+            ActorState::Tombstoned,
+        ] {
+            assert_eq!(ActorState::try_from(state.as_str()), Ok(state));
+        }
+        assert_eq!(
+            ActorState::try_from("deleted"),
+            Err(UnknownActorState("deleted".to_string()))
+        );
+        assert_eq!(
+            ActorIdentity::mint(ActorKind::User).state,
+            ActorState::Active
         );
     }
 }
