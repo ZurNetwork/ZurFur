@@ -36,9 +36,11 @@
 //! References: DESIGN/"Domains and Applications"; the per-port detail lives on
 //! the trait docs in [`domain::ports`].
 
+mod actor_identity;
 mod commission;
 mod file_store;
 mod public_records;
+pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
@@ -60,6 +62,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
+    actor_identity::ActorIdentityId,
     commission::{CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, StoredFile},
     did::Did,
     handle::Handle,
@@ -71,9 +74,10 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{
-    AccountStore, AccountWrites, Authenticator, ChangelogStore, ChangelogWrites, CommissionStore,
-    CommissionWrites, Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    AccountStore, AccountWrites, ActorIdentityStore, ActorIdentityWrites, Authenticator,
+    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, Database, DidMinter,
+    FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork,
+    UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -166,6 +170,12 @@ pub struct MemBackend {
     /// the id. A domain map, staged and applied by the Unit of Work like
     /// `nodes`: a seat's node and satellite commit together.
     pub(crate) seats: Arc<Mutex<HashMap<NodeId, StoredSeat>>>,
+    /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`] — the in-memory
+    /// mirror of the pg `actor_identity` super-table (ZMVP-122, DD 34013187).
+    /// Slice 1: the parts are empty, the key is the row. Rows are immortal — no
+    /// write here removes one. A domain map, staged and applied by the Unit of
+    /// Work like `users`.
+    pub(crate) actor_identities: Arc<Mutex<HashMap<ActorIdentityId, StoredActorIdentity>>>,
 }
 
 impl MemBackend {
@@ -210,6 +220,12 @@ impl MemBackend {
     /// The [`Database`] write factory over this backend's shared state.
     pub fn database(&self) -> Arc<dyn Database> {
         Arc::new(MemDatabase(self.clone()))
+    }
+
+    /// The [`ActorIdentityStore`] read port over this backend's shared state
+    /// (ZMVP-122 — the actor super-table's fake).
+    pub fn actor_identity_store(&self) -> Arc<dyn ActorIdentityStore> {
+        Arc::new(MemActorIdentityStore(self.clone()))
     }
 
     /// Snapshot the **domain** maps into a fresh staging backend for a unit of work
@@ -315,6 +331,12 @@ impl MemBackend {
                 self.seats
                     .lock()
                     .expect("MemBackend seats mutex poisoned")
+                    .clone(),
+            )),
+            actor_identities: Arc::new(Mutex::new(
+                self.actor_identities
+                    .lock()
+                    .expect("MemBackend actor_identities mutex poisoned")
                     .clone(),
             )),
         }
@@ -429,6 +451,14 @@ impl MemBackend {
             .seats
             .lock()
             .expect("MemBackend seats mutex poisoned")
+            .clone();
+        *self
+            .actor_identities
+            .lock()
+            .expect("MemBackend actor_identities mutex poisoned") = staged
+            .actor_identities
+            .lock()
+            .expect("MemBackend actor_identities mutex poisoned")
             .clone();
     }
 
@@ -1354,6 +1384,12 @@ impl UnitOfWork for MemUnitOfWork {
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
         Box::new(MemUserWrites(self.staged.clone()))
+    }
+
+    /// A view of the actor-super-table write surface over this unit's staged
+    /// snapshot (ZMVP-122). No delete exists on it — identity rows are immortal.
+    fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
+        Box::new(MemActorIdentityWrites(self.staged.clone()))
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
