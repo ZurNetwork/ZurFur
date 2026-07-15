@@ -480,6 +480,7 @@ pub mod actor_identity {
     pub struct ActorIdentityRow {
         pub id: uuid::Uuid,
         pub kind: String,
+        pub did: Option<String>,
     }
 
     /// `queries/actor_identity/create.sql`, typed against the migrated schema at generation time.
@@ -504,6 +505,32 @@ pub mod actor_identity {
         sqlx::query_as(include_str!("../queries/actor_identity/find.sql"))
             .bind(id)
             .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/actor_identity/find_by_did.sql`, typed against the migrated schema at generation time.
+    pub async fn find_by_did(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+    ) -> sqlx::Result<Option<ActorIdentityRow>> {
+        sqlx::query_as(include_str!("../queries/actor_identity/find_by_did.sql"))
+            .bind(did)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/actor_identity/intern.sql`, typed against the migrated schema at generation time.
+    pub async fn intern(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        kind: &str,
+        did: &str,
+    ) -> sqlx::Result<ActorIdentityRow> {
+        sqlx::query_as(include_str!("../queries/actor_identity/intern.sql"))
+            .bind(id)
+            .bind(kind)
+            .bind(did)
+            .fetch_one(conn)
             .await
     }
 }
@@ -1496,6 +1523,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::transfer_demote_owner",
     "account::transfer_promote_heir",
     "actor_identity::create",
+    "actor_identity::intern",
     "changelog::append",
     "commission::add_component",
     "commission::add_file",

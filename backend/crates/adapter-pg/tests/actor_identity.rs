@@ -7,7 +7,10 @@
 
 use adapter_pg::{PgActorIdentityStore, PgDatabase, PgPool};
 use domain::{
-    elements::actor_identity::{ActorIdentity, ActorKind},
+    elements::{
+        actor_identity::{ActorIdentity, ActorKind},
+        did::Did,
+    },
     ports::{ActorIdentityStore, Database},
 };
 use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
@@ -100,6 +103,90 @@ async fn kind_round_trips_and_check_rejects_unknown() {
     assert!(
         rejected.is_err(),
         "the kind CHECK must reject a spelling outside the closed vocabulary"
+    );
+}
+
+/// Slice 3: intern is race-safe-idempotent by DID — a re-intern (even claiming
+/// a different kind) returns the first row untouched; a distinct DID mints its
+/// own row; `find_by_did` follows the unique index.
+#[tokio::test]
+async fn intern_is_idempotent_by_did() {
+    let (pool, _container) = fresh_pool().await;
+    let db = PgDatabase::new(pool.clone());
+    let store = PgActorIdentityStore::new(pool.clone());
+    let did = Did::new("did:plc:intern-me".to_string());
+
+    let mut uow = db.begin().await.expect("begin");
+    let first = uow
+        .actor_identities()
+        .intern(&did, ActorKind::User)
+        .await
+        .expect("first intern");
+    uow.commit().await.expect("commit");
+
+    let mut uow = db.begin().await.expect("begin");
+    let again = uow
+        .actor_identities()
+        .intern(&did, ActorKind::Account)
+        .await
+        .expect("re-intern");
+    uow.commit().await.expect("commit");
+    assert_eq!(again, first, "re-intern returns the existing row as-is");
+
+    let by_did = store.find_by_did(&did).await.expect("find_by_did");
+    assert_eq!(by_did, Some(first.clone()));
+
+    let other = Did::new("did:plc:someone-else".to_string());
+    let mut uow = db.begin().await.expect("begin");
+    let second = uow
+        .actor_identities()
+        .intern(&other, ActorKind::User)
+        .await
+        .expect("intern other");
+    uow.commit().await.expect("commit");
+    assert_ne!(second.id, first.id, "a distinct DID mints its own row");
+}
+
+/// Slice 3: DID-lessness is a designed state — many rows may carry NULL
+/// (Characters), while a present DID is unique at the DB even against a raw
+/// insert that skips the intern path.
+#[tokio::test]
+async fn null_dids_coexist_and_present_dids_are_unique() {
+    let (pool, _container) = fresh_pool().await;
+    let db = PgDatabase::new(pool.clone());
+
+    let mut uow = db.begin().await.expect("begin");
+    uow.actor_identities()
+        .create(&ActorIdentity::mint(ActorKind::Character))
+        .await
+        .expect("first DID-less create");
+    uow.actor_identities()
+        .create(&ActorIdentity::mint(ActorKind::Character))
+        .await
+        .expect("second DID-less create — NULLs never collide");
+    let interned = uow
+        .actor_identities()
+        .intern(&Did::new("did:plc:unique-me".to_string()), ActorKind::User)
+        .await
+        .expect("intern");
+    uow.commit().await.expect("commit");
+
+    let raw_duplicate =
+        sqlx::query("INSERT INTO actor_identity (id, kind, did) VALUES ($1, 'user', $2)")
+            .bind(uuid::Uuid::now_v7())
+            .bind("did:plc:unique-me")
+            .execute(&pool)
+            .await;
+    assert!(
+        raw_duplicate.is_err(),
+        "did UNIQUE must hold even against a raw insert"
+    );
+    assert_eq!(
+        PgActorIdentityStore::new(pool.clone())
+            .find(interned.id)
+            .await
+            .expect("find"),
+        Some(interned)
     );
 }
 

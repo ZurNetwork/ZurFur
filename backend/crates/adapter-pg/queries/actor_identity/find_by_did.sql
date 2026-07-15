@@ -1,6 +1,6 @@
--- params: id
+-- params: did
 -- fetch: optional
 -- row: ActorIdentityRow
 SELECT id, kind, did
 FROM actor_identity
-WHERE id = $1
+WHERE did = $1
