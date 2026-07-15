@@ -8,6 +8,7 @@
 
 use anyhow::Context;
 use async_trait::async_trait;
+use domain::datetime::DateTimeUtc;
 use domain::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind, ActorState};
 use domain::elements::did::Did;
 use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
@@ -30,6 +31,7 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
         did: row.did.map(Did::new),
         state,
         handle: row.handle,
+        first_seen: row.first_seen,
     })
 }
 
@@ -59,14 +61,21 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             *identity.id,
             identity.kind.as_str(),
             identity.state.as_str(),
+            identity.first_seen,
         )
         .await?;
         Ok(())
     }
 
-    async fn intern(&mut self, did: &Did, kind: ActorKind) -> anyhow::Result<ActorIdentity> {
+    async fn intern(
+        &mut self,
+        did: &Did,
+        kind: ActorKind,
+        now: DateTimeUtc,
+    ) -> anyhow::Result<ActorIdentity> {
         // A freshly minted candidate loses to an existing DID at the unique
-        // index; RETURNING yields whichever row survived (DD decision 6).
+        // index; RETURNING yields whichever row survived (DD decision 6) —
+        // including its ORIGINAL first_seen (the upsert never restamps).
         let candidate = uuid::Uuid::now_v7();
         let row = sql::intern(
             &mut *self.conn,
@@ -74,6 +83,7 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             kind.as_str(),
             did.as_str(),
             ActorState::Active.as_str(),
+            now,
         )
         .await?;
         rebuild(row)

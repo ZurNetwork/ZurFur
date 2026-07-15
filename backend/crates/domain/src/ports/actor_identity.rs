@@ -11,6 +11,7 @@
 
 use async_trait::async_trait;
 
+use crate::datetime::DateTimeUtc;
 use crate::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
 use crate::elements::did::Did;
 
@@ -47,10 +48,16 @@ pub trait ActorIdentityWrites: Send {
     /// same row — two concurrent interns of one DID converge on one row at the
     /// `did UNIQUE` index, never a duplicate and never an error.
     ///
-    /// `kind` is the caller's classification for a *new* row. An existing row's
-    /// stored kind is returned as-is and **not** rewritten — kind refinement is
-    /// intake's business (ZMVP-126), not a side effect of re-seeing a DID.
-    async fn intern(&mut self, did: &Did, kind: ActorKind) -> anyhow::Result<ActorIdentity>;
+    /// `kind` is the caller's classification for a *new* row; `now` stamps a
+    /// *new* row's `first_seen`. An existing row is returned **as-is** — its
+    /// stored kind is not rewritten (refinement is intake's business,
+    /// ZMVP-126) and its `first_seen` keeps the original sighting.
+    async fn intern(
+        &mut self,
+        did: &Did,
+        kind: ActorKind,
+        now: DateTimeUtc,
+    ) -> anyhow::Result<ActorIdentity>;
 
     /// Refresh (or clear, with `None`) the actor's cached display handle — a
     /// cache fill, not a claim: the value is foreign network data and is never

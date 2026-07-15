@@ -33,9 +33,14 @@
 //! actor's atproto handle, deliberately a plain string: external handles are
 //! foreign data and never pass through Zurfur's claim-validation
 //! ([`crate::elements::handle::Handle`] stays the claim gate's type).
+//!
+//! Slice 7 adds `first_seen` — when the Index first saw the actor, stamped at
+//! create/intern and immutable thereafter (re-interning a DID keeps the
+//! original stamp). Injected, never `now()`-defaulted, per house convention.
 
 use std::ops::Deref;
 
+use crate::datetime::DateTimeUtc;
 use crate::elements::did::Did;
 
 /// The app-private, stable handle for an [`ActorIdentity`] row.
@@ -186,56 +191,65 @@ pub struct ActorIdentity {
     /// (DID-less actors, or not fetched yet). Rows are born uncached; the
     /// cache fills via [`crate::ports::ActorIdentityWrites::cache_handle`].
     pub handle: Option<String>,
+    /// When the Index first saw this actor. An explicit domain fact, injected
+    /// (tests and import flows stay deterministic) and immutable — re-seeing
+    /// an actor never restamps it.
+    pub first_seen: DateTimeUtc,
 }
 
 impl ActorIdentity {
     /// Mint a brand-new **DID-less** actor identity of `kind` with a fresh
-    /// UUIDv7 key. Any kind mints — the invariant is `did: None`, not the
-    /// kind (in the domain, Characters are the actors born DID-less,
-    /// DD `34013187`).
+    /// UUIDv7 key, first seen `now`. Any kind mints — the invariant is
+    /// `did: None`, not the kind (in the domain, Characters are the actors
+    /// born DID-less, DD `34013187`).
     ///
     /// Pure: this only builds the value — persisting it is
     /// [`crate::ports::ActorIdentityWrites::create`]'s job. Each call mints a
     /// distinct identity. DID-bearing actors go through
     /// [`crate::ports::ActorIdentityWrites::intern`] instead, which owns the
-    /// race-safe one-DID-one-actor upsert.
+    /// race-safe one-DID-one-actor upsert. `now` is injected so tests and
+    /// import flows stay deterministic.
     ///
     /// ```
+    /// use chrono::Utc;
     /// use domain::elements::actor_identity::{ActorIdentity, ActorKind};
     ///
-    /// let a = ActorIdentity::mint(ActorKind::Character);
-    /// let b = ActorIdentity::mint(ActorKind::Character);
+    /// let a = ActorIdentity::mint(ActorKind::Character, Utc::now());
+    /// let b = ActorIdentity::mint(ActorKind::Character, Utc::now());
     /// assert_ne!(a.id, b.id);
     /// assert_eq!(a.did, None);
     /// ```
-    pub fn mint(kind: ActorKind) -> Self {
+    pub fn mint(kind: ActorKind, now: DateTimeUtc) -> Self {
         Self {
             id: ActorIdentityId(uuid::Uuid::now_v7()),
             kind,
             did: None,
             state: ActorState::Active,
             handle: None,
+            first_seen: now,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
 
     /// Slice-1 base: every mint is a distinct row-to-be.
     #[test]
     fn mint_yields_distinct_ids() {
         assert_ne!(
-            ActorIdentity::mint(ActorKind::User).id,
-            ActorIdentity::mint(ActorKind::User).id
+            ActorIdentity::mint(ActorKind::User, Utc::now()).id,
+            ActorIdentity::mint(ActorKind::User, Utc::now()).id
         );
     }
 
     /// The id round-trips through its stored UUID (the read-back path).
     #[test]
     fn id_rebuilds_from_stored_uuid() {
-        let minted = ActorIdentity::mint(ActorKind::Account);
+        let minted = ActorIdentity::mint(ActorKind::Account, Utc::now());
         assert_eq!(ActorIdentityId::new(*minted.id), minted.id);
     }
 
@@ -268,7 +282,7 @@ mod tests {
             Err(UnknownActorState("deleted".to_string()))
         );
         assert_eq!(
-            ActorIdentity::mint(ActorKind::User).state,
+            ActorIdentity::mint(ActorKind::User, Utc::now()).state,
             ActorState::Active
         );
     }
