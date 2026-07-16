@@ -23,36 +23,25 @@ use domain::{
     },
 };
 use serde_json::json;
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
 /// The ZMVP-71 migration (create `commission_node` + root backfill), as sqlx
 /// numbers it. The backfill test runs everything *before* this version, seeds
 /// pre-tree commissions, then lets the full migrator catch up.
 const COMMISSION_NODE_MIGRATION: i64 = 20260705150000;
 
-/// Boots a fresh database and runs all migrations. The container is returned so
-/// the caller keeps it alive for the test's duration.
+/// A fresh, fully migrated private database — a clone of the shared template
+/// (see `test_support::pg`). The second element keeps the shared container
+/// alive for the test's duration.
 async fn fresh_pool() -> (PgPool, impl Sized) {
-    let (pool, container) = bare_pool().await;
-    adapter_pg::migrate(&pool).await.expect("migrations run");
-    (pool, container)
+    test_support::pg::fresh_pool().await
 }
 
-/// Boots a fresh database with NO migrations applied.
+/// A fresh, empty private database with NO migrations applied (the backfill
+/// tests drive the migrator themselves).
 async fn bare_pool() -> (PgPool, impl Sized) {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("postgres container should start");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped postgres port");
-    let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = adapter_pg::connect(&database_url)
-        .await
-        .expect("pool connects");
-    (pool, container)
+    let db = test_support::pg::bare_db().await;
+    let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
+    (pool, db)
 }
 
 /// Recognize a visitor in its own committed unit of work

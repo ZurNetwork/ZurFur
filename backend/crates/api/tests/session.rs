@@ -8,24 +8,16 @@ use std::sync::Arc;
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 #[tokio::test]
 async fn me_redirects_anonymous_visitor_to_sign_in() {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("postgres container should start");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped postgres port");
-    let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    // A migrated clone of the shared template database (see `test_support::pg`).
+    let db = test_support::pg::fresh_db().await;
+    let database_url = db.url().to_string();
     let pool = adapter_pg::connect(&database_url)
         .await
         .expect("pool connects");
-    adapter_pg::migrate(&pool).await.expect("migrations run");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

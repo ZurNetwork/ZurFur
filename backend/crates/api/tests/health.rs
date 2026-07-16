@@ -2,26 +2,17 @@ use std::sync::Arc;
 
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
-
-/// Boots the app against a throwaway PostgreSQL container and expects a green
+/// Boots the app against a throwaway PostgreSQL database and expects a green
 /// /health. Requires a container runtime socket (DOCKER_HOST honored).
 #[tokio::test]
 async fn health_is_green_against_fresh_postgres() {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("postgres container should start");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped postgres port");
-    let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    // A migrated clone of the shared template database (see `test_support::pg`).
+    let db = test_support::pg::fresh_db().await;
+    let database_url = db.url().to_string();
 
     let pool = adapter_pg::connect(&database_url)
         .await
         .expect("pool connects");
-    adapter_pg::migrate(&pool).await.expect("migrations run");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

@@ -30,7 +30,9 @@ query-codegen = { path = "../query-codegen" }
 # The prepare-test gate also iterates adapter-atproto's registry (its queries run
 # against tables these migrations create).
 adapter-atproto = { path = "../adapter-atproto/" }
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
+# Shared template-database harness (one container per test process); the
+# test-support → adapter-pg edge back this way is the standard cargo dev-cycle.
+test-support = { path = "../test-support" }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }

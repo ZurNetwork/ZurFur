@@ -32,7 +32,6 @@ dependencies = [
  "smol_str",
  "sqlx",
  "test-support",
- "testcontainers-modules",
  "tokio",
  "tracing",
 ]
@@ -68,7 +67,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "sqlx-rust-codegen",
- "testcontainers-modules",
+ "test-support",
  "time",
  "tokio",
  "tower-sessions-core",
@@ -156,7 +155,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
- "testcontainers-modules",
+ "test-support",
  "tokio",
  "tower-sessions",
  "tracing",
@@ -4903,6 +4902,7 @@ dependencies = [
 name = "test-support"
 version = "0.1.0"
 dependencies = [
+ "adapter-pg",
  "anyhow",
  "atrium-crypto",
  "axum",
@@ -4912,8 +4912,11 @@ dependencies = [
  "rand 0.8.6",
  "reqwest 0.12.28",
  "serde_json",
+ "sqlx",
  "testcontainers",
+ "testcontainers-modules",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

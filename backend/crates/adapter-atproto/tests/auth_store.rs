@@ -14,26 +14,14 @@ use jacquard_oauth::{
     utils::generate_key,
 };
 use smol_str::SmolStr;
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 
-/// Boots a fresh database, runs the real migrations (which create the
-/// `atproto_oauth` schema), and returns the store. The container is returned too
-/// so the caller keeps it alive for the test's duration.
+/// A store on a fresh, fully migrated private database (a clone of the shared
+/// template, which the real migrations gave the `atproto_oauth` schema — see
+/// `test_support::pg`). The second element keeps the shared container alive
+/// for the test's duration.
 async fn fresh_store() -> (AtprotoAuthStore, impl Sized) {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("postgres container should start");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped postgres port");
-    let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = adapter_pg::connect(&database_url)
-        .await
-        .expect("pool connects");
-    adapter_pg::migrate(&pool).await.expect("migrations run");
-    (AtprotoAuthStore::new(pool), container)
+    let (pool, db) = test_support::pg::fresh_pool().await;
+    (AtprotoAuthStore::new(pool), db)
 }
 
 fn client_session(did: &'static str, session_id: &'static str) -> ClientSessionData {

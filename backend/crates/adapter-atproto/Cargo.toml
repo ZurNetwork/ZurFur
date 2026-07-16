@@ -44,7 +44,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Boots a throwaway Postgres so the store round-trips against the real migration.
 # adapter-pg (test-only) supplies connect + migrate; this is not a runtime edge.
 adapter-pg = { path = "../adapter-pg" }
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
 tokio = { workspace = true }
 # The in-memory KeyStore fake, so RealDidMinter unit-tests need no database.
 adapter-mem = { path = "../adapter-mem" }
