@@ -191,7 +191,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             &mut *self.conn,
             *root.id,
             *commission.id,
-            root.mode.as_str(),
+            Some(root.mode.as_str()),
             *root.created_by,
             root.created_at,
         )
@@ -225,8 +225,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             &mut *self.conn,
             *surface.id,
             *surface.commission_id,
-            *surface.parent,
-            mode.as_str(),
+            Some(*surface.parent),
+            Some(mode.as_str()),
             *surface.created_by,
             surface.created_at,
         )
@@ -250,7 +250,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             &mut *self.conn,
             *component.id,
             *component.commission_id,
-            *component.parent,
+            Some(*component.parent),
             *component.created_by,
             component.created_at,
             &component.payload,
@@ -342,7 +342,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
                 &mut *self.conn,
                 *slot.id,
                 *slot.commission_id,
-                *slot.parent,
+                Some(*slot.parent),
                 *slot.created_by,
                 slot.created_at,
             )
@@ -415,8 +415,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         sql::set_maturity(
             &mut *self.conn,
             *id,
-            maturity.rating.as_str(),
-            maturity.graphic,
+            Some(maturity.rating.as_str()),
+            Some(maturity.graphic),
         )
         .await?;
         Ok(())
@@ -439,7 +439,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             &mut *self.conn,
             *seat.id,
             *seat.commission_id,
-            *seat.parent,
+            Some(*seat.parent),
             *seat.created_by,
             seat.created_at,
         )
@@ -618,14 +618,21 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 }
 
 /// Attach the commission id a placement row was queried by, yielding the domain
-/// [`Placement`] (the generated row carries the other four columns).
-fn to_placement(row: sql::PlacementRow, commission_id: CommissionId) -> Placement {
+/// [`Placement`]. Takes the four row columns directly — the log and
+/// current-pointer queries generate identically-shaped but distinct row types.
+fn to_placement(
+    seq: i64,
+    account_id: uuid::Uuid,
+    placed_by: uuid::Uuid,
+    placed_at: chrono::DateTime<chrono::Utc>,
+    commission_id: CommissionId,
+) -> Placement {
     Placement {
-        seq: row.seq,
+        seq,
         commission_id,
-        account_id: AccountId::new(row.account_id),
-        placed_by: UserId::new(row.placed_by),
-        placed_at: row.placed_at,
+        account_id: AccountId::new(account_id),
+        placed_by: UserId::new(placed_by),
+        placed_at,
     }
 }
 
@@ -729,7 +736,15 @@ impl CommissionStore for PgCommissionStore {
         commission: CommissionId,
     ) -> anyhow::Result<Option<Placement>> {
         let row = sql::current_placement(&self.pool, *commission).await?;
-        Ok(row.map(|row| to_placement(row, commission)))
+        Ok(row.map(|row| {
+            to_placement(
+                row.seq,
+                row.account_id,
+                row.placed_by,
+                row.placed_at,
+                commission,
+            )
+        }))
     }
 
     /// The whole placement log in append order (ascending `seq`) — the current
@@ -739,7 +754,15 @@ impl CommissionStore for PgCommissionStore {
         let rows = sql::placement_log(&self.pool, *commission).await?;
         Ok(rows
             .into_iter()
-            .map(|row| to_placement(row, commission))
+            .map(|row| {
+                to_placement(
+                    row.seq,
+                    row.account_id,
+                    row.placed_by,
+                    row.placed_at,
+                    commission,
+                )
+            })
             .collect())
     }
 

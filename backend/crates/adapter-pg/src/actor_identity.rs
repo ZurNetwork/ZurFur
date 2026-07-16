@@ -87,7 +87,9 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             &mut *self.conn,
             candidate,
             kind.as_str(),
-            did.as_str(),
+            // The inferred contract widens to Option (the column is nullable);
+            // intern is the DID-bearing path, so the value is always present.
+            Some(did.as_str()),
             ActorState::Active.as_str(),
             now,
         )

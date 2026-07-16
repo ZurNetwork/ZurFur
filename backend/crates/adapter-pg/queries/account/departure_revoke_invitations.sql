@@ -1,4 +1,4 @@
--- params: revoked_state, updated_at, account_id, inviter, pending_state
--- fetch: execute
-UPDATE account_invitations SET state = $1, updated_at = $2
-WHERE account_id = $3 AND inviter = $4 AND state = $5
+-- state receives the revoked state; inv_state selects the departing inviter's
+-- still-pending invitations.
+UPDATE account_invitations AS inv SET state = $1, updated_at = $2
+WHERE inv.account_id = $3 AND inv.inviter = $4 AND inv.state = $5

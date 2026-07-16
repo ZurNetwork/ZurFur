@@ -1,7 +1,5 @@
--- params: now, terminal_lifecycles
--- fetch: many
--- row: LapsedRow
--- not_null: deadline
+-- The deadline param receives the sweep instant ("now"); lifecycle takes the
+-- terminal lifecycles exempt from lapsing.
 SELECT c.id, c.deadline, c.deadline_status
 FROM commission c
 WHERE c.deadline IS NOT NULL
