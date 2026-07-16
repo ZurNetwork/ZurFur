@@ -54,7 +54,7 @@ async fn committed_query_modules_match_a_fresh_regeneration() {
     let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     for adapter in ["adapter-pg", "adapter-atproto"] {
         let queries = crates_dir.join(adapter).join("queries");
-        let regenerated = query_codegen::generate(&mut conn, &queries)
+        let regenerated = sqlx_rust_codegen::generate(&mut conn, &queries)
             .await
             .unwrap_or_else(|e| panic!("{adapter}: regeneration failed: {e:#}"));
 
