@@ -48,6 +48,7 @@
 pub mod contract;
 mod fixture;
 mod pds;
+pub mod pg;
 mod plc_stub;
 
 pub use fixture::{ActingCredential, FixtureAccount};

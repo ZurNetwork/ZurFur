@@ -27,5 +27,6 @@ adapter-mem = { path = "../adapter-mem" }
 # Implement port-trait test doubles (the fact-bearing unit-of-work wrapper in
 # the ZMVP-66 delete tests) against the async port traits.
 async-trait = { workspace = true }
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
+# Shared template-database harness (one Postgres container per test process).
+test-support = { path = "../test-support" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }

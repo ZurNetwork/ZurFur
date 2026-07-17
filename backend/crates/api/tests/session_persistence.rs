@@ -18,7 +18,6 @@ use adapter_pg::{PgPool, PgSessionStore};
 use api::{AppState, Config, Environment};
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
 use tower_sessions::SessionManagerLayer;
 
 /// Builds the app router wired to a fresh `PgSessionStore` over `pool`, serves it
@@ -75,20 +74,9 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
 async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     let did = "did:plc:persistalice";
 
-    // Spin up Postgres and run migrations (mirrors adapter-pg's session_store tests).
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("postgres container should start");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped postgres port");
-    let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = adapter_pg::connect(&database_url)
-        .await
-        .expect("pool connects");
-    adapter_pg::migrate(&pool).await.expect("migrations run");
+    // A migrated clone of the shared template database (see `test_support::pg`);
+    // `_db` keeps the shared container alive across both app instances.
+    let (pool, _db) = test_support::pg::fresh_pool().await;
 
     // The user the cookie will point at. Shared across both app instances so the
     // "restart" resolves the same identity — the durable part under test is the

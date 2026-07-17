@@ -18,8 +18,16 @@ serde_json = { workspace = true }
 rand = { workspace = true }
 data-encoding = { workspace = true }
 # Same version testcontainers-modules 0.15 (the Postgres harness) resolves to;
-# this crate drives a GenericImage, so it needs the core crate only.
+# the PDS drives a GenericImage from the core crate, the shared Postgres
+# harness (`pg`) drives the postgres module.
 testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+# The shared Postgres harness migrates the template once and vends adapter-pg
+# pools; the consuming adapters dev-depend back on this crate (the standard
+# cargo dev-cycle).
+adapter-pg = { path = "../adapter-pg" }
+sqlx = { workspace = true }
+uuid = { workspace = true }
 # Plain-HTTP XRPC against 127.0.0.1 — no TLS backend needed.
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
