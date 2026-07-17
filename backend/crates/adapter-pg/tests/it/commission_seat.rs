@@ -3,9 +3,12 @@
 //! the migration backfills one for commissions that predate the table);
 //! `is_participant` reads the membership record, not the owner column; the
 //! owner's row is the irremovable permanent floor (while the commission-delete
-//! cascade still sweeps everything); and a declared Seat lands as one component
-//! node plus its interpreted satellite sharing the id, read back through
-//! `seats()`. Requires a container runtime socket (DOCKER_HOST honored).
+//! cascade still sweeps everything); a re-add for an already-seated pair is a
+//! silent no-op that preserves the original created_at (ZMVP-140, ahead of
+//! ZMVP-79's seat acceptance re-adding an existing participant); and a
+//! declared Seat lands as one component node plus its interpreted satellite
+//! sharing the id, read back through `seats()`. Requires a container runtime
+//! socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
@@ -16,7 +19,7 @@ use domain::{
             SeatLink, SeatPrompt,
         },
         did::Did,
-        user::User,
+        user::{User, UserId},
     },
     ports::{CommissionStore, Database, ParentNodeNotFound},
 };
@@ -224,6 +227,72 @@ async fn the_migration_backfills_the_owners_participant_row() {
             .await
             .expect("predicate")
     );
+}
+
+// ZMVP-140 — a second add_participant for a pair that's already a member is a
+// silent no-op (`ON CONFLICT (commission_id, user_id) DO NOTHING`): no
+// duplicate row lands, and the original created_at is preserved rather than
+// overwritten by the re-add's. This is the invariant ZMVP-79's seat
+// acceptance will lean on — a User who already holds one seat and is seated
+// into another must not double-insert or clobber their first membership
+// instant.
+#[tokio::test]
+async fn add_participant_is_idempotent_for_an_already_seated_pair() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:reseat-owner").await;
+    let seated = provision(&pool, "did:plc:reseat-seated").await;
+    let commission = create_commission(&pool, &owner, "Reseated").await;
+
+    let first_created_at = Utc::now();
+    adapter_pg::queries::commission::add_participant(
+        &pool,
+        *commission.id,
+        *seated.id,
+        first_created_at,
+    )
+    .await
+    .expect("first add lands a row");
+    let stored_after_first = created_at_of(&pool, commission.id, seated.id).await;
+
+    let second_created_at = first_created_at + chrono::Duration::hours(1);
+    let rows_affected = adapter_pg::queries::commission::add_participant(
+        &pool,
+        *commission.id,
+        *seated.id,
+        second_created_at,
+    )
+    .await
+    .expect("a re-add is a no-op, not an error");
+    assert_eq!(rows_affected, 0, "the conflict is silently dropped");
+
+    let rows_for_seated = participant_rows(&pool, commission.id)
+        .await
+        .into_iter()
+        .filter(|id| *id == *seated.id)
+        .count();
+    assert_eq!(rows_for_seated, 1, "no duplicate row");
+
+    let stored_after_second = created_at_of(&pool, commission.id, seated.id).await;
+    assert_eq!(
+        stored_after_second, stored_after_first,
+        "the original created_at survives the re-add"
+    );
+}
+
+/// The stored `created_at` for one participant membership row.
+async fn created_at_of(
+    pool: &PgPool,
+    commission: CommissionId,
+    user: UserId,
+) -> chrono::DateTime<Utc> {
+    sqlx::query_scalar(
+        "SELECT created_at FROM commission_participant WHERE commission_id = $1 AND user_id = $2",
+    )
+    .bind(*commission)
+    .bind(*user)
+    .fetch_one(pool)
+    .await
+    .expect("fetch created_at")
 }
 
 // The permanent floor — the owner's participant row refuses a direct DELETE at
