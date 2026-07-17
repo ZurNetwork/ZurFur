@@ -19,7 +19,6 @@ pub use commission::{
 pub use file::FileStore;
 
 use std::future::Future;
-use std::pin::Pin;
 
 use async_trait::async_trait;
 
@@ -100,40 +99,47 @@ pub trait UnitOfWork: Send {
     async fn rollback(self: Box<Self>) -> anyhow::Result<()>;
 }
 
-/// Run `f` inside one private-store transaction. Opens a [`UnitOfWork`] via
-/// [`Database::begin`], hands it to `f`, then **commits on `Ok`, rolls back on
-/// `Err`** — the closure body *is* the transaction boundary, so a commit can never
-/// be forgotten. Strictly intra-Postgres; never a cross-store dual write.
+/// The bound a transaction body closure must satisfy: callable once with a
+/// borrowed [`UnitOfWork`] for *any* lifetime `'a`, yielding a `Send` future for
+/// that same `'a` (so the enclosing transaction future stays `Send` — the bound
+/// Axum requires of a handler future). Consumed by the `api` crate's
+/// `AppState::transaction` — the sole orchestrator of `begin`/`commit`/`rollback`
+/// around a unit of work (ZMVP-111; DD `24150017`) — so a call site writes
+/// `state.transaction(async |uow: &mut dyn UnitOfWork| { … }).await?` with no
+/// `Box::pin` and no reach into `state.database` directly.
 ///
-/// `f` is a plain closure that returns a boxed, `Send` future
-/// (`|uow| Box::pin(async move { … })`) rather than an `async |uow| …` closure. An
-/// `AsyncFnOnce(&mut dyn UnitOfWork)` bound would be more ergonomic, but an async
-/// closure whose future borrows its `&mut` argument cannot satisfy the *higher-ranked*
-/// `Send` bound Axum requires of a handler future (rust-lang/rust#100013 — "implementation
-/// of `AsyncFnOnce` is not general enough"). Boxing the future — the same shape sqlx's
-/// own transaction-closure API uses — sidesteps that limitation while keeping one call:
-/// `commit`/`rollback` is still impossible to forget.
-pub async fn transaction<T, F>(db: &dyn Database, f: F) -> anyhow::Result<T>
+/// **Why a custom trait instead of std's [`AsyncFnOnce`]** (the std-trait-first
+/// rule): the natural signature —
+/// `for<'a> AsyncFnOnce(&'a mut dyn UnitOfWork) -> anyhow::Result<T>` — is the
+/// contract this exists to express, but the compiler cannot currently prove an
+/// `async |uow| …` closure satisfies `AsyncFnOnce` at that higher rank: it unifies
+/// the input borrow and the output future to one concrete lifetime instead of
+/// staying generic over `'a`, so the bound only holds for a single caller-chosen
+/// lifetime rather than *every* lifetime — "implementation of `AsyncFnOnce` is not
+/// general enough" (rust-lang/rust#110338, reproduced against this exact shape on
+/// 2026-07-17: it also fails via the older #100013 diagnostic once boxed at the
+/// port). Routing the same bound through a plain [`FnOnce`] — via this trait's
+/// blanket [`impl`] — sidesteps the bug: plain `Fn*` traits don't carry the
+/// higher-ranked lifetime through an opaque associated-type projection the way
+/// `AsyncFnOnce` does, and an `async` closure *also* implements the plain `Fn*`
+/// traits (returning its opaque future type), so `async |uow: &mut dyn
+/// UnitOfWork| { … }` satisfies this trait's blanket impl at every rank the
+/// caller needs — no `Box::pin` required anywhere, at the port or the call site.
+pub trait UnitOfWorkFn<'a, T>: FnOnce(&'a mut dyn UnitOfWork) -> Self::Fut {
+    /// The future `Self` returns when called — named so a `for<'a>` bound on this
+    /// trait can require it `Send + 'a` without knowing the closure's concrete type.
+    /// `Fut: Send` alone does not make an enclosing future `Send`: the caller
+    /// (the api orchestrator) additionally bounds the closure and `T` as `Send`,
+    /// since both are held across its `.await` points.
+    type Fut: Future<Output = anyhow::Result<T>> + Send + 'a;
+}
+
+impl<'a, T, F, Fut> UnitOfWorkFn<'a, T> for F
 where
-    F: for<'a> FnOnce(
-        &'a mut Box<dyn UnitOfWork>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>,
+    F: FnOnce(&'a mut dyn UnitOfWork) -> Fut,
+    Fut: Future<Output = anyhow::Result<T>> + Send + 'a,
 {
-    let mut uow = db.begin().await?;
-    match f(&mut uow).await {
-        Ok(value) => {
-            uow.commit().await?;
-            Ok(value)
-        }
-        Err(err) => {
-            // The closure's error is the meaningful one (e.g. `HandleTaken` → 409);
-            // a rollback failure must never replace it. The unit is abandoned either
-            // way (an uncommitted transaction also rolls back on drop), so a rollback
-            // error here is secondary and deliberately not surfaced over `err`.
-            let _ = uow.rollback().await;
-            Err(err)
-        }
-    }
+    type Fut = Fut;
 }
 
 /// The write surface of Zurfur's record of recognized visitors — reachable only

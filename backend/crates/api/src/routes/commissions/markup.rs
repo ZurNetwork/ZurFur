@@ -27,7 +27,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{ChangelogEntryKind, CommissionId, FileKey, Markup, NewChangelogEntry},
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde_json::json;
 use tower_sessions::Session;
@@ -84,10 +84,9 @@ pub(super) async fn add_markup(
         }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.changelog().append(&entry).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| uow.changelog().append(&entry).await)
+        .await?;
 
     Ok(StatusCode::CREATED.into_response())
 }

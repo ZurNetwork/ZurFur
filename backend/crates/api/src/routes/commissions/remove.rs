@@ -17,7 +17,7 @@ use axum::{
 };
 use domain::{
     elements::commission::{CommissionId, NodeId},
-    ports::{CannotRemoveRoot, NodeNotFound, transaction},
+    ports::{CannotRemoveRoot, NodeNotFound, UnitOfWork},
 };
 use tower_sessions::Session;
 use uuid::Uuid;
@@ -50,19 +50,20 @@ pub(super) async fn remove_node(
     require_owner(&state, commission, &user).await?;
 
     let node = NodeId::new(node);
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.commissions().remove_node(commission, node).await })
-    })
-    .await
-    .map_err(|err| {
-        if err.downcast_ref::<NodeNotFound>().is_some() {
-            Problem::node_not_found()
-        } else if err.downcast_ref::<CannotRemoveRoot>().is_some() {
-            Problem::cannot_remove_root()
-        } else {
-            err.into()
-        }
-    })?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().remove_node(commission, node).await
+        })
+        .await
+        .map_err(|err| {
+            if err.downcast_ref::<NodeNotFound>().is_some() {
+                Problem::node_not_found()
+            } else if err.downcast_ref::<CannotRemoveRoot>().is_some() {
+                Problem::cannot_remove_root()
+            } else {
+                err.into()
+            }
+        })?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

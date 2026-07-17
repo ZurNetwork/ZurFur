@@ -28,7 +28,7 @@ use domain::{
         did::Did,
         invitation::InvitationState,
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -107,10 +107,11 @@ pub(super) async fn invite_to_seat(
 
     // Recognize the invitee by DID (idempotent), its own unit of work — settled
     // before the offer is issued, as with the account invite.
-    let invited = transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.users().provision(&Did::new(body.user)).await })
-    })
-    .await?;
+    let invited = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.users().provision(&Did::new(body.user)).await
+        })
+        .await?;
 
     // Idempotent re-invite: an existing pending offer to this seat is returned, not
     // a second row.
@@ -132,10 +133,11 @@ pub(super) async fn invite_to_seat(
 
     let invitation = SeatInvitation::issue(commission, seat, invited.id, user.id, Utc::now());
     let minted = invitation.id;
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.commissions().create_seat_invitation(&invitation).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().create_seat_invitation(&invitation).await
+        })
+        .await?;
 
     // Answer from the row that actually survives: a duplicate invite racing past
     // the pending check above is dropped by the store (`ON CONFLICT … DO
@@ -247,14 +249,13 @@ pub(super) async fn revoke_seat_invitation(
     invitation.revoke(Utc::now()).map_err(|_| {
         Problem::internal_error("Could not revoke the invitation. Please try again.")
     })?;
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions()
                 .revoke_seat_invitation(invitation.id)
                 .await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(revoked())
 }

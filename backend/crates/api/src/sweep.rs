@@ -35,9 +35,11 @@ use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
     elements::commission::{ChangelogEntryKind, NewChangelogEntry},
-    ports::{Database, transaction},
+    ports::{Database, UnitOfWork},
 };
 use serde_json::json;
+
+use crate::transaction;
 
 /// Run **one** deadline sweep as of `now` (injected, never read from a wall
 /// clock here — deterministic by construction), returning how many commissions
@@ -55,26 +57,24 @@ use serde_json::json;
 /// for the same commission takes a fresh deadline miss (extend, then miss
 /// again).
 pub async fn sweep_deadlines(database: &dyn Database, now: DateTimeUtc) -> anyhow::Result<usize> {
-    transaction(database, |uow| {
-        Box::pin(async move {
-            let lapsed = uow.commissions().lapsed_deadlines(now).await?;
-            for lapse in &lapsed {
-                // Log-only: `Late` is derived on lookup and never persisted
-                // (Engineer ruling 2026-07-08). This pass just records the
-                // transition once, so hooks/plugins have an event to consume.
-                let entry = NewChangelogEntry::system(
-                    lapse.id,
-                    ChangelogEntryKind::Late,
-                    json!({
-                        "deadline": lapse.deadline,
-                        "from": lapse.status.map(|s| s.as_str()),
-                    }),
-                    now,
-                );
-                uow.changelog().append(&entry).await?;
-            }
-            Ok(lapsed.len())
-        })
+    transaction(database, async move |uow: &mut dyn UnitOfWork| {
+        let lapsed = uow.commissions().lapsed_deadlines(now).await?;
+        for lapse in &lapsed {
+            // Log-only: `Late` is derived on lookup and never persisted
+            // (Engineer ruling 2026-07-08). This pass just records the
+            // transition once, so hooks/plugins have an event to consume.
+            let entry = NewChangelogEntry::system(
+                lapse.id,
+                ChangelogEntryKind::Late,
+                json!({
+                    "deadline": lapse.deadline,
+                    "from": lapse.status.map(|s| s.as_str()),
+                }),
+                now,
+            );
+            uow.changelog().append(&entry).await?;
+        }
+        Ok(lapsed.len())
     })
     .await
 }

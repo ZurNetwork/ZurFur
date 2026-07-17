@@ -24,7 +24,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewSlot, NodeId, SlotTitle},
-    ports::{ParentNodeNotFound, ParentNotASurface, transaction},
+    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -108,19 +108,20 @@ pub(super) async fn declare_slots(
     }
     let node_ids: Vec<Uuid> = slots.iter().map(|slot| *slot.id).collect();
 
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.commissions().declare_slots(&slots).await })
-    })
-    .await
-    .map_err(|err| {
-        if err.downcast_ref::<ParentNodeNotFound>().is_some() {
-            Problem::node_not_found()
-        } else if err.downcast_ref::<ParentNotASurface>().is_some() {
-            Problem::parent_not_a_surface()
-        } else {
-            err.into()
-        }
-    })?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().declare_slots(&slots).await
+        })
+        .await
+        .map_err(|err| {
+            if err.downcast_ref::<ParentNodeNotFound>().is_some() {
+                Problem::node_not_found()
+            } else if err.downcast_ref::<ParentNotASurface>().is_some() {
+                Problem::parent_not_a_surface()
+            } else {
+                err.into()
+            }
+        })?;
 
     Ok((StatusCode::CREATED, Json(json!({ "ids": node_ids }))).into_response())
 }

@@ -30,7 +30,7 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, DeadlineStatus, NewChangelogEntry},
         user::UserId,
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -145,13 +145,12 @@ async fn apply_deadline(
         json!({ "from": from, "to": to }),
         now,
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().set_deadline(commission, to).await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -255,15 +254,14 @@ async fn apply_deadline_status(
         }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions()
                 .set_deadline_status(commission, to)
                 .await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

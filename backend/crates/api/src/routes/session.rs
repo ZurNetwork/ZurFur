@@ -17,7 +17,7 @@ use axum::{
 };
 use domain::{
     elements::{did::Did, profile::Profile, user::UserId},
-    ports::{ProfileCache, ProfileSource},
+    ports::{ProfileCache, ProfileSource, UnitOfWork},
 };
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -203,13 +203,9 @@ async fn signin_callback(
     // the first sign-in for this DID and returns the existing one on every repeat
     // (idempotent — one DID, one User, forever). The human fills out nothing.
     // Recognition is a private-store write, so it goes through one unit of work.
-    let provisioned = async {
-        let mut uow = state.database.begin().await?;
-        let user = uow.users().provision(&did).await?;
-        uow.commit().await?;
-        anyhow::Ok(user)
-    }
-    .await;
+    let provisioned = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| uow.users().provision(&did).await)
+        .await;
     let user = match provisioned {
         Ok(user) => user,
         Err(_) => {

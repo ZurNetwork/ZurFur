@@ -19,7 +19,7 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, DirectionStatus, NewChangelogEntry},
         user::UserId,
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -124,8 +124,8 @@ async fn apply_direction_status(
         }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             // Gate the changelog entry on the atomic `changed` flag the write
             // returns (`… IS DISTINCT FROM`), so a value that raced to `to`
             // between the read above and this write appends no spurious entry —
@@ -139,8 +139,7 @@ async fn apply_direction_status(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

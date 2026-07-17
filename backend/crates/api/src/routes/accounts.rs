@@ -35,7 +35,7 @@ use domain::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
-use domain::ports::{HandleTaken, transaction};
+use domain::ports::{HandleTaken, UnitOfWork};
 use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
@@ -333,19 +333,17 @@ async fn create_account(
     // One unit of work: the account row and the founder's Owner membership commit
     // together or not at all — reached through the transaction-bound write view. A
     // handle collision surfaces as `HandleTaken` (the global unique index — live or
-    // tombstoned, DD 23003138); map it to a 409 rather than a 500. On any error the
-    // `transaction` helper rolls the unit back and preserves *this* error (never the
+    // tombstoned, DD 23003138); map it to a 409 rather than a 500. On any error
+    // `state.transaction` rolls the unit back and preserves *this* error (never the
     // rollback's), so the 409 downcast below still sees `HandleTaken`.
-    // The boxed transaction future owns what it writes (it cannot borrow this stack
-    // frame across the `for<'a>` boundary), so `account`/`owner` move in and the
-    // committed `account` is handed back out for the response body.
-    let account = match transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    // The `async move` closure owns what it writes, so `account`/`owner` move in
+    // and the committed `account` is handed back out for the response body.
+    let account = match state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.accounts().create(&account, &owner).await?;
             Ok(account)
         })
-    })
-    .await
+        .await
     {
         Ok(account) => account,
         Err(err) => {
@@ -446,16 +444,18 @@ async fn delete_account(
     // empty. Both are one private-store transaction on the write view.
     if account_has_facts(&state, account.id).await? {
         let account_id = account.id;
-        transaction(&*state.database, |uow| {
-            Box::pin(async move { uow.accounts().soft_delete(account_id).await })
-        })
-        .await?;
+        state
+            .transaction(async move |uow: &mut dyn UnitOfWork| {
+                uow.accounts().soft_delete(account_id).await
+            })
+            .await?;
     } else {
         let account_id = account.id;
-        transaction(&*state.database, |uow| {
-            Box::pin(async move { uow.accounts().hard_delete(account_id).await })
-        })
-        .await?;
+        state
+            .transaction(async move |uow: &mut dyn UnitOfWork| {
+                uow.accounts().hard_delete(account_id).await
+            })
+            .await?;
 
         // The private hard-delete above already freed the handle. Tombstoning the
         // account's `did:plc` is a separate, retryable **public** step — never a
@@ -610,19 +610,18 @@ async fn change_handle(
     // Private half (DD §7): repoint `accounts.handle` (which flips the handle→DID
     // resolver) and record the change (the rate-limit + quarantine source) in ONE unit
     // of work. A collision with the global handle index maps to 409, exactly as founding
-    // does. `old`/`new` move into the boxed future; `new` is cloned so the response can
+    // does. `old`/`new` move into the closure; `new` is cloned so the response can
     // still name it.
     let old = account.handle.clone();
     let account_id = account.id;
     let new_stored = new.clone();
-    if let Err(err) = transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    if let Err(err) = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.accounts()
                 .change_handle(account_id, &old, &new_stored, now)
                 .await
         })
-    })
-    .await
+        .await
     {
         if err.downcast_ref::<HandleTaken>().is_some() {
             return Err(Problem::handle_taken());
@@ -674,14 +673,13 @@ async fn accept_invitation(
 
     // Flip the offer to accepted and seat the member in one transaction; a revoke
     // or accept that wins the race inside the write view seats no member.
-    let accepted = transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    let accepted = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.accounts()
                 .accept_invitation(invitation, body.listed_on_profile)
                 .await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(ok_json(json!({
         "account": accepted.account_id.to_string(),
@@ -715,10 +713,11 @@ async fn leave_account(
 
     // Re-home the leaver's children, delete the membership, and revoke their
     // pending issued invitations — atomically, on the transaction-bound view.
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.accounts().leave(leaving_user.id, account).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.accounts().leave(leaving_user.id, account).await
+        })
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -786,10 +785,11 @@ async fn grant_role(
     // signed in is how an Owner adds them; they resolve to the same User when they do.
     // Recognition is its own unit of work, settled before the grant (as before the
     // Unit-of-Work refactor): an idempotent recognize, independent of the grant.
-    let grantee = transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.users().provision(&Did::new(body.user)).await })
-    })
-    .await?;
+    let grantee = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.users().provision(&Did::new(body.user)).await
+        })
+        .await?;
 
     // The guard above bounds the role being *granted*; this bounds the *grantee*.
     // An account's Owner is never demoted through a grant — ownership only moves via
@@ -806,15 +806,14 @@ async fn grant_role(
         account_id: account.id,
         role: new_role,
     };
-    // `member` moves into the boxed future (it can't be borrowed across `for<'a>`);
-    // the granted role is returned back out for the response body.
-    let granted_role = transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    // `member` moves into the closure; the granted role is returned back out for
+    // the response body.
+    let granted_role = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.accounts().grant_role(&member).await?;
             Ok(member.role)
         })
-    })
-    .await?;
+        .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -885,10 +884,11 @@ async fn revoke_role(
 
     // Settle the revoke: remove the membership (and re-home children + revoke the
     // member's pending issued invitations) atomically, on the write view.
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.accounts().revoke_role(target.id, account.id).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.accounts().revoke_role(target.id, account.id).await
+        })
+        .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -953,10 +953,11 @@ async fn invite_user_to_account(
 
     // Recognize the invitee (idempotent), its own unit of work — settled before
     // the offer is issued, as before the Unit-of-Work refactor.
-    let invited = transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.users().provision(&Did::new(body.user)).await })
-    })
-    .await?;
+    let invited = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.users().provision(&Did::new(body.user)).await
+        })
+        .await?;
 
     // An invitation is the path *to* membership; someone who already holds a role has
     // nowhere to be invited. This is a state conflict (409), not an authority failure
@@ -990,10 +991,11 @@ async fn invite_user_to_account(
     let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
     let minted = invitation.id;
     // The write only persists; the response body is built from the re-read below.
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.accounts().create_invitation(&invitation).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.accounts().create_invitation(&invitation).await
+        })
+        .await?;
 
     // Answer from the row that actually survives: a duplicate invite racing past
     // the pending check above is dropped by the store (`ON CONFLICT … DO
@@ -1130,10 +1132,11 @@ async fn revoke_invitation_to_account(
             "Could not revoke invitation. Please try again.",
         ));
     }
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.accounts().revoke_invitation(invitation.id).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.accounts().revoke_invitation(invitation.id).await
+        })
+        .await?;
 
     Ok(revoked())
 }
@@ -1168,10 +1171,11 @@ async fn decline_invitation(
             "Could not decline the invitation. Please try again.",
         ));
     }
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.accounts().revoke_invitation(invitation.id).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.accounts().revoke_invitation(invitation.id).await
+        })
+        .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),
@@ -1259,14 +1263,13 @@ async fn transfer_ownership(
     // atomically, on the transaction-bound write view. Only the `Copy` ids are
     // captured by the future, so the `User`/`Account` structs stay owned here for the
     // response body below (the same shape as `leave_account`).
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.accounts()
                 .transfer_ownership(old_owner.id, new_owner.id, account.id)
                 .await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(ok_json(json!({
         "account": account.id.to_string(),

@@ -12,7 +12,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewChangelogEntry},
-    ports::transaction,
+    ports::UnitOfWork,
     string_builder::StringBuilder,
 };
 use serde::Deserialize;
@@ -55,10 +55,9 @@ pub(super) async fn write_note(
         .map_err(|_| Problem::invalid_request("A note must not be empty."))?;
 
     let entry = NewChangelogEntry::note(commission, user.id, text, Utc::now());
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.changelog().append(&entry).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| uow.changelog().append(&entry).await)
+        .await?;
 
     Ok(StatusCode::CREATED.into_response())
 }

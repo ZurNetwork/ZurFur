@@ -22,7 +22,7 @@ use domain::{
         commission::CommissionId,
         maturity::{Maturity, MaturityRating},
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -73,10 +73,11 @@ pub(super) async fn set_maturity(
         graphic: body.graphic,
     };
 
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.commissions().set_maturity(commission, maturity).await })
-    })
-    .await?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().set_maturity(commission, maturity).await
+        })
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
