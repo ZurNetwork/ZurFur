@@ -30,7 +30,7 @@ use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
     handle::Handle,
-    invitation::Invitation,
+    invitation::{Invitation, InvitationState},
     role::Role,
     user::{User, UserId},
     user_account::UserAccount,
@@ -921,6 +921,12 @@ struct InviteUserToAccountBody {
 /// already-pending User is idempotent — the existing offer is returned (`200`),
 /// never a second row (handler check plus the partial-unique-index backstop).
 /// Otherwise a fresh pending offer is created (`201`).
+///
+/// A duplicate invite can also race *between* the pending check above and the
+/// insert — the store drops it (`ON CONFLICT … DO NOTHING`), so after the write
+/// the handler re-reads the pending offer and answers from whichever row
+/// survives: the minted offer's own id → `201`; someone else's (the racer's) →
+/// `200`, same as the idempotent-reinvite path.
 async fn invite_user_to_account(
     State(state): State<AppState>,
     account_role: AccountRole,
@@ -981,23 +987,41 @@ async fn invite_user_to_account(
         })));
     }
 
-    let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
+    let invitation = Invitation::issue(account.id, invited.id, role.clone(), actor.id, Utc::now());
+    let minted = invitation.id;
     // `invitation` moves into the boxed future and is handed back out for the body.
-    let invitation = transaction(&*state.database, |uow| {
-        Box::pin(async move {
-            uow.accounts().create_invitation(&invitation).await?;
-            Ok(invitation)
-        })
+    transaction(&*state.database, |uow| {
+        Box::pin(async move { uow.accounts().create_invitation(&invitation).await })
     })
     .await?;
 
-    Ok(created_json(json!({
-        "id": invitation.id.to_string(),
+    // Answer from the row that actually survives: a duplicate invite racing past
+    // the pending check above is dropped by the store (`ON CONFLICT … DO
+    // NOTHING`), so the offer on record may be the racer's — report that one as
+    // a 200, and claim 201 only when the minted offer is what the table holds.
+    // (Residual window: the insert conflicted AND the surviving offer was
+    // revoked, all between adjacent statements — then the minted body goes out
+    // as created and the very next read shows the offer closed.)
+    let (status, offer_id, offer_role, offer_state) = match state
+        .accounts
+        .find_pending_invitation(account.id, invited.id)
+        .await?
+    {
+        Some(stored) if stored.id == minted => {
+            (StatusCode::CREATED, stored.id, stored.role, stored.state)
+        }
+        Some(stored) => (StatusCode::OK, stored.id, stored.role, stored.state),
+        None => (StatusCode::CREATED, minted, role, InvitationState::Pending),
+    };
+    let offer = json!({
+        "id": offer_id.to_string(),
         "account": account.id.to_string(),
         "user": invited.did.as_str(),
-        "role": invitation.role.as_str(),
-        "state": invitation.state.as_str()
-    })))
+        "role": offer_role.as_str(),
+        "state": offer_state.as_str()
+    });
+    let response = (status, Json(offer)).into_response();
+    Ok(response)
 }
 
 /// The body of `DELETE /accounts/{id}/invitations`. The invitation is addressed by
