@@ -16,9 +16,11 @@ use domain::elements::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
         CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
         GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSeat,
-        NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat, SeatKind,
-        SeatLink, SeatPrompt, Slot, SlotTitle, SurfaceMode, Visibility, derive_deadline_status,
+        NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat,
+        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotTitle,
+        SurfaceMode, Visibility, derive_deadline_status,
     },
+    invitation::InvitationState,
     maturity::Maturity,
     user::UserId,
 };
@@ -202,6 +204,47 @@ pub(crate) struct StoredSeat {
     /// The single occupant slot — `None` from declaration until ZMVP-79 fills
     /// it; at most one occupant is unrepresentable to violate (AC3).
     pub(crate) occupant: Option<UserId>,
+}
+
+/// One pending (or once-pending) seat invitation as the mem backend keeps it —
+/// the in-memory mirror of a pg `commission_invitation` row (ZMVP-78), keyed by
+/// the [`SeatInvitationId`] in the backend map. Stored as parts because
+/// [`SeatInvitation`] isn't `Clone` (an entity with a lifecycle, like
+/// `Invitation`); a read rebuilds a fresh one. `Clone` so a unit of work can
+/// deep-copy the map into its staging snapshot.
+#[derive(Clone)]
+pub(crate) struct StoredSeatInvitation {
+    /// The commission whose Seat is offered.
+    pub(crate) commission: CommissionId,
+    /// The Seat being offered (its tree node id).
+    pub(crate) seat: NodeId,
+    /// The User being invited.
+    pub(crate) invited_user: UserId,
+    /// The commission owner who issued the offer.
+    pub(crate) inviter: UserId,
+    /// Where the offer sits in its lifecycle. [`InvitationState`] is `Copy`.
+    pub(crate) state: InvitationState,
+    /// When the invitation was issued.
+    pub(crate) created_at: DateTimeUtc,
+    /// When the invitation last changed state.
+    pub(crate) updated_at: DateTimeUtc,
+}
+
+impl StoredSeatInvitation {
+    /// Rebuild the domain [`SeatInvitation`] from the stored parts (it isn't
+    /// `Clone`).
+    fn rebuild(&self, id: SeatInvitationId) -> SeatInvitation {
+        SeatInvitation {
+            id,
+            commission: self.commission,
+            seat: self.seat,
+            invited_user: self.invited_user,
+            inviter: self.inviter,
+            state: self.state,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 /// One appended changelog entry as the mem backend keeps it — the in-memory
@@ -659,6 +702,64 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
+    /// Insert the pending seat invitation, unless one is already pending for the
+    /// same `(seat, invited_user)` — in which case this is a no-op, the in-memory
+    /// mirror of the pg partial unique index (`... WHERE state = 'pending'`,
+    /// ZMVP-78). The handler also checks
+    /// [`find_pending_seat_invitation`](CommissionStore::find_pending_seat_invitation)
+    /// first, so this is the belt-and-suspenders backstop. Several *different*
+    /// Users may hold pending invitations to one Seat — only a duplicate for the
+    /// same pair is dropped. Staged like every write here.
+    async fn create_seat_invitation(&mut self, invitation: &SeatInvitation) -> anyhow::Result<()> {
+        let mut invitations = self
+            .0
+            .seat_invitations
+            .lock()
+            .expect("MemBackend seat_invitations mutex poisoned");
+        let already_pending = invitations.values().any(|stored| {
+            stored.seat == invitation.seat
+                && stored.invited_user == invitation.invited_user
+                && stored.state == InvitationState::Pending
+        });
+        if already_pending {
+            // At most one pending offer per (seat, user): a second issue is a
+            // no-op, not a second row.
+            return Ok(());
+        }
+        invitations.insert(
+            invitation.id,
+            StoredSeatInvitation {
+                commission: invitation.commission,
+                seat: invitation.seat,
+                invited_user: invitation.invited_user,
+                inviter: invitation.inviter,
+                state: invitation.state,
+                created_at: invitation.created_at,
+                updated_at: invitation.updated_at,
+            },
+        );
+        Ok(())
+    }
+
+    /// Flip a pending seat invitation to revoked and stamp `updated_at`. A
+    /// non-pending or absent invitation is left untouched — a no-op, not an error
+    /// (the handler decides whether that's a 404/200), mirroring the pg guarded
+    /// `UPDATE` (ZMVP-78). Staged like every write here.
+    async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()> {
+        let mut invitations = self
+            .0
+            .seat_invitations
+            .lock()
+            .expect("MemBackend seat_invitations mutex poisoned");
+        if let Some(stored) = invitations.get_mut(&id)
+            && stored.state == InvitationState::Pending
+        {
+            stored.state = InvitationState::Revoked;
+            stored.updated_at = chrono::Utc::now();
+        }
+        Ok(())
+    }
+
     /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
     /// the pg conditional `UPDATE`: the write applies only when the stored value
     /// differs from the requested one, so a repeat answers `false` and the
@@ -1056,6 +1157,32 @@ impl CommissionStore for MemCommissionStore {
         Ok(found)
     }
 
+    /// The lone pending seat invitation for `(commission, seat, user)`, or `None`
+    /// (ZMVP-78) — the mem mirror of the pg query scoped to
+    /// `commission_id`/`seat_id`/`invited_user`/pending. Accepted/revoked
+    /// invitations are history, not live offers, so they never match; a
+    /// *different* seat's — or another commission's — offer never matches either
+    /// (the authorization binding lives in the lookup, not caller discipline).
+    async fn find_pending_seat_invitation(
+        &self,
+        commission: CommissionId,
+        seat: NodeId,
+        user: UserId,
+    ) -> anyhow::Result<Option<SeatInvitation>> {
+        let invitations = self
+            .0
+            .seat_invitations
+            .lock()
+            .expect("MemBackend seat_invitations mutex poisoned");
+        Ok(invitations.iter().find_map(|(id, stored)| {
+            (stored.commission == commission
+                && stored.seat == seat
+                && stored.invited_user == user
+                && stored.state == InvitationState::Pending)
+                .then(|| stored.rebuild(*id))
+        }))
+    }
+
     /// The file-entry link `key` names **within `commission`** (ZMVP-88) — the mem
     /// mirror of the pg query filtered by both id and commission_id: a key that
     /// belongs to a *different* commission answers `None` (never a cross-commission
@@ -1158,6 +1285,30 @@ impl MemBackend {
             .collect();
         found.sort_by_key(|slot| *slot.node_id);
         Ok(found)
+    }
+
+    /// Fill a declared Seat's occupant slot directly on the shared store
+    /// (test-only seeder). There is no seat-fill port yet — accepting a seat
+    /// invitation is ZMVP-79 — so this stands in for it, letting an api test
+    /// exercise the "already occupied" refusal (ZMVP-78) against a truly filled
+    /// seat. Panics if `seat` is not a declared seat (the test set it up wrong).
+    pub fn occupy_seat(&self, seat: NodeId, occupant: UserId) {
+        let mut seats = self.seats.lock().expect("MemBackend seats mutex poisoned");
+        seats
+            .get_mut(&seat)
+            .expect("occupy_seat: no such declared seat")
+            .occupant = Some(occupant);
+    }
+
+    /// Seed a (non-owner) participant membership row directly (test-only). There
+    /// is no seat-accept path yet (ZMVP-79), so this stands in for a seated
+    /// member — letting a test exercise the owner-vs-participant authority split
+    /// (the `403` arm of `require_owner`: a participant who is not the owner).
+    pub fn seed_participant(&self, commission: CommissionId, user: UserId) {
+        self.participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .insert((commission, user), chrono::Utc::now());
     }
 }
 

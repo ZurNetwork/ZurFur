@@ -20,6 +20,7 @@ mod commission_maturity;
 mod commission_node;
 mod commission_positioning;
 mod commission_seat;
+mod commission_seat_invitation;
 mod commission_slot;
 mod key_store;
 mod no_bare_pool_writes;

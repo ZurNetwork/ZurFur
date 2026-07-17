@@ -40,7 +40,11 @@
 //! deferred wholesale to the Character epic. The [`seat`] submodule carries the
 //! **Seat** (ZMVP-76): the 1:1 structural participant position declared vacant,
 //! and — with it — the persisted participant-membership model whose permanent
-//! floor is the owner.
+//! floor is the owner. The [`seat_invitation`] submodule carries the
+//! [`SeatInvitation`] (ZMVP-78): the owner's pending offer of a vacant Seat to a
+//! User — the Seat mirror of the account invitation, reusing its
+//! [`InvitationState`](crate::elements::invitation::InvitationState) machine;
+//! filling the Seat on acceptance is ZMVP-79.
 
 pub mod changelog;
 pub mod fact;
@@ -49,6 +53,7 @@ pub mod markup;
 pub mod node;
 pub mod positioning;
 pub mod seat;
+pub mod seat_invitation;
 pub mod slot;
 
 pub use changelog::{
@@ -65,6 +70,7 @@ pub use positioning::{GrantLevel, Placement};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
+pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
 
 use std::ops::Deref;

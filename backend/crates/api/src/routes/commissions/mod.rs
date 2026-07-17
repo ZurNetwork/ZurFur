@@ -26,6 +26,9 @@
 //!   epic).
 //! - [`seats`] — `POST /commissions/{id}/seats` (ZMVP-76: the owner declares a
 //!   vacant, typed Seat — a component plus its interpreted satellite).
+//! - [`invitations`] — `POST`/`DELETE /commissions/{id}/invitations` (ZMVP-78:
+//!   the owner invites a User to a vacant Seat, or revokes a pending offer;
+//!   accept/decline is ZMVP-79).
 //! - [`status`] — `PUT`/`DELETE /commissions/{id}/status/direction` (the
 //!   direction-axis Status, ZMVP-85).
 //! - [`deadline`] — `PUT`/`DELETE /commissions/{id}/deadline` and
@@ -72,6 +75,7 @@ mod create;
 mod deadline;
 mod delete;
 mod files;
+mod invitations;
 mod markup;
 mod maturity;
 mod notes;
@@ -148,6 +152,10 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/commissions/{id}/slots", post(slots::declare_slots))
         .route("/commissions/{id}/seats", post(seats::declare_seat))
         .route(
+            "/commissions/{id}/invitations",
+            post(invitations::invite_to_seat).delete(invitations::revoke_seat_invitation),
+        )
+        .route(
             "/commissions/{id}/status/direction",
             put(status::set_direction_status).delete(status::clear_direction_status),
         )
@@ -223,8 +231,8 @@ async fn require_participant(
 /// authority is an honest `403` — today that arm is unreachable (the owner is
 /// the only participant until ZMVP-79 seats more). Consumed by every
 /// owner-gated commission handler ([`channel`], [`delete`], [`archive`],
-/// [`surfaces`], [`seats`]). Returns the resolved [`Commission`] so callers
-/// needn't re-read it.
+/// [`surfaces`], [`seats`], [`invitations`]). Returns the resolved [`Commission`]
+/// so callers needn't re-read it.
 async fn require_owner(
     state: &AppState,
     commission: CommissionId,

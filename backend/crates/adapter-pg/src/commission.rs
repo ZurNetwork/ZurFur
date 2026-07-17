@@ -15,9 +15,10 @@ use domain::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
             LifecycleStep, NewComponent, NewSeat, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
-            Placement, RootSurface, Seat, SeatKind, SeatLink, SeatPrompt, SurfaceMode, Visibility,
-            derive_deadline_status,
+            Placement, RootSurface, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
+            SeatPrompt, SurfaceMode, Visibility, derive_deadline_status,
         },
+        invitation::InvitationState,
         maturity::{Maturity, MaturityRating},
         user::UserId,
     },
@@ -83,9 +84,15 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   structure a commission offers, not work performed on it; the Referenceable/
 ///   Slot/Seat DD's "gone entirely — seats, applications" (ZMVP-66) relies on
 ///   this cascade.
+/// - `commission_invitation` (ZMVP-78): a pending offer of a Seat to a User.
+///   An invitation is bookkeeping on the path to occupancy, not evidence that
+///   work happened; it cascades away with the commission (and with its seat),
+///   never a fact that blocks deletion — the Seat mirror of
+///   `account_invitations`.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
     "commission_file",
+    "commission_invitation",
     "commission_node",
     "commission_participant",
     "commission_seat",
@@ -357,6 +364,50 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             )
             .await?;
         }
+        Ok(())
+    }
+
+    /// `INSERT ... ON CONFLICT (seat_id, invited_user) WHERE state = 'pending'
+    /// DO NOTHING` (ZMVP-78): the partial unique index (see the migration)
+    /// enforces at most one pending offer per (seat, invited user), so a
+    /// duplicate issue is silently dropped rather than becoming a second row —
+    /// the store-level backstop for the idempotent re-invite the handler also
+    /// guards by checking
+    /// [`find_pending_seat_invitation`](CommissionStore::find_pending_seat_invitation)
+    /// first. The Seat mirror of
+    /// [`create_invitation`](crate::PgAccountWrites::create_invitation). No
+    /// changelog entry (Engineer ruling 2026-07-16).
+    async fn create_seat_invitation(&mut self, invitation: &SeatInvitation) -> anyhow::Result<()> {
+        sql::create_seat_invitation(
+            &mut *self.conn,
+            *invitation.id,
+            *invitation.commission,
+            *invitation.seat,
+            *invitation.invited_user,
+            *invitation.inviter,
+            invitation.state.as_str(),
+            invitation.created_at,
+            invitation.updated_at,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// A guarded `UPDATE ... SET state = 'revoked' WHERE id = $1 AND state =
+    /// 'pending'` (ZMVP-78): only a pending offer flips, and an `UPDATE` matching
+    /// no row still succeeds — so revoking an absent or already-terminal
+    /// invitation is a harmless no-op, not an error (the handler decides whether
+    /// that's a 404/200). The Seat mirror of
+    /// [`revoke_invitation`](crate::PgAccountWrites::revoke_invitation).
+    async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()> {
+        sql::revoke_seat_invitation(
+            &mut *self.conn,
+            InvitationState::Revoked.as_str(),
+            chrono::Utc::now(),
+            *id,
+            InvitationState::Pending.as_str(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -636,6 +687,22 @@ fn to_placement(
     }
 }
 
+/// Rebuild a domain [`SeatInvitation`] from its generated row (ZMVP-78),
+/// re-validating the stored `state` discriminant — an `Err` on row tampering,
+/// never a panic. The Seat mirror of `to_invitation` in the account adapter.
+fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatInvitation> {
+    Ok(SeatInvitation {
+        id: SeatInvitationId::new(row.id),
+        commission: CommissionId::new(row.commission_id),
+        seat: NodeId::new(row.seat_id),
+        invited_user: UserId::new(row.invited_user),
+        inviter: UserId::new(row.inviter),
+        state: InvitationState::try_from(row.state)?,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
 /// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
 /// the one canonical commission read port, born with the changelog (ZMVP-87).
 /// Holds the pool directly — reads pay no transaction tax; the writes live on
@@ -852,6 +919,30 @@ impl CommissionStore for PgCommissionStore {
             uploaded_by: UserId::new(row.uploaded_by),
             created_at: row.created_at,
         }))
+    }
+
+    /// Selects the lone `state = 'pending'` offer for `(seat, invited_user)`, or
+    /// `None` (ZMVP-78). Accepted and revoked invitations are history, not live
+    /// offers, so they never match. The stored `state` discriminant is
+    /// re-validated through `InvitationState::try_from` on the way out — an `Err`
+    /// on row tampering, never a panic. The Seat mirror of
+    /// [`find_pending_invitation`](crate::PgAccountStore::find_pending_invitation).
+    async fn find_pending_seat_invitation(
+        &self,
+        commission: CommissionId,
+        seat: NodeId,
+        user: UserId,
+    ) -> anyhow::Result<Option<SeatInvitation>> {
+        sql::find_pending_seat_invitation(
+            &self.pool,
+            *commission,
+            *seat,
+            *user,
+            InvitationState::Pending.as_str(),
+        )
+        .await?
+        .map(to_seat_invitation)
+        .transpose()
     }
 
     /// The commission's seat satellites (ZMVP-76) in declaration order (node

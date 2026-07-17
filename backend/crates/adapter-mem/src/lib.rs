@@ -48,7 +48,8 @@ pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
 
 pub(crate) use commission::{
-    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSeat, StoredSlot,
+    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSeat,
+    StoredSeatInvitation, StoredSlot,
 };
 
 use std::collections::HashMap;
@@ -63,7 +64,9 @@ use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
     actor_identity::ActorIdentityId,
-    commission::{CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, StoredFile},
+    commission::{
+        CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, SeatInvitationId, StoredFile,
+    },
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
@@ -170,6 +173,13 @@ pub struct MemBackend {
     /// the id. A domain map, staged and applied by the Unit of Work like
     /// `nodes`: a seat's node and satellite commit together.
     pub(crate) seats: Arc<Mutex<HashMap<NodeId, StoredSeat>>>,
+    /// [`StoredSeatInvitation`] parts keyed by [`SeatInvitationId`] — the
+    /// in-memory mirror of the pg `commission_invitation` table (ZMVP-78): the
+    /// owner's pending offer of a Seat to a User. The at-most-one-*pending*-per-
+    /// (seat, user) rule is enforced by scanning before inserting (the pg
+    /// adapter uses a partial index). A domain map, staged and applied by the
+    /// Unit of Work like `seats`.
+    pub(crate) seat_invitations: Arc<Mutex<HashMap<SeatInvitationId, StoredSeatInvitation>>>,
     /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`] — the in-memory
     /// mirror of the pg `actor_identity` super-table (ZMVP-122, DD 34013187).
     /// Slice 1: the parts are empty, the key is the row. Rows are immortal — no
@@ -333,6 +343,12 @@ impl MemBackend {
                     .expect("MemBackend seats mutex poisoned")
                     .clone(),
             )),
+            seat_invitations: Arc::new(Mutex::new(
+                self.seat_invitations
+                    .lock()
+                    .expect("MemBackend seat_invitations mutex poisoned")
+                    .clone(),
+            )),
             actor_identities: Arc::new(Mutex::new(
                 self.actor_identities
                     .lock()
@@ -451,6 +467,14 @@ impl MemBackend {
             .seats
             .lock()
             .expect("MemBackend seats mutex poisoned")
+            .clone();
+        *self
+            .seat_invitations
+            .lock()
+            .expect("MemBackend seat_invitations mutex poisoned") = staged
+            .seat_invitations
+            .lock()
+            .expect("MemBackend seat_invitations mutex poisoned")
             .clone();
         *self
             .actor_identities
