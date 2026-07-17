@@ -44,6 +44,10 @@ One bar for "done" — the skills **enforce** this, they don't redefine it. A ti
 
 A handed-off 🧑 Engineer / 👥 Group piece is **not** "done" — it's explicitly handed off (failing test + note).
 
+## Code style (semantic)
+
+Rust code follows the Engineer's **semantic style rulebook** — Confluence DESIGN page `37519361` "Code Style — Semantic Rulings (Rust)" (a living page; fetch it, don't quote from memory). The short of it: domain-meaningful primitives behind newtypes; multi-line constructions named into a `let` first (tests too); `ok_or_else`/`let-else`/`map_err` over match-plumbing; clarity beats brevity. Binding for all NEW code; sweeps ZMVP-136/137/138 chase the backlog. Formatting stays rustfmt's job.
+
 ## Commands
 
 All commands use `just` (Justfile at repo root, `dotenv-load` enabled).

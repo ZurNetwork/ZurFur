@@ -19,6 +19,7 @@ Know these without fetching; fetch the linked DD page for detail.
 
 ### Meta / structure
 - `98422` — Design (space homepage)
+- `37519361` — Code Style — Semantic Rulings (Rust) (LIVING page; binding for new code; sweeps ZMVP-136/137/138 chase the backlog — fetch before styling debates)
 - `2490388` — Design decision (DD page template/convention)
 - `10125333` — The Index
 - `786450` — Project Philosophy
