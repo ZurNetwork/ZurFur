@@ -524,7 +524,7 @@ impl MemBackend {
                 StoredAccount {
                     did: did.clone(),
                     handle: handle.clone(),
-                    name: AccountName::try_new("Tombstoned").expect("valid name"),
+                    name: "Tombstoned".parse::<AccountName>().expect("valid name"),
                     created_at: now,
                     updated_at: now,
                     deleted_at: Some(now),
@@ -1704,7 +1704,7 @@ mod tests {
             id: AccountId::new(uuid::Uuid::now_v7()),
             did: did(did_s),
             handle: Handle::try_new(format!("{label}.example.com")).unwrap(),
-            name: AccountName::try_new("Test Studio").unwrap(),
+            name: "Test Studio".parse::<AccountName>().unwrap(),
             created_at: now,
             updated_at: now,
             deleted_at: None,

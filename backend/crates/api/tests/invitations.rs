@@ -393,7 +393,7 @@ async fn seed_pending_invite(
         owner.id,
         Did::new("did:plc:seedacct".to_string()),
         Handle::try_new("acme.zurfur.app").unwrap(),
-        AccountName::try_new("Acme Studio".to_string()).expect("account name"),
+        AccountName::try_from("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
     backend
@@ -471,7 +471,7 @@ async fn declining_with_no_pending_invitation_is_not_found() {
         owner.id,
         Did::new("did:plc:seedacct".to_string()),
         Handle::try_new("acme.zurfur.app").unwrap(),
-        AccountName::try_new("Acme Studio".to_string()).expect("account name"),
+        AccountName::try_from("Acme Studio".to_string()).expect("account name"),
         chrono::Utc::now(),
     );
     backend

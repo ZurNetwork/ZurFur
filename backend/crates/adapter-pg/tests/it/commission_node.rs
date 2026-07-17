@@ -61,7 +61,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// Create a commission (which mints its root) in one committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         owner.id,
         Utc::now(),
         None,

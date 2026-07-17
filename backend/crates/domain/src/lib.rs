@@ -14,6 +14,9 @@
 //!   `UserStore`, an `Authenticator`), implemented by the adapter crates. These
 //!   are the seams the domain reaches the outside world through.
 //! - [`datetime`] — the single clock type the domain speaks in.
+//! - [`string_builder`] — [`string_builder::StringBuilder`], the shared
+//!   explicit-rule builder the trimmed/capped string newtypes in [`elements`]
+//!   validate through (ZMVP-113).
 //!
 //! The `domain` crate is transitional: as namespaces are built it splits into
 //! per-domain crates (`identity`, `gallery`, `workflow`, `plugin`).
@@ -21,3 +24,4 @@
 pub mod datetime;
 pub mod elements;
 pub mod ports;
+pub mod string_builder;

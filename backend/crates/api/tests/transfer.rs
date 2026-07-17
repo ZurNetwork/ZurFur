@@ -199,7 +199,7 @@ async fn only_the_owner_may_transfer() {
         host.id,
         Did::new("did:plc:hostacct".to_string()),
         Handle::try_new("host.zurfur.app").unwrap(),
-        AccountName::try_new("Host Studio").unwrap(),
+        "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     backend

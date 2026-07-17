@@ -22,7 +22,11 @@
 //! [`NodeKind::Component`]: super::NodeKind::Component
 
 use super::{CommissionId, node::NodeId};
-use crate::{datetime::DateTimeUtc, elements::user::UserId};
+use crate::{
+    datetime::DateTimeUtc,
+    elements::user::UserId,
+    string_builder::{StringBuilder, StringBuilderViolation},
+};
 
 /// A Slot's title, validated on the way in — the one **required** facet of a
 /// declared Slot (ZMVP-77 AC1).
@@ -34,10 +38,10 @@ use crate::{datetime::DateTimeUtc, elements::user::UserId};
 /// ```
 /// use domain::elements::commission::SlotTitle;
 ///
-/// let title = SlotTitle::try_from("  The knight  ").unwrap();
+/// let title = "  The knight  ".parse::<SlotTitle>().unwrap();
 /// assert_eq!(title.as_str(), "The knight"); // trimmed
 ///
-/// assert!(SlotTitle::try_from("   ").is_err()); // empty after trim
+/// assert!("   ".parse::<SlotTitle>().is_err()); // empty after trim
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotTitle(String);
@@ -65,19 +69,44 @@ impl TryFrom<String> for SlotTitle {
     /// Validate and wrap a title: trim surrounding whitespace, then reject an
     /// empty result with [`SlotTitleError::Empty`].
     fn try_from(raw: String) -> Result<Self, Self::Error> {
-        let trimmed = raw.trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(SlotTitleError::Empty);
-        }
-        Ok(Self(trimmed))
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => SlotTitleError::Empty,
+                StringBuilderViolation::TooLong { .. }
+                | StringBuilderViolation::ControlCharacter => {
+                    // Unreachable by construction: this chain never calls
+                    // `max_chars`/`no_control`/`no_control_except`, and
+                    // `SlotTitleError` has no variant for either. Fail safe
+                    // onto the only existing variant rather than panic.
+                    debug_assert!(
+                        false,
+                        "SlotTitle's TryFrom chain only applies trimmed().non_empty()"
+                    );
+                    SlotTitleError::Empty
+                }
+            })
     }
 }
 
-impl TryFrom<&str> for SlotTitle {
-    type Error = SlotTitleError;
+/// The std parsing door: `"…".parse::<SlotTitle>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for SlotTitle {
+    type Err = SlotTitleError;
 
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for SlotTitle {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -138,7 +167,7 @@ impl NewSlot {
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
     /// let parent = NodeId::new(uuid::Uuid::now_v7());
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let title = SlotTitle::try_from("The knight").unwrap();
+    /// let title = "The knight".parse::<SlotTitle>().unwrap();
     /// let slot = NewSlot::under(commission, parent, title, None, owner, Utc::now());
     /// assert_eq!(slot.parent, parent);
     /// assert_eq!(slot.title.as_str(), "The knight");
@@ -196,11 +225,11 @@ mod tests {
     #[test]
     fn a_slot_title_trims_and_rejects_blank() {
         assert_eq!(
-            SlotTitle::try_from("  The knight  ").unwrap().as_str(),
+            "  The knight  ".parse::<SlotTitle>().unwrap().as_str(),
             "The knight"
         );
-        assert_eq!(SlotTitle::try_from(""), Err(SlotTitleError::Empty));
-        assert_eq!(SlotTitle::try_from("   \t "), Err(SlotTitleError::Empty));
+        assert_eq!("".parse::<SlotTitle>(), Err(SlotTitleError::Empty));
+        assert_eq!("   \t ".parse::<SlotTitle>(), Err(SlotTitleError::Empty));
     }
 
     // AC1 — a new Slot's envelope: fresh id, the surface it grows under, the
@@ -210,7 +239,7 @@ mod tests {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
         let parent = NodeId::new(uuid::Uuid::now_v7());
         let owner = UserId::new(uuid::Uuid::now_v7());
-        let title = SlotTitle::try_from("The mage").unwrap();
+        let title = "The mage".parse::<SlotTitle>().unwrap();
 
         let slot = NewSlot::under(
             commission,

@@ -1338,7 +1338,7 @@ mod tests {
 
     fn commission(title: &str, owner: UserId) -> Commission {
         Commission::create(
-            CommissionTitle::try_new(title).unwrap(),
+            title.parse::<CommissionTitle>().unwrap(),
             owner,
             Utc::now(),
             None,
@@ -2185,7 +2185,7 @@ mod tests {
 
         let seed = |title: &str, deadline, step: Option<LifecycleStep>| {
             let mut c = Commission::create(
-                CommissionTitle::try_new(title).unwrap(),
+                title.parse::<CommissionTitle>().unwrap(),
                 owner,
                 now,
                 deadline,
@@ -2271,7 +2271,7 @@ mod tests {
                 .unwrap()
         );
 
-        let pointer = ChannelPointer::try_new("@artist on Telegram").unwrap();
+        let pointer = "@artist on Telegram".parse::<ChannelPointer>().unwrap();
         let mut uow = database.begin().await.unwrap();
         assert!(
             uow.commissions()
@@ -2874,9 +2874,9 @@ mod tests {
         let first = NewSeat::under(
             id,
             root,
-            SeatKind::try_new("Creator").unwrap(),
-            Some(SeatPrompt::try_new("Two refs, please.").unwrap()),
-            Some(SeatLink::try_new("https://forms.example/apply").unwrap()),
+            "Creator".parse::<SeatKind>().unwrap(),
+            Some("Two refs, please.".parse::<SeatPrompt>().unwrap()),
+            Some("https://forms.example/apply".parse::<SeatLink>().unwrap()),
             owner,
             Utc::now(),
         );
@@ -2884,7 +2884,7 @@ mod tests {
         let second = NewSeat::under(
             id,
             root,
-            SeatKind::try_new("Creator").unwrap(),
+            "Creator".parse::<SeatKind>().unwrap(),
             None,
             None,
             owner,
@@ -2964,7 +2964,7 @@ mod tests {
             let seat = NewSeat::under(
                 id,
                 root,
-                SeatKind::try_new("Client").unwrap(),
+                "Client".parse::<SeatKind>().unwrap(),
                 None,
                 None,
                 owner,
@@ -3004,7 +3004,7 @@ mod tests {
         let (id, root) = rooted_commission(&backend, owner).await;
         let (_, their_root) = rooted_commission(&backend, user_id()).await;
 
-        let kind = || SeatKind::try_new("Creator").unwrap();
+        let kind = || "Creator".parse::<SeatKind>().unwrap();
         // Absent parent.
         let fabricated = NewSeat::under(
             id,
@@ -3146,7 +3146,7 @@ mod tests {
         let noted = NewSlot::under(
             id,
             root,
-            SlotTitle::try_from("The knight").unwrap(),
+            "The knight".parse::<SlotTitle>().unwrap(),
             Some("full plate, no cape".to_string()),
             owner,
             Utc::now(),
@@ -3154,7 +3154,7 @@ mod tests {
         let bare = NewSlot::under(
             id,
             root,
-            SlotTitle::try_from("The mage").unwrap(),
+            "The mage".parse::<SlotTitle>().unwrap(),
             None,
             owner,
             Utc::now(),
@@ -3226,7 +3226,7 @@ mod tests {
         uow.commissions().add_component(&component).await.unwrap();
         uow.commit().await.unwrap();
 
-        let title = || SlotTitle::try_from("The knight").unwrap();
+        let title = || "The knight".parse::<SlotTitle>().unwrap();
 
         let fabricated = NewSlot::under(
             mine,
@@ -3305,7 +3305,7 @@ mod tests {
             let slot = NewSlot::under(
                 id,
                 root,
-                SlotTitle::try_from("Never lands").unwrap(),
+                "Never lands".parse::<SlotTitle>().unwrap(),
                 None,
                 owner,
                 Utc::now(),

@@ -22,7 +22,11 @@
 use serde_json::Value;
 
 use super::CommissionId;
-use crate::{datetime::DateTimeUtc, elements::user::UserId};
+use crate::{
+    datetime::DateTimeUtc,
+    elements::user::UserId,
+    string_builder::{StringBuilder, StringBuilderViolation},
+};
 
 /// The kind of act a changelog entry records — the **frozen entry taxonomy** of
 /// the Changelog DD (`30408741`, Responsibility 1), plus the [`Note`] entry its
@@ -377,6 +381,18 @@ pub struct ChangelogEntry {
 /// enforced at construction: the text is trimmed, non-empty, at most
 /// [`MAX_CHARS`](Self::MAX_CHARS) characters, and free of control characters
 /// (which have no place in a pointer and only serve header/log injection).
+///
+/// ```
+/// use domain::elements::commission::ChannelPointer;
+///
+/// let url = "  https://t.me/refsheet-chat  ".parse::<ChannelPointer>().unwrap();
+/// assert_eq!(url.as_str(), "https://t.me/refsheet-chat"); // trimmed
+///
+/// "@artist on Telegram".parse::<ChannelPointer>().unwrap(); // not a URL — fine
+///
+/// assert!("   ".parse::<ChannelPointer>().is_err()); // empty after trim
+/// assert!("x\ny".parse::<ChannelPointer>().is_err()); // control character
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelPointer(String);
 
@@ -414,40 +430,51 @@ impl ChannelPointer {
     /// enough that the pointer stays a pointer rather than a message.
     pub const MAX_CHARS: usize = 512;
 
+    /// The validated, trimmed pointer as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ChannelPointer {
+    type Error = ChannelPointerError;
+
     /// Validate and wrap a pointer: trim surrounding whitespace, then reject an
     /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
     /// control character. Anything else — URL or not — is accepted: the value
     /// renders as an opaque pointer, never auto-embeds, so no scheme allowlist
     /// is applied (ZMVP-87 AC3).
-    ///
-    /// ```
-    /// use domain::elements::commission::ChannelPointer;
-    ///
-    /// let url = ChannelPointer::try_new("  https://t.me/refsheet-chat  ").unwrap();
-    /// assert_eq!(url.as_str(), "https://t.me/refsheet-chat"); // trimmed
-    ///
-    /// ChannelPointer::try_new("@artist on Telegram").unwrap(); // not a URL — fine
-    ///
-    /// assert!(ChannelPointer::try_new("   ").is_err()); // empty after trim
-    /// assert!(ChannelPointer::try_new("x\ny").is_err()); // control character
-    /// ```
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, ChannelPointerError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(ChannelPointerError::Empty);
-        }
-        if trimmed.chars().count() > Self::MAX_CHARS {
-            return Err(ChannelPointerError::TooLong);
-        }
-        if trimmed.chars().any(char::is_control) {
-            return Err(ChannelPointerError::ControlCharacter);
-        }
-        Ok(Self(trimmed))
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .max_chars(Self::MAX_CHARS)
+            .no_control()
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => ChannelPointerError::Empty,
+                StringBuilderViolation::TooLong { .. } => ChannelPointerError::TooLong,
+                StringBuilderViolation::ControlCharacter => ChannelPointerError::ControlCharacter,
+            })
     }
+}
 
-    /// The validated, trimmed pointer as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
+/// The std parsing door: `"…".parse::<ChannelPointer>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for ChannelPointer {
+    type Err = ChannelPointerError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for ChannelPointer {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -485,26 +512,27 @@ mod tests {
     #[test]
     fn channel_pointer_validates_shape_but_not_scheme() {
         assert_eq!(
-            ChannelPointer::try_new(" https://t.me/x ")
+            " https://t.me/x "
+                .parse::<ChannelPointer>()
                 .unwrap()
                 .as_str(),
             "https://t.me/x",
         );
         // No scheme allowlist — a bare handle is a fine pointer.
-        assert!(ChannelPointer::try_new("@artist on Telegram").is_ok());
+        assert!("@artist on Telegram".parse::<ChannelPointer>().is_ok());
         assert_eq!(
-            ChannelPointer::try_new("   "),
+            "   ".parse::<ChannelPointer>(),
             Err(ChannelPointerError::Empty)
         );
         assert_eq!(
-            ChannelPointer::try_new("x".repeat(ChannelPointer::MAX_CHARS + 1)),
+            ChannelPointer::try_from("x".repeat(ChannelPointer::MAX_CHARS + 1)),
             Err(ChannelPointerError::TooLong)
         );
         // Exactly at the cap is fine.
-        assert!(ChannelPointer::try_new("x".repeat(ChannelPointer::MAX_CHARS)).is_ok());
+        assert!(ChannelPointer::try_from("x".repeat(ChannelPointer::MAX_CHARS)).is_ok());
         for bad in ["a\nb", "a\tb", "a\rb", "a\0b"] {
             assert_eq!(
-                ChannelPointer::try_new(bad),
+                bad.parse::<ChannelPointer>(),
                 Err(ChannelPointerError::ControlCharacter),
                 "control characters are rejected: {bad:?}",
             );

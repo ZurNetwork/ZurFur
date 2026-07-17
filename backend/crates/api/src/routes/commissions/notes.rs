@@ -13,6 +13,7 @@ use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewChangelogEntry},
     ports::transaction,
+    string_builder::StringBuilder,
 };
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -32,7 +33,7 @@ pub(super) struct WriteNoteBody {
 ///
 /// Participant-only behind [`require_participant`](super::require_participant)
 /// (uniform 404 for everyone else — the closed door). The text is trimmed and
-/// must be non-empty (`422` otherwise); it lands as a
+/// must be non-empty (`422` otherwise) via [`StringBuilder`] (ZMVP-113); it lands as a
 /// [`Note`](domain::elements::commission::ChangelogEntryKind::Note) entry in the
 /// **same stream** as every domain event, appended through the unit of work like
 /// any other entry. Returns `201 Created`.
@@ -47,12 +48,13 @@ pub(super) async fn write_note(
     super::require_participant(&state, commission, user.id).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let text = body.note.trim();
-    if text.is_empty() {
-        return Err(Problem::invalid_request("A note must not be empty."));
-    }
+    let text = StringBuilder::new(body.note)
+        .trimmed()
+        .non_empty()
+        .build()
+        .map_err(|_| Problem::invalid_request("A note must not be empty."))?;
 
-    let entry = NewChangelogEntry::note(commission, user.id, text.to_owned(), Utc::now());
+    let entry = NewChangelogEntry::note(commission, user.id, text, Utc::now());
     transaction(&*state.database, |uow| {
         Box::pin(async move { uow.changelog().append(&entry).await })
     })

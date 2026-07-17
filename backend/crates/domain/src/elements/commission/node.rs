@@ -338,7 +338,7 @@ impl RootSurface {
     /// };
     ///
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let title = CommissionTitle::try_new("A ref sheet").unwrap();
+    /// let title = "A ref sheet".parse::<CommissionTitle>().unwrap();
     /// let commission = Commission::create(title, owner, Utc::now(), None);
     /// let root = RootSurface::of(&commission);
     /// assert_eq!(root.mode, SurfaceMode::Total); // born Private = root Total
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn the_root_mode_is_the_commission_visibility() {
         let owner = UserId::new(uuid::Uuid::now_v7());
-        let title = CommissionTitle::try_new("Aliases").unwrap();
+        let title = "Aliases".parse::<CommissionTitle>().unwrap();
         let mut commission = Commission::create(title, owner, Utc::now(), None);
 
         // Birth: Private = root Total.

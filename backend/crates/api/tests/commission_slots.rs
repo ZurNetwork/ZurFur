@@ -184,7 +184,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .provision(&Did::new("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
-    let title = CommissionTitle::try_new("Not yours").expect("valid title");
+    let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
     let id = *commission.id;
     backend

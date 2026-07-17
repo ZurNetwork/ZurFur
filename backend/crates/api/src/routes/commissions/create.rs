@@ -71,7 +71,8 @@ struct MaturityInput {
 /// ZMVP-71), not here — no handler can create a treeless commission. Returns
 /// `201 Created` on success. A missing/malformed JSON body — or a blank
 /// (empty/whitespace) title, rejected by
-/// [`CommissionTitle::try_new`](domain::elements::commission::CommissionTitle::try_new) —
+/// [`CommissionTitle`](domain::elements::commission::CommissionTitle)'s
+/// `TryFrom<String>` —
 /// is a `422` (`invalid_request`). An optional `maturity` posture may rate the
 /// commission at birth; its `rating` is validated server-side, and an
 /// out-of-vocabulary token is a `422` (`unknown_maturity_rating`) before any write.
@@ -83,7 +84,7 @@ pub(super) async fn create_commission(
     let user = super::current_user(&state, &session).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let title = CommissionTitle::try_new(body.title)
+    let title = CommissionTitle::try_from(body.title)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
     // The optional at-creation rating passes the same server-side enum gate as the
     // PUT route — an out-of-vocabulary token is a 422 here, before anything is

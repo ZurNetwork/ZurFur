@@ -78,6 +78,7 @@ use std::ops::Deref;
 use crate::{
     datetime::DateTimeUtc,
     elements::{maturity::Maturity, user::UserId},
+    string_builder::{StringBuilder, StringBuilderViolation},
 };
 
 /// The app-private, stable handle for a [`Commission`].
@@ -115,10 +116,10 @@ impl Deref for CommissionId {
 /// ```
 /// use domain::elements::commission::CommissionTitle;
 ///
-/// let title = CommissionTitle::try_new("  A ref sheet  ").unwrap();
+/// let title = "  A ref sheet  ".parse::<CommissionTitle>().unwrap();
 /// assert_eq!(title.as_str(), "A ref sheet"); // trimmed
 ///
-/// assert!(CommissionTitle::try_new("   ").is_err()); // empty after trim
+/// assert!("   ".parse::<CommissionTitle>().is_err()); // empty after trim
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissionTitle(String);
@@ -141,19 +142,56 @@ impl std::fmt::Display for CommissionTitleError {
 impl std::error::Error for CommissionTitleError {}
 
 impl CommissionTitle {
-    /// Validate and wrap a title: trim surrounding whitespace, then reject an empty
-    /// result with [`CommissionTitleError::Empty`].
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, CommissionTitleError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(CommissionTitleError::Empty);
-        }
-        Ok(Self(trimmed))
-    }
-
     /// The validated, trimmed title as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for CommissionTitle {
+    type Error = CommissionTitleError;
+
+    /// Validate and wrap a title: trim surrounding whitespace, then reject an
+    /// empty result with [`CommissionTitleError::Empty`].
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => CommissionTitleError::Empty,
+                StringBuilderViolation::TooLong { .. }
+                | StringBuilderViolation::ControlCharacter => {
+                    // Unreachable by construction: this chain never calls
+                    // `max_chars`/`no_control`/`no_control_except`, and
+                    // `CommissionTitleError` has no variant for either. Fail
+                    // safe onto the only existing variant rather than panic.
+                    debug_assert!(
+                        false,
+                        "CommissionTitle's TryFrom chain only applies trimmed().non_empty()"
+                    );
+                    CommissionTitleError::Empty
+                }
+            })
+    }
+}
+
+/// The std parsing door: `"…".parse::<CommissionTitle>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for CommissionTitle {
+    type Err = CommissionTitleError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for CommissionTitle {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -242,7 +280,7 @@ impl Commission {
     ///
     /// Mints the id (`CommissionId::new(Uuid::now_v7())`), records the already-validated
     /// [`CommissionTitle`] and optional `deadline`, and stamps `created_at` from `now`.
-    /// The title is validated at the boundary ([`CommissionTitle::try_new`]) before this
+    /// The title is validated at the boundary ([`CommissionTitle::try_from`]) before this
     /// is reached, so this constructor is infallible — mirroring how [`Account::open`]
     /// takes an already-validated [`AccountName`]. Authority (a signed-in User; no
     /// Account needed — ZMVP-47) is the caller's concern, settled before this is reached.
@@ -255,7 +293,7 @@ impl Commission {
     /// use domain::elements::{commission::{Commission, CommissionTitle, LifecycleStep}, user::UserId};
     ///
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let title = CommissionTitle::try_new("A ref sheet").unwrap();
+    /// let title = "A ref sheet".parse::<CommissionTitle>().unwrap();
     /// let c = Commission::create(title, owner, Utc::now(), None);
     /// assert_eq!(c.owner_id, owner);                             // the creator owns it
     /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
@@ -605,7 +643,7 @@ mod tests {
     #[test]
     fn a_fresh_commission_has_no_deadline_status() {
         let c = Commission::create(
-            CommissionTitle::try_new("Ref").unwrap(),
+            "Ref".parse::<CommissionTitle>().unwrap(),
             crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
             chrono::Utc::now(),
             Some(chrono::Utc::now()),
@@ -674,7 +712,7 @@ mod tests {
     #[test]
     fn a_fresh_commission_has_no_direction_status() {
         let c = Commission::create(
-            CommissionTitle::try_new("Ref").unwrap(),
+            "Ref".parse::<CommissionTitle>().unwrap(),
             crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
             chrono::Utc::now(),
             None,
