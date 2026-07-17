@@ -30,7 +30,7 @@ use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
     handle::Handle,
-    invitation::{Invitation, InvitationState},
+    invitation::Invitation,
     role::Role,
     user::{User, UserId},
     user_account::UserAccount,
@@ -987,9 +987,9 @@ async fn invite_user_to_account(
         })));
     }
 
-    let invitation = Invitation::issue(account.id, invited.id, role.clone(), actor.id, Utc::now());
+    let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
     let minted = invitation.id;
-    // `invitation` moves into the boxed future and is handed back out for the body.
+    // The write only persists; the response body is built from the re-read below.
     transaction(&*state.database, |uow| {
         Box::pin(async move { uow.accounts().create_invitation(&invitation).await })
     })
@@ -999,9 +999,9 @@ async fn invite_user_to_account(
     // the pending check above is dropped by the store (`ON CONFLICT … DO
     // NOTHING`), so the offer on record may be the racer's — report that one as
     // a 200, and claim 201 only when the minted offer is what the table holds.
-    // (Residual window: the insert conflicted AND the surviving offer was
-    // revoked, all between adjacent statements — then the minted body goes out
-    // as created and the very next read shows the offer closed.)
+    // No pending offer at all means the survivor was closed between adjacent
+    // statements — answer from the minted row's own persisted state (it exists
+    // whenever our insert won), so nothing fabricated ever goes out.
     let (status, offer_id, offer_role, offer_state) = match state
         .accounts
         .find_pending_invitation(account.id, invited.id)
@@ -1011,7 +1011,21 @@ async fn invite_user_to_account(
             (StatusCode::CREATED, stored.id, stored.role, stored.state)
         }
         Some(stored) => (StatusCode::OK, stored.id, stored.role, stored.state),
-        None => (StatusCode::CREATED, minted, role, InvitationState::Pending),
+        None => {
+            let stored = state
+                .accounts
+                .find_invitation(minted)
+                .await?
+                .ok_or_else(|| {
+                    // Our insert was dropped AND the surviving offer is already
+                    // gone — nothing exists to report. Vanishingly rare; an
+                    // honest retry beats a fabricated offer.
+                    Problem::internal_error(
+                        "The invitation could not be confirmed. Please try again.",
+                    )
+                })?;
+            (StatusCode::CREATED, stored.id, stored.role, stored.state)
+        }
     };
     let offer = json!({
         "id": offer_id.to_string(),
