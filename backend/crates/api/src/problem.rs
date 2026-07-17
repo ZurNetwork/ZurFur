@@ -219,6 +219,21 @@ impl Problem {
         )
     }
 
+    /// `409` — inviting a User to a Seat that is already occupied (ZMVP-78). A
+    /// Seat holds at most one occupant (ZMVP-76 AC3), so a filled Seat has no
+    /// vacancy to offer — a state conflict, not an authority failure (the caller
+    /// is the owner) or a malformed request. Fixed text by construction: naming
+    /// the occupant would leak the other party.
+    pub fn seat_filled() -> Self {
+        Self::new(
+            "urn:zurfur:error:seat-filled",
+            "seat_filled",
+            "Seat already filled",
+            409,
+            "That seat is already occupied, so no one can be invited to it.",
+        )
+    }
+
     /// `409` — the commission bears facts, so hard-deleting it is no longer
     /// possible (ZMVP-66; Deletion DD `3014657`: "Delete = hard delete, possible
     /// only while fact-free"). A state conflict, not an authority failure — the

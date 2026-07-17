@@ -319,6 +319,20 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         self.0.create(commission).await
     }
 
+    async fn create_seat_invitation(
+        &mut self,
+        invitation: &domain::elements::commission::SeatInvitation,
+    ) -> anyhow::Result<()> {
+        self.0.create_seat_invitation(invitation).await
+    }
+
+    async fn revoke_seat_invitation(
+        &mut self,
+        id: domain::elements::commission::SeatInvitationId,
+    ) -> anyhow::Result<()> {
+        self.0.revoke_seat_invitation(id).await
+    }
+
     async fn commission_has_facts(&mut self, _id: CommissionId) -> anyhow::Result<bool> {
         Ok(true)
     }

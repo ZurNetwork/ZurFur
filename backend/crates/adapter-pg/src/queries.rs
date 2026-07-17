@@ -646,6 +646,19 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct CommissionInvitationRow {
+        pub id: uuid::Uuid,
+        pub commission_id: uuid::Uuid,
+        pub seat_id: uuid::Uuid,
+        pub invited_user: uuid::Uuid,
+        pub inviter: uuid::Uuid,
+        pub state: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        pub updated_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct CurrentPlacementRow {
         pub seq: i64,
         pub account_id: uuid::Uuid,
@@ -845,6 +858,41 @@ pub mod commission {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/create_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Persist a freshly issued, pending seat invitation (ZMVP-78). The partial
+    /// unique index (`... WHERE state = 'pending'`, see the migration) enforces at
+    /// most one pending offer per (seat, invited_user), so a duplicate issue is
+    /// silently dropped rather than becoming a second row — the store-level backstop
+    /// for the idempotent re-invite the handler also guards. The Seat mirror of
+    /// `account/create_invitation.sql`.
+    pub async fn create_seat_invitation(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        seat_id: uuid::Uuid,
+        invited_user: uuid::Uuid,
+        inviter: uuid::Uuid,
+        state: &str,
+        created_at: chrono::DateTime<chrono::Utc>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/commission/create_seat_invitation.sql"
+        ))
+        .bind(id)
+        .bind(commission_id)
+        .bind(seat_id)
+        .bind(invited_user)
+        .bind(inviter)
+        .bind(state)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/current_placement.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn current_placement(
         conn: impl sqlx::PgExecutor<'_>,
@@ -969,6 +1017,33 @@ pub mod commission {
             .bind(commission_id)
             .fetch_optional(conn)
             .await
+    }
+
+    /// `queries/commission/find_pending_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The lone pending offer for (commission, seat, invited_user), or nothing
+    /// (ZMVP-78). The `state` bind is the pending discriminant; accepted/revoked
+    /// invitations are history, not live offers, so they never match. Scoped to
+    /// commission_id in the query itself so a seat id from another commission's
+    /// tree can never reach that commission's offers — the authorization binding
+    /// is unrepresentable to skip, not caller discipline. The Seat mirror of
+    /// `account/find_pending_invitation.sql`.
+    pub async fn find_pending_seat_invitation(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        seat_id: uuid::Uuid,
+        invited_user: uuid::Uuid,
+        state: &str,
+    ) -> sqlx::Result<Option<CommissionInvitationRow>> {
+        sqlx::query_as(include_str!(
+            "../queries/commission/find_pending_seat_invitation.sql"
+        ))
+        .bind(commission_id)
+        .bind(seat_id)
+        .bind(invited_user)
+        .bind(state)
+        .fetch_optional(conn)
+        .await
     }
 
     /// `queries/commission/grant_view.sql`, contract inferred from the SQL against the migrated schema.
@@ -1133,6 +1208,32 @@ pub mod commission {
         .bind(commission_id)
         .fetch_optional(conn)
         .await
+    }
+
+    /// `queries/commission/revoke_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Revoke a pending seat invitation (ZMVP-78). state receives the revoked state;
+    /// inv_state guards the expected current (pending) state, so a concurrent flip
+    /// loses, and an UPDATE matching no row still succeeds — revoking an absent or
+    /// already-terminal invitation is a harmless no-op. The Seat mirror of
+    /// `account/revoke_invitation.sql`.
+    pub async fn revoke_seat_invitation(
+        conn: impl sqlx::PgExecutor<'_>,
+        state: &str,
+        updated_at: chrono::DateTime<chrono::Utc>,
+        id: uuid::Uuid,
+        inv_state: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/commission/revoke_seat_invitation.sql"
+        ))
+        .bind(state)
+        .bind(updated_at)
+        .bind(id)
+        .bind(inv_state)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/revoke_view.sql`, contract inferred from the SQL against the migrated schema.
@@ -1603,6 +1704,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::add_surface",
     "commission::create_commission",
     "commission::create_root_surface",
+    "commission::create_seat_invitation",
     "commission::declare_seat_node",
     "commission::declare_seat_satellite",
     "commission::declare_slot_node",
@@ -1613,6 +1715,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::place_repoint_current",
     "commission::remove_node_delete",
     "commission::remove_node_renumber",
+    "commission::revoke_seat_invitation",
     "commission::revoke_view",
     "commission::set_archived",
     "commission::set_deadline",

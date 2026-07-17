@@ -11,7 +11,8 @@ use crate::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
             DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
-            NewSeat, NewSlot, NewSurface, NodeId, Placement, Seat,
+            NewSeat, NewSlot, NewSurface, NodeId, Placement, Seat, SeatInvitation,
+            SeatInvitationId,
         },
         maturity::Maturity,
         user::UserId,
@@ -127,6 +128,24 @@ pub trait CommissionStore: Send + Sync {
         commission: CommissionId,
         key: FileKey,
     ) -> anyhow::Result<Option<CommissionFile>>;
+
+    /// The pending [`SeatInvitation`] for `(commission, seat, user)`, or `None`
+    /// if there isn't one (ZMVP-78 — the Seat mirror of
+    /// [`AccountStore::find_pending_invitation`](crate::ports::AccountStore::find_pending_invitation)).
+    /// Underpins the idempotent re-invite: a hit means "already invited to this
+    /// seat", so the owner-invite handler returns it rather than issuing a
+    /// duplicate. Only ever returns a **pending** offer — accepted/revoked
+    /// invitations are history, not live offers. Scoped to `commission` **in the
+    /// query itself**, not by caller discipline: a seat id from some other
+    /// commission's tree never matches, so a handler that authorized against one
+    /// commission cannot reach another's offers (the closed-door rule
+    /// [`CommissionStore::is_participant`] documents, enforced by construction).
+    async fn find_pending_seat_invitation(
+        &self,
+        commission: CommissionId,
+        seat: NodeId,
+        user: UserId,
+    ) -> anyhow::Result<Option<SeatInvitation>>;
 }
 
 /// The error an [`CommissionWrites::add_surface`] failure carries (as the source
@@ -244,6 +263,32 @@ pub trait CommissionWrites: Send {
     ///
     /// [`SeatDeclared`]: crate::elements::commission::ChangelogEntryKind::SeatDeclared
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()>;
+
+    /// Persist a freshly issued, pending [`SeatInvitation`] (ZMVP-78 — the
+    /// issuing half of seat invite-then-accept; acceptance is ZMVP-79). The Seat
+    /// mirror of [`AccountWrites::create_invitation`](crate::ports::AccountWrites::create_invitation):
+    /// at most one *pending* invitation may exist per (seat, invited user), so if
+    /// one already does this is a no-op rather than a second row — the
+    /// store-level backstop for the idempotent re-invite the caller also guards
+    /// by checking
+    /// [`CommissionStore::find_pending_seat_invitation`](crate::ports::CommissionStore::find_pending_seat_invitation)
+    /// first. Several *different* Users may hold pending invitations to one Seat
+    /// (the acceptance race is ZMVP-79's to resolve); only a duplicate pending
+    /// for the same (seat, user) pair is dropped. Authority (the inviter being
+    /// the commission owner, the seat being vacant) is the caller's check,
+    /// settled before this is reached. A private-side write, never a cross-store
+    /// dual write. Deliberately **not** changelog-recorded (Engineer ruling
+    /// 2026-07-16: no changelog entries in this ticket).
+    async fn create_seat_invitation(&mut self, invitation: &SeatInvitation) -> anyhow::Result<()>;
+
+    /// Transition a pending seat invitation to revoked, so it can no longer be
+    /// accepted (ZMVP-78 — the Seat mirror of
+    /// [`AccountWrites::revoke_invitation`](crate::ports::AccountWrites::revoke_invitation)).
+    /// Idempotent on a non-pending or absent invitation — a no-op, not an error;
+    /// the caller decides whether absence/already-revoked is a 404/200. *Who* may
+    /// revoke (the commission owner) is the caller's authority check. A
+    /// private-side write, never a cross-store dual write.
+    async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()>;
 
     /// Grow the commission's tree: persist a [`NewSurface`] under its parent
     /// (ZMVP-71 AC2). Sibling order is assigned here, **on the open
