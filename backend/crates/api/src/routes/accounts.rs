@@ -288,8 +288,8 @@ async fn create_account(
     // rejects; ZMVP-48/45, DD/24870914 §6).
     let Json(body) =
         body.map_err(|_| Problem::invalid_request("A name and handle are required."))?;
-    let name =
-        AccountName::try_new(body.name).map_err(|err| Problem::invalid_request(err.to_string()))?;
+    let name = AccountName::try_from(body.name)
+        .map_err(|err| Problem::invalid_request(err.to_string()))?;
     let handle =
         Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
 
@@ -1349,7 +1349,7 @@ mod tests {
             owner.id,
             Did::new(format!("{owner_did}:acct")),
             Handle::try_new(handle).expect("valid handle"),
-            AccountName::try_new("Seed Studio").expect("valid name"),
+            "Seed Studio".parse::<AccountName>().expect("valid name"),
             Utc::now(),
         );
         backend

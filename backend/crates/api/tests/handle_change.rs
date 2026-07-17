@@ -243,7 +243,7 @@ async fn only_the_owner_may_change_the_handle() {
         host.id,
         Did::new("did:plc:hostacct".to_string()),
         handle("host.zurfur.app"),
-        AccountName::try_new("Host Studio").unwrap(),
+        "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     backend
@@ -309,7 +309,7 @@ async fn rejects_a_taken_handle() {
         other.id,
         Did::new("did:plc:otheracct".to_string()),
         handle("theirs.zurfur.app"),
-        AccountName::try_new("Theirs").unwrap(),
+        "Theirs".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     backend

@@ -45,7 +45,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// one committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         owner.id,
         Utc::now(),
         None,
@@ -82,7 +82,7 @@ async fn declare_seat(
     let seat = NewSeat::under(
         commission,
         parent,
-        SeatKind::try_new("Creator").expect("valid kind"),
+        "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
         owner.id,

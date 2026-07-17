@@ -63,7 +63,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// in one committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         owner.id,
         Utc::now(),
         None,
@@ -356,7 +356,7 @@ async fn deleting_the_commission_cascades_participants_and_seats_away() {
     let seat = NewSeat::under(
         commission.id,
         root,
-        SeatKind::try_new("Creator").expect("valid kind"),
+        "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
         owner.id,
@@ -407,16 +407,24 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
     let first = NewSeat::under(
         commission.id,
         root,
-        SeatKind::try_new("Creator").expect("valid kind"),
-        Some(SeatPrompt::try_new("Two refs, please.").expect("valid prompt")),
-        Some(SeatLink::try_new("https://forms.example/apply").expect("valid link")),
+        "Creator".parse::<SeatKind>().expect("valid kind"),
+        Some(
+            "Two refs, please."
+                .parse::<SeatPrompt>()
+                .expect("valid prompt"),
+        ),
+        Some(
+            "https://forms.example/apply"
+                .parse::<SeatLink>()
+                .expect("valid link"),
+        ),
         owner.id,
         Utc::now(),
     );
     let second = NewSeat::under(
         commission.id,
         root,
-        SeatKind::try_new("Creator").expect("valid kind"),
+        "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
         owner.id,
@@ -477,7 +485,7 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
     let third = NewSeat::under(
         commission.id,
         root,
-        SeatKind::try_new("Client").expect("valid kind"),
+        "Client".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
         owner.id,
@@ -519,7 +527,7 @@ async fn declare_seat_refuses_an_absent_parent() {
     let fabricated = NewSeat::under(
         commission.id,
         NodeId::new(uuid::Uuid::now_v7()),
-        SeatKind::try_new("Creator").expect("valid kind"),
+        "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
         owner.id,

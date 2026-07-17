@@ -353,7 +353,7 @@ async fn a_non_owner_member_cannot_delete() {
         owner.id,
         Did::new("did:plc:ownedacct".to_string()),
         Handle::try_new("owned.zurfur.app").unwrap(),
-        AccountName::try_new("Not Yours").unwrap(),
+        "Not Yours".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     backend

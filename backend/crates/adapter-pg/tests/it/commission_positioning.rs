@@ -43,7 +43,7 @@ async fn seed_commission(
 ) -> (User, domain::elements::commission::CommissionId) {
     let owner = provision(pool, owner_did).await;
     let commission = Commission::create(
-        CommissionTitle::try_new("A ref sheet").expect("title"),
+        "A ref sheet".parse::<CommissionTitle>().expect("title"),
         owner.id,
         Utc::now(),
         None,
@@ -64,7 +64,7 @@ async fn seed_account(pool: &PgPool, owner_did: &str, handle: &str) -> AccountId
         owner.id,
         Did::new(format!("did:plc:acct-{handle}")),
         Handle::try_new(handle).expect("handle"),
-        AccountName::try_new("PG Studio").expect("name"),
+        "PG Studio".parse::<AccountName>().expect("name"),
         Utc::now(),
     );
     let id = account.id;

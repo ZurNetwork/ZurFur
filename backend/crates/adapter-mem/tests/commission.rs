@@ -23,7 +23,9 @@ async fn every_commission_answers_false_with_no_fact_minters_wired() {
         .provision(&Did::new("did:plc:factless-owner".to_string()))
         .await
         .expect("provision owner");
-    let title = CommissionTitle::try_new("A ref sheet").expect("valid title");
+    let title = "A ref sheet"
+        .parse::<CommissionTitle>()
+        .expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
     let id = commission.id;
 
@@ -87,7 +89,9 @@ async fn set_archived_round_trips_and_reports_transitions() {
         .await
         .expect("provision owner");
     let commission = Commission::create(
-        CommissionTitle::try_new("A ref sheet").expect("valid title"),
+        "A ref sheet"
+            .parse::<CommissionTitle>()
+            .expect("valid title"),
         owner.id,
         Utc::now(),
         None,
@@ -195,7 +199,9 @@ async fn a_dropped_unit_of_work_discards_the_archive() {
         .await
         .expect("provision owner");
     let commission = Commission::create(
-        CommissionTitle::try_new("Kept active").expect("valid title"),
+        "Kept active"
+            .parse::<CommissionTitle>()
+            .expect("valid title"),
         owner.id,
         Utc::now(),
         None,

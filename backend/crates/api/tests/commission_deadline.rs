@@ -218,7 +218,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .provision(&Did::new("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
-    let title = CommissionTitle::try_new("Not yours").expect("valid title");
+    let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
     let id = *commission.id;
     backend
@@ -237,7 +237,7 @@ async fn seed_with_lifecycle(backend: &MemBackend, step: LifecycleStep) -> uuid:
         .provision(&Did::new("did:plc:lifecycle-owner".to_string()))
         .await
         .expect("provision owner");
-    let title = CommissionTitle::try_new("Staged").expect("valid title");
+    let title = "Staged".parse::<CommissionTitle>().expect("valid title");
     let mut commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
     commission.lifecycle_step = step;
     let id = *commission.id;

@@ -52,7 +52,7 @@ async fn seed(
     step: Option<LifecycleStep>,
 ) -> Commission {
     let mut commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         owner.id,
         Utc::now(),
         deadline,

@@ -13,6 +13,7 @@ use std::ops::Deref;
 use crate::{
     datetime::DateTimeUtc,
     elements::{did::Did, handle::Handle, role::Role, user::UserId, user_account::UserAccount},
+    string_builder::{StringBuilder, StringBuilderViolation},
 };
 
 /// The app-private, stable handle for an [`Account`].
@@ -51,11 +52,11 @@ pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
 /// ```
 /// use domain::elements::account::AccountName;
 ///
-/// let name = AccountName::try_new("  Acme Studio  ").unwrap();
+/// let name = "  Acme Studio  ".parse::<AccountName>().unwrap();
 /// assert_eq!(name.as_str(), "Acme Studio"); // trimmed
 ///
-/// assert!(AccountName::try_new("   ").is_err()); // empty after trim
-/// assert!(AccountName::try_new("x".repeat(121)).is_err()); // too long
+/// assert!("   ".parse::<AccountName>().is_err()); // empty after trim
+/// assert!(AccountName::try_from("x".repeat(121)).is_err()); // too long
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountName(String);
@@ -65,7 +66,7 @@ pub struct AccountName(String);
 /// ```
 /// use domain::elements::account::{AccountName, AccountNameError};
 ///
-/// assert_eq!(AccountName::try_new(""), Err(AccountNameError::Empty));
+/// assert_eq!("".parse::<AccountName>(), Err(AccountNameError::Empty));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountNameError {
@@ -90,21 +91,54 @@ impl std::fmt::Display for AccountNameError {
 impl std::error::Error for AccountNameError {}
 
 impl AccountName {
-    /// Validate and wrap a name. Trims first, then checks the bounds above.
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, AccountNameError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(AccountNameError::Empty);
-        }
-        let len = trimmed.chars().count();
-        if len > ACCOUNT_NAME_MAX_LEN {
-            return Err(AccountNameError::TooLong(len));
-        }
-        Ok(Self(trimmed))
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for AccountName {
+    type Error = AccountNameError;
+
+    /// Validate and wrap a name: trim first, then check the bounds above.
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .max_chars(ACCOUNT_NAME_MAX_LEN)
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => AccountNameError::Empty,
+                StringBuilderViolation::TooLong { len, .. } => AccountNameError::TooLong(len),
+                StringBuilderViolation::ControlCharacter => {
+                    // Unreachable by construction: this chain never calls
+                    // `no_control`/`no_control_except`. Fail safe onto the
+                    // most conservative existing variant rather than panic.
+                    debug_assert!(
+                        false,
+                        "AccountName's TryFrom chain never calls no_control; ControlCharacter is unreachable"
+                    );
+                    AccountNameError::Empty
+                }
+            })
+    }
+}
+
+/// The std parsing door: `"…".parse::<AccountName>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for AccountName {
+    type Err = AccountNameError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for AccountName {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -161,7 +195,7 @@ impl Account {
     ///     owner,
     ///     Did::new("did:plc:example".to_string()),
     ///     Handle::try_new("acme.zurfur.app").unwrap(),
-    ///     AccountName::try_new("Acme Studio").unwrap(),
+    ///     "Acme Studio".parse::<AccountName>().unwrap(),
     ///     Utc::now(),
     /// );
     /// assert_eq!(membership.role, Role::Owner(None)); // founder is Owner

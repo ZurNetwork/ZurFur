@@ -157,7 +157,7 @@ async fn sign_in_and_create(
 /// Seeds a commission owned by an off-session User directly onto the backend.
 async fn seed_foreign_commission(backend: &MemBackend, title: &str) -> CommissionId {
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         UserId::new(uuid::Uuid::now_v7()),
         Utc::now(),
         None,

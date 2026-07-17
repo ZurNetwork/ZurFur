@@ -102,7 +102,7 @@ fn to_account(row: sql::AccountsRow) -> anyhow::Result<Account> {
         id: AccountId::new(row.id),
         did: Did::new(row.did),
         handle: Handle::try_new(row.handle)?,
-        name: AccountName::try_new(row.name)?,
+        name: AccountName::try_from(row.name)?,
         created_at: row.created_at,
         updated_at: row.updated_at,
         deleted_at: row.deleted_at,

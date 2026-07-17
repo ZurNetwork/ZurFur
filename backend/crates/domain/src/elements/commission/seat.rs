@@ -25,6 +25,7 @@ use crate::{
         commission::{CommissionId, NodeId},
         user::UserId,
     },
+    string_builder::{StringBuilder, StringBuilderViolation},
 };
 
 /// A Seat's **kind** — the semantic label of the position (Creator, Client, …),
@@ -40,10 +41,10 @@ use crate::{
 /// ```
 /// use domain::elements::commission::SeatKind;
 ///
-/// let kind = SeatKind::try_new("  Creator  ").unwrap();
+/// let kind = "  Creator  ".parse::<SeatKind>().unwrap();
 /// assert_eq!(kind.as_str(), "Creator"); // trimmed
 ///
-/// assert!(SeatKind::try_new("   ").is_err()); // empty after trim
+/// assert!("   ".parse::<SeatKind>().is_err()); // empty after trim
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatKind(String);
@@ -82,26 +83,49 @@ impl SeatKind {
     /// enough that a kind stays a label.
     pub const MAX_CHARS: usize = 64;
 
-    /// Validate and wrap a kind: trim surrounding whitespace, then reject an
-    /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
-    /// control character. No vocabulary check — the enumeration is open.
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, SeatKindError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(SeatKindError::Empty);
-        }
-        if trimmed.chars().count() > Self::MAX_CHARS {
-            return Err(SeatKindError::TooLong);
-        }
-        if trimmed.chars().any(char::is_control) {
-            return Err(SeatKindError::ControlCharacter);
-        }
-        Ok(Self(trimmed))
-    }
-
     /// The validated, trimmed kind as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for SeatKind {
+    type Error = SeatKindError;
+
+    /// Validate and wrap a kind: trim surrounding whitespace, then reject an
+    /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
+    /// control character. No vocabulary check — the enumeration is open.
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .max_chars(Self::MAX_CHARS)
+            .no_control()
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => SeatKindError::Empty,
+                StringBuilderViolation::TooLong { .. } => SeatKindError::TooLong,
+                StringBuilderViolation::ControlCharacter => SeatKindError::ControlCharacter,
+            })
+    }
+}
+
+/// The std parsing door: `"…".parse::<SeatKind>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for SeatKind {
+    type Err = SeatKindError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for SeatKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -117,11 +141,11 @@ impl SeatKind {
 /// ```
 /// use domain::elements::commission::SeatPrompt;
 ///
-/// let prompt = SeatPrompt::try_new("Show two refs.\nLink your portfolio.").unwrap();
+/// let prompt = "Show two refs.\nLink your portfolio.".parse::<SeatPrompt>().unwrap();
 /// assert!(prompt.as_str().contains('\n')); // multi-line is fine
 ///
-/// assert!(SeatPrompt::try_new("   ").is_err()); // empty after trim
-/// assert!(SeatPrompt::try_new("a\0b").is_err()); // NUL is not
+/// assert!("   ".parse::<SeatPrompt>().is_err()); // empty after trim
+/// assert!("a\0b".parse::<SeatPrompt>().is_err()); // NUL is not
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatPrompt(String);
@@ -162,30 +186,50 @@ impl SeatPrompt {
     /// rather than hosting the application form the DD defers to a Plugin.
     pub const MAX_CHARS: usize = 2000;
 
+    /// The validated, trimmed prompt as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for SeatPrompt {
+    type Error = SeatPromptError;
+
     /// Validate and wrap a prompt: trim surrounding whitespace, then reject an
     /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or a
     /// control character other than `\n`/`\r`/`\t` (free text keeps its line
     /// structure; NUL and friends only serve injection).
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, SeatPromptError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(SeatPromptError::Empty);
-        }
-        if trimmed.chars().count() > Self::MAX_CHARS {
-            return Err(SeatPromptError::TooLong);
-        }
-        if trimmed
-            .chars()
-            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-        {
-            return Err(SeatPromptError::ControlCharacter);
-        }
-        Ok(Self(trimmed))
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .max_chars(Self::MAX_CHARS)
+            .no_control_except(&['\n', '\r', '\t'])
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => SeatPromptError::Empty,
+                StringBuilderViolation::TooLong { .. } => SeatPromptError::TooLong,
+                StringBuilderViolation::ControlCharacter => SeatPromptError::ControlCharacter,
+            })
     }
+}
 
-    /// The validated, trimmed prompt as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
+/// The std parsing door: `"…".parse::<SeatPrompt>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for SeatPrompt {
+    type Err = SeatPromptError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for SeatPrompt {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -201,10 +245,10 @@ impl SeatPrompt {
 /// ```
 /// use domain::elements::commission::SeatLink;
 ///
-/// let link = SeatLink::try_new(" https://forms.example/apply ").unwrap();
+/// let link = " https://forms.example/apply ".parse::<SeatLink>().unwrap();
 /// assert_eq!(link.as_str(), "https://forms.example/apply"); // trimmed
 ///
-/// assert!(SeatLink::try_new("x\ny").is_err()); // control character
+/// assert!("x\ny".parse::<SeatLink>().is_err()); // control character
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatLink(String);
@@ -243,27 +287,50 @@ impl SeatLink {
     /// pointer: generous for any URL, tight enough to stay a pointer.
     pub const MAX_CHARS: usize = 512;
 
+    /// The validated, trimmed link as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for SeatLink {
+    type Error = SeatLinkError;
+
     /// Validate and wrap a link: trim surrounding whitespace, then reject an
     /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
     /// control character. Anything else — URL or not — is accepted: the value
     /// renders as an opaque pointer, never auto-embeds.
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, SeatLinkError> {
-        let trimmed = raw.into().trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(SeatLinkError::Empty);
-        }
-        if trimmed.chars().count() > Self::MAX_CHARS {
-            return Err(SeatLinkError::TooLong);
-        }
-        if trimmed.chars().any(char::is_control) {
-            return Err(SeatLinkError::ControlCharacter);
-        }
-        Ok(Self(trimmed))
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        StringBuilder::new(raw)
+            .trimmed()
+            .non_empty()
+            .max_chars(Self::MAX_CHARS)
+            .no_control()
+            .build()
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => SeatLinkError::Empty,
+                StringBuilderViolation::TooLong { .. } => SeatLinkError::TooLong,
+                StringBuilderViolation::ControlCharacter => SeatLinkError::ControlCharacter,
+            })
     }
+}
 
-    /// The validated, trimmed link as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
+/// The std parsing door: `"…".parse::<SeatLink>()?` — delegates to the
+/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
+impl std::str::FromStr for SeatLink {
+    type Err = SeatLinkError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
+/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
+impl AsRef<str> for SeatLink {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -323,7 +390,7 @@ impl NewSeat {
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
     /// let parent = NodeId::new(uuid::Uuid::now_v7());
     /// let owner = UserId::new(uuid::Uuid::now_v7());
-    /// let kind = SeatKind::try_new("Creator").unwrap();
+    /// let kind = "Creator".parse::<SeatKind>().unwrap();
     /// let seat = NewSeat::under(commission, parent, kind, None, None, owner, Utc::now());
     /// assert_eq!(seat.parent, parent);
     /// assert_eq!(seat.kind.as_str(), "Creator");
@@ -395,19 +462,22 @@ mod tests {
     // checks a vocabulary.
     #[test]
     fn seat_kind_is_an_open_trimmed_vocabulary() {
-        assert_eq!(SeatKind::try_new("  Creator ").unwrap().as_str(), "Creator");
-        // Not a Role, not a closed list — arbitrary labels are fine.
-        assert!(SeatKind::try_new("Background artist").is_ok());
-        assert!(SeatKind::try_new("客户").is_ok());
-
-        assert_eq!(SeatKind::try_new("   "), Err(SeatKindError::Empty));
         assert_eq!(
-            SeatKind::try_new("x".repeat(SeatKind::MAX_CHARS + 1)),
+            "  Creator ".parse::<SeatKind>().unwrap().as_str(),
+            "Creator"
+        );
+        // Not a Role, not a closed list — arbitrary labels are fine.
+        assert!("Background artist".parse::<SeatKind>().is_ok());
+        assert!("客户".parse::<SeatKind>().is_ok());
+
+        assert_eq!("   ".parse::<SeatKind>(), Err(SeatKindError::Empty));
+        assert_eq!(
+            SeatKind::try_from("x".repeat(SeatKind::MAX_CHARS + 1)),
             Err(SeatKindError::TooLong)
         );
-        assert!(SeatKind::try_new("x".repeat(SeatKind::MAX_CHARS)).is_ok());
+        assert!(SeatKind::try_from("x".repeat(SeatKind::MAX_CHARS)).is_ok());
         assert_eq!(
-            SeatKind::try_new("a\nb"),
+            "a\nb".parse::<SeatKind>(),
             Err(SeatKindError::ControlCharacter)
         );
     }
@@ -416,21 +486,23 @@ mod tests {
     // control characters and blank/oversized input refuse.
     #[test]
     fn seat_prompt_allows_lines_but_not_injection() {
-        let prompt = SeatPrompt::try_new(" Provide:\n\t- two refs\n\t- your rate ").unwrap();
+        let prompt = " Provide:\n\t- two refs\n\t- your rate "
+            .parse::<SeatPrompt>()
+            .unwrap();
         assert_eq!(prompt.as_str(), "Provide:\n\t- two refs\n\t- your rate");
 
-        assert_eq!(SeatPrompt::try_new("   "), Err(SeatPromptError::Empty));
+        assert_eq!("   ".parse::<SeatPrompt>(), Err(SeatPromptError::Empty));
         assert_eq!(
-            SeatPrompt::try_new("x".repeat(SeatPrompt::MAX_CHARS + 1)),
+            SeatPrompt::try_from("x".repeat(SeatPrompt::MAX_CHARS + 1)),
             Err(SeatPromptError::TooLong)
         );
-        assert!(SeatPrompt::try_new("x".repeat(SeatPrompt::MAX_CHARS)).is_ok());
+        assert!(SeatPrompt::try_from("x".repeat(SeatPrompt::MAX_CHARS)).is_ok());
         assert_eq!(
-            SeatPrompt::try_new("a\0b"),
+            "a\0b".parse::<SeatPrompt>(),
             Err(SeatPromptError::ControlCharacter)
         );
         assert_eq!(
-            SeatPrompt::try_new("a\u{1b}b"),
+            "a\u{1b}b".parse::<SeatPrompt>(),
             Err(SeatPromptError::ControlCharacter)
         );
     }
@@ -440,21 +512,22 @@ mod tests {
     #[test]
     fn seat_link_validates_shape_but_not_scheme() {
         assert_eq!(
-            SeatLink::try_new(" https://forms.example/apply ")
+            " https://forms.example/apply "
+                .parse::<SeatLink>()
                 .unwrap()
                 .as_str(),
             "https://forms.example/apply"
         );
         // No scheme allowlist — a bare pointer is fine.
-        assert!(SeatLink::try_new("form on my carrd").is_ok());
+        assert!("form on my carrd".parse::<SeatLink>().is_ok());
 
-        assert_eq!(SeatLink::try_new("   "), Err(SeatLinkError::Empty));
+        assert_eq!("   ".parse::<SeatLink>(), Err(SeatLinkError::Empty));
         assert_eq!(
-            SeatLink::try_new("x".repeat(SeatLink::MAX_CHARS + 1)),
+            SeatLink::try_from("x".repeat(SeatLink::MAX_CHARS + 1)),
             Err(SeatLinkError::TooLong)
         );
         assert_eq!(
-            SeatLink::try_new("a\tb"),
+            "a\tb".parse::<SeatLink>(),
             Err(SeatLinkError::ControlCharacter)
         );
     }
@@ -467,9 +540,9 @@ mod tests {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
         let parent = NodeId::new(uuid::Uuid::now_v7());
         let owner = UserId::new(uuid::Uuid::now_v7());
-        let kind = SeatKind::try_new("Creator").unwrap();
-        let prompt = SeatPrompt::try_new("Two refs, please.").unwrap();
-        let link = SeatLink::try_new("https://forms.example/apply").unwrap();
+        let kind = "Creator".parse::<SeatKind>().unwrap();
+        let prompt = "Two refs, please.".parse::<SeatPrompt>().unwrap();
+        let link = "https://forms.example/apply".parse::<SeatLink>().unwrap();
 
         let seat = NewSeat::under(
             commission,

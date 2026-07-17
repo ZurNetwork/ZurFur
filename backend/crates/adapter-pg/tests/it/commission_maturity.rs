@@ -42,7 +42,9 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// Create and commit a commission owned by `owner_did`, returning it.
 async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
     let owner = provision(pool, owner_did).await;
-    let title = CommissionTitle::try_new("A ref sheet").expect("valid title");
+    let title = "A ref sheet"
+        .parse::<CommissionTitle>()
+        .expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");

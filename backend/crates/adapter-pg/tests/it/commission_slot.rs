@@ -46,7 +46,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// returning `(the commission, its root node id)`.
 async fn rooted_commission(pool: &PgPool, owner: &User, title: &str) -> (Commission, NodeId) {
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("valid title"),
+        title.parse::<CommissionTitle>().expect("valid title"),
         owner.id,
         Utc::now(),
         None,
@@ -92,7 +92,7 @@ async fn declare_slot_persists_the_leaf_and_its_satellite() {
     let noted = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_from("The knight").expect("valid"),
+        "The knight".parse::<SlotTitle>().expect("valid"),
         Some("full plate, no cape".to_string()),
         owner.id,
         Utc::now(),
@@ -100,7 +100,7 @@ async fn declare_slot_persists_the_leaf_and_its_satellite() {
     let bare = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_from("The mage").expect("valid"),
+        "The mage".parse::<SlotTitle>().expect("valid"),
         None,
         owner.id,
         Utc::now(),
@@ -173,7 +173,7 @@ async fn declare_slot_refuses_bad_parents_like_every_tree_write() {
         .expect("component");
     uow.commit().await.expect("commit");
 
-    let title = || SlotTitle::try_from("The knight").expect("valid");
+    let title = || "The knight".parse::<SlotTitle>().expect("valid");
 
     // Fabricated parent.
     let fabricated = NewSlot::under(
@@ -242,7 +242,7 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
     let slot = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_from("Never lands").expect("valid"),
+        "Never lands".parse::<SlotTitle>().expect("valid"),
         None,
         owner.id,
         Utc::now(),
@@ -278,7 +278,7 @@ async fn slots_cascade_away_with_their_commission() {
     let slot = NewSlot::under(
         commission.id,
         root,
-        SlotTitle::try_from("Swept").expect("valid"),
+        "Swept".parse::<SlotTitle>().expect("valid"),
         Some("goes with the ship".to_string()),
         owner.id,
         Utc::now(),

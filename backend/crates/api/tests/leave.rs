@@ -160,7 +160,7 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         host.id,
         Did::new("did:plc:hostacct".to_string()),
         Handle::try_new("host.zurfur.app").unwrap(),
-        AccountName::try_new("Host Studio").unwrap(),
+        "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     backend

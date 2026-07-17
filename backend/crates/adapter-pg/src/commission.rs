@@ -725,8 +725,8 @@ impl CommissionStore for PgCommissionStore {
     /// `visibility`, `maturity`, `direction_status`, `deadline_status`, and
     /// `linked_channel` values are re-validated through their domain gates
     /// (`TryFrom<&str>` on [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`]
-    /// / [`DirectionStatus`] / [`DeadlineStatus`], with [`ChannelPointer::try_new`]
-    /// and [`CommissionTitle::try_new`] for the
+    /// / [`DirectionStatus`] / [`DeadlineStatus`], with `ChannelPointer`'s
+    /// and `CommissionTitle`'s `TryFrom<String>` for the
     /// title); a value outside its vocabulary means row tampering and surfaces
     /// as an `Err`, never a panic or a silent default — as does a half-set
     /// maturity posture, which the migration's CHECK already makes
@@ -769,7 +769,7 @@ impl CommissionStore for PgCommissionStore {
         );
         Ok(Some(Commission {
             id,
-            title: CommissionTitle::try_new(row.title)?,
+            title: CommissionTitle::try_from(row.title)?,
             owner_id: UserId::new(row.owner_id),
             lifecycle_step,
             visibility: Visibility::try_from(row.visibility.as_str())
@@ -787,7 +787,7 @@ impl CommissionStore for PgCommissionStore {
             deadline_status,
             linked_channel: row
                 .linked_channel
-                .map(ChannelPointer::try_new)
+                .map(ChannelPointer::try_from)
                 .transpose()?,
             archived_at: row.archived_at,
             created_at: row.created_at,
@@ -948,7 +948,7 @@ impl CommissionStore for PgCommissionStore {
     /// The commission's seat satellites (ZMVP-76) in declaration order (node
     /// ids are UUIDv7, so id order is declaration order): one indexed query
     /// over `commission_seat`, each row's `kind`/`prompt`/`link` re-validated
-    /// through its domain gate ([`SeatKind::try_new`] & co.) — a stored value
+    /// through its domain gate (`SeatKind`'s `TryFrom<String>` & co.) — a stored value
     /// outside its rules means row tampering and surfaces as an `Err`, never a
     /// silent default. No seats (or no commission) is simply the empty list.
     async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>> {
@@ -957,9 +957,9 @@ impl CommissionStore for PgCommissionStore {
             .map(|row| {
                 Ok(Seat {
                     id: NodeId::new(row.id),
-                    kind: SeatKind::try_new(row.kind)?,
-                    prompt: row.prompt.map(SeatPrompt::try_new).transpose()?,
-                    link: row.link.map(SeatLink::try_new).transpose()?,
+                    kind: SeatKind::try_from(row.kind)?,
+                    prompt: row.prompt.map(SeatPrompt::try_from).transpose()?,
+                    link: row.link.map(SeatLink::try_from).transpose()?,
                     occupant: row.occupant.map(UserId::new),
                 })
             })

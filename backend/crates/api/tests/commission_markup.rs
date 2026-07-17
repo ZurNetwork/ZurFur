@@ -203,7 +203,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .await
         .expect("provision foreign owner");
     let commission = Commission::create(
-        CommissionTitle::try_new("Not yours").expect("title"),
+        "Not yours".parse::<CommissionTitle>().expect("title"),
         owner.id,
         Utc::now(),
         None,

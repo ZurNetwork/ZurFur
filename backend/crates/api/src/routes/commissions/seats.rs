@@ -79,15 +79,16 @@ pub(super) async fn declare_seat(
     require_owner(&state, commission, &user).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let kind = SeatKind::try_new(body.kind).map_err(|e| Problem::invalid_request(e.to_string()))?;
+    let kind =
+        SeatKind::try_from(body.kind).map_err(|e| Problem::invalid_request(e.to_string()))?;
     let prompt = body
         .prompt
-        .map(SeatPrompt::try_new)
+        .map(SeatPrompt::try_from)
         .transpose()
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
     let link = body
         .link
-        .map(SeatLink::try_new)
+        .map(SeatLink::try_from)
         .transpose()
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
 

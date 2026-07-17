@@ -33,7 +33,7 @@ pub(super) struct LinkChannelBody {
 /// Declare (or replace) the commission's linked channel (ZMVP-87 AC3).
 ///
 /// Owner-only ([`require_owner`]). The pointer is validated by
-/// [`ChannelPointer::try_new`] — trimmed, non-empty, length-capped,
+/// `ChannelPointer`'s `TryFrom<String>` — trimmed, non-empty, length-capped,
 /// control-character-free, **no scheme allowlist** — a failure is a `422`. The
 /// column write and the `channel_linked` changelog entry (payload carries the
 /// pointer, so it renders without joins) land in **one unit of work** (Changelog
@@ -52,7 +52,7 @@ pub(super) async fn link_channel(
     require_owner(&state, commission, &user).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let pointer = ChannelPointer::try_new(body.channel)
+    let pointer = ChannelPointer::try_from(body.channel)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
 
     let entry = NewChangelogEntry::event(

@@ -43,7 +43,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn seed_commission(pool: &PgPool, owner: &User, title: &str) -> CommissionId {
     let db = PgDatabase::new(pool.clone());
     let commission = Commission::create(
-        CommissionTitle::try_new(title).expect("title"),
+        title.parse::<CommissionTitle>().expect("title"),
         owner.id,
         Utc::now(),
         None,

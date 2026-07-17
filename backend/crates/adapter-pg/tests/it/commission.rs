@@ -50,7 +50,9 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:factless-owner").await;
-    let title = CommissionTitle::try_new("A ref sheet").expect("valid title");
+    let title = "A ref sheet"
+        .parse::<CommissionTitle>()
+        .expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
     let id = commission.id;
 
@@ -110,7 +112,7 @@ async fn an_unknown_commission_answers_false() {
 async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:deleting-owner").await;
-    let title = CommissionTitle::try_new("Doomed").expect("valid title");
+    let title = "Doomed".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
     let id = commission.id;
 
@@ -194,7 +196,9 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:archiving-owner").await;
     let commission = Commission::create(
-        CommissionTitle::try_new("A ref sheet").expect("valid title"),
+        "A ref sheet"
+            .parse::<CommissionTitle>()
+            .expect("valid title"),
         owner.id,
         Utc::now(),
         None,

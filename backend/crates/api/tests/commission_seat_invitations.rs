@@ -403,7 +403,7 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
         .provision(&Did::new("did:plc:foreign-owner".to_string()))
         .await
         .expect("provision foreign owner");
-    let title = CommissionTitle::try_new("Not yours").expect("valid title");
+    let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let foreign = Commission::create(title, foreign_owner.id, Utc::now(), None);
     let foreign_id = *foreign.id;
     backend
