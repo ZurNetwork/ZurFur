@@ -390,7 +390,14 @@ impl CommissionWrites for MemCommissionWrites {
             .participants
             .lock()
             .expect("MemBackend participants mutex poisoned");
-        participants.insert((commission.id, commission.owner_id), commission.created_at);
+        // A duplicate add is a no-op that preserves the ORIGINAL created_at —
+        // the mem mirror of the pg `ON CONFLICT (commission_id, user_id) DO
+        // NOTHING` (ZMVP-140): a fresh commission's owner row can't collide
+        // here, but ZMVP-79's seat acceptance re-adds whoever it seats, who
+        // may already be a participant through another seat.
+        participants
+            .entry((commission.id, commission.owner_id))
+            .or_insert(commission.created_at);
         Ok(())
     }
 
@@ -1305,10 +1312,14 @@ impl MemBackend {
     /// member — letting a test exercise the owner-vs-participant authority split
     /// (the `403` arm of `require_owner`: a participant who is not the owner).
     pub fn seed_participant(&self, commission: CommissionId, user: UserId) {
+        // Mirrors add_participant.sql's ON CONFLICT DO NOTHING (ZMVP-140): a
+        // re-seed of an already-seated pair is a no-op, preserving the
+        // original created_at.
         self.participants
             .lock()
             .expect("MemBackend participants mutex poisoned")
-            .insert((commission, user), chrono::Utc::now());
+            .entry((commission, user))
+            .or_insert_with(chrono::Utc::now);
     }
 }
 
