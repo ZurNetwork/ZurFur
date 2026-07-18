@@ -14,6 +14,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         account::{Account, AccountId, AccountName},
+        actor_identity::{ActorKind, ActorState},
         did::Did,
         handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
@@ -26,6 +27,7 @@ use domain::{
 use sqlx::{PgConnection, PgPool};
 
 use crate::queries::account as sql;
+use crate::queries::actor_identity as actor_sql;
 
 /// THE ACCOUNT-FACT REGISTRY (ZMVP-57; Account Deletion DD `23003138`): the tables
 /// whose rows are **account-anchored facts** — evidence that would be *orphaned* by
@@ -96,11 +98,19 @@ const _: () = assert!(
 
 /// Rebuild a domain [`Account`] from its generated row. The stored name/handle
 /// were validated before they were written, so re-validation here only guards
-/// against tampering — surfaced as an error, never a panic.
-fn to_account(row: sql::AccountsRow) -> anyhow::Result<Account> {
+/// against tampering — surfaced as an error, never a panic. The DID is joined from
+/// the actor super-table (ZMVP-123); an account always has one (the per-kind CHECK),
+/// so a NULL is a corrupted projection, surfaced as an error too.
+fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
+    let did = row.did.ok_or_else(|| {
+        anyhow::anyhow!(
+            "account {} has no DID in actor_identity (corrupted projection)",
+            row.id
+        )
+    })?;
     Ok(Account {
         id: AccountId::new(row.id),
-        did: Did::new(row.did),
+        did: Did::new(did),
         handle: Handle::try_new(row.handle)?,
         name: AccountName::try_from(row.name)?,
         created_at: row.created_at,
@@ -257,8 +267,9 @@ impl AccountStore for PgAccountStore {
     /// resolver and the founding-time duplicate-handle pre-check. The `UNIQUE`
     /// handle index makes at most one row possible.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
-        let did = sql::find_did_by_handle(&self.pool, handle.as_str()).await?;
-        Ok(did.map(Did::new))
+        Ok(sql::find_did_by_handle(&self.pool, handle.as_str())
+            .await?
+            .map(Did::new))
     }
 
     /// Counts the account's `account_handle_changes` rows at or after `since` — the
@@ -299,24 +310,50 @@ fn constraint_of(err: &sqlx::Error) -> Option<&str> {
 
 #[async_trait::async_trait]
 impl AccountWrites for PgAccountWrites<'_> {
-    /// Writes the `accounts` row and the founder's `account_members` row on the
-    /// open transaction, so a half-founded account can never be observed and both
-    /// rows commit with the rest of the unit. Both rows live in the private store,
+    /// Founding as a two-step write in one unit (ZMVP-123): `intern` the account's DID
+    /// into the actor super-table, then write the `accounts` projection row and the
+    /// founder's `account_members` row — all on the open transaction, so a half-founded
+    /// account can never be observed and the composite FK makes writing the projection
+    /// without its identity parent unrepresentable. Every row lives in the private store,
     /// so this is one unit of work — never a cross-store dual write.
     ///
     /// A **handle** collision — the global `accounts_handle_key` unique index, which
     /// covers live *and* soft-deleted accounts (a tombstone still reserves its
     /// handle, DD `23003138`) — fails with [`HandleTaken`] as the error source, so
-    /// the founding handler maps it to a `409` rather than a `500`. This is the
-    /// authoritative backstop for the two cases the handler's pre-check can't see: a
-    /// handle reserved by a soft-deleted account, and the concurrent-claim race. A
-    /// duplicate `id` or `did` (both machine-minted, never user-facing) stays an
+    /// the founding handler maps it to a `409` rather than a `500`. On any failure the
+    /// caller's transaction rolls back, taking the just-interned identity row with it,
+    /// so no orphan identity is left behind. The DID lives in `actor_identity` now
+    /// (both id and DID machine-minted, never user-facing), so a duplicate stays an
     /// opaque store error.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
+        // Step 1 — intern the account's sovereign DID FIRST, keyed by the account's OWN
+        // id (the shared PK). The account's DID is freshly minted and unique, so this
+        // always creates a new identity whose id equals the account's; a DID already
+        // interned under a different identity is a loud bug (the ids diverge), never a
+        // silent projection onto the wrong actor.
+        let interned = actor_sql::intern(
+            &mut *self.conn,
+            *account.id,
+            ActorKind::Account.as_str(),
+            Some(account.did.as_str()),
+            ActorState::Active.as_str(),
+            account.created_at,
+        )
+        .await?;
+        anyhow::ensure!(
+            interned.id == *account.id,
+            "account {} DID {} was already interned under a different identity {}",
+            *account.id,
+            account.did.as_str(),
+            interned.id
+        );
+
+        // Step 2 — the `accounts` projection row (no `did`: it lives in the super-table
+        // now). Map a handle-uniqueness violation to the typed `HandleTaken` so the
+        // caller can answer 409; any other database error stays opaque (→ 500).
         let insert = sql::create_account(
             &mut *self.conn,
             *account.id,
-            account.did.as_str(),
             account.handle.as_str(),
             account.name.as_str(),
             account.created_at,
@@ -324,8 +361,6 @@ impl AccountWrites for PgAccountWrites<'_> {
         )
         .await;
 
-        // Map a handle-uniqueness violation to the typed `HandleTaken` so the caller
-        // can answer 409; any other database error stays opaque (→ 500).
         if let Err(ref err) = insert
             && constraint_of(err) == Some("accounts_handle_key")
         {

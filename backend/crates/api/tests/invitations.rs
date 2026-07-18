@@ -521,3 +521,37 @@ async fn invitee_accepts_and_becomes_a_member() {
         "accepting mints a Member membership at the offered role"
     );
 }
+
+// Ultrareview round (2026-07-18) — inviting a DID that already belongs to
+// ANOTHER actor (here: the account's own DID) is a typed 409, never an opaque
+// 500: one DID = one actor (DD 34013187), and the wire contract is
+// did_belongs_to_another_actor (Engineer ruling).
+#[tokio::test]
+async fn inviting_an_accounts_own_did_is_a_did_conflict() {
+    let did = "did:plc:conflict-owner";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account_id = found_account(&client, &base, "Conflict Studio").await;
+
+    let account = backend
+        .find(AccountId::new(account_id.parse().expect("uuid id")))
+        .await
+        .expect("find")
+        .expect("the founded account exists");
+
+    let res = client
+        .post(format!("{base}/accounts/{account_id}/invitations"))
+        .json(&serde_json::json!({ "user": account.did.as_str(), "role": "member" }))
+        .send()
+        .await
+        .expect("POST invite with an account's DID");
+    assert_eq!(
+        res.status(),
+        409,
+        "an existing actor's DID cannot be provisioned as a User"
+    );
+    let problem: serde_json::Value = res.json().await.expect("problem+json body");
+    let conflict_code = problem["code"].as_str().unwrap_or_default().to_string();
+    assert_eq!(conflict_code, "did_belongs_to_another_actor");
+}

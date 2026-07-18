@@ -321,6 +321,29 @@ impl std::fmt::Display for HandleTaken {
 
 impl std::error::Error for HandleTaken {}
 
+/// Marker error: the supplied DID is already interned as a DIFFERENT actor
+/// kind (e.g. an account's public DID handed to a user-provisioning path).
+/// One DID = one actor (DD 34013187), so the request conflicts with existing
+/// state — routes downcast this to a `409 did_belongs_to_another_actor`
+/// rather than letting it surface as an opaque `500` (ultrareview, PR #141).
+#[derive(Debug)]
+pub struct DidBelongsToAnotherActor {
+    /// The kind the DID is already interned as.
+    pub existing_kind: String,
+}
+
+impl std::fmt::Display for DidBelongsToAnotherActor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the DID already belongs to another actor (kind '{}')",
+            self.existing_kind
+        )
+    }
+}
+
+impl std::error::Error for DidBelongsToAnotherActor {}
+
 /// The **write** surface of Zurfur's record of accounts and memberships —
 /// reachable only on an open [`UnitOfWork`] (`uow.accounts()`), so no private-store
 /// account write can skip a transaction. An account and its founder's Owner

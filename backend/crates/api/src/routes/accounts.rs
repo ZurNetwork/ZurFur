@@ -35,7 +35,7 @@ use domain::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
-use domain::ports::{HandleTaken, UnitOfWork};
+use domain::ports::{DidBelongsToAnotherActor, HandleTaken, UnitOfWork};
 use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
@@ -789,7 +789,11 @@ async fn grant_role(
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.users().provision(&Did::new(body.user)).await
         })
-        .await?;
+        .await
+        .map_err(|err| match err.downcast_ref::<DidBelongsToAnotherActor>() {
+            Some(_) => Problem::did_belongs_to_another_actor(),
+            None => Problem::from(err),
+        })?;
 
     // The guard above bounds the role being *granted*; these bound the *grantee*,
     // both keyed on their current standing on the account (loaded once):
@@ -968,7 +972,11 @@ async fn invite_user_to_account(
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.users().provision(&Did::new(body.user)).await
         })
-        .await?;
+        .await
+        .map_err(|err| match err.downcast_ref::<DidBelongsToAnotherActor>() {
+            Some(_) => Problem::did_belongs_to_another_actor(),
+            None => Problem::from(err),
+        })?;
 
     // An invitation is the path *to* membership; someone who already holds a role has
     // nowhere to be invited. This is a state conflict (409), not an authority failure

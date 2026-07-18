@@ -26,7 +26,9 @@ async fn fresh_pool() -> (PgPool, impl Sized) {
 #[tokio::test]
 async fn create_commit_find_round_trips() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
+    // Character is the DID-less kind — `create` is the DID-less path, and the ZMVP-123
+    // per-kind CHECK requires user/account identities to carry a DID (intern them).
+    let identity = ActorIdentity::mint(ActorKind::Character, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
@@ -60,7 +62,8 @@ async fn create_commit_find_round_trips() {
 #[tokio::test]
 async fn uncommitted_create_rolls_back() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
+    // Character: the DID-less kind `create` persists (per-kind CHECK, ZMVP-123).
+    let identity = ActorIdentity::mint(ActorKind::Character, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     {
@@ -86,28 +89,46 @@ async fn kind_round_trips_and_check_rejects_unknown() {
     let db = PgDatabase::new(pool.clone());
     let store = PgActorIdentityStore::new(pool.clone());
 
-    for kind in [ActorKind::User, ActorKind::Account, ActorKind::Character] {
-        let identity = ActorIdentity::mint(kind, Utc::now());
+    // Character is the DID-less kind — it round-trips through `create`.
+    let character = ActorIdentity::mint(ActorKind::Character, Utc::now());
+    let mut uow = db.begin().await.expect("begin");
+    uow.actor_identities()
+        .create(&character)
+        .await
+        .expect("create");
+    uow.commit().await.expect("commit");
+    let found = store
+        .find(character.id)
+        .await
+        .expect("find")
+        .expect("row exists");
+    assert_eq!(
+        found.kind,
+        ActorKind::Character,
+        "Character must round-trip"
+    );
+
+    // User and Account always carry a DID (the ZMVP-123 per-kind CHECK), so they
+    // round-trip through the DID-bearing `intern` path rather than `create`.
+    for (kind, did) in [
+        (ActorKind::User, "did:plc:kind-user"),
+        (ActorKind::Account, "did:plc:kind-account"),
+    ] {
         let mut uow = db.begin().await.expect("begin");
-        uow.actor_identities()
-            .create(&identity)
+        let interned = uow
+            .actor_identities()
+            .intern(&Did::new(did.to_string()), kind, Utc::now())
             .await
-            .expect("create");
+            .expect("intern");
         uow.commit().await.expect("commit");
+        assert_eq!(interned.kind, kind, "{kind:?} must round-trip");
 
         let found = store
-            .find(identity.id)
+            .find(interned.id)
             .await
             .expect("find")
             .expect("row exists");
-        assert_eq!(
-            found,
-            ActorIdentity {
-                first_seen: found.first_seen,
-                ..identity
-            },
-            "{kind:?} must round-trip"
-        );
+        assert_eq!(found.kind, kind);
     }
 
     let rejected = sqlx::query(
@@ -326,7 +347,8 @@ async fn handle_cache_fills_refreshes_and_clears() {
 #[tokio::test]
 async fn duplicate_create_errors() {
     let (pool, _container) = fresh_pool().await;
-    let identity = ActorIdentity::mint(ActorKind::User, Utc::now());
+    // Character: the DID-less kind `create` persists (per-kind CHECK, ZMVP-123).
+    let identity = ActorIdentity::mint(ActorKind::Character, Utc::now());
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");

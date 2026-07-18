@@ -709,8 +709,17 @@ async fn the_migration_backfills_a_root_for_pre_tree_commissions() {
     pre_tree.run(&pool).await.expect("pre-tree migrations run");
 
     // Seed a pre-tree world: an owner and one commission per visibility value,
-    // exactly as ZMVP-65 wrote them (no tree anywhere).
-    let owner = provision(&pool, "did:plc:early-adopter").await;
+    // exactly as ZMVP-65 wrote them (no tree anywhere). The owner is inserted directly
+    // because at this OLD schema `users` still carries `did` and the actor super-table
+    // does not exist yet, so today's `provision` — which interns into it — cannot run.
+    let owner = User::recognize(Did::new("did:plc:early-adopter".to_string()), Utc::now());
+    sqlx::query("INSERT INTO users (id, did, created_at) VALUES ($1, $2, $3)")
+        .bind(*owner.id)
+        .bind(owner.did.as_str())
+        .bind(owner.created_at)
+        .execute(&pool)
+        .await
+        .expect("seed pre-actor-identity owner");
     let mut seeded = Vec::new();
     for visibility in ["private", "listed", "public"] {
         let id = uuid::Uuid::now_v7();

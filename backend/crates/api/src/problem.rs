@@ -219,6 +219,21 @@ impl Problem {
         )
     }
 
+    /// `409` — the supplied DID is already interned as a different actor kind
+    /// (one DID = one actor, DD 34013187): e.g. an account's public DID handed
+    /// to a user-provisioning path (invite/grant). The conflict is with
+    /// existing state, so it is a 409 sibling of [`already_member`](Self::already_member)
+    /// (Engineer ruling 2026-07-18, ultrareview round).
+    pub fn did_belongs_to_another_actor() -> Self {
+        Self::new(
+            "urn:zurfur:error:did-belongs-to-another-actor",
+            "did_belongs_to_another_actor",
+            "DID belongs to another actor",
+            409,
+            "That DID is already interned as a different actor kind.",
+        )
+    }
+
     /// `409` — inviting a User to a Seat that is already occupied (ZMVP-78). A
     /// Seat holds at most one occupant (ZMVP-76 AC3), so a filled Seat has no
     /// vacancy to offer — a state conflict, not an authority failure (the caller

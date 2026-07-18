@@ -192,8 +192,11 @@ pub struct ActorIdentity {
 
 impl ActorIdentity {
     /// Mint a brand-new **DID-less** actor identity of `kind` with a fresh
-    /// UUIDv7 key, first seen `now`. Any kind mints — the invariant is
-    /// `did: None`, not the kind (in the domain, Characters are the actors
+    /// UUIDv7 key, first seen `now`. Any kind *mints* (this is a pure value), but
+    /// the persistence rule is narrower: since ZMVP-123 the store's per-kind DID
+    /// CHECK rejects a DID-less `user`/`account`, so only DID-less kinds (Characters)
+    /// are actually persistable via [`crate::ports::ActorIdentityWrites::create`].
+    /// The invariant here is `did: None`, not the kind (Characters are the actors
     /// born DID-less, DD `34013187`).
     ///
     /// Pure: this only builds the value — persisting it is
