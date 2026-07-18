@@ -58,3 +58,24 @@ jobs:
           node-version: '20'
       # Lint the hand-authored API contracts (OpenAPI / AsyncAPI) under openapi/.
       - run: npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+
+  deny:
+    name: deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # Matches the lockfile-assertion convention the other jobs use.
+          # --all-features: scan the full feature graph, not just default features.
+          arguments: --locked --all-features
+          # Full four-check set (advisories, licenses, bans, sources) —
+          # all green: every workspace crate sets `publish = false`, and
+          # MPL-2.0 (jacquard family) is Engineer-allowed in deny.toml.
+
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@v1

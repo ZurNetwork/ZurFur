@@ -101,6 +101,17 @@ worktree-init:
 check:
     cd backend && bacon
 
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint) -- sequential
+# and fail-fast, so a red step stops the run before the next one starts. The
+# last two need `cargo install cargo-deny` / `cargo install typos-cli` once.
+gate:
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    cargo test --workspace --locked
+    cargo deny --locked --all-features check
+    typos
+    npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+
 # --- Setup ---
 
 setup:

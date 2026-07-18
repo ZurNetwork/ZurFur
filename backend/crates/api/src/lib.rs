@@ -278,7 +278,7 @@ impl Config {
 
 /// The shared application state every handler receives via axum's [`State`]
 /// extractor — the composition root's bag of dependencies. It is `Clone` (the
-/// pool and every port are cheaply clonable, behind [`PgPool`]/[`Arc`]), so axum
+/// pool and every port are cheaply cloneable, behind [`PgPool`]/[`Arc`]), so axum
 /// can hand each request its own copy.
 ///
 /// Each port is an `Arc<dyn Trait>` precisely so the wiring picks the live
