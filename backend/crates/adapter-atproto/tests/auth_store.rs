@@ -3,7 +3,7 @@
 //! and, critically, that the `#[serde(flatten)]`-heavy `ClientSessionData` and
 //! `AuthRequestData` survive the JSON encode/decode this store relies on.
 //! Requires a container runtime socket (DOCKER_HOST honored).
-use adapter_atproto::AtprotoAuthStore;
+use adapter_atproto::{AtprotoAuthStore, SecretVault};
 use fluent_uri::Uri;
 use jacquard_common::types::did::Did;
 use jacquard_oauth::{
@@ -14,6 +14,14 @@ use jacquard_oauth::{
     utils::generate_key,
 };
 use smol_str::SmolStr;
+use sqlx::PgPool;
+
+/// A fixed 32-byte root key for the test vault. Real deployments source this from
+/// `ZURFUR_DID_KEY_ROOT_KEY` (the same key the custody store uses); tests only
+/// need *a* valid key so seal/open round-trips.
+fn test_vault() -> SecretVault {
+    SecretVault::from_bytes(&[7u8; 32]).expect("32-byte test root key")
+}
 
 /// A store on a fresh, fully migrated private database (a clone of the shared
 /// template, which the real migrations gave the `atproto_oauth` schema — see
@@ -21,7 +29,15 @@ use smol_str::SmolStr;
 /// for the test's duration.
 async fn fresh_store() -> (AtprotoAuthStore, impl Sized) {
     let (pool, db) = test_support::pg::fresh_pool().await;
-    (AtprotoAuthStore::new(pool), db)
+    (AtprotoAuthStore::new(pool, test_vault()), db)
+}
+
+/// Like [`fresh_store`], but also hands back the pool so a test can read the raw
+/// at-rest `data` bytea directly — bypassing the store's decrypt path — to prove
+/// what actually landed on disk.
+async fn fresh_store_and_pool() -> (AtprotoAuthStore, PgPool, impl Sized) {
+    let (pool, db) = test_support::pg::fresh_pool().await;
+    (AtprotoAuthStore::new(pool.clone(), test_vault()), pool, db)
 }
 
 fn client_session(did: &'static str, session_id: &'static str) -> ClientSessionData {
@@ -154,5 +170,146 @@ async fn missing_session_returns_none() {
             .expect("get")
             .is_none(),
         "absent session must read as None, not error"
+    );
+}
+
+/// The whole point of the fix: what lands in `client_session.data` is ciphertext,
+/// not the plaintext JSON. The DPoP private key + tokens must not be recoverable
+/// from a raw column read (the leaked-backup / read-replica threat).
+#[tokio::test]
+async fn stored_session_bytes_are_not_plaintext_json() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    store.upsert_session(session.clone()).await.expect("upsert");
+
+    // Read the at-rest bytes straight from the column, bypassing the store.
+    let raw: Vec<u8> = sqlx::query_scalar(
+        "SELECT data FROM atproto_oauth.client_session WHERE account_did = $1 AND session_id = $2",
+    )
+    .bind("did:plc:alice")
+    .bind("session-1")
+    .fetch_one(&pool)
+    .await
+    .expect("row present after upsert");
+
+    // Not the plaintext JSON, and no secret/identifier survives in the clear.
+    let plaintext_json = serde_json::to_vec(&session).expect("json");
+    assert_ne!(
+        raw, plaintext_json,
+        "at-rest bytes must not be the plaintext JSON"
+    );
+    for needle in [
+        b"refresh-token".as_slice(),
+        b"access-token".as_slice(),
+        b"did:plc:alice".as_slice(),
+    ] {
+        assert!(
+            !raw.windows(needle.len()).any(|w| w == needle),
+            "secret/identifier {:?} leaked into the at-rest bytes",
+            std::str::from_utf8(needle).unwrap()
+        );
+    }
+    assert!(
+        serde_json::from_slice::<ClientSessionData>(&raw).is_err(),
+        "the ciphertext must not deserialize as a session"
+    );
+}
+
+/// The in-flight `auth_request.data` is sealed too — the PKCE verifier + DPoP key
+/// must not sit in the clear.
+#[tokio::test]
+async fn stored_auth_request_bytes_are_not_plaintext_json() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let req = auth_request("state-xyz");
+    store.save_auth_req_info(&req).await.expect("save");
+
+    let raw: Vec<u8> =
+        sqlx::query_scalar("SELECT data FROM atproto_oauth.auth_request WHERE state = $1")
+            .bind("state-xyz")
+            .fetch_one(&pool)
+            .await
+            .expect("row present after save");
+
+    for needle in [b"pkce-verifier".as_slice(), b"did:plc:alice".as_slice()] {
+        assert!(
+            !raw.windows(needle.len()).any(|w| w == needle),
+            "secret/identifier {:?} leaked into the at-rest bytes",
+            std::str::from_utf8(needle).unwrap()
+        );
+    }
+    assert!(
+        serde_json::from_slice::<AuthRequestData>(&raw).is_err(),
+        "the ciphertext must not deserialize as an auth request"
+    );
+}
+
+/// A value that is not valid ciphertext under the store's vault (here, a legacy
+/// plaintext-JSON row written straight into the column) must fail CLOSED on read —
+/// an error, never a silent downgrade that hands back the plaintext.
+#[tokio::test]
+async fn non_sealed_row_fails_closed_on_read() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    let plaintext_json = serde_json::to_vec(&session).expect("json");
+
+    sqlx::query(
+        "INSERT INTO atproto_oauth.client_session (account_did, session_id, data) \
+         VALUES ($1, $2, $3)",
+    )
+    .bind("did:plc:alice")
+    .bind("session-1")
+    .bind(&plaintext_json)
+    .execute(&pool)
+    .await
+    .expect("insert plaintext row");
+
+    let did: Did = Did::new_static("did:plc:alice").expect("valid did");
+    assert!(
+        store.get_session(&did, "session-1").await.is_err(),
+        "a non-sealed value must fail closed, not pass through as plaintext"
+    );
+}
+
+/// The AAD is wired to the actual row key: a sealed blob grafted onto a different
+/// `(account_did, session_id)` row fails the tag check on read, so an attacker
+/// with DB write access cannot move one session's secret onto another row.
+#[tokio::test]
+async fn sealed_session_is_bound_to_its_row_key() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    store.upsert_session(session).await.expect("upsert");
+
+    // Lift the sealed blob and graft it onto a second session_id for the same DID.
+    let raw: Vec<u8> = sqlx::query_scalar(
+        "SELECT data FROM atproto_oauth.client_session WHERE account_did = $1 AND session_id = $2",
+    )
+    .bind("did:plc:alice")
+    .bind("session-1")
+    .fetch_one(&pool)
+    .await
+    .expect("row present");
+    sqlx::query(
+        "INSERT INTO atproto_oauth.client_session (account_did, session_id, data) \
+         VALUES ($1, $2, $3)",
+    )
+    .bind("did:plc:alice")
+    .bind("session-2")
+    .bind(&raw)
+    .execute(&pool)
+    .await
+    .expect("graft blob onto session-2");
+
+    let did: Did = Did::new_static("did:plc:alice").expect("valid did");
+    assert!(
+        store.get_session(&did, "session-2").await.is_err(),
+        "a blob grafted onto another row key must fail the AAD check"
+    );
+    assert!(
+        store
+            .get_session(&did, "session-1")
+            .await
+            .expect("get")
+            .is_some(),
+        "the legitimate row still opens"
     );
 }

@@ -36,6 +36,11 @@ tracing = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Envelope-encrypts the OAuth store's at-rest secrets (DPoP private key, refresh/
+# access tokens, PKCE verifier) under the one custody root key — a faithful mirror
+# of adapter-pg's key_vault (same AEAD, same root key). See `secret_vault`.
+chacha20poly1305 = { workspace = true }
+zeroize = { workspace = true }
 # Supplies the concrete HttpClient for the resolver and the TLS backend jacquard
 # leaves to the consumer (jacquard-common enables only json/charset on reqwest).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

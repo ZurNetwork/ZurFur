@@ -83,6 +83,11 @@ async fn main() -> anyhow::Result<()> {
     api::ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
     let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
     let key_store = std::sync::Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
+    // The OAuth store seals its at-rest secrets (the DPoP private key, refresh/
+    // access tokens, and the in-flight PKCE verifier) under the SAME root key as
+    // custody — one key-management path, already covered by the boot guard above
+    // (ZMVP-12). A DB read alone yields no usable upstream session.
+    let oauth_vault = adapter_atproto::SecretVault::from_bytes(&root_key_bytes)?;
     let op_log = std::sync::Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
     let directory = adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
         endpoint: config.plc_directory_endpoint.clone(),
@@ -97,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
         auth: std::sync::Arc::new(adapter_atproto::AtprotoAuthenticator::new(
             redirect_uri,
             pool.clone(),
+            oauth_vault,
         )),
         // Reads go through the pool-backed stores; every private-store write goes
         // through the one `database` factory (also pool-backed) — both built from
