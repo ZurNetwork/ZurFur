@@ -25,7 +25,7 @@ use domain::{
         ChangelogEntryKind, CommissionId, NewChangelogEntry, NewSeat, NodeId, SeatKind, SeatLink,
         SeatPrompt,
     },
-    ports::{ParentNodeNotFound, ParentNotASurface, transaction},
+    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -114,22 +114,21 @@ pub(super) async fn declare_seat(
         now,
     );
 
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().declare_seat(&seat).await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await
-    .map_err(|err| {
-        if err.downcast_ref::<ParentNodeNotFound>().is_some() {
-            Problem::node_not_found()
-        } else if err.downcast_ref::<ParentNotASurface>().is_some() {
-            Problem::parent_not_a_surface()
-        } else {
-            err.into()
-        }
-    })?;
+        .await
+        .map_err(|err| {
+            if err.downcast_ref::<ParentNodeNotFound>().is_some() {
+                Problem::node_not_found()
+            } else if err.downcast_ref::<ParentNotASurface>().is_some() {
+                Problem::parent_not_a_surface()
+            } else {
+                err.into()
+            }
+        })?;
 
     Ok((StatusCode::CREATED, Json(json!({ "id": seat_id }))).into_response())
 }

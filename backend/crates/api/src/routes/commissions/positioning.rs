@@ -33,7 +33,7 @@ use domain::{
         account::{Account, AccountId},
         commission::{ChangelogEntryKind, CommissionId, GrantLevel, NewChangelogEntry},
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -97,14 +97,13 @@ pub(super) async fn place_commission(
     let account = resolve_live_account(&state, &body.account_id).await?.id;
 
     let now = Utc::now();
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions()
                 .place(commission, account, user.id, now)
                 .await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -147,15 +146,14 @@ pub(super) async fn grant_view(
         }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions()
                 .grant_view(commission, account_id, level)
                 .await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -194,8 +192,8 @@ pub(super) async fn revoke_view(
         json!({ "account_id": *account, "account_handle": handle }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let mut commissions = uow.commissions();
             if commissions.revoke_view(commission, account).await? {
                 drop(commissions);
@@ -203,8 +201,7 @@ pub(super) async fn revoke_view(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

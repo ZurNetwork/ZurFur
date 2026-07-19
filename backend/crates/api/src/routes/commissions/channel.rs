@@ -14,7 +14,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{ChangelogEntryKind, ChannelPointer, CommissionId, NewChangelogEntry},
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -62,8 +62,8 @@ pub(super) async fn link_channel(
         json!({ "channel": pointer.as_str() }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let changed = uow
                 .commissions()
                 .set_linked_channel(commission, Some(&pointer))
@@ -73,8 +73,7 @@ pub(super) async fn link_channel(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -108,8 +107,8 @@ pub(super) async fn clear_channel(
         json!({ "channel": previous.as_str() }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let changed = uow
                 .commissions()
                 .set_linked_channel(commission, None)
@@ -119,8 +118,7 @@ pub(super) async fn clear_channel(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

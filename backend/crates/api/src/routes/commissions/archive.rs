@@ -21,7 +21,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde_json::json;
 use tower_sessions::Session;
@@ -58,8 +58,8 @@ pub(super) async fn archive_commission(
         json!({ "title": found.title.as_str() }),
         now,
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let mut commissions = uow.commissions();
             if commissions.set_archived(commission, Some(now)).await? {
                 drop(commissions);
@@ -67,8 +67,7 @@ pub(super) async fn archive_commission(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -97,8 +96,8 @@ pub(super) async fn unarchive_commission(
         json!({ "title": found.title.as_str() }),
         Utc::now(),
     );
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let mut commissions = uow.commissions();
             if commissions.set_archived(commission, None).await? {
                 drop(commissions);
@@ -106,8 +105,7 @@ pub(super) async fn unarchive_commission(
             }
             Ok(())
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

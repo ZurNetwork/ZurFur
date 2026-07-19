@@ -48,7 +48,7 @@ use domain::{
         ChangelogEntryKind, CommissionFile, CommissionId, FileKey, FileMetadata, FileName,
         NewChangelogEntry,
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde_json::json;
 use tower_sessions::Session;
@@ -120,13 +120,12 @@ pub(super) async fn upload_file(
         uploaded_by: user.id,
         created_at: now,
     };
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().add_file(&file).await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await?;
+        .await?;
 
     Ok((StatusCode::CREATED, Json(json!({ "id": *key }))).into_response())
 }

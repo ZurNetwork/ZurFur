@@ -19,7 +19,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewComponent, NodeId},
-    ports::{ParentNodeNotFound, ParentNotASurface, transaction},
+    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -83,19 +83,20 @@ pub(super) async fn add_component(
     );
     let node_id = *component.id;
 
-    transaction(&*state.database, |uow| {
-        Box::pin(async move { uow.commissions().add_component(&component).await })
-    })
-    .await
-    .map_err(|err| {
-        if err.downcast_ref::<ParentNodeNotFound>().is_some() {
-            Problem::node_not_found()
-        } else if err.downcast_ref::<ParentNotASurface>().is_some() {
-            Problem::parent_not_a_surface()
-        } else {
-            err.into()
-        }
-    })?;
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().add_component(&component).await
+        })
+        .await
+        .map_err(|err| {
+            if err.downcast_ref::<ParentNodeNotFound>().is_some() {
+                Problem::node_not_found()
+            } else if err.downcast_ref::<ParentNotASurface>().is_some() {
+                Problem::parent_not_a_surface()
+            } else {
+                err.into()
+            }
+        })?;
 
     Ok((StatusCode::CREATED, Json(json!({ "id": node_id }))).into_response())
 }

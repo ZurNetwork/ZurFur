@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::{elements::commission::CommissionId, ports::transaction};
+use domain::{elements::commission::CommissionId, ports::UnitOfWork};
 use tower_sessions::Session;
 use uuid::Uuid;
 
@@ -57,8 +57,8 @@ pub(super) async fn delete_commission(
     let commission = CommissionId::new(id);
     super::require_owner(&state, commission, &user).await?;
 
-    let outcome = transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    let outcome = state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             let mut commissions = uow.commissions();
             if commissions.commission_has_facts(commission).await? {
                 return Ok(DeleteOutcome::HasFacts);
@@ -66,8 +66,7 @@ pub(super) async fn delete_commission(
             commissions.delete(commission).await?;
             Ok(DeleteOutcome::Deleted)
         })
-    })
-    .await?;
+        .await?;
 
     match outcome {
         DeleteOutcome::Deleted => Ok(StatusCode::NO_CONTENT.into_response()),

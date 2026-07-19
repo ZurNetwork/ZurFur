@@ -16,7 +16,7 @@ use domain::{
         commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
         maturity::{Maturity, MaturityRating},
     },
-    ports::transaction,
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -118,13 +118,12 @@ pub(super) async fn create_commission(
         now,
     );
 
-    transaction(&*state.database, |uow| {
-        Box::pin(async move {
+    state
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().create(&commission).await?;
             uow.changelog().append(&entry).await
         })
-    })
-    .await?;
+        .await?;
 
     Ok(StatusCode::CREATED.into_response())
 }
