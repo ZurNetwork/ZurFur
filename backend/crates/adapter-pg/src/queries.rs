@@ -30,9 +30,9 @@ pub mod account {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct AccountsRow {
+    pub struct FindRow {
         pub id: uuid::Uuid,
-        pub did: String,
+        pub did: Option<String>,
         pub handle: String,
         pub name: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
@@ -150,10 +150,15 @@ pub mod account {
     }
 
     /// `queries/account/create_account.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The account's DID now lives in the actor super-table (ZMVP-123): the caller interns
+    /// it (keyed by this same id) as the first step of the create unit, so the projection
+    /// row carries no `did`. `kind` is filled by its constant column DEFAULT ('account')
+    /// and never named here. `handle` STAYS on accounts — it is the authoritative, globally
+    /// unique resolution claim, not the actor_identity display cache.
     pub async fn create_account(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        did: &str,
         handle: &str,
         name: &str,
         created_at: chrono::DateTime<chrono::Utc>,
@@ -161,7 +166,6 @@ pub mod account {
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/create_account.sql"))
             .bind(id)
-            .bind(did)
             .bind(handle)
             .bind(name)
             .bind(created_at)
@@ -292,10 +296,17 @@ pub mod account {
     }
 
     /// `queries/account/find.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The account's DID now lives in the actor super-table (ZMVP-123): join it back on the
+    /// shared id. An account always has a DID (the per-kind CHECK on actor_identity), so a
+    /// NULL here would be a corrupted projection — the adapter surfaces it as an error.
+    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
+    /// sits behind the actor_identity join, which the pg_index cardinality proof
+    /// cannot cross — without it the generated contract degrades to Vec<T>.
     pub async fn find(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-    ) -> sqlx::Result<Option<AccountsRow>> {
+    ) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/account/find.sql"))
             .bind(id)
             .fetch_optional(conn)
@@ -303,6 +314,15 @@ pub mod account {
     }
 
     /// `queries/account/find_did_by_handle.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Resolve a live account's handle to its DID (ZMVP-123: the DID lives in the actor
+    /// super-table now, joined on the shared id). `handle` stays the authoritative,
+    /// globally unique claim on `accounts`; this backs the `/.well-known/atproto-did`
+    /// resolver and the founding duplicate-handle pre-check. An account always has a DID,
+    /// so `ai.did IS NOT NULL` is a true no-op that keeps the scalar result a plain DID.
+    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
+    /// sits behind the actor_identity join, which the pg_index cardinality proof
+    /// cannot cross — without it the generated contract degrades to Vec<T>.
     pub async fn find_did_by_handle(
         conn: impl sqlx::PgExecutor<'_>,
         handle: &str,
@@ -1645,17 +1665,38 @@ pub mod session {
 pub mod user {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct UsersRow {
+    pub struct FindByDidRow {
         pub id: uuid::Uuid,
-        pub did: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FindRow {
+        pub id: uuid::Uuid,
+        pub did: Option<String>,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ProvisionRow {
+        pub id: uuid::Uuid,
         pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// `queries/user/find.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The visitor's DID now lives in the actor super-table (ZMVP-123): join it back on
+    /// the shared id. A User always has a DID (the per-kind CHECK on actor_identity), so a
+    /// NULL here would be a corrupted projection — the adapter surfaces it as an error.
+    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
+    /// sits behind the actor_identity join, which the pg_index cardinality proof
+    /// cannot cross — without it the generated contract degrades to Vec<T>.
     pub async fn find(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-    ) -> sqlx::Result<Option<UsersRow>> {
+    ) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/user/find.sql"))
             .bind(id)
             .fetch_optional(conn)
@@ -1663,10 +1704,17 @@ pub mod user {
     }
 
     /// `queries/user/find_by_did.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Resolve a DID to its User via the actor super-table (ZMVP-123: the DID lives there
+    /// now, not on `users`). The caller already holds the DID it looked up, so the row need
+    /// only carry the projection's own columns — the adapter pairs them with that DID.
+    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
+    /// sits behind the actor_identity join, which the pg_index cardinality proof
+    /// cannot cross — without it the generated contract degrades to Vec<T>.
     pub async fn find_by_did(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
-    ) -> sqlx::Result<Option<UsersRow>> {
+    ) -> sqlx::Result<Option<FindByDidRow>> {
         sqlx::query_as(include_str!("../queries/user/find_by_did.sql"))
             .bind(did)
             .fetch_optional(conn)
@@ -1674,15 +1722,21 @@ pub mod user {
     }
 
     /// `queries/user/provision.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Insert (or resolve) the User projection row keyed by its shared actor_identity id —
+    /// the id the caller has just interned the visitor's DID under (ZMVP-123). The DID and
+    /// the one-DID-one-actor race are the intern step's job now; this only lands the
+    /// projection. Idempotent on the shared PK: a repeat sign-in resolves to the same
+    /// identity id, whose users row already exists, so the no-op DO UPDATE lets RETURNING
+    /// hand back the ORIGINAL created_at. `kind` is filled by its constant column DEFAULT
+    /// ('user') and never named here.
     pub async fn provision(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        did: &str,
         created_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<UsersRow> {
+    ) -> sqlx::Result<ProvisionRow> {
         sqlx::query_as(include_str!("../queries/user/provision.sql"))
             .bind(id)
-            .bind(did)
             .bind(created_at)
             .fetch_one(conn)
             .await

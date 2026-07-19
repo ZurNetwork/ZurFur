@@ -33,13 +33,16 @@ pub trait ActorIdentityStore: Send + Sync {
 /// transaction.
 #[async_trait]
 pub trait ActorIdentityWrites: Send {
-    /// Persist a freshly minted **DID-less** [`ActorIdentity`]. The contract
-    /// is `did == None` (adapter-enforced), not any particular kind — in the
-    /// domain, Characters are the actors born DID-less (DD `34013187`) — and
-    /// the row must arrive as minted: born-active, handle uncached (also
-    /// enforced). Creating the same id twice is an error (PK) — ids are always
-    /// freshly minted, so a collision is a caller bug, not a race to absorb.
-    /// DID-bearing actors go through [`intern`](ActorIdentityWrites::intern).
+    /// Persist a freshly minted **DID-less** [`ActorIdentity`]. The path contract
+    /// is `did == None` (adapter-enforced), and the row must arrive as minted:
+    /// born-active, handle uncached (also enforced). In the domain the DID-less
+    /// actors are Characters (DD `34013187`); since ZMVP-123 the store's per-kind
+    /// DID CHECK makes that concrete — a `user`/`account` identity MUST carry a DID
+    /// (their projections' former `did NOT NULL` invariant) and is rejected here, so
+    /// this path persists only DID-less *kinds* (Characters, and any future DID-less
+    /// kind). Creating the same id twice is an error (PK) — ids are always freshly
+    /// minted, so a collision is a caller bug, not a race to absorb. DID-bearing
+    /// actors go through [`intern`](ActorIdentityWrites::intern).
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()>;
 
     /// Intern a DID-bearing actor: the **race-safe, idempotent** upsert of DD

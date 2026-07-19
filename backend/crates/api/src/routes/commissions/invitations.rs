@@ -28,7 +28,7 @@ use domain::{
         did::Did,
         invitation::InvitationState,
     },
-    ports::UnitOfWork,
+    ports::{DidBelongsToAnotherActor, UnitOfWork},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -111,7 +111,11 @@ pub(super) async fn invite_to_seat(
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.users().provision(&Did::new(body.user)).await
         })
-        .await?;
+        .await
+        .map_err(|err| match err.downcast_ref::<DidBelongsToAnotherActor>() {
+            Some(_) => Problem::did_belongs_to_another_actor(),
+            None => Problem::from(err),
+        })?;
 
     // Idempotent re-invite: an existing pending offer to this seat is returned, not
     // a second row.

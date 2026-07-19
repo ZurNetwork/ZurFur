@@ -66,7 +66,7 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     account_keys::AccountKeys,
-    actor_identity::ActorIdentityId,
+    actor_identity::{ActorIdentityId, ActorKind, ActorState},
     commission::{
         CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, SeatInvitationId, StoredFile,
     },
@@ -79,6 +79,7 @@ use domain::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
+use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::{
     AccountStore, AccountWrites, ActorIdentityStore, ActorIdentityWrites, Authenticator,
     ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, Database, DidMinter,
@@ -790,18 +791,37 @@ pub struct MemUserWrites(MemBackend);
 
 #[async_trait]
 impl UserWrites for MemUserWrites {
-    /// Idempotent per DID: the first call mints (via [`User::recognize`]) and
-    /// inserts; later calls return the stored `User` untouched. `or_insert_with`
-    /// makes the mint-or-return one atomic map operation under the lock.
+    /// Recognize a DID as the two-step create of ZMVP-123: intern the identity row
+    /// (the shared-PK parent), then key the `users` projection by that identity id.
+    /// Idempotent per DID — the `intern` upsert returns the existing identity and
+    /// `or_insert_with` returns the existing user untouched — so a repeat sign-in maps
+    /// to the same User (same id, same created_at). Both rows land in this (staged, when
+    /// vended by the unit of work) backend, so a dropped unit discards them together.
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
+        let now = Utc::now();
+        // Intern first (idempotent by DID) — the identity id is what the user is keyed by.
+        let identity = MemActorIdentityWrites(self.0.clone())
+            .intern(did, ActorKind::User, now)
+            .await?;
+        // Cross-kind guard, the pg provision's twin: a DID already interned as
+        // another actor kind is a 409-shaped conflict, never a silent reuse of
+        // the other actor's identity id.
+        if identity.kind != ActorKind::User {
+            let conflict = DidBelongsToAnotherActor {
+                existing_kind: identity.kind.as_str().to_string(),
+            };
+            return Err(anyhow::Error::new(conflict));
+        }
         let mut users = self
             .0
             .users
             .lock()
             .expect("MemBackend users mutex poisoned");
-        let user = users
-            .entry(did.clone())
-            .or_insert_with(|| User::recognize(did.clone(), Utc::now()));
+        let user = users.entry(did.clone()).or_insert_with(|| User {
+            id: UserId::new(*identity.id),
+            did: did.clone(),
+            created_at: now,
+        });
         Ok(user.clone())
     }
 }
@@ -1191,6 +1211,42 @@ impl AccountWrites for MemAccountWrites {
             return Err(anyhow::Error::new(HandleTaken));
         }
 
+        // Intern the account's identity row, keyed by the account's OWN id (the shared
+        // PK, ZMVP-123) — the mem mirror of the pg intern+projection in one unit. The
+        // account's DID is freshly minted and unique, so this creates a new identity; a
+        // DID already interned under a different id is a loud bug, not a duplicate row.
+        // Runs BEFORE the projection is staged so a failure leaves no partial
+        // account row — the mem mirror of the pg transaction abort (PR #141 review).
+        {
+            let mut identities = self
+                .0
+                .actor_identities
+                .lock()
+                .expect("MemBackend actor_identities mutex poisoned");
+            let existing = identities
+                .iter()
+                .find(|(_, stored)| stored.did.as_ref() == Some(&account.did))
+                .map(|(id, _)| *id);
+            if let Some(existing_id) = existing {
+                anyhow::ensure!(
+                    existing_id == ActorIdentityId::new(*account.id),
+                    "account {} DID {} already interned under a different identity {}",
+                    *account.id,
+                    account.did.as_str(),
+                    *existing_id
+                );
+            }
+            identities
+                .entry(ActorIdentityId::new(*account.id))
+                .or_insert_with(|| StoredActorIdentity {
+                    kind: ActorKind::Account,
+                    did: Some(account.did.clone()),
+                    state: ActorState::Active,
+                    handle: None,
+                    first_seen: account.created_at,
+                });
+        }
+
         accounts.insert(
             account.id,
             StoredAccount {
@@ -1202,6 +1258,7 @@ impl AccountWrites for MemAccountWrites {
                 deleted_at: account.deleted_at,
             },
         );
+        drop(accounts);
 
         let UserAccount {
             user_id,
@@ -1914,6 +1971,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(found, None);
+    }
+
+    // ZMVP-123 — the mem two-step create: provisioning interns the actor_identity
+    // parent alongside the user (sharing its id, findable by DID), and a dropped unit
+    // discards BOTH, mirroring pg's shared-PK rollback.
+    #[tokio::test]
+    async fn provision_interns_the_identity_and_rolls_back_together() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let identities = backend.actor_identity_store();
+
+        // Committed provision: the user and its identity both land, sharing the id.
+        let d = did("did:plc:mem-two-step");
+        let user = backend.provision(&d).await.unwrap();
+        let identity = identities
+            .find_by_did(&d)
+            .await
+            .unwrap()
+            .expect("the identity was interned alongside the user");
+        assert_eq!(*identity.id, *user.id, "the user shares its identity's id");
+        assert_eq!(identity.kind, ActorKind::User);
+
+        // A dropped unit discards both the user projection and its interned identity.
+        let rolled = did("did:plc:mem-rolled-back");
+        {
+            let mut uow = database.begin().await.unwrap();
+            uow.users().provision(&rolled).await.unwrap();
+            // Dropped without commit → rollback.
+        }
+        assert!(
+            backend.find_by_did(&rolled).await.unwrap().is_none(),
+            "no user survives a dropped unit"
+        );
+        assert!(
+            identities.find_by_did(&rolled).await.unwrap().is_none(),
+            "no interned identity survives either"
+        );
     }
 
     fn user_id() -> UserId {
