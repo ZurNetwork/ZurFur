@@ -1,0 +1,20 @@
+# typos (ZMVP-143) false-positive exemptions. Run locally with `typos`; CI
+# runs it via the `typos` job in .github/workflows/ci.yml.
+#
+# Both entries below are the SAME class of false positive: an all-caps
+# SQL/DB keyword immediately followed by a lowercase suffix that forms a
+# real compound word (a plural or an "-able" adjective). typos' identifier
+# splitter treats the last uppercase letter of a caps run as the start of
+# the next word (the usual `HTTPServer` -> `HTTP` + `Server` heuristic), so
+# `CHECKs` splits into `CHEC` + `Ks` and `NULLable` splits into `NUL` +
+# `Lable` -- both fragments happen to fuzzy-match real words in the
+# dictionary. The source text is correct as written; `extend-identifiers`
+# marks the whole compound word as a single opaque token so it isn't split.
+[default.extend-identifiers]
+# "the kind and state CHECKs" (adapter-pg/tests/it/actor_identity.rs) --
+# plural of the SQL CHECK constraint, not a truncated "CHECK".
+CHECKs = "CHECKs"
+# "`parent` stays NULLable on purpose" (adapter-pg's parent_uuid_fk
+# migration) -- NULL + able, standard SQL/domain jargon for "can be NULL",
+# not a misspelling of "Label".
+NULLable = "NULLable"

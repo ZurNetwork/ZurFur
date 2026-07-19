@@ -1,0 +1,117 @@
+# cargo-deny configuration (ZMVP-143). Run locally with `cargo deny check`;
+# CI runs it via the `deny` job in .github/workflows/ci.yml. Lint levels:
+# deny = fails the check, warn = printed but non-blocking, allow = silent.
+#
+# All 7 workspace crates set `publish = false`, which is what keys cargo-deny's
+# private-crate exemptions ([licenses.private] and [bans] allow-wildcard-paths);
+# the CI `deny` job runs the full four-check set (Engineer rulings 2026-07-18:
+# MPL-2.0 allowed for the jacquard family; anyhow bumped to clear its advisory).
+
+[graph]
+# No `targets` restriction: the full cross-platform graph is checked, which
+# is how `r-efi` (a Windows/UEFI-only transitive of `getrandom`, never
+# actually built for our targets) shows up in `cargo deny list` at all -- see
+# the [licenses] section below for why it's harmless. Scoping `targets` to
+# just the real deployment target(s) would drop it entirely, but that's a
+# real policy tradeoff (also stops checking other-OS transitives for
+# advisories/bans) -- left as-is, flagged as an option rather than decided
+# here.
+
+[advisories]
+ignore = [
+
+    # Transitive: jacquard (atproto client) -> postcard -> heapless 0.7 ->
+    # atomic-polyfill. Archived upstream with no successor release (heapless
+    # itself would need to move to `portable-atomic`, a jacquard-upstream
+    # call). Only used by heapless for atomic-CAS polyfilling on targets
+    # lacking native atomics; not a direct dependency of ours.
+    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill unmaintained; transitive via jacquard -> postcard -> heapless 0.7; no upstream fix available; not a direct dependency." },
+
+    # Transitive: jacquard -> hickory-resolver -> hickory-proto 0.24.4. Real
+    # DoS advisory (O(n^2) name-compression CPU blowup on crafted DNS
+    # responses); fixed upstream in hickory-proto >=0.26.1, but the version
+    # is set by jacquard's own Cargo.toml, not ours. SECURITY-RELEVANT --
+    # hickory sits in the DNS/DID-resolution path; flagged for the Engineer,
+    # not silently accepted.
+    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.24.4 DoS (O(n^2) name compression); transitive via jacquard -> hickory-resolver; fix exists upstream (>=0.26.1) but needs a jacquard version bump we don't control. Flagged for the Engineer -- DNS/DID-resolution-adjacent." },
+
+    # Transitive: jacquard / jacquard-oauth -> jose-jwk -> rsa 0.9.10. The
+    # advisory itself states no safe upgrade exists yet (RustCrypto/RSA#626
+    # still open upstream). Used for JOSE/JWK RSA key handling.
+    # SECURITY-RELEVANT -- flagged for the Engineer, not silently accepted.
+    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9.10 Marvin Attack timing side-channel; transitive via jacquard-oauth -> jose-jwk; advisory itself states no fix is available yet. Flagged for the Engineer -- JOSE/JWK key handling." },
+]
+
+[licenses]
+# Derived from `cargo deny list` against the real lockfile (2026-07-18), not
+# assumed. Every SPDX identifier actually reported by a third-party crate is
+# either allowed below (permissive, uncontroversial) or explicitly called out
+# as NOT allowed (copyleft, needs the Engineer's sign-off).
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    # webpki-roots ships Mozilla's root-certificate bundle as data under CDLA
+    # rather than code under a software license; permissive, attribution-only.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # jacquard (the atproto/OAuth client family) — weak file-level copyleft;
+    # obligations attach only to modified MPL files, none to Zurfur's own code
+    # (Engineer ruling 2026-07-18).
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# r-efi@5.3.0 / r-efi@6.0.0 (pulled in only via getrandom's UEFI backend,
+# never actually built for any target this workspace ships) is triple-
+# licensed `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; already satisfied via
+# the MIT/Apache-2.0 branches above, so it needs no allowance and isn't
+# rejected -- not a copyleft concern despite `cargo deny list` bucketing it
+# under LGPL (list shows one detected license per crate, not the full
+# expression).
+#
+# pg_query (a build-dependency of sqlx-rust-codegen's SQL parsing, itself a
+# dev-dependency of adapter-pg/query-codegen -- never linked into the shipped
+# `api` binary): its own Cargo.toml declares `license = "MIT"`, which is what
+# is allowed above and is accurate for the Rust wrapper. Its vendored
+# `libpg_query/{src,vendor}` C sources are real extracted PostgreSQL server
+# source, carrying the (permissive, OSI-approved, non-copyleft) PostgreSQL
+# License per libpg_query's own README, plus a BSD-3-Clause notice for
+# libpg_query's own glue code -- neither shows up in cargo-deny's manifest-
+# level SPDX scan. All three (MIT, PostgreSQL License, BSD-3-Clause) are
+# permissive; noted here for completeness, not because the tool's "MIT" is
+# wrong.
+confidence-threshold = 0.8
+
+[licenses.private]
+# Every workspace crate sets `publish = false`, so all seven are exempted
+# here (they carry no `license` field and never publish).
+ignore = true
+
+[bans]
+# The tree has real duplicate versions (getrandom, hashbrown, thiserror,
+# rand, ...); expected in a workspace this size and not worth failing on.
+multiple-versions = "warn"
+wildcards = "deny"
+# Exempts intra-workspace path/git deps from the wildcard-version check, but
+# only for a dependency edge that's either a dev-dependency or where the
+# DEPENDENT crate is itself private (publish = false) -- same gate as
+# [licenses.private]. All workspace
+# crates set `publish = false`, so intra-workspace path deps and the
+# sqlx-rust-codegen git dep resolve cleanly here.
+allow-wildcard-paths = true
+
+[sources]
+allow-git = [
+    # Tag-pinned codegen library (root Cargo.toml `[workspace.dependencies]`;
+    # see that file's comment for why it's a git dependency, not a crates.io
+    # one).
+    "https://github.com/ZurNetwork/sqlx-rust-codegen.git",
+]

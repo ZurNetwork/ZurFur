@@ -54,7 +54,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = { version = "0.15.7" }
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 rand = { version = "0.8" }
 # --- ZMVP-49: real did:plc minter, key custody, envelope encryption ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +
