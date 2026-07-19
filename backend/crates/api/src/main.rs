@@ -15,6 +15,7 @@ use fluent_uri::Uri;
 use tower_sessions::{
     Expiry, SessionManagerLayer,
     cookie::{SameSite, time},
+    session_store::ExpiredDeletion,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -130,8 +131,28 @@ async fn main() -> anyhow::Result<()> {
     // loses nothing — the next tick re-sweeps whatever still stands lapsed.
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),
+        // The sweeper takes a Postgres advisory lock for single-writer leader election
+        // across instances, so it needs the pool directly (not just the port).
+        app_state.pool.clone(),
         std::time::Duration::from_secs(app_state.config.deadline_sweep_interval_secs),
     ));
+
+    // Reclaim expired `tower_sessions.session` rows on a schedule. Read-time expiry
+    // (`PgSessionStore::load` filters `expiry_date > now()`) already hides them from
+    // callers, so this is pure housekeeping — hence a relaxed hourly cadence. Mirrors
+    // the deadline sweeper: a failed pass is logged and retried on the next tick, so a
+    // transient DB blip never permanently stops the reaper.
+    let session_reaper = adapter_pg::PgSessionStore::new(app_state.pool.clone());
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            if let Err(error) = session_reaper.delete_expired().await {
+                tracing::error!(%error, "session reaper pass failed; retrying next tick");
+            }
+        }
+    });
 
     let app = api::app(app_state).layer(session_layer);
 

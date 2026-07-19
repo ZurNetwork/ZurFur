@@ -419,7 +419,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         &mut self,
         id: CommissionId,
         deadline: Option<domain::datetime::DateTimeUtc>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         self.0.set_deadline(id, deadline).await
     }
 
@@ -427,7 +427,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         &mut self,
         id: CommissionId,
         status: Option<domain::elements::commission::DeadlineStatus>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         self.0.set_deadline_status(id, status).await
     }
 

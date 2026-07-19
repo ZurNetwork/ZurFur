@@ -577,11 +577,15 @@ pub trait CommissionWrites: Send {
     /// [`set_deadline_status`](Self::set_deadline_status) — AC4). Setting on
     /// an absent commission is a no-op write; existence and authority (any
     /// Participant) are the caller's checks, settled before this is reached.
+    /// Returns `true` iff the stored value actually changed (`… IS DISTINCT
+    /// FROM`), so the caller appends the changelog entry only on a real change
+    /// — never a spurious entry when the deadline already held is re-set, even
+    /// under a concurrent racing write (mirrors [`set_direction_status`](Self::set_direction_status)).
     async fn set_deadline(
         &mut self,
         id: CommissionId,
         deadline: Option<DateTimeUtc>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's **deadline-axis
     /// Status** (ZMVP-86). One nullable cell (ruling E29): a set REPLACES the
@@ -593,12 +597,14 @@ pub trait CommissionWrites: Send {
     /// [`Late`](DeadlineStatus::Late) mark — the only system writer, scoped to
     /// this axis and nothing else). The caller holds AC4: never leave a value
     /// on a commission without a deadline. Setting on an absent commission is
-    /// a no-op write.
+    /// a no-op write. Returns `true` iff the stored value actually changed
+    /// (`… IS DISTINCT FROM`), so the caller records the changelog entry only
+    /// on a real change (mirrors [`set_direction_status`](Self::set_direction_status)).
     async fn set_deadline_status(
         &mut self,
         id: CommissionId,
         status: Option<DeadlineStatus>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<bool>;
 
     /// The commissions the deadline sweeper must mark Late **as of `now`**
     /// (ZMVP-86 AC2, ruling E12): deadline strictly before `now`, not already

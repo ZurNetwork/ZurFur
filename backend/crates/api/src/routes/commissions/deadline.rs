@@ -103,10 +103,12 @@ pub(super) async fn clear_deadline(
     apply_deadline(&state, commission, user.id, None).await
 }
 
-/// The shared deadline set/clear tail: read the current envelope, drop a no-op
-/// early, decide the entry kind (`deadline_extended` only for a later `to` over
-/// a standing `from`), and land the deadline write plus the entry **in one unit
-/// of work**.
+/// The shared deadline set/clear tail: read the current envelope to decide the
+/// entry kind (`deadline_extended` only for a later `to` over a standing
+/// `from`), then land the deadline write plus the entry **in one unit of
+/// work** — appending only when the write actually changed the stored value
+/// (the atomic `IS DISTINCT FROM`), so a re-set of the same deadline records
+/// no entry (`204`) even under a concurrent racing write.
 ///
 /// The deadline-axis status needs no touch here: **`Late` is derived on lookup**
 /// from `deadline < now` (Engineer ruling 2026-07-08), so moving or clearing the
@@ -129,9 +131,6 @@ async fn apply_deadline(
         .await?
         .ok_or_else(Problem::commission_not_found)?;
     let from = found.deadline;
-    if from == to {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
 
     let now = Utc::now();
     let kind = match (from, to) {
@@ -147,8 +146,15 @@ async fn apply_deadline(
     );
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().set_deadline(commission, to).await?;
-            uow.changelog().append(&entry).await
+            // Append only on a real change — the write's atomic `IS DISTINCT
+            // FROM` result is the single arbiter, not the non-atomic pre-read
+            // above (which only shapes the entry). A re-set of the same value
+            // makes no entry, even under a concurrent racing write; mirrors
+            // set_direction_status (ultrareview 2026-07-18).
+            if uow.commissions().set_deadline(commission, to).await? {
+                uow.changelog().append(&entry).await?;
+            }
+            anyhow::Ok(())
         })
         .await?;
 
@@ -219,8 +225,10 @@ pub(super) async fn clear_deadline_status(
 
 /// The shared Delayed-flag set/clear tail: enforce the axis preconditions
 /// (a deadline must exist to flag against — AC4; a standing Late is the
-/// system's and conflicts either way), drop a no-op early, otherwise write the
-/// one nullable cell and append the `delayed` entry **in one unit of work**.
+/// system's and conflicts either way), then write the one nullable cell and
+/// append the `delayed` entry **in one unit of work** — the entry landing only
+/// when the write actually changed the value (the atomic `IS DISTINCT FROM`),
+/// so a re-flag records no entry (`204`).
 async fn apply_deadline_status(
     state: &AppState,
     commission: CommissionId,
@@ -233,9 +241,10 @@ async fn apply_deadline_status(
         .await?
         .ok_or_else(Problem::commission_not_found)?;
     let from = found.deadline_status;
-    if from == to {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
+    // Real preconditions (business 409s), kept before the write: a standing
+    // system Late is not the actor's to downgrade, and a Delayed flag needs a
+    // deadline to flag against (AC4). The no-op case is NOT decided here — the
+    // atomic write below is its single arbiter.
     if from == Some(DeadlineStatus::Late) {
         return Err(Problem::commission_late());
     }
@@ -256,10 +265,17 @@ async fn apply_deadline_status(
     );
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions()
+            // Append only on a real change (the write's atomic `IS DISTINCT
+            // FROM`), never a spurious `delayed` entry on a re-set; mirrors
+            // set_direction_status (ultrareview 2026-07-18).
+            if uow
+                .commissions()
                 .set_deadline_status(commission, to)
-                .await?;
-            uow.changelog().append(&entry).await
+                .await?
+            {
+                uow.changelog().append(&entry).await?;
+            }
+            anyhow::Ok(())
         })
         .await?;
 

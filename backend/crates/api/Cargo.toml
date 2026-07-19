@@ -22,6 +22,12 @@ fluent-uri = { version = "0.4.1", features = ["std"] }
 tower-sessions = { workspace = true }
 # Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
 base64 = { workspace = true }
+# The deadline sweeper takes a Postgres transaction-scoped advisory lock
+# (`pg_try_advisory_xact_lock`) for single-writer leader election across api
+# instances (see `sweep.rs`); that
+# is the only direct use of sqlx in this crate — reads/writes otherwise go through the
+# adapter-pg ports.
+sqlx = { workspace = true }
 [dev-dependencies]
 adapter-mem = { path = "../adapter-mem" }
 # Implement port-trait test doubles (the fact-bearing unit-of-work wrapper in

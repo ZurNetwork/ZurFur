@@ -13,9 +13,10 @@ use domain::{
 use jacquard::api::app_bsky::actor::profile::Profile as BskyProfile;
 use jacquard::client::{AgentSessionExt, BasicClient};
 use jacquard::common::types::collection::RecordError;
-use jacquard::common::types::string::{AtUri, Did as AtDid};
+use jacquard::common::types::string::{AtUri, Did as AtDid, Handle};
 use jacquard::common::xrpc::XrpcError;
 use jacquard::prelude::IdentityResolver;
+use smol_str::SmolStr;
 
 /// The real [`ProfileSource`]: reads a visitor's public profile from their own
 /// PDS — the decentralized path. It resolves the DID document for the handle and
@@ -47,9 +48,13 @@ impl AtprotoProfileSource {
 impl ProfileSource for AtprotoProfileSource {
     /// Two hops, both fallible network reads:
     ///
-    /// 1. Resolve the DID document (handle from `alsoKnownAs`, PDS endpoint).
-    ///    Errors if the DID is malformed, the document can't be resolved, or it
-    ///    carries no handle / no PDS endpoint.
+    /// 1. Resolve the DID document (claimed handle from `alsoKnownAs`, PDS
+    ///    endpoint). Errors if the DID is malformed, the document can't be
+    ///    resolved, or it carries no handle / no PDS endpoint. The `alsoKnownAs`
+    ///    handle is only *claimed*, so it is then **bidirectionally verified** —
+    ///    the claimed handle is resolved back and must return this same DID
+    ///    ([`presented_handle`]); a claim that can't be confirmed is never
+    ///    presented as the actor's handle (we fall back to the DID string).
     /// 2. Read `app.bsky.actor.profile/self` from that PDS. The error mapping is
     ///    deliberate: a `RecordNotFound` is **not** an error — the visitor just
     ///    has no display name/avatar yet, so we return a handle-only [`Profile`]
@@ -72,12 +77,31 @@ impl ProfileSource for AtprotoProfileSource {
             .await
             .map_err(|e| anyhow::anyhow!("resolving DID document: {e}"))?;
 
-        let handle = doc
+        // The DID document's first `alsoKnownAs` is the handle it *claims*. A DID
+        // document is self-asserted, so the claim is untrusted until verified: an
+        // attacker's document can name any `alsoKnownAs`. atproto trusts a handle only
+        // under **bidirectional** verification — resolve the claimed handle back and
+        // confirm it returns THIS DID (see [`presented_handle`]).
+        let claimed_handle = doc
             .also_known_as
             .as_ref()
             .and_then(|aka| aka.first())
             .map(|aka| aka.as_str().trim_start_matches("at://").to_string())
             .ok_or_else(|| anyhow::anyhow!("DID document carries no handle"))?;
+
+        // Resolve the claimed handle back to a DID (DNS `_atproto` / HTTPS well-known —
+        // the same [`IdentityResolver`] the sign-in path trusts). A malformed handle,
+        // or any failure to resolve it, leaves `resolved_back` = `None`, i.e. the claim
+        // is unconfirmed and must not be presented as the actor's.
+        let resolved_back = match Handle::new(SmolStr::from(claimed_handle.as_str())) {
+            Ok(handle) => self.client.resolve_handle(&handle).await.ok(),
+            Err(_) => None,
+        };
+        let handle = presented_handle(
+            did.as_str(),
+            &claimed_handle,
+            resolved_back.as_ref().map(|resolved| resolved.as_str()),
+        );
 
         let pds = doc
             .pds_endpoint()
@@ -131,5 +155,66 @@ impl ProfileSource for AtprotoProfileSource {
             display_name,
             avatar_url,
         })
+    }
+}
+
+/// Decide which handle to present for `did`, given the `candidate` handle claimed in
+/// the DID document's `alsoKnownAs` and the DID that candidate resolves **back** to
+/// (`resolved_back`; `None` when the reverse resolution could not be completed at all).
+///
+/// atproto handles are trustworthy only under **bidirectional** verification: a DID
+/// document is self-asserted and can claim any `alsoKnownAs`, so a handle is the
+/// actor's only if resolving that handle (DNS / HTTPS well-known) returns THIS same
+/// DID. On any failure to confirm — the reverse resolves to a *different* DID (a stale
+/// or spoofed claim) or could not be resolved — we fall back to the DID string itself,
+/// which is the actor's own verifiable, unspoofable identifier. We never surface an
+/// unconfirmed handle as though it were the actor's confirmed one.
+///
+/// (The domain [`Profile::handle`](domain::elements::profile::Profile) is a required
+/// `String`, so "unverified" is represented by substituting the DID rather than a
+/// `None`; a first-class `verified`/`Option<handle>` distinction is a domain follow-up
+/// — see the crate notes.)
+fn presented_handle(did: &str, candidate: &str, resolved_back: Option<&str>) -> String {
+    match resolved_back {
+        Some(back) if back == did => candidate.to_string(),
+        _ => did.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::presented_handle;
+
+    const DID: &str = "did:plc:actor";
+
+    // Finding 2: a handle is only the actor's when it resolves BACK to this DID.
+    #[test]
+    fn a_handle_that_resolves_back_to_this_did_is_presented() {
+        assert_eq!(
+            presented_handle(DID, "alice.zurfur.app", Some(DID)),
+            "alice.zurfur.app",
+            "a bidirectionally-verified handle is trusted"
+        );
+    }
+
+    #[test]
+    fn a_handle_resolving_to_another_did_is_never_presented() {
+        // A spoofed / stale `alsoKnownAs`: the claimed handle belongs to someone else.
+        assert_eq!(
+            presented_handle(DID, "victim.zurfur.app", Some("did:plc:someoneelse")),
+            DID,
+            "a handle owned by a different DID falls back to the DID, never impersonates"
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_handle_falls_back_to_the_did() {
+        // Reverse resolution could not be completed (malformed handle, resolver
+        // failure, …) — the claim is unconfirmed, so it must not be presented.
+        assert_eq!(
+            presented_handle(DID, "alice.zurfur.app", None),
+            DID,
+            "an unconfirmable handle is never presented as trusted"
+        );
     }
 }

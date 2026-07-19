@@ -70,8 +70,10 @@ fn next_position(nodes: &HashMap<NodeId, StoredNode>, parent: NodeId) -> i32 {
 /// `Commission` isn't `Clone` (an aggregate root, not a value), so we store its
 /// parts and rebuild a fresh `Commission` on read. `Clone` so a unit of work can
 /// deep-copy the commissions map into its staging snapshot (see
-/// [`MemBackend::stage`]).
-#[derive(Clone)]
+/// [`MemBackend::stage`]). `PartialEq` lets [`crate::merge_map`] diff a unit's
+/// staged value against its pristine base snapshot to tell an untouched row
+/// (rode along in the snapshot) apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
     /// The commission's fixed, always-present Title (ZMVP-65), validated non-empty.
     pub(crate) title: CommissionTitle,
@@ -137,8 +139,10 @@ impl StoredCommission {
 /// One commission tree node as the mem backend keeps it — the in-memory mirror
 /// of a pg `commission_node` row (ZMVP-71). Keyed by [`NodeId`] in the backend
 /// map, so the row's own id lives in the key. `Clone` so a unit of work can
-/// deep-copy the node map into its staging snapshot.
-#[derive(Clone)]
+/// deep-copy the node map into its staging snapshot. `PartialEq` lets
+/// [`crate::merge_map`] diff a unit's staged value against its pristine base
+/// snapshot to tell an untouched row apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredNode {
     /// The tree (commission) this node belongs to.
     pub(crate) commission_id: CommissionId,
@@ -161,8 +165,10 @@ pub(crate) struct StoredNode {
 /// backend map by the [`NodeId`] of the component that carries the Slot (the
 /// satellite's own key), exactly like the pg table. Deliberately occupant-less: fill is unrepresentable until the
 /// Character epic adds it. `Clone` so a unit of work can deep-copy the map into
-/// its staging snapshot.
-#[derive(Clone)]
+/// its staging snapshot. `PartialEq` lets [`crate::merge_map`] diff a unit's
+/// staged value against its pristine base snapshot to tell an untouched row
+/// apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredSlot {
     /// The commission the Slot belongs to (the pg row's own commission FK).
     pub(crate) commission_id: CommissionId,
@@ -189,8 +195,10 @@ impl StoredSlot {
 /// in-memory mirror of a pg `commission_seat` row (ZMVP-76), keyed by the
 /// seat's [`NodeId`] in the backend map (one identity: the tree node in
 /// [`StoredNode`], this satellite here). `Clone` so a unit of work can
-/// deep-copy the seat map into its staging snapshot.
-#[derive(Clone)]
+/// deep-copy the seat map into its staging snapshot. `PartialEq` lets
+/// [`crate::merge_map`] diff a unit's staged value against its pristine base
+/// snapshot to tell an untouched row apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredSeat {
     /// The owning commission — the mem mirror of the denormalized
     /// `commission_seat.commission_id` column backing the seats() read.
@@ -211,8 +219,10 @@ pub(crate) struct StoredSeat {
 /// the [`SeatInvitationId`] in the backend map. Stored as parts because
 /// [`SeatInvitation`] isn't `Clone` (an entity with a lifecycle, like
 /// `Invitation`); a read rebuilds a fresh one. `Clone` so a unit of work can
-/// deep-copy the map into its staging snapshot.
-#[derive(Clone)]
+/// deep-copy the map into its staging snapshot. `PartialEq` lets
+/// [`crate::merge_map`] diff a unit's staged value against its pristine base
+/// snapshot to tell an untouched row apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredSeatInvitation {
     /// The commission whose Seat is offered.
     pub(crate) commission: CommissionId,
@@ -249,9 +259,12 @@ impl StoredSeatInvitation {
 
 /// One appended changelog entry as the mem backend keeps it — the in-memory
 /// mirror of a pg `commission_changelog` row (ZMVP-87). `Clone` so a unit of
-/// work can deep-copy the log into its staging snapshot. Append-only like the pg
-/// table: nothing in this crate mutates or removes one once pushed.
-#[derive(Clone)]
+/// work can deep-copy the log into its staging snapshot. A push never rewrites
+/// an existing entry; the only way one disappears is `delete`'s whole-commission
+/// cascade. `PartialEq` lets the Unit-of-Work's commit-time merge diff a unit's
+/// staged log against its pristine base snapshot by value — an entry carries no
+/// id apart from its own data, so equality IS identity here.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredChangelogEntry {
     /// The store-assigned ordering key — the mem mirror of the pg `bigserial`
     /// (global, monotonic, not per-commission).
@@ -289,8 +302,11 @@ impl StoredChangelogEntry {
 /// pg `commission_placement` row (ZMVP-70), and (with the latest `seq` per
 /// commission) of the `commission_current_placement` cache pointer. `Clone` so a
 /// unit of work can deep-copy the log/cache into its staging snapshot. Append-only
-/// like the pg log: nothing here mutates a pushed row.
-#[derive(Clone)]
+/// like the pg log: nothing here mutates a pushed row (an account's hard-delete can
+/// still remove one, ZMVP-57 AC1). `PartialEq` lets the Unit-of-Work's commit-time
+/// merge diff a unit's staged log against its pristine base snapshot by value — a
+/// row carries no id apart from its own data, so equality IS identity here.
+#[derive(Clone, PartialEq)]
 pub(crate) struct StoredPlacement {
     /// The store-assigned ordering key — the mem mirror of the pg `bigserial`
     /// (global, monotonic): the greatest `seq` for a commission is its current
@@ -896,16 +912,20 @@ impl CommissionWrites for MemCommissionWrites {
         &mut self,
         id: CommissionId,
         deadline: Option<DateTimeUtc>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        if let Some(stored) = commissions.get_mut(&id) {
-            stored.deadline = deadline;
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.deadline == deadline {
+            return Ok(false);
         }
-        Ok(())
+        stored.deadline = deadline;
+        Ok(true)
     }
 
     /// Repoint (or clear) the stored deadline-axis Status — the mem mirror of
@@ -916,16 +936,20 @@ impl CommissionWrites for MemCommissionWrites {
         &mut self,
         id: CommissionId,
         status: Option<DeadlineStatus>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        if let Some(stored) = commissions.get_mut(&id) {
-            stored.deadline_status = status;
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.deadline_status == status {
+            return Ok(false);
         }
-        Ok(())
+        stored.deadline_status = status;
+        Ok(true)
     }
 
     /// The sweeper's candidate scan — the mem mirror of the pg query (ZMVP-86,

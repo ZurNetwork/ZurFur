@@ -791,13 +791,24 @@ async fn grant_role(
         })
         .await?;
 
-    // The guard above bounds the role being *granted*; this bounds the *grantee*.
-    // An account's Owner is never demoted through a grant — ownership only moves via
-    // the separate transfer seam ("an Owner never has a parent, even when
-    // transferred", DESIGN/Roles). Without this, an Admin could grant Manager to the
-    // Owner's DID and quietly unseat them.
-    if let Some(Role::Owner(_)) = state.accounts.role_of(grantee.id, account.id).await? {
-        return Err(Problem::forbidden());
+    // The guard above bounds the role being *granted*; these bound the *grantee*,
+    // both keyed on their current standing on the account (loaded once):
+    //
+    // - An account's Owner is never demoted through a grant — ownership only moves via
+    //   the separate transfer seam ("an Owner never has a parent, even when
+    //   transferred", DESIGN/Roles). Without this, an Admin could grant Manager to the
+    //   Owner's DID and quietly unseat them. (Kept explicit though the rank guard below
+    //   also refuses it — no actor `can_grant` onto an Owner.)
+    // - Rank symmetry with `revoke_role`: re-roling an EXISTING member acts on them, so
+    //   the actor must outrank that member's *current* role (`can_grant`), exactly as a
+    //   revoke does. Without this an Admin could grant Member to a peer Admin and
+    //   silently DEMOTE them — the very act `revoke_role` forbids ("an Admin never acts
+    //   on a peer Admin"). A brand-new grantee has no current role, nothing to outrank,
+    //   and seats normally.
+    match state.accounts.role_of(grantee.id, account.id).await? {
+        Some(Role::Owner(_)) => return Err(Problem::forbidden()),
+        Some(current) if !actor_role.can_grant(&current) => return Err(Problem::forbidden()),
+        _ => {}
     }
 
     // Settle the grant: upsert the membership in the private store.
