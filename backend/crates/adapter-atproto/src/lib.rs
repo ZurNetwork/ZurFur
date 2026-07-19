@@ -53,11 +53,13 @@ mod plc;
 mod plc_directory;
 mod profile;
 mod public_records;
+mod secret_vault;
 pub use auth_store::AtprotoAuthStore;
 pub use did_minter::{RealDidMinter, StubDidMinter};
 pub use plc_directory::{DirectoryConfig, NoopPlcDirectory, plc_directory_from_config};
 pub use profile::AtprotoProfileSource;
 pub use public_records::AtprotoPublicRecords;
+pub use secret_vault::SecretVault;
 
 /// The fully-applied jacquard OAuth client this crate drives: a
 /// [`JacquardResolver`] (handle/DID resolution over `reqwest`) paired with the
@@ -76,10 +78,12 @@ pub struct AtprotoAuthenticator {
 impl AtprotoAuthenticator {
     /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
     /// registered redirect target (see `build_oauth` for why that is fixed here).
-    /// `pool` backs the persistent [`AtprotoAuthStore`] and is injected by `api`.
-    pub fn new(redirect_uri: Uri<String>, pool: PgPool) -> Self {
+    /// `pool` backs the persistent [`AtprotoAuthStore`] and is injected by `api`;
+    /// `vault` seals that store's at-rest secrets under the custody root key (also
+    /// injected by `api`, the same `ZURFUR_DID_KEY_ROOT_KEY`).
+    pub fn new(redirect_uri: Uri<String>, pool: PgPool, vault: SecretVault) -> Self {
         Self {
-            oauth: build_oauth(redirect_uri, AtprotoAuthStore::new(pool)),
+            oauth: build_oauth(redirect_uri, AtprotoAuthStore::new(pool, vault)),
         }
     }
 }
