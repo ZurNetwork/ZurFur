@@ -297,7 +297,7 @@ fn map_output_err<E: std::error::Error>(err: XrpcError<E>) -> PublicRecordsError
     match err {
         XrpcError::Xrpc(typed) => {
             let rendered = typed.to_string();
-            if is_not_found(&rendered) {
+            if is_record_not_found(&rendered) {
                 PublicRecordsError::NotFound
             } else {
                 PublicRecordsError::Rejected {
@@ -308,7 +308,7 @@ fn map_output_err<E: std::error::Error>(err: XrpcError<E>) -> PublicRecordsError
             }
         }
         XrpcError::Generic(g) => {
-            if is_not_found(g.error.as_str()) {
+            if is_record_not_found(g.error.as_str()) {
                 PublicRecordsError::NotFound
             } else {
                 PublicRecordsError::Rejected {
@@ -341,7 +341,7 @@ fn rejected_from_body(status: u16, body: &[u8]) -> PublicRecordsError {
         .and_then(|v| v["error"].as_str())
         .unwrap_or("Unknown")
         .to_string();
-    if is_not_found(&error) {
+    if is_record_not_found(&error) {
         return PublicRecordsError::NotFound;
     }
     let message = parsed
@@ -355,9 +355,21 @@ fn rejected_from_body(status: u16, body: &[u8]) -> PublicRecordsError {
     }
 }
 
-/// Whether an atproto error name/render denotes a missing record.
-fn is_not_found(s: &str) -> bool {
-    s.contains("RecordNotFound") || s.contains("NotFound") || s.contains("Could not locate record")
+/// Whether an atproto error denotes a missing **record specifically** — the exact
+/// `RecordNotFound` code (`com.atproto.repo.getRecord`), never a repo- or
+/// account-level failure (`RepoNotFound`, `AccountNotFound`, `RepoDeactivated`, …)
+/// whose name merely *contains* `NotFound`. Those are real errors — a missing repo
+/// or a deactivated account is not an absent record — so they must propagate with
+/// their real status + message, never be flattened to [`PublicRecordsError::NotFound`].
+///
+/// Accepts either a bare atproto error code (the `error` field of a `Generic` XRPC
+/// error or of an error body) or a jacquard typed-error render of the shape
+/// `"RecordNotFound: <message>"`. The atproto error code is the token before the
+/// first `':'` and never itself contains one, so comparing that token to
+/// `"RecordNotFound"` matches the record-not-found code exactly while rejecting
+/// every other `*NotFound` name.
+fn is_record_not_found(s: &str) -> bool {
+    s.split(':').next().map(str::trim) == Some("RecordNotFound")
 }
 
 // --- domain ↔ jacquard string-type construction ---
@@ -616,5 +628,32 @@ fn subject_from_wire(wire: WireReplySubject) -> Result<ReplySubject, PublicRecor
             cid: parse_cid(&cid)?,
         })),
         WireReplySubject::Profile { did } => Ok(ReplySubject::Profile(Did::new(did))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_record_not_found;
+
+    // Finding 3: only the exact `RecordNotFound` code (bare, or in jacquard's
+    // `"RecordNotFound: <message>"` typed render) is a missing *record*; every other
+    // `*NotFound` is a real repo/account/identity failure that must keep its status.
+    #[test]
+    fn record_not_found_is_the_only_missing_record_signal() {
+        // The record-absent code — bare, and jacquard's typed render with the PDS
+        // "could not locate record" message appended — both classify as NotFound.
+        assert!(is_record_not_found("RecordNotFound"));
+        assert!(is_record_not_found(
+            "RecordNotFound: Could not locate record: at://did:plc:x/app.zurfur.feed.post/1"
+        ));
+
+        // Repo-, account- and identity-level failures merely CONTAIN "NotFound"; they
+        // are genuine errors, never an absent record, so must NOT be flattened.
+        assert!(!is_record_not_found("RepoNotFound"));
+        assert!(!is_record_not_found("AccountNotFound"));
+        assert!(!is_record_not_found("RepoDeactivated"));
+        assert!(!is_record_not_found("InvalidRequest"));
+        // A bare "NotFound" is not the record code either — the old substring bug.
+        assert!(!is_record_not_found("NotFound"));
     }
 }

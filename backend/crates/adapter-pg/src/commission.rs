@@ -604,9 +604,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         &mut self,
         id: CommissionId,
         deadline: Option<DateTimeUtc>,
-    ) -> anyhow::Result<()> {
-        sql::set_deadline(&mut *self.conn, *id, deadline).await?;
-        Ok(())
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_deadline(&mut *self.conn, *id, deadline).await?;
+        Ok(affected > 0)
     }
 
     /// Repoint (or clear) the `commission.deadline_status` column — one
@@ -619,9 +619,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         &mut self,
         id: CommissionId,
         status: Option<DeadlineStatus>,
-    ) -> anyhow::Result<()> {
-        sql::set_deadline_status(&mut *self.conn, *id, status.map(|s| s.as_str())).await?;
-        Ok(())
+    ) -> anyhow::Result<bool> {
+        let affected =
+            sql::set_deadline_status(&mut *self.conn, *id, status.map(|s| s.as_str())).await?;
+        Ok(affected > 0)
     }
 
     /// The sweeper's candidate scan (ZMVP-86, ruling E12), **on the open

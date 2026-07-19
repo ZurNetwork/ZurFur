@@ -14,18 +14,21 @@
 //! **Fidelity, not realism.** A fake reproduces the *contract* a handler depends
 //! on (idempotent recognition, soft-delete invisibility, cache hits) but skips
 //! everything operational — TTLs, real keypairs. The unit of work, though, *does*
-//! model transactional rollback (DD `24150017`): [`MemDatabase::begin`] snapshots
-//! the domain maps into a private staging copy, the write views mutate only that
-//! copy, and [`MemUnitOfWork::commit`] applies it back to the shared store —
-//! **dropping the handle without committing discards the staged writes**, exactly
-//! like pg's drop = rollback. So a forgotten `commit()` leaves nothing behind in
-//! mem either (exercised by [`tests`], mirroring the pg rollback assertion), and an
-//! uncommitted unit's writes are invisible to the shared read stores — as in pg,
-//! where a pool read can't see another connection's open transaction. The
-//! read-through profile cache is the one exception: its best-effort fill writes
-//! straight to the shared store (a documented Unit-of-Work exemption), so it is
-//! neither staged nor rolled back. Where behavior intentionally diverges from
-//! production it is called out on the item.
+//! model transactional rollback (DD `24150017`): [`MemDatabase::begin`] takes two
+//! independent deep copies of the domain maps — a pristine `base` and a `staged`
+//! copy the write views mutate — and [`MemUnitOfWork::commit`] diffs the two to
+//! merge only what this unit actually changed back onto the shared store, key by
+//! key (not a wholesale replace, which would let one unit's commit silently
+//! clobber another's disjoint writes). **Dropping the handle without committing
+//! discards `base` and `staged` together**, exactly like pg's drop = rollback. So
+//! a forgotten `commit()` leaves nothing behind in mem either (exercised by
+//! [`tests`], mirroring the pg rollback assertion), and an uncommitted unit's
+//! writes are invisible to the shared read stores — as in pg, where a pool read
+//! can't see another connection's open transaction. The read-through profile
+//! cache is the one exception: its best-effort fill writes straight to the shared
+//! store (a documented Unit-of-Work exemption), so it is neither staged, merged,
+//! nor rolled back. Where behavior intentionally diverges from production it is
+//! called out on the item.
 //!
 //! **Locking discipline.** Mutable state sits behind a `std::sync::Mutex`, not a
 //! `tokio::sync::Mutex`, because no `.await` is ever held across a guard: each
@@ -358,132 +361,255 @@ impl MemBackend {
         }
     }
 
-    /// Apply a staged unit's domain maps onto this (shared) backend, replacing their
-    /// contents wholesale — the mem mirror of a pg `COMMIT`. The profile map is left
-    /// untouched (it was never staged). Only [`MemUnitOfWork::commit`] calls this; a
-    /// dropped, un-applied unit leaves the shared store exactly as it was.
-    fn apply(&self, staged: &MemBackend) {
-        *self.users.lock().expect("MemBackend users mutex poisoned") = staged
-            .users
-            .lock()
-            .expect("MemBackend users mutex poisoned")
-            .clone();
-        *self
-            .accounts
-            .lock()
-            .expect("MemBackend accounts mutex poisoned") = staged
-            .accounts
-            .lock()
-            .expect("MemBackend accounts mutex poisoned")
-            .clone();
-        *self
-            .memberships
-            .lock()
-            .expect("MemBackend memberships mutex poisoned") = staged
-            .memberships
-            .lock()
-            .expect("MemBackend memberships mutex poisoned")
-            .clone();
-        *self
-            .invitations
-            .lock()
-            .expect("MemBackend invitations mutex poisoned") = staged
-            .invitations
-            .lock()
-            .expect("MemBackend invitations mutex poisoned")
-            .clone();
-        *self
-            .handle_changes
-            .lock()
-            .expect("MemBackend handle_changes mutex poisoned") = staged
-            .handle_changes
-            .lock()
-            .expect("MemBackend handle_changes mutex poisoned")
-            .clone();
-        *self
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned") = staged
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned")
-            .clone();
-        *self
-            .changelog
-            .lock()
-            .expect("MemBackend changelog mutex poisoned") = staged
-            .changelog
-            .lock()
-            .expect("MemBackend changelog mutex poisoned")
-            .clone();
-        *self
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned") = staged
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned")
-            .clone();
-        *self
-            .current_placements
-            .lock()
-            .expect("MemBackend current_placements mutex poisoned") = staged
-            .current_placements
-            .lock()
-            .expect("MemBackend current_placements mutex poisoned")
-            .clone();
-        *self
-            .view_grants
-            .lock()
-            .expect("MemBackend view_grants mutex poisoned") = staged
-            .view_grants
-            .lock()
-            .expect("MemBackend view_grants mutex poisoned")
-            .clone();
-        *self.nodes.lock().expect("MemBackend nodes mutex poisoned") = staged
-            .nodes
-            .lock()
-            .expect("MemBackend nodes mutex poisoned")
-            .clone();
-        *self.files.lock().expect("MemBackend files mutex poisoned") = staged
-            .files
-            .lock()
-            .expect("MemBackend files mutex poisoned")
-            .clone();
-        *self.slots.lock().expect("MemBackend slots mutex poisoned") = staged
-            .slots
-            .lock()
-            .expect("MemBackend slots mutex poisoned")
-            .clone();
-        *self
-            .participants
-            .lock()
-            .expect("MemBackend participants mutex poisoned") = staged
-            .participants
-            .lock()
-            .expect("MemBackend participants mutex poisoned")
-            .clone();
-        *self.seats.lock().expect("MemBackend seats mutex poisoned") = staged
-            .seats
-            .lock()
-            .expect("MemBackend seats mutex poisoned")
-            .clone();
-        *self
-            .seat_invitations
-            .lock()
-            .expect("MemBackend seat_invitations mutex poisoned") = staged
-            .seat_invitations
-            .lock()
-            .expect("MemBackend seat_invitations mutex poisoned")
-            .clone();
-        *self
-            .actor_identities
-            .lock()
-            .expect("MemBackend actor_identities mutex poisoned") = staged
-            .actor_identities
-            .lock()
-            .expect("MemBackend actor_identities mutex poisoned")
-            .clone();
+    /// Merge a unit's staged writes onto this (shared) backend, key by key — the
+    /// mem mirror of a pg `COMMIT` under row-level concurrency, not a whole-table
+    /// swap. `base` is the pristine snapshot [`stage`](MemBackend::stage) took at
+    /// `begin`, before any write; diffing it against `staged` is what tells a
+    /// key/entry this unit actually touched (inserted, updated, or removed) apart
+    /// from everything that merely rode along in the snapshot untouched — so
+    /// another unit's concurrent, disjoint commit survives instead of being
+    /// silently clobbered by this one. (The bug this replaces: assigning
+    /// `*self.field.lock() = staged.field.lock().clone()` replaced the whole map on
+    /// every commit, so of two units committed in any order, only the last
+    /// writer's snapshot survived — a lost update for anything the other unit
+    /// alone had written.) The profile cache and blob store are Unit-of-Work
+    /// exemptions (see `stage`) — never staged, so there is nothing to merge for
+    /// them here. Only [`MemUnitOfWork::commit`] calls this; a dropped, un-merged
+    /// unit leaves the shared store exactly as it was.
+    ///
+    /// Every `HashMap` field merges through [`merge_map`]: a key that was in
+    /// `base` but has since vanished from `staged` (removed by this unit) is
+    /// removed from `shared` too; of the keys `staged` still carries, only those
+    /// whose value actually *differs* from `base` are (re)written onto `shared`
+    /// (covering both a fresh insert and an in-place update). A key this unit
+    /// **read** into its snapshot but never changed merges as a no-op — `staged`
+    /// equals `base` for it, so [`merge_map`] skips it and leaves `shared`'s
+    /// current value alone. That is what lets a *third* unit's concurrent
+    /// update-or-delete of a key this unit only read survive this unit's commit,
+    /// instead of being clobbered back to the stale value this unit's snapshot
+    /// happened to carry. The three append-log `Vec` fields (`handle_changes`,
+    /// `changelog`, `placements`) merge through [`merge_log`] instead — the same
+    /// idea applied by value, since a log row carries no separate key.
+    ///
+    /// The remaining, unmodeled gap is a genuine **same-key write-write
+    /// conflict**: two units both *writing* the same key between their respective
+    /// `begin` and `commit`. Nothing here detects that collision — whichever unit
+    /// commits last simply overwrites the other's value (last-writer-wins), where
+    /// pg would instead serialize the second writer on a real row lock (blocking
+    /// it until the first transaction commits or rolls back, then applying its
+    /// write on top). This fake does not model that lock, and nothing in the test
+    /// suite currently depends on it (the tests below cover disjoint writes and a
+    /// third unit's untouched-key read surviving a concurrent update/delete, not
+    /// same-key write-write conflict resolution).
+    fn merge(&self, base: &MemBackend, staged: &MemBackend) {
+        merge_map(
+            &mut self.users.lock().expect("MemBackend users mutex poisoned"),
+            &base.users.lock().expect("MemBackend users mutex poisoned"),
+            &staged
+                .users
+                .lock()
+                .expect("MemBackend users mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .accounts
+                .lock()
+                .expect("MemBackend accounts mutex poisoned"),
+            &base
+                .accounts
+                .lock()
+                .expect("MemBackend accounts mutex poisoned"),
+            &staged
+                .accounts
+                .lock()
+                .expect("MemBackend accounts mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .memberships
+                .lock()
+                .expect("MemBackend memberships mutex poisoned"),
+            &base
+                .memberships
+                .lock()
+                .expect("MemBackend memberships mutex poisoned"),
+            &staged
+                .memberships
+                .lock()
+                .expect("MemBackend memberships mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .invitations
+                .lock()
+                .expect("MemBackend invitations mutex poisoned"),
+            &base
+                .invitations
+                .lock()
+                .expect("MemBackend invitations mutex poisoned"),
+            &staged
+                .invitations
+                .lock()
+                .expect("MemBackend invitations mutex poisoned"),
+        );
+        merge_log(
+            &mut self
+                .handle_changes
+                .lock()
+                .expect("MemBackend handle_changes mutex poisoned"),
+            &base
+                .handle_changes
+                .lock()
+                .expect("MemBackend handle_changes mutex poisoned"),
+            &staged
+                .handle_changes
+                .lock()
+                .expect("MemBackend handle_changes mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned"),
+            &base
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned"),
+            &staged
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned"),
+        );
+        merge_log(
+            &mut self
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned"),
+            &base
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned"),
+            &staged
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned"),
+        );
+        merge_log(
+            &mut self
+                .placements
+                .lock()
+                .expect("MemBackend placements mutex poisoned"),
+            &base
+                .placements
+                .lock()
+                .expect("MemBackend placements mutex poisoned"),
+            &staged
+                .placements
+                .lock()
+                .expect("MemBackend placements mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .current_placements
+                .lock()
+                .expect("MemBackend current_placements mutex poisoned"),
+            &base
+                .current_placements
+                .lock()
+                .expect("MemBackend current_placements mutex poisoned"),
+            &staged
+                .current_placements
+                .lock()
+                .expect("MemBackend current_placements mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .view_grants
+                .lock()
+                .expect("MemBackend view_grants mutex poisoned"),
+            &base
+                .view_grants
+                .lock()
+                .expect("MemBackend view_grants mutex poisoned"),
+            &staged
+                .view_grants
+                .lock()
+                .expect("MemBackend view_grants mutex poisoned"),
+        );
+        merge_map(
+            &mut self.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &base.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &staged
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned"),
+        );
+        merge_map(
+            &mut self.files.lock().expect("MemBackend files mutex poisoned"),
+            &base.files.lock().expect("MemBackend files mutex poisoned"),
+            &staged
+                .files
+                .lock()
+                .expect("MemBackend files mutex poisoned"),
+        );
+        merge_map(
+            &mut self.slots.lock().expect("MemBackend slots mutex poisoned"),
+            &base.slots.lock().expect("MemBackend slots mutex poisoned"),
+            &staged
+                .slots
+                .lock()
+                .expect("MemBackend slots mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .participants
+                .lock()
+                .expect("MemBackend participants mutex poisoned"),
+            &base
+                .participants
+                .lock()
+                .expect("MemBackend participants mutex poisoned"),
+            &staged
+                .participants
+                .lock()
+                .expect("MemBackend participants mutex poisoned"),
+        );
+        merge_map(
+            &mut self.seats.lock().expect("MemBackend seats mutex poisoned"),
+            &base.seats.lock().expect("MemBackend seats mutex poisoned"),
+            &staged
+                .seats
+                .lock()
+                .expect("MemBackend seats mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .seat_invitations
+                .lock()
+                .expect("MemBackend seat_invitations mutex poisoned"),
+            &base
+                .seat_invitations
+                .lock()
+                .expect("MemBackend seat_invitations mutex poisoned"),
+            &staged
+                .seat_invitations
+                .lock()
+                .expect("MemBackend seat_invitations mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .actor_identities
+                .lock()
+                .expect("MemBackend actor_identities mutex poisoned"),
+            &base
+                .actor_identities
+                .lock()
+                .expect("MemBackend actor_identities mutex poisoned"),
+            &staged
+                .actor_identities
+                .lock()
+                .expect("MemBackend actor_identities mutex poisoned"),
+        );
     }
 
     // --- Convenience seed/inspection helpers for tests. These operate directly on
@@ -568,6 +694,67 @@ impl MemBackend {
     // The commission seed/inspect helpers (`create_commission`, `find_commission`,
     // `all_commissions`, `changelog_entries`) live with the commission fakes in
     // [`mod@crate::commission`].
+}
+
+/// [`MemBackend::merge`]'s per-`HashMap`-field step: reconcile `shared` with what
+/// this unit changed, told apart by diffing `base` (the pristine pre-write
+/// snapshot) against `staged` (the mutated one) — key by key, never a wholesale
+/// replace. A key that was in `base` but has since vanished from `staged` was
+/// removed by this unit, so it is removed from `shared` too. Of the keys present
+/// in `staged`, only those whose value actually **differs** from `base` are
+/// (re)written onto `shared` — covering both a fresh insert (absent from `base`)
+/// and an in-place update alike; a key `staged` carries unchanged from `base` was
+/// merely read (or simply rode along in the snapshot) and is left alone, so it
+/// does not clobber whatever `shared` holds for that key now. A key `shared`
+/// holds that neither `base` nor `staged` ever saw belongs to another unit's
+/// disjoint, concurrent commit, and is likewise left untouched. Together this is
+/// what turns the merge from a destructive whole-map replace into a per-key,
+/// per-change apply. (`V: PartialEq` is what makes the "actually differs" check
+/// possible; every value type stored in one of these maps derives it for exactly
+/// this reason.)
+fn merge_map<K, V>(shared: &mut HashMap<K, V>, base: &HashMap<K, V>, staged: &HashMap<K, V>)
+where
+    K: Eq + std::hash::Hash + Clone,
+    V: Clone + PartialEq,
+{
+    for key in base.keys() {
+        if !staged.contains_key(key) {
+            shared.remove(key);
+        }
+    }
+    for (key, value) in staged {
+        if base.get(key) == Some(value) {
+            continue; // untouched by this unit — leave shared's current state alone
+        }
+        shared.insert(key.clone(), value.clone());
+    }
+}
+
+/// [`MemBackend::merge`]'s per-append-log-field step — the [`merge_map`] idea
+/// applied to a `Vec`-shaped log instead of a `HashMap`. A log row (a
+/// [`StoredHandleChange`], [`StoredChangelogEntry`], or [`StoredPlacement`])
+/// carries no id split from its own data, so value equality stands in for the key
+/// equality `merge_map` diffs by — sound because every row is written once, at
+/// push time, and never mutated after (the one way a row disappears is a bulk
+/// removal cascading from a parent's delete, never an edit). A `staged` row absent
+/// from `base` is new and is pushed onto `shared`, once; a `base` row absent from
+/// `staged` was removed by this unit, so one matching copy is dropped from
+/// `shared` too.
+fn merge_log<T: Clone + PartialEq>(shared: &mut Vec<T>, base: &[T], staged: &[T]) {
+    for entry in base {
+        if staged.contains(entry) {
+            continue;
+        }
+        if let Some(position) = shared.iter().position(|row| row == entry) {
+            shared.remove(position);
+        }
+    }
+    for entry in staged {
+        if base.contains(entry) || shared.contains(entry) {
+            continue;
+        }
+        shared.push(entry.clone());
+    }
 }
 
 /// In-memory [`UserStore`] read surface over the shared [`MemBackend`].
@@ -743,8 +930,10 @@ impl ProfileCache for MemProfileCache {
 /// (an aggregate root, not a value), so we store its parts and rebuild a fresh
 /// `Account` on every `find` rather than clone the original. `Clone` so a unit of
 /// work can deep-copy the accounts map into its staging snapshot (see
-/// [`MemBackend::stage`]).
-#[derive(Clone)]
+/// [`MemBackend::stage`]). `PartialEq` lets [`merge_map`] diff a unit's staged
+/// value against its pristine base snapshot to tell an untouched row (rode along
+/// in the snapshot) apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 struct StoredAccount {
     /// The account's sovereign `did:plc` (minted by [`MemDidMinter`] in the
     /// real founding flow).
@@ -768,8 +957,10 @@ struct StoredAccount {
 /// `Invitation` isn't `Clone` (an entity with a lifecycle, not a value), so we
 /// store its parts and rebuild a fresh `Invitation` on read. `Clone` so a unit of
 /// work can deep-copy the invitations map into its staging snapshot (see
-/// [`MemBackend::stage`]).
-#[derive(Clone)]
+/// [`MemBackend::stage`]). `PartialEq` lets [`merge_map`] diff a unit's staged
+/// value against its pristine base snapshot to tell an untouched row (rode along
+/// in the snapshot) apart from one this unit actually wrote.
+#[derive(Clone, PartialEq)]
 struct StoredInvitation {
     /// The account membership is being offered of.
     account: AccountId,
@@ -794,7 +985,10 @@ struct StoredInvitation {
 /// The mem fake keeps only the fields its reads consume — the account, the vacated
 /// `old_handle`, and the instant. It deliberately drops the pg row's `new_handle`
 /// (audit-only, read by nothing here), per this module's "fidelity, not realism" note.
-#[derive(Clone)]
+/// `PartialEq` so [`merge_log`] can diff a unit's staged log against its pristine
+/// base snapshot by value — this row carries no id of its own, so equality IS
+/// identity (sound because a row is written once, at push time, and never mutated).
+#[derive(Clone, PartialEq)]
 struct StoredHandleChange {
     /// The account whose handle changed.
     account_id: AccountId,
@@ -1191,6 +1385,13 @@ impl AccountWrites for MemAccountWrites {
     /// deferred on the floor here, exactly as the role tree is in `grant_role`: the
     /// pg adapter persists them in dedicated columns, but no port reads either back
     /// (`role_of` returns only the role), so the in-memory map keeps only the role.
+    ///
+    /// Seating is a no-op when the pair is already seated (a role granted through
+    /// another path, e.g. `grant_role`, while this invitation sat pending) — the mem
+    /// mirror of pg's `ON CONFLICT (account_id, user_id) DO NOTHING`. The ORIGINAL
+    /// membership row survives untouched, and the returned [`UserAccount`] carries
+    /// whatever role is actually persisted, not necessarily the one this invitation
+    /// offered.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -1223,15 +1424,18 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert(
-            (invitation.account, invitation.invited_user),
-            invitation.role.clone(),
-        );
+        // `or_insert_with` writes only when the pair is absent, so a re-seat of an
+        // already-seated pair leaves the existing role untouched instead of
+        // overwriting it with this (possibly stale) invitation's offer.
+        let role = memberships
+            .entry((invitation.account, invitation.invited_user))
+            .or_insert_with(|| invitation.role.clone())
+            .clone();
 
         Ok(UserAccount {
             account_id: invitation.account,
             user_id: invitation.invited_user,
-            role: invitation.role,
+            role,
         })
     }
 
@@ -1303,14 +1507,15 @@ impl AccountWrites for MemAccountWrites {
     }
 
     /// Removes the account row (freeing its handle for reuse) along with every
-    /// membership and invitation belonging to it, and **severs the account's
-    /// positioning rails** — the placements it held, the current-placement pointers
-    /// aimed at it, and its view grants (ZMVP-57 AC1). This mirrors pg's delete: the
-    /// membership/invitation FKs are removed children-first, while the positioning FKs
-    /// onto `accounts` are `ON DELETE CASCADE`. The **commissions themselves are
-    /// untouched** — they are User-owned and survive account deletion (Ownership
-    /// Separation DD `29130754`); only the account-side positioning goes. The custody
-    /// keys are not modeled here. Removing an absent account is a no-op. See the
+    /// membership, invitation, and handle-change log row belonging to it, and
+    /// **severs the account's positioning rails** — the placements it held, the
+    /// current-placement pointers aimed at it, and its view grants (ZMVP-57 AC1).
+    /// This mirrors pg's delete: the membership/invitation/handle-change FKs are
+    /// removed children-first, while the positioning FKs onto `accounts` are `ON
+    /// DELETE CASCADE`. The **commissions themselves are untouched** — they are
+    /// User-owned and survive account deletion (Ownership Separation DD `29130754`);
+    /// only the account-side positioning goes. The custody keys are not modeled
+    /// here. Removing an absent account is a no-op. See the
     /// [`hard_delete`](AccountWrites::hard_delete) port doc.
     async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
         self.0
@@ -1330,6 +1535,16 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend invitations mutex poisoned")
             .retain(|_, invitation| invitation.account != account);
+
+        // Drop this account's handle-change log rows too — the mem mirror of pg's
+        // `account_handle_changes.account_id REFERENCES accounts(id) ON DELETE
+        // CASCADE` (ZMVP-46). Left uncleared, the vacated-handle quarantine would
+        // keep citing a change row for an account that no longer exists.
+        self.0
+            .handle_changes
+            .lock()
+            .expect("MemBackend handle_changes mutex poisoned")
+            .retain(|change| change.account_id != account);
 
         // Sever the account's positioning rails (the mem mirror of the ZMVP-70
         // `ON DELETE CASCADE` on each positioning FK onto `accounts`): drop every
@@ -1366,23 +1581,37 @@ pub struct MemDatabase(MemBackend);
 #[async_trait]
 impl Database for MemDatabase {
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        // `staged` is what the write views mutate; `base` is a second, independent
+        // deep copy taken at the same instant and never touched again — the
+        // pristine "before" snapshot `commit` diffs `staged` against to find
+        // exactly what this unit changed (see `MemBackend::merge`).
+        let staged = self.0.stage();
+        let base = staged.stage();
         Ok(Box::new(MemUnitOfWork {
             shared: self.0.clone(),
-            staged: self.0.stage(),
+            base,
+            staged,
         }))
     }
 }
 
 /// In-memory [`UnitOfWork`] that models transactional rollback. Holds the `shared`
-/// store and a private `staged` snapshot of its domain maps taken at `begin`; the
-/// write views ([`accounts`](MemUnitOfWork::accounts)/[`users`](MemUnitOfWork::users))
-/// mutate only `staged`. [`commit`](MemUnitOfWork::commit) applies `staged` back onto
-/// `shared`; **dropping the handle without committing discards it** — the mem mirror
-/// of pg's drop = rollback. Uncommitted writes are therefore invisible to the shared
-/// read stores, matching pg (a pool read can't see another connection's open tx).
+/// store, the pristine `base` snapshot of its domain maps taken at `begin`, and a
+/// `staged` copy of the same snapshot that the write views
+/// ([`accounts`](MemUnitOfWork::accounts)/[`users`](MemUnitOfWork::users)) mutate.
+/// [`commit`](MemUnitOfWork::commit) diffs `base` against `staged` and merges only
+/// what changed back onto `shared`, key by key — **dropping the handle without
+/// committing discards `base`/`staged` together**, the mem mirror of pg's drop =
+/// rollback. Uncommitted writes are therefore invisible to the shared read stores,
+/// matching pg (a pool read can't see another connection's open tx).
 pub struct MemUnitOfWork {
     /// The real, shared store the unit commits back onto.
     shared: MemBackend,
+    /// A pristine deep copy of the shared domain maps taken at `begin`, before any
+    /// write — never mutated again. `commit` diffs this against `staged` to tell a
+    /// key this unit actually touched (inserted, updated, or removed) apart from
+    /// everything that merely rode along in the snapshot untouched.
+    base: MemBackend,
     /// A private deep copy of the shared domain maps; the unit's writes land here
     /// and reach `shared` only on `commit`. (Shares the profile-cache `Arc` — that
     /// map is a documented Unit-of-Work exemption, never staged.)
@@ -1417,17 +1646,19 @@ impl UnitOfWork for MemUnitOfWork {
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
-        // Apply the staged writes onto the shared store. Without this call the staged
-        // snapshot is simply dropped, so the unit rolls back — as in pg.
-        self.shared.apply(&self.staged);
+        // Merge the staged writes onto the shared store, key by key (see
+        // `MemBackend::merge`). Without this call `base`/`staged` are simply
+        // dropped, so the unit rolls back — as in pg.
+        self.shared.merge(&self.base, &self.staged);
         Ok(())
     }
 
-    /// The mirror opposite of [`commit`](MemUnitOfWork::commit): commit *applies*
-    /// the staged snapshot back onto the shared store, rollback simply does **not**.
-    /// Consuming `self` here drops the staged copy, discarding every write in the
-    /// unit — the same outcome as dropping the handle uncommitted, made explicit and
-    /// deterministic (mem mirror of pg's awaited `ROLLBACK`).
+    /// The mirror opposite of [`commit`](MemUnitOfWork::commit): commit *merges*
+    /// the staged snapshot's changes back onto the shared store, rollback simply
+    /// does **not**. Consuming `self` here drops `base` and `staged` together,
+    /// discarding every write in the unit — the same outcome as dropping the
+    /// handle uncommitted, made explicit and deterministic (mem mirror of pg's
+    /// awaited `ROLLBACK`).
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         Ok(())
     }
@@ -2098,6 +2329,265 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_none());
+    }
+
+    // Bug guard — mirrors pg's `ON CONFLICT (account_id, user_id) DO NOTHING`: a
+    // pending invitation accepted for a pair that's ALREADY seated (granted a role
+    // through another path while the offer sat pending) must not overwrite the
+    // existing membership. It's a no-op that keeps the ORIGINAL role, not the
+    // invitation's offer.
+    #[tokio::test]
+    async fn accepting_an_invitation_for_an_already_seated_pair_keeps_the_original_role() {
+        let backend = MemBackend::new();
+        let (account, invitee, inviter) = (account_id(), user_id(), user_id());
+
+        // The invitee is granted Admin directly, bypassing any invitation.
+        backend
+            .grant_role(&UserAccount {
+                account_id: account,
+                user_id: invitee,
+                role: Role::Admin(None),
+            })
+            .await
+            .unwrap();
+
+        // A stale pending invitation (issued before the grant) offers only Member.
+        let invitation =
+            Invitation::issue(account, invitee, Role::Member(None), inviter, Utc::now());
+        backend.create_invitation(&invitation).await.unwrap();
+
+        let database = backend.database();
+        let mut uow = database.begin().await.unwrap();
+        let seated = uow
+            .accounts()
+            .accept_invitation(invitation, false)
+            .await
+            .expect("accepting an already-seated pair must not error");
+        uow.commit().await.unwrap();
+
+        assert_eq!(
+            seated.role,
+            Role::Admin(None),
+            "the returned membership reflects the original grant, not the invitation's role"
+        );
+        assert_eq!(
+            backend.role_of(invitee, account).await.unwrap(),
+            Some(Role::Admin(None)),
+            "the persisted membership still holds the original grant"
+        );
+    }
+
+    // Bug guard — hard_delete must also drop the account's handle-change log rows,
+    // the mem mirror of pg's `account_handle_changes.account_id REFERENCES
+    // accounts(id) ON DELETE CASCADE` (ZMVP-46). Left uncleared, a hard-deleted
+    // account would keep quarantining a handle no live account owns anymore.
+    #[tokio::test]
+    async fn hard_delete_clears_the_accounts_handle_change_log() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let store = backend.account_store();
+
+        let account = live_account("did:plc:hdchangelog");
+        let (old, account_id) = (account.handle.clone(), account.id);
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id,
+            role: Role::Owner(None),
+        };
+        backend.create(&account, &owner).await.unwrap();
+
+        let new = Handle::try_new("hdchangelog-new.example.com").unwrap();
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts()
+            .change_handle(account_id, &old, &new, Utc::now())
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+
+        let since = Utc::now() - chrono::Duration::minutes(5);
+        assert_eq!(
+            store
+                .count_handle_changes_since(account_id, since)
+                .await
+                .unwrap(),
+            1,
+            "the change is recorded before the delete"
+        );
+
+        let mut uow = database.begin().await.unwrap();
+        uow.accounts().hard_delete(account_id).await.unwrap();
+        uow.commit().await.unwrap();
+
+        assert_eq!(
+            store
+                .count_handle_changes_since(account_id, since)
+                .await
+                .unwrap(),
+            0,
+            "hard_delete drops the account's handle-change log rows too"
+        );
+    }
+
+    // Bug guard — `MemUnitOfWork::commit` used to replace each shared map
+    // wholesale with the unit's staged snapshot, so two units committed in
+    // sequence were last-writer-wins across the WHOLE map: the second commit
+    // silently erased the first unit's disjoint write. Two units opened from the
+    // same (empty) shared state, each provisioning a DIFFERENT user, must both
+    // survive once committed.
+    #[tokio::test]
+    async fn two_units_each_provisioning_a_different_user_both_survive_commit() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        // Both snapshot the same shared state before either has written anything.
+        let mut first_unit = database.begin().await.unwrap();
+        let mut second_unit = database.begin().await.unwrap();
+
+        let alice = first_unit
+            .users()
+            .provision(&did("did:plc:merge-alice"))
+            .await
+            .unwrap();
+        let bob = second_unit
+            .users()
+            .provision(&did("did:plc:merge-bob"))
+            .await
+            .unwrap();
+
+        first_unit.commit().await.unwrap();
+        second_unit.commit().await.unwrap();
+
+        assert_eq!(
+            backend
+                .find_by_did(&did("did:plc:merge-alice"))
+                .await
+                .unwrap()
+                .map(|u| u.id),
+            Some(alice.id),
+            "the first unit's disjoint write survives the second unit's commit"
+        );
+        assert_eq!(
+            backend
+                .find_by_did(&did("did:plc:merge-bob"))
+                .await
+                .unwrap()
+                .map(|u| u.id),
+            Some(bob.id),
+            "the second unit's write is present too, not clobbered by the first"
+        );
+    }
+
+    // Bug guard (Copilot review, PR #144) — `merge_map` used to unconditionally
+    // rewrite EVERY key `staged` carried, including ones a unit merely rode
+    // along with in its begin-time snapshot without ever writing. So a unit
+    // that began before a second, concurrent unit updated and committed a key
+    // would clobber that update back to the stale snapshot value on its own,
+    // later commit — a lost update. `merge_map` now diffs `staged` against
+    // `base` and skips a key whose value is unchanged, so only what a unit
+    // actually wrote reaches `shared`.
+    #[tokio::test]
+    async fn a_third_units_untouched_read_does_not_clobber_a_concurrent_update() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        let account = live_account("did:plc:merge-update");
+        let account_id = account.id;
+        let old_handle = account.handle.clone();
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id,
+            role: Role::Owner(None),
+        };
+        backend.create(&account, &owner).await.unwrap();
+
+        // `unit_a` snapshots the account BEFORE `unit_b` updates it, but never
+        // writes the account itself — only a disjoint key, committed after.
+        let mut unit_a = database.begin().await.unwrap();
+        let mut unit_b = database.begin().await.unwrap();
+
+        let new_handle = Handle::try_new("merge-update-new.example.com").unwrap();
+        unit_b
+            .accounts()
+            .change_handle(account_id, &old_handle, &new_handle, Utc::now())
+            .await
+            .unwrap();
+        unit_b.commit().await.unwrap();
+
+        let other_account = live_account("did:plc:merge-update-other");
+        let other_owner = UserAccount {
+            user_id: user_id(),
+            account_id: other_account.id,
+            role: Role::Owner(None),
+        };
+        unit_a
+            .accounts()
+            .create(&other_account, &other_owner)
+            .await
+            .unwrap();
+        unit_a.commit().await.unwrap();
+
+        let found_account = backend
+            .find(account_id)
+            .await
+            .unwrap()
+            .expect("account still present");
+        assert_eq!(
+            found_account.handle, new_handle,
+            "unit_b's committed update survives unit_a's later, disjoint commit"
+        );
+        assert!(
+            backend.find(other_account.id).await.unwrap().is_some(),
+            "unit_a's own disjoint write is present too"
+        );
+    }
+
+    // Bug guard (Copilot review, PR #144) — the same stale-snapshot clobber also
+    // resurrected a key another unit had deleted: `unit_a`'s snapshot still
+    // carried the row, so its commit re-inserted it into `shared` even though
+    // `unit_a` never wrote it at all.
+    #[tokio::test]
+    async fn a_third_units_untouched_read_does_not_resurrect_a_concurrent_delete() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+
+        let account = live_account("did:plc:merge-delete");
+        let account_id = account.id;
+        let owner = UserAccount {
+            user_id: user_id(),
+            account_id,
+            role: Role::Owner(None),
+        };
+        backend.create(&account, &owner).await.unwrap();
+
+        // `unit_a` snapshots the account BEFORE `unit_b` deletes it, but never
+        // touches the account itself — only a disjoint key, committed after.
+        let mut unit_a = database.begin().await.unwrap();
+        let mut unit_b = database.begin().await.unwrap();
+
+        unit_b.accounts().hard_delete(account_id).await.unwrap();
+        unit_b.commit().await.unwrap();
+
+        let other_account = live_account("did:plc:merge-delete-other");
+        let other_owner = UserAccount {
+            user_id: user_id(),
+            account_id: other_account.id,
+            role: Role::Owner(None),
+        };
+        unit_a
+            .accounts()
+            .create(&other_account, &other_owner)
+            .await
+            .unwrap();
+        unit_a.commit().await.unwrap();
+
+        assert!(
+            backend.find(account_id).await.unwrap().is_none(),
+            "unit_b's committed delete stays deleted after unit_a's later, disjoint commit"
+        );
+        assert!(
+            backend.find(other_account.id).await.unwrap().is_some(),
+            "unit_a's own disjoint write is present too"
+        );
     }
 
     // The commission store-layer tests (ZMVP-65/87) live with the commission

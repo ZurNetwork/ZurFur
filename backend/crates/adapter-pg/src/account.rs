@@ -494,6 +494,14 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// back with no membership minted — honoring "a revoked invitation yields no
     /// membership". The new member's `parent` is the `inviter` (DESIGN/Roles rule 4a)
     /// and `listed_on_profile` records the invitee's opt-in.
+    ///
+    /// Seating itself is `ON CONFLICT (account_id, user_id) DO NOTHING`: a pair
+    /// that's already seated (a role granted through another path, e.g.
+    /// `grant_role`, while this invitation sat pending) mints no row rather than
+    /// raising a primary-key violation, so a repeat accept is a no-op instead of a
+    /// 500. `RETURNING` then yields nothing on that path, so the seated role is
+    /// re-read from the row that's actually there — the ORIGINAL grant survives
+    /// untouched, never overwritten by this invitation's offer.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -529,10 +537,35 @@ impl AccountWrites for PgAccountWrites<'_> {
         )
         .await?;
 
+        // `ON CONFLICT DO NOTHING` skipped the insert (the pair was already
+        // seated), so `RETURNING` gave back no row: fall back to reading the role
+        // that's actually persisted rather than assuming this invitation's offer
+        // took effect.
+        let role = match seated {
+            Some(row) => Role::try_from(row.role)?,
+            None => {
+                let existing = sql::role_of(
+                    &mut *self.conn,
+                    *invitation.invited_user,
+                    *invitation.account,
+                )
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "account_members row for account {} user {} vanished between the \
+                         conflicting seat and the fallback read",
+                        *invitation.account,
+                        *invitation.invited_user
+                    )
+                })?;
+                Role::try_from(existing)?
+            }
+        };
+
         Ok(UserAccount {
-            account_id: AccountId::new(seated.account_id),
-            user_id: UserId::new(seated.user_id),
-            role: Role::try_from(seated.role)?,
+            account_id: invitation.account,
+            user_id: invitation.invited_user,
+            role,
         })
     }
 

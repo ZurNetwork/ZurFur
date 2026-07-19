@@ -26,7 +26,8 @@
 //!
 //! The rest are stubs — identity types and shapes sketched ahead of the work
 //! that fills them in, documented honestly per the glossary: [`achievement`],
-//! [`blob`], [`character`], [`commission`], [`golem`], [`markdown`], [`workflow`].
+//! [`blob`], [`character`], [`commission`], `golem`, [`markdown`], [`workflow`].
+//! (`golem` has no submodule yet — plain text, not a link, until one exists.)
 
 pub mod account;
 pub mod account_keys;

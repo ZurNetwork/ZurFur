@@ -916,3 +916,207 @@ async fn wellknown_does_not_serve_a_foreign_host() {
         .expect("GET /.well-known/atproto-did");
     assert_eq!(res.status(), 404, "a foreign Host is not ours to resolve");
 }
+
+// --- Finding 1: grant/revoke authorization symmetry (the current-rank guard) ---
+
+/// Seats the signed-in caller (`my_did`) as an ADMIN of an account owned by someone
+/// else, returning the account — the shared setup for the grant-rank tests below
+/// (the e2e harness signs in one DID, so the Owner is seeded via the backend, exactly
+/// as in `a_non_owner_member_cannot_delete`). Each test spawns its own backend, so the
+/// fixed owner/handle here never collide across tests.
+async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &str) -> Account {
+    let me = backend
+        .find_by_did(&Did::new(my_did.to_string()))
+        .await
+        .expect("find me")
+        .expect("sign-in provisioned me");
+    let owner = backend
+        .provision(&Did::new("did:plc:rankowner".to_string()))
+        .await
+        .expect("provision owner");
+    let (account, owner_membership) = Account::open(
+        owner.id,
+        Did::new("did:plc:rankacct".to_string()),
+        Handle::try_new("ranked.zurfur.app").unwrap(),
+        "Ranked Studio".parse::<AccountName>().unwrap(),
+        Utc::now(),
+    );
+    backend
+        .create(&account, &owner_membership)
+        .await
+        .expect("found the account under another owner");
+    backend
+        .grant_role(&UserAccount {
+            user_id: me.id,
+            account_id: account.id,
+            role: Role::Admin(None),
+        })
+        .await
+        .expect("seat me as an Admin");
+    account
+}
+
+// The heart of finding 1: an Admin may NOT re-role a peer Admin (here a demotion to
+// Member) — the exact act `revoke_role` already forbids. `grant_role` must check the
+// grantee's *current* rank, not only the role being granted, or an Admin could silently
+// unseat a peer Admin.
+#[tokio::test]
+async fn admin_cannot_demote_a_peer_admin() {
+    let did = "did:plc:e2eadmin-actor";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+
+    // A peer Admin — the same rank as the actor.
+    let peer_did = "did:plc:e2epeer-admin";
+    let peer = backend
+        .provision(&Did::new(peer_did.to_string()))
+        .await
+        .expect("provision peer");
+    backend
+        .grant_role(&UserAccount {
+            user_id: peer.id,
+            account_id: account.id,
+            role: Role::Admin(None),
+        })
+        .await
+        .expect("seat the peer Admin");
+
+    // The actor tries to DEMOTE the peer Admin to Member — must be refused (403).
+    let res = client
+        .post(format!("{base}/accounts/{}/members", *account.id))
+        .json(&serde_json::json!({ "user": peer_did, "role": "member" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    common::assert_problem(res, 403, "forbidden").await;
+
+    // The peer is untouched — still an Admin.
+    assert_eq!(
+        backend.role_of(peer.id, account.id).await.expect("role_of"),
+        Some(Role::Admin(None)),
+        "the peer Admin keeps their rank after the refused demotion"
+    );
+}
+
+// The guard must not over-reach: an Admin can still seat a BRAND-NEW member — no current
+// rank to outrank — the ordinary grant path.
+#[tokio::test]
+async fn admin_can_grant_to_a_non_member() {
+    let did = "did:plc:e2eadmin-granter";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+
+    let newcomer_did = "did:plc:e2enewcomer";
+    let res = client
+        .post(format!("{base}/accounts/{}/members", *account.id))
+        .json(&serde_json::json!({ "user": newcomer_did, "role": "member" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    assert_eq!(res.status(), 200, "an Admin seats a brand-new member");
+
+    let newcomer = backend
+        .provision(&Did::new(newcomer_did.to_string()))
+        .await
+        .expect("provision newcomer");
+    assert_eq!(
+        backend
+            .role_of(newcomer.id, account.id)
+            .await
+            .expect("role_of"),
+        Some(Role::Member(None)),
+        "the newcomer holds the granted role"
+    );
+}
+
+// The actor may act on someone they OUTRANK: an Admin re-roles a Member up to Manager
+// (both ranks below the Admin), which the current-rank guard must still allow.
+#[tokio::test]
+async fn admin_can_re_role_a_member_below_them() {
+    let did = "did:plc:e2eadmin-reroler";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+
+    // Seat a Member — a rank below the Admin actor.
+    let member_did = "did:plc:e2emember";
+    let member = backend
+        .provision(&Did::new(member_did.to_string()))
+        .await
+        .expect("provision member");
+    backend
+        .grant_role(&UserAccount {
+            user_id: member.id,
+            account_id: account.id,
+            role: Role::Member(None),
+        })
+        .await
+        .expect("seat the member");
+
+    let res = client
+        .post(format!("{base}/accounts/{}/members", *account.id))
+        .json(&serde_json::json!({ "user": member_did, "role": "manager" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    assert_eq!(
+        res.status(),
+        200,
+        "an Admin may re-role a Member below them"
+    );
+    assert_eq!(
+        backend
+            .role_of(member.id, account.id)
+            .await
+            .expect("role_of"),
+        Some(Role::Manager(None)),
+        "the member is re-roled to Manager"
+    );
+}
+
+// An Owner OUTRANKS an Admin, so the Owner may still re-role an Admin (here down to
+// Manager); the symmetric guard must never block a legitimately-outranking actor.
+#[tokio::test]
+async fn owner_can_re_role_an_admin() {
+    let did = "did:plc:e2eowner-reroler";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    // The signed-in caller founds the account, so they are its Owner.
+    let account_id = found_account(&client, &base, "Owned Studio").await;
+    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+
+    // Seat an Admin under the Owner.
+    let admin_did = "did:plc:e2eadmin-grantee";
+    let admin = backend
+        .provision(&Did::new(admin_did.to_string()))
+        .await
+        .expect("provision admin");
+    backend
+        .grant_role(&UserAccount {
+            user_id: admin.id,
+            account_id: account,
+            role: Role::Admin(None),
+        })
+        .await
+        .expect("seat the admin");
+
+    // The Owner re-roles the Admin down to Manager — allowed (Owner outranks Admin).
+    let res = client
+        .post(format!("{base}/accounts/{account_id}/members"))
+        .json(&serde_json::json!({ "user": admin_did, "role": "manager" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    assert_eq!(res.status(), 200, "an Owner may re-role an Admin");
+    assert_eq!(
+        backend.role_of(admin.id, account).await.expect("role_of"),
+        Some(Role::Manager(None)),
+        "the admin is re-roled to Manager by the Owner"
+    );
+}

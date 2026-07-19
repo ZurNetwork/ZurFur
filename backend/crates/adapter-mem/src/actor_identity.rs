@@ -14,8 +14,11 @@ use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 use crate::MemBackend;
 
 /// The stored parts of one actor identity, keyed by its id in the backend map —
-/// growing a field per slice exactly as the pg table grows columns.
-#[derive(Debug, Clone)]
+/// growing a field per slice exactly as the pg table grows columns. `PartialEq`
+/// lets [`crate::merge_map`] diff a unit's staged value against its pristine
+/// base snapshot to tell an untouched row apart from one this unit actually
+/// wrote.
+#[derive(Debug, Clone, PartialEq)]
 pub struct StoredActorIdentity {
     /// What kind of actor the row is (slice 2).
     pub kind: ActorKind,

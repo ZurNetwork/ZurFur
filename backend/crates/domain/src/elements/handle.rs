@@ -230,9 +230,11 @@ impl Handle {
     ///    both namespaces);
     /// 5. the rightmost segment does not start with a digit;
     /// 6. the rightmost segment is not a [reserved TLD](RESERVED_TLDS);
-    /// 7. for a `*.zurfur.app` handle, the leftmost label is not
-    ///    [reserved](RESERVED_LABELS) (ZMVP-45) — this gate applies to the Zurfur
-    ///    namespace only, never to a BYO domain.
+    /// 7. for a `*.zurfur.app` handle — or the bare apex `zurfur.app` itself — the
+    ///    leftmost label is not [reserved](RESERVED_LABELS) (ZMVP-45); `"zurfur"` is
+    ///    itself in that set, so the platform root handle is refused the same way a
+    ///    sub-label is. This gate applies to the Zurfur namespace only, never to a
+    ///    BYO domain.
     ///
     /// ```
     /// use domain::elements::handle::{Handle, HandleError};
@@ -240,6 +242,8 @@ impl Handle {
     /// assert_eq!(Handle::try_new("alice.zurfur.app").unwrap().as_str(), "alice.zurfur.app");
     /// assert_eq!(Handle::try_new("XN--abc.com"), Err(HandleError::PunycodeLabel)); // case-insensitive
     /// assert_eq!(Handle::try_new("admin.zurfur.app"), Err(HandleError::ReservedLabel("admin".into())));
+    /// // The bare platform apex is reserved too — no one claims the Zurfur root handle.
+    /// assert_eq!(Handle::try_new("zurfur.app"), Err(HandleError::ReservedLabel("zurfur".into())));
     /// ```
     pub fn try_new(raw: impl Into<String>) -> Result<Self, HandleError> {
         // 1. NORMALIZE: trim, lowercase, strip a single trailing dot (FQDN root).
@@ -300,7 +304,13 @@ impl Handle {
         }
 
         // 8. Reserved labels — the Zurfur namespace only (ZMVP-45), leftmost label.
-        if normalized.ends_with(ZURFUR_NAMESPACE_SUFFIX) {
+        // The bare platform apex `zurfur.app` has no label in front of it, so it
+        // never matches the leading-dot suffix on its own — but its own leftmost
+        // label is "zurfur", which is already in RESERVED_LABELS. Folding the apex
+        // into the same namespace test (the suffix minus its leading dot) routes it
+        // through the one gate instead of adding a parallel special case.
+        let zurfur_apex = &ZURFUR_NAMESPACE_SUFFIX[1..];
+        if normalized == zurfur_apex || normalized.ends_with(ZURFUR_NAMESPACE_SUFFIX) {
             let leftmost = labels[0];
             if RESERVED_LABELS.contains(&leftmost) {
                 return Err(HandleError::ReservedLabel(leftmost.to_owned()));
@@ -476,6 +486,26 @@ mod tests {
                 "{label}.zurfur.app should be reserved"
             );
         }
+    }
+
+    // Bug guard — the suffix check keyed on the leading-dot `.zurfur.app`, so the
+    // bare apex (no label in front of it) slipped past every other sub-label
+    // rejection. The platform root handle must be reserved too.
+    #[test]
+    fn rejects_the_bare_platform_apex() {
+        assert_eq!(
+            Handle::try_new("zurfur.app"),
+            Err(HandleError::ReservedLabel("zurfur".into()))
+        );
+    }
+
+    #[test]
+    fn accepts_a_normal_zurfur_subdomain() {
+        // The apex rejection must not overreach into ordinary subdomains.
+        assert_eq!(
+            Handle::try_new("alice.zurfur.app").unwrap().as_str(),
+            "alice.zurfur.app"
+        );
     }
 
     #[test]

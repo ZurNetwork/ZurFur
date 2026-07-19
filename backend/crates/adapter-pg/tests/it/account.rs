@@ -159,6 +159,14 @@ async fn revoke_role(pool: &PgPool, user: UserId, account: AccountId) {
     uow.commit().await.expect("commit");
 }
 
+/// Grant (seat or re-seat) a member's role directly, bypassing any invitation.
+async fn grant_role(pool: &PgPool, member: &UserAccount) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts().grant_role(member).await.expect("grant_role");
+    uow.commit().await.expect("commit");
+}
+
 /// Read an account by id off the pool-backed store.
 async fn find_account(pool: &PgPool, id: AccountId) -> Option<Account> {
     PgAccountStore::new(pool.clone())
@@ -483,6 +491,53 @@ async fn find_unknown_invitation_is_none() {
     assert!(
         found.is_none(),
         "an invitation we never stored resolves to nothing"
+    );
+}
+
+// Bug guard — `account_members`'s PRIMARY KEY is `(account_id, user_id)`, and the
+// seat insert had no `ON CONFLICT` clause: accepting a still-pending invitation
+// for a pair that's ALREADY seated (granted a role through another path while the
+// offer sat pending) raised a PK violation and 500'd, leaving the invitation
+// permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING` makes the seat
+// a no-op that keeps the ORIGINAL membership row.
+#[tokio::test]
+async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, inviter, invitee) = invitation_fixture(&pool, "reseat").await;
+
+    // The invitee is granted Admin directly, bypassing any invitation.
+    grant_role(
+        &pool,
+        &UserAccount {
+            account_id: account.id,
+            user_id: invitee,
+            role: Role::Admin(None),
+        },
+    )
+    .await;
+
+    // A stale pending invitation (issued before the grant) offers only Member.
+    let invitation =
+        Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
+    create_invitation(&pool, &invitation).await;
+
+    // Accepting it must not error, and must not downgrade the already-granted role.
+    let seated = accept_invitation(&pool, invitation, false).await;
+    assert_eq!(
+        seated.role,
+        Role::Admin(None),
+        "the returned membership reflects the original grant, not the invitation's role"
+    );
+    assert_eq!(
+        role_of(&pool, invitee, account.id).await,
+        Some(Role::Admin(None)),
+        "the persisted membership still holds the original grant"
+    );
+    assert_eq!(
+        parent_of(&pool, account.id, invitee).await,
+        None,
+        "the row is untouched entirely — parent stays NULL from the direct \
+         grant, not overwritten to this invitation's inviter"
     );
 }
 

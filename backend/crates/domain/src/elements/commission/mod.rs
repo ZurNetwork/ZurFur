@@ -329,7 +329,7 @@ impl Commission {
 /// **explicitly by a participant**, never by a system event. Only the birth state
 /// ([`Draft`](LifecycleStep::Draft)) is exercised in ZMVP-65; the transitions between
 /// states are later tickets.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LifecycleStep {
     /// Just created. No content commitments and no facts. Hard delete is possible.
     Draft,
@@ -729,7 +729,7 @@ mod tests {
 /// commission defaults to [`Private`](Visibility::Private); widening is an explicit
 /// later act, and when the content tree lands this field is reinterpreted as the
 /// root mode rather than replaced.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
     /// Closed door — nobody outside the participants sees the commission at all,
     /// not even its existence. The default at birth.
