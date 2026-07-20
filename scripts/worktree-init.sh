@@ -6,7 +6,8 @@
 # on a RANDOM host port (testcontainers) and binds the HTTP server to :0, so the
 # test suite is collision-free across worktrees out of the box. The thing that is
 # NOT isolated is the *manual* dev environment: `just up` / `just dev` use the
-# fixed host ports 5432 (db) and 8080 (backend), and a single shared DB volume.
+# fixed host ports 5432 (db) and 8080 (Caddy public origin), and a single shared
+# DB volume.
 # Two worktrees running it at once would fight over those ports and corrupt each
 # other's schema.
 #
@@ -14,13 +15,15 @@
 # `.env` that pins:
 #   * COMPOSE_PROJECT_NAME         — namespaces containers + the pg_data/pds_data volumes
 #   * ZURFUR_DB_HOST_PORT          — the host port docker-compose maps Postgres to
-#   * ZURFUR_PROXY_HOST_PORT       — the host port for the optional nginx proxy
+#   * ZURFUR_PROXY_HOST_PORT       — Caddy's public-origin listen port (ZMVP-150)
+#   * ZURFUR_WEB_PORT              — the SvelteKit vite dev server port (ZMVP-150)
+#   * ZURFUR_API_UPSTREAM          — the internal axum origin Caddy + SSR proxy to (ZMVP-150)
 #   * ZURFUR_PDS_HOST_PORT         — the host port docker-compose maps the dev PDS to (ZMVP-102)
 #   * ZURFUR_PDS_ENDPOINT          — kept coherent with the PDS port above
 #   * ZURFUR_PLC_HOST_PORT         — the host port docker-compose maps the local PLC to (ZMVP-102)
 #   * ZURFUR_PLC_DIRECTORY_ENDPOINT — kept coherent with the PLC port above
-#   * ZURFUR_HTTP_ADDR             — where the backend binds (env wins over dev.toml)
-#   * ZURFUR_PUBLIC_URL            — matches the bind addr so OAuth URIs are coherent
+#   * ZURFUR_HTTP_ADDR             — where axum binds INTERNALLY (env wins over dev.toml)
+#   * ZURFUR_PUBLIC_URL            — the BROWSER origin = Caddy's proxy port, so OAuth/CSRF stay coherent
 #   * DATABASE_URL                 — points sqlx/the app at this worktree's DB port
 #
 # Ports are derived from the worktree's directory name, so they are stable across
@@ -52,8 +55,8 @@ EOF
   exit 1
 fi
 
-# --- pick three stable, free host ports -------------------------------------
-# Base is a hash of the slug folded into 20000–38999, leaving room for +1/+2.
+# --- pick six stable, free host ports ---------------------------------------
+# Base is a hash of the slug folded into 20000–38999, leaving room for +1..+5.
 # We then walk forward past any port that currently has a listener, so a re-run
 # while the stack is up still lands on this worktree's own (already-bound) ports
 # only if they are free — otherwise it advances, which is fine and deterministic
@@ -80,6 +83,9 @@ http_port="$(next_free "$((db_port + 1))")"
 proxy_port="$(next_free "$((http_port + 1))")"
 pds_port="$(next_free "$((proxy_port + 1))")"
 plc_port="$(next_free "$((pds_port + 1))")"
+# Appended last so the existing five ports stay stable for pre-ZMVP-150 worktrees
+# (re-running only ADDS the web port; it doesn't shuffle db/http/proxy/pds/plc).
+web_port="$(next_free "$((plc_port + 1))")"
 
 # --- seed .env from the primary worktree's secrets (first run only) ----------
 if [ ! -f .env ]; then
@@ -114,7 +120,7 @@ done
 # Drop any prior managed block AND any standalone definitions of the keys we own,
 # so we never depend on dotenv duplicate-key precedence (which differs between
 # just's loader and dotenvy).
-managed_keys="COMPOSE_PROJECT_NAME ZURFUR_DB_HOST_PORT ZURFUR_PROXY_HOST_PORT ZURFUR_PDS_HOST_PORT ZURFUR_PDS_ENDPOINT ZURFUR_PLC_HOST_PORT ZURFUR_PLC_DIRECTORY_ENDPOINT ZURFUR_HTTP_ADDR ZURFUR_PUBLIC_URL DATABASE_URL"
+managed_keys="COMPOSE_PROJECT_NAME ZURFUR_DB_HOST_PORT ZURFUR_PROXY_HOST_PORT ZURFUR_WEB_PORT ZURFUR_API_UPSTREAM ZURFUR_PDS_HOST_PORT ZURFUR_PDS_ENDPOINT ZURFUR_PLC_HOST_PORT ZURFUR_PLC_DIRECTORY_ENDPOINT ZURFUR_HTTP_ADDR ZURFUR_PUBLIC_URL DATABASE_URL"
 
 tmp="$(mktemp)"
 awk -v keys="$managed_keys" '
@@ -142,12 +148,14 @@ cat >> .env <<EOF
 COMPOSE_PROJECT_NAME=$slug
 ZURFUR_DB_HOST_PORT=$db_port
 ZURFUR_PROXY_HOST_PORT=$proxy_port
+ZURFUR_WEB_PORT=$web_port
+ZURFUR_API_UPSTREAM=http://127.0.0.1:$http_port
 ZURFUR_PDS_HOST_PORT=$pds_port
 ZURFUR_PDS_ENDPOINT=http://localhost:$pds_port
 ZURFUR_PLC_HOST_PORT=$plc_port
 ZURFUR_PLC_DIRECTORY_ENDPOINT=http://localhost:$plc_port
 ZURFUR_HTTP_ADDR=127.0.0.1:$http_port
-ZURFUR_PUBLIC_URL=http://127.0.0.1:$http_port
+ZURFUR_PUBLIC_URL=http://127.0.0.1:$proxy_port
 DATABASE_URL=postgres://admin:password@localhost:$db_port/zurfur
 # <<< worktree isolation
 EOF
@@ -156,8 +164,9 @@ cat <<EOF
 [worktree-init] isolated '$slug':
   compose project : $slug
   postgres        : localhost:$db_port  (DATABASE_URL updated)
-  backend         : 127.0.0.1:$http_port
-  proxy (profile) : 127.0.0.1:$proxy_port
+  public origin   : 127.0.0.1:$proxy_port  (Caddy = ZURFUR_PUBLIC_URL, ZMVP-150)
+  axum (internal) : 127.0.0.1:$http_port  (ZURFUR_API_UPSTREAM, behind Caddy)
+  web (SvelteKit) : 127.0.0.1:$web_port  (ZURFUR_WEB_PORT, behind Caddy)
   dev PDS         : localhost:$pds_port  (ZURFUR_PDS_ENDPOINT updated, ZMVP-102)
   local PLC       : localhost:$plc_port  (ZURFUR_PLC_DIRECTORY_ENDPOINT updated, ZMVP-102)
 Run \`just up\` / \`just dev\` here without colliding with other worktrees.

@@ -1,0 +1,74 @@
+# Zurfur dev reverse proxy — the ONE public origin (ZMVP-149/150).
+#
+# Everything a browser (or SvelteKit SSR) talks to arrives here, on
+# ZURFUR_PUBLIC_URL (dev: http://127.0.0.1:8080). Caddy fans it out to the two
+# backends that actually serve it — axum and the SvelteKit vite dev server —
+# so the app is same-origin end to end: no CORS, one host-only `zurfur.sid`
+# cookie. ZURFUR_PUBLIC_URL stays pinned to THIS origin so the OAuth redirect
+# URI and the first-party-Origin CSRF guard both keep seeing the browser's
+# real origin.
+#
+# Runs under `network_mode: host` (docker-compose.yml): axum and the vite dev
+# servers bind 127.0.0.1 on the host at per-worktree ports, which a
+# bridge-networked container could not reach — host networking lets Caddy dial
+# loopback directly while every bind stays loopback-only (nothing on the LAN).
+# Env placeholders below are substituted at config-load time; their defaults
+# are the primary-checkout values, overridden per worktree via the compose
+# service `environment:` block.
+{
+	# Plain HTTP on a loopback port in dev — no ACME, no cert management, and
+	# no admin API surface we don't use.
+	auto_https off
+	admin off
+}
+
+:{$ZURFUR_PROXY_HOST_PORT:8080} {
+	# The explicit bind matters: without it a `:port` site listens on ALL
+	# interfaces (0.0.0.0 + ::), and under host networking that would put the
+	# authenticated origin on the LAN. `bind` pins the LISTENER to loopback;
+	# a host in the site address would not (that's a Host matcher, and it
+	# also flips the site to HTTPS) — verified live, both ways.
+	bind 127.0.0.1
+	# --- Auth carve-outs: proxied to axum VERBATIM (no prefix strip) ---
+	# Three paths axum owns byte-for-byte and SvelteKit must never see:
+	#   /signin-callback  the EXACT registered atproto OAuth callback path
+	#                     (built as {ZURFUR_PUBLIC_URL}/signin-callback) — the
+	#                     redirect URI must resolve to axum unchanged.
+	#   /.well-known/*    atproto handle resolution (/.well-known/atproto-did)
+	#                     and any future well-knowns.
+	#   /plugin/v1/*      the bearer public plugin API namespace
+	#                     (forward-compatible: no route serves it yet).
+	# handle blocks are mutually exclusive and first-match-wins, so each of
+	# these is decided here and never falls through to SvelteKit.
+	handle /signin-callback {
+		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
+	}
+	handle /.well-known/* {
+		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
+	}
+	handle /plugin/v1/* {
+		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
+	}
+
+	# --- /api/* -> axum, with ONLY the /api prefix stripped ---
+	# handle_path strips the matched `/api` prefix, so /api/health hits axum as
+	# /health. The matcher requires the `/api/` boundary, so /apifoo does NOT
+	# match here (it falls through to SvelteKit below).
+	handle_path /api/* {
+		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
+	}
+	# /api with no trailing slash or path -> axum root. Kept separate because
+	# `/api/*` does not match a bare `/api`.
+	handle /api {
+		rewrite * /
+		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
+	}
+
+	# --- everything else -> the SvelteKit vite dev server ---
+	# Caddy sorts the bare (matcher-less) handle last, so this is the terminal
+	# catch-all. reverse_proxy upgrades WebSocket connections natively, so
+	# vite's HMR socket passes straight through.
+	handle {
+		reverse_proxy http://127.0.0.1:{$ZURFUR_WEB_PORT:5174}
+	}
+}

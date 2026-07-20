@@ -1,9 +1,15 @@
 # Dev profile defaults. Loaded by figment, then overridden by ZURFUR_*/DATABASE_URL/RUST_LOG env vars.
 # Secrets (e.g. DATABASE_URL) are NOT set here — they live in the environment only.
 env = "DEV"
-http_addr = "127.0.0.1:8080"
-# Externally-visible origin (scheme + host + port) used to build OAuth redirect URIs.
-# In dev this is the loopback address; in prod it is the public HTTPS domain.
+# axum binds an INTERNAL loopback port; it is no longer the public origin.
+# Caddy owns the public origin (public_url below) and reverse-proxies /api/* and
+# the auth carve-outs here (ZMVP-149/150). Kept off 8080 so it can't collide
+# with Caddy's default listen port.
+http_addr = "127.0.0.1:8081"
+# Externally-visible origin (scheme + host + port) used to build OAuth redirect
+# URIs and to check the first-party Origin (CSRF). This is the BROWSER-visible
+# origin = Caddy's listen port, NOT axum's internal bind above. In dev it is the
+# loopback proxy address; in prod it is the public HTTPS domain.
 public_url = "http://127.0.0.1:8080"
 log_level = "info,zurfur=debug"
 
