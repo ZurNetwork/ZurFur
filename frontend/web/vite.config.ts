@@ -6,10 +6,14 @@ import { sveltekit } from '@sveltejs/kit/vite';
 // The dev server port Caddy proxies its catch-all to (ZMVP-150). 5174, not the
 // Vite default 5173 — that belongs to frontend/auth. strictPort makes the port
 // deterministic so Caddy's upstream can't silently drift to an incremented port.
-// `|| 5174` (not `??`): an empty/unset/garbage env value must fall back too —
-// Number('') is 0, which would bind a random ephemeral port and 502 Caddy's
-// fixed upstream.
-const webPort = Number(process.env.ZURFUR_WEB_PORT) || 5174;
+// Any value that isn't a real TCP port falls back — unset/empty (Number('') is
+// 0, a random ephemeral bind that would 502 Caddy's fixed upstream) but also
+// garbage like '-1' or '5174.5', which would otherwise fail the dev server
+// confusingly instead of falling back.
+const parsedWebPort = Number(process.env.ZURFUR_WEB_PORT);
+const parsedWebPortIsValid =
+	Number.isInteger(parsedWebPort) && parsedWebPort >= 1 && parsedWebPort <= 65535;
+const webPort = parsedWebPortIsValid ? parsedWebPort : 5174;
 
 export default defineConfig({
 	// Bind IPv4 loopback explicitly: Vite's default `localhost` resolves to IPv6
