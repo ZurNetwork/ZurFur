@@ -9,13 +9,17 @@ dev:
     just up
     just _wait-for-db
     just _wait-for-pds
-    just dev-back & just dev-auth & wait
+    just dev-back & just dev-auth & just dev-web & wait
 
 dev-back:
     cargo watch -C backend -x run
 
 dev-auth:
     cd frontend/auth && yarn dev
+
+# The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
+dev-web:
+    cd frontend/web && yarn dev
 
 # --- Docker ---
 
@@ -72,6 +76,16 @@ pds-provision:
 # loop* itself.
 pds-smoke:
     bash scripts/pds-smoke-test.sh
+
+# --- Web dev loop (ZMVP-150) ---
+
+# Scripted proof for ZMVP-150: through the Caddy public origin, assert the
+# one-origin split routes /api/* (stripped) to axum, the auth carve-outs
+# (/signin-callback, /.well-known/*) to axum verbatim, / to SvelteKit, and that
+# /apifoo never reaches the backend. Needs the stack already running (`just dev`)
+# — axum and the vite dev server run on the host, so there's nothing to boot here.
+web-smoke:
+    bash scripts/web-smoke.sh
 
 # --- Testing ---
 
