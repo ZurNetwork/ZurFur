@@ -1,9 +1,20 @@
 {
-  "uow": null,
+  "uow": "gj33s",
   "logbook": null,
-  "updated": "2026-07-02T01:20:00-06:00",
-  "_note": "No active unit of work — nothing in flight. Start the next one with /next-path (or /unit-of-work).",
-  "previous_unit": "8ef12a — COMPLETE. Single ticket ZMVP-50 'Signed did:plc UPDATE op + retryable outbox (reusable)' shipped: DidMinter::update_handle re-points alsoKnownAs (REPLACE), one byte-exact PlcOperation path shared with genesis (prev: Option), prev from own PlcOperationLog, gated no-op directory in v1; idempotent via content-address + UNIQUE(cid) (deterministic signing verified). Engineer forks: A1 (contract-only outbox, no worker → launch-gated ZMVP-51), B1 (extend DidMinter), faithful-primitive re-assert. Build on Fable 5 (did NOT refuse crypto build), Opus /security-review. Security fixes IN-TICKET: F1 partial UNIQUE(did,prev) (no chain fork), F2 latest_op carries public fields fwd + imports only operational key. /address-comments: Copilot identity-only guard (reject tombstone/non-identity-only prior, no silent field drop) + doc nit. Merged main f3268bc (#89), ZMVP-50 → Done. Unblocks ZMVP-46 (handle change, Engineer's lane, In Progress). Logbook: .understand/logbooks/8ef12a.md. OPEN FOLLOW-UPS: (1) F3 launch-gated — verify plc.directory resubmit idempotency before real submission (offer to file under ZMVP-51/launch checklist); (2) model-policy reconcile — RESOLVED 2026-07-02 via /optimize-memory: Engineer confirmed ZMVP-50's Fable-build was a ONE-OFF override, policy STANDS (Sonnet default builder, Fable opt-in non-security only, Opus all security+review); feedback_model_split_fable_impl_opus_design was a PHANTOM (never existed as a file). Recorded in feedback_model_assignment_policy.",
-  "next_action": "No unit in flight. Plan the next with /next-path. ZMVP-46 (Account handle-change flow) is now UNBLOCKED and is the Engineer's domain-heavy lane (In Progress, consumes update_handle).",
-  "tickets": []
+  "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (§8 rulings 2026-07-21) and on epic ZMVP-149.",
+  "updated": "2026-07-21T17:56:00-06:00",
+  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's — 'Login is yours; I am doing UI in future tickets' (supersedes the 45163 note routing 151 to the Engineer). Rulings at unit start: convert GET /me to JSON (200 profile / 401 problem); POST /signin failures = problem+json; callback failures = 303 /login?error=<code>; Fable builds all but security-nature pieces — Opus builds the backend session-surface slice and runs /security-review. Previous unit 45163 (ZMVP-150) closed merged at 92833d6.",
+  "tickets": [
+    {
+      "key": "ZMVP-151",
+      "summary": "A visitor signs in from the browser and signs out",
+      "phase": "implementing",
+      "next_action": "slice 1 (backend session surface, Opus) -> slice 2 (api client + /login) -> slice 3 (guard + /logout + landing)",
+      "pr": null,
+      "branch": "feature/zmvp-151-browser-sign-in",
+      "worktree": null,
+      "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",
+      "updated": "2026-07-21T17:56:00-06:00"
+    }
+  ]
 }
