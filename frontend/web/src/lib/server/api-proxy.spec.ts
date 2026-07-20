@@ -76,6 +76,38 @@ describe('rewriteApiRequest', () => {
 		expect(rewritten.headers.get('cookie')).toBeNull();
 	});
 
+	it('forwards ONLY the zurfur.sid pair from a multi-cookie header', () => {
+		// Cookies are host-scoped by hostname, not port, so on 127.0.0.1 any other
+		// local dev tool's cookies share the jar. Only the session cookie may ride
+		// along to axum — everything else must be dropped.
+		const request = sameOriginRequest('/api/me');
+		const incomingCookie = 'foo=bar; zurfur.sid=abc123; other=x%3Dy';
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=abc123');
+	});
+
+	it('forwards NO cookie header when the incoming header has cookies but no zurfur.sid', () => {
+		const request = sameOriginRequest('/api/me');
+		const incomingCookie = 'foo=bar; other=baz';
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.headers.get('cookie')).toBeNull();
+	});
+
+	it('preserves a literal = inside the zurfur.sid value (split on first = only)', () => {
+		// Session values can carry `=` (e.g. base64 padding). The defensive parse
+		// splits each pair on its FIRST `=`, so the value survives intact.
+		const request = sameOriginRequest('/api/me');
+		const incomingCookie = 'foo=bar; zurfur.sid=a=b==; other=baz';
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=a=b==');
+	});
+
 	it('preserves the method and body on a POST', async () => {
 		const request = sameOriginRequest('/api/accounts', {
 			method: 'POST',
