@@ -79,3 +79,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@v1
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 24 (current LTS): vite 8 requires >= 20.19; spec-lint's pin stays untouched.
+          node-version: '24'
+          cache: yarn
+          cache-dependency-path: frontend/web/yarn.lock
+      - run: yarn install --frozen-lockfile
+      # Chromium for the vitest browser-mode (component) test project.
+      - run: yarn playwright install --with-deps chromium
+      - run: yarn run check
+      - run: yarn run lint
+      - run: yarn run test
+      - run: yarn run build

@@ -17,16 +17,28 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
 
-  proxy:
-    image: nginx:alpine
-    ports:
-      - "${ZURFUR_PROXY_HOST_PORT:-8080}:80"
+  # The ONE public origin (ZMVP-149/150). Caddy fans ZURFUR_PUBLIC_URL out to
+  # axum and the SvelteKit vite dev server so the app is same-origin end to end
+  # (see caddy/Caddyfile). Default-on — plain `just up` brings it up, no profile.
+  #
+  # `network_mode: host` (Linux dev): axum and the vite dev servers bind
+  # 127.0.0.1 on the HOST at per-worktree ports, which a bridge-networked
+  # container cannot reach. Host networking lets Caddy dial loopback directly
+  # with zero new host dependencies, and keeps every bind loopback-only. With
+  # host networking `ports:`/`extra_hosts:` are meaningless (there is no
+  # published-port namespace) — the listen port comes from the Caddyfile via
+  # ZURFUR_PROXY_HOST_PORT instead.
+  caddy:
+    image: caddy:2-alpine
+    network_mode: host
+    environment:
+      # Consumed by caddy/Caddyfile at config-load time. Defaults match the
+      # primary checkout; a worktree overrides them via its isolated .env.
+      ZURFUR_PROXY_HOST_PORT: ${ZURFUR_PROXY_HOST_PORT:-8080}
+      ZURFUR_API_UPSTREAM: ${ZURFUR_API_UPSTREAM:-http://127.0.0.1:8081}
+      ZURFUR_WEB_PORT: ${ZURFUR_WEB_PORT:-5174}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    extra_hosts:
-      - host.docker.internal:host-gateway
-    profiles:
-      - proxy
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
 
   # --- Local PDS + PLC (dev loop; ZMVP-102) ---
   #

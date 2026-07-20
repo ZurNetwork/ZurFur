@@ -9,13 +9,17 @@ dev:
     just up
     just _wait-for-db
     just _wait-for-pds
-    just dev-back & just dev-auth & wait
+    just dev-back & just dev-auth & just dev-web & wait
 
 dev-back:
     cargo watch -C backend -x run
 
 dev-auth:
     cd frontend/auth && yarn dev
+
+# The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
+dev-web:
+    cd frontend/web && yarn dev
 
 # --- Docker ---
 
@@ -73,6 +77,16 @@ pds-provision:
 pds-smoke:
     bash scripts/pds-smoke-test.sh
 
+# --- Web dev loop (ZMVP-150) ---
+
+# Scripted proof for ZMVP-150: through the Caddy public origin, assert the
+# one-origin split routes /api/* (stripped) to axum, the auth carve-outs
+# (/signin-callback, /.well-known/*) to axum verbatim, / to SvelteKit, and that
+# /apifoo never reaches the backend. Needs the stack already running (`just dev`)
+# — axum and the vite dev server run on the host, so there's nothing to boot here.
+web-smoke:
+    bash scripts/web-smoke.sh
+
 # --- Testing ---
 
 # Run all tests (unit + integration). Integration tests manage their own
@@ -101,9 +115,11 @@ worktree-init:
 check:
     cd backend && bacon
 
-# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint) -- sequential
-# and fail-fast, so a red step stops the run before the next one starts. The
-# last two need `cargo install cargo-deny` / `cargo install typos-cli` once.
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint, web)
+# -- sequential and fail-fast, so a red step stops the run before the next one
+# starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
+# a one-time `yarn --cwd frontend/web playwright install chromium` for the
+# browser-mode component tests.
 gate:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -111,6 +127,10 @@ gate:
     cargo deny --locked --all-features check
     typos
     npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+    yarn --cwd frontend/web run check
+    yarn --cwd frontend/web run lint
+    yarn --cwd frontend/web run test
+    yarn --cwd frontend/web run build
 
 # --- Setup ---
 
@@ -121,12 +141,14 @@ setup:
     cargo install just cargo-watch bacon
     cargo install sqlx-cli --no-default-features --features postgres
     cd frontend/auth && yarn install
+    cd frontend/web && yarn install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
 
 clean:
     cargo clean
     rm -rf frontend/auth/node_modules
+    rm -rf frontend/web/node_modules frontend/web/.svelte-kit frontend/web/build
 
 # --- Internal ---
 
