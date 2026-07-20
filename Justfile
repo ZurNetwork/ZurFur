@@ -101,9 +101,11 @@ worktree-init:
 check:
     cd backend && bacon
 
-# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint) -- sequential
-# and fail-fast, so a red step stops the run before the next one starts. The
-# last two need `cargo install cargo-deny` / `cargo install typos-cli` once.
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint, web)
+# -- sequential and fail-fast, so a red step stops the run before the next one
+# starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
+# a one-time `yarn --cwd frontend/web playwright install chromium` for the
+# browser-mode component tests.
 gate:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -111,6 +113,10 @@ gate:
     cargo deny --locked --all-features check
     typos
     npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+    yarn --cwd frontend/web run check
+    yarn --cwd frontend/web run lint
+    yarn --cwd frontend/web run test
+    yarn --cwd frontend/web run build
 
 # --- Setup ---
 
@@ -121,12 +127,14 @@ setup:
     cargo install just cargo-watch bacon
     cargo install sqlx-cli --no-default-features --features postgres
     cd frontend/auth && yarn install
+    cd frontend/web && yarn install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
 
 clean:
     cargo clean
     rm -rf frontend/auth/node_modules
+    rm -rf frontend/web/node_modules frontend/web/.svelte-kit frontend/web/build
 
 # --- Internal ---
 
