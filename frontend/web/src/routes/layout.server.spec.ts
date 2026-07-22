@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
 import { load } from './+layout.server';
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -15,32 +16,24 @@ describe('root layout load', () => {
 			display_name: 'Alice',
 			avatar_url: 'https://cdn.example/alice.jpg'
 		};
-		const fetch = (async () => Response.json(me)) as typeof globalThis.fetch;
+		const { fetch } = fetchStub(() => Response.json(me));
 		const result = await load(layoutEvent(fetch));
 		expect(result).toEqual({ session: me });
 	});
 
 	it('carries null for an anonymous visitor (backend 401)', async () => {
-		const problem = {
-			type: 'urn:zurfur:error:not-authenticated',
-			code: 'not_authenticated',
-			title: 'Not authenticated',
-			status: 401
-		};
-		const fetch = (async () =>
-			new Response(JSON.stringify(problem), {
-				status: 401,
-				headers: { 'content-type': 'application/problem+json' }
-			})) as typeof globalThis.fetch;
+		const { fetch } = fetchStub(() => problemResponse(401, 'not_authenticated'));
 		const result = await load(layoutEvent(fetch));
 		expect(result).toEqual({ session: null });
 	});
 
 	it('degrades to signed-out when the backend is unreachable', async () => {
-		const deadFetch = (async () => {
-			throw new TypeError('fetch failed');
-		}) as typeof globalThis.fetch;
-		const result = await load(layoutEvent(deadFetch));
+		const result = await load(layoutEvent(unreachableFetch()));
 		expect(result).toEqual({ session: null });
+	});
+
+	it('surfaces a broken contract instead of treating it as signed-out', async () => {
+		const { fetch } = fetchStub(() => new Response('gateway timeout', { status: 504 }));
+		await expect(load(layoutEvent(fetch))).rejects.toThrow(/contract violation/);
 	});
 });

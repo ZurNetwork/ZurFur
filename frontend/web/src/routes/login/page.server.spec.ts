@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isRedirect } from '@sveltejs/kit';
+import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { Session } from '$lib/api/session';
 
@@ -26,25 +27,10 @@ async function runLoad(event: LoadEvent): Promise<{ callbackError: string | null
 	return (await load(event)) as { callbackError: string | null };
 }
 
-function fetchReturning(response: () => Response): typeof globalThis.fetch {
-	return (async () => response()) as typeof globalThis.fetch;
-}
-
 async function signinAction(fetch: typeof globalThis.fetch, handle: string | null) {
 	const body = new URLSearchParams(handle === null ? {} : { handle });
 	const request = new Request('http://localhost/login', { method: 'POST', body });
 	return actions.default({ request, fetch } as unknown as ActionEvent);
-}
-
-/** Run a thunk expected to throw a SvelteKit redirect; return it. */
-async function expectRedirect(thunk: () => unknown) {
-	try {
-		await thunk();
-	} catch (thrown) {
-		if (isRedirect(thrown)) return thrown;
-		throw thrown;
-	}
-	throw new Error('expected a redirect to be thrown');
 }
 
 describe('/login load', () => {
@@ -72,37 +58,23 @@ describe('/login load', () => {
 
 describe('/login signin action', () => {
 	it('rejects an empty handle locally with a problem-shaped failure', async () => {
-		const neverFetch = (async () => {
-			throw new Error('must not reach the backend');
-		}) as typeof globalThis.fetch;
-		const failure = await signinAction(neverFetch, '   ');
+		const failure = await signinAction(unreachableFetch('must not reach the backend'), '   ');
 		expect(failure).toMatchObject({ status: 422, data: { problem: { title: 'Enter a handle.' } } });
 	});
 
 	it('relays the PDS authorize URL as a 303 navigation', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
-		const redirectingFetch = fetchReturning(
+		const { fetch } = fetchStub(
 			() => new Response(null, { status: 303, headers: { location: authorizeUrl } })
 		);
-		const redirect = await expectRedirect(() => signinAction(redirectingFetch, 'alice.test'));
+		const redirect = await expectRedirect(() => signinAction(fetch, 'alice.test'));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe(authorizeUrl);
 	});
 
 	it('hands a backend problem to the page to render', async () => {
-		const rejectingFetch = fetchReturning(
-			() =>
-				new Response(
-					JSON.stringify({
-						type: 'urn:zurfur:error:invalid-request',
-						code: 'invalid_request',
-						title: 'Invalid request',
-						status: 422
-					}),
-					{ status: 422, headers: { 'content-type': 'application/problem+json' } }
-				)
-		);
-		const failure = await signinAction(rejectingFetch, 'nope');
+		const { fetch } = fetchStub(() => problemResponse(422, 'invalid_request'));
+		const failure = await signinAction(fetch, 'nope');
 		expect(failure).toMatchObject({ status: 422, data: { problem: { code: 'invalid_request' } } });
 	});
 });

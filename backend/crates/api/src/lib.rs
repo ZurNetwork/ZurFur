@@ -23,7 +23,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use adapter_pg::PgPool;
-use axum::{Router, middleware};
+use axum::{
+    Router,
+    http::{HeaderValue, header},
+    middleware,
+};
 use domain::ports::{
     AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore,
     ProfileCache, ProfileSource, UnitOfWorkFn, UserStore,
@@ -33,6 +37,7 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use serde::Deserialize;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 mod problem;
 mod routes;
@@ -431,7 +436,10 @@ impl AppState {
 /// guard is layered over the **cookie surface only** — `session` + `accounts` — and
 /// not over `/health`, nor (in future) over the bearer `/plugin/v1` namespace, which
 /// authenticates by `app_key` and is exempt by construction (ZMVP-23, DD "Auth
-/// Surfaces, the Plugin Trust Boundary & CSRF").
+/// Surfaces, the Plugin Trust Boundary & CSRF"). That same cookie surface also carries
+/// a `Cache-Control: no-store` response layer so authenticated identity/PII JSON is
+/// never cached by a browser or shared intermediary (CWE-525, ZMVP-151); the public
+/// `/health` and `/.well-known` GETs stay cacheable.
 ///
 /// Routes: `GET /health`; `GET /.well-known/atproto-did` (handle resolution, also
 /// top-level and CSRF-exempt); the sign-in flow (`GET /`, `POST /signin`,
@@ -461,9 +469,21 @@ impl AppState {
 /// let router = api::app(state).layer(session_layer);
 /// ```
 pub fn app(state: AppState) -> Router {
+    // Stamp `Cache-Control: no-store` on every cookie-surface response so a browser
+    // or shared intermediary never caches authenticated identity/PII JSON — e.g.
+    // `GET /me` (CWE-525, ZMVP-151 security review). `if_not_present` yields to any
+    // handler that sets its own cache policy (none do today). Scoped to the cookie
+    // surface deliberately: the public `/health` and `/.well-known` GETs are left
+    // cacheable — over-scoping to them was called out in review.
+    let no_store_cookie_surface = SetResponseHeaderLayer::if_not_present(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+
     // The cookie surface: the browser/session flow and the account API, both reached
     // with the ambient session cookie. The first-party-`Origin` (CSRF) guard wraps
-    // this surface once — a state-changing request from a foreign `Origin` is refused.
+    // this surface once — a state-changing request from a foreign `Origin` is refused —
+    // and the no-store layer sits outermost so even a CSRF rejection is uncacheable.
     let cookie_surface = routes::session_router()
         .merge(routes::accounts_router())
         .merge(routes::commissions_router(
@@ -474,7 +494,8 @@ pub fn app(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::require_first_party_origin,
-        ));
+        ))
+        .layer(no_store_cookie_surface);
 
     // `/health` and the atproto `/.well-known/atproto-did` resolver are mounted
     // top-level, deliberately outside the CSRF layer (they bear no cookie and change

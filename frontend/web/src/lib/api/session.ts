@@ -4,7 +4,7 @@
  * CSRF) live entirely backend-side — these helpers only consume them.
  */
 
-import { apiFetch } from './client';
+import { API_PREFIX, apiFetch } from './client';
 import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from './problem';
 
 /**
@@ -56,7 +56,7 @@ export async function startSignin(
 	handle: string
 ): Promise<SigninStart> {
 	const form = new URLSearchParams({ handle });
-	const response = await fetch('/api/signin', {
+	const response = await fetch(`${API_PREFIX}/signin`, {
 		method: 'POST',
 		body: form,
 		redirect: 'manual'

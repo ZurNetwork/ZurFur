@@ -8,9 +8,9 @@
     {
       "key": "ZMVP-151",
       "summary": "A visitor signs in from the browser and signs out",
-      "phase": "implementing",
-      "next_action": "slice 1 (backend session surface, Opus) -> slice 2 (api client + /login) -> slice 3 (guard + /logout + landing)",
-      "pr": null,
+      "phase": "gates-green-awaiting-merges",
+      "next_action": "Engineer merges #151 (slice 3+review, last slice); then feature->main rubber-stamp PR. Open item: 204/ApiResult<T> typing judgment from #150 Copilot round (deferred pending Engineer call)",
+      "pr": "#149 (slice 1) merged; #150 (slice 2, incl. Copilot fix round) merged; #151 (slice 3+review) open, Copilot requested",
       "branch": "feature/zmvp-151-browser-sign-in",
       "worktree": null,
       "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",

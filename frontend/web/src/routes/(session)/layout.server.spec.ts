@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRedirect } from '@sveltejs/kit';
+import { expectRedirect } from '$lib/testing/redirect';
 import { load } from './+layout.server';
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -10,15 +10,9 @@ function guardEvent(session: unknown): LoadEvent {
 
 describe('(session) guard', () => {
 	it('bounces an anonymous visit to /login', async () => {
-		try {
-			await load(guardEvent(null));
-		} catch (thrown) {
-			if (!isRedirect(thrown)) throw thrown;
-			expect(thrown.status).toBe(303);
-			expect(thrown.location).toBe('/login');
-			return;
-		}
-		throw new Error('expected the guard to redirect');
+		const redirect = await expectRedirect(() => load(guardEvent(null)));
+		expect(redirect.status).toBe(303);
+		expect(redirect.location).toBe('/login');
 	});
 
 	it('passes a signed-in visit through', async () => {
