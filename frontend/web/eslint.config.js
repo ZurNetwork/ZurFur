@@ -34,6 +34,33 @@ export default defineConfig(
 		}
 	},
 	{
+		// DD 39944194 containment: Effect exists only below the runes seam —
+		// src/lib/server/** and *.server.ts. Everything above the seam receives
+		// plain data and never sees a fiber.
+		files: ['src/**/*.ts', 'src/**/*.svelte', 'src/**/*.svelte.ts'],
+		ignores: ['src/lib/server/**', 'src/**/*.server.ts'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					paths: [
+						{
+							name: 'effect',
+							message:
+								'Effect is server-only (DD 39944194) — move this under src/lib/server/** or a *.server.ts.'
+						}
+					],
+					patterns: [
+						{
+							group: ['effect/*', '@effect/*'],
+							message: 'Effect is server-only (DD 39944194).'
+						}
+					]
+				}
+			]
+		}
+	},
+	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
 		rules: {}
