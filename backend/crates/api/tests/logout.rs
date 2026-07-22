@@ -106,17 +106,16 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
     );
 
     // Criterion 1: the next request carries no session — a signed-out user is a
-    // visitor again, bounced from the gated route rather than shown a stale identity.
+    // visitor again, refused the gated read (401) rather than shown a stale identity.
     let res = client
         .get(format!("{base}/me"))
         .send()
         .await
         .expect("GET /me after logout");
-    assert_eq!(res.status(), 303, "a signed-out visitor has no session");
     assert_eq!(
-        res.headers()["location"],
-        "/",
-        "and is sent to the sign-in page"
+        res.status(),
+        401,
+        "a signed-out visitor has no session, so /me is unauthenticated"
     );
 
     // Criterion 2: a second sign-out from a stale tab is harmless — the session is

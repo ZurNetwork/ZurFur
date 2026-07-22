@@ -196,9 +196,9 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
     );
 }
 
-/// A signed-out viewer gets no identity surface at all — `/me` redirects to the
-/// sign-in page rather than leaking any handle or DID. Public presence on the
-/// platform never starts from an enumerable identity read.
+/// A signed-out viewer gets no identity surface at all — `/me` is an unauthenticated
+/// 401 rather than leaking any handle or DID. Public presence on the platform never
+/// starts from an enumerable identity read.
 #[tokio::test]
 async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
     let (base, _backend) = spawn_app().await;
@@ -209,8 +209,8 @@ async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
         .expect("GET /me");
     assert_eq!(
         res.status(),
-        303,
-        "an anonymous /me redirects to sign-in, exposing no identity"
+        401,
+        "an anonymous /me is unauthenticated, exposing no identity"
     );
 }
 
