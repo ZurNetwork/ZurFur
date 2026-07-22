@@ -1,0 +1,29 @@
+name: Bug
+description: Something behaves wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed
+      description: What happened — error output, wrong behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should have happened instead.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Steps, environment, branch/commit if known.
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: References
+      description: Related issues/PRs, code paths, DD pages.

@@ -1,0 +1,23 @@
+name: Ticket proposal
+description: Describes a ticket to be created later
+labels: ["proposal"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What the ticket would do, a few sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The itch — bug seen, gap found, decision made that needs executing.
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: References
+      description: DD pages, related issues/PRs, code paths.
