@@ -1,34 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { isRedirect } from '@sveltejs/kit';
 import { actions, load } from './+page.server';
+import type { Session } from '$lib/api/session';
 
 type LoadEvent = Parameters<typeof load>[0];
 type ActionEvent = Parameters<(typeof actions)['default']>[0];
 
-function fetchReturning(response: () => Response): typeof globalThis.fetch {
-	return (async () => response()) as typeof globalThis.fetch;
-}
+const alice: Session = {
+	did: 'did:plc:alice',
+	handle: 'alice.zurfur.app',
+	display_name: 'Alice',
+	avatar_url: null
+};
 
-const anonymousFetch = fetchReturning(
-	() =>
-		new Response(
-			JSON.stringify({
-				type: 'urn:zurfur:error:not-authenticated',
-				code: 'not_authenticated',
-				title: 'Not authenticated',
-				status: 401
-			}),
-			{ status: 401, headers: { 'content-type': 'application/problem+json' } }
-		)
-);
-
-function loadEvent(fetch: typeof globalThis.fetch, search = ''): LoadEvent {
-	return { fetch, url: new URL(`http://localhost/login${search}`) } as unknown as LoadEvent;
+function loadEvent(session: Session | null, search = ''): LoadEvent {
+	const event = {
+		parent: async () => ({ session }),
+		url: new URL(`http://localhost/login${search}`)
+	};
+	return event as unknown as LoadEvent;
 }
 
 /** `load` types its return as possibly-void (it may throw a redirect); pin the data shape. */
 async function runLoad(event: LoadEvent): Promise<{ callbackError: string | null }> {
 	return (await load(event)) as { callbackError: string | null };
+}
+
+function fetchReturning(response: () => Response): typeof globalThis.fetch {
+	return (async () => response()) as typeof globalThis.fetch;
 }
 
 async function signinAction(fetch: typeof globalThis.fetch, handle: string | null) {
@@ -50,35 +49,24 @@ async function expectRedirect(thunk: () => unknown) {
 
 describe('/login load', () => {
 	it('renders signed-out with no callback error by default', async () => {
-		const result = await runLoad(loadEvent(anonymousFetch));
+		const result = await runLoad(loadEvent(null));
 		expect(result).toEqual({ callbackError: null });
 	});
 
 	it('maps a known ?error code to its message', async () => {
-		const result = await runLoad(loadEvent(anonymousFetch, '?error=denied'));
+		const result = await runLoad(loadEvent(null, '?error=denied'));
 		expect(result.callbackError).toBe('Sign-in was cancelled at your PDS.');
 	});
 
 	it('falls back on an unknown ?error code', async () => {
-		const result = await runLoad(loadEvent(anonymousFetch, '?error=mystery'));
+		const result = await runLoad(loadEvent(null, '?error=mystery'));
 		expect(result.callbackError).toBe('Sign-in failed. Try again.');
 	});
 
 	it('bounces a signed-in visitor home', async () => {
-		const signedInFetch = fetchReturning(() =>
-			Response.json({ did: 'did:plc:a', handle: 'a.test', display_name: null, avatar_url: null })
-		);
-		const redirect = await expectRedirect(() => load(loadEvent(signedInFetch)));
+		const redirect = await expectRedirect(() => load(loadEvent(alice)));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/');
-	});
-
-	it('renders signed-out when the backend is unreachable', async () => {
-		const deadFetch = (async () => {
-			throw new TypeError('fetch failed');
-		}) as typeof globalThis.fetch;
-		const result = await runLoad(loadEvent(deadFetch));
-		expect(result).toEqual({ callbackError: null });
 	});
 });
 
