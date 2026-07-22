@@ -4,28 +4,36 @@
  * the problem-body builder instead of per-file variants.
  */
 
+import type { FetchFunction } from '$lib/api/client';
+
+/** Builds the response a stubbed fetch answers with. */
+type ResponseFn = () => Response;
+
+/** What `fetchStub` hands back: the stub itself plus the URLs it saw. */
+type FetchStub = {
+	fetch: FetchFunction;
+	calls: string[];
+};
+
 /**
  * A `fetch` stub answering every call with a fresh response from `respond`
  * (fresh because Response bodies are single-use), recording requested URLs.
  * Destructure only what the test needs.
  */
-export function fetchStub(respond: () => Response): {
-	fetch: typeof globalThis.fetch;
-	calls: string[];
-} {
+export function fetchStub(respond: ResponseFn): FetchStub {
 	const calls: string[] = [];
 	const fetch = (async (input: RequestInfo | URL) => {
 		calls.push(String(input));
 		return respond();
-	}) as typeof globalThis.fetch;
+	}) as FetchFunction;
 	return { fetch, calls };
 }
 
 /** A `fetch` stub that fails like a dead backend (connection refused, DNS, …). */
-export function unreachableFetch(message = 'fetch failed'): typeof globalThis.fetch {
+export function unreachableFetch(message = 'fetch failed'): FetchFunction {
 	return (async () => {
 		throw new TypeError(message);
-	}) as typeof globalThis.fetch;
+	}) as FetchFunction;
 }
 
 /** A registry-shaped `application/problem+json` response for `code` at `status`. */

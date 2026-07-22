@@ -7,7 +7,7 @@ Canonical design lives in the **zurnetwork** Confluence, space **DESIGN** — th
 - cloudId: `cafe5eef-9c51-4800-85df-ef42187f9414`
 - DESIGN space id: `98310`
 - Fetch a page: `getConfluencePage` with the `pageId` below. Web URL: `https://zurnetwork.atlassian.net/wiki/spaces/DESIGN/pages/{id}`
-- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573). **Full `getPagesInConfluenceSpace` re-list done 2026-07-11** (space held 102 pages; 35 added below in "2026-07 wave" sections) during the full-space `/design-sync` audit.
+- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573). **Full `getPagesInConfluenceSpace` re-list done 2026-07-11** (space held 102 pages; 35 added below in "2026-07 wave" sections) during the full-space `/design-sync` audit. Incremental 2026-07-22: added DD 39944194 (frontend stack).
 
 ## Settled-decision quick facts
 
@@ -120,6 +120,8 @@ Know these without fetching; fetch the linked DD page for detail.
 - `34013187` — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban (super-table named `actor_identity`, Engineer 2026-07-14; amended same day: `did` NULLABLE — actor-ness ≠ DID-ness, Characters carry no DID; ZMVP-124/-109 consume it)
 - `33947651` — Private-store query layer — Diesel vs SeaORM (RESOLVED 2026-07-11 by events: #118/#119 SQL-file separation settled the layer; spike ZMVP-127 closed)
 - `34308097` — Query census — 2026-07-10 (HEAD 236dd0f; snapshot overtaken by #118/#119)
+- `39944194` — Frontend Stack — Server-Only Effect & the Runes Seam (DECIDED 2026-07-22; Effect strictly server-side [`src/lib/server/**` + `*.server.ts`], one ManagedRuntime run at hooks/loads/actions, runes never see a fiber; RFC 9457 carried as tagged error union + catchTags; Schema at untrusted boundaries; Layers mirror ports-and-adapters [in-memory test Layer]; wraps @atproto/oauth-client-node, single-flight refresh; universal/client Effect REJECTED [revisit: browser→PDS reads post-v1]; neverthrow declined; no Option type; plain try/catch = the rejected gap; spawns the BFF-core scaffold ticket)
+- `39944194` — Frontend Stack — Server-Only Effect & the Runes Seam (DECIDED 2026-07-22; Effect only under `src/lib/server/**`, seam = `ManagedRuntime.runPromise` at hooks/loads/actions, runes never see a fiber; universal REJECTED [fibers-vs-runes two schedulers; no v1 client→PDS path per 26935298/29622283], revisit trigger = post-v1 direct PDS reads; RFC 9457 → tagged error union [23592962]; Effect Schema at untrusted boundaries [no Zod/Valibot]; Layers = ports-by-role with in-mem test Layer [adapter-mem parity]; wraps @atproto/oauth-client-node, doesn't reimplement; no Option type — strict-null `T | undefined`; neverthrow considered & declined; scaffold ticket ZMVP-156)
 
 ### Data layer / infrastructure
 - `9994298` — Where does Data live?

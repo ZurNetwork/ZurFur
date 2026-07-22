@@ -17,7 +17,7 @@
 			<img data-testid="session-avatar" src={session.avatar_url} alt="" width="32" height="32" />
 		{/if}
 		<span data-testid="session-handle">{session.handle ?? session.did}</span>
-		<form method="post" action="/logout">
+		<form method="post" action={resolve('/logout')}>
 			<button>Sign out</button>
 		</form>
 	{:else}

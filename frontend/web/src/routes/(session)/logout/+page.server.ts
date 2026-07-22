@@ -2,7 +2,11 @@ import { error, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { API_PREFIX } from '$lib/api/client';
 
-/** `/logout` is an action, not a page — a stray GET just goes home. */
+/**
+ * `/logout` is an action, not a page — a signed-in visitor's stray GET just
+ * goes home. (An anonymous one never reaches this load: the `(session)`
+ * group guard bounces it to `/login` first.)
+ */
 export const load: PageServerLoad = async () => {
 	redirect(303, '/');
 };

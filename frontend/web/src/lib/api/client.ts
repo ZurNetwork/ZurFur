@@ -10,6 +10,13 @@
 import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from './problem';
 
 /**
+ * The `fetch` signature every seam function accepts — the SvelteKit event
+ * `fetch` during SSR or the browser's own; named so no signature spells out
+ * the global's type inline.
+ */
+export type FetchFunction = typeof fetch;
+
+/**
  * Every API call resolves to exactly one of the two shapes the backend
  * contract allows: a bare success body, or an RFC 9457 problem. Anything
  * else (a non-problem error, an unparsable body) is a broken contract and
@@ -28,7 +35,7 @@ export const API_PREFIX = '/api';
  * contract violation and throws.
  */
 export async function apiFetch<T>(
-	fetch: typeof globalThis.fetch,
+	fetch: FetchFunction,
 	path: string,
 	init?: RequestInit
 ): Promise<ApiResult<T>> {
