@@ -116,7 +116,9 @@ async fn a_request_with_no_origin_passes_the_guard() {
 #[tokio::test]
 async fn a_safe_method_is_never_blocked_by_origin() {
     let base = spawn_app().await;
-    // GET is safe; even a foreign Origin passes (anonymous /me redirects to /).
+    // GET is safe; even a foreign Origin passes the CSRF layer. Anonymous /me is a
+    // 401 (the session check), never a 403 cross_origin — proving the guard let the
+    // safe method through.
     let res = client()
         .get(format!("{base}/me"))
         .header("origin", "http://evil.example")
@@ -125,7 +127,7 @@ async fn a_safe_method_is_never_blocked_by_origin() {
         .expect("GET /me");
     assert_eq!(
         res.status(),
-        303,
-        "a safe method is not subject to the Origin guard"
+        401,
+        "a safe method is not subject to the Origin guard (401 session check, not 403)"
     );
 }
