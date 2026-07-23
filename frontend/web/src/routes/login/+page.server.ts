@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { startSignin } from '$lib/api/session';
+import { runApi } from '$lib/server/runtime';
+import { signinOutcome } from '$lib/server/session';
 import type { Problem } from '$lib/api/problem';
 import { callbackErrorMessage } from './callback-errors';
 
@@ -43,7 +44,7 @@ export const actions: Actions = {
 		const handle = typeof handleEntry === 'string' ? handleEntry.trim() : '';
 		if (handle === '') return fail(422, { problem: EMPTY_HANDLE_PROBLEM });
 
-		const started = await startSignin(fetch, handle);
+		const started = await runApi(fetch, signinOutcome(handle));
 		if ('problem' in started) return fail(started.problem.status, { problem: started.problem });
 		redirect(303, started.location);
 	}
