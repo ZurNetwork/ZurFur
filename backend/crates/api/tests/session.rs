@@ -213,19 +213,80 @@ async fn me_returns_401_problem_for_an_anonymous_visitor() {
     common::assert_problem(res, 401, "not_authenticated").await;
 }
 
+// --- Cache-Control on the cookie surface (CWE-525, ZMVP-151) --------------------
+
+#[tokio::test]
+async fn me_401_carries_no_store_for_an_anonymous_visitor() {
+    // Even the anonymous 401 problem response must forbid caching: the whole cookie
+    // surface is no-store, not just the 200 body, so an intermediary can't stash a
+    // stale authenticated/anonymous response.
+    let base = serve_happy().await;
+    let res = client()
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .expect("GET /me");
+    assert_eq!(res.status(), 401, "anonymous /me is a 401");
+    assert_eq!(
+        res.headers()[reqwest::header::CACHE_CONTROL],
+        "no-store",
+        "the cookie surface stamps Cache-Control: no-store",
+    );
+}
+
+#[tokio::test]
+async fn me_200_carries_no_store_for_a_live_session() {
+    // The signed-in identity/PII JSON must not be cached by the browser or a shared
+    // proxy (CWE-525).
+    let base = serve_happy().await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let res = client
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .expect("GET /me");
+    assert_eq!(res.status(), 200, "a live session gets a 200");
+    assert_eq!(
+        res.headers()[reqwest::header::CACHE_CONTROL],
+        "no-store",
+        "the authenticated /me body is no-store",
+    );
+}
+
+#[tokio::test]
+async fn health_is_not_scoped_into_the_no_store_layer() {
+    // The public probe is deliberately left OUT of the cookie-surface cache layer —
+    // over-scoping to the public routers was called out in review.
+    let base = serve_happy().await;
+    let res = client()
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("GET /health");
+    assert!(
+        res.headers().get(reqwest::header::CACHE_CONTROL).is_none(),
+        "public /health carries no Cache-Control from the cookie-surface layer",
+    );
+}
+
 // --- GET /signin-callback -------------------------------------------------------
 
 #[tokio::test]
 async fn signin_callback_success_redirects_to_root() {
     let base = serve_happy().await;
     let client = client();
-    client
+    // Assert the first hop too: the test authenticator is stateless, so a broken
+    // /signin would otherwise go unnoticed while the callback still succeeded.
+    let res = client
         .post(format!("{base}/signin"))
         .header("content-type", "application/x-www-form-urlencoded")
         .body("handle=alice.bsky.social")
         .send()
         .await
         .expect("POST /signin");
+    assert_eq!(res.status(), 303, "signin redirects to the PDS");
     let res = client
         .get(format!("{base}/signin-callback?code=test"))
         .send()

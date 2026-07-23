@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Login from './+page.svelte';
 
-const signedOut = { callbackError: null };
+const signedOut = { session: null, callbackError: null };
 
 describe('/login page', () => {
 	it('renders the handle input and submit', async () => {
@@ -15,7 +15,10 @@ describe('/login page', () => {
 	});
 
 	it('renders a callback error from the redirect contract', async () => {
-		render(Login, { data: { callbackError: 'Sign-in was cancelled at your PDS.' }, form: null });
+		render(Login, {
+			data: { session: null, callbackError: 'Sign-in was cancelled at your PDS.' },
+			form: null
+		});
 
 		await expect
 			.element(page.getByTestId('callback-error'))

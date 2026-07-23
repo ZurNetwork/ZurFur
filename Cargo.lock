@@ -160,6 +160,7 @@ dependencies = [
  "sqlx",
  "test-support",
  "tokio",
+ "tower-http",
  "tower-sessions",
  "tracing",
  "tracing-subscriber",

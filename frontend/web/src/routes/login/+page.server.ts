@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { anonymousWhenUnreachable, getSession, startSignin } from '$lib/api/session';
+import { startSignin } from '$lib/api/session';
 import type { Problem } from '$lib/api/problem';
 import { callbackErrorMessage } from './callback-errors';
 
@@ -18,13 +18,12 @@ const EMPTY_HANDLE_PROBLEM: Problem = {
 
 /**
  * A signed-in visitor has nothing to do here — bounce home (ruling 9b makes
- * `/` the signed-in landing). Otherwise surface any `?error=<code>` a failed
- * `signin_callback` redirected back with. A dead backend renders the form
- * signed-out rather than a 500 — sign-in would fail anyway, the page needn't
- * — but only unreachability degrades; a broken contract still surfaces.
+ * `/` the signed-in landing; the session rides in from the root layout's one
+ * whoami). Otherwise surface any `?error=<code>` a failed `signin_callback`
+ * redirected back with.
  */
-export const load: PageServerLoad = async ({ fetch, url }) => {
-	const session = await getSession(fetch).catch(anonymousWhenUnreachable);
+export const load: PageServerLoad = async ({ parent, url }) => {
+	const { session } = await parent();
 	if (session !== null) redirect(303, '/');
 
 	const errorCode = url.searchParams.get('error');

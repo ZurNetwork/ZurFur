@@ -4,7 +4,7 @@
  * CSRF) live entirely backend-side — these helpers only consume them.
  */
 
-import { apiFetch } from './client';
+import { API_PREFIX, apiFetch, type FetchFunction } from './client';
 import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from './problem';
 
 /**
@@ -24,7 +24,7 @@ export interface Session {
  * `not_authenticated` (anonymous or expired); any other problem is
  * unexpected on this endpoint and throws.
  */
-export async function getSession(fetch: typeof globalThis.fetch): Promise<Session | null> {
+export async function getSession(fetch: FetchFunction): Promise<Session | null> {
 	const result = await apiFetch<Session>(fetch, '/me');
 	if (result.ok) return result.data;
 	if (result.problem.code === 'not_authenticated') return null;
@@ -51,12 +51,9 @@ export type SigninStart = { location: string } | { problem: Problem };
  * which needs `redirect: 'manual'` semantics only server-side fetch provides
  * (a browser fetch would return an opaque redirect with no headers).
  */
-export async function startSignin(
-	fetch: typeof globalThis.fetch,
-	handle: string
-): Promise<SigninStart> {
+export async function startSignin(fetch: FetchFunction, handle: string): Promise<SigninStart> {
 	const form = new URLSearchParams({ handle });
-	const response = await fetch('/api/signin', {
+	const response = await fetch(`${API_PREFIX}/signin`, {
 		method: 'POST',
 		body: form,
 		redirect: 'manual'

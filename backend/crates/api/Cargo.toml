@@ -21,6 +21,9 @@ tracing-subscriber = { workspace = true }
 adapter-atproto = { path = "../adapter-atproto/" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 tower-sessions = { workspace = true }
+# `SetResponseHeaderLayer` (set-header feature) — the no-store cache header layer
+# over the cookie surface in `app()` (ZMVP-151, CWE-525).
+tower-http = { workspace = true }
 # Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
 base64 = { workspace = true }
 # The deadline sweeper takes a Postgres transaction-scoped advisory lock
