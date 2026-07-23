@@ -2,19 +2,19 @@
   "uow": "gj33s",
   "logbook": null,
   "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (\u00a78 rulings 2026-07-21) and on epic ZMVP-149.",
-  "updated": "2026-07-23T15:00:00-06:00",
-  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's \u2014 'Login is yours; I am doing UI in future tickets' (supersedes the 45163 note routing 151 to the Engineer). Rulings at unit start: convert GET /me to JSON (200 profile / 401 problem); POST /signin failures = problem+json; callback failures = 303 /login?error=<code>; Fable builds all but security-nature pieces \u2014 Opus builds the backend session-surface slice and runs /security-review. Previous unit 45163 (ZMVP-150) closed merged at 92833d6.",
+  "updated": "2026-07-23T15:10:00-06:00",
+  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's. Rulings: JSON /me; problem+json failures; callback 303 /login?error=<code>; Opus built the backend session slice + all security review.",
   "tickets": [
     {
       "key": "ZMVP-151",
       "summary": "A visitor signs in from the browser and signs out",
-      "phase": "gates-green-awaiting-merges",
-      "next_action": "Ship-gates Workflow (wf_3244c8fd-539) run on slice 4 at Engineer request: security/code-review/critique clean of real defects; 4 mechanical fixes applied as [7] review commit on PR #152 (containment-guard globs, satisfies-only outcomes, named anonymous problem, runtime dispose note); gate re-run green. Engineer merges #152; then feature -> main rubber-stamp. Confluence DD 39944194 open-table rows still to record: v3 pin + containment guard.",
-      "pr": "#149, #150, #151 merged; #152 (slice 4 + [7] ship-gates fixes) open",
+      "phase": "feature-pr-open-awaiting-merge",
+      "next_action": "All 4 slices merged (#149 #150 #151 #152; ship-gates Workflow clean, Engineer blessed the degrade broadening). Rubber-stamp PR feature/zmvp-151-browser-sign-in -> main open; Engineer squash-merges; then integrate (sync main, transition ZMVP-151 Done, /cleanup) + record DD 39944194 open-table rows on Confluence (v3 pin, containment guard).",
+      "pr": "#149 #150 #151 #152 merged into feature; feature->main rubber-stamp open",
       "branch": "feature/zmvp-151-browser-sign-in",
       "worktree": null,
       "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",
-      "updated": "2026-07-23T15:00:00-06:00"
+      "updated": "2026-07-23T15:10:00-06:00"
     }
   ]
 }
