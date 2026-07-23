@@ -2,19 +2,19 @@
   "uow": "gj33s",
   "logbook": null,
   "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (\u00a78 rulings 2026-07-21) and on epic ZMVP-149.",
-  "updated": "2026-07-23T15:10:00-06:00",
+  "updated": "2026-07-23T15:30:00-06:00",
   "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's. Rulings: JSON /me; problem+json failures; callback 303 /login?error=<code>; Opus built the backend session slice + all security review.",
   "tickets": [
     {
       "key": "ZMVP-151",
       "summary": "A visitor signs in from the browser and signs out",
       "phase": "feature-pr-open-awaiting-merge",
-      "next_action": "All 4 slices merged (#149 #150 #151 #152; ship-gates Workflow clean, Engineer blessed the degrade broadening). Rubber-stamp PR feature/zmvp-151-browser-sign-in -> main open; Engineer squash-merges; then integrate (sync main, transition ZMVP-151 Done, /cleanup) + record DD 39944194 open-table rows on Confluence (v3 pin, containment guard).",
+      "next_action": "Whole-unit ship-gates Workflow (wf_c5973291-413) run on the full feature-vs-main diff at Engineer request: security lane clean (end-to-end auth trace, zero findings); fixes landed as [9] (lib.rs surface doc, callback let-else, redirect:'manual' notes); both gates green (Rust 610/610, web 63/63). Engineer squash-merges #153; then integrate (sync main, ZMVP-151 Done, /cleanup) + record DD 39944194 rows on Confluence. Open proposal for Engineer: integration test pinning redirect:'manual' undici semantics (declined/deferred?).",
       "pr": "#149 #150 #151 #152 merged into feature; feature->main rubber-stamp open",
       "branch": "feature/zmvp-151-browser-sign-in",
       "worktree": null,
       "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",
-      "updated": "2026-07-23T15:10:00-06:00"
+      "updated": "2026-07-23T15:30:00-06:00"
     }
   ]
 }

@@ -140,6 +140,8 @@ const liveMe = (fetch: FetchFunction) =>
 const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 	Effect.gen(function* () {
 		const form = new URLSearchParams({ handle });
+		// redirect:'manual' exposing the real 303 + Location is server-only (undici)
+		// behavior — a browser fetch would see an opaque status-0 redirect instead.
 		const init: RequestInit = { method: 'POST', body: form, redirect: 'manual' };
 		const response = yield* backendFetch(fetch, '/signin', init);
 		if (isRedirectStatus(response.status)) {
@@ -160,6 +162,7 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 
 const liveSignout = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
+		// Server-only undici semantics again: the 303 + Set-Cookie stay readable.
 		const init: RequestInit = { method: 'POST', redirect: 'manual' };
 		const response = yield* backendFetch(fetch, '/logout', init);
 		if (!isRedirectStatus(response.status)) {

@@ -9,15 +9,15 @@
 //! The HTTP surface is split into per-domain route groups under [`mod@routes`]
 //! (`health`, `session`, `accounts`, `commissions`), each exposing a `*_router()` builder;
 //! [`app`] is pure composition that merges them. Two shapes of endpoint coexist.
-//! The browser-facing sign-in flow (`/`, `/signin`, `/signin-callback`, `/me`,
-//! `/logout`) speaks HTML and redirects — an unrecognized visitor lands back on
-//! the sign-in page. The account/membership API (`POST /accounts`, `.../members`,
-//! `.../invitations`) speaks JSON and returns status codes — an unrecognized
-//! caller gets a `401`, never a redirect, because the frontend calls these rather
-//! than browsing to them.
+//! The browser-facing sign-in flow (`/signin`, `/signin-callback`, `/me`,
+//! `/logout`) redirects or speaks JSON; the human-facing HTML lives in the
+//! SvelteKit frontend (ZMVP-151). The account/membership API (`POST /accounts`,
+//! `.../members`, `.../invitations`) speaks JSON and returns status codes — an
+//! unrecognized caller gets a `401`, never a redirect, because the frontend calls
+//! these rather than browsing to them.
 //!
 //! References: DESIGN "Domains and Applications" (ports and adapters);
-//! DESIGN/Account, DESIGN/Roles; ZMVP-8 through ZMVP-16.
+//! DESIGN/Account, DESIGN/Roles; ZMVP-8 through ZMVP-16; ZMVP-151.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -442,7 +442,7 @@ impl AppState {
 /// `/health` and `/.well-known` GETs stay cacheable.
 ///
 /// Routes: `GET /health`; `GET /.well-known/atproto-did` (handle resolution, also
-/// top-level and CSRF-exempt); the sign-in flow (`GET /`, `POST /signin`,
+/// top-level and CSRF-exempt); the sign-in flow (`POST /signin`,
 /// `GET /signin-callback`, `GET /me`, `POST /logout`); the accounts tree
 /// (`POST /accounts`, `POST`/`DELETE /accounts/{id}/members`,
 /// `DELETE /accounts/{id}/members/me`, `POST`/`DELETE /accounts/{id}/invitations`,

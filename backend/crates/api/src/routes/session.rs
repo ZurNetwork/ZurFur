@@ -156,9 +156,8 @@ async fn signin_callback(
         return Redirect::to("/login?error=invalid_callback").into_response();
     };
 
-    let did = match state.auth.complete(code, q.state, q.iss).await {
-        Ok(did) => did,
-        Err(_) => return Redirect::to("/login?error=exchange_failed").into_response(),
+    let Ok(did) = state.auth.complete(code, q.state, q.iss).await else {
+        return Redirect::to("/login?error=exchange_failed").into_response();
     };
 
     // First contact recognizes rather than registers: provisioning mints a User on
@@ -168,14 +167,11 @@ async fn signin_callback(
     let provisioned = state
         .transaction(async move |uow: &mut dyn UnitOfWork| uow.users().provision(&did).await)
         .await;
-    let user = match provisioned {
-        Ok(user) => user,
-        Err(_) => {
-            return Problem::internal_error(
-                "Your sign-in succeeded but your account couldn't be set up. Please try again.",
-            )
-            .into_response();
-        }
+    let Ok(user) = provisioned else {
+        return Problem::internal_error(
+            "Your sign-in succeeded but your account couldn't be set up. Please try again.",
+        )
+        .into_response();
     };
 
     // Rotate the session id at this privilege change, then store the identity.
