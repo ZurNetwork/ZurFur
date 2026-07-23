@@ -51,7 +51,7 @@ export function signinOutcome(
 	const started = Effect.gen(function* () {
 		const api = yield* ZurfurApi;
 		const location = yield* api.startSignin(handle);
-		return { location } satisfies SigninOutcome as SigninOutcome;
+		return { location } satisfies SigninOutcome;
 	});
 	return started.pipe(
 		Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<SigninOutcome>({ problem }))
@@ -70,7 +70,7 @@ export const signoutOutcome: Effect.Effect<SignoutOutcome, NetworkFailure, Zurfu
 	function* () {
 		const api = yield* ZurfurApi;
 		const clearedCookies = yield* api.signout;
-		return { clearedCookies } satisfies SignoutOutcome as SignoutOutcome;
+		return { clearedCookies } satisfies SignoutOutcome;
 	}
 ).pipe(
 	Effect.catchTag('SignoutFailed', ({ status }) =>

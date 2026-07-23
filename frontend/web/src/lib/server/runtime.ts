@@ -13,7 +13,10 @@ import { RequestFetch, ZurfurApi, ZurfurApiLive } from './api/zurfur-api';
 /**
  * The process-wide runtime. Holds the request-independent service graph —
  * empty today; config/log/telemetry Layers join here (OTel is a DD follow-up),
- * while per-request services are provided in {@link runApi}.
+ * while per-request services are provided in {@link runApi}. `Layer.empty`
+ * holds no resources, so it is safe to never dispose; the first resourceful
+ * Layer added here must bring `runtime.dispose()` on shutdown and an
+ * `import.meta.hot?.dispose` guard for dev HMR.
  */
 const runtime = ManagedRuntime.make(Layer.empty);
 

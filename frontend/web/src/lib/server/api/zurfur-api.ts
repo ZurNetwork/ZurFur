@@ -185,18 +185,17 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 	})
 );
 
+/** The problem an unstubbed `me` fails with — the backend's anonymous 401 shape. */
+const anonymousProblem: Problem = {
+	type: 'urn:zurfur:error:not-authenticated',
+	code: 'not_authenticated',
+	title: 'not_authenticated',
+	status: 401
+};
+
 /** Anonymous-by-default stub behaviors for {@link zurfurApiTest}. */
 const anonymousDefaults: ZurfurApiShape = {
-	me: Effect.fail(
-		new NotAuthenticated({
-			problem: {
-				type: 'urn:zurfur:error:not-authenticated',
-				code: 'not_authenticated',
-				title: 'not_authenticated',
-				status: 401
-			}
-		})
-	),
+	me: Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	startSignin: () => Effect.fail(new NetworkFailure({ cause: new TypeError('no signin stubbed') })),
 	signout: Effect.fail(new SignoutFailed({ status: 500 }))
 };

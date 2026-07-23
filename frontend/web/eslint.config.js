@@ -37,8 +37,14 @@ export default defineConfig(
 		// DD 39944194 containment: Effect exists only below the runes seam —
 		// src/lib/server/** and *.server.ts. Everything above the seam receives
 		// plain data and never sees a fiber.
-		files: ['src/**/*.ts', 'src/**/*.svelte', 'src/**/*.svelte.ts'],
-		ignores: ['src/lib/server/**', 'src/**/*.server.ts'],
+		files: [
+			'src/**/*.ts',
+			'src/**/*.js',
+			'src/**/*.svelte',
+			'src/**/*.svelte.ts',
+			'src/**/*.svelte.js'
+		],
+		ignores: ['src/lib/server/**', 'src/**/*.server.ts', 'src/**/*.server.spec.ts'],
 		rules: {
 			'no-restricted-imports': [
 				'error',

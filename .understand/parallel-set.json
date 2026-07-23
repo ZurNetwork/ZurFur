@@ -1,20 +1,20 @@
 {
   "uow": "gj33s",
   "logbook": null,
-  "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (§8 rulings 2026-07-21) and on epic ZMVP-149.",
-  "updated": "2026-07-21T17:56:00-06:00",
-  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's — 'Login is yours; I am doing UI in future tickets' (supersedes the 45163 note routing 151 to the Engineer). Rulings at unit start: convert GET /me to JSON (200 profile / 401 problem); POST /signin failures = problem+json; callback failures = 303 /login?error=<code>; Fable builds all but security-nature pieces — Opus builds the backend session-surface slice and runs /security-review. Previous unit 45163 (ZMVP-150) closed merged at 92833d6.",
+  "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (\u00a78 rulings 2026-07-21) and on epic ZMVP-149.",
+  "updated": "2026-07-23T15:00:00-06:00",
+  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's \u2014 'Login is yours; I am doing UI in future tickets' (supersedes the 45163 note routing 151 to the Engineer). Rulings at unit start: convert GET /me to JSON (200 profile / 401 problem); POST /signin failures = problem+json; callback failures = 303 /login?error=<code>; Fable builds all but security-nature pieces \u2014 Opus builds the backend session-surface slice and runs /security-review. Previous unit 45163 (ZMVP-150) closed merged at 92833d6.",
   "tickets": [
     {
       "key": "ZMVP-151",
       "summary": "A visitor signs in from the browser and signs out",
       "phase": "gates-green-awaiting-merges",
-      "next_action": "Engineer merges #151 (slice 3+review); then Claude restacks slice 4 (Effect scaffold, [6] on feature/zmvp-151-slice-4-effect-scaffold, BUILT+gate-green+pushed) and opens its PR; after its merge, feature->main rubber-stamp. Effect pin RULED: v3 (3.22.x). DD 39944194 recorded in the local index; ZMVP-156 absorbed as this slice (comment on ticket; Engineer disposes of the ticket). DD open-table rows to record on Confluence: version pin ruled v3 + containment guard shipped",
-      "pr": "#149 (slice 1) merged; #150 (slice 2, incl. Copilot fix round) merged; #151 (slice 3+review) open, Copilot requested",
+      "next_action": "Ship-gates Workflow (wf_3244c8fd-539) run on slice 4 at Engineer request: security/code-review/critique clean of real defects; 4 mechanical fixes applied as [7] review commit on PR #152 (containment-guard globs, satisfies-only outcomes, named anonymous problem, runtime dispose note); gate re-run green. Engineer merges #152; then feature -> main rubber-stamp. Confluence DD 39944194 open-table rows still to record: v3 pin + containment guard.",
+      "pr": "#149, #150, #151 merged; #152 (slice 4 + [7] ship-gates fixes) open",
       "branch": "feature/zmvp-151-browser-sign-in",
       "worktree": null,
       "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",
-      "updated": "2026-07-21T17:56:00-06:00"
+      "updated": "2026-07-23T15:00:00-06:00"
     }
   ]
 }
