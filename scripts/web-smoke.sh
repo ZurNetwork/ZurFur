@@ -74,12 +74,14 @@ pass "/.well-known/atproto-did -> axum 404 (non-HTML body): reached the resolver
 
 echo "--- AC2: /signin-callback -> axum verbatim (the OAuth callback path) ---"
 http_get "/signin-callback"
-# The callback with no query params is a 400 from axum (the sign-in response was
-# incomplete). SvelteKit has no such route and would 404. The 400 proves axum
-# handled it verbatim (no /api strip, no SvelteKit).
-[ "$REPLY_CODE" = "400" ] \
-    || fail "/signin-callback returned $REPLY_CODE, expected axum's 400 (SvelteKit would 404)"
-pass "/signin-callback -> axum 400 (reached the OAuth callback handler verbatim)"
+# The callback with no query params is a 303 to /login?error=invalid_callback
+# from axum (ZMVP-151: callback failures redirect to the SvelteKit login page).
+# SvelteKit has no such route and would 404. The 303 proves axum handled it
+# verbatim (no /api strip, no SvelteKit). curl does not follow it, so the code
+# and Location are the callback handler's own.
+[ "$REPLY_CODE" = "303" ] \
+    || fail "/signin-callback returned $REPLY_CODE, expected axum's 303 (SvelteKit would 404)"
+pass "/signin-callback -> axum 303 (reached the OAuth callback handler verbatim)"
 
 echo "--- AC2: /apifoo does NOT reach the backend (/api is a prefix, not a stem) ---"
 http_get "/apifoo"

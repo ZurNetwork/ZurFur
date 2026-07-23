@@ -45,6 +45,10 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 # Facade (axum layer + Session extractor) for the composition root; the adapter
 # implements the traits from -core directly, so it needn't pull the axum layer.
 tower-sessions = { version = "0.15" }
+# `set-header` only: the `SetResponseHeaderLayer` that stamps `Cache-Control:
+# no-store` on the authenticated cookie surface (CWE-525, ZMVP-151). Already in
+# the tree transitively (reqwest decompression) — this just turns on the module.
+tower-http = { version = "0.6", features = ["set-header"] }
 tower-sessions-core = { version = "0.15", features = ["deletion-task"] }
 time = { version = "0.3" }
 rmp-serde = { version = "1" }

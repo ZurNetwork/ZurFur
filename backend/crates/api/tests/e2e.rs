@@ -90,23 +90,24 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     assert_eq!(res.status(), 303, "callback should redirect on success");
     assert_eq!(
         res.headers()["location"],
-        "/me",
-        "callback hands off to /me"
+        "/",
+        "callback lands the visitor on the signed-in frontend root"
     );
 
     // 3. A subsequent request resolves the session back to the provisioned User —
-    //    greeted as that user (by their profile handle), with no PDS round-trip
-    //    for the identity itself. (Profile rendering is covered in profile.rs.)
+    //    identified by their profile handle in the JSON whoami, with no PDS
+    //    round-trip for the identity itself. (Profile rendering is covered in
+    //    profile.rs.)
     let res = client
         .get(format!("{base}/me"))
         .send()
         .await
         .expect("GET /me");
-    assert_eq!(res.status(), 200, "the signed-in visitor sees the greeting");
-    let body = res.text().await.expect("body");
-    assert!(
-        body.contains("e2ealice.bsky.social"),
-        "/me should greet the signed-in visitor, got: {body}"
+    assert_eq!(res.status(), 200, "the signed-in visitor is recognized");
+    let body: serde_json::Value = res.json().await.expect("body is JSON");
+    assert_eq!(
+        body["handle"], "e2ealice.bsky.social",
+        "/me identifies the signed-in visitor, got: {body}"
     );
 
     // Exactly one User exists for that DID after a successful sign-in.
