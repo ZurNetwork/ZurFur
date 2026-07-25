@@ -36,7 +36,7 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{DidBelongsToAnotherActor, HandleTaken, UnitOfWork};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
@@ -235,11 +235,6 @@ fn ok_json(body: serde_json::Value) -> Response {
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// `201 Created` carrying a bare JSON resource body.
-fn created_json(body: serde_json::Value) -> Response {
-    (StatusCode::CREATED, Json(body)).into_response()
-}
-
 /// The body of `POST /accounts`. Founding takes real input, not a bare click:
 /// the account's display `name` and its public `handle` (the atproto-style name it
 /// is reached by; DD "The Account Handle" 24870914).
@@ -249,6 +244,59 @@ fn created_json(body: serde_json::Value) -> Response {
 struct CreateAccountBody {
     name: String,
     handle: String,
+}
+
+/// An account as the API renders it — the shared response shape for founding
+/// (`POST /accounts`), renaming (`PATCH /accounts/{id}/handle`) and, with a
+/// `role` alongside it, listing (`GET /accounts`).
+///
+/// Named rather than built with `json!` (ZMVP-158) because a schema cannot be
+/// checked against a `json!` literal — there is no type to check. Once the
+/// contract generates this type, a handler returning the wrong shape stops
+/// compiling; until then, one struct is still the difference between three
+/// hand-kept-in-sync literals and one declaration.
+///
+/// Field names are the wire contract: they are what `GET /accounts` has always
+/// emitted, and the frontend reads them directly.
+#[derive(Serialize)]
+struct AccountBody {
+    /// The account's app-private UUIDv7, rendered as a string.
+    id: String,
+    /// The account's sovereign `did:plc`.
+    did: String,
+    /// The public handle the account is reached by.
+    handle: String,
+    /// The account's display name.
+    name: String,
+}
+
+impl From<&Account> for AccountBody {
+    /// Render a stored [`Account`] into its wire shape.
+    fn from(account: &Account) -> Self {
+        Self {
+            id: account.id.to_string(),
+            did: account.did.as_str().to_owned(),
+            handle: account.handle.as_str().to_owned(),
+            name: account.name.as_str().to_owned(),
+        }
+    }
+}
+
+/// One row of `GET /accounts`: an account plus **the caller's own** role on it.
+///
+/// `role` is load-bearing rather than decorative — `DELETE /accounts/{id}` is
+/// Owner-only and `403`s a non-Owner member, so the frontend needs the caller's
+/// standing to render the delete affordance honestly.
+///
+/// The role is a `String` on the wire, carrying the domain vocabulary
+/// (`owner`/`admin`/`manager`/`member`) exactly as it has always been emitted
+/// (Engineer ruling 2026-07-25: the contract documents the wire that exists).
+#[derive(Serialize)]
+struct AccountMembershipBody {
+    #[serde(flatten)]
+    account: AccountBody,
+    /// The querying user's role on this account.
+    role: String,
 }
 
 /// `GET /accounts` — every **live** account the signed-in visitor holds a role
@@ -283,20 +331,16 @@ async fn list_accounts(
         .accounts
         .list_for_user(user.id, ListingScope::SelfView)
         .await?;
-    let accounts: Vec<serde_json::Value> = memberships
+    let rows: Vec<AccountMembershipBody> = memberships
         .into_iter()
-        .map(|membership| {
-            json!({
-                "id": membership.account.id.to_string(),
-                "did": membership.account.did.as_str(),
-                "handle": membership.account.handle.as_str(),
-                "name": membership.account.name.as_str(),
-                "role": membership.role.as_str(),
-            })
+        .map(|membership| AccountMembershipBody {
+            account: AccountBody::from(&membership.account),
+            role: membership.role.as_str().to_owned(),
         })
         .collect();
 
-    Ok(ok_json(serde_json::Value::Array(accounts)))
+    let response = (StatusCode::OK, Json(rows)).into_response();
+    Ok(response)
 }
 
 /// Founds a new Account for the signed-in visitor and makes them its Owner
@@ -402,12 +446,9 @@ async fn create_account(
         }
     };
 
-    Ok(created_json(json!({
-        "id": account.id.to_string(),
-        "did": account.did.as_str(),
-        "handle": account.handle.as_str(),
-        "name": account.name.as_str(),
-    })))
+    let founded = AccountBody::from(&account);
+    let response = (StatusCode::CREATED, Json(founded)).into_response();
+    Ok(response)
 }
 
 // Mirror of the `adapter_pg::ACCOUNT_FACT_TABLES` compile guard, placed right beside
@@ -677,12 +718,17 @@ async fn change_handle(
         return Err(err.into());
     }
 
-    Ok(ok_json(json!({
-        "id": account.id.to_string(),
-        "did": account.did.as_str(),
-        "handle": new.as_str(),
-        "name": account.name.as_str(),
-    })))
+    // Struct-update over the loaded row, overriding ONLY the handle: the
+    // repoint happened in the transaction above, not on this in-memory value,
+    // so a plain `AccountBody::from(&account)` would echo the handle the
+    // caller just left. Building the rest via `..from()` keeps every other
+    // field drift-proof if `AccountBody` grows.
+    let renamed = AccountBody {
+        handle: new.as_str().to_owned(),
+        ..AccountBody::from(&account)
+    };
+    let response = (StatusCode::OK, Json(renamed)).into_response();
+    Ok(response)
 }
 
 /// The accept-invitation request body: the invitee's choice of whether this new
