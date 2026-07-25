@@ -1,0 +1,24 @@
+# The Zurfur API contract module (DD 40992770; epic ZMVP-25).
+#
+# This directory is the AUTHORITY over both tiers: backend (prost + pbjson) and
+# frontend (protobuf-es) are generated FROM it, and neither may redefine it.
+# JSON over HTTP is the v1 transport — nothing here implies gRPC (decision 2:
+# transports are adapters; a second transport would consume these same files).
+#
+# `breaking.use: [WIRE_JSON]` is EXPLICIT and load-bearing: buf's default is
+# FILE (stricter — would block harmless file/package reorganisation), while
+# WIRE alone would let a field rename ship (on a JSON wire the field NAME is
+# the identity). WIRE_JSON is buf's documented recommended minimum wherever
+# JSON is a transport. See contract/VERSIONING.md §2.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # google/api is vendored verbatim from googleapis; it predates some rules.
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - WIRE_JSON

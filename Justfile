@@ -115,18 +115,21 @@ worktree-init:
 check:
     cd backend && bacon
 
-# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint, web)
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, contract, web).
+# CI's contract job ADDITIONALLY runs `buf breaking` against the PR base — a
+# comparison that only makes sense per-PR, so it is deliberately CI-only here.
 # -- sequential and fail-fast, so a red step stops the run before the next one
 # starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
 # a one-time `yarn --cwd frontend/web playwright install chromium` for the
-# browser-mode component tests.
+# browser-mode component tests, and the `buf` CLI for the contract lint
+# (https://buf.build/docs/installation — a single Go binary).
 gate:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
-    npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+    buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test

@@ -162,7 +162,8 @@ async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
         .expect("GET /commissions");
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.expect("json body");
-    let rows = body.as_array().expect("array body");
+    // Wrapped at the /api/v1 mint (contract R7): rows ride under "commissions".
+    let rows = body["commissions"].as_array().expect("commissions array");
     assert_eq!(rows.len(), 2, "only the caller's own commissions: {body}");
 
     let ids: Vec<String> = rows
@@ -235,7 +236,8 @@ async fn excludes_archived_commissions() {
         .expect("GET /commissions");
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.expect("json body");
-    let rows = body.as_array().expect("array body");
+    // Wrapped at the /api/v1 mint (contract R7): rows ride under "commissions".
+    let rows = body["commissions"].as_array().expect("commissions array");
     assert_eq!(rows.len(), 1, "the archived commission is excluded: {body}");
     assert_eq!(rows[0]["id"], active.id.to_string());
 }

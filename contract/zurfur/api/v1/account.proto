@@ -1,0 +1,144 @@
+// The Citizen's surface: founding, listing, renaming, deleting Accounts.
+//
+// Only messages are generated; the service block declares routes for the
+// descriptor test (DD 40992770 decision 3). Ids are OPAQUE to clients
+// (VERSIONING.md R6): stable, unique, ≤64-char strings — do not parse, do not
+// order by them. The `role` vocabulary is a STRING, not an enum (R8): the
+// backend's `Role::try_from` is the enforcement; this file only describes.
+
+syntax = "proto3";
+
+package zurfur.api.v1;
+
+import "google/api/annotations.proto";
+
+// `GET /api/v1/accounts` takes no input; the session is the argument.
+message ListAccountsRequest {}
+
+// One row of `GET /api/v1/accounts`: an account the caller holds a role in,
+// with THE CALLER'S OWN role riding along. Flat on purpose — this is the wire
+// shape the listing has always emitted (the Rust-side struct composition via
+// `#[serde(flatten)]` is an implementation detail the contract does not see).
+message AccountMembership {
+  // Opaque account id (R6).
+  string id = 1;
+  // The account's sovereign `did:plc`.
+  string did = 2;
+  // The public handle.
+  string handle = 3;
+  // The display name.
+  string name = 4;
+  // The CALLER's role on this account. Extensible string vocabulary (R8),
+  // enforced by the domain: `owner` | `admin` | `manager` | `member`.
+  // Clients MUST tolerate unknown values with a defined fallback. Load-bearing
+  // for the UI: `DeleteAccount` is Owner-only, so the delete affordance is
+  // rendered from this field.
+  string role = 5;
+}
+
+// `POST /api/v1/accounts` — founding takes real input, not a bare click.
+message CreateAccountRequest {
+  // The account's display name. Domain-validated (non-empty, ≤120 chars).
+  string name = 1;
+  // The handle to claim — BYO domain or `*.zurfur.app`. Domain-validated
+  // (normalization, punycode ban, reserved labels); taken/quarantined → 409.
+  string handle = 2;
+}
+
+// `POST /api/v1/accounts` succeeds `201` with the founded account.
+// Field-for-field the same wire shape as ChangeHandleResponse today — kept as
+// SEPARATE messages so each endpoint's response can evolve independently
+// (coupling them means a future change to one silently changes the other).
+message CreateAccountResponse {
+  // Opaque account id (R6).
+  string id = 1;
+  // The account's sovereign `did:plc`.
+  string did = 2;
+  // The public handle the account is reached by.
+  string handle = 3;
+  // The account's display name.
+  string name = 4;
+}
+
+// `PATCH .../handle` succeeds `200` carrying the account with its NEW handle.
+message ChangeHandleResponse {
+  // Opaque account id (R6).
+  string id = 1;
+  // The account's sovereign `did:plc`.
+  string did = 2;
+  // The handle just moved to.
+  string handle = 3;
+  // The display name.
+  string name = 4;
+}
+
+// `DELETE /api/v1/accounts/{id}` succeeds `200` and SAYS WHICH deletion
+// happened (Engineer ruling 2026-07-25: the frontend is an interface — it
+// renders what the program tells it, and cannot infer an outcome it was
+// never told; ZMVP-152's AC needs this). Minted at `/api/v1`; the pre-GA
+// surface answered a bodiless `204`.
+message DeleteAccountResponse {
+  // Extensible string vocabulary (R8), domain-enforced:
+  // `soft` — the account held facts; row kept, handle reserved, DID live;
+  // `hard` — the account was fact-free; row gone, handle freed, DID
+  //          tombstoned (a separate retryable public step).
+  string outcome = 1;
+}
+
+// `GET /api/v1/accounts` — wrapped (R7) so pagination can land additively.
+message ListAccountsResponse {
+  // Every live account the caller holds a role in, ascending by creation.
+  // Order is served here — never derived from id structure (R6).
+  repeated AccountMembership accounts = 1;
+}
+
+// `PATCH /api/v1/accounts/{id}/handle` — the Owner-only rename (DD 27852802).
+message ChangeHandleRequest {
+  // Opaque account id, from the path.
+  string id = 1;
+  // The handle to change to. Same validation gate as founding.
+  string handle = 2;
+}
+
+// `DELETE /api/v1/accounts/{id}`.
+message DeleteAccountRequest {
+  // Opaque account id, from the path.
+  string id = 1;
+}
+
+// The accounts service. Every route requires a session (401 otherwise) and
+// answers Problems per problem.proto.
+service AccountService {
+  // Every live account the caller holds a role in — not owned-only
+  // (Engineer ruling 2026-07-24). Soft-deleted accounts excluded.
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/accounts"
+    };
+  }
+
+  // Found an account; the caller becomes its Owner. `201` + the Account.
+  // Mints the account's own `did:plc` before any row is written.
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/accounts"
+      body: "*"
+    };
+  }
+
+  // Owner-only rename. `200` + the Account carrying the NEW handle.
+  rpc ChangeHandle(ChangeHandleRequest) returns (ChangeHandleResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/accounts/{id}/handle"
+      body: "*"
+    };
+  }
+
+  // Owner-only delete. Fact-bearing → soft (`outcome: "soft"`), fact-free →
+  // hard (`outcome: "hard"`). `200` + the outcome — ruled 2026-07-25.
+  rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/accounts/{id}"
+    };
+  }
+}

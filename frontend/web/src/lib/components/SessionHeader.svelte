@@ -13,8 +13,8 @@
 
 <header>
 	{#if session !== null}
-		{#if session.avatar_url !== null}
-			<img data-testid="session-avatar" src={session.avatar_url} alt="" width="32" height="32" />
+		{#if session.avatarUrl !== undefined}
+			<img data-testid="session-avatar" src={session.avatarUrl} alt="" width="32" height="32" />
 		{/if}
 		<span data-testid="session-handle">{session.handle ?? session.did}</span>
 		<form method="post" action={resolve('/logout')}>

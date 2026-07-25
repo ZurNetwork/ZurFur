@@ -25,9 +25,9 @@ import {
  */
 const SessionSchema = Schema.Struct({
 	did: Schema.String,
-	handle: Schema.NullOr(Schema.String),
-	display_name: Schema.NullOr(Schema.String),
-	avatar_url: Schema.NullOr(Schema.String)
+	handle: Schema.optional(Schema.String),
+	displayName: Schema.optional(Schema.String),
+	avatarUrl: Schema.optional(Schema.String)
 });
 
 /** What each `ZurfurApi` call does; failures per call are in the signature. */

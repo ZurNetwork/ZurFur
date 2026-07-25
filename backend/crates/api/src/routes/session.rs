@@ -68,14 +68,19 @@ struct CallbackQuery {
 }
 
 /// The JSON body of `GET /me`: who the session belongs to. `did` is always present
-/// (the session always resolves to a User with a DID); the profile fields are
-/// `null` when the PDS profile can't be resolved — an unreachable PDS with nothing
-/// cached is not an error, it degrades to a bare identity (the DID). See [`me`].
+/// (the session always resolves to a User with a DID); the profile KEYS are
+/// OMITTED when the PDS profile can't be resolved (contract R4 — absence only
+/// ever means "not set") — an unreachable PDS with nothing cached is not an
+/// error, it degrades to a bare identity (the DID). See [`me`].
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionUser {
     did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     avatar_url: Option<String>,
 }
 

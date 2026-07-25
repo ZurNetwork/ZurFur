@@ -16,7 +16,12 @@ describe('(session) guard', () => {
 	});
 
 	it('passes a signed-in visit through', async () => {
-		const signedIn = { did: 'did:plc:alice', handle: null, display_name: null, avatar_url: null };
+		const signedIn = {
+			did: 'did:plc:alice',
+			handle: undefined,
+			displayName: undefined,
+			avatarUrl: undefined
+		};
 		await expect(load(guardEvent(signedIn))).resolves.toEqual({});
 	});
 });

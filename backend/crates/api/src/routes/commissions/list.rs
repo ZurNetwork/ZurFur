@@ -20,6 +20,7 @@ use crate::{AppState, problem::Problem};
 /// A commission's maturity rating as the API renders it (DD `29982722`): the
 /// atproto self-label axis plus the orthogonal `graphic` flag.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MaturityBody {
     /// The maturity axis value — `safe` / `suggestive` / `nudity` / `adult`.
     rating: String,
@@ -38,13 +39,12 @@ struct MaturityBody {
 /// the **first place a `Commission` is serialized anywhere in the API**, so
 /// this field set is the precedent every later commission surface inherits.
 ///
-/// Optional fields are `Option<T>` and currently serialize as explicit `null`
-/// — the shape `GET /commissions` has always emitted. ProtoJSON would omit the
-/// key instead; that difference is recorded as an open wire-format question
-/// (`.understand/20260725-zmvp-159-wire-format-fork.md`) rather than changed
-/// here, because this ticket is a pure refactor.
+/// Minted at `/api/v1` (contract R1/R4, 2026-07-25): keys are lowerCamelCase,
+/// and an absent optional OMITS its key — `null` is never emitted. Absence
+/// only ever means "not set".
 #[derive(Serialize)]
-struct CommissionBody {
+#[serde(rename_all = "camelCase")]
+pub(super) struct CommissionBody {
     /// The commission's UUIDv7, rendered as a string.
     id: String,
     /// The commission's title.
@@ -54,14 +54,19 @@ struct CommissionBody {
     /// Who may see it.
     visibility: String,
     /// The agreed deadline, if one is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     deadline: Option<DateTimeUtc>,
     /// The maturity rating, if one is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     maturity: Option<MaturityBody>,
     /// The direction axis of the two-dimensional status set, if set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     direction_status: Option<String>,
     /// The deadline axis of the two-dimensional status set, if set.
+    #[serde(skip_serializing_if = "Option::is_none")]
     deadline_status: Option<String>,
     /// The external chat channel pointer, if one is linked.
+    #[serde(skip_serializing_if = "Option::is_none")]
     linked_channel: Option<String>,
     /// When the commission was created.
     created_at: DateTimeUtc,
@@ -95,6 +100,14 @@ impl From<Commission> for CommissionBody {
     }
 }
 
+/// `GET /api/v1/commissions` — wrapped (contract R7): `{ "commissions": [...] }`,
+/// so pagination can later land additively as a sibling key instead of
+/// costing a major.
+#[derive(Serialize)]
+struct ListCommissionsBody {
+    commissions: Vec<CommissionBody>,
+}
+
 /// List the signed-in user's owned commissions (ZMVP-157).
 ///
 /// Resolves the session to the acting [`User`](domain::elements::user::User)
@@ -109,8 +122,9 @@ impl From<Commission> for CommissionBody {
 /// are small).
 ///
 /// Outcomes:
-/// - `200 [ { "id", "title", "lifecycle", "visibility", "deadline", "maturity",
-///   "direction_status", "deadline_status", "linked_channel", "created_at" }, … ]`
+/// - `200 { "commissions": [ { "id", "title", "lifecycle", "visibility",
+///   "deadline"?, "maturity"?, "directionStatus"?, "deadlineStatus"?,
+///   "linkedChannel"?, "createdAt" }, … ] }` — absent optionals omit their keys
 /// - `401` — not signed in
 pub(super) async fn list_commissions(
     State(state): State<AppState>,
@@ -119,8 +133,10 @@ pub(super) async fn list_commissions(
     let user = super::current_user(&state, &session).await?;
 
     let commissions = state.commissions.list_owned_by(user.id).await?;
-    let rows: Vec<CommissionBody> = commissions.into_iter().map(CommissionBody::from).collect();
+    let commissions: Vec<CommissionBody> =
+        commissions.into_iter().map(CommissionBody::from).collect();
 
-    let response = (StatusCode::OK, Json(rows)).into_response();
+    let body = ListCommissionsBody { commissions };
+    let response = (StatusCode::OK, Json(body)).into_response();
     Ok(response)
 }

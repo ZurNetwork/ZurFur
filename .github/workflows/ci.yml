@@ -48,16 +48,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
-  spec-lint:
-    name: spec-lint
+  contract:
+    name: contract
     runs-on: ubuntu-latest
     steps:
+      # Full history: `buf breaking --against` compares the PR's contract to
+      # the base branch's, which needs the base ref fetched.
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      # Lint the hand-authored API contracts (OpenAPI / AsyncAPI) under openapi/.
-      - run: npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+          fetch-depth: 0
+      # Pinned buf CLI (a Go binary; no JVM, no registry, no BUF_TOKEN — the
+      # google/api deps are vendored in-tree).
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.72.0'
+      # Lint the corpus (STANDARD rules; see contract/buf.yaml).
+      - run: buf lint contract
+      # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
+      # against the base branch. Once the first version tag exists this gains
+      # a second comparison against the last released tag (VERSIONING.md §2
+      # "two gates, not one").
+      # Bootstrap guard: a base that predates the corpus has nothing to
+      # compare against (buf fails with "had no .proto files"), and skipping
+      # is CORRECT there — the first corpus commit cannot break a contract
+      # that does not exist yet.
+      - if: github.event_name == 'pull_request'
+        run: |
+          if git ls-tree -r "origin/${{ github.base_ref }}" --name-only | grep -q '^contract/.*\.proto$'; then
+            buf breaking contract --against ".git#branch=origin/${{ github.base_ref }},subdir=contract"
+          else
+            echo "base origin/${{ github.base_ref }} has no contract corpus (bootstrap) — breaking gate skipped"
+          fi
 
   deny:
     name: deny

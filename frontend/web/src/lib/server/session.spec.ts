@@ -8,8 +8,8 @@ import { sessionOrAnonymous, sessionOrNull, signinOutcome, signoutOutcome } from
 const alice: Session = {
 	did: 'did:plc:alice',
 	handle: 'alice.zurfur.app',
-	display_name: 'Alice',
-	avatar_url: null
+	displayName: 'Alice',
+	avatarUrl: undefined
 };
 
 /** Run a program against the in-memory Layer — no fetch, no network. */
