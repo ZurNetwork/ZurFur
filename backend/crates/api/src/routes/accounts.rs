@@ -23,11 +23,11 @@ use axum::{
     extract::{FromRequestParts, Path, State, rejection::JsonRejection},
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
-    routing::{delete, patch, post},
+    routing::{delete, get, patch, post},
 };
 use chrono::{Duration, Utc};
 use domain::elements::{
-    account::{Account, AccountId, AccountName},
+    account::{Account, AccountId, AccountName, ListingScope},
     did::Did,
     handle::Handle,
     invitation::Invitation,
@@ -50,7 +50,7 @@ use crate::{AppState, SESSION_USER_KEY};
 /// [`require_first_party_origin`](super::require_first_party_origin) layer.
 pub(crate) fn accounts_router() -> Router<AppState> {
     Router::new()
-        .route("/accounts", post(create_account))
+        .route("/accounts", get(list_accounts).post(create_account))
         .route("/accounts/{id}", delete(delete_account))
         .route("/accounts/{id}/handle", patch(change_handle))
         .route(
@@ -249,6 +249,54 @@ fn created_json(body: serde_json::Value) -> Response {
 struct CreateAccountBody {
     name: String,
     handle: String,
+}
+
+/// `GET /accounts` — every **live** account the signed-in visitor holds a role
+/// in (ZMVP-157; frontend enablement for ZMVP-152 AC1) — **not** owned-only:
+/// gaining a role is how a user joins an account on this platform
+/// (DESIGN/Roles), so an account reached only through an accepted invitation
+/// (ZMVP-20) belongs on this list exactly as one the caller founded does.
+///
+/// Each row carries the caller's own `role` alongside `{id, did, handle,
+/// name}` — required, not cosmetic: `DELETE /accounts/{id}` is Owner-only and
+/// `403`s a non-Owner member (see [`delete_account`]), so without `role` the
+/// frontend would render a delete affordance that fails for members. Soft-
+/// deleted accounts are excluded, mirroring [`AccountStore::find`](domain::ports::AccountStore::find)
+/// (DD `23003138`). Ordered by id (UUIDv7 sorts as creation order); no
+/// pagination (v1 volumes are small).
+///
+/// Outcomes:
+/// - `200 [ { "id", "did", "handle", "name", "role" }, … ]`
+/// - `401` — not signed in
+async fn list_accounts(
+    State(state): State<AppState>,
+    session: Session,
+) -> Result<Response, Problem> {
+    let user = require_user(&state, &session).await?;
+
+    // The caller is reading their OWN accounts, so the `listed_on_profile`
+    // valve deliberately does not apply — a member's own records are not
+    // hidden from them by their own publication choice. A surface rendering
+    // one user's memberships TO ANOTHER must pass `PublicProfile` instead
+    // (DD 21594113 decision 4); the port makes that choice unskippable.
+    let memberships = state
+        .accounts
+        .list_for_user(user.id, ListingScope::SelfView)
+        .await?;
+    let accounts: Vec<serde_json::Value> = memberships
+        .into_iter()
+        .map(|membership| {
+            json!({
+                "id": membership.account.id.to_string(),
+                "did": membership.account.did.as_str(),
+                "handle": membership.account.handle.as_str(),
+                "name": membership.account.name.as_str(),
+                "role": membership.role.as_str(),
+            })
+        })
+        .collect();
+
+    Ok(ok_json(serde_json::Value::Array(accounts)))
 }
 
 /// Founds a new Account for the signed-in visitor and makes them its Owner

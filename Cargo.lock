@@ -4706,8 +4706,8 @@ dependencies = [
 
 [[package]]
 name = "sqlx-rust-codegen"
-version = "0.2.2"
-source = "git+https://github.com/ZurNetwork/sqlx-rust-codegen.git?tag=v0.2.2#97eb63056dadfe6d45060bec35921cec1ac354ec"
+version = "0.3.0"
+source = "git+https://github.com/ZurNetwork/sqlx-rust-codegen.git?tag=v0.3.0#057fad89ebc5ab1fafb2ff09b965e98744b996bb"
 dependencies = [
  "anyhow",
  "pg_query",

@@ -16,7 +16,7 @@ use adapter_pg::{
 use chrono::{Duration, Utc};
 use domain::{
     elements::{
-        account::{Account, AccountId, AccountName},
+        account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
         commission::{Commission, CommissionTitle, GrantLevel},
         did::Did,
         handle::Handle,
@@ -1505,5 +1505,174 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
         )
         .await,
         "an expired quarantine no longer reserves the handle"
+    );
+}
+
+// --- ZMVP-157: `list_for_user` against real SQL. ---
+//
+// These matter more than most round-trip tests: `WHERE am.user_id = $1 AND
+// a.deleted_at IS NULL AND (am.listed_on_profile OR NOT $2)` IS the
+// authorization boundary for `GET /accounts` — the only thing standing between
+// a caller and other users' rows. The API-level suites exercise adapter-mem,
+// whose implementation is independently hand-written, so a divergence in a
+// scoping predicate is exactly the regression those tests cannot catch.
+
+/// Read a user's own accounts off the pool-backed store.
+async fn list_for_user(pool: &PgPool, user: UserId, scope: ListingScope) -> Vec<AccountMembership> {
+    PgAccountStore::new(pool.clone())
+        .list_for_user(user, scope)
+        .await
+        .expect("list_for_user")
+}
+
+/// Found an account owned by `owner_did`, returning it. Each call mints its own
+/// DID/handle from `tag`, so a test can seed several without collisions.
+async fn found_account(pool: &PgPool, owner: UserId, tag: &str) -> Account {
+    let (account, membership) = Account::open(
+        owner,
+        Did::new(format!("did:plc:pglist-{tag}")),
+        Handle::try_new(format!("pglist-{tag}.example.com")).unwrap(),
+        "PG Studio".parse::<AccountName>().unwrap(),
+        Utc::now(),
+    );
+    create(pool, &account, &membership).await;
+    account
+}
+
+// The listing is every live account the caller holds a role in — founded AND
+// granted alike (Engineer ruling 2026-07-24) — each row carrying the caller's
+// OWN role, ordered by id. The stranger's account is the containment case: it
+// proves the `user_id` predicate scopes the query rather than merely decorating
+// it, which is the property ZMVP-17 rests on.
+#[tokio::test]
+async fn list_for_user_returns_every_live_membership_with_the_callers_own_role() {
+    let (pool, _container) = fresh_pool().await;
+
+    let caller = provision(&pool, "did:plc:pglist-caller").await;
+    let stranger = provision(&pool, "did:plc:pglist-stranger").await;
+
+    let owned = found_account(&pool, caller.id, "owned").await;
+
+    // A second account someone else founded, on which the caller holds a
+    // non-Owner role — the accepted-invitation shape (ZMVP-20).
+    let joined = found_account(&pool, stranger.id, "joined").await;
+    let seat = UserAccount {
+        user_id: caller.id,
+        account_id: joined.id,
+        role: Role::Member(None),
+    };
+    grant_role(&pool, &seat).await;
+
+    // A third the caller has nothing to do with: must never appear.
+    let theirs = found_account(&pool, stranger.id, "theirs").await;
+
+    let rows = list_for_user(&pool, caller.id, ListingScope::SelfView).await;
+
+    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id).collect();
+    assert!(
+        !listed.contains(&theirs.id),
+        "an account the caller holds no role in is never listed, got {listed:?}"
+    );
+    assert_eq!(
+        listed.len(),
+        2,
+        "exactly the two memberships, got {listed:?}"
+    );
+
+    let owned_row = rows
+        .iter()
+        .find(|row| row.account.id == owned.id)
+        .expect("the founded account is listed");
+    assert_eq!(
+        owned_row.role,
+        Role::Owner(None),
+        "the founder's own role rides along"
+    );
+    assert_eq!(
+        owned_row.account.handle, owned.handle,
+        "the row is hydrated"
+    );
+    assert_eq!(owned_row.account.did, owned.did, "the DID join resolves");
+
+    let joined_row = rows
+        .iter()
+        .find(|row| row.account.id == joined.id)
+        .expect("the granted-only account is listed too — not owned-only");
+    assert_eq!(
+        joined_row.role,
+        Role::Member(None),
+        "the CALLER's role, not the account owner's"
+    );
+
+    // Ordering is `ORDER BY a.id`, and account ids are UUIDv7 — creation order.
+    let order: Vec<uuid::Uuid> = listed.iter().map(|id| **id).collect();
+    let mut expected = order.clone();
+    expected.sort();
+    assert_eq!(order, expected, "rows come back ascending by account id");
+}
+
+// Soft-deleted accounts are absent, mirroring `find`'s `deleted_at IS NULL`
+// liveness filter (DD 23003138). The membership row survives the tombstone, so
+// only the join's predicate keeps it out of the listing.
+#[tokio::test]
+async fn list_for_user_excludes_a_soft_deleted_account() {
+    let (pool, _container) = fresh_pool().await;
+
+    let caller = provision(&pool, "did:plc:pglist-live-caller").await;
+    let live = found_account(&pool, caller.id, "live").await;
+    let doomed = found_account(&pool, caller.id, "doomed").await;
+
+    soft_delete(&pool, doomed.id).await;
+
+    let rows = list_for_user(&pool, caller.id, ListingScope::SelfView).await;
+    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id).collect();
+    assert_eq!(
+        listed,
+        vec![live.id],
+        "only the live account is listed; the tombstoned one is filtered out"
+    );
+    assert!(
+        role_of(&pool, caller.id, doomed.id).await.is_some(),
+        "the membership row itself survives the soft delete — only the join filters it"
+    );
+}
+
+// The `listed_on_profile` valve (DD 21594113 decision 4, Engineer ruling
+// 2026-07-25) is honored for a PUBLIC projection and deliberately ignored for
+// the member's own view. This is the test that makes `ListingScope` more than a
+// parameter: the same user, the same rows, two different answers.
+#[tokio::test]
+async fn list_for_user_honors_the_privacy_valve_only_for_a_public_projection() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:pgvalve-owner").await;
+    let member = provision(&pool, "did:plc:pgvalve-member").await.id;
+
+    // Two accounts the member joins by invitation — one published, one not.
+    let published = found_account(&pool, owner.id, "published").await;
+    let unlisted = found_account(&pool, owner.id, "unlisted").await;
+
+    for (account, listed) in [(&published, true), (&unlisted, false)] {
+        let invitation =
+            Invitation::issue(account.id, member, Role::Member(None), owner.id, Utc::now());
+        create_invitation(&pool, &invitation).await;
+        accept_invitation(&pool, invitation, listed).await;
+    }
+
+    let own_view = list_for_user(&pool, member, ListingScope::SelfView).await;
+    let own_ids: BTreeSet<uuid::Uuid> = own_view.iter().map(|row| *row.account.id).collect();
+    assert_eq!(
+        own_ids,
+        BTreeSet::from([*published.id, *unlisted.id]),
+        "a member's OWN view shows every live membership — their publication \
+         choice does not hide their records from themselves"
+    );
+
+    let public_view = list_for_user(&pool, member, ListingScope::PublicProfile).await;
+    let public_ids: Vec<AccountId> = public_view.iter().map(|row| row.account.id).collect();
+    assert_eq!(
+        public_ids,
+        vec![published.id],
+        "a PUBLIC projection shows only the memberships the member published"
     );
 }

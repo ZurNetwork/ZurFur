@@ -720,79 +720,180 @@ impl PgCommissionStore {
     }
 }
 
+/// The persisted commission fields shared by the `find` row (which lacks its
+/// own `id` — the caller already has it) and the `list_owned_by` row (which
+/// carries one) — the codegen shapes for `queries/commission/find.sql` and
+/// `queries/commission/list_owned_by.sql` (ZMVP-157). Naming this lets
+/// [`to_commission`] converge both call sites on ONE re-validation body
+/// (ruling 3: multi-line constructions named first) instead of the read-store
+/// re-deriving [`Commission`] from raw columns twice.
+///
+/// Every field here is still a **raw column value** — the stored token, not the
+/// domain type. Nothing in this struct is trusted: [`to_commission`] is the one
+/// gate that re-validates each one back into its newtype/enum.
+struct CommissionFields {
+    /// The commission's fixed Title (ZMVP-65), re-validated into
+    /// [`CommissionTitle`].
+    title: String,
+    /// The User who created it and owns it — the permanent owner
+    /// (DESIGN/Commission); the `owner_id` this listing filters on.
+    owner_id: uuid::Uuid,
+    /// The stored [`LifecycleStep`] token.
+    lifecycle: String,
+    /// The stored [`Visibility`] token.
+    visibility: String,
+    /// The nullable deadline envelope field.
+    deadline: Option<DateTimeUtc>,
+    /// The stored [`MaturityRating`] token, or `None` while unrated (ZMVP-31).
+    /// Both-or-neither with `graphic` — the migration's CHECK enforces it, and
+    /// [`to_commission`] refuses a half-set pair rather than defaulting.
+    maturity: Option<String>,
+    /// The orthogonal graphic flag of the maturity posture; see `maturity`.
+    graphic: Option<bool>,
+    /// The stored [`DirectionStatus`] token, or `None` while none is set
+    /// (ZMVP-85).
+    direction_status: Option<String>,
+    /// The stored [`DeadlineStatus`] token (ZMVP-86) — the manual `Delayed`
+    /// flag only; `Late` is derived fresh at read, never persisted (Engineer
+    /// ruling 2026-07-08).
+    deadline_status: Option<String>,
+    /// The external [`ChannelPointer`], or `None` while none is declared
+    /// (ZMVP-87 AC3).
+    linked_channel: Option<String>,
+    /// When the commission was archived, or `None` while active (ZMVP-68) —
+    /// what `list_owned_by` filters on to stay an active view.
+    archived_at: Option<DateTimeUtc>,
+    /// When the commission was created.
+    created_at: DateTimeUtc,
+}
+
+impl From<sql::FindRow> for CommissionFields {
+    /// The single-commission read's row (`queries/commission/find.sql`), which
+    /// selects no `id` — the caller passed one in to look it up, so
+    /// [`CommissionStore::find`] hands that same id to [`to_commission`].
+    fn from(row: sql::FindRow) -> Self {
+        Self {
+            title: row.title,
+            owner_id: row.owner_id,
+            lifecycle: row.lifecycle,
+            visibility: row.visibility,
+            deadline: row.deadline,
+            maturity: row.maturity,
+            graphic: row.graphic,
+            direction_status: row.direction_status,
+            deadline_status: row.deadline_status,
+            linked_channel: row.linked_channel,
+            archived_at: row.archived_at,
+            created_at: row.created_at,
+        }
+    }
+}
+
+impl From<sql::CommissionRow> for CommissionFields {
+    /// The listing read's row (`queries/commission/list_owned_by.sql`), which
+    /// *does* carry an `id` — one per result, so nothing outside the row knows
+    /// it. The conversion drops it deliberately: [`CommissionStore::list_owned_by`]
+    /// lifts it into a [`CommissionId`] first and passes it alongside these
+    /// fields, keeping the id typed rather than smuggling a bare UUID through
+    /// the shared shape.
+    fn from(row: sql::CommissionRow) -> Self {
+        Self {
+            title: row.title,
+            owner_id: row.owner_id,
+            lifecycle: row.lifecycle,
+            visibility: row.visibility,
+            deadline: row.deadline,
+            maturity: row.maturity,
+            graphic: row.graphic,
+            direction_status: row.direction_status,
+            deadline_status: row.deadline_status,
+            linked_channel: row.linked_channel,
+            archived_at: row.archived_at,
+            created_at: row.created_at,
+        }
+    }
+}
+
+/// Rebuild the [`Commission`] from its persisted fields (shared by
+/// [`CommissionStore::find`] and [`CommissionStore::list_owned_by`] via
+/// [`CommissionFields`]). The stored `lifecycle`, `visibility`, `maturity`,
+/// `direction_status`, `deadline_status`, and `linked_channel` values are
+/// re-validated through their domain gates (`TryFrom<&str>` on
+/// [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`] /
+/// [`DirectionStatus`] / [`DeadlineStatus`], with `ChannelPointer`'s and
+/// `CommissionTitle`'s `TryFrom<String>` for the title); a value outside its
+/// vocabulary means row tampering and surfaces as an `Err`, never a panic or a
+/// silent default — as does a half-set maturity posture, which the
+/// migration's CHECK already makes unrepresentable at the database.
+fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
+    let maturity = match (fields.maturity, fields.graphic) {
+        (None, None) => None,
+        (Some(token), Some(graphic)) => Some(Maturity {
+            rating: MaturityRating::try_from(token.as_str())
+                .map_err(|_| anyhow::anyhow!("unknown maturity token {token:?}"))?,
+            graphic,
+        }),
+        (token, graphic) => {
+            anyhow::bail!("half-set maturity posture (maturity {token:?}, graphic {graphic:?})")
+        }
+    };
+    let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
+        .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
+    // The stored `deadline_status` is the manual `Delayed` flag only — `Late`
+    // is never persisted (Engineer ruling 2026-07-08). Derive the effective
+    // status fresh at lookup from the deadline, the same math the sweep's log
+    // pass uses.
+    let stored_deadline_status = fields
+        .deadline_status
+        .as_deref()
+        .map(|token| {
+            DeadlineStatus::try_from(token)
+                .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
+        })
+        .transpose()?;
+    let deadline_status = derive_deadline_status(
+        fields.deadline,
+        &lifecycle_step,
+        stored_deadline_status,
+        chrono::Utc::now(),
+    );
+    let commission = Commission {
+        id,
+        title: CommissionTitle::try_from(fields.title)?,
+        owner_id: UserId::new(fields.owner_id),
+        lifecycle_step,
+        visibility: Visibility::try_from(fields.visibility.as_str())
+            .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", fields.visibility))?,
+        deadline: fields.deadline,
+        maturity,
+        direction_status: fields
+            .direction_status
+            .as_deref()
+            .map(|token| {
+                DirectionStatus::try_from(token)
+                    .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
+            })
+            .transpose()?,
+        deadline_status,
+        linked_channel: fields
+            .linked_channel
+            .map(ChannelPointer::try_from)
+            .transpose()?,
+        archived_at: fields.archived_at,
+        created_at: fields.created_at,
+    };
+    Ok(commission)
+}
+
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
-    /// Rebuild the [`Commission`] from its row. The stored `lifecycle`,
-    /// `visibility`, `maturity`, `direction_status`, `deadline_status`, and
-    /// `linked_channel` values are re-validated through their domain gates
-    /// (`TryFrom<&str>` on [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`]
-    /// / [`DirectionStatus`] / [`DeadlineStatus`], with `ChannelPointer`'s
-    /// and `CommissionTitle`'s `TryFrom<String>` for the
-    /// title); a value outside its vocabulary means row tampering and surfaces
-    /// as an `Err`, never a panic or a silent default — as does a half-set
-    /// maturity posture, which the migration's CHECK already makes
-    /// unrepresentable at the database.
+    /// Rebuild the [`Commission`] from its row via [`to_commission`]; `None`
+    /// if no such commission exists.
     async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&self.pool, *id).await? else {
             return Ok(None);
         };
-
-        let maturity = match (row.maturity, row.graphic) {
-            (None, None) => None,
-            (Some(token), Some(graphic)) => Some(Maturity {
-                rating: MaturityRating::try_from(token.as_str())
-                    .map_err(|_| anyhow::anyhow!("unknown maturity token {token:?}"))?,
-                graphic,
-            }),
-            (token, graphic) => {
-                anyhow::bail!("half-set maturity posture (maturity {token:?}, graphic {graphic:?})")
-            }
-        };
-        let lifecycle_step = LifecycleStep::try_from(row.lifecycle.as_str())
-            .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", row.lifecycle))?;
-        // The stored `deadline_status` is the manual `Delayed` flag only — `Late`
-        // is never persisted (Engineer ruling 2026-07-08). Derive the effective
-        // status fresh at lookup from the deadline, the same math the sweep's log
-        // pass uses.
-        let stored_deadline_status = row
-            .deadline_status
-            .as_deref()
-            .map(|token| {
-                DeadlineStatus::try_from(token)
-                    .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
-            })
-            .transpose()?;
-        let deadline_status = derive_deadline_status(
-            row.deadline,
-            &lifecycle_step,
-            stored_deadline_status,
-            chrono::Utc::now(),
-        );
-        Ok(Some(Commission {
-            id,
-            title: CommissionTitle::try_from(row.title)?,
-            owner_id: UserId::new(row.owner_id),
-            lifecycle_step,
-            visibility: Visibility::try_from(row.visibility.as_str())
-                .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", row.visibility))?,
-            deadline: row.deadline,
-            maturity,
-            direction_status: row
-                .direction_status
-                .as_deref()
-                .map(|token| {
-                    DirectionStatus::try_from(token)
-                        .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
-                })
-                .transpose()?,
-            deadline_status,
-            linked_channel: row
-                .linked_channel
-                .map(ChannelPointer::try_from)
-                .transpose()?,
-            archived_at: row.archived_at,
-            created_at: row.created_at,
-        }))
+        to_commission(id, row.into()).map(Some)
     }
 
     /// The current-placement pointer row (ZMVP-70), or `None` if the commission
@@ -963,6 +1064,21 @@ impl CommissionStore for PgCommissionStore {
                     link: row.link.map(SeatLink::try_from).transpose()?,
                     occupant: row.occupant.map(UserId::new),
                 })
+            })
+            .collect()
+    }
+
+    /// One indexed query over `commission.owner_id`, filtered active
+    /// (`archived_at IS NULL`) and ordered by id (ZMVP-157); each row
+    /// re-validated through [`to_commission`] exactly as [`find`](PgCommissionStore::find)
+    /// re-validates its own row.
+    async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>> {
+        sql::list_owned_by(&self.pool, *owner)
+            .await?
+            .into_iter()
+            .map(|row| {
+                let id = CommissionId::new(row.id);
+                to_commission(id, row.into())
             })
             .collect()
     }

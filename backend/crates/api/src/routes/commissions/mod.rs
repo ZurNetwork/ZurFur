@@ -4,6 +4,8 @@
 //!
 //! - [`create`] — `POST /commissions` (ZMVP-65 + the creation changelog entry;
 //!   ZMVP-71 mints the root surface in the same unit of work).
+//! - [`list`] — `GET /commissions` (ZMVP-157: the signed-in user's owned
+//!   commissions, owner-POV only — frontend enablement for ZMVP-153).
 //! - [`changelog`] — `GET /commissions/{id}/changelog` (the ordered read).
 //! - [`notes`] — `POST /commissions/{id}/notes` (free text into the record).
 //! - [`channel`] — `PUT`/`DELETE /commissions/{id}/channel` (the linked-channel
@@ -76,6 +78,7 @@ mod deadline;
 mod delete;
 mod files;
 mod invitations;
+mod list;
 mod markup;
 mod maturity;
 mod notes;
@@ -108,7 +111,10 @@ const UPLOAD_BODY_SLACK_BYTES: usize = 1024 * 1024;
 pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
     let upload_body_limit = max_upload_bytes.saturating_add(UPLOAD_BODY_SLACK_BYTES);
     Router::new()
-        .route("/commissions", post(create::create_commission))
+        .route(
+            "/commissions",
+            get(list::list_commissions).post(create::create_commission),
+        )
         .route(
             "/commissions/{id}",
             axum::routing::delete(delete::delete_commission),

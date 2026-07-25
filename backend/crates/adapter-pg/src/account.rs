@@ -13,7 +13,7 @@ use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        account::{Account, AccountId, AccountName},
+        account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
         actor_identity::{ActorKind, ActorState},
         did::Did,
         handle::Handle,
@@ -96,27 +96,105 @@ const _: () = assert!(
      remove this guard and its mirror in the api crate"
 );
 
-/// Rebuild a domain [`Account`] from its generated row. The stored name/handle
-/// were validated before they were written, so re-validation here only guards
-/// against tampering — surfaced as an error, never a panic. The DID is joined from
-/// the actor super-table (ZMVP-123); an account always has one (the per-kind CHECK),
-/// so a NULL is a corrupted projection, surfaced as an error too.
-fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
-    let did = row.did.ok_or_else(|| {
-        anyhow::anyhow!(
-            "account {} has no DID in actor_identity (corrupted projection)",
-            row.id
-        )
+/// Rebuild a domain [`Account`] from its persisted fields — shared by
+/// [`to_account`] (the `find` row, keyed by an id the caller already has) and
+/// [`to_account_membership`] (the `list_for_user` row, which carries its own
+/// id from the join), so the one re-validation body backs both generated row
+/// shapes. The stored name/handle were validated before they were written, so
+/// re-validation here only guards against tampering — surfaced as an error,
+/// never a panic. The DID is joined from the actor super-table (ZMVP-123); an
+/// account always has one (the per-kind CHECK), so a NULL is a corrupted
+/// projection, surfaced as an error too.
+fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
+    let AccountFields {
+        id,
+        did,
+        handle,
+        name,
+        created_at,
+        updated_at,
+        deleted_at,
+    } = fields;
+    let did = did.ok_or_else(|| {
+        anyhow::anyhow!("account {id} has no DID in actor_identity (corrupted projection)")
     })?;
     Ok(Account {
-        id: AccountId::new(row.id),
+        id: AccountId::new(id),
         did: Did::new(did),
-        handle: Handle::try_new(row.handle)?,
-        name: AccountName::try_from(row.name)?,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        deleted_at: row.deleted_at,
+        handle: Handle::try_new(handle)?,
+        name: AccountName::try_from(name)?,
+        created_at,
+        updated_at,
+        deleted_at,
     })
+}
+
+/// The persisted account columns, converged from every generated row shape that
+/// carries them — `find` and the listing.
+///
+/// Named rather than passed positionally on purpose: the seven columns include
+/// two adjacent `String`s (`handle`, `name`) and two adjacent [`DateTimeUtc`]s
+/// (`created_at`, `updated_at`), so a positional call transposing either pair
+/// would compile silently and persist wrong data forever. Converting by field
+/// name makes that transposition unrepresentable. Mirrors `CommissionFields` on
+/// the commission side, which solves the identical problem.
+struct AccountFields {
+    id: uuid::Uuid,
+    did: Option<String>,
+    handle: String,
+    name: String,
+    created_at: DateTimeUtc,
+    updated_at: DateTimeUtc,
+    deleted_at: Option<DateTimeUtc>,
+}
+
+impl From<sql::FindRow> for AccountFields {
+    fn from(row: sql::FindRow) -> Self {
+        Self {
+            id: row.id,
+            did: row.did,
+            handle: row.handle,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            deleted_at: row.deleted_at,
+        }
+    }
+}
+
+impl From<sql::ListForUserRow> for AccountFields {
+    fn from(row: sql::ListForUserRow) -> Self {
+        Self {
+            id: row.id,
+            did: row.did,
+            handle: row.handle,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            deleted_at: row.deleted_at,
+        }
+    }
+}
+
+/// Rebuild a domain [`Account`] from its `find` row. See [`build_account`].
+fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
+    build_account(row.into())
+}
+
+/// Rebuild an [`AccountMembership`] from either listing row (ZMVP-157): the
+/// account half via [`build_account`], plus the caller's own [`Role`] the join
+/// carries alongside it. Generic over the row shape because the self-view and
+/// public-projection queries return structurally identical rows under different
+/// generated names — both converge through [`AccountFields`]. A stored role
+/// outside its vocabulary means row tampering and surfaces as an `Err`, never a
+/// panic — the same posture as every other re-validated discriminant here.
+fn to_account_membership<Row>(row: Row, role: String) -> anyhow::Result<AccountMembership>
+where
+    AccountFields: From<Row>,
+{
+    let role = Role::try_from(role)?;
+    let account = build_account(AccountFields::from(row))?;
+    Ok(AccountMembership { account, role })
 }
 
 /// Rebuild a domain [`Invitation`] from its generated row, re-validating the
@@ -296,6 +374,36 @@ impl AccountStore for PgAccountStore {
     ) -> anyhow::Result<bool> {
         let excluding = excluding.map(|account| *account);
         Ok(sql::handle_reserved_for_other(&self.pool, handle.as_str(), since, excluding).await?)
+    }
+
+    /// One query joining `account_members` → `accounts` → `actor_identity`
+    /// (ZMVP-157), filtered live and ordered by id; each row re-validated
+    /// through [`to_account_membership`] exactly as [`find`](PgAccountStore::find)
+    /// re-validates its own row — an `Err` on tampering, never a panic.
+    ///
+    /// `scope` rides into the query as its `listed_on_profile` predicate: a
+    /// [`PublicProfile`](ListingScope::PublicProfile) listing sees only
+    /// published memberships, a [`SelfView`](ListingScope::SelfView) one sees
+    /// every live membership.
+    ///
+    /// The seek is served by `account_members_by_user`; without it the
+    /// `user_id` predicate could not use the composite primary key
+    /// `(account_id, user_id)`, whose leading column this query never
+    /// constrains.
+    async fn list_for_user(
+        &self,
+        user: UserId,
+        scope: ListingScope,
+    ) -> anyhow::Result<Vec<AccountMembership>> {
+        let honor_privacy = matches!(scope, ListingScope::PublicProfile);
+        sql::list_for_user(&self.pool, *user, honor_privacy)
+            .await?
+            .into_iter()
+            .map(|row| {
+                let role = row.role.clone();
+                to_account_membership(row, role)
+            })
+            .collect()
     }
 }
 

@@ -1233,6 +1233,27 @@ impl CommissionStore for MemCommissionStore {
             .filter(|file| file.commission_id == commission)
             .cloned())
     }
+
+    /// Scans `commissions` for `owner`'s rows, drops archived ones (ZMVP-157 —
+    /// the mem mirror of the pg `archived_at IS NULL` filter), and rebuilds
+    /// each via [`StoredCommission::rebuild`] — the same reconstruction
+    /// [`find`](Self::find) uses. Sorted by [`CommissionId`] afterward (UUIDv7
+    /// sorts as creation order); the `HashMap` scan itself has no natural
+    /// order, mirroring the pg `ORDER BY id`.
+    async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>> {
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let mut owned: Vec<Commission> = commissions
+            .iter()
+            .filter(|(_, stored)| stored.owner_id == owner && stored.archived_at.is_none())
+            .map(|(id, stored)| stored.rebuild(*id))
+            .collect();
+        owned.sort_by_key(|commission| *commission.id);
+        Ok(owned)
+    }
 }
 
 /// In-memory [`ChangelogStore`] read surface over the shared [`MemBackend`].

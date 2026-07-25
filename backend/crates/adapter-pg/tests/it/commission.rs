@@ -351,3 +351,102 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
          adds the table"
     );
 }
+
+// --- ZMVP-157: `list_owned_by` against real SQL. ---
+//
+// `WHERE owner_id = $1 AND archived_at IS NULL` is the authorization boundary
+// for `GET /commissions`. The API-level suite runs against adapter-mem, whose
+// implementation is independently hand-written, so only this test proves the
+// owner scoping and the active filter hold in postgres.
+
+/// Create a commission owned by `owner` in its own committed unit of work.
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+    let commission = Commission::create(
+        title.parse::<CommissionTitle>().expect("valid title"),
+        owner.id,
+        Utc::now(),
+        None,
+    );
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions().create(&commission).await.expect("create");
+    uow.commit().await.expect("commit");
+    commission
+}
+
+// The listing is owner-scoped and active-only: another user's commission never
+// appears (the containment property `GET /commissions` rests on), and an
+// archived one of the caller's own is filtered out — the active-view filtering
+// `Commission::archived_at` documents as belonging to listing projections.
+#[tokio::test]
+async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order() {
+    let (pool, _container) = fresh_pool().await;
+
+    let owner = provision(&pool, "did:plc:pglist-comm-owner").await;
+    let stranger = provision(&pool, "did:plc:pglist-comm-stranger").await;
+    let store = adapter_pg::PgCommissionStore::new(pool.clone());
+
+    let first = create_commission(&pool, &owner, "A ref sheet").await;
+    let second = create_commission(&pool, &owner, "A full illustration").await;
+    let archived = create_commission(&pool, &owner, "An old job").await;
+    let theirs = create_commission(&pool, &stranger, "Someone else's job").await;
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.commissions()
+        .set_archived(archived.id, Some(Utc::now()))
+        .await
+        .expect("archive");
+    uow.commit().await.expect("commit");
+
+    let rows = store.list_owned_by(owner.id).await.expect("list_owned_by");
+    let listed: Vec<CommissionId> = rows.iter().map(|commission| commission.id).collect();
+
+    assert!(
+        !listed.contains(&theirs.id),
+        "another user's commission is never listed, got {listed:?}"
+    );
+    assert!(
+        !listed.contains(&archived.id),
+        "an archived commission is filtered out of the active listing, got {listed:?}"
+    );
+    assert!(
+        listed.contains(&first.id) && listed.contains(&second.id),
+        "both of the caller's active commissions are listed, got {listed:?}"
+    );
+    assert_eq!(
+        listed.len(),
+        2,
+        "exactly the caller's two active commissions, got {listed:?}"
+    );
+
+    // Ordering is `ORDER BY id`, and commission ids are UUIDv7 — creation order.
+    let order: Vec<uuid::Uuid> = listed.iter().map(|id| **id).collect();
+    let mut expected = order.clone();
+    expected.sort();
+    assert_eq!(order, expected, "rows come back ascending by commission id");
+
+    let titles: Vec<&str> = rows
+        .iter()
+        .map(|commission| commission.title.as_str())
+        .collect();
+    assert!(
+        titles.contains(&"A ref sheet") && titles.contains(&"A full illustration"),
+        "rows are hydrated, not just ids: {titles:?}"
+    );
+}
+
+// A user with nothing owns nothing: the empty listing is a plain empty vec, not
+// an error — the shape `GET /commissions` renders for a new account.
+#[tokio::test]
+async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
+    let (pool, _container) = fresh_pool().await;
+    let newcomer = provision(&pool, "did:plc:pglist-comm-newcomer").await;
+    let store = adapter_pg::PgCommissionStore::new(pool.clone());
+
+    let rows = store
+        .list_owned_by(newcomer.id)
+        .await
+        .expect("list_owned_by");
+    assert!(rows.is_empty(), "a user with no commissions lists none");
+}

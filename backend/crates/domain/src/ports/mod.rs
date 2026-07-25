@@ -24,7 +24,7 @@ use async_trait::async_trait;
 
 use crate::datetime::DateTimeUtc;
 use crate::elements::{
-    account::{Account, AccountId},
+    account::{Account, AccountId, AccountMembership, ListingScope},
     account_keys::AccountKeys,
     did::Did,
     handle::Handle,
@@ -293,6 +293,32 @@ pub trait AccountStore: Send + Sync {
         excluding: Option<AccountId>,
         since: DateTimeUtc,
     ) -> anyhow::Result<bool>;
+
+    /// Every **live** account `user` holds a role in — not owned-only (ZMVP-157,
+    /// Engineer ruling 2026-07-24): gaining a role *is* how a user joins an
+    /// account on this platform (DESIGN/Roles), so an accepted invitation
+    /// (ZMVP-20) belongs on this list exactly as a founded account does. Each
+    /// row pairs the [`Account`] with the caller's own [`Role`] on it — see
+    /// [`AccountMembership`] for why the role rides along rather than needing a
+    /// second [`role_of`](Self::role_of) round-trip per row. Soft-deleted
+    /// accounts are excluded, mirroring [`find`](Self::find). Ordered by
+    /// [`AccountId`] — UUIDv7 sorts as creation order — so the listing is
+    /// deterministic; no pagination (v1 volumes are small, the same stance as
+    /// ZMVP-110).
+    ///
+    /// `scope` decides whether the `listed_on_profile` privacy valve applies,
+    /// and it is **required** so that it cannot be forgotten — see
+    /// [`ListingScope`]. A caller reading their own accounts passes
+    /// [`SelfView`](ListingScope::SelfView); anything rendering one user's
+    /// memberships *to another* must pass
+    /// [`PublicProfile`](ListingScope::PublicProfile), or it republishes
+    /// memberships the member opted out of and turns a sanctioned surface into
+    /// the cross-persona correlation ZMVP-17 forbids.
+    async fn list_for_user(
+        &self,
+        user: UserId,
+        scope: ListingScope,
+    ) -> anyhow::Result<Vec<AccountMembership>>;
 }
 
 /// The error a [`AccountWrites::create`] failure carries (as the source of its

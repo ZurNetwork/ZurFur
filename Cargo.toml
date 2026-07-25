@@ -20,7 +20,7 @@ exclude = [
 # bindgen build needs libclang at compile time (present on GitHub's
 # ubuntu-latest runners; install clang/libclang-dev locally if the build
 # can't find it).
-sqlx-rust-codegen = { git = "https://github.com/ZurNetwork/sqlx-rust-codegen.git", tag = "v0.2.2" }
+sqlx-rust-codegen = { git = "https://github.com/ZurNetwork/sqlx-rust-codegen.git", tag = "v0.3.0" }
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.20.0", features = ["v7", "serde"] }

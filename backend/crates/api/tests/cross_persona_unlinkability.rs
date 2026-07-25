@@ -21,6 +21,14 @@
 //!   one account does not assert that any two of them are the same human, so it is
 //!   not cross-persona correlation. A future roster endpoint is a deliberate,
 //!   designed surface — not something this guard should trip on.
+//! - **Also sanctioned:** a caller reading *their own* accounts (`GET /accounts`,
+//!   ZMVP-157). It is `401` to anonymous, takes no parameter naming a user, and
+//!   names no User but the caller — so obtaining it requires already being that
+//!   persona. DD `21594113` decision 4 publishes strictly more than this (the
+//!   *public* User-Profile lists account memberships by default), so a private
+//!   self-listing cannot be the leak. What must stay true is behavioural, and is
+//!   tested below: it never names a co-member (Engineer ruling 2026-07-25,
+//!   re-aiming this guard from route-absence onto the leak itself).
 //!
 //! Scope of the claim (1DD "Accepted tradeoff"): *not correlated in-product, not
 //! surfaced publicly by default* — not adversarial anonymity, since shared
@@ -194,6 +202,28 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
         !body.contains(BOB_DID) && !body.contains(BOB_HANDLE),
         "/me must not correlate the caller with a co-member's separate handle/DID, got: {body}"
     );
+
+    // The own-accounts listing (ZMVP-157) is the other surface that could
+    // correlate here: A and B share this account, so a listing that leaked its
+    // roster would name B. It must return A's account WITHOUT naming the
+    // co-member — this is the behavioural guard that replaced the old
+    // route-absence assertion for `/accounts` (Engineer ruling 2026-07-25).
+    let body = client
+        .get(format!("{base}/accounts"))
+        .send()
+        .await
+        .expect("GET /accounts")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        body.contains(&account_id),
+        "/accounts lists the caller's own account, got: {body}"
+    );
+    assert!(
+        !body.contains(BOB_DID) && !body.contains(BOB_HANDLE),
+        "/accounts must not name a co-member's separate handle/DID, got: {body}"
+    );
 }
 
 /// A signed-out viewer gets no identity surface at all — `/me` is an unauthenticated
@@ -219,11 +249,21 @@ async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
 /// separate handles get correlated, so its *absence* is part of the invariant.
 /// This fails the moment such a route is added — at which point ZMVP-17 must be
 /// reconsidered, not silently regressed.
+///
+/// `/accounts` was removed from this list in ZMVP-157 (Engineer ruling
+/// 2026-07-25) because it now exists as a **caller-scoped** read: it takes no
+/// user-naming parameter, so it cannot enumerate anyone, and the property that
+/// actually matters is tested behaviourally instead — see
+/// [`the_identity_surface_never_names_a_callers_other_persona`], which asserts
+/// the listing never names a co-member, and
+/// [`the_own_accounts_listing_is_closed_to_anonymous_callers`] below. Those are
+/// strictly stronger than an absence check: they fail on a leak, not merely on
+/// a route existing.
 #[tokio::test]
 async fn there_is_no_global_user_enumeration_endpoint() {
     let (base, _backend) = spawn_app().await;
     let c = client();
-    for path in ["/users", "/accounts", "/profiles", "/members"] {
+    for path in ["/users", "/profiles", "/members"] {
         let res = c
             .get(format!("{base}{path}"))
             .send()
@@ -238,4 +278,25 @@ async fn there_is_no_global_user_enumeration_endpoint() {
             "GET {path} must not enumerate Users across handles; got {status}"
         );
     }
+}
+
+/// The half of the old `/accounts` absence assertion that still carries weight:
+/// the own-accounts listing is **closed to anonymous callers**. A `2xx` here is
+/// the real regression the structural guard was protecting against — it would
+/// mean the listing had become a public surface, which is exactly what ZMVP-17
+/// forbids. `401` is the sanctioned answer (the route exists; you must be
+/// someone to read it); anything in the 2xx range is a leak.
+#[tokio::test]
+async fn the_own_accounts_listing_is_closed_to_anonymous_callers() {
+    let (base, _backend) = spawn_app().await;
+    let res = client()
+        .get(format!("{base}/accounts"))
+        .send()
+        .await
+        .expect("GET /accounts");
+    assert_eq!(
+        res.status(),
+        401,
+        "an anonymous /accounts is unauthenticated, exposing no membership graph"
+    );
 }

@@ -146,6 +146,24 @@ pub trait CommissionStore: Send + Sync {
         seat: NodeId,
         user: UserId,
     ) -> anyhow::Result<Option<SeatInvitation>>;
+
+    /// The commissions `owner` OWNS, owner-POV only (ZMVP-157) — the frontend's
+    /// own-commissions list. The non-participant projection view (ZMVP-75) is a
+    /// distinct, later surface this does not attempt: nothing here answers "what
+    /// can I see as a seated participant", only "what do I own".
+    ///
+    /// **Archived commissions are excluded.** An archived commission is meant to
+    /// disappear from *active views* (Deletion DD `3014657`; ZMVP-68), and
+    /// [`Commission::archived_at`] documents that filtering it out is exactly a
+    /// listing projection's job — this is that filter's first implementation.
+    /// The record and its facts still survive and stay reachable through
+    /// [`find`](Self::find) for a Participant who already has the id (e.g. to
+    /// un-archive it); this list just never surfaces one to browse to.
+    ///
+    /// Ordered by [`CommissionId`] — UUIDv7 sorts as creation order — so the
+    /// listing is deterministic; no pagination (v1 volumes are small, the same
+    /// stance as ZMVP-110).
+    async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>>;
 }
 
 /// The error an [`CommissionWrites::add_surface`] failure carries (as the source
