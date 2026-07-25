@@ -40,6 +40,19 @@ pub mod account {
         pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     }
 
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ListForUserRow {
+        pub id: uuid::Uuid,
+        pub did: Option<String>,
+        pub handle: String,
+        pub name: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        pub updated_at: chrono::DateTime<chrono::Utc>,
+        pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+        pub role: String,
+    }
+
     /// `queries/account/accept_invitation_flip.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// state receives the accepted state; inv_state guards the expected current
@@ -437,6 +450,33 @@ pub mod account {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/account/list_for_user.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every LIVE account `$1` holds a role in, together with that role (ZMVP-157) —
+    /// not owned-only: gaining a role is how a user joins an account on this
+    /// platform, so an accepted invitation belongs here exactly as a founded
+    /// account does. Mirrors `find`'s DID join (ZMVP-123) and its
+    /// `deleted_at IS NULL` liveness filter. Ordered by account id (UUIDv7 sorts
+    /// as creation order).
+    ///
+    /// `$2` gates the `listed_on_profile` privacy valve (DD 21594113 decision 4).
+    /// TRUE for a PUBLIC projection of this user's memberships, which shows only
+    /// the ones they chose to publish; FALSE for the member's OWN view, which shows
+    /// every live membership — a member's own records are not hidden from them by
+    /// their own publication choice. The domain side takes this as a required
+    /// `ListingScope`, so the valve cannot be bypassed by omission.
+    pub async fn list_for_user(
+        conn: impl sqlx::PgExecutor<'_>,
+        user_id: uuid::Uuid,
+        honor_privacy: bool,
+    ) -> sqlx::Result<Vec<ListForUserRow>> {
+        sqlx::query_as(include_str!("../queries/account/list_for_user.sql"))
+            .bind(user_id)
+            .bind(honor_privacy)
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/account/revoke_invitation.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// state receives the revoked state; inv_state guards the expected current
@@ -682,6 +722,24 @@ pub mod commission {
         pub state: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub updated_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct CommissionRow {
+        pub id: uuid::Uuid,
+        pub title: String,
+        pub owner_id: uuid::Uuid,
+        pub lifecycle: String,
+        pub visibility: String,
+        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
+        pub maturity: Option<String>,
+        pub graphic: Option<bool>,
+        pub direction_status: Option<String>,
+        pub deadline_status: Option<String>,
+        pub linked_channel: Option<String>,
+        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1123,6 +1181,22 @@ pub mod commission {
         sqlx::query_as(include_str!("../queries/commission/lapsed_deadlines.sql"))
             .bind(deadline)
             .bind(lifecycle)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/list_owned_by.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The signed-in user's OWNED commissions, owner-POV only (ZMVP-157). Archived
+    /// commissions are excluded — an active-view listing, per the documented
+    /// listing-projection contract on `commission.archived_at`. Ordered by id
+    /// (UUIDv7 sorts as creation order).
+    pub async fn list_owned_by(
+        conn: impl sqlx::PgExecutor<'_>,
+        owner_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<CommissionRow>> {
+        sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
+            .bind(owner_id)
             .fetch_all(conn)
             .await
     }

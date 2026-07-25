@@ -227,6 +227,55 @@ impl Account {
     }
 }
 
+/// One row of [`crate::ports::AccountStore::list_for_user`]: a live [`Account`]
+/// paired with the caller's own [`Role`] on it (ZMVP-157) — the frontend's
+/// own-accounts list. The role is load-bearing, not cosmetic: `DELETE
+/// /accounts/{id}` is Owner-only, so the frontend needs the caller's own
+/// standing to render the delete affordance honestly rather than offering one
+/// that 403s. Distinct from [`UserAccount`], which addresses a membership by
+/// [`AccountId`]/[`UserId`] pair for **writes** — this carries the full
+/// account row a listing renders.
+pub struct AccountMembership {
+    /// The live account itself — the full row, so a listing renders without a
+    /// second lookup per id. Never a soft-deleted one: `list_for_user` filters
+    /// those out exactly as [`crate::ports::AccountStore::find`] does.
+    pub account: Account,
+    /// The **caller's own** standing on that account, not the account's owner
+    /// or its whole member list — the role the querying user holds, carried
+    /// along by the membership join.
+    pub role: Role,
+}
+
+/// Who a membership listing is *for* — and therefore whether the
+/// `listed_on_profile` privacy valve applies (Engineer ruling 2026-07-25).
+///
+/// A member choosing not to list a membership on their profile (DD `21594113`
+/// decision 4: the public User-Profile "lists account memberships by default,
+/// each with a 'list on profile?' choice") is opting out of **publication**,
+/// not out of their own records. So the two lawful readings of "this user's
+/// accounts" differ, and the difference is a privacy boundary rather than a
+/// filter preference.
+///
+/// This is a **required** argument to
+/// [`list_for_user`](crate::ports::AccountStore::list_for_user) precisely so the
+/// valve cannot be bypassed by omission: there is no default, no `Option`, and
+/// no way to obtain a listing without stating which audience it is for. A
+/// public surface that forgot the valve would republish exactly the
+/// membership graph the cross-persona-unlinkability invariant (ZMVP-17) forbids
+/// — so the invariant is enforced by the signature, not by remembering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingScope {
+    /// The user reading their **own** accounts — every live membership,
+    /// `listed_on_profile` deliberately ignored. Backs `GET /accounts`: a
+    /// member's own records are not hidden from them by their own publication
+    /// choice.
+    SelfView,
+    /// A **public** projection of someone's memberships, as rendered to a
+    /// third party — honors `listed_on_profile`, so an unlisted membership is
+    /// absent. Backs the User-Profile surface of DD `21594113` decision 4.
+    PublicProfile,
+}
+
 /// An account's public-facing profile: its [`Did`] and a display name.
 ///
 /// The account analogue of a visitor's [`crate::elements::profile::Profile`] —

@@ -64,7 +64,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
-    account::{Account, AccountId, AccountName},
+    account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
     commission::{
@@ -100,9 +100,10 @@ pub struct MemBackend {
     /// [`StoredAccount`] parts keyed by [`AccountId`] (stored as parts because
     /// [`Account`] isn't `Clone`; `find` rebuilds a fresh `Account`).
     accounts: Arc<Mutex<HashMap<AccountId, StoredAccount>>>,
-    /// The [`Role`] each user holds in each account, keyed by `(account, user)`. A
-    /// missing key means non-membership — what `role_of` returns as `None`.
-    memberships: Arc<Mutex<HashMap<(AccountId, UserId), Role>>>,
+    /// The [`StoredMembership`] each user holds in each account, keyed by
+    /// `(account, user)`. A missing key means non-membership — what `role_of`
+    /// returns as `None`.
+    memberships: Arc<Mutex<HashMap<(AccountId, UserId), StoredMembership>>>,
     /// [`StoredInvitation`] parts keyed by [`InvitationId`] (ZMVP-32). The
     /// at-most-one-*pending*-per-(account, user) rule is enforced by scanning for an
     /// existing pending offer before inserting (the pg adapter uses a partial index).
@@ -973,6 +974,37 @@ struct StoredAccount {
     deleted_at: Option<domain::datetime::DateTimeUtc>,
 }
 
+/// One `account_members` row's fields: the [`Role`] held, plus the member's
+/// `listed_on_profile` publication choice (DD `21594113` decision 4).
+///
+/// The flag lives here rather than being dropped on the floor so the fake can
+/// answer [`ListingScope::PublicProfile`] the same way the pg adapter's
+/// `listed_on_profile` predicate does. Storing only the role would make the
+/// fake silently return unlisted memberships to a public listing — a mem/pg
+/// divergence in a *privacy* filter, which is the one class of parity bug the
+/// in-memory adapter must never have.
+#[derive(Clone, PartialEq)]
+struct StoredMembership {
+    /// The role the member holds in the account.
+    role: Role,
+    /// Whether the member chose to publish this membership on their public
+    /// profile. Mirrors the pg column's `DEFAULT true`: a membership is listed
+    /// unless the member says otherwise.
+    listed_on_profile: bool,
+}
+
+impl StoredMembership {
+    /// A membership seated with the column default — listed. Founding and
+    /// `grant_role` both take this path; only invitation-acceptance carries an
+    /// explicit choice.
+    fn listed(role: Role) -> Self {
+        Self {
+            role,
+            listed_on_profile: true,
+        }
+    }
+}
+
 /// The fields of an [`Invitation`] we keep behind the lock. Like [`Account`],
 /// `Invitation` isn't `Clone` (an entity with a lifecycle, not a value), so we
 /// store its parts and rebuild a fresh `Invitation` on read. `Clone` so a unit of
@@ -1055,7 +1087,9 @@ impl AccountStore for MemAccountStore {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        Ok(memberships.get(&(account, user)).cloned())
+        Ok(memberships
+            .get(&(account, user))
+            .map(|membership| membership.role.clone()))
     }
 
     /// Scans for the lone pending offer for `(account, invited_user)`, rebuilding
@@ -1144,6 +1178,61 @@ impl AccountStore for MemAccountStore {
                 && change.changed_at >= since
                 && excluding.is_none_or(|account| change.account_id != account)
         }))
+    }
+
+    /// Scans `memberships` for `user`'s rows, joins each back to its
+    /// `accounts` entry, and drops any that is soft-deleted or has vanished
+    /// (ZMVP-157) — the mem mirror of the pg adapter's
+    /// `account_members ⋈ accounts ⋈ actor_identity` query. Sorted by
+    /// [`AccountId`] afterward (UUIDv7 sorts as creation order); the `HashMap`
+    /// scan itself has no natural order, so the sort is what makes the result
+    /// deterministic, mirroring the pg `ORDER BY a.id`.
+    async fn list_for_user(
+        &self,
+        user: UserId,
+        scope: ListingScope,
+    ) -> anyhow::Result<Vec<AccountMembership>> {
+        let accounts = self
+            .0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned");
+        let memberships = self
+            .0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned");
+
+        // A public projection honors the member's publication choice; their own
+        // view ignores it. Mirrors the pg query's `listed_on_profile` predicate.
+        let honors_valve = matches!(scope, ListingScope::PublicProfile);
+
+        let mut rows: Vec<AccountMembership> = memberships
+            .iter()
+            .filter(|((_, member_user), _)| *member_user == user)
+            .filter(|(_, membership)| !honors_valve || membership.listed_on_profile)
+            .filter_map(|((account_id, _), membership)| {
+                let stored = accounts.get(account_id)?;
+                if stored.deleted_at.is_some() {
+                    return None;
+                }
+                let account = Account {
+                    id: *account_id,
+                    did: stored.did.clone(),
+                    handle: stored.handle.clone(),
+                    name: stored.name.clone(),
+                    created_at: stored.created_at,
+                    updated_at: stored.updated_at,
+                    deleted_at: stored.deleted_at,
+                };
+                Some(AccountMembership {
+                    account,
+                    role: membership.role.clone(),
+                })
+            })
+            .collect();
+        rows.sort_by_key(|membership| *membership.account.id);
+        Ok(rows)
     }
 }
 
@@ -1270,7 +1359,10 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert((*account_id, *user_id), role.clone());
+        memberships.insert(
+            (*account_id, *user_id),
+            StoredMembership::listed(role.clone()),
+        );
         Ok(())
     }
 
@@ -1356,7 +1448,7 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert((*account_id, *user), role.clone());
+        memberships.insert((*account_id, *user), StoredMembership::listed(role.clone()));
         Ok(())
     }
 
@@ -1452,7 +1544,7 @@ impl AccountWrites for MemAccountWrites {
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
-        _listed_on_profile: bool,
+        listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
         {
             // The pending guard is the atomic backstop: matching no pending offer
@@ -1483,10 +1575,17 @@ impl AccountWrites for MemAccountWrites {
             .expect("MemBackend memberships mutex poisoned");
         // `or_insert_with` writes only when the pair is absent, so a re-seat of an
         // already-seated pair leaves the existing role untouched instead of
-        // overwriting it with this (possibly stale) invitation's offer.
+        // overwriting it with this (possibly stale) invitation's offer. The
+        // invitee's `listed_on_profile` choice is seated with it, and likewise
+        // is not overwritten on a re-seat.
+        let seated = StoredMembership {
+            role: invitation.role.clone(),
+            listed_on_profile,
+        };
         let role = memberships
             .entry((invitation.account, invitation.invited_user))
-            .or_insert_with(|| invitation.role.clone())
+            .or_insert(seated)
+            .role
             .clone();
 
         Ok(UserAccount {
@@ -1519,7 +1618,10 @@ impl AccountWrites for MemAccountWrites {
             .expect("MemBackend memberships mutex poisoned");
 
         // Backstop: the outgoing Owner must still be the Owner of this account.
-        if !matches!(memberships.get(&(account, old_owner)), Some(Role::Owner(_))) {
+        if !matches!(
+            memberships.get(&(account, old_owner)).map(|m| &m.role),
+            Some(Role::Owner(_))
+        ) {
             return Err(anyhow::anyhow!(
                 "user {} is not the Owner of account {}; ownership not transferred",
                 *old_owner,
@@ -1536,8 +1638,14 @@ impl AccountWrites for MemAccountWrites {
             ));
         }
 
-        memberships.insert((account, old_owner), Role::Admin(None));
-        memberships.insert((account, new_owner), Role::Owner(None));
+        // Only the roles swap — each member keeps their own `listed_on_profile`
+        // choice across the transfer; ownership is not a publication decision.
+        if let Some(outgoing) = memberships.get_mut(&(account, old_owner)) {
+            outgoing.role = Role::Admin(None);
+        }
+        if let Some(incoming) = memberships.get_mut(&(account, new_owner)) {
+            incoming.role = Role::Owner(None);
+        }
         Ok(())
     }
 
