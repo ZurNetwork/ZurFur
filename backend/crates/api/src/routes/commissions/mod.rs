@@ -69,6 +69,28 @@ use uuid::Uuid;
 
 use crate::{AppState, SESSION_USER_KEY, problem::Problem};
 
+/// Domain time → the contract's wire time (ZMVP-160). `pbjson_types::Timestamp`
+/// serializes as canonical ProtoJSON — RFC 3339, Z-normalized, 0/3/6/9
+/// fractional digits — which is byte-identical to what chrono's serde emitted
+/// (`contract/VERSIONING.md` §7.3), so adopting the generated types does not
+/// move the wire.
+pub(super) fn wire_timestamp(at: domain::datetime::DateTimeUtc) -> pbjson_types::Timestamp {
+    pbjson_types::Timestamp {
+        seconds: at.timestamp(),
+        nanos: at.timestamp_subsec_nanos() as i32,
+    }
+}
+
+/// Wire time → domain time, or `None` for a timestamp outside chrono's range.
+/// The GENERATED deserializer already enforced the strict ProtoJSON grammar on
+/// parse (closing the chrono-laxness input gap §7.3 recorded); this only
+/// bridges the representation.
+pub(super) fn from_wire_timestamp(
+    at: pbjson_types::Timestamp,
+) -> Option<domain::datetime::DateTimeUtc> {
+    chrono::DateTime::from_timestamp(at.seconds, u32::try_from(at.nanos).ok()?)
+}
+
 mod archive;
 mod changelog;
 mod channel;

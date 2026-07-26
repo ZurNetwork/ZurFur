@@ -3,6 +3,13 @@
 //! projection view (ZMVP-75) is a distinct, later surface this does not
 //! attempt: nothing here answers "what can I see as a seated participant",
 //! only "what do I own".
+//!
+//! The response types are the contract's GENERATED messages (ZMVP-160):
+//! `Commission` / `Maturity` / `ListCommissionsResponse` from
+//! `contract/zurfur/api/v1/commission.proto` — a shape that drifts from the
+//! corpus stops compiling, which is the property the contract exists for.
+//! Their serde is canonical ProtoJSON: lowerCamelCase keys (R1), absent
+//! optionals omit their keys (R4).
 
 use axum::{
     Json,
@@ -10,102 +17,40 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::datetime::DateTimeUtc;
-use domain::elements::commission::Commission;
-use serde::Serialize;
 use tower_sessions::Session;
 
+use super::wire_timestamp;
+use crate::generated::{Commission, ListCommissionsResponse, Maturity};
 use crate::{AppState, problem::Problem};
 
-/// A commission's maturity rating as the API renders it (DD `29982722`): the
-/// atproto self-label axis plus the orthogonal `graphic` flag.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct MaturityBody {
-    /// The maturity axis value — `safe` / `suggestive` / `nudity` / `adult`.
-    rating: String,
-    /// The orthogonal graphic-content flag.
-    graphic: bool,
-}
-
-/// One row of `GET /commissions` — the envelope fields a listing renders.
-///
-/// The content tree is deliberately absent (that stays the future
-/// single-commission surface's job), and `owner` is omitted because this
-/// endpoint is owner-POV only: every row's owner is always the caller.
-///
-/// Named rather than built with `json!` (ZMVP-158): a schema cannot be checked
-/// against a `json!` literal because there is no type to check. This is also
-/// the **first place a `Commission` is serialized anywhere in the API**, so
-/// this field set is the precedent every later commission surface inherits.
-///
-/// Minted at `/api/v1` (contract R1/R4, 2026-07-25): keys are lowerCamelCase,
-/// and an absent optional OMITS its key — `null` is never emitted. Absence
-/// only ever means "not set".
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct CommissionBody {
-    /// The commission's UUIDv7, rendered as a string.
-    id: String,
-    /// The commission's title.
-    title: String,
-    /// The lifecycle step — `draft` / `batched` / `active` / …
-    lifecycle: String,
-    /// Who may see it.
-    visibility: String,
-    /// The agreed deadline, if one is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deadline: Option<DateTimeUtc>,
-    /// The maturity rating, if one is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    maturity: Option<MaturityBody>,
-    /// The direction axis of the two-dimensional status set, if set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    direction_status: Option<String>,
-    /// The deadline axis of the two-dimensional status set, if set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deadline_status: Option<String>,
-    /// The external chat channel pointer, if one is linked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    linked_channel: Option<String>,
-    /// When the commission was created.
-    created_at: DateTimeUtc,
-}
-
-impl From<Commission> for CommissionBody {
-    fn from(commission: Commission) -> Self {
-        let maturity = commission.maturity.map(|maturity| MaturityBody {
-            rating: maturity.rating.as_str().to_owned(),
-            graphic: maturity.graphic,
-        });
-        Self {
-            id: commission.id.to_string(),
-            title: commission.title.as_str().to_owned(),
-            lifecycle: commission.lifecycle_step.as_str().to_owned(),
-            visibility: commission.visibility.as_str().to_owned(),
-            deadline: commission.deadline,
-            maturity,
-            direction_status: commission
-                .direction_status
-                .map(|status| status.as_str().to_owned()),
-            deadline_status: commission
-                .deadline_status
-                .map(|status| status.as_str().to_owned()),
-            linked_channel: commission
-                .linked_channel
-                .as_ref()
-                .map(|channel| channel.as_str().to_owned()),
-            created_at: commission.created_at,
-        }
+/// Render a domain commission into the contract's envelope. The ONE mapping
+/// site for the listing row; `create` builds its own response message from the
+/// same fields (the corpus keeps the two messages separate on purpose, so each
+/// endpoint's response can evolve independently).
+pub(super) fn wire_commission(commission: domain::elements::commission::Commission) -> Commission {
+    let maturity = commission.maturity.map(|maturity| Maturity {
+        rating: maturity.rating.as_str().to_owned(),
+        graphic: maturity.graphic,
+    });
+    Commission {
+        id: commission.id.to_string(),
+        title: commission.title.as_str().to_owned(),
+        lifecycle: commission.lifecycle_step.as_str().to_owned(),
+        visibility: commission.visibility.as_str().to_owned(),
+        deadline: commission.deadline.map(wire_timestamp),
+        maturity,
+        direction_status: commission
+            .direction_status
+            .map(|status| status.as_str().to_owned()),
+        deadline_status: commission
+            .deadline_status
+            .map(|status| status.as_str().to_owned()),
+        linked_channel: commission
+            .linked_channel
+            .as_ref()
+            .map(|channel| channel.as_str().to_owned()),
+        created_at: Some(wire_timestamp(commission.created_at)),
     }
-}
-
-/// `GET /api/v1/commissions` — wrapped (contract R7): `{ "commissions": [...] }`,
-/// so pagination can later land additively as a sibling key instead of
-/// costing a major.
-#[derive(Serialize)]
-struct ListCommissionsBody {
-    commissions: Vec<CommissionBody>,
 }
 
 /// List the signed-in user's owned commissions (ZMVP-157).
@@ -133,10 +78,9 @@ pub(super) async fn list_commissions(
     let user = super::current_user(&state, &session).await?;
 
     let commissions = state.commissions.list_owned_by(user.id).await?;
-    let commissions: Vec<CommissionBody> =
-        commissions.into_iter().map(CommissionBody::from).collect();
+    let commissions: Vec<Commission> = commissions.into_iter().map(wire_commission).collect();
 
-    let body = ListCommissionsBody { commissions };
+    let body = ListCommissionsResponse { commissions };
     let response = (StatusCode::OK, Json(body)).into_response();
     Ok(response)
 }

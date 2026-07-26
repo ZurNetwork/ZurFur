@@ -11,50 +11,27 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    datetime::DateTimeUtc,
     elements::{
         commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
         maturity::{Maturity, MaturityRating},
     },
     ports::UnitOfWork,
 };
-use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
 
-use super::list::CommissionBody;
+use super::{from_wire_timestamp, list::wire_commission};
+use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
 use crate::{AppState, problem::Problem};
 
-/// The `POST /commissions` request body: the commission's fixed metadata a caller
-/// supplies. The `title` is required (a missing/invalid body is a `422`); `deadline`
-/// and `maturity` are the optional envelope fields. Owner and lifecycle are not
-/// accepted from the client — the owner is the authenticated caller and the
-/// lifecycle is always `Draft`.
-///
-/// `maturity` lets the caller rate the commission **at creation** instead of a
-/// follow-up `PUT /commissions/{id}/maturity`: when present its `rating` is resolved
-/// server-side (a bad token is a `422`, never stored) and lands in the same write;
-/// when absent the commission is born unrated (`None`) — legal while it stays
-/// private (Maturity Vocabulary DD `29982722`: a rating is required at *publish*,
-/// not at birth).
-#[derive(Deserialize)]
-pub(super) struct CreateCommissionBody {
-    title: String,
-    deadline: Option<DateTimeUtc>,
-    maturity: Option<MaturityInput>,
-}
-
-/// The optional at-creation maturity posture on [`CreateCommissionBody`] — the same
-/// `{ rating, graphic }` shape the `PUT .../maturity` route accepts, so rating at
-/// birth and re-rating later speak one wire language. `graphic` defaults to `false`
-/// when omitted.
-#[derive(Deserialize)]
-struct MaturityInput {
-    rating: String,
-    #[serde(default)]
-    graphic: bool,
-}
-
+/// The request shape is the contract's GENERATED `CreateCommissionRequest`
+/// (ZMVP-160): `title` required; `deadline` and `maturity` optional. Owner and
+/// lifecycle are never accepted from the client — the owner is the caller, the
+/// lifecycle is always Draft. The generated deserializer REJECTS unknown
+/// request fields (canonical ProtoJSON; the contract's tolerant-reader duty is
+/// response-side and client-only — the server stays conservative, VERSIONING
+/// §6), and parses `deadline` under the STRICT Timestamp grammar, closing the
+/// chrono-laxness input gap (§7.3).
 /// Create a commission owned by the signed-in caller (ZMVP-65), recording the
 /// creation in its changelog (ZMVP-87).
 ///
@@ -80,7 +57,7 @@ struct MaturityInput {
 pub(super) async fn create_commission(
     State(state): State<AppState>,
     session: Session,
-    body: Result<Json<CreateCommissionBody>, JsonRejection>,
+    body: Result<Json<CreateCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let user = super::current_user(&state, &session).await?;
 
@@ -106,8 +83,16 @@ pub(super) async fn create_commission(
         })
         .transpose()?;
 
+    let deadline = body
+        .deadline
+        .map(|at| {
+            from_wire_timestamp(at)
+                .ok_or_else(|| Problem::invalid_request("deadline is out of range"))
+        })
+        .transpose()?;
+
     let now = Utc::now();
-    let mut commission = Commission::create(title, user.id, now, body.deadline);
+    let mut commission = Commission::create(title, user.id, now, deadline);
     commission.maturity = maturity;
     // The genesis entry: the payload carries the title so the sentence renders
     // without joins (the DD's core-renderable rule).
@@ -132,7 +117,19 @@ pub(super) async fn create_commission(
         })
         .await?;
 
-    let body = CommissionBody::from(commission);
+    let row = wire_commission(commission);
+    let body = CreateCommissionResponse {
+        id: row.id,
+        title: row.title,
+        lifecycle: row.lifecycle,
+        visibility: row.visibility,
+        deadline: row.deadline,
+        maturity: row.maturity,
+        direction_status: row.direction_status,
+        deadline_status: row.deadline_status,
+        linked_channel: row.linked_channel,
+        created_at: row.created_at,
+    };
     let response = (StatusCode::CREATED, Json(body)).into_response();
     Ok(response)
 }
