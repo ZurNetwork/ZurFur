@@ -1,0 +1,19 @@
+# Frontend codegen (ZMVP-161, DD 40992770 decision 5): protobuf-es emits the
+# TypeScript types AND the runtime schemas whose `fromJson` is the boundary
+# decoder — generated from the contract, so it structurally cannot drift from
+# it (the amended Decision 4 of DD 39944194).
+#
+# Output lands under src/lib/server/api/generated/ — BELOW the runes seam, so
+# the eslint containment guard and SvelteKit's server-only enforcement apply
+# to it unchanged, and the client bundle never sees it.
+#
+# Regenerate: `just gen-contract` (drift is CI-checked by `git diff` after a
+# regeneration in the contract job).
+version: v2
+plugins:
+  - local: ../frontend/web/node_modules/.bin/protoc-gen-es
+    out: ../frontend/web/src/lib/server/api/generated
+    opt:
+      - target=ts
+inputs:
+  - directory: .

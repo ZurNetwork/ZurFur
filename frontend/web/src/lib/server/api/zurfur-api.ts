@@ -6,10 +6,12 @@
  * failures are the tagged union in {@link import('./errors')}.
  */
 
-import { Context, Effect, Layer, Schema } from 'effect';
+import { type DescMessage, fromJson, type JsonValue, type MessageShape } from '@bufbuild/protobuf';
+import { Context, Effect, Layer } from 'effect';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	ApiProblem,
 	ContractViolation,
@@ -19,16 +21,22 @@ import {
 } from './errors';
 
 /**
- * The JSON `/me` contract (ZMVP-151 slice 1), as the wire schema. Decodes into
- * the component-facing {@link Session} type — the `me` signature below is the
- * compile-time proof the two stay one shape.
+ * The contract's boundary decoder (ZMVP-161; amended Decision 4 of
+ * DD 39944194): `fromJson` against a GENERATED schema — produced from
+ * `contract/zurfur/api/v1/*.proto`, so it structurally cannot drift from the
+ * contract, which is a stronger property than the hand-written Effect Schema
+ * it replaces offered. `ignoreUnknownFields: true` is MANDATORY here
+ * (contract §6): protobuf-es rejects unknown fields by default, and
+ * additive-only evolution is void without the tolerant reader. The
+ * `contract_tolerant_reader` spec pins this exact function, so dropping the
+ * option is a failing test, not a shipped incident.
  */
-const SessionSchema = Schema.Struct({
-	did: Schema.String,
-	handle: Schema.optional(Schema.String),
-	displayName: Schema.optional(Schema.String),
-	avatarUrl: Schema.optional(Schema.String)
-});
+export function decodeContract<Desc extends DescMessage>(
+	schema: Desc,
+	value: unknown
+): MessageShape<Desc> {
+	return fromJson(schema, value as JsonValue, { ignoreUnknownFields: true });
+}
 
 /** What each `ZurfurApi` call does; failures per call are in the signature. */
 export interface ZurfurApiShape {
@@ -125,16 +133,27 @@ const liveMe = (fetch: FetchFunction) =>
 		const response = yield* backendFetch(fetch, '/me');
 		if (!response.ok) return yield* problemFailure(response, '/me');
 		const raw = yield* parsedBody(response, '/me');
-		return yield* Schema.decodeUnknown(SessionSchema)(raw).pipe(
-			Effect.mapError(
-				() =>
-					new ContractViolation({
-						path: '/me',
-						status: response.status,
-						detail: 'malformed session payload'
-					})
-			)
-		);
+		// Decode through the generated schema, then map the message to the PLAIN
+		// component-facing Session — generated types stay below the seam (the
+		// containment guard applies to them unchanged), components get plain data.
+		return yield* Effect.try({
+			try: () => {
+				const message = decodeContract(GetMeResponseSchema, raw);
+				const session: Session = {
+					did: message.did,
+					handle: message.handle,
+					displayName: message.displayName,
+					avatarUrl: message.avatarUrl
+				};
+				return session;
+			},
+			catch: () =>
+				new ContractViolation({
+					path: '/me',
+					status: response.status,
+					detail: 'malformed session payload'
+				})
+		});
 	});
 
 const liveStartSignin = (fetch: FetchFunction, handle: string) =>

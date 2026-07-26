@@ -102,10 +102,14 @@ test:
 gen-queries:
     cargo run -p query-codegen
 
-# Regenerate the api crate's committed src/generated/ from the contract corpus
-# (DD 40992770). The contract_current test fails with a diff when it's stale.
+# Regenerate BOTH tiers' committed generated code from the contract corpus
+# (DD 40992770): the api crate's src/generated/ (drift-gated by the
+# contract_current test) and the frontend's protobuf-es output (drift-gated by
+# the CI contract job's git-diff step). Needs the `buf` CLI for the frontend
+# half (https://buf.build/docs/installation).
 gen-contract:
     cargo run -p contract-gen
+    cd contract && buf generate
 
 
 # --- Worktrees (parallel branches) ---

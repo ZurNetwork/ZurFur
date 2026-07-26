@@ -64,6 +64,18 @@ jobs:
           version: '1.72.0'
       # Lint the corpus (STANDARD rules; see contract/buf.yaml).
       - run: buf lint contract
+      # Frontend codegen drift (ZMVP-161): regenerate protobuf-es output and
+      # fail on any diff — the committed generated TS must match the corpus.
+      # (The backend's generated module is drift-checked by the cargo test
+      # job's contract_current test; this is its frontend twin.)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: yarn
+          cache-dependency-path: frontend/web/yarn.lock
+      - run: yarn --cwd frontend/web install --frozen-lockfile
+      - run: cd contract && buf generate
+      - run: git diff --exit-code -- frontend/web/src/lib/server/api/generated
       # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
       # against the base branch. Once the first version tag exists this gains
       # a second comparison against the last released tag (VERSIONING.md §2
