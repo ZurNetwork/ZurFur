@@ -1126,3 +1126,34 @@ async fn owner_can_re_role_an_admin() {
         "the admin is re-roled to Manager by the Owner"
     );
 }
+
+// The contract's server-side §6 obligation (VERSIONING.md), pinned: unknown
+// request fields are REJECTED, not ignored — the tolerant-reader duty is
+// response-side and client-only; the server stays conservative (ZAL #109) so
+// client bugs surface instead of silently passing. The generated request
+// deserializer (ZMVP-160) enforces this by construction: pbjson emits
+// `Error::unknown_field` for any key outside the contract.
+#[tokio::test]
+async fn create_account_rejects_unknown_request_fields() {
+    let did = "did:plc:strictreq";
+    let (base, _backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    let res = client
+        .post(format!("{base}/accounts"))
+        .json(&serde_json::json!({
+            "name": "Strict Studio",
+            "handle": "strict.zurfur.app",
+            "surprise": "not in the contract",
+        }))
+        .send()
+        .await
+        .expect("POST /accounts");
+    assert_eq!(
+        res.status(),
+        422,
+        "an unknown request field is rejected (contract §6 server obligation), \
+         so a misspelled client field fails loudly instead of being dropped"
+    );
+}

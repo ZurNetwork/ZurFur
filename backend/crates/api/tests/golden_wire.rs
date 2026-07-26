@@ -286,14 +286,20 @@ async fn commission_wire_shapes() {
         "title": "A golden ref sheet",
         "lifecycle": "draft",
         "visibility": "private",
-        "maturity": { "rating": "safe", "graphic": false },
+        // `graphic` is ABSENT here although the request sent `false`: implicit-
+        // presence defaults are omitted (canonical ProtoJSON; the contract's
+        // §7.7 canonical settings). Absent ⇒ false, and a generated client's
+        // parse restores the default structurally. This hunk moved at the
+        // ZMVP-160 codec adoption, deliberately — the golden records it.
+        "maturity": { "rating": "safe" },
         "createdAt": "<VOLATILE>",
     });
     assert_eq!(
         normalized(&created),
         expected,
         "create returns the resource; absent optionals omit keys (R4); \
-         vocabulary values stay lowercase (R8)"
+         implicit-presence defaults omit too (§7.7); vocabulary stays \
+         lowercase (R8)"
     );
 
     // List: wrapped (R7).

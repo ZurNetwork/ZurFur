@@ -39,6 +39,11 @@ use figment::{
 use serde::Deserialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+/// The contract's generated message types (DD 40992770; `@generated` by
+/// `contract-gen`, regenerate with `just gen-contract`). Drift from
+/// `contract/zurfur/api/v1/*.proto` fails the `contract_current` test.
+pub mod generated;
+
 mod problem;
 mod routes;
 mod sweep;
