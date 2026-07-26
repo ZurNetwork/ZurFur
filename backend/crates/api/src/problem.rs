@@ -19,33 +19,21 @@ use axum::{
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
-use serde::Serialize;
 
-/// An RFC 9457 problem document — the JSON API's single error representation.
-///
-/// Constructed through the named constructors (one per entry in the error
-/// registry, e.g. [`Problem::forbidden`], [`Problem::already_member`]), never field
-/// by field, so the `type`/`code`/`title`/`status` of a given kind stay consistent
-/// across every call-site. `detail` is the only per-occurrence part.
-#[derive(Debug, Serialize)]
-pub struct Problem {
-    /// Stable problem-type identifier: a non-dereferenceable `urn:zurfur:error:*`
-    /// URN. An identity to look up in our error docs, **not** a live URL — nothing
-    /// to host, nothing to 404. Serialized as `type` (the RFC 9457 member name).
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    /// Our own terse, machine-branchable code (e.g. `already_member`) — never a
-    /// leaked PostgreSQL or internal error code. An RFC 9457 extension member.
-    pub code: &'static str,
-    /// Short, stable, human-readable summary of the problem *type* (same for every
-    /// occurrence of a given `code`).
-    pub title: &'static str,
-    /// Specific, human-readable explanation of *this* occurrence.
-    pub detail: String,
-    /// The HTTP status code, duplicated in the body per RFC 9457 so it survives
-    /// proxies and logs that drop the status line.
-    pub status: u16,
-}
+/// An RFC 9457 problem document — **the contract's generated type** (ZMVP-162,
+/// DD 40992770 decision 8). The shape was hand-declared three times — here, in
+/// `plugin-v1.yaml`, and in `problem.ts` — and the copies had already drifted
+/// on whether `detail` is required. Now `contract/zurfur/api/v1/problem.proto`
+/// is the ONLY declaration and both tiers generate from it; this module keeps
+/// what a schema cannot carry — the REGISTRY (the named constructors, one per
+/// error kind, e.g. [`Problem::forbidden`], [`Problem::already_member`]) and
+/// the axum integration. Problems are constructed through the registry, never
+/// field by field, so a kind's `type`/`code`/`title`/`status` stay consistent
+/// across every call site; `detail` is the only per-occurrence part, and it is
+/// ALWAYS non-empty — implicit presence omits an empty string from the JSON,
+/// which would violate the detail-required ruling (the golden wire test and
+/// the debug_assert in [`Problem::new`] both watch this).
+pub use crate::generated::Problem;
 
 impl Problem {
     /// The shared constructor — every registry entry funnels through here so the
@@ -57,12 +45,20 @@ impl Problem {
         status: u16,
         detail: impl Into<String>,
     ) -> Self {
+        let detail = detail.into();
+        // Implicit presence omits an empty string — and `detail` is REQUIRED
+        // on the wire (Engineer ruling 2026-07-25). Every registry entry
+        // supplies one; an empty detail is a registry bug, caught here.
+        debug_assert!(
+            !detail.is_empty(),
+            "a Problem's detail must be non-empty (detail-required ruling)"
+        );
         Self {
-            kind,
-            code,
-            title,
-            detail: detail.into(),
-            status,
+            r#type: kind.to_owned(),
+            code: code.to_owned(),
+            title: title.to_owned(),
+            detail,
+            status: i32::from(status),
         }
     }
 
@@ -464,7 +460,10 @@ impl IntoResponse for Problem {
     /// `application/problem+json` (axum's [`Json`] sets `application/json`, so the
     /// header is replaced after the body is built), with the matching HTTP status.
     fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status = u16::try_from(self.status)
+            .ok()
+            .and_then(|code| StatusCode::from_u16(code).ok())
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let mut response = (status, Json(self)).into_response();
         response.headers_mut().insert(
             CONTENT_TYPE,
@@ -520,7 +519,7 @@ mod tests {
     #[test]
     fn commission_has_facts_is_a_409_pointing_at_archive() {
         let problem = Problem::commission_has_facts();
-        assert_eq!(problem.kind, "urn:zurfur:error:commission-has-facts");
+        assert_eq!(problem.r#type, "urn:zurfur:error:commission-has-facts");
         assert_eq!(problem.code, "commission_has_facts");
         assert_eq!(problem.status, 409);
         assert!(
@@ -536,7 +535,7 @@ mod tests {
         assert_eq!(Problem::invalid_request("x").code, "invalid_request");
         assert_eq!(Problem::unknown_role("bad").code, "unknown_role");
         assert_eq!(
-            Problem::unknown_role("bad").kind,
+            Problem::unknown_role("bad").r#type,
             "urn:zurfur:error:invalid-request"
         );
         assert_eq!(Problem::unknown_role("bad").status, 422);
