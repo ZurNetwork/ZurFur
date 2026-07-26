@@ -28,15 +28,15 @@ const signout = Effect.flatMap(ZurfurApi, (api) => api.signout);
 const aliceWire = {
 	did: 'did:plc:alice',
 	handle: 'alice.zurfur.app',
-	display_name: 'Alice',
-	avatar_url: null
+	displayName: 'Alice',
+	avatarUrl: undefined
 };
 
 describe('ZurfurApi.me (live)', () => {
-	it('rides the /api prefix so both split halves route it', async () => {
+	it('rides the /api/v1 prefix so both split halves route it', async () => {
 		const { fetch, calls } = fetchStub(() => Response.json(aliceWire));
 		await runLive(fetch, me);
-		expect(calls).toEqual(['/api/me']);
+		expect(calls).toEqual(['/api/v1/me']);
 	});
 
 	it('decodes the session for a signed-in visitor', async () => {

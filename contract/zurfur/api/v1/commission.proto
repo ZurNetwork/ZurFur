@@ -1,0 +1,116 @@
+// The Reason's v1 surface: listing and creating Commissions, owner-POV only.
+//
+// Only messages are generated; routes are declared for the descriptor test
+// (DD 40992770 decision 3). Every vocabulary here is a STRING with the known
+// values documented (R8) — the domain's state machines are the enforcement,
+// the contract only says "this is this" (Engineer, 2026-07-25). Timestamps
+// are `google.protobuf.Timestamp`: RFC 3339 on the wire, Z-normalized,
+// byte-identical to what chrono already emits (VERSIONING.md §7.3).
+
+syntax = "proto3";
+
+package zurfur.api.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+// `GET /api/v1/commissions` takes no input; the session is the argument.
+message ListCommissionsRequest {}
+
+// `POST /api/v1/commissions` succeeds `201` with the created commission —
+// the bare resource, flat, exactly as CreateAccountResponse renders its
+// account (DD 23592962: success bodies are bare resources). Minted at
+// `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
+// unable to navigate to what it just made (Engineer ruling 2026-07-25: the
+// interface renders what the program tells it). Field semantics are
+// documented on `Commission`; this is a dedicated message so the create
+// response can evolve independently of the listing row.
+message CreateCommissionResponse {
+  string id = 1;
+  string title = 2;
+  string lifecycle = 3;
+  string visibility = 4;
+  optional google.protobuf.Timestamp deadline = 5;
+  optional Maturity maturity = 6;
+  optional string direction_status = 7;
+  optional string deadline_status = 8;
+  optional string linked_channel = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+// A commission's maturity posture (DD 29982722): the atproto self-label axis
+// plus the orthogonal graphic flag.
+message Maturity {
+  // Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
+  // `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
+  string rating = 1;
+  // The orthogonal graphic-content flag.
+  bool graphic = 2;
+}
+
+// One row of `GET /api/v1/commissions` — the envelope a listing renders.
+// The content tree is deliberately absent (the future single-commission
+// surface's job); `owner` is omitted because this endpoint is owner-POV only.
+// This is the FIRST place a Commission is serialized anywhere in the API —
+// the precedent later commission surfaces inherit.
+message Commission {
+  // Opaque commission id (R6).
+  string id = 1;
+  // The commission's title.
+  string title = 2;
+  // Lifecycle step. Vocabulary (R8): `draft` | `batched` | `active` |
+  // `completed` | `cancelled` | `disputed`.
+  string lifecycle = 3;
+  // Who may see it. Vocabulary (R8): `private` | `listed` | `public`.
+  string visibility = 4;
+  // The agreed deadline, if set. Absent = no deadline, nothing more (R4).
+  optional google.protobuf.Timestamp deadline = 5;
+  // The maturity posture, if rated.
+  optional Maturity maturity = 6;
+  // Direction axis of the two-dimensional status, if set (R8 vocabulary,
+  // domain-enforced).
+  optional string direction_status = 7;
+  // Deadline axis of the two-dimensional status, if set (R8 vocabulary).
+  optional string deadline_status = 8;
+  // The external chat channel pointer, if linked (DD 32112642).
+  optional string linked_channel = 9;
+  // When the commission was created.
+  google.protobuf.Timestamp created_at = 10;
+}
+
+// `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
+message ListCommissionsResponse {
+  // The caller's owned, ACTIVE commissions (archived excluded), ascending by
+  // creation. Order is served — never derived from ids (R6).
+  repeated Commission commissions = 1;
+}
+
+// `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
+message CreateCommissionRequest {
+  // Required; missing/invalid → 422.
+  string title = 1;
+  // Optional deadline.
+  optional google.protobuf.Timestamp deadline = 2;
+  // Optional at-birth maturity; same shape re-rating speaks later.
+  optional Maturity maturity = 3;
+}
+
+// The commissions service. Session-gated; Problems per problem.proto.
+service CommissionService {
+  // The caller's owned commissions, owner-POV only (the non-participant
+  // projection is a distinct, later surface — ZMVP-75).
+  rpc ListCommissions(ListCommissionsRequest) returns (ListCommissionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/commissions"
+    };
+  }
+
+  // Create a commission. `201` + the created commission — ruled 2026-07-25
+  // (create-then-navigate needs the id; consistent with CreateAccount).
+  rpc CreateCommission(CreateCommissionRequest) returns (CreateCommissionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/commissions"
+      body: "*"
+    };
+  }
+}

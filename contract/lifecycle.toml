@@ -1,0 +1,18 @@
+# The per-major lifecycle manifest (contract/VERSIONING.md §4).
+#
+# Routes follow THIS FILE, not a human's memory: the §4 CI assertions (owed by
+# ZMVP-28's close-out — sunset ordering, the notice window, mount/unmount from
+# status, derived header emission, 410 after sunset) read it as their input.
+# One entry per path-major, forever — a sunset major keeps its entry as the
+# record that it existed.
+#
+# v1 is PRE-GA until the first release tag is cut (VERSIONING.md §5: pre-GA
+# surfaces are exempt from the deprecation contract in full — no notice owed).
+# ZMVP-28 must be DECIDED before that tag exists (DD 40992770's hard ordering
+# constraint).
+
+[major.v1]
+status = "live" # live | deprecated | sunset
+# deprecated_at =  (RFC 3339; absent while live)
+# sunset_at     =  (RFC 3339; absent while live; >= deprecated_at + window)
+# successor     =  (e.g. "/api/v2" -> Link rel="successor-version")

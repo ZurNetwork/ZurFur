@@ -50,19 +50,27 @@
 		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
 	}
 
-	# --- /api/* -> axum, with ONLY the /api prefix stripped ---
-	# handle_path strips the matched `/api` prefix, so /api/health hits axum as
-	# /health. The matcher requires the `/api/` boundary, so /apifoo does NOT
-	# match here (it falls through to SvelteKit below).
-	handle_path /api/* {
+	# --- /api/v1/* -> axum, with the FULL versioned prefix stripped ---
+	# The path-major lives here (DD 40992770: `/api/v1` is bound to the proto
+	# package `zurfur.api.v1`). handle_path strips the matched `/api/v1`, so
+	# /api/v1/health hits axum as /health — axum's route table stays
+	# unprefixed, and the weld between path-major and package is held by the
+	# contract's router test (which knows this strip), not by axum nesting.
+	# The matcher requires the `/api/v1/` boundary, so /api/v1foo does NOT
+	# match (falls through to SvelteKit). A future /api/v2 is a NEW block —
+	# majors are explicit, never a rewrite of this one.
+	handle_path /api/v1/* {
 		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
 	}
-	# /api with no trailing slash or path -> axum root. Kept separate because
-	# `/api/*` does not match a bare `/api`.
-	handle /api {
+	# Bare /api/v1 -> axum root. Kept separate because `/api/v1/*` does not
+	# match the bare prefix.
+	handle /api/v1 {
 		rewrite * /
 		reverse_proxy {$ZURFUR_API_UPSTREAM:http://127.0.0.1:8081}
 	}
+	# Unversioned /api/* deliberately falls through to SvelteKit now: the
+	# pre-GA unversioned surface is retired at the /api/v1 mint (contract §5 —
+	# pre-GA is exempt from the deprecation contract, so no sunset owed).
 
 	# --- everything else -> the SvelteKit vite dev server ---
 	# Caddy sorts the bare (matcher-less) handle last, so this is the terminal

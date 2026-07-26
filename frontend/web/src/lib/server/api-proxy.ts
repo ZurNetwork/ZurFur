@@ -1,12 +1,12 @@
 /**
- * The single rewrite that makes in-app `fetch('/api/...')` behave identically in
+ * The single rewrite that makes in-app `fetch('/api/v1/...')` behave identically in
  * the browser and during SSR (ZMVP-150, AC3).
  *
- * In the browser the call rides Caddy: same-origin `/api/*` reaches axum with the
+ * In the browser the call rides Caddy: same-origin `/api/v1/*` reaches axum with the
  * `/api` prefix stripped. During SSR there is no Caddy in the loop, so SvelteKit's
  * `handleFetch` hook applies this same rewrite by hand — pointing the request at
  * the internal axum origin, stripping the prefix, and forwarding the caller's
- * session cookie — so component code writes ONE `fetch('/api/...')` and never
+ * session cookie — so component code writes ONE `fetch('/api/v1/...')` and never
  * branches on environment.
  *
  * Kept a pure function (no `$env`, no hook state) so it is unit-testable in
@@ -15,7 +15,10 @@
  */
 
 /** The `/api` prefix, exposed once so the boundary logic can't drift. */
-const API_PREFIX = '/api';
+// The FULL versioned prefix is stripped (Caddy does the same): the backend's
+// route table stays unprefixed, and the weld between path-major and proto
+// package is held by the contract's router test rather than by axum nesting.
+const API_PREFIX = '/api/v1';
 
 /**
  * The ONLY cookie ever forwarded to the upstream: the host-only session cookie.
@@ -70,7 +73,7 @@ function extractSessionCookie(incomingCookie: string | null): string | null {
 }
 
 /**
- * Rewrite a same-origin `/api/*` request to the axum upstream (prefix stripped,
+ * Rewrite a same-origin `/api/v1/*` request to the axum upstream (prefix stripped,
  * query preserved, method/body/headers preserved, session cookie forwarded), or
  * return the request untouched when it is cross-origin or not under `/api`.
  *
@@ -93,7 +96,7 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 
 	// Only `/api` exactly or a path under `/api/` is an API call. `/apifoo` is a
 	// different route (a prefix is not a stem) and falls through untouched — this
-	// mirrors Caddy's `handle_path /api/*` + `handle /api` split.
+	// mirrors Caddy's `handle_path /api/v1/*` + `handle /api` split.
 	const path = requestUrl.pathname;
 	const isApiCall = path === API_PREFIX || path.startsWith(`${API_PREFIX}/`);
 	if (!isApiCall) {

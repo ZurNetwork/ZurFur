@@ -14,8 +14,8 @@ describe('/ landing', () => {
 		const alice = {
 			did: 'did:plc:alice',
 			handle: 'alice.zurfur.app',
-			display_name: 'Alice',
-			avatar_url: null
+			displayName: 'Alice',
+			avatarUrl: undefined
 		};
 		render(Landing, { data: { session: alice } });
 

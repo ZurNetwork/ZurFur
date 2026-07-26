@@ -246,8 +246,14 @@ async fn owner_deletes_their_empty_account() {
         .expect("DELETE /accounts/{id}");
     assert_eq!(
         res.status(),
-        204,
-        "the Owner deleting their account returns 204 No Content"
+        200,
+        "the Owner deleting their account returns 200 with the outcome"
+    );
+    let body: serde_json::Value = res.json().await.expect("outcome body");
+    assert_eq!(
+        body["outcome"], "hard",
+        "an empty account hard-deletes, and the wire SAYS so — the interface \
+         renders what the program tells it (contract ruling 2026-07-25)"
     );
 
     // Empty → hard-deleted → gone.
@@ -274,7 +280,7 @@ async fn deleting_an_empty_account_frees_its_handle() {
         .send()
         .await
         .expect("DELETE /accounts/{id}");
-    assert_eq!(res.status(), 204);
+    assert_eq!(res.status(), 200);
 
     // The freed handle can be founded anew (a soft-delete would have kept it reserved →
     // 409; this is the hard-delete contrast).

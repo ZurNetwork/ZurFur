@@ -22,6 +22,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tower_sessions::Session;
 
+use super::list::CommissionBody;
 use crate::{AppState, problem::Problem};
 
 /// The `POST /commissions` request body: the commission's fixed metadata a caller
@@ -118,12 +119,20 @@ pub(super) async fn create_commission(
         now,
     );
 
-    state
+    // The closure owns what it writes and hands the committed commission back
+    // out — the create_account pattern — because the response now CARRIES it
+    // (contract, Engineer ruling 2026-07-25): the interface renders what the
+    // program tells it, and create-then-navigate needs the id. Minted at
+    // /api/v1; the pre-GA surface answered an empty 201.
+    let commission = state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().create(&commission).await?;
-            uow.changelog().append(&entry).await
+            uow.changelog().append(&entry).await?;
+            Ok(commission)
         })
         .await?;
 
-    Ok(StatusCode::CREATED.into_response())
+    let body = CommissionBody::from(commission);
+    let response = (StatusCode::CREATED, Json(body)).into_response();
+    Ok(response)
 }

@@ -8,8 +8,8 @@ describe('SessionHeader', () => {
 		const alice = {
 			did: 'did:plc:alice',
 			handle: 'alice.zurfur.app',
-			display_name: 'Alice',
-			avatar_url: 'https://cdn.example/alice.jpg'
+			displayName: 'Alice',
+			avatarUrl: 'https://cdn.example/alice.jpg'
 		};
 		render(SessionHeader, { session: alice });
 
@@ -21,7 +21,12 @@ describe('SessionHeader', () => {
 	});
 
 	it('falls back to the DID when the profile did not resolve', async () => {
-		const unresolved = { did: 'did:plc:alice', handle: null, display_name: null, avatar_url: null };
+		const unresolved = {
+			did: 'did:plc:alice',
+			handle: undefined,
+			displayName: undefined,
+			avatarUrl: undefined
+		};
 		render(SessionHeader, { session: unresolved });
 
 		await expect.element(page.getByTestId('session-handle')).toHaveTextContent('did:plc:alice');

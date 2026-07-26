@@ -1,0 +1,35 @@
+// The RFC 9457 problem shape, declared ONCE for every surface (DD 40992770
+// decision 8; API error model DD 23592962). Before this file existed the shape
+// was hand-declared three times — problem.rs, plugin-v1.yaml, problem.ts — and
+// the copies had already drifted on whether `detail` is required. This is the
+// only declaration; both tiers generate from it.
+//
+// Semantics (unchanged from DD 23592962):
+// - served with `Content-Type: application/problem+json`, never on a 2xx;
+// - `type` is a stable, NON-dereferenceable URN (`urn:zurfur:error:<slug>`) —
+//   an identifier, not a documentation URL;
+// - `code` is the terse machine token clients branch on. `type` and `code` are
+//   NOT 1:1 (several codes can share a type class); `code` is the discriminant.
+
+syntax = "proto3";
+
+package zurfur.api.v1;
+
+// One RFC 9457 problem-details document.
+message Problem {
+  // The stable problem-class URN, e.g. `urn:zurfur:error:not-authenticated`.
+  string type = 1;
+  // The machine discriminant, e.g. `not_authenticated`, `handle_taken`.
+  string code = 2;
+  // Short human summary of the problem class.
+  string title = 3;
+  // Per-occurrence human detail. REQUIRED — always emitted with content
+  // (Engineer ruling 2026-07-25, resolving the three-way drift: the backend
+  // has always emitted it; `problem.ts`'s optionality was the outlier).
+  // Implicit presence means an empty string would be OMITTED from the JSON —
+  // so the emitting side must never construct an empty `detail`; the golden
+  // wire test pins this.
+  string detail = 4;
+  // The HTTP status code, duplicated in the body per RFC 9457.
+  int32 status = 5;
+}

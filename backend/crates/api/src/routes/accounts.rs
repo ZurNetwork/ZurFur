@@ -282,6 +282,13 @@ impl From<&Account> for AccountBody {
     }
 }
 
+/// `GET /api/v1/accounts` — wrapped (contract R7): `{ "accounts": [...] }`, so
+/// pagination can later land additively instead of costing a major.
+#[derive(Serialize)]
+struct ListAccountsBody {
+    accounts: Vec<AccountMembershipBody>,
+}
+
 /// One row of `GET /accounts`: an account plus **the caller's own** role on it.
 ///
 /// `role` is load-bearing rather than decorative — `DELETE /accounts/{id}` is
@@ -331,7 +338,7 @@ async fn list_accounts(
         .accounts
         .list_for_user(user.id, ListingScope::SelfView)
         .await?;
-    let rows: Vec<AccountMembershipBody> = memberships
+    let accounts: Vec<AccountMembershipBody> = memberships
         .into_iter()
         .map(|membership| AccountMembershipBody {
             account: AccountBody::from(&membership.account),
@@ -339,7 +346,8 @@ async fn list_accounts(
         })
         .collect();
 
-    let response = (StatusCode::OK, Json(rows)).into_response();
+    let body = ListAccountsBody { accounts };
+    let response = (StatusCode::OK, Json(body)).into_response();
     Ok(response)
 }
 
@@ -530,14 +538,19 @@ async fn delete_account(
     }
 
     // Soft if the account holds facts (it then never escalates to hard); hard if it is
-    // empty. Both are one private-store transaction on the write view.
-    if account_has_facts(&state, account.id).await? {
+    // empty. Both are one private-store transaction on the write view. The wire SAYS
+    // WHICH (contract, Engineer ruling 2026-07-25): the frontend is an interface — it
+    // renders what the program tells it, and cannot infer an outcome it was never
+    // told (ZMVP-152 renders soft-vs-gone from this field). Minted at /api/v1; the
+    // pre-GA surface answered a bodiless 204.
+    let outcome = if account_has_facts(&state, account.id).await? {
         let account_id = account.id;
         state
             .transaction(async move |uow: &mut dyn UnitOfWork| {
                 uow.accounts().soft_delete(account_id).await
             })
             .await?;
+        "soft"
     } else {
         let account_id = account.id;
         state
@@ -564,9 +577,24 @@ async fn delete_account(
                  handle freed — the tombstone is retryable"
             );
         }
-    }
+        "hard"
+    };
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    let body = DeleteOutcomeBody { outcome };
+    let response = (StatusCode::OK, Json(body)).into_response();
+    Ok(response)
+}
+
+/// `DELETE /accounts/{id}`'s body: WHICH deletion happened (contract R8
+/// vocabulary: `soft` | `hard`). An interface renders what the program tells
+/// it; the outcome is unrecoverable after the fact (a soft-deleted account
+/// leaves the list exactly like a hard-deleted one), so the response is the
+/// only place this fact can cross.
+#[derive(Serialize)]
+struct DeleteOutcomeBody {
+    /// `soft` — facts held; row kept, handle reserved, DID live.
+    /// `hard` — fact-free; row gone, handle freed, DID tombstoned.
+    outcome: &'static str,
 }
 
 /// The body of `PATCH /accounts/{id}/handle`: the `handle` to change to (the
