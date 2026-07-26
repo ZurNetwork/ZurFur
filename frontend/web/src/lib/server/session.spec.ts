@@ -63,6 +63,7 @@ describe('signinOutcome', () => {
 			type: 'urn:zurfur:error:invalid-request',
 			code: 'invalid_request',
 			title: 'invalid_request',
+			detail: 'That handle is not usable.',
 			status: 422
 		};
 		const rejected = () => Effect.fail(new ApiProblem({ problem }));

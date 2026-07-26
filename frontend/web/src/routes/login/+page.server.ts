@@ -14,6 +14,7 @@ const EMPTY_HANDLE_PROBLEM: Problem = {
 	type: 'urn:zurfur:error:invalid-request',
 	code: 'invalid_request',
 	title: 'Enter a handle.',
+	detail: 'A handle is required to start sign-in — e.g. you.bsky.social.',
 	status: 422
 };
 

@@ -9,8 +9,9 @@
 import { type DescMessage, fromJson, type JsonValue, type MessageShape } from '@bufbuild/protobuf';
 import { Context, Effect, Layer } from 'effect';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
+import { PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	ApiProblem,
@@ -112,8 +113,21 @@ function problemFailure(
 	const classified = (
 		body: unknown
 	): Effect.Effect<never, NotAuthenticated | ApiProblem | ContractViolation> => {
-		if (!isProblem(body)) return Effect.fail(violation);
-		const problem: Problem = body;
+		// Decode through the generated schema (ZMVP-162): the contract's one
+		// Problem declaration, mapped to the plain component-facing interface.
+		let problem: Problem;
+		try {
+			const message = decodeContract(ProblemSchema, body);
+			problem = {
+				type: message.type,
+				code: message.code,
+				title: message.title,
+				detail: message.detail,
+				status: message.status
+			};
+		} catch {
+			return Effect.fail(violation);
+		}
 		if (problem.code === 'not_authenticated') return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
 	};
@@ -212,6 +226,7 @@ const anonymousProblem: Problem = {
 	type: 'urn:zurfur:error:not-authenticated',
 	code: 'not_authenticated',
 	title: 'not_authenticated',
+	detail: 'No signed-in visitor (test default).',
 	status: 401
 };
 
