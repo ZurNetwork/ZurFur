@@ -98,3 +98,42 @@ and predates me.
 1. Your call on the wire-format fork (a) vs (b), plus int64 and null.
 2. ZMVP-28's drafted content into the ticket.
 3. ZMVP-159 → 160 → 161 → 162, then the epic-level gates and the epic→main PR.
+
+---
+
+## Morning update — the merge cascade and the epic gates (appended while you were at the gym)
+
+**The chain is fully merged.** ZMVP-159/160/161/162 are Done in Jira; 158 and 28 carry honest
+status comments and stay open (158: ~26 `json!` sites outside the corpus; 28: Q5 + Q7 are yours).
+The epic PR is **#162** (`feature/zmvp-25-api-contract` → `main`), **hold-merge flagged per your
+order** — it is the record + CI + Copilot surface; the merge is yours.
+
+**Epic gates ran as one parallel Workflow** (code-review ∥ security-review ∥ critique, 19 agents,
+every finding adversarially verified; doc audit clean). 8 confirmed findings, all applied in
+`cc666de5` — the full table is on PR #162. The two that matter:
+
+1. **The codec swap moved every `/api/v1` timestamp from `Z` to `+00:00`** — pbjson's `Timestamp`
+   serializer is not canonical ProtoJSON (chrono `to_rfc3339`, `use_z=false`), my `wire_timestamp`
+   doc claimed byte-identity that was false, and the golden test normalized away exactly the two
+   fields that changed. Fixed with `crate::wire_time::WireTimestamp` (`extern_path` over
+   `google.protobuf.Timestamp`): canonical Z output, golden now pins `<TS>Z`.
+2. **Half-applied §7.3**: the un-converted `PUT …/deadline` accepted years protobuf forbids
+   (`+10000-…`), which stores fine and then emits a listing **no generated client can parse**.
+   `SetDeadlineBody` now uses the validating newtype; the 0001–9999 range binds both directions.
+
+Neither fix took a domain decision — both execute your recorded rulings (§7.7 canonical
+settings, §7.3's validating-newtype prescription) where the slices had left them half-applied.
+
+Also swept: CI's frontend drift gate was blind to added/orphaned generated files (clean-slate
+regen + index diff now), `web-smoke.sh` still probed the retired unversioned `/api/health`
+(migrated + a retirement-proving negative check), `buf.yaml`'s module-wide lint exception
+re-scoped to `google/api` so the weld lint guards our corpus again, `.gitattributes` +
+`@generated` stamp on the pbjson serde file, three stale rustdoc spots.
+
+**Copilot triage:** #160 zero inline comments; #161's one comment declined with contract evidence
+(implicit-presence `{}` is a *valid* Problem encoding; enforcement is the emitter's per R8 —
+reply on the thread).
+
+**Still yours:** merge #162 (or say the word); Q5 + Q7 (VERSIONING stays DRAFT, no v1 tag until
+ratified); the ZURI query-annotation change (`ultmslqs`, restacked onto the epic tip, untouched);
+ZMVP-153's missing `GET /commissions/{id}` gap ticket.
