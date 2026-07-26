@@ -65,7 +65,7 @@ jobs:
       # Lint the corpus (STANDARD rules; see contract/buf.yaml).
       - run: buf lint contract
       # Frontend codegen drift (ZMVP-161): regenerate protobuf-es output and
-      # fail on any diff — the committed generated TS must match the corpus.
+      # fail on any drift — the committed generated TS must match the corpus.
       # (The backend's generated module is drift-checked by the cargo test
       # job's contract_current test; this is its frontend twin.)
       - uses: actions/setup-node@v4
@@ -74,8 +74,19 @@ jobs:
           cache: yarn
           cache-dependency-path: frontend/web/yarn.lock
       - run: yarn --cwd frontend/web install --frozen-lockfile
-      - run: cd contract && buf generate
-      - run: git diff --exit-code -- frontend/web/src/lib/server/api/generated
+      # Clean-slate regeneration, then diff the INDEX: a bare
+      # `git diff --exit-code` on a warm tree sees only tracked-file edits —
+      # blind to a file `buf generate` ADDS (new .proto ⇒ untracked _pb.ts,
+      # green) and to a committed file it no longer writes (renamed .proto ⇒
+      # orphaned _pb.ts, green forever). Wiping first makes the regenerated
+      # tree the whole truth; `git add -A` + a cached diff then reports adds,
+      # edits, and orphan deletions alike. The backend twin closes the same
+      # holes by construction (contract_current's owned-set walk).
+      - run: |
+          rm -rf frontend/web/src/lib/server/api/generated
+          (cd contract && buf generate)
+          git add -A frontend/web/src/lib/server/api/generated
+          git diff --cached --exit-code -- frontend/web/src/lib/server/api/generated
       # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
       # against the base branch. Once the first version tag exists this gains
       # a second comparison against the last released tag (VERSIONING.md §2

@@ -198,7 +198,7 @@ pub struct CreateCommissionResponse {
     #[prost(string, tag = "4")]
     pub visibility: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "5")]
-    pub deadline: ::core::option::Option<::pbjson_types::Timestamp>,
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
     #[prost(message, optional, tag = "6")]
     pub maturity: ::core::option::Option<Maturity>,
     #[prost(string, optional, tag = "7")]
@@ -208,7 +208,7 @@ pub struct CreateCommissionResponse {
     #[prost(string, optional, tag = "9")]
     pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "10")]
-    pub created_at: ::core::option::Option<::pbjson_types::Timestamp>,
+    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
 /// A commission's maturity posture (DD 29982722): the atproto self-label axis
 /// plus the orthogonal graphic flag.
@@ -244,7 +244,7 @@ pub struct Commission {
     pub visibility: ::prost::alloc::string::String,
     /// The agreed deadline, if set. Absent = no deadline, nothing more (R4).
     #[prost(message, optional, tag = "5")]
-    pub deadline: ::core::option::Option<::pbjson_types::Timestamp>,
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
     /// The maturity posture, if rated.
     #[prost(message, optional, tag = "6")]
     pub maturity: ::core::option::Option<Maturity>,
@@ -260,7 +260,7 @@ pub struct Commission {
     pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
     /// When the commission was created.
     #[prost(message, optional, tag = "10")]
-    pub created_at: ::core::option::Option<::pbjson_types::Timestamp>,
+    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
 /// `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -278,7 +278,7 @@ pub struct CreateCommissionRequest {
     pub title: ::prost::alloc::string::String,
     /// Optional deadline.
     #[prost(message, optional, tag = "2")]
-    pub deadline: ::core::option::Option<::pbjson_types::Timestamp>,
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
     /// Optional at-birth maturity; same shape re-rating speaks later.
     #[prost(message, optional, tag = "3")]
     pub maturity: ::core::option::Option<Maturity>,

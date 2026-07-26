@@ -48,6 +48,10 @@ mod problem;
 mod routes;
 mod sweep;
 
+/// The canonical-ProtoJSON wire instant the generated types carry for every
+/// `google.protobuf.Timestamp` field (`extern_path`'d there by `contract-gen`).
+pub mod wire_time;
+
 pub use sweep::{run_deadline_sweeper, sweep_deadlines};
 
 /// Session key under which the recognized visitor's `UserId` is stored. The

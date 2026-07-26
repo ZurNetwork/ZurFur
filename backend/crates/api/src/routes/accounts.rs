@@ -254,7 +254,8 @@ fn ok_json(body: serde_json::Value) -> Response {
 /// pagination (v1 volumes are small).
 ///
 /// Outcomes:
-/// - `200 [ { "id", "did", "handle", "name", "role" }, … ]`
+/// - `200 { "accounts": [ { "id", "did", "handle", "name", "role" }, … ] }` —
+///   wrapped, never a bare array (R7)
 /// - `401` — not signed in
 async fn list_accounts(
     State(state): State<AppState>,
@@ -461,7 +462,8 @@ async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<boo
 /// recovery window (DD 23003138; in v1 the DID is identity-only, DD 26935298).
 ///
 /// Outcomes:
-/// - `204` — the account was soft- or hard-deleted
+/// - `200 { "outcome": "soft" | "hard" }` — which deletion happened (Engineer
+///   ruling 2026-07-25: the wire says, the interface renders)
 /// - `401` — not signed in
 /// - `403` — signed in but not this account's Owner (a non-member or a non-Owner member)
 /// - `404` — no such live account
@@ -683,11 +685,9 @@ async fn change_handle(
         return Err(err.into());
     }
 
-    // Struct-update over the loaded row, overriding ONLY the handle: the
-    // repoint happened in the transaction above, not on this in-memory value,
-    // so building from the loaded `account` would echo the handle the
-    // caller just left. Building the rest via `..from()` keeps every other
-    // field drift-proof if `AccountBody` grows.
+    // Built from the loaded row EXCEPT the handle: the repoint happened in the
+    // transaction above, not on this in-memory value, so echoing
+    // `account.handle` would hand back the name the caller just left.
     let renamed = ChangeHandleResponse {
         handle: new.as_str().to_owned(),
         id: account.id.to_string(),

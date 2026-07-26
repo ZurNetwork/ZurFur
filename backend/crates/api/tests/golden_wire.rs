@@ -90,18 +90,27 @@ async fn sign_in(client: &reqwest::Client, base: &str, handle: &str) {
     assert_eq!(res.status(), 303);
 }
 
-/// Replace volatile leaf values (ids, DIDs, timestamps) with `"<VOLATILE>"`,
-/// recursively — key SETS and stable values survive, which is what the guard
-/// pins. Volatility is keyed by name, so a renamed key stops being normalized
-/// and shows up as a diff (the desired failure).
+/// Replace volatile leaf values with placeholders, recursively — key SETS and
+/// stable values survive, which is what the guard pins. Volatility is keyed by
+/// name, so a renamed key stops being normalized and shows up as a diff (the
+/// desired failure).
+///
+/// Timestamps are NOT fully erased: only the digits are replaced, so the
+/// ENCODING — canonical ProtoJSON, `Z`-normalized, never `+00:00` — stays
+/// pinned. The epic gate caught exactly this hole: the ZMVP-160 codec swap
+/// moved `createdAt`/`deadline` from `Z` to `+00:00` and the old
+/// all-`<VOLATILE>` normalization was blind to it.
 fn normalized(value: &Value) -> Value {
-    const VOLATILE_KEYS: &[&str] = &["id", "did", "createdAt", "deadline"];
+    const VOLATILE_KEYS: &[&str] = &["id", "did"];
+    const TIMESTAMP_KEYS: &[&str] = &["createdAt", "deadline"];
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
                 .map(|(key, val)| {
                     if VOLATILE_KEYS.contains(&key.as_str()) {
                         (key.clone(), json!("<VOLATILE>"))
+                    } else if TIMESTAMP_KEYS.contains(&key.as_str()) {
+                        (key.clone(), normalized_timestamp(val))
                     } else {
                         (key.clone(), normalized(val))
                     }
@@ -110,6 +119,27 @@ fn normalized(value: &Value) -> Value {
         ),
         Value::Array(items) => Value::Array(items.iter().map(normalized).collect()),
         other => other.clone(),
+    }
+}
+
+/// Normalize a timestamp value to `"<TS>"` + its offset suffix (`Z`, or
+/// whatever non-canonical form actually got emitted): the instant is volatile,
+/// the encoding is contract text. A non-string (e.g. a null) passes through
+/// untouched and fails the comparison — also the desired failure.
+fn normalized_timestamp(value: &Value) -> Value {
+    let Value::String(text) = value else {
+        return value.clone();
+    };
+    let date_and_time = &text[..text.len().min(19)];
+    let offset_suffix =
+        &text[text.len().min(19)..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let is_timestamp_shaped = date_and_time.len() == 19
+        && date_and_time.as_bytes()[4] == b'-'
+        && date_and_time.as_bytes()[10] == b'T';
+    if is_timestamp_shaped {
+        json!(format!("<TS>{offset_suffix}"))
+    } else {
+        value.clone()
     }
 }
 
@@ -292,14 +322,17 @@ async fn commission_wire_shapes() {
         // parse restores the default structurally. This hunk moved at the
         // ZMVP-160 codec adoption, deliberately — the golden records it.
         "maturity": { "rating": "safe" },
-        "createdAt": "<VOLATILE>",
+        // `<TS>Z` pins the ENCODING: canonical ProtoJSON is Z-normalized —
+        // an emitter drifting to `+00:00` (pbjson's raw Timestamp serializer
+        // does exactly that) fails here instead of shipping.
+        "createdAt": "<TS>Z",
     });
     assert_eq!(
         normalized(&created),
         expected,
         "create returns the resource; absent optionals omit keys (R4); \
-         implicit-presence defaults omit too (§7.7); vocabulary stays \
-         lowercase (R8)"
+         implicit-presence defaults omit too (§7.7); timestamps are \
+         Z-normalized (§7.3); vocabulary stays lowercase (R8)"
     );
 
     // List: wrapped (R7).

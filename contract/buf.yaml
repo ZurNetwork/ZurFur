@@ -16,9 +16,13 @@ modules:
 lint:
   use:
     - STANDARD
-  except:
+  ignore_only:
     # google/api is vendored verbatim from googleapis; it predates some rules.
-    - PACKAGE_VERSION_SUFFIX
+    # Scoped to the vendored tree ONLY — for the zurfur corpus this rule is
+    # half of the path-major ⇄ package weld (`zurfur.api.v1` must end in a
+    # version suffix) and stays enforced.
+    PACKAGE_VERSION_SUFFIX:
+      - google/api
 breaking:
   use:
     - WIRE_JSON

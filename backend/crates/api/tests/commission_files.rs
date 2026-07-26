@@ -36,8 +36,10 @@ use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 mod common;
 
-/// The default upload cap for the suite (25 MiB, matching production). The size-cap
-/// test overrides it with a tiny value.
+/// The default upload cap for the suite — `Config::DEFAULT_MAX_UPLOAD_BYTES`,
+/// the same value production defaults to (a doc restating the number would
+/// just drift when the constant moves — it already did once, 25→50 MiB). The
+/// size-cap test overrides it with a tiny value.
 const DEFAULT_MAX_UPLOAD: u64 = Config::DEFAULT_MAX_UPLOAD_BYTES;
 
 /// Boots the app with everything faked in-process, at the given upload cap; returns

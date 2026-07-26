@@ -126,8 +126,12 @@ check:
     cd backend && bacon
 
 # The local mirror of CI's gate (fmt, clippy, test, deny, typos, contract, web).
-# CI's contract job ADDITIONALLY runs `buf breaking` against the PR base — a
-# comparison that only makes sense per-PR, so it is deliberately CI-only here.
+# CI's contract job ADDITIONALLY runs (a) `buf breaking` against the PR base —
+# a comparison that only makes sense per-PR — and (b) the frontend codegen
+# drift check (clean-slate `buf generate` + index diff); both deliberately
+# CI-only here. The backend half of the drift gate DOES run locally, inside
+# `cargo test` (the contract_current test); regenerate both tiers with
+# `just gen-contract` before pushing a corpus change.
 # -- sequential and fail-fast, so a red step stops the run before the next one
 # starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
 # a one-time `yarn --cwd frontend/web playwright install chromium` for the
