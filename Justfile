@@ -102,6 +102,12 @@ test:
 gen-queries:
     cargo run -p query-codegen
 
+# Regenerate the api crate's committed src/generated/ from the contract corpus
+# (DD 40992770). The contract_current test fails with a diff when it's stale.
+gen-contract:
+    cargo run -p contract-gen
+
+
 # --- Worktrees (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
