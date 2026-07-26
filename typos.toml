@@ -10,6 +10,14 @@
 # `Lable` -- both fragments happen to fuzzy-match real words in the
 # dictionary. The source text is correct as written; `extend-identifiers`
 # marks the whole compound word as a single opaque token so it isn't split.
+# protobuf-es generated modules carry the compiled file descriptor as an
+# inline base64 blob (`fileDesc("...")`); typos scans the blob's random
+# letter runs and fuzzy-matches "words" inside them (first hit: `IZ` ->
+# `IS` in commission_pb.ts). The directory is @generated and drift-checked
+# by CI's contract job -- spelling lint on it is meaningless. Skip it.
+[files]
+extend-exclude = ["frontend/web/src/lib/server/api/generated/"]
+
 [default.extend-identifiers]
 # "the kind and state CHECKs" (adapter-pg/tests/it/actor_identity.rs) --
 # plural of the SQL CHECK constraint, not a truncated "CHECK".

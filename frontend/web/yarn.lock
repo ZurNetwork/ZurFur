@@ -7,6 +7,28 @@
   resolved "https://registry.yarnpkg.com/@blazediff/core/-/core-1.9.1.tgz#ad61c4ec48dc11a2913b9753c8c74902e05e8f14"
   integrity sha512-ehg3jIkYKulZh+8om/O25vkvSsXXwC+skXmyA87FFx6A/45eqOkZsBltMw/TVteb0mloiGT8oGRTcjRAz66zaA==
 
+"@bufbuild/protobuf@2.13.0", "@bufbuild/protobuf@^2.13.0":
+  version "2.13.0"
+  resolved "https://registry.yarnpkg.com/@bufbuild/protobuf/-/protobuf-2.13.0.tgz#92ae09d6412c658a56b3c2cd867386850064c901"
+  integrity sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g==
+
+"@bufbuild/protoc-gen-es@^2.13.0":
+  version "2.13.0"
+  resolved "https://registry.yarnpkg.com/@bufbuild/protoc-gen-es/-/protoc-gen-es-2.13.0.tgz#329a24bd81811dbb6d5b0589de5d94422eff491f"
+  integrity sha512-ylI1vrLksdnXrVZRs9xGxmrQxKGhUm6pPszv26kqBvNiO3qPTktk+hgfwbLISBY4M/reShkT2dFLGT9fbydBXg==
+  dependencies:
+    "@bufbuild/protobuf" "2.13.0"
+    "@bufbuild/protoplugin" "2.13.0"
+
+"@bufbuild/protoplugin@2.13.0":
+  version "2.13.0"
+  resolved "https://registry.yarnpkg.com/@bufbuild/protoplugin/-/protoplugin-2.13.0.tgz#0ad2337a7d6fcb138fdd5d3fc087d29f84104ca4"
+  integrity sha512-32eMChKaL/A8Hh5AfMmXSdnuyznN85uoEjoyWiWeRrvtQOtpqX/v1R9PDe0g9vMIgzznK9inMT3CUaal0kjLUQ==
+  dependencies:
+    "@bufbuild/protobuf" "2.13.0"
+    "@typescript/vfs" "^1.6.2"
+    typescript "5.4.5"
+
 "@emnapi/core@1.11.1":
   version "1.11.1"
   resolved "https://registry.yarnpkg.com/@emnapi/core/-/core-1.11.1.tgz#b9e1064f3a6b1631e241e638eb48d736bfd372a6"
@@ -632,6 +654,13 @@
   dependencies:
     "@typescript-eslint/types" "8.64.0"
     eslint-visitor-keys "^5.0.0"
+
+"@typescript/vfs@^1.6.2":
+  version "1.6.4"
+  resolved "https://registry.yarnpkg.com/@typescript/vfs/-/vfs-1.6.4.tgz#7543a3bd961727eb51c8bdafc3ed5e0fb5f56dff"
+  integrity sha512-PJFXFS4ZJKiJ9Qiuix6Dz/OwEIqHD7Dme1UwZhTK11vR+5dqW2ACbdndWQexBzCx+CPuMe5WBYQWCsFyGlQLlQ==
+  dependencies:
+    debug "^4.4.3"
 
 "@vitest/browser-playwright@^4.1.8":
   version "4.1.10"
@@ -1719,6 +1748,11 @@ typescript-eslint@^8.60.1:
     "@typescript-eslint/parser" "8.64.0"
     "@typescript-eslint/typescript-estree" "8.64.0"
     "@typescript-eslint/utils" "8.64.0"
+
+typescript@5.4.5:
+  version "5.4.5"
+  resolved "https://registry.yarnpkg.com/typescript/-/typescript-5.4.5.tgz#42ccef2c571fdbd0f6718b1d1f5e6e5ef006f611"
+  integrity sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ==
 
 typescript@^6.0.3:
   version "6.0.3"
