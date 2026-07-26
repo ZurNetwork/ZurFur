@@ -1,4 +1,4 @@
-//! The router-vs-contract weld (DD 40992770 decision 12, first cut).
+//! The router-vs-contract weld (DD 40992770 decision 12).
 //!
 //! `google.api.http` annotations in `contract/zurfur/api/v1/*.proto` *declare*
 //! each endpoint's path and verb; nothing else connects that declaration to
@@ -6,10 +6,14 @@
 //! lied. This test holds the weld: every route the contract declares must be
 //! served, at the declared verb, under the declared path-major.
 //!
-//! **First cut = text-level.** The `.proto` files are parsed textually for the
-//! HttpRule options — no protoc/descriptor machinery yet. ZMVP-160 upgrades
-//! this to a compiled-descriptor comparison when prost enters; the shape of
-//! the assertion (declared set == served set) is the part that must survive.
+//! **Text-level by design.** The `.proto` files are parsed textually for the
+//! HttpRule options. ZMVP-160's prost adoption deliberately did NOT upgrade
+//! this: the generated code carries no service machinery at all (`NoServices`,
+//! DD 40992770 decision 3), so there is no compiled descriptor at test time —
+//! and compiling one here (protox) would add machinery for route metadata
+//! only. The assertion's shape (every declared route served, under the
+//! path-major) is the load-bearing part; the parse is the lightest tool that
+//! feeds it.
 //!
 //! The `/api/v1` prefix is STRIPPED by the proxy layer (Caddy in dev, mirrored
 //! by SvelteKit's `handleFetch`) — axum's own table is unprefixed. The strip

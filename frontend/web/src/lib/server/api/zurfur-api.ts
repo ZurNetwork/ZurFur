@@ -126,15 +126,17 @@ function problemFailure(
 				status: message.status
 			};
 		} catch {
-			return Effect.fail(violation);
+			// Each failure arm keeps its own detail — "no problem body" (wrong
+			// content type), "unparsable body" (parsedBody's, propagated), and
+			// this one — so a ContractViolation says which contract promise broke.
+			return Effect.fail(
+				new ContractViolation({ path, status: response.status, detail: 'malformed problem body' })
+			);
 		}
 		if (problem.code === 'not_authenticated') return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
 	};
-	return parsedBody(response, path).pipe(
-		Effect.catchTag('ContractViolation', () => Effect.fail(violation)),
-		Effect.flatMap(classified)
-	);
+	return parsedBody(response, path).pipe(Effect.flatMap(classified));
 }
 
 /** The redirect-range check both signin and signout branch on. */
