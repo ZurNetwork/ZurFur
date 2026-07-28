@@ -33,8 +33,8 @@ use uuid::Uuid;
 use super::require_owner;
 use crate::{AppState, problem::Problem};
 
-/// `POST /commissions/{id}/slots`'s `201` body: the new Slots' carrying
-/// components' node ids, in request order — see [`declare_slots`].
+/// `POST /commissions/{id}/slots`'s `201` body: the node id of each newly
+/// declared slot's carrying component, in request order — see [`declare_slots`].
 #[derive(Serialize)]
 struct DeclareSlotsResponse {
     ids: Vec<Uuid>,
@@ -72,8 +72,8 @@ pub(super) struct DeclareSlotBody {
 /// write: absent/foreign is the indistinguishable
 /// [`node_not_found`](Problem::node_not_found) 404, a component parent the
 /// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a
-/// malformed body is a `422`. Returns `201 Created` with the node ids of the
-/// new Slots' carrying components, in request order — `{"ids": ["…", …]}` —
+/// malformed body is a `422`. Returns `201 Created` with the node id of each
+/// newly declared slot's carrying component, in request order — `{"ids": ["…", …]}` —
 /// since no tree read exposes ids until the projection lands (ZMVP-75).
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
