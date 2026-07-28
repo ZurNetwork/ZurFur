@@ -27,7 +27,7 @@ export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
 	const deletedParam = url.searchParams.get('deleted');
 	const deleted =
-		deletedParam !== null && deletedParam in DELETE_OUTCOMES
+		deletedParam !== null && Object.hasOwn(DELETE_OUTCOMES, deletedParam)
 			? (deletedParam as DeleteOutcome)
 			: undefined;
 
