@@ -6,7 +6,8 @@
 
 import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
-import type { Problem } from '$lib/api/problem';
+import { type Problem, ProblemKind } from '$lib/api/problem';
+import { HttpStatus } from '$lib/api/http-status';
 import { ZurfurApi } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
 
@@ -35,11 +36,10 @@ export const accountsOutcome: Effect.Effect<
  * endpoint would give.
  */
 const accountNotFoundProblem: Problem = {
-	type: 'urn:zurfur:error:account-not-found',
-	code: 'account_not_found',
+	...ProblemKind.AccountNotFound,
 	title: 'Account not found',
 	detail: 'No such account.',
-	status: 404
+	status: HttpStatus.NotFound
 };
 
 /** The two ways a single-account read comes back: the row, or a problem (including the derived not-found) to render. */

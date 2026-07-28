@@ -20,6 +20,10 @@ export default defineConfig({
 	// `::1` on some hosts, but the Caddyfile upstream (and axum) are 127.0.0.1, so
 	// an IPv6-only bind makes Caddy's catch-all 502. Pin both ends to 127.0.0.1.
 	server: { host: '127.0.0.1', port: webPort, strictPort: true },
+	// Bundle superforms into the SSR build instead of externalizing it: its
+	// package root re-exports SuperDebug.svelte, which bare Node cannot load
+	// ("Unknown file extension .svelte") when the dep is externalized.
+	ssr: { noExternal: ['sveltekit-superforms'] },
 	plugins: [
 		sveltekit({
 			compilerOptions: {

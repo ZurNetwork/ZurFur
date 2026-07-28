@@ -5,3 +5,7 @@
 
 # JS schema-validity harness for lexicons/ (ZMVP-104)
 lexicons/node_modules
+
+# Live tutoring worksheet (session artifact, /worksheet-tutorial)
+WORKSHEET.md
+.env.bak*
