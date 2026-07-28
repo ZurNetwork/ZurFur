@@ -30,13 +30,34 @@ use domain::{
     },
     ports::{DidBelongsToAnotherActor, UnitOfWork},
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use uuid::Uuid;
 
 use super::require_owner;
 use crate::{AppState, problem::Problem};
+
+/// `POST /commissions/{id}/invitations`'s body (both the idempotent `200`
+/// re-invite and the minted `201`): the seat offer, in full — see
+/// [`invite_to_seat`].
+#[derive(Serialize)]
+struct InviteToSeatResponse {
+    id: String,
+    commission: String,
+    seat: String,
+    user: String,
+    state: &'static str,
+}
+
+/// `DELETE /commissions/{id}/invitations`'s `200` body: the always-available
+/// request inputs the revoke echoes on every path (success or idempotent
+/// no-op) — see [`revoke_seat_invitation`].
+#[derive(Serialize)]
+struct RevokeSeatInvitationResponse {
+    commission: String,
+    seat: String,
+    user: String,
+}
 
 /// The `POST /commissions/{id}/invitations` request body: the `seat` to offer
 /// (its tree node id, from the seat-declaration `201`) and the `user` to invite,
@@ -124,13 +145,13 @@ pub(super) async fn invite_to_seat(
         .find_pending_seat_invitation(commission, seat, invited.id)
         .await?
     {
-        let existing_offer = json!({
-            "id": existing.id.to_string(),
-            "commission": id.to_string(),
-            "seat": seat_id.to_string(),
-            "user": invited.did.as_str(),
-            "state": existing.state.as_str(),
-        });
+        let existing_offer = InviteToSeatResponse {
+            id: existing.id.to_string(),
+            commission: id.to_string(),
+            seat: seat_id.to_string(),
+            user: invited.did.as_str().to_owned(),
+            state: existing.state.as_str(),
+        };
         let response = (StatusCode::OK, Json(existing_offer)).into_response();
         return Ok(response);
     }
@@ -165,13 +186,13 @@ pub(super) async fn invite_to_seat(
         }
         None => (StatusCode::CREATED, minted, InvitationState::Pending),
     };
-    let offer = json!({
-        "id": offer_id.to_string(),
-        "commission": id.to_string(),
-        "seat": seat_id.to_string(),
-        "user": invited.did.as_str(),
-        "state": offer_state.as_str(),
-    });
+    let offer = InviteToSeatResponse {
+        id: offer_id.to_string(),
+        commission: id.to_string(),
+        seat: seat_id.to_string(),
+        user: invited.did.as_str().to_owned(),
+        state: offer_state.as_str(),
+    };
     let response = (status, Json(offer)).into_response();
     Ok(response)
 }
@@ -217,15 +238,12 @@ pub(super) async fn revoke_seat_invitation(
     let invited_did = body.user;
 
     let revoked = || {
-        (
-            StatusCode::OK,
-            Json(json!({
-                "commission": id.to_string(),
-                "seat": body.seat.to_string(),
-                "user": invited_did.as_str(),
-            })),
-        )
-            .into_response()
+        let response_body = RevokeSeatInvitationResponse {
+            commission: id.to_string(),
+            seat: body.seat.to_string(),
+            user: invited_did.clone(),
+        };
+        (StatusCode::OK, Json(response_body)).into_response()
     };
 
     // Resolve the invited user by DID *without minting*. An unknown DID was never
@@ -262,4 +280,44 @@ pub(super) async fn revoke_seat_invitation(
         .await?;
 
     Ok(revoked())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the two response bodies' wire shapes to the exact string form the
+    //! retired `json!({…})` literals produced — every field a `String` (as the
+    //! `.to_string()`/`.as_str()` calls already emitted), so swapping in the
+    //! named structs moved no bytes (ZMVP-158 AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn invite_to_seat_response_serializes_every_field_as_a_string() {
+        let body = InviteToSeatResponse {
+            id: "offer-id".to_string(),
+            commission: "commission-id".to_string(),
+            seat: "seat-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+            state: "pending",
+        };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"id":"offer-id","commission":"commission-id","seat":"seat-id","user":"did:plc:invitee","state":"pending"}"#
+        );
+    }
+
+    #[test]
+    fn revoke_seat_invitation_response_serializes_every_field_as_a_string() {
+        let body = RevokeSeatInvitationResponse {
+            commission: "commission-id".to_string(),
+            seat: "seat-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"commission":"commission-id","seat":"seat-id","user":"did:plc:invitee"}"#
+        );
+    }
 }
