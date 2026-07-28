@@ -6,7 +6,7 @@
 //! *outside* the cookie-surface CSRF layer rather than under it.
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
-use serde_json::json;
+use serde::Serialize;
 
 use crate::AppState;
 
@@ -16,6 +16,14 @@ use crate::AppState;
 /// no `Origin` and no session.
 pub(crate) fn health_router() -> Router<AppState> {
     Router::new().route("/health", get(health))
+}
+
+/// `GET /health`'s body: liveness/readiness, `status` and `database` each one of
+/// a fixed pair of tokens (`"ok"`/`"degraded"`, `"up"`/`"down"`) — see [`health`].
+#[derive(Serialize)]
+struct HealthBody {
+    status: &'static str,
+    database: &'static str,
 }
 
 /// Liveness/readiness probe (`GET /health`). Reports `200` with the database
@@ -31,16 +39,55 @@ pub(crate) fn health_router() -> Router<AppState> {
 /// → 200 { "status": "ok",       "database": "up"   }
 /// → 503 { "status": "degraded", "database": "down" }
 /// ```
-async fn health(state: State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
+async fn health(state: State<AppState>) -> (StatusCode, Json<HealthBody>) {
     if adapter_pg::is_reachable(&state.pool).await {
         (
             StatusCode::OK,
-            Json(json!({ "status": "ok", "database": "up" })),
+            Json(HealthBody {
+                status: "ok",
+                database: "up",
+            }),
         )
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "status": "degraded", "database": "down" })),
+            Json(HealthBody {
+                status: "degraded",
+                database: "down",
+            }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the body's wire shape to the exact strings the retired
+    //! `json!({ "status": …, "database": … })` literals produced (ZMVP-158
+    //! AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn health_body_serializes_the_ok_pair() {
+        let body = HealthBody {
+            status: "ok",
+            database: "up",
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"status":"ok","database":"up"}"#
+        );
+    }
+
+    #[test]
+    fn health_body_serializes_the_degraded_pair() {
+        let body = HealthBody {
+            status: "degraded",
+            database: "down",
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"status":"degraded","database":"down"}"#
+        );
     }
 }
