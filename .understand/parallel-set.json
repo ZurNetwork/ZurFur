@@ -1,20 +1,31 @@
 {
-  "uow": "gj33s",
+  "uow": "7g6vt",
   "logbook": null,
-  "_logbook_note": "Skipped by the /unit-of-work stakes rule: single-ticket unit; decisions of record live in the ZMVP-151 snapshot (\u00a78 rulings 2026-07-21) and on epic ZMVP-149.",
-  "updated": "2026-07-23T15:30:00-06:00",
-  "unit_note": "Single-ticket unit: ZMVP-151 (The Other Side, second child). Reassignment at unit start (Engineer 2026-07-21): ZMVP-151 is CLAUDE's. Rulings: JSON /me; problem+json failures; callback 303 /login?error=<code>; Opus built the backend session slice + all security review.",
+  "_logbook_note": "Two-lane unit under epic ZMVP-25 close-out: 158 (mechanical build) ∥ 28 Q8 sweep (research). Decisions of record: R9/R10 rulings 2026-07-27 (Q5 skip-label ban via required status check; Q7 12-month window + ZAL #188 telemetry commitment), recorded in contract/VERSIONING.md via PR #163 (merged, main 9fd9afab). Ratification ruling: Engineer takes a FINAL WHOLE-DOC READ before VERSIONING.md leaves DRAFT — no auto-bind on a clean Q8 sweep. Q1 spike stays deferred by R8 until the first true enum enters the corpus.",
+  "updated": "2026-07-27T19:10:00-06:00",
+  "unit_note": "ZMVP-158 owns the primary checkout (no-worktrees ruling; jj workspace only on Engineer go if lanes collide). ZMVP-28's Q8 research is checkout-free; its doc edit lands as a small commit at a safe point. Prior unit gj33s carry-overs still open: DD 39944194 Confluence rows to verify; redirect:'manual' test proposal awaiting Engineer; Engineer's ultmslqs change conflicted after epic squash (Engineer drives restack).",
   "tickets": [
     {
-      "key": "ZMVP-151",
-      "summary": "A visitor signs in from the browser and signs out",
-      "phase": "feature-pr-open-awaiting-merge",
-      "next_action": "Whole-unit ship-gates Workflow (wf_c5973291-413) run on the full feature-vs-main diff at Engineer request: security lane clean (end-to-end auth trace, zero findings); fixes landed as [9] (lib.rs surface doc, callback let-else, redirect:'manual' notes); both gates green (Rust 610/610, web 63/63). Engineer squash-merges #153; then integrate (sync main, ZMVP-151 Done, /cleanup) + record DD 39944194 rows on Confluence. Open proposal for Engineer: integration test pinning redirect:'manual' undici semantics (declined/deferred?).",
-      "pr": "#149 #150 #151 #152 merged into feature; feature->main rubber-stamp open",
-      "branch": "feature/zmvp-151-browser-sign-in",
+      "key": "ZMVP-158",
+      "summary": "Typed response bodies: replace json! literals with named Serialize types (remainder outside the contract corpus; slice [1] = #156 did the nine contract endpoints)",
+      "phase": "understood-blocked-on-engineer",
+      "next_action": "Briefing done (re-measured: 18 response sites / 15 endpoints in scope; 14 payload sites out). TWO Engineer decisions block the build: G = shared-vs-per-endpoint body structs (blocks pieces A+C); AC5 scope = document-only vs adopt WireTimestamp on remainder routes. Then builder (Sonnet; D/E Haiku) on feature/zmvp-158-typed-response-bodies, first commit [uow:7g6vt]; /security-review (Opus) required pre-PR (DID-carrying bodies, field-widening threat).",
+      "pr": null,
+      "branch": "feature/zmvp-158-typed-response-bodies (to create)",
       "worktree": null,
-      "snapshot": ".understand/20260721-175414_ZMVP-151_browser-sign-in.md",
-      "updated": "2026-07-23T15:30:00-06:00"
+      "snapshot": ".understand/20260727-184210_ZMVP-158_typed-response-bodies.md",
+      "updated": "2026-07-27T18:45:00-06:00"
+    },
+    {
+      "key": "ZMVP-28",
+      "summary": "Versioning contract — Q8 UNVERIFIED sweep (last research before Engineer ratification read)",
+      "phase": "q8-swept-doc-edit-pending",
+      "next_action": "Q8 sweep DONE (all six items; R1-R10 survive, R10 strengthened). NEW: Q9 fork opened (Struct/Value cannot hold >2^53 — payload representation: Struct+range rule / opaque string / typed per-kind; Engineer rules before changelog enters corpus) + CORS gap (Deprecation/Sunset not CORS-safelisted; needs Access-Control-Expose-Headers clause — Engineer picks §3 clause vs §4 test). Doc edit slice [3] lands the Q8 resolutions + corrections (§7.2 quote completion, §4 table rows, §7.8(i) availability note), then Engineer ratification read.",
+      "pr": "#163 merged",
+      "branch": null,
+      "worktree": null,
+      "snapshot": null,
+      "updated": "2026-07-27T18:45:00-06:00"
     }
   ]
 }
