@@ -6,10 +6,13 @@
  * failures are the tagged union in {@link import('./errors')}.
  */
 
-import { Context, Effect, Layer, Schema } from 'effect';
+import { type DescMessage, fromJson, type JsonValue, type MessageShape } from '@bufbuild/protobuf';
+import { Context, Effect, Layer } from 'effect';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { isProblem, PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
+import { PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
+import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	ApiProblem,
 	ContractViolation,
@@ -19,16 +22,22 @@ import {
 } from './errors';
 
 /**
- * The JSON `/me` contract (ZMVP-151 slice 1), as the wire schema. Decodes into
- * the component-facing {@link Session} type — the `me` signature below is the
- * compile-time proof the two stay one shape.
+ * The contract's boundary decoder (ZMVP-161; amended Decision 4 of
+ * DD 39944194): `fromJson` against a GENERATED schema — produced from
+ * `contract/zurfur/api/v1/*.proto`, so it structurally cannot drift from the
+ * contract, which is a stronger property than the hand-written Effect Schema
+ * it replaces offered. `ignoreUnknownFields: true` is MANDATORY here
+ * (contract §6): protobuf-es rejects unknown fields by default, and
+ * additive-only evolution is void without the tolerant reader. The
+ * `contract_tolerant_reader` spec pins this exact function, so dropping the
+ * option is a failing test, not a shipped incident.
  */
-const SessionSchema = Schema.Struct({
-	did: Schema.String,
-	handle: Schema.NullOr(Schema.String),
-	display_name: Schema.NullOr(Schema.String),
-	avatar_url: Schema.NullOr(Schema.String)
-});
+export function decodeContract<Desc extends DescMessage>(
+	schema: Desc,
+	value: unknown
+): MessageShape<Desc> {
+	return fromJson(schema, value as JsonValue, { ignoreUnknownFields: true });
+}
 
 /** What each `ZurfurApi` call does; failures per call are in the signature. */
 export interface ZurfurApiShape {
@@ -104,15 +113,30 @@ function problemFailure(
 	const classified = (
 		body: unknown
 	): Effect.Effect<never, NotAuthenticated | ApiProblem | ContractViolation> => {
-		if (!isProblem(body)) return Effect.fail(violation);
-		const problem: Problem = body;
+		// Decode through the generated schema (ZMVP-162): the contract's one
+		// Problem declaration, mapped to the plain component-facing interface.
+		let problem: Problem;
+		try {
+			const message = decodeContract(ProblemSchema, body);
+			problem = {
+				type: message.type,
+				code: message.code,
+				title: message.title,
+				detail: message.detail,
+				status: message.status
+			};
+		} catch {
+			// Each failure arm keeps its own detail — "no problem body" (wrong
+			// content type), "unparsable body" (parsedBody's, propagated), and
+			// this one — so a ContractViolation says which contract promise broke.
+			return Effect.fail(
+				new ContractViolation({ path, status: response.status, detail: 'malformed problem body' })
+			);
+		}
 		if (problem.code === 'not_authenticated') return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
 	};
-	return parsedBody(response, path).pipe(
-		Effect.catchTag('ContractViolation', () => Effect.fail(violation)),
-		Effect.flatMap(classified)
-	);
+	return parsedBody(response, path).pipe(Effect.flatMap(classified));
 }
 
 /** The redirect-range check both signin and signout branch on. */
@@ -125,16 +149,27 @@ const liveMe = (fetch: FetchFunction) =>
 		const response = yield* backendFetch(fetch, '/me');
 		if (!response.ok) return yield* problemFailure(response, '/me');
 		const raw = yield* parsedBody(response, '/me');
-		return yield* Schema.decodeUnknown(SessionSchema)(raw).pipe(
-			Effect.mapError(
-				() =>
-					new ContractViolation({
-						path: '/me',
-						status: response.status,
-						detail: 'malformed session payload'
-					})
-			)
-		);
+		// Decode through the generated schema, then map the message to the PLAIN
+		// component-facing Session — generated types stay below the seam (the
+		// containment guard applies to them unchanged), components get plain data.
+		return yield* Effect.try({
+			try: () => {
+				const message = decodeContract(GetMeResponseSchema, raw);
+				const session: Session = {
+					did: message.did,
+					handle: message.handle,
+					displayName: message.displayName,
+					avatarUrl: message.avatarUrl
+				};
+				return session;
+			},
+			catch: () =>
+				new ContractViolation({
+					path: '/me',
+					status: response.status,
+					detail: 'malformed session payload'
+				})
+		});
 	});
 
 const liveStartSignin = (fetch: FetchFunction, handle: string) =>
@@ -193,6 +228,7 @@ const anonymousProblem: Problem = {
 	type: 'urn:zurfur:error:not-authenticated',
 	code: 'not_authenticated',
 	title: 'not_authenticated',
+	detail: 'No signed-in visitor (test default).',
 	status: 401
 };
 

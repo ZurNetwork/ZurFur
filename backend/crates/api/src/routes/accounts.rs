@@ -41,6 +41,10 @@ use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
 
+use crate::generated::{
+    AccountMembership, ChangeHandleRequest, ChangeHandleResponse, CreateAccountRequest,
+    CreateAccountResponse, DeleteAccountResponse, ListAccountsResponse,
+};
 use crate::problem::Problem;
 use crate::{AppState, SESSION_USER_KEY};
 
@@ -235,22 +239,6 @@ fn ok_json(body: serde_json::Value) -> Response {
     (StatusCode::OK, Json(body)).into_response()
 }
 
-/// `201 Created` carrying a bare JSON resource body.
-fn created_json(body: serde_json::Value) -> Response {
-    (StatusCode::CREATED, Json(body)).into_response()
-}
-
-/// The body of `POST /accounts`. Founding takes real input, not a bare click:
-/// the account's display `name` and its public `handle` (the atproto-style name it
-/// is reached by; DD "The Account Handle" 24870914).
-///
-/// Example: `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }`.
-#[derive(Deserialize)]
-struct CreateAccountBody {
-    name: String,
-    handle: String,
-}
-
 /// `GET /accounts` — every **live** account the signed-in visitor holds a role
 /// in (ZMVP-157; frontend enablement for ZMVP-152 AC1) — **not** owned-only:
 /// gaining a role is how a user joins an account on this platform
@@ -266,7 +254,8 @@ struct CreateAccountBody {
 /// pagination (v1 volumes are small).
 ///
 /// Outcomes:
-/// - `200 [ { "id", "did", "handle", "name", "role" }, … ]`
+/// - `200 { "accounts": [ { "id", "did", "handle", "name", "role" }, … ] }` —
+///   wrapped, never a bare array (R7)
 /// - `401` — not signed in
 async fn list_accounts(
     State(state): State<AppState>,
@@ -283,20 +272,23 @@ async fn list_accounts(
         .accounts
         .list_for_user(user.id, ListingScope::SelfView)
         .await?;
-    let accounts: Vec<serde_json::Value> = memberships
+    // Generated types (ZMVP-160): the contract's AccountMembership is FLAT —
+    // the old hand-written flatten composition was a Rust detail the wire
+    // never saw, and the generated shape simply is the wire.
+    let accounts: Vec<AccountMembership> = memberships
         .into_iter()
-        .map(|membership| {
-            json!({
-                "id": membership.account.id.to_string(),
-                "did": membership.account.did.as_str(),
-                "handle": membership.account.handle.as_str(),
-                "name": membership.account.name.as_str(),
-                "role": membership.role.as_str(),
-            })
+        .map(|membership| AccountMembership {
+            id: membership.account.id.to_string(),
+            did: membership.account.did.as_str().to_owned(),
+            handle: membership.account.handle.as_str().to_owned(),
+            name: membership.account.name.as_str().to_owned(),
+            role: membership.role.as_str().to_owned(),
         })
         .collect();
 
-    Ok(ok_json(serde_json::Value::Array(accounts)))
+    let body = ListAccountsResponse { accounts };
+    let response = (StatusCode::OK, Json(body)).into_response();
+    Ok(response)
 }
 
 /// Founds a new Account for the signed-in visitor and makes them its Owner
@@ -323,7 +315,7 @@ async fn list_accounts(
 async fn create_account(
     State(state): State<AppState>,
     session: Session,
-    body: Result<Json<CreateAccountBody>, JsonRejection>,
+    body: Result<Json<CreateAccountRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     // Founding is a write, so it requires a recognized visitor (DESIGN/Account: "a
     // user without any accounts must create one before any write").
@@ -402,12 +394,14 @@ async fn create_account(
         }
     };
 
-    Ok(created_json(json!({
-        "id": account.id.to_string(),
-        "did": account.did.as_str(),
-        "handle": account.handle.as_str(),
-        "name": account.name.as_str(),
-    })))
+    let founded = CreateAccountResponse {
+        id: account.id.to_string(),
+        did: account.did.as_str().to_owned(),
+        handle: account.handle.as_str().to_owned(),
+        name: account.name.as_str().to_owned(),
+    };
+    let response = (StatusCode::CREATED, Json(founded)).into_response();
+    Ok(response)
 }
 
 // Mirror of the `adapter_pg::ACCOUNT_FACT_TABLES` compile guard, placed right beside
@@ -468,7 +462,8 @@ async fn account_has_facts(_state: &AppState, _account: AccountId) -> Result<boo
 /// recovery window (DD 23003138; in v1 the DID is identity-only, DD 26935298).
 ///
 /// Outcomes:
-/// - `204` — the account was soft- or hard-deleted
+/// - `200 { "outcome": "soft" | "hard" }` — which deletion happened (Engineer
+///   ruling 2026-07-25: the wire says, the interface renders)
 /// - `401` — not signed in
 /// - `403` — signed in but not this account's Owner (a non-member or a non-Owner member)
 /// - `404` — no such live account
@@ -489,14 +484,19 @@ async fn delete_account(
     }
 
     // Soft if the account holds facts (it then never escalates to hard); hard if it is
-    // empty. Both are one private-store transaction on the write view.
-    if account_has_facts(&state, account.id).await? {
+    // empty. Both are one private-store transaction on the write view. The wire SAYS
+    // WHICH (contract, Engineer ruling 2026-07-25): the frontend is an interface — it
+    // renders what the program tells it, and cannot infer an outcome it was never
+    // told (ZMVP-152 renders soft-vs-gone from this field). Minted at /api/v1; the
+    // pre-GA surface answered a bodiless 204.
+    let outcome = if account_has_facts(&state, account.id).await? {
         let account_id = account.id;
         state
             .transaction(async move |uow: &mut dyn UnitOfWork| {
                 uow.accounts().soft_delete(account_id).await
             })
             .await?;
+        "soft"
     } else {
         let account_id = account.id;
         state
@@ -523,19 +523,14 @@ async fn delete_account(
                  handle freed — the tombstone is retryable"
             );
         }
-    }
+        "hard"
+    };
 
-    Ok(StatusCode::NO_CONTENT.into_response())
-}
-
-/// The body of `PATCH /accounts/{id}/handle`: the `handle` to change to (the
-/// atproto-style name the account will be reached by). Re-validated through the same
-/// [`Handle`] gate as founding.
-///
-/// Example: `{ "handle": "renamed.zurfur.app" }`.
-#[derive(Deserialize)]
-struct ChangeHandleBody {
-    handle: String,
+    let body = DeleteAccountResponse {
+        outcome: outcome.to_owned(),
+    };
+    let response = (StatusCode::OK, Json(body)).into_response();
+    Ok(response)
 }
 
 /// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle after
@@ -571,7 +566,7 @@ struct ChangeHandleBody {
 async fn change_handle(
     State(state): State<AppState>,
     account_role: AccountRole,
-    body: Result<Json<ChangeHandleBody>, JsonRejection>,
+    body: Result<Json<ChangeHandleRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     // The shared `AccountRole` seam settled the write floor (401/404/403) and loaded the
     // live account plus the actor's role in it.
@@ -588,6 +583,19 @@ async fn change_handle(
     // all re-enforced on a change, exactly as at founding (Done-when: "same validation
     // guarantees as the initial claim").
     let Json(body) = body.map_err(|_| Problem::invalid_request("A new handle is required."))?;
+
+    // The generated ChangeHandleRequest carries `id` because the CONTRACT
+    // declares it (HttpRule binds it from the path). The path is authoritative;
+    // a non-empty body id naming a DIFFERENT account is a client bug the
+    // conservative server surfaces rather than hides (contract §6 stance) —
+    // succeeding against the path while the body claims another target would
+    // mask exactly the kind of mistake loud failure exists for.
+    if !body.id.is_empty() && body.id != account.id.to_string() {
+        return Err(Problem::invalid_request(
+            "The body's id does not match the account in the path.",
+        ));
+    }
+
     let new =
         Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
 
@@ -677,12 +685,17 @@ async fn change_handle(
         return Err(err.into());
     }
 
-    Ok(ok_json(json!({
-        "id": account.id.to_string(),
-        "did": account.did.as_str(),
-        "handle": new.as_str(),
-        "name": account.name.as_str(),
-    })))
+    // Built from the loaded row EXCEPT the handle: the repoint happened in the
+    // transaction above, not on this in-memory value, so echoing
+    // `account.handle` would hand back the name the caller just left.
+    let renamed = ChangeHandleResponse {
+        handle: new.as_str().to_owned(),
+        id: account.id.to_string(),
+        did: account.did.as_str().to_owned(),
+        name: account.name.as_str().to_owned(),
+    };
+    let response = (StatusCode::OK, Json(renamed)).into_response();
+    Ok(response)
 }
 
 /// The accept-invitation request body: the invitee's choice of whether this new

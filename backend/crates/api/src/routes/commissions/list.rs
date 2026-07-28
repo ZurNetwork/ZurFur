@@ -3,42 +3,54 @@
 //! projection view (ZMVP-75) is a distinct, later surface this does not
 //! attempt: nothing here answers "what can I see as a seated participant",
 //! only "what do I own".
+//!
+//! The response types are the contract's GENERATED messages (ZMVP-160):
+//! `Commission` / `Maturity` / `ListCommissionsResponse` from
+//! `contract/zurfur/api/v1/commission.proto` — a shape that drifts from the
+//! corpus stops compiling, which is the property the contract exists for.
+//! Their serde is canonical ProtoJSON: lowerCamelCase keys (R1), absent
+//! optionals omit their keys (R4).
 
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::elements::commission::Commission;
-use serde_json::json;
 use tower_sessions::Session;
 
+use super::wire_timestamp;
+use crate::generated::{Commission, ListCommissionsResponse, Maturity};
 use crate::{AppState, problem::Problem};
 
-/// Serialize a [`Commission`] for the `GET /commissions` list — the envelope
-/// fields a listing renders. The content tree is deliberately not loaded here
-/// (that stays the future single-commission surface's job); `owner` is
-/// omitted since this endpoint is owner-POV only — every row's owner is
-/// always the caller.
-fn commission_json(commission: Commission) -> serde_json::Value {
-    let maturity = commission.maturity.map(|maturity| {
-        json!({
-            "rating": maturity.rating.as_str(),
-            "graphic": maturity.graphic,
-        })
+/// Render a domain commission into the contract's envelope. The ONE mapping
+/// site for the listing row; `create` builds its own response message from the
+/// same fields (the corpus keeps the two messages separate on purpose, so each
+/// endpoint's response can evolve independently).
+pub(super) fn wire_commission(commission: domain::elements::commission::Commission) -> Commission {
+    let maturity = commission.maturity.map(|maturity| Maturity {
+        rating: maturity.rating.as_str().to_owned(),
+        graphic: maturity.graphic,
     });
-    json!({
-        "id": commission.id.to_string(),
-        "title": commission.title.as_str(),
-        "lifecycle": commission.lifecycle_step.as_str(),
-        "visibility": commission.visibility.as_str(),
-        "deadline": commission.deadline,
-        "maturity": maturity,
-        "direction_status": commission.direction_status.map(|status| status.as_str()),
-        "deadline_status": commission.deadline_status.map(|status| status.as_str()),
-        "linked_channel": commission.linked_channel.as_ref().map(|c| c.as_str()),
-        "created_at": commission.created_at,
-    })
+    Commission {
+        id: commission.id.to_string(),
+        title: commission.title.as_str().to_owned(),
+        lifecycle: commission.lifecycle_step.as_str().to_owned(),
+        visibility: commission.visibility.as_str().to_owned(),
+        deadline: commission.deadline.map(wire_timestamp),
+        maturity,
+        direction_status: commission
+            .direction_status
+            .map(|status| status.as_str().to_owned()),
+        deadline_status: commission
+            .deadline_status
+            .map(|status| status.as_str().to_owned()),
+        linked_channel: commission
+            .linked_channel
+            .as_ref()
+            .map(|channel| channel.as_str().to_owned()),
+        created_at: Some(wire_timestamp(commission.created_at)),
+    }
 }
 
 /// List the signed-in user's owned commissions (ZMVP-157).
@@ -55,8 +67,9 @@ fn commission_json(commission: Commission) -> serde_json::Value {
 /// are small).
 ///
 /// Outcomes:
-/// - `200 [ { "id", "title", "lifecycle", "visibility", "deadline", "maturity",
-///   "direction_status", "deadline_status", "linked_channel", "created_at" }, … ]`
+/// - `200 { "commissions": [ { "id", "title", "lifecycle", "visibility",
+///   "deadline"?, "maturity"?, "directionStatus"?, "deadlineStatus"?,
+///   "linkedChannel"?, "createdAt" }, … ] }` — absent optionals omit their keys
 /// - `401` — not signed in
 pub(super) async fn list_commissions(
     State(state): State<AppState>,
@@ -65,7 +78,9 @@ pub(super) async fn list_commissions(
     let user = super::current_user(&state, &session).await?;
 
     let commissions = state.commissions.list_owned_by(user.id).await?;
-    let body: Vec<serde_json::Value> = commissions.into_iter().map(commission_json).collect();
+    let commissions: Vec<Commission> = commissions.into_iter().map(wire_commission).collect();
 
-    Ok((StatusCode::OK, axum::Json(serde_json::Value::Array(body))).into_response())
+    let body = ListCommissionsResponse { commissions };
+    let response = (StatusCode::OK, Json(body)).into_response();
+    Ok(response)
 }

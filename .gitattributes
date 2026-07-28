@@ -1,0 +1,6 @@
+# Committed generated code (DD 40992770: the contract's codegen is committed
+# and drift-gated, not build-time). linguist-generated collapses it in GitHub
+# diffs and keeps it out of language stats; the files also carry @generated
+# headers for tools that read markers instead of attributes.
+backend/crates/api/src/generated/** linguist-generated=true
+frontend/web/src/lib/server/api/generated/** linguist-generated=true

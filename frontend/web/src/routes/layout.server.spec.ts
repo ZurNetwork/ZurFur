@@ -13,8 +13,8 @@ describe('root layout load', () => {
 		const me = {
 			did: 'did:plc:alice',
 			handle: 'alice.zurfur.app',
-			display_name: 'Alice',
-			avatar_url: 'https://cdn.example/alice.jpg'
+			displayName: 'Alice',
+			avatarUrl: 'https://cdn.example/alice.jpg'
 		};
 		const { fetch } = fetchStub(() => Response.json(me));
 		const result = await load(layoutEvent(fetch));

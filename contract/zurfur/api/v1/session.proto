@@ -1,0 +1,82 @@
+// The session surface: who is signed in, and the doors in and out.
+//
+// SERVICE BLOCKS DECLARE ROUTES, NOTHING MORE (DD 40992770 decision 3): the
+// `google.api.http` annotations are where paths and verbs live, and the
+// router-vs-descriptor test binds them to axum's real route table. ONLY
+// MESSAGES are generated — no gRPC stubs, no clients, no service impls; JSON
+// over HTTP is the transport and these annotations are declarative metadata.
+//
+// Field names emit as lowerCamelCase on the wire (canonical ProtoJSON;
+// Engineer ruling R1 2026-07-25 — `display_name` becomes `displayName` at the
+// /api/v1 mint). No `json_name` anywhere, by ruling: it is a one-way door.
+
+syntax = "proto3";
+
+package zurfur.api.v1;
+
+import "google/api/annotations.proto";
+
+// `GET /api/v1/me` takes no input; the session cookie is the argument.
+message GetMeRequest {}
+
+// The signed-in visitor, as `GET /api/v1/me` renders them.
+message GetMeResponse {
+  // The visitor's atproto DID — always present for a live session. Opaque to
+  // clients like every id (VERSIONING.md R6), though DIDs are additionally a
+  // public, externally-specified format.
+  string did = 1;
+  // The visitor's handle, when their profile resolved. `optional` = explicit
+  // presence: absent (key omitted) when the PDS was unreachable and nothing
+  // was cached — absence means "not resolved", never anything more (R4).
+  optional string handle = 2;
+  // Display name from the resolved profile, if any.
+  optional string display_name = 3;
+  // Avatar URL from the resolved profile, if any.
+  optional string avatar_url = 4;
+}
+
+// `POST /api/v1/signin` — the handle whose PDS starts the OAuth dance.
+message SigninRequest {
+  // The atproto handle to authenticate, e.g. `alice.bsky.social`.
+  string handle = 1;
+}
+
+// Success is a `303` redirect; there is no body (see the service caveat).
+message SigninResponse {}
+
+// `POST /api/v1/logout` takes no input beyond the session cookie.
+message LogoutRequest {}
+
+// Success is a `303` redirect with cookie clears; there is no body.
+message LogoutResponse {}
+
+// The session service. AUTH-FLOW CAVEAT: `Signin` and `Logout` are
+// redirect-shaped endpoints whose real semantics live outside ProtoJSON —
+// Signin consumes a form-encoded body and answers `303 Location: <PDS authorize
+// URL>`; Logout answers `303` with `Set-Cookie` clears. They are declared here
+// so the route table is complete and the descriptor test covers their paths;
+// their bodies are NOT generated-decoded (the frontend's hand-written Layer
+// owns redirect-following and cookie harvesting — DD 39944194).
+service SessionService {
+  // Who is signed in. Anonymous/expired → 401 `not_authenticated` Problem.
+  rpc GetMe(GetMeRequest) returns (GetMeResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/me"
+    };
+  }
+
+  // Start the atproto OAuth flow. Success is a `303` redirect, not a body.
+  rpc Signin(SigninRequest) returns (SigninResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/signin"
+      body: "*"
+    };
+  }
+
+  // End the session. Success is a `303` redirect with cookie clears.
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/logout"
+    };
+  }
+}

@@ -102,6 +102,16 @@ test:
 gen-queries:
     cargo run -p query-codegen
 
+# Regenerate BOTH tiers' committed generated code from the contract corpus
+# (DD 40992770): the api crate's src/generated/ (drift-gated by the
+# contract_current test) and the frontend's protobuf-es output (drift-gated by
+# the CI contract job's git-diff step). Needs the `buf` CLI for the frontend
+# half (https://buf.build/docs/installation).
+gen-contract:
+    cargo run -p contract-gen
+    cd contract && buf generate
+
+
 # --- Worktrees (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
@@ -115,18 +125,25 @@ worktree-init:
 check:
     cd backend && bacon
 
-# The local mirror of CI's gate (fmt, clippy, test, deny, typos, spec-lint, web)
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, contract, web).
+# CI's contract job ADDITIONALLY runs (a) `buf breaking` against the PR base —
+# a comparison that only makes sense per-PR — and (b) the frontend codegen
+# drift check (clean-slate `buf generate` + index diff); both deliberately
+# CI-only here. The backend half of the drift gate DOES run locally, inside
+# `cargo test` (the contract_current test); regenerate both tiers with
+# `just gen-contract` before pushing a corpus change.
 # -- sequential and fail-fast, so a red step stops the run before the next one
 # starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
 # a one-time `yarn --cwd frontend/web playwright install chromium` for the
-# browser-mode component tests.
+# browser-mode component tests, and the `buf` CLI for the contract lint
+# (https://buf.build/docs/installation — a single Go binary).
 gate:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
-    npx --yes @redocly/cli@2.35.1 lint "openapi/*.yaml"
+    buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test

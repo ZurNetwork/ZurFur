@@ -41,9 +41,16 @@ use crate::{AppState, problem::Problem};
 
 /// The `PUT /commissions/{id}/deadline` request body: the new deadline as an
 /// RFC 3339 timestamp. Clearing is `DELETE`, not a null body.
+///
+/// The field is [`WireTimestamp`](crate::wire_time::WireTimestamp), not bare
+/// chrono: chrono's serde accepts years outside protobuf `Timestamp`'s
+/// 0001–9999 (e.g. `+10000-…`), which would store fine and then produce a
+/// `GET /commissions` body no contract-generated client can decode. The
+/// validating newtype rejects such input at the boundary with a 422
+/// (`contract/VERSIONING.md` §7.3).
 #[derive(Deserialize)]
 pub(super) struct SetDeadlineBody {
-    deadline: DateTimeUtc,
+    deadline: crate::wire_time::WireTimestamp,
 }
 
 /// The `PUT /commissions/{id}/status/deadline` request body: the deadline-axis
@@ -79,7 +86,10 @@ pub(super) async fn set_deadline(
     super::require_participant(&state, commission, user.id).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    apply_deadline(&state, commission, user.id, Some(body.deadline)).await
+    // Deserialize already range-checked; this bridges wire → domain time.
+    let deadline = super::from_wire_timestamp(body.deadline)
+        .ok_or_else(|| Problem::invalid_request("Deadline outside the representable range."))?;
+    apply_deadline(&state, commission, user.id, Some(deadline)).await
 }
 
 /// Clear the commission's deadline (ZMVP-86 AC1/AC4).

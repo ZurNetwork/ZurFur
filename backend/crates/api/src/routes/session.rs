@@ -26,11 +26,11 @@ use domain::{
     elements::{did::Did, profile::Profile, user::UserId},
     ports::{ProfileCache, ProfileSource, UnitOfWork},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tower_sessions::Session;
 use uuid::Uuid;
 
-use crate::{AppState, SESSION_USER_KEY, problem::Problem};
+use crate::{AppState, SESSION_USER_KEY, generated::GetMeResponse, problem::Problem};
 
 /// The session route group: the OAuth sign-in flow and the JSON whoami. Each
 /// route here is on the cookie surface; the composition root wraps the group with
@@ -65,18 +65,6 @@ struct CallbackQuery {
     state: Option<String>,
     iss: Option<String>,
     error: Option<String>,
-}
-
-/// The JSON body of `GET /me`: who the session belongs to. `did` is always present
-/// (the session always resolves to a User with a DID); the profile fields are
-/// `null` when the PDS profile can't be resolved — an unreachable PDS with nothing
-/// cached is not an error, it degrades to a bare identity (the DID). See [`me`].
-#[derive(Serialize)]
-struct SessionUser {
-    did: String,
-    handle: Option<String>,
-    display_name: Option<String>,
-    avatar_url: Option<String>,
 }
 
 /// Begins sign-in (`POST /signin`): hands the submitted [`SigninForm`] handle to
@@ -200,10 +188,10 @@ async fn signin_callback(
 /// Caveats: an anonymous visitor — no session, an expired one, or one whose User no
 /// longer exists — gets a `401` `not_authenticated` problem+json, **not** a redirect
 /// (an API, not a page: the frontend owns the redirect to `/login`). An unreachable
-/// PDS with nothing cached still returns `200`, with the profile fields `null` and
+/// PDS with nothing cached still returns `200`, with the profile KEYS OMITTED and
 /// the DID present (absence is not an error).
 ///
-/// References: [`UserStore`](domain::ports::UserStore), [`SessionUser`], [`resolve_profile`].
+/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`resolve_profile`].
 ///
 /// ```text
 /// GET /me   (Cookie: zurfur.sid=...)
@@ -212,7 +200,10 @@ async fn signin_callback(
 /// GET /me   (no/expired session)
 /// → 401 (application/problem+json, code not_authenticated)
 /// ```
-async fn me(State(state): State<AppState>, session: Session) -> Result<Json<SessionUser>, Problem> {
+async fn me(
+    State(state): State<AppState>,
+    session: Session,
+) -> Result<Json<GetMeResponse>, Problem> {
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Err(Problem::not_authenticated());
     };
@@ -224,15 +215,15 @@ async fn me(State(state): State<AppState>, session: Session) -> Result<Json<Sess
     let body = match profile {
         // A resolved profile: the handle is always present, display name and avatar
         // are the source's own optionals.
-        Some(profile) => SessionUser {
+        Some(profile) => GetMeResponse {
             did,
             handle: Some(profile.handle),
             display_name: profile.display_name,
             avatar_url: profile.avatar_url,
         },
         // No profile (unreachable PDS, nothing cached): degrade to the bare DID —
-        // absence is not an error, so the profile fields are simply null.
-        None => SessionUser {
+        // absence is not an error, so the profile keys are simply omitted (R4).
+        None => GetMeResponse {
             did,
             handle: None,
             display_name: None,

@@ -7,7 +7,7 @@ Canonical design lives in the **zurnetwork** Confluence, space **DESIGN** — th
 - cloudId: `cafe5eef-9c51-4800-85df-ef42187f9414`
 - DESIGN space id: `98310`
 - Fetch a page: `getConfluencePage` with the `pageId` below. Web URL: `https://zurnetwork.atlassian.net/wiki/spaces/DESIGN/pages/{id}`
-- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573). **Full `getPagesInConfluenceSpace` re-list done 2026-07-11** (space held 102 pages; 35 added below in "2026-07 wave" sections) during the full-space `/design-sync` audit. Incremental 2026-07-22: added DD 39944194 (frontend stack).
+- New DD pages should be created via `/design-decision` (writes the Confluence page + Jira tickets). Index snapshot built 2026-06-30; incrementally updated 2026-07-02 (added DD 27852802, relabeled 24870914) and 2026-07-04 (ZMVP-104: added the AT Protocol Boundary Contract programme — 29622283 / 29687820 / 29949954 / 29982722 / 29622362 / 29622321 / 29818896 — and the Replyable DD 30572573). **Full `getPagesInConfluenceSpace` re-list done 2026-07-11** (space held 102 pages; 35 added below in "2026-07 wave" sections) during the full-space `/design-sync` audit. Incremental 2026-07-22: added DD 39944194 (frontend stack). Incremental 2026-07-25: added DD 40992770 (the API contract), the new `Portal` entity page, and the four `Plugin` sub-pages created when Plugin was split; moved `Golem` out of the data-layer section into core entities where it belongs.
 
 ## Settled-decision quick facts
 
@@ -42,7 +42,13 @@ Know these without fetching; fetch the linked DD page for detail.
 - `10190849` — Gallery
 - `9895957` — Workflow
 - `2949165` — Tags
-- `3047451` — Plugin
+- `3047451` — Plugin (parent: entity, the two forms, the Rules; **split 2026-07-25** — sections below moved to sub-pages)
+- `40960023` — Portal (the renderer form; NEW 2026-07-25, sibling of Golem — declared surfaces, sandbox + separate-registrable-domain rule, install contexts)
+- `12451841` — Golem (the actor form; a non-human User with its own did:plc, holding a seat and acting as itself)
+- `40894479` — Plugin — Authority & Scopes (scope families, the authority rule, principals, production vs reading, private storage)
+- `41189377` — Plugin — Listing Lifecycle (Draft→Listed→Deprecated→Archived, Visibility, Banned, author, ratings, reporting, deferred acquisition)
+- `41189413` — Plugin — API Stability & Versioning (the versioning/deprecation contract + the CI machinery enforcing it)
+- `41222145` — Plugin — Security Model (containment properties, the origin boundary, transport & credentials)
 - `3244063` — First-party plugins
 - `1933322` — Achievement
 - `10453000` — Lens
@@ -120,7 +126,8 @@ Know these without fetching; fetch the linked DD page for detail.
 - `34013187` — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban (super-table named `actor_identity`, Engineer 2026-07-14; amended same day: `did` NULLABLE — actor-ness ≠ DID-ness, Characters carry no DID; ZMVP-124/-109 consume it)
 - `33947651` — Private-store query layer — Diesel vs SeaORM (RESOLVED 2026-07-11 by events: #118/#119 SQL-file separation settled the layer; spike ZMVP-127 closed)
 - `34308097` — Query census — 2026-07-10 (HEAD 236dd0f; snapshot overtaken by #118/#119)
-- `39944194` — Frontend Stack — Server-Only Effect & the Runes Seam (DECIDED 2026-07-22; Effect only under `src/lib/server/**`, seam = `ManagedRuntime.runPromise` at hooks/loads/actions, runes never see a fiber; universal REJECTED [fibers-vs-runes two schedulers; no v1 client→PDS path per 26935298/29622283], revisit trigger = post-v1 direct PDS reads; RFC 9457 → tagged error union [23592962]; Effect Schema at untrusted boundaries [no Zod/Valibot]; Layers = ports-by-role with in-mem test Layer [adapter-mem parity]; wraps @atproto/oauth-client-node, doesn't reimplement; no Option type — strict-null `T | undefined`; neverthrow considered & declined; scaffold ticket ZMVP-156)
+- `39944194` — Frontend Stack — Server-Only Effect & the Runes Seam (DECIDED 2026-07-22; Effect only under `src/lib/server/**`, seam = `ManagedRuntime.runPromise` at hooks/loads/actions, runes never see a fiber; universal REJECTED [fibers-vs-runes two schedulers; no v1 client→PDS path per 26935298/29622283], revisit trigger = post-v1 direct PDS reads; RFC 9457 → tagged error union [23592962]; Effect Schema at untrusted boundaries [no Zod/Valibot] — **D4 AMENDED 2026-07-25 by 40992770: the API boundary decodes via the contract's GENERATED decoder (protobuf-es fromJson, server-side only); Effect Schema keeps every boundary the contract doesn't describe**; Layers = ports-by-role with in-mem test Layer [adapter-mem parity]; wraps @atproto/oauth-client-node, doesn't reimplement; no Option type — strict-null `T | undefined`; neverthrow considered & declined; scaffold ticket ZMVP-156)
+- `40992770` — The API Contract — Protobuf as the Independent IDL (DECIDED 2026-07-25; repo-root `contract/zurfur/api/v1/*.proto` authoritative over BOTH tiers, owned by neither — ports-and-adapters at the PROJECT level; Rust via prost+pbjson, TS via protobuf-es SERVER-SIDE ONLY; **JSON/HTTP is the v1 transport, not the contract** — transports are adapters, gRPC is a later one the same artifact serves; declare `service`/`rpc` for google.api.http annotations but GENERATE ONLY MESSAGES, handlers hand-written must return the generated type; path-major bound to the proto package [`package zurfur.api.v1` ⇒ `/api/v1/…`], additive-only, `buf breaking` at WIRE_JSON gating CI; canonical lowerCamelCase keys at the /api/v1 mint (R1 2026-07-25; `json_name` REJECTED as a one-way door); Problem declared ONCE [was 3× and already drifting on `detail`]; implicit-latest REJECTED [Stripe keeps /v1/ in the path and defaults to the account's PINNED version]; field-number immunity largely INERT on a JSON wire; ~65/35 over hand-authored OpenAPI, tiebreaker = toolchain health; retires openapi/plugin-v1.yaml + supersedes 589826's OpenAPI commitment + amends 11763713's versioning ruling; epic ZMVP-25, chain 158→159→{160,161}→162 with 28 blocking 159)
 
 ### Data layer / infrastructure
 - `9994298` — Where does Data live?
@@ -131,4 +138,3 @@ Know these without fetching; fetch the linked DD page for detail.
 - `9994275` — Blob
 - `10354710` — Lexicon
 - `11763713` — Domains and Applications
-- `12451841` — Golem

@@ -69,6 +69,28 @@ use uuid::Uuid;
 
 use crate::{AppState, SESSION_USER_KEY, problem::Problem};
 
+/// Domain time → the contract's wire time (ZMVP-160).
+/// [`WireTimestamp`](crate::wire_time::WireTimestamp) serializes as canonical
+/// ProtoJSON — RFC 3339, **Z-normalized**, 0/3/6/9 fractional digits — which
+/// is byte-identical to what chrono's serde emitted
+/// (`contract/VERSIONING.md` §7.3), so adopting the generated types does not
+/// move the wire. (The raw `pbjson_types::Timestamp` would have: its
+/// serializer emits `+00:00`, non-canonical — the epic gate caught it.)
+pub(super) fn wire_timestamp(at: domain::datetime::DateTimeUtc) -> crate::wire_time::WireTimestamp {
+    crate::wire_time::WireTimestamp::from(at)
+}
+
+/// Wire time → domain time, or `None` for a timestamp outside the protobuf
+/// `Timestamp` range (years 0001–9999). The type's own `Deserialize` already
+/// range-checked anything that arrived over the wire (§7.3's validating
+/// newtype), so on a request path this is a bridge that cannot fail — the
+/// `Option` guards constructed-in-process values.
+pub(super) fn from_wire_timestamp(
+    at: crate::wire_time::WireTimestamp,
+) -> Option<domain::datetime::DateTimeUtc> {
+    at.as_datetime()
+}
+
 mod archive;
 mod changelog;
 mod channel;

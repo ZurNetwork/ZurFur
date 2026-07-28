@@ -10,8 +10,8 @@ type ActionEvent = Parameters<(typeof actions)['default']>[0];
 const alice: Session = {
 	did: 'did:plc:alice',
 	handle: 'alice.zurfur.app',
-	display_name: 'Alice',
-	avatar_url: null
+	displayName: 'Alice',
+	avatarUrl: undefined
 };
 
 function loadEvent(session: Session | null, search = ''): LoadEvent {

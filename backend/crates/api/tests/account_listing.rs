@@ -178,7 +178,9 @@ async fn lists_every_live_account_the_caller_holds_a_role_in_with_that_role() {
         .expect("GET /accounts");
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.expect("json body");
-    let rows = body.as_array().expect("array body");
+    // Wrapped at the /api/v1 mint (contract R7): rows ride under "accounts" so
+    // pagination can later land additively as a sibling key.
+    let rows = body["accounts"].as_array().expect("accounts array");
     assert_eq!(rows.len(), 2, "both memberships are listed: {body}");
 
     let listed_ids: Vec<&str> = rows
@@ -272,7 +274,9 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
         .expect("GET /accounts");
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.expect("json body");
-    let rows = body.as_array().expect("array body");
+    // Wrapped at the /api/v1 mint (contract R7): rows ride under "accounts" so
+    // pagination can later land additively as a sibling key.
+    let rows = body["accounts"].as_array().expect("accounts array");
     assert_eq!(
         rows.len(),
         1,

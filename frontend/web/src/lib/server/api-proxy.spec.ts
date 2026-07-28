@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { rewriteApiRequest } from './api-proxy';
 
-// The browser-visible origin SvelteKit resolves in-app `fetch('/api/...')` calls
+// The browser-visible origin SvelteKit resolves in-app `fetch('/api/v1/...')` calls
 // against (Caddy, in the real deployment). The function is origin-agnostic — it
 // only compares the request origin to this one — so any consistent value works.
 const eventOrigin = 'http://127.0.0.1:8080';
@@ -13,8 +13,8 @@ function sameOriginRequest(path: string, init?: RequestInit): Request {
 }
 
 describe('rewriteApiRequest', () => {
-	it('rewrites /api/* to the upstream with the /api prefix stripped', () => {
-		const request = sameOriginRequest('/api/health');
+	it('rewrites /api/* to the upstream with the /api/v1 prefix stripped', () => {
+		const request = sameOriginRequest('/api/v1/health');
 
 		const rewritten = rewriteApiRequest({
 			request,
@@ -27,7 +27,7 @@ describe('rewriteApiRequest', () => {
 	});
 
 	it('preserves the query string when stripping the prefix', () => {
-		const request = sameOriginRequest('/api/accounts?page=2&sort=name');
+		const request = sameOriginRequest('/api/v1/accounts?page=2&sort=name');
 
 		const rewritten = rewriteApiRequest({
 			request,
@@ -39,8 +39,8 @@ describe('rewriteApiRequest', () => {
 		expect(rewritten.url).toBe(`${apiUpstream}/accounts?page=2&sort=name`);
 	});
 
-	it('maps a bare /api to the upstream root', () => {
-		const request = sameOriginRequest('/api');
+	it('maps a bare /api/v1 to the upstream root', () => {
+		const request = sameOriginRequest('/api/v1');
 
 		const rewritten = rewriteApiRequest({
 			request,
@@ -53,7 +53,7 @@ describe('rewriteApiRequest', () => {
 	});
 
 	it('forwards the incoming cookie header to the upstream', () => {
-		const request = sameOriginRequest('/api/me');
+		const request = sameOriginRequest('/api/v1/me');
 		const incomingCookie = 'zurfur.sid=abc123';
 
 		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
@@ -64,7 +64,7 @@ describe('rewriteApiRequest', () => {
 	it('forwards NO cookie header when the incoming request carries none', () => {
 		// Even if the outgoing request somehow already had a cookie, only the
 		// incoming session cookie may be forwarded — none in, none out.
-		const request = sameOriginRequest('/api/me', { headers: { cookie: 'stray=leak' } });
+		const request = sameOriginRequest('/api/v1/me', { headers: { cookie: 'stray=leak' } });
 
 		const rewritten = rewriteApiRequest({
 			request,
@@ -80,7 +80,7 @@ describe('rewriteApiRequest', () => {
 		// Cookies are host-scoped by hostname, not port, so on 127.0.0.1 any other
 		// local dev tool's cookies share the jar. Only the session cookie may ride
 		// along to axum — everything else must be dropped.
-		const request = sameOriginRequest('/api/me');
+		const request = sameOriginRequest('/api/v1/me');
 		const incomingCookie = 'foo=bar; zurfur.sid=abc123; other=x%3Dy';
 
 		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
@@ -89,7 +89,7 @@ describe('rewriteApiRequest', () => {
 	});
 
 	it('forwards NO cookie header when the incoming header has cookies but no zurfur.sid', () => {
-		const request = sameOriginRequest('/api/me');
+		const request = sameOriginRequest('/api/v1/me');
 		const incomingCookie = 'foo=bar; other=baz';
 
 		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
@@ -100,7 +100,7 @@ describe('rewriteApiRequest', () => {
 	it('preserves a literal = inside the zurfur.sid value (split on first = only)', () => {
 		// Session values can carry `=` (e.g. base64 padding). The defensive parse
 		// splits each pair on its FIRST `=`, so the value survives intact.
-		const request = sameOriginRequest('/api/me');
+		const request = sameOriginRequest('/api/v1/me');
 		const incomingCookie = 'foo=bar; zurfur.sid=a=b==; other=baz';
 
 		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
@@ -109,7 +109,7 @@ describe('rewriteApiRequest', () => {
 	});
 
 	it('preserves the method and body on a POST', async () => {
-		const request = sameOriginRequest('/api/accounts', {
+		const request = sameOriginRequest('/api/v1/accounts', {
 			method: 'POST',
 			body: '{"handle":"alice"}',
 			headers: { 'content-type': 'application/json' }
@@ -128,7 +128,7 @@ describe('rewriteApiRequest', () => {
 	});
 
 	it('preserves other request headers through the rewrite', () => {
-		const request = sameOriginRequest('/api/health', {
+		const request = sameOriginRequest('/api/v1/health', {
 			headers: { 'x-custom': 'kept', accept: 'application/json' }
 		});
 
@@ -143,7 +143,7 @@ describe('rewriteApiRequest', () => {
 		expect(rewritten.headers.get('accept')).toBe('application/json');
 	});
 
-	it('leaves a same-origin non-/api request untouched', () => {
+	it('leaves a same-origin non-/api/v1 request untouched', () => {
 		const request = sameOriginRequest('/internal/data');
 
 		const result = rewriteApiRequest({
@@ -159,16 +159,16 @@ describe('rewriteApiRequest', () => {
 		expect(result.headers.get('cookie')).toBeNull();
 	});
 
-	it('does NOT treat /apifoo as an /api match (prefix, not stem)', () => {
-		const request = sameOriginRequest('/apifoo');
+	it('does NOT treat /api/v1foo as an /api/v1 match (prefix, not stem)', () => {
+		const request = sameOriginRequest('/api/v1foo');
 
 		const result = rewriteApiRequest({ request, eventOrigin, incomingCookie: null, apiUpstream });
 
 		expect(result).toBe(request);
-		expect(result.url).toBe(`${eventOrigin}/apifoo`);
+		expect(result.url).toBe(`${eventOrigin}/api/v1foo`);
 	});
 
-	it('leaves a cross-origin /api request untouched and forwards NO cookie', () => {
+	it('leaves a cross-origin /api/v1 request untouched and forwards NO cookie', () => {
 		// A fetch to some other host that happens to have an /api path must never be
 		// rewritten to our upstream, and must NEVER receive our session cookie.
 		const request = new Request('https://cdn.example.com/api/thing');

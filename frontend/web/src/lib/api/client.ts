@@ -5,8 +5,10 @@
  * client-safe surface both sides of the split share.
  */
 
-/** The prefix the origin split routes to axum; kept in lockstep with the proxy seam. */
-export const API_PREFIX = '/api';
+/** The prefix the origin split routes to axum — now carrying the PATH-MAJOR
+ * (`/api/v1`, DD 40992770: the major is bound to the proto package version).
+ * Kept in lockstep with the proxy seam and the Caddyfile. */
+export const API_PREFIX = '/api/v1';
 
 /**
  * The `fetch` signature every seam function accepts — the SvelteKit event

@@ -166,14 +166,14 @@ async fn me_returns_json_identity_for_a_live_session() {
     let body: serde_json::Value = res.json().await.expect("body is JSON");
     assert_eq!(body["did"], DID, "did is always present");
     assert_eq!(body["handle"], "alice.bsky.social");
-    assert_eq!(body["display_name"], "Alice");
-    assert_eq!(body["avatar_url"], "https://pds.example/avatar/alice.jpg");
+    assert_eq!(body["displayName"], "Alice");
+    assert_eq!(body["avatarUrl"], "https://pds.example/avatar/alice.jpg");
 }
 
 #[tokio::test]
-async fn me_nulls_the_profile_fields_when_the_pds_is_unreachable_and_uncached() {
+async fn me_omits_the_profile_fields_when_the_pds_is_unreachable_and_uncached() {
     // The PDS is down and nothing is cached: /me still resolves the identity (the
-    // DID) and simply nulls the profile fields — absence is not an error.
+    // DID) and simply omits the profile keys — absence is not an error.
     let source = MemProfileSource::new(alice_profile());
     source.set_unreachable();
     let auth = Arc::new(MemAuthenticator::new(Did::new(DID.to_string())));
@@ -189,14 +189,19 @@ async fn me_nulls_the_profile_fields_when_the_pds_is_unreachable_and_uncached() 
     assert_eq!(res.status(), 200, "an unreachable PDS is not an error");
     let body: serde_json::Value = res.json().await.expect("body is JSON");
     assert_eq!(body["did"], DID, "the DID still proves who is signed in");
-    assert!(body["handle"].is_null(), "handle nulls out, got {body}");
+    // Minted R4 (2026-07-25): an absent optional OMITS its key — `null` is
+    // never emitted; absence only ever means "not set".
     assert!(
-        body["display_name"].is_null(),
-        "display_name nulls out, got {body}"
+        body.get("handle").is_none(),
+        "handle key is omitted when unresolved, got {body}"
     );
     assert!(
-        body["avatar_url"].is_null(),
-        "avatar_url nulls out, got {body}"
+        body.get("displayName").is_none(),
+        "displayName key is omitted when unresolved, got {body}"
+    );
+    assert!(
+        body.get("avatarUrl").is_none(),
+        "avatarUrl key is omitted when unresolved, got {body}"
     );
 }
 

@@ -8,8 +8,8 @@ import { sessionOrAnonymous, sessionOrNull, signinOutcome, signoutOutcome } from
 const alice: Session = {
 	did: 'did:plc:alice',
 	handle: 'alice.zurfur.app',
-	display_name: 'Alice',
-	avatar_url: null
+	displayName: 'Alice',
+	avatarUrl: undefined
 };
 
 /** Run a program against the in-memory Layer — no fetch, no network. */
@@ -63,6 +63,7 @@ describe('signinOutcome', () => {
 			type: 'urn:zurfur:error:invalid-request',
 			code: 'invalid_request',
 			title: 'invalid_request',
+			detail: 'That handle is not usable.',
 			status: 422
 		};
 		const rejected = () => Effect.fail(new ApiProblem({ problem }));

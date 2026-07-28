@@ -5,12 +5,17 @@
 # shell/`just` level. It asserts, through the Caddy public origin, that the
 # one-origin split routes exactly as designed:
 #
-#   /api/health           -> axum, /api stripped        (AC2 + AC3 upstream)
+#   /api/v1/health        -> axum, /api/v1 stripped     (AC2 + AC3 upstream;
+#                                                         path-major per
+#                                                         DD 40992770)
+#   /api/health            -> SvelteKit, NOT the backend (the unversioned /api
+#                                                         surface is retired)
 #   /                      -> SvelteKit (HTML)           (AC2 catch-all)
 #   /.well-known/atproto-did  -> axum verbatim          (AC2 carve-out)
 #   /signin-callback       -> axum verbatim             (AC2 carve-out, OAuth)
-#   /apifoo                -> SvelteKit, NOT the backend (AC2 boundary: /api is
-#                                                         a prefix, not a stem)
+#   /apifoo                -> SvelteKit, NOT the backend (AC2 boundary: /api/v1
+#                                                         is a prefix, not a
+#                                                         stem)
 #
 # Unlike `pds-smoke`, this does NOT boot anything: axum (`cargo run`) and the
 # vite dev server (`yarn dev`) run on the HOST, not in Docker, so there is
@@ -42,16 +47,25 @@ if ! curl -sS -o /dev/null --max-time 5 "$origin/" 2>/dev/null; then
     fail "Caddy origin $origin is unreachable — start the stack first (\`just dev\`), then re-run \`just web-smoke\`."
 fi
 
-echo "--- AC2/AC3: /api/* -> axum with the /api prefix stripped ---"
-http_get "/api/health"
-[ "$REPLY_CODE" = "200" ] || fail "/api/health returned $REPLY_CODE, expected 200 (is the backend up?)"
+echo "--- AC2/AC3: /api/v1/* -> axum with the /api/v1 path-major stripped ---"
+http_get "/api/v1/health"
+[ "$REPLY_CODE" = "200" ] || fail "/api/v1/health returned $REPLY_CODE, expected 200 (is the backend up?)"
 # axum's health body is JSON carrying a status + database field; a SvelteKit
 # 404 would be HTML. Assert the axum shape.
 printf '%s' "$REPLY_BODY" | grep -q '"status"' \
-    || fail "/api/health body is not axum health JSON: $REPLY_BODY"
+    || fail "/api/v1/health body is not axum health JSON: $REPLY_BODY"
 printf '%s' "$REPLY_BODY" | grep -q '"database"' \
-    || fail "/api/health body is missing the database field: $REPLY_BODY"
-pass "/api/health -> 200 axum health JSON (/api stripped to /health): $REPLY_BODY"
+    || fail "/api/v1/health body is missing the database field: $REPLY_BODY"
+pass "/api/v1/health -> 200 axum health JSON (/api/v1 stripped to /health): $REPLY_BODY"
+
+echo "--- DD 40992770: the unversioned /api surface is RETIRED ---"
+http_get "/api/health"
+# Bare /api/* no longer matches any Caddy backend route; it must fall through
+# to SvelteKit (its HTML 404 page), proving the retirement rather than merely
+# commenting it. An axum answer here would be a JSON body, not HTML.
+printf '%s' "$REPLY_BODY" | grep -qi '<!doctype html\|<html' \
+    || fail "/api/health did not fall through to SvelteKit (code $REPLY_CODE) — the retired unversioned /api surface still reaches the backend"
+pass "/api/health -> SvelteKit HTML (code $REPLY_CODE): the unversioned surface is retired"
 
 echo "--- AC2: / -> the SvelteKit app (HTML) ---"
 http_get "/"
@@ -85,10 +99,10 @@ pass "/signin-callback -> axum 303 (reached the OAuth callback handler verbatim)
 
 echo "--- AC2: /apifoo does NOT reach the backend (/api is a prefix, not a stem) ---"
 http_get "/apifoo"
-# /apifoo must fall through to SvelteKit: it does not match /api/* nor a bare
-# /api. SvelteKit renders a full HTML document (its 404 page); axum would have
-# returned an empty-bodied 404. The presence of an HTML document proves the
-# backend was NOT reached.
+# /apifoo must fall through to SvelteKit: it does not match /api/v1/* nor a
+# bare /api/v1. SvelteKit renders a full HTML document (its 404 page); axum
+# would have returned an empty-bodied 404. The presence of an HTML document
+# proves the backend was NOT reached.
 printf '%s' "$REPLY_BODY" | grep -qi '<!doctype html\|<html' \
     || fail "/apifoo did not return a SvelteKit HTML document (code $REPLY_CODE) — it may have reached the backend"
 pass "/apifoo -> SvelteKit HTML (code $REPLY_CODE): the backend was not reached"

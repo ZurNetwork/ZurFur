@@ -39,9 +39,18 @@ use figment::{
 use serde::Deserialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+/// The contract's generated message types (DD 40992770; `@generated` by
+/// `contract-gen`, regenerate with `just gen-contract`). Drift from
+/// `contract/zurfur/api/v1/*.proto` fails the `contract_current` test.
+pub mod generated;
+
 mod problem;
 mod routes;
 mod sweep;
+
+/// The canonical-ProtoJSON wire instant the generated types carry for every
+/// `google.protobuf.Timestamp` field (`extern_path`'d there by `contract-gen`).
+pub mod wire_time;
 
 pub use sweep::{run_deadline_sweeper, sweep_deadlines};
 
@@ -145,7 +154,8 @@ pub struct Config {
     pub deadline_sweep_interval_secs: u64,
     /// The maximum size, in bytes, of a single uploaded commission file entry
     /// (ZMVP-88, ruling E13). Defaults to [`Config::DEFAULT_MAX_UPLOAD_BYTES`]
-    /// (25 MiB); override via `ZURFUR_MAX_UPLOAD_BYTES`. The
+    /// (50 MiB — Bluesky PDS blob-cap parity, Engineer ruling 2026-07-25);
+    /// override via `ZURFUR_MAX_UPLOAD_BYTES`. The
     /// upload route enforces this two ways: a body-size limit on the request (a
     /// hard framework backstop, set a margin above this for the multipart
     /// envelope) and an exact check on the file bytes that answers `413`
@@ -239,11 +249,19 @@ fn default_http_addr() -> SocketAddr {
 }
 
 impl Config {
-    /// Default for [`Config::max_upload_bytes`]: 25 MiB — generous for a
-    /// work-in-progress art file, bounded so no upload is uncapped (ZMVP-88).
-    /// The one home for the number; the serde default and every test fixture
+    /// Default for [`Config::max_upload_bytes`]: **50 MiB (52,428,800 bytes) —
+    /// Bluesky PDS blob-cap parity** (Engineer ruling 2026-07-25, MVP; "we can
+    /// increase eventually"). Bounded so no upload is uncapped (ZMVP-88). The
+    /// one home for the number; the serde default and every test fixture
     /// reference it.
-    pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+    ///
+    /// Raising it later is fine **up to `i32::MAX` bytes** (2,147,483,647 —
+    /// one byte under 2 GiB): past that the
+    /// wire's `byte_size` field can no longer be an `int32` JSON number and
+    /// must become the canonical int64 decimal **string** (the minimum-range
+    /// ruling, `contract/VERSIONING.md` §7.2) — a breaking change to plan,
+    /// not stumble into.
+    pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
 
     /// Loads and validates the runtime [`Config`] from the layered figment
     /// sources, selecting the profile from `ZURFUR_ENV` (default `dev`).
