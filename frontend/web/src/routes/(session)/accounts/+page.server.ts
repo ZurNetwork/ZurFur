@@ -2,24 +2,50 @@ import { accountsOutcome, createAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import type { Problem } from '$lib/api/problem';
+import { type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import type { DeleteOutcome } from '$lib/api/account';
+import { HttpStatus } from '$lib/api/http-status';
 
+/**
+ * Every outcome a completed delete can carry back via `?deleted=`. Anything
+ * else in the URL — hand-typed, stale, or forged — is not an outcome and must
+ * render no banner: an unvalidated query param never confirms a deletion.
+ */
+const DELETE_OUTCOMES: readonly DeleteOutcome[] = ['soft', 'hard', 'unknown'];
+
+/**
+ * The caller's account listing, plus the `?deleted=` flash a completed delete
+ * redirects back with — narrowed against {@link DeleteOutcome} so the page
+ * renders from the declared vocabulary, not from raw query text.
+ */
 export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
-	const deleted = url.searchParams.get('deleted');
+	const deletedParam = url.searchParams.get('deleted');
+	const deleted = DELETE_OUTCOMES.find((known) => known === deletedParam);
 
 	return { ...outcome, deleted };
 };
 
+/**
+ * Rendered through the same problem seam as backend problems, but minted
+ * locally — an empty name or handle never needs a round-trip. Same shape,
+ * same rendering path ({@link import('$lib/components/ProblemNote.svelte')}).
+ */
 const MISSING_PARAMETERS_PROBLEM: Problem = {
-	type: 'urn:zurfur:error:invalid-request',
-	code: 'invalid_request',
+	type: ProblemType.InvalidRequest,
+	code: ProblemCode.InvalidRequest,
 	title: 'Invalid values.',
 	detail: 'You need to enter valid values to proceed.',
-	status: 422
+	status: HttpStatus.UnprocessableContent
 };
 
 export const actions: Actions = {
+	/**
+	 * Found an account: validate locally, then POST /accounts. A problem
+	 * re-renders the form with the typed values riding back on the fail
+	 * payload (SvelteKit's repopulate-from-fail pattern — neither field is a
+	 * secret); success redirects to the clean listing (PRG).
+	 */
 	default: async ({ request, fetch }) => {
 		const form = await request.formData();
 		const formName = form.get('name');
@@ -28,10 +54,16 @@ export const actions: Actions = {
 		const formHandle = form.get('handle');
 		const handle = typeof formHandle === 'string' ? formHandle.trim() : '';
 
-		if (name === '' || handle === '') return fail(422, { problem: MISSING_PARAMETERS_PROBLEM });
+		if (name === '' || handle === '')
+			return fail(HttpStatus.UnprocessableContent, {
+				problem: MISSING_PARAMETERS_PROBLEM,
+				name,
+				handle
+			});
 		const outcome = await runApi(fetch, createAccountOutcome(name, handle));
 
-		if ('problem' in outcome) return fail(outcome.problem.status, { problem: outcome.problem });
-		redirect(303, '/accounts');
+		if ('problem' in outcome)
+			return fail(outcome.problem.status, { problem: outcome.problem, name, handle });
+		redirect(HttpStatus.SeeOther, '/accounts');
 	}
 };

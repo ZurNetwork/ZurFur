@@ -14,7 +14,7 @@
 <header>
 	{#if session !== null}
 		<nav>
-			<a href={resolve('/(session)/accounts')}>Accounts</a>
+			<a href={resolve('/accounts')} data-testid="accounts-link">Accounts</a>
 		</nav>
 		{#if session.avatarUrl !== undefined}
 			<img data-testid="session-avatar" src={session.avatarUrl} alt="" width="32" height="32" />

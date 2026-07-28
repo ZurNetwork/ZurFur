@@ -27,3 +27,34 @@ export interface Problem {
 
 /** The content type every backend problem response carries. */
 export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
+
+/**
+ * The `urn:zurfur:error:*` URNs the frontend mints locally, named — the
+ * hyphenated half of the type/code pair. Entry names match {@link ProblemCode}
+ * one-to-one; a locally-built Problem must take BOTH fields from the same
+ * entry name. Not a mirror of the backend's full registry — wire problems
+ * arrive already paired; an entry lands here when the frontend mints it.
+ */
+export const ProblemType = {
+	InvalidRequest: 'urn:zurfur:error:invalid-request',
+	AccountNotFound: 'urn:zurfur:error:account-not-found',
+	NotAuthenticated: 'urn:zurfur:error:not-authenticated',
+	Forbidden: 'urn:zurfur:error:forbidden'
+} as const;
+
+/** The union of every locally-minted problem URN. */
+export type ProblemType = (typeof ProblemType)[keyof typeof ProblemType];
+
+/**
+ * The machine codes matching {@link ProblemType} entry-for-entry — the
+ * snake_case half of the pair (clients branch on this, never on the URN).
+ */
+export const ProblemCode = {
+	InvalidRequest: 'invalid_request',
+	AccountNotFound: 'account_not_found',
+	NotAuthenticated: 'not_authenticated',
+	Forbidden: 'forbidden'
+} as const;
+
+/** The union of every locally-minted problem code. */
+export type ProblemCode = (typeof ProblemCode)[keyof typeof ProblemCode];

@@ -29,6 +29,23 @@ export function fetchStub(respond: ResponseFn): FetchStub {
 	return { fetch, calls };
 }
 
+/** Builds the response a routed stub answers with, given the requested URL and init. */
+type RoutedResponseFn = (url: string, init?: RequestInit) => Response;
+
+/**
+ * A `fetch` stub for actions that make MORE THAN ONE backend call (e.g. read
+ * the listing, then delete): `respond` sees each call's URL and init and
+ * routes on them. Same recording contract as {@link fetchStub}.
+ */
+export function routedFetchStub(respond: RoutedResponseFn): FetchStub {
+	const calls: string[] = [];
+	const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		calls.push(String(input));
+		return respond(String(input), init);
+	}) as FetchFunction;
+	return { fetch, calls };
+}
+
 /** A `fetch` stub that fails like a dead backend (connection refused, DNS, …). */
 export function unreachableFetch(message = 'fetch failed'): FetchFunction {
 	return (async () => {

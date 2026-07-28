@@ -20,6 +20,18 @@ describe('SessionHeader', () => {
 		await expect.element(page.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
 	});
 
+	it('shows the accounts nav link for a session', async () => {
+		const alice = {
+			did: 'did:plc:alice',
+			handle: 'alice.zurfur.app',
+			displayName: 'Alice',
+			avatarUrl: undefined
+		};
+		render(SessionHeader, { session: alice });
+
+		await expect.element(page.getByTestId('accounts-link')).toHaveAttribute('href', '/accounts');
+	});
+
 	it('falls back to the DID when the profile did not resolve', async () => {
 		const unresolved = {
 			did: 'did:plc:alice',
@@ -36,5 +48,11 @@ describe('SessionHeader', () => {
 		render(SessionHeader, { session: null });
 
 		await expect.element(page.getByTestId('signin-link')).toHaveAttribute('href', '/login');
+	});
+
+	it('hides the accounts nav link when signed out', async () => {
+		render(SessionHeader, { session: null });
+
+		await expect.element(page.getByTestId('accounts-link')).not.toBeInTheDocument();
 	});
 });

@@ -2,7 +2,8 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { runApi } from '$lib/server/runtime';
 import { signinOutcome } from '$lib/server/session';
-import type { Problem } from '$lib/api/problem';
+import { type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import { HttpStatus } from '$lib/api/http-status';
 import { callbackErrorMessage } from './callback-errors';
 
 /**
@@ -11,11 +12,11 @@ import { callbackErrorMessage } from './callback-errors';
  * rendering path ({@link import('$lib/components/ProblemNote.svelte')}).
  */
 const EMPTY_HANDLE_PROBLEM: Problem = {
-	type: 'urn:zurfur:error:invalid-request',
-	code: 'invalid_request',
+	type: ProblemType.InvalidRequest,
+	code: ProblemCode.InvalidRequest,
 	title: 'Enter a handle.',
 	detail: 'A handle is required to start sign-in — e.g. you.bsky.social.',
-	status: 422
+	status: HttpStatus.UnprocessableContent
 };
 
 /**
