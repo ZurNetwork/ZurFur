@@ -51,6 +51,13 @@ use crate::{AppState, problem::Problem};
 /// payload `{ file_id, markup }`, the markup **exactly as submitted** — through
 /// the unit of work. The entry is the only write: no status, no lifecycle, no
 /// deadline. Returns `201 Created`.
+///
+/// ⚠️ contract-decision-needed: the `Json<Markup>` request body below is the
+/// *inbound* facet of an unschematized passthrough — `Markup` rides back OUT
+/// through the same hole, opaque inside `ChangelogEntryBody.payload`
+/// (`routes/commissions/changelog.rs`) on `GET /commissions/{id}/changelog`.
+/// Both facets are flagged there; resolution tracks `VERSIONING.md` §8 Q9
+/// (Engineer-deferred).
 pub(super) async fn add_markup(
     State(state): State<AppState>,
     Path((id, file_id)): Path<(Uuid, Uuid)>,

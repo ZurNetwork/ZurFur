@@ -26,13 +26,19 @@ use domain::{
     elements::commission::{CommissionId, NewSlot, NodeId, SlotTitle},
     ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use uuid::Uuid;
 
 use super::require_owner;
 use crate::{AppState, problem::Problem};
+
+/// `POST /commissions/{id}/slots`'s `201` body: the node id of each newly
+/// declared slot's carrying component, in request order — see [`declare_slots`].
+#[derive(Serialize)]
+struct DeclareSlotsResponse {
+    ids: Vec<Uuid>,
+}
 
 /// One Slot of the `POST /commissions/{id}/slots` request body (a JSON array
 /// of these): the existing **surface** to grow under, the Slot's required
@@ -66,8 +72,8 @@ pub(super) struct DeclareSlotBody {
 /// write: absent/foreign is the indistinguishable
 /// [`node_not_found`](Problem::node_not_found) 404, a component parent the
 /// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a
-/// malformed body is a `422`. Returns `201 Created` with the node ids of the
-/// new Slots' carrying components, in request order — `{"ids": ["…", …]}` —
+/// malformed body is a `422`. Returns `201 Created` with the node id of each
+/// newly declared slot's carrying component, in request order — `{"ids": ["…", …]}` —
 /// since no tree read exposes ids until the projection lands (ZMVP-75).
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
@@ -123,5 +129,29 @@ pub(super) async fn declare_slots(
             }
         })?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "ids": node_ids }))).into_response())
+    let body = DeclareSlotsResponse { ids: node_ids };
+    Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the `201` body's wire shape: `{"ids": ["<uuid>", …]}` — the exact
+    //! string form `json!({ "ids": node_ids })` (a `Vec<Uuid>`) used to emit
+    //! (ZMVP-158 AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn declare_slots_response_serializes_to_a_bare_ids_array() {
+        let first = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000004").unwrap();
+        let second = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000005").unwrap();
+        let body = DeclareSlotsResponse {
+            ids: vec![first, second],
+        };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            format!("{{\"ids\":[\"{first}\",\"{second}\"]}}")
+        );
+    }
 }

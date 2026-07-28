@@ -27,13 +27,20 @@ use domain::{
     },
     ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
 
 use super::require_owner;
 use crate::{AppState, problem::Problem};
+
+/// `POST /commissions/{id}/seats`'s `201` body: the new seat's node id — see
+/// [`declare_seat`].
+#[derive(Serialize)]
+struct DeclareSeatResponse {
+    id: Uuid,
+}
 
 /// The `POST /commissions/{id}/seats` request body: the existing **surface** to
 /// declare the seat under (the seat inherits its visibility — a vacant seat
@@ -130,5 +137,25 @@ pub(super) async fn declare_seat(
             }
         })?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "id": seat_id }))).into_response())
+    let body = DeclareSeatResponse { id: seat_id };
+    Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}` — the exact string
+    //! form `json!({ "id": seat_id })` used to emit (ZMVP-158 AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn declare_seat_response_serializes_to_a_bare_id_object() {
+        let id = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000003").unwrap();
+        let body = DeclareSeatResponse { id };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            format!("{{\"id\":\"{id}\"}}")
+        );
+    }
 }
