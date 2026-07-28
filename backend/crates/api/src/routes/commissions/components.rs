@@ -21,8 +21,7 @@ use domain::{
     elements::commission::{CommissionId, NewComponent, NodeId},
     ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use uuid::Uuid;
 
@@ -34,11 +33,23 @@ use crate::{AppState, problem::Problem};
 /// verbatim (AC3); omitted, it defaults to the empty object (the column's own
 /// default). Position is core-assigned (append order) and the creator is the
 /// session.
+///
+/// ⚠️ contract-decision-needed: `payload` is an unschematized `serde_json::Value`
+/// passthrough — v1's generic, untyped component contract (no type catalog yet,
+/// per the Surfaces DD). Whatever shape a client sends round-trips verbatim, with
+/// no schema behind it; resolution tracks `VERSIONING.md` §8 Q9 (Engineer-deferred).
 #[derive(Deserialize)]
 pub(super) struct AddComponentBody {
     parent: Uuid,
     #[serde(default = "empty_object")]
     payload: serde_json::Value,
+}
+
+/// `POST /commissions/{id}/components`'s `201` body: the new node's id — see
+/// [`add_component`].
+#[derive(Serialize)]
+struct AddComponentResponse {
+    id: Uuid,
 }
 
 /// The default payload for a request that omits it: `{}`, mirroring the
@@ -98,5 +109,25 @@ pub(super) async fn add_component(
             }
         })?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "id": node_id }))).into_response())
+    let body = AddComponentResponse { id: node_id };
+    Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}` — the exact string
+    //! form `json!({ "id": node_id })` used to emit (ZMVP-158 AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn add_component_response_serializes_to_a_bare_id_object() {
+        let id = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000002").unwrap();
+        let body = AddComponentResponse { id };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            format!("{{\"id\":\"{id}\"}}")
+        );
+    }
 }

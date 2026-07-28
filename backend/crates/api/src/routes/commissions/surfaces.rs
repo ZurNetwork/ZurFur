@@ -19,8 +19,7 @@ use domain::{
     elements::commission::{CommissionId, NewSurface, NodeId},
     ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use uuid::Uuid;
 
@@ -33,6 +32,13 @@ use crate::{AppState, problem::Problem};
 #[derive(Deserialize)]
 pub(super) struct AddSurfaceBody {
     parent: Uuid,
+}
+
+/// `POST /commissions/{id}/surfaces`'s `201` body: the new node's id — see
+/// [`add_surface`].
+#[derive(Serialize)]
+struct AddSurfaceResponse {
+    id: Uuid,
 }
 
 /// Add a surface under an existing surface of the commission's tree (ZMVP-71
@@ -81,5 +87,26 @@ pub(super) async fn add_surface(
             }
         })?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "id": node_id }))).into_response())
+    let body = AddSurfaceResponse { id: node_id };
+    Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}` — the exact string
+    //! form `json!({ "id": node_id })` (a bare `Uuid`) used to emit, so swapping
+    //! in the named struct moved no bytes (ZMVP-158 AC1/AC3).
+
+    use super::*;
+
+    #[test]
+    fn add_surface_response_serializes_to_a_bare_id_object() {
+        let id = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000001").unwrap();
+        let body = AddSurfaceResponse { id };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            format!("{{\"id\":\"{id}\"}}")
+        );
+    }
 }

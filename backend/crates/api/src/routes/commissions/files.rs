@@ -50,11 +50,19 @@ use domain::{
     },
     ports::UnitOfWork,
 };
+use serde::Serialize;
 use serde_json::json;
 use tower_sessions::Session;
 use uuid::Uuid;
 
 use crate::{AppState, problem::Problem};
+
+/// `POST /commissions/{id}/files`'s `201` body: the uploaded entry's key — see
+/// [`upload_file`].
+#[derive(Serialize)]
+struct UploadFileResponse {
+    id: Uuid,
+}
 
 /// `POST /commissions/{id}/files` — a Participant uploads a file entry (ZMVP-88).
 ///
@@ -127,7 +135,8 @@ pub(super) async fn upload_file(
         })
         .await?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "id": *key }))).into_response())
+    let body = UploadFileResponse { id: *key };
+    Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 /// `GET /commissions/{id}/files/{file_id}` — a Participant retrieves a file entry
@@ -270,6 +279,20 @@ fn rfc5987_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pins the `201` body's wire shape: `{"id": "<uuid>"}` — the exact string
+    // form `json!({ "id": *key })` (the deref'd `Uuid`) used to emit
+    // (ZMVP-158 AC1/AC3).
+    #[test]
+    fn upload_file_response_serializes_to_a_bare_id_object() {
+        let id = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000006").unwrap();
+        let body = UploadFileResponse { id };
+
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            format!("{{\"id\":\"{id}\"}}")
+        );
+    }
 
     // The Content-Disposition is always `attachment`, carries an ASCII fallback and
     // an RFC 5987 encoding, and neutralizes header-hostile characters.
