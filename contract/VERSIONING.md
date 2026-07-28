@@ -10,7 +10,7 @@ Research method, per the Engineer's standing directive (2026-07-25): every factu
 claim below was web-fetched from a primary source and carries its URL; nothing is
 asserted from memory; items that could not be verified are labelled UNVERIFIED in §8.
 
-## Rulings already made (Engineer, 2026-07-25) — these resolve §8 Q3 and part of Q7's shape
+## Rulings already made (Engineer, 2026-07-25 · R9/R10 2026-07-27)
 
 | # | Ruling | Consequence here |
 | --- | --- | --- |
@@ -23,11 +23,13 @@ asserted from memory; items that could not be verified are labelled UNVERIFIED i
 | R7 | **Listing responses are wrapped objects at the `/api/v1` mint** (resolves §8 Q4; ZAL #110). `GET /accounts` → `{ "accounts": [...] }`, `GET /commissions` → `{ "commissions": [...] }` — so pagination can later land additively (`next_cursor` sibling) instead of costing a major. Rationale is pagination-extensibility, not protobuf: `HttpRule.response_body` could have preserved the bare array. The pre-`/api/v1` bare-array shape is pre-GA and exempt (§5). The changelog's bare array is wrapped whenever that endpoint is next touched. |
 | R8 | **All v1 vocabularies are `string` fields, never proto enums** (extends the `role` precedent to `lifecycle`, `visibility`, `direction_status`, `deadline_status`, `maturity.rating`; defers §8 Q1 until the first true enum enters the corpus). Rationale, the Engineer's: **the backend enforces vocabularies — the contract just says "this is this."** Enforcement lives in the domain (newtypes, `try_from`, the state machines); a proto enum would move domain law into the schema layer. Consequences: (a) the contract documents each field's known values as an **extensible vocabulary** — clients MUST tolerate unknown strings with a defined fallback (the ZAL #112 pattern, pinned by a §6-style test); (b) vocabulary changes are invisible to `buf breaking` and are therefore a **review obligation** under §1's semantics items — changing a value's meaning is breaking-by-review; (c) wire values stay lowercase, unchanged. |
 
-**Still open for the Engineer:** Q5 (the `buf skip breaking` label — recommended ban via
-required status check) and Q7 (12 vs 24 months — recommended 12 + per-major telemetry).
-**Spikes owed before v1 tags:** Q1 (protobuf-es unknown-enum behaviour), Q6 (`buf breaking
---list-rules` transcript pasted into §2), plus §8's UNVERIFIED list. Q2 and Q4 are resolved
-above (R6, R7).
+| R9 | **The `buf skip breaking` label is banned** (resolves §8 Q5; ruled 2026-07-27). The `contract` CI job is a **required status check** on `main` — a PR label cannot skip a required check, so the bypass is structurally unreachable rather than policed. A genuine §5 emergency must edit the workflow in the PR itself, which is loud, reviewed, and diffed. No signed-justification lane exists. |
+| R10 | **Notice window: 12 months, bound to per-major telemetry** (resolves §8 Q7; ruled 2026-07-27). ≥ 12 months from `Deprecation` to `Sunset` for any GA path-major (Google Cloud ToS floor); pre-GA surfaces get zero. The commitment is honest only with eyes: Zalando #188 **per-major request-count telemetry is committed alongside it** — an implementation obligation (nothing is instrumented today) that must land before the first GA deprecation is announced. A major retires when the numbers show migration, never calendar-blind. 12 is a floor, not a ceiling. |
+
+**No Engineer questions remain open.** Q2/Q4/Q5/Q7 are resolved above (R6, R7, R9, R10);
+Q3 by R1–R4; Q6 verified. **Spikes owed before v1 tags:** Q1 (protobuf-es unknown-enum
+behaviour — deferred by R8 until the first true enum enters the corpus) and §8's
+UNVERIFIED list.
 
 ---
 
@@ -102,7 +104,7 @@ Consequence, with a sharp edge:
 - **Compile time: the `.proto` file IS the retired-name register.** "The protocol buffer compiler will complain if any future users try to use these identifiers." Combined with `FIELD_NO_DELETE_UNLESS_NAME_RESERVED`, buf forces the reservation to be written and protoc forbids re-minting the name with new semantics. **We do not build a parallel register.** The policy rule is one line: *every field or enum-value deletion reserves both the number and the name.*
 - **Runtime: it does nothing.** "Runtime JSON parsing is not affected by reserved names." A client still sending a retired key gets it treated as an unknown field, subject to our unknown-field policy — not a targeted error. If we want "you are sending a field we retired in v1.4, here is why," that is ours to build.
 
-**The bypass.** `bufbuild/buf-action@v1` supports a `buf skip breaking` PR label that skips the check ("Runs on pull requests, skipped when the `buf skip breaking` label is present" — https://github.com/bufbuild/buf-action). That is a one-click bypass of this entire contract. **Policy ruling required: ban it, or require an Engineer-signed justification comment on the PR.** §8 Q5.
+**The bypass.** `bufbuild/buf-action@v1` supports a `buf skip breaking` PR label that skips the check ("Runs on pull requests, skipped when the `buf skip breaking` label is present" — https://github.com/bufbuild/buf-action). That is a one-click bypass of this entire contract. → **RESOLVED 2026-07-27: banned — see R9 in the header.** The `contract` job is a required status check on `main`; the label is inert against it.
 
 **Two gates, not one.** The action's default `breaking_against` is "Base of the PR (or the commit before a push)" — that catches intra-PR regressions but is *not* the release contract. We need both: (a) against PR base, (b) against the last released tag, `buf breaking --against '.git#tag=api/v1.4.0,subdir=proto'` (git input fragment syntax: https://buf.build/docs/reference/inputs/; `subdir=` is used in every git example in https://buf.build/docs/breaking/quickstart/).
 
@@ -164,7 +166,7 @@ Two further RFC 8594 notes worth carrying: §4 — "the Sunset header field and 
 
 ## 4. The notice window
 
-**Recommendation: 12 months minimum from the `Deprecation` timestamp to the `Sunset` timestamp, for any GA path-major. Pre-GA surfaces get zero.**
+**RULED 2026-07-27 (R10): 12 months minimum from the `Deprecation` timestamp to the `Sunset` timestamp, for any GA path-major, bound to Zalando #188 per-major usage telemetry. Pre-GA surfaces get zero.**
 
 Precedents, all verified:
 
@@ -307,11 +309,11 @@ Pinned by a **golden-bytes test**: a fixture message with every wire-relevant sh
 
 **Q4 — The bare-array response.** `GET /commissions/{id}/changelog` returns a top-level JSON array, which ZAL #110 forbids precisely because it forecloses adding pagination without a break — and ZMVP-100 is the pagination ticket. **Closed by:** deciding whether `/api/v1` wraps it in an object at mint time (free) or accepts that paginating it later costs a major (expensive). Recommend wrapping. → **RESOLVED 2026-07-25: wrap — see R7 in the header.**
 
-**Q5 — The `buf skip breaking` label.** `bufbuild/buf-action@v1` documents a PR label that skips the breaking check outright. **Closed by:** an Engineer ruling — ban it via a required-status-check that cannot be label-skipped, or permit it only with a signed justification comment naming the §5 emergency cause. Left unruled, it is a one-click bypass of this entire document.
+**Q5 — The `buf skip breaking` label.** `bufbuild/buf-action@v1` documents a PR label that skips the breaking check outright. **Closed by:** an Engineer ruling — ban it via a required-status-check that cannot be label-skipped, or permit it only with a signed justification comment naming the §5 emergency cause. Left unruled, it is a one-click bypass of this entire document. → **RESOLVED 2026-07-27: banned via required status check — see R9 in the header.**
 
 **Q6 — `buf` rule-list discrepancy (§2).** → **RESOLVED 2026-07-25**: verified on buf 1.72.0 — `FIELD_SAME_NAME` IS in WIRE_JSON (renames stay CI-enforced); `ENUM_SAME_TYPE` is not. See §2.
 
-**Q7 — Notice window: 12 or 24 months?** Recommended 12 (Google Cloud ToS) over 24 (GitHub, Graph) because our consumers are enumerable; band is 12–24, pre-GA is zero in all precedents. **Closed by** an Engineer ruling plus a commitment to ZAL #188 per-major usage telemetry, which is what makes the shorter number honest.
+**Q7 — Notice window: 12 or 24 months?** Recommended 12 (Google Cloud ToS) over 24 (GitHub, Graph) because our consumers are enumerable; band is 12–24, pre-GA is zero in all precedents. **Closed by** an Engineer ruling plus a commitment to ZAL #188 per-major usage telemetry, which is what makes the shorter number honest. → **RESOLVED 2026-07-27: 12 months + telemetry — see R10 in the header.**
 
 **Q8 — UNVERIFIED items, listed rather than asserted.**
 - Google AIP and Azure numeric deprecation windows — AIP-180/185 state none; Azure defers to `aka.ms/AzBreakingChangesPolicy`, which was not fetched.
