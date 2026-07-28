@@ -24,6 +24,10 @@ function failureOf<A>(
 const me = Effect.flatMap(ZurfurApi, (api) => api.me);
 const startSignin = (handle: string) => Effect.flatMap(ZurfurApi, (api) => api.startSignin(handle));
 const signout = Effect.flatMap(ZurfurApi, (api) => api.signout);
+const listAccounts = Effect.flatMap(ZurfurApi, (api) => api.listAccounts);
+const createAccount = (name: string, handle: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.createAccount(name, handle));
+const deleteAccount = (id: string) => Effect.flatMap(ZurfurApi, (api) => api.deleteAccount(id));
 
 const aliceWire = {
 	did: 'did:plc:alice',
@@ -138,5 +142,95 @@ describe('ZurfurApi.signout (live)', () => {
 		const failure = await runLive(fetch, failureOf(signout));
 		expect(failure._tag).toBe('SignoutFailed');
 		if (failure._tag === 'SignoutFailed') expect(failure.status).toBe(200);
+	});
+});
+
+const aliceRow = { id: 'acct-alice', did: 'did:plc:alice', handle: 'alice.zurfur.app', name: 'Alice Studio', role: 'owner' };
+
+describe('ZurfurApi.listAccounts (live)', () => {
+	it('decodes a wrapped listing into plain rows', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ accounts: [aliceRow] }));
+		const accounts = await runLive(fetch, listAccounts);
+		expect(calls).toEqual(['/api/v1/accounts']);
+		expect(accounts).toEqual([aliceRow]);
+	});
+
+	it('tolerates an unknown role value and an unknown extra field (R8)', async () => {
+		const futureRow = { ...aliceRow, role: 'steward', futureField: 'not in the contract yet' };
+		const { fetch } = fetchStub(() => Response.json({ accounts: [futureRow] }));
+		const accounts = await runLive(fetch, listAccounts);
+		expect(accounts).toEqual([{ ...aliceRow, role: 'steward' }]);
+	});
+
+	it('fails ContractViolation naming /accounts on a non-JSON body', async () => {
+		const { fetch } = fetchStub(() => new Response('not json', { status: 200 }));
+		const failure = await runLive(fetch, failureOf(listAccounts));
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/\/accounts responded 200 — unparsable body/);
+	});
+});
+
+describe('ZurfurApi.createAccount (live)', () => {
+	it('posts {name, handle} and decodes the 201 into the founded account', async () => {
+		let sentBody: unknown;
+		const created = { id: 'acct-new', did: 'did:plc:new', handle: 'new.zurfur.app', name: 'New Studio' };
+		const { fetch, calls } = fetchStub(() => Response.json(created, { status: 201 }));
+		const spyingFetch: typeof fetch = async (input, init) => {
+			sentBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+			return fetch(input, init);
+		};
+		const account = await runLive(spyingFetch, createAccount('New Studio', 'new.zurfur.app'));
+		expect(calls).toEqual(['/api/v1/accounts']);
+		expect(sentBody).toEqual({ name: 'New Studio', handle: 'new.zurfur.app' });
+		expect(account).toEqual(created);
+	});
+
+	it('fails ApiProblem carrying handle_taken on the 409', async () => {
+		const { fetch } = fetchStub(() => problemResponse(409, 'handle_taken'));
+		const failure = await runLive(fetch, failureOf(createAccount('New Studio', 'taken.zurfur.app')));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('handle_taken');
+	});
+
+	it('fails ApiProblem carrying invalid_request on the 422 (reserved label / punycode share this code)', async () => {
+		const { fetch } = fetchStub(() => problemResponse(422, 'invalid_request'));
+		const failure = await runLive(fetch, failureOf(createAccount('', 'xn--bad')));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('invalid_request');
+	});
+});
+
+describe('ZurfurApi.deleteAccount (live)', () => {
+	it('decodes a hard outcome', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		const outcome = await runLive(fetch, deleteAccount('acct-1'));
+		expect(calls).toEqual(['/api/v1/accounts/acct-1']);
+		expect(outcome).toBe('hard');
+	});
+
+	it('decodes a soft outcome', async () => {
+		const { fetch } = fetchStub(() => Response.json({ outcome: 'soft' }));
+		const outcome = await runLive(fetch, deleteAccount('acct-1'));
+		expect(outcome).toBe('soft');
+	});
+
+	it('fails ApiProblem carrying forbidden on the 403 (non-Owner)', async () => {
+		const { fetch } = fetchStub(() => problemResponse(403, 'forbidden'));
+		const failure = await runLive(fetch, failureOf(deleteAccount('acct-1')));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('forbidden');
+	});
+
+	it('fails ApiProblem carrying account_not_found (not not_found) on the 404', async () => {
+		const { fetch } = fetchStub(() => problemResponse(404, 'account_not_found'));
+		const failure = await runLive(fetch, failureOf(deleteAccount('acct-1')));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('account_not_found');
+	});
+
+	it("resolves an unknown outcome string to the 'unknown' fallback, never throwing (R8)", async () => {
+		const { fetch } = fetchStub(() => Response.json({ outcome: 'quarantined' }));
+		const outcome = await runLive(fetch, deleteAccount('acct-1'));
+		expect(outcome).toBe('unknown');
 	});
 });
