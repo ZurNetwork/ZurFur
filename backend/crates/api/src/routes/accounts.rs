@@ -36,8 +36,7 @@ use domain::elements::{
     user_account::UserAccount,
 };
 use domain::ports::{DidBelongsToAnotherActor, HandleTaken, UnitOfWork};
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use uuid::Uuid;
 
@@ -231,12 +230,6 @@ fn in_zurfur_namespace(handle: &Handle, handle_domain: &str) -> bool {
         .trim_end_matches('.')
         .to_ascii_lowercase();
     handle.as_str().ends_with(&format!(".{domain}"))
-}
-
-/// `200 OK` carrying a bare JSON resource body (success bodies are not enveloped;
-/// see the RFC 9457 response-shape decision).
-fn ok_json(body: serde_json::Value) -> Response {
-    (StatusCode::OK, Json(body)).into_response()
 }
 
 /// `GET /accounts` — every **live** account the signed-in visitor holds a role
@@ -705,6 +698,15 @@ struct AcceptInvitationBody {
     pub listed_on_profile: bool,
 }
 
+/// `POST /accounts/{id}/invitations/accept`'s `200` body: the resulting
+/// membership — see [`accept_invitation`].
+#[derive(Serialize)]
+struct AcceptInvitationResponse {
+    account: String,
+    user: String,
+    role: &'static str,
+}
+
 /// Accepts a pending invitation (ZMVP-20): the invited User takes up their own offer
 /// and becomes a member. Symmetric with [`decline_invitation`] — keyed by the session
 /// User, not a DID in the body, so authority is implicit: we only ever look up the
@@ -742,11 +744,12 @@ async fn accept_invitation(
         })
         .await?;
 
-    Ok(ok_json(json!({
-        "account": accepted.account_id.to_string(),
-        "user": invited_user.did.as_str(),
-        "role": accepted.role.as_str(),
-    })))
+    let body = AcceptInvitationResponse {
+        account: accepted.account_id.to_string(),
+        user: invited_user.did.as_str().to_owned(),
+        role: accepted.role.as_str(),
+    };
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// `DELETE /accounts/{id}/members/me` — the signed-in member leaves the account on
@@ -793,6 +796,15 @@ async fn leave_account(
 struct GrantRoleBody {
     user: String,
     role: String,
+}
+
+/// `POST /accounts/{id}/members`'s `200` body: the settled grant — see
+/// [`grant_role`].
+#[derive(Serialize)]
+struct GrantRoleResponse {
+    account: String,
+    user: String,
+    role: &'static str,
 }
 
 /// Grants a role to a user on an account, seating them as a member if they aren't
@@ -891,11 +903,12 @@ async fn grant_role(
         })
         .await?;
 
-    Ok(ok_json(json!({
-        "account": account.id.to_string(),
-        "user": grantee.did.as_str(),
-        "role": granted_role.as_str(),
-    })))
+    let body = GrantRoleResponse {
+        account: account.id.to_string(),
+        user: grantee.did.as_str().to_owned(),
+        role: granted_role.as_str(),
+    };
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// The body of `DELETE /accounts/{id}/members`. The member to revoke is named by
@@ -905,6 +918,14 @@ async fn grant_role(
 /// Example: `{ "user": "did:plc:abc123" }`.
 #[derive(Deserialize)]
 struct RevokeRoleBody {
+    user: String,
+}
+
+/// `DELETE /accounts/{id}/members`'s `200` body: the revoked membership's
+/// account and user — see [`revoke_role`].
+#[derive(Serialize)]
+struct RevokeRoleResponse {
+    account: String,
     user: String,
 }
 
@@ -966,10 +987,11 @@ async fn revoke_role(
         })
         .await?;
 
-    Ok(ok_json(json!({
-        "account": account.id.to_string(),
-        "user": target.did.as_str(),
-    })))
+    let body = RevokeRoleResponse {
+        account: account.id.to_string(),
+        user: target.did.as_str().to_owned(),
+    };
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// The body of `POST /accounts/{id}/invitations`. The invitee is named by their
@@ -983,6 +1005,18 @@ async fn revoke_role(
 struct InviteUserToAccountBody {
     user: String,
     role: String,
+}
+
+/// `POST /accounts/{id}/invitations`'s body (both the idempotent `200`
+/// re-invite and the minted `201`): the offer, in full — see
+/// [`invite_user_to_account`].
+#[derive(Serialize)]
+struct InviteUserToAccountResponse {
+    id: String,
+    account: String,
+    user: String,
+    role: &'static str,
+    state: &'static str,
 }
 
 /// Issues a pending invitation for a User to join an account (ZMVP-32 — the
@@ -1059,13 +1093,14 @@ async fn invite_user_to_account(
         .find_pending_invitation(account.id, invited.id)
         .await?
     {
-        return Ok(ok_json(json!({
-            "id": existing_invitation.id.to_string(),
-            "account": account.id.to_string(),
-            "user": invited.did.as_str(),
-            "role": existing_invitation.role.as_str(),
-            "state": existing_invitation.state.as_str()
-        })));
+        let existing_offer = InviteUserToAccountResponse {
+            id: existing_invitation.id.to_string(),
+            account: account.id.to_string(),
+            user: invited.did.as_str().to_owned(),
+            role: existing_invitation.role.as_str(),
+            state: existing_invitation.state.as_str(),
+        };
+        return Ok((StatusCode::OK, Json(existing_offer)).into_response());
     }
 
     let invitation = Invitation::issue(account.id, invited.id, role, actor.id, Utc::now());
@@ -1109,13 +1144,13 @@ async fn invite_user_to_account(
             (StatusCode::CREATED, stored.id, stored.role, stored.state)
         }
     };
-    let offer = json!({
-        "id": offer_id.to_string(),
-        "account": account.id.to_string(),
-        "user": invited.did.as_str(),
-        "role": offer_role.as_str(),
-        "state": offer_state.as_str()
-    });
+    let offer = InviteUserToAccountResponse {
+        id: offer_id.to_string(),
+        account: account.id.to_string(),
+        user: invited.did.as_str().to_owned(),
+        role: offer_role.as_str(),
+        state: offer_state.as_str(),
+    };
     let response = (status, Json(offer)).into_response();
     Ok(response)
 }
@@ -1128,6 +1163,15 @@ async fn invite_user_to_account(
 /// Example: `{ "user": "did:plc:abc123" }`.
 #[derive(Deserialize)]
 struct RevokeInvitationBody {
+    user: String,
+}
+
+/// `DELETE /accounts/{id}/invitations`'s `200` body: the always-available
+/// request inputs the revoke echoes on every path (success or idempotent
+/// no-op) — see [`revoke_invitation_to_account`].
+#[derive(Serialize)]
+struct RevokeInvitationResponse {
+    account: String,
     user: String,
 }
 
@@ -1169,14 +1213,11 @@ async fn revoke_invitation_to_account(
     // must not recognize a brand-new visitor as a side effect. An unknown DID was never
     // invited, so there is nothing pending to revoke (idempotent no-op).
     let revoked = || {
-        (
-            StatusCode::OK,
-            Json(json!({
-                "account": account.id.to_string(),
-                "user": invited_did.as_str(),
-            })),
-        )
-            .into_response()
+        let response_body = RevokeInvitationResponse {
+            account: account.id.to_string(),
+            user: invited_did.clone(),
+        };
+        (StatusCode::OK, Json(response_body)).into_response()
     };
 
     let invited_user = match state
@@ -1221,6 +1262,14 @@ async fn revoke_invitation_to_account(
     Ok(revoked())
 }
 
+/// `POST /accounts/{id}/invitations/decline`'s `200` body: the declined
+/// offer's account and the declining user — see [`decline_invitation`].
+#[derive(Serialize)]
+struct DeclineInvitationResponse {
+    account: String,
+    user: String,
+}
+
 /// Declines a pending invitation (ZMVP-20). The invitee actively kills their *own*
 /// offer — symmetric with the issuer's revoke, but keyed by the session User rather
 /// than a DID in the body, so authority is implicit: we only ever look up the
@@ -1257,10 +1306,11 @@ async fn decline_invitation(
         })
         .await?;
 
-    Ok(ok_json(json!({
-        "account": account.id.to_string(),
-        "user": actor.did.as_str(),
-    })))
+    let body = DeclineInvitationResponse {
+        account: account.id.to_string(),
+        user: actor.did.as_str().to_owned(),
+    };
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 /// The body of `POST /accounts/{id}/transfer`. The incoming Owner is named by their
@@ -1271,6 +1321,15 @@ async fn decline_invitation(
 #[derive(Deserialize)]
 struct TransferOwnershipBody {
     new_owner: String,
+}
+
+/// `POST /accounts/{id}/transfer`'s `200` body: who owns the account now, and
+/// who did before — see [`transfer_ownership`].
+#[derive(Serialize)]
+struct TransferOwnershipResponse {
+    account: String,
+    owner: String,
+    previous_owner: String,
 }
 
 /// Transfers Account ownership to another existing member (ZMVP-33; DESIGN/Roles
@@ -1351,11 +1410,12 @@ async fn transfer_ownership(
         })
         .await?;
 
-    Ok(ok_json(json!({
-        "account": account.id.to_string(),
-        "owner": new_owner.did.as_str(),
-        "previous_owner": old_owner.did.as_str(),
-    })))
+    let body = TransferOwnershipResponse {
+        account: account.id.to_string(),
+        owner: new_owner.did.as_str().to_owned(),
+        previous_owner: old_owner.did.as_str().to_owned(),
+    };
+    Ok((StatusCode::OK, Json(body)).into_response())
 }
 
 #[cfg(test)]
@@ -1504,5 +1564,100 @@ mod tests {
         };
         assert_eq!(err.status, 404, "an unknown account is a 404");
         assert_eq!(err.code, "account_not_found");
+    }
+
+    // Pins each response body's wire shape to the exact string form its retired
+    // `json!({…})`/`ok_json(json!({…}))` literal produced — every field a
+    // `String` (as the `.to_string()`/`.as_str()` calls already emitted), so
+    // swapping in the named structs moved no bytes (ZMVP-158 AC1/AC3).
+
+    #[test]
+    fn accept_invitation_response_serializes_every_field_as_a_string() {
+        let body = AcceptInvitationResponse {
+            account: "account-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+            role: "member",
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","user":"did:plc:invitee","role":"member"}"#
+        );
+    }
+
+    #[test]
+    fn grant_role_response_serializes_every_field_as_a_string() {
+        let body = GrantRoleResponse {
+            account: "account-id".to_string(),
+            user: "did:plc:grantee".to_string(),
+            role: "admin",
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","user":"did:plc:grantee","role":"admin"}"#
+        );
+    }
+
+    #[test]
+    fn revoke_role_response_serializes_every_field_as_a_string() {
+        let body = RevokeRoleResponse {
+            account: "account-id".to_string(),
+            user: "did:plc:target".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","user":"did:plc:target"}"#
+        );
+    }
+
+    #[test]
+    fn invite_user_to_account_response_serializes_every_field_as_a_string() {
+        let body = InviteUserToAccountResponse {
+            id: "offer-id".to_string(),
+            account: "account-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+            role: "member",
+            state: "pending",
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"id":"offer-id","account":"account-id","user":"did:plc:invitee","role":"member","state":"pending"}"#
+        );
+    }
+
+    #[test]
+    fn revoke_invitation_response_serializes_every_field_as_a_string() {
+        let body = RevokeInvitationResponse {
+            account: "account-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","user":"did:plc:invitee"}"#
+        );
+    }
+
+    #[test]
+    fn decline_invitation_response_serializes_every_field_as_a_string() {
+        let body = DeclineInvitationResponse {
+            account: "account-id".to_string(),
+            user: "did:plc:invitee".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","user":"did:plc:invitee"}"#
+        );
+    }
+
+    #[test]
+    fn transfer_ownership_response_serializes_every_field_as_a_string() {
+        let body = TransferOwnershipResponse {
+            account: "account-id".to_string(),
+            owner: "did:plc:new-owner".to_string(),
+            previous_owner: "did:plc:old-owner".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            r#"{"account":"account-id","owner":"did:plc:new-owner","previous_owner":"did:plc:old-owner"}"#
+        );
     }
 }
