@@ -92,7 +92,32 @@ impl<'de> Deserialize<'de> for WireTimestamp {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
+
     use super::*;
+
+    /// `WireTimestamp::from(DateTimeUtc)` — the bridge every response type
+    /// carrying an instant goes through (e.g. `ChangelogEntryBody.created_at`,
+    /// ZMVP-158 AC5) — emits the exact same string chrono's own
+    /// `DateTime<Utc>` serde produced for every in-range instant: whole-second
+    /// and fractional. This is the wire-compatibility claim those callers'
+    /// doc comments rest on.
+    #[test]
+    fn wire_timestamp_matches_chronos_prior_serialization() {
+        let whole = chrono::Utc.with_ymd_and_hms(2025, 7, 25, 12, 0, 0).unwrap();
+        assert_eq!(
+            serde_json::to_string(&WireTimestamp::from(whole)).unwrap(),
+            serde_json::to_string(&whole).unwrap(),
+            "a whole-second instant"
+        );
+
+        let fractional = whole + chrono::Duration::microseconds(123_456);
+        assert_eq!(
+            serde_json::to_string(&WireTimestamp::from(fractional)).unwrap(),
+            serde_json::to_string(&fractional).unwrap(),
+            "a fractional instant"
+        );
+    }
 
     /// Canonical output: Z suffix, never `+00:00`; AutoSi fractional digits.
     #[test]

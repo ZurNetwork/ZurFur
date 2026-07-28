@@ -23,7 +23,11 @@ use crate::{AppState, problem::Problem, wire_time::WireTimestamp};
 /// **Z-normalized**, 0/3/6/9 fractional digits, range-validated to years
 /// 0001–9999 — byte-identical to what chrono's serde previously emitted for
 /// every in-range instant (verified empirically; ZMVP-158 AC5), so adopting it
-/// here does not move the wire.
+/// here does not move the wire. Serialization is bounded to that same
+/// 0001–9999 range: a stored `created_at` outside it fails the whole list's
+/// response (matching the accepted behavior on the `/api/v1` corpus routes
+/// this type already serves) — unreachable in practice, since `created_at` is
+/// DB-minted `now()`, never client-supplied.
 ///
 /// ⚠️ contract-decision-needed: `payload` is an unschematized `serde_json::Value`
 /// passthrough — the hole through which every changelog-payload `json!` site
@@ -78,30 +82,12 @@ pub(super) async fn read_changelog(
 #[cfg(test)]
 mod tests {
     //! Pins `ChangelogEntryBody.created_at`'s wire format: canonical ProtoJSON
-    //! (RFC 3339, Z-normalized), byte-identical to what chrono's own serde
-    //! emitted for the same instant before the `WireTimestamp` adoption
-    //! (ZMVP-158 AC5) — both a whole-second and a fractional instant.
+    //! (RFC 3339, Z-normalized) — see `wire_time`'s own tests for the
+    //! byte-identity-with-chrono pin; this one is specific to the entry body.
 
     use chrono::{TimeZone, Utc};
 
     use super::*;
-
-    #[test]
-    fn wire_timestamp_matches_chronos_prior_serialization() {
-        let whole = Utc.with_ymd_and_hms(2025, 7, 25, 12, 0, 0).unwrap();
-        assert_eq!(
-            serde_json::to_string(&WireTimestamp::from(whole)).unwrap(),
-            serde_json::to_string(&whole).unwrap(),
-            "a whole-second instant"
-        );
-
-        let fractional = whole + chrono::Duration::microseconds(123_456);
-        assert_eq!(
-            serde_json::to_string(&WireTimestamp::from(fractional)).unwrap(),
-            serde_json::to_string(&fractional).unwrap(),
-            "a fractional instant"
-        );
-    }
 
     #[test]
     fn changelog_entry_body_created_at_is_z_normalized() {

@@ -42,11 +42,11 @@ use crate::{AppState, problem::Problem};
 /// [`invite_to_seat`].
 #[derive(Serialize)]
 struct InviteToSeatResponse {
-    id: String,
     commission: String,
+    id: String,
     seat: String,
-    user: String,
     state: &'static str,
+    user: String,
 }
 
 /// `DELETE /commissions/{id}/invitations`'s `200` body: the always-available
@@ -146,11 +146,11 @@ pub(super) async fn invite_to_seat(
         .await?
     {
         let existing_offer = InviteToSeatResponse {
-            id: existing.id.to_string(),
             commission: id.to_string(),
+            id: existing.id.to_string(),
             seat: seat_id.to_string(),
-            user: invited.did.as_str().to_owned(),
             state: existing.state.as_str(),
+            user: invited.did.as_str().to_owned(),
         };
         let response = (StatusCode::OK, Json(existing_offer)).into_response();
         return Ok(response);
@@ -187,11 +187,11 @@ pub(super) async fn invite_to_seat(
         None => (StatusCode::CREATED, minted, InvitationState::Pending),
     };
     let offer = InviteToSeatResponse {
-        id: offer_id.to_string(),
         commission: id.to_string(),
+        id: offer_id.to_string(),
         seat: seat_id.to_string(),
-        user: invited.did.as_str().to_owned(),
         state: offer_state.as_str(),
+        user: invited.did.as_str().to_owned(),
     };
     let response = (status, Json(offer)).into_response();
     Ok(response)
@@ -294,16 +294,16 @@ mod tests {
     #[test]
     fn invite_to_seat_response_serializes_every_field_as_a_string() {
         let body = InviteToSeatResponse {
-            id: "offer-id".to_string(),
             commission: "commission-id".to_string(),
+            id: "offer-id".to_string(),
             seat: "seat-id".to_string(),
-            user: "did:plc:invitee".to_string(),
             state: "pending",
+            user: "did:plc:invitee".to_string(),
         };
 
         assert_eq!(
             serde_json::to_string(&body).unwrap(),
-            r#"{"id":"offer-id","commission":"commission-id","seat":"seat-id","user":"did:plc:invitee","state":"pending"}"#
+            r#"{"commission":"commission-id","id":"offer-id","seat":"seat-id","state":"pending","user":"did:plc:invitee"}"#
         );
     }
 
