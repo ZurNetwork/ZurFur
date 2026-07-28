@@ -3,7 +3,12 @@ import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount } from '$lib/api/account';
 import { ApiProblem } from './api/errors';
 import { zurfurApiTest, type ZurfurApi } from './api/zurfur-api';
-import { accountOutcome, accountsOutcome, createAccountOutcome, deleteAccountOutcome } from './accounts';
+import {
+	accountOutcome,
+	accountsOutcome,
+	createAccountOutcome,
+	deleteAccountOutcome
+} from './accounts';
 
 /** Run a program against the in-memory Layer — no fetch, no network. */
 function runTest<A, E>(
@@ -31,10 +36,7 @@ const handleTakenProblem = {
 
 describe('accountsOutcome', () => {
 	it('carries the rows a stubbed listAccounts hands it', async () => {
-		const outcome = await runTest(
-			{ listAccounts: Effect.succeed([aliceStudio]) },
-			accountsOutcome
-		);
+		const outcome = await runTest({ listAccounts: Effect.succeed([aliceStudio]) }, accountsOutcome);
 		expect(outcome).toEqual({ accounts: [aliceStudio] });
 	});
 

@@ -145,7 +145,13 @@ describe('ZurfurApi.signout (live)', () => {
 	});
 });
 
-const aliceRow = { id: 'acct-alice', did: 'did:plc:alice', handle: 'alice.zurfur.app', name: 'Alice Studio', role: 'owner' };
+const aliceRow = {
+	id: 'acct-alice',
+	did: 'did:plc:alice',
+	handle: 'alice.zurfur.app',
+	name: 'Alice Studio',
+	role: 'owner'
+};
 
 describe('ZurfurApi.listAccounts (live)', () => {
 	it('decodes a wrapped listing into plain rows', async () => {
@@ -173,7 +179,12 @@ describe('ZurfurApi.listAccounts (live)', () => {
 describe('ZurfurApi.createAccount (live)', () => {
 	it('posts {name, handle} and decodes the 201 into the founded account', async () => {
 		let sentBody: unknown;
-		const created = { id: 'acct-new', did: 'did:plc:new', handle: 'new.zurfur.app', name: 'New Studio' };
+		const created = {
+			id: 'acct-new',
+			did: 'did:plc:new',
+			handle: 'new.zurfur.app',
+			name: 'New Studio'
+		};
 		const { fetch, calls } = fetchStub(() => Response.json(created, { status: 201 }));
 		const spyingFetch: typeof fetch = async (input, init) => {
 			sentBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
@@ -187,7 +198,10 @@ describe('ZurfurApi.createAccount (live)', () => {
 
 	it('fails ApiProblem carrying handle_taken on the 409', async () => {
 		const { fetch } = fetchStub(() => problemResponse(409, 'handle_taken'));
-		const failure = await runLive(fetch, failureOf(createAccount('New Studio', 'taken.zurfur.app')));
+		const failure = await runLive(
+			fetch,
+			failureOf(createAccount('New Studio', 'taken.zurfur.app'))
+		);
 		expect(failure._tag).toBe('ApiProblem');
 		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('handle_taken');
 	});

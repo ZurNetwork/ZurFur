@@ -8,7 +8,7 @@ import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import { ZurfurApi } from './api/zurfur-api';
-import type { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
+import type { ContractViolation, NetworkFailure } from './api/errors';
 
 /** The two ways the listing comes back: the rows, or a problem to render. */
 export type AccountsOutcome = { accounts: ReadonlyArray<AccountMembership> } | { problem: Problem };
@@ -22,7 +22,9 @@ export const accountsOutcome: Effect.Effect<
 	const api = yield* ZurfurApi;
 	const accounts = yield* api.listAccounts;
 	return { accounts } satisfies AccountsOutcome;
-}).pipe(Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<AccountsOutcome>({ problem })));
+}).pipe(
+	Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<AccountsOutcome>({ problem }))
+);
 
 /**
  * The synthetic 404 ⚠️ F1's derived read answers for an id absent from the
@@ -75,7 +77,9 @@ export function createAccountOutcome(
 		return { account } satisfies CreateAccountOutcome;
 	});
 	return created.pipe(
-		Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<CreateAccountOutcome>({ problem }))
+		Effect.catchTag('ApiProblem', ({ problem }) =>
+			Effect.succeed<CreateAccountOutcome>({ problem })
+		)
 	);
 }
 
@@ -92,6 +96,8 @@ export function deleteAccountOutcome(
 		return { outcome } satisfies DeleteAccountOutcome;
 	});
 	return deleted.pipe(
-		Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<DeleteAccountOutcome>({ problem }))
+		Effect.catchTag('ApiProblem', ({ problem }) =>
+			Effect.succeed<DeleteAccountOutcome>({ problem })
+		)
 	);
 }
