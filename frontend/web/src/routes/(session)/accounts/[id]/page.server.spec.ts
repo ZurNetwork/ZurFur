@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchStub, problemResponse, routedFetchStub } from '$lib/testing/http';
+import { fetchStub, problemResponse } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership } from '$lib/api/account';
@@ -44,7 +44,7 @@ function deleteEvent(fetch: typeof globalThis.fetch, id: string, confirm?: strin
  * source of truth) answers `accounts`; the DELETE answers `onDelete`.
  */
 function deleteFlowStub(accounts: AccountMembership[], onDelete: () => Response) {
-	return routedFetchStub((url, init) =>
+	return fetchStub((url, init) =>
 		init?.method === 'DELETE' ? onDelete() : Response.json({ accounts })
 	);
 }
@@ -107,6 +107,30 @@ describe('/accounts/[id] delete action', () => {
 		});
 		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
 		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
+		expect(calls).toHaveLength(1);
+	});
+
+	it('answers 403 (not a field error) for a non-Owner with a WRONG handle — authorization precedes validation', async () => {
+		const aliceAsMember: AccountMembership = { ...aliceStudio, role: 'member' };
+		const { fetch, calls } = deleteFlowStub([aliceAsMember], () => {
+			throw new Error('the delete must not be reached');
+		});
+		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'wrong.zurfur.app'));
+		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
+		expect(calls).toHaveLength(1);
+	});
+
+	it('answers the derived not-found and NEVER issues the delete for an id outside the caller listing', async () => {
+		const { fetch, calls } = deleteFlowStub([aliceStudio], () => {
+			throw new Error('the delete must not be reached');
+		});
+		const failure = await actions.delete(
+			deleteEvent(fetch, 'acct-nobody-holds-a-role-in', 'alice.zurfur.app')
+		);
+		expect(failure).toMatchObject({
+			status: 404,
+			data: { problem: { code: 'account_not_found' } }
+		});
 		expect(calls).toHaveLength(1);
 	});
 

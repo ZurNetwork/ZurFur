@@ -3,18 +3,11 @@ import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
-import { ProblemCode, ProblemType, type Problem } from '$lib/api/problem';
+import { FORBIDDEN_PROBLEM, renderableStatus } from '$lib/api/problem';
 import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 import { deleteAccountForm } from '$lib/server/forms/delete-account';
 
-const INCORRECT_ROLE_FOR_OPERATION_PROBLEM: Problem = {
-	type: ProblemType.Forbidden,
-	code: ProblemCode.Forbidden,
-	title: 'You are not allowed to do this',
-	detail: 'You  do not have the powers to do this',
-	status: HttpStatus.Forbidden
-};
 /**
  * The account detail, derived from the caller's own listing (ruling F1 — no
  * GetAccount rpc in v1): an id the caller holds no role in produces the same
@@ -29,31 +22,33 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 
 export const actions: Actions = {
 	/**
-	 * Owner-only delete — enforced server-side; the page's role gate is only
-	 * an affordance. A problem re-renders in place; success redirects to the
-	 * list carrying `?deleted=<outcome>` so it can say WHICH deletion happened
-	 * (soft vs hard — DD 23003138 decision 6).
+	 * Owner-only delete, guarded in fail-closed order: role membership first
+	 * (authorization precedes validation), then the type-the-handle confirm
+	 * schema, and only then the DELETE — enforced server-side; the page's
+	 * role gate is only an affordance. A problem re-renders in place; success
+	 * redirects to the list carrying `?deleted=<outcome>` so it can say WHICH
+	 * deletion happened (soft vs hard — DD 23003138 decision 6).
 	 */
 	delete: async ({ params, fetch, request }) => {
-		const isSameAccountOutcome = await runApi(fetch, accountOutcome(params.id));
-		if ('problem' in isSameAccountOutcome) {
-			return fail(isSameAccountOutcome.problem.status, { problem: isSameAccountOutcome.problem });
+		const callerAccountOutcome = await runApi(fetch, accountOutcome(params.id));
+		if ('problem' in callerAccountOutcome) {
+			const { problem } = callerAccountOutcome;
+			return fail(renderableStatus(problem), { problem });
 		}
 
-		const { account } = isSameAccountOutcome;
+		const { account } = callerAccountOutcome;
+		if (account.role !== 'owner') {
+			return fail(HttpStatus.Forbidden, { problem: FORBIDDEN_PROBLEM });
+		}
+
 		const form = await superValidate(request, effect(deleteAccountForm(account.handle)));
 		if (!form.valid) {
 			return fail(HttpStatus.UnprocessableContent, { form });
 		}
 
-		if (account.role !== 'owner') {
-			// I know this is guarded in the UI.
-			return fail(HttpStatus.Forbidden, { problem: INCORRECT_ROLE_FOR_OPERATION_PROBLEM });
-		}
 		const outcome = await runApi(fetch, deleteAccountOutcome(params.id));
-
 		if ('problem' in outcome) {
-			return fail(outcome.problem.status, { problem: outcome.problem });
+			return fail(renderableStatus(outcome.problem), { problem: outcome.problem });
 		}
 
 		redirect(HttpStatus.SeeOther, `/accounts?deleted=${outcome.outcome}`);

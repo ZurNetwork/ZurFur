@@ -1,6 +1,8 @@
 /**
- * Every registered HTTP status code (RFC 9110 + IANA registry), named — so
- * call sites read `HttpStatus.UnprocessableContent` instead of a magic 422.
+ * Named HTTP status codes — RFC 9110's usable set — so call sites read
+ * `HttpStatus.UnprocessableContent` instead of a magic 422. Not the byte-exact
+ * IANA registry: the unused-reserved slots (305, 306) are omitted, and 418
+ * stays despite its "(Unused)" registry row because it is reserved by name.
  *
  * Deliberately an `as const` object rather than a `const enum`: under
  * SvelteKit's `isolatedModules` the compiler cannot inline const-enum members

@@ -6,8 +6,12 @@
 
 import type { FetchFunction } from '$lib/api/client';
 
-/** Builds the response a stubbed fetch answers with. */
-type ResponseFn = () => Response;
+/**
+ * Builds the response a stubbed fetch answers with. The URL and init are
+ * offered for stubs that route on them (an action making more than one
+ * backend call); a zero-arg callback is assignable for the single-call case.
+ */
+type ResponseFn = (url: string, init?: RequestInit) => Response;
 
 /** What `fetchStub` hands back: the stub itself plus the URLs it saw. */
 type FetchStub = {
@@ -21,23 +25,6 @@ type FetchStub = {
  * Destructure only what the test needs.
  */
 export function fetchStub(respond: ResponseFn): FetchStub {
-	const calls: string[] = [];
-	const fetch = (async (input: RequestInfo | URL) => {
-		calls.push(String(input));
-		return respond();
-	}) as FetchFunction;
-	return { fetch, calls };
-}
-
-/** Builds the response a routed stub answers with, given the requested URL and init. */
-type RoutedResponseFn = (url: string, init?: RequestInit) => Response;
-
-/**
- * A `fetch` stub for actions that make MORE THAN ONE backend call (e.g. read
- * the listing, then delete): `respond` sees each call's URL and init and
- * routes on them. Same recording contract as {@link fetchStub}.
- */
-export function routedFetchStub(respond: RoutedResponseFn): FetchStub {
 	const calls: string[] = [];
 	const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		calls.push(String(input));

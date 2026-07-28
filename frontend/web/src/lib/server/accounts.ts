@@ -6,7 +6,7 @@
 
 import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
-import { type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import { type Problem, ProblemKind } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import { ZurfurApi } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
@@ -36,8 +36,7 @@ export const accountsOutcome: Effect.Effect<
  * endpoint would give.
  */
 const accountNotFoundProblem: Problem = {
-	type: ProblemType.AccountNotFound,
-	code: ProblemCode.AccountNotFound,
+	...ProblemKind.AccountNotFound,
 	title: 'Account not found',
 	detail: 'No such account.',
 	status: HttpStatus.NotFound

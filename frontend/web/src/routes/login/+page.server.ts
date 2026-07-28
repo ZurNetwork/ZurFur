@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { runApi } from '$lib/server/runtime';
 import { signinOutcome } from '$lib/server/session';
-import { type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import { type Problem, ProblemKind, renderableStatus } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import { callbackErrorMessage } from './callback-errors';
 
@@ -12,8 +12,7 @@ import { callbackErrorMessage } from './callback-errors';
  * rendering path ({@link import('$lib/components/ProblemNote.svelte')}).
  */
 const EMPTY_HANDLE_PROBLEM: Problem = {
-	type: ProblemType.InvalidRequest,
-	code: ProblemCode.InvalidRequest,
+	...ProblemKind.InvalidRequest,
 	title: 'Enter a handle.',
 	detail: 'A handle is required to start sign-in — e.g. you.bsky.social.',
 	status: HttpStatus.UnprocessableContent
@@ -47,7 +46,8 @@ export const actions: Actions = {
 		if (handle === '') return fail(422, { problem: EMPTY_HANDLE_PROBLEM });
 
 		const started = await runApi(fetch, signinOutcome(handle));
-		if ('problem' in started) return fail(started.problem.status, { problem: started.problem });
+		if ('problem' in started)
+			return fail(renderableStatus(started.problem), { problem: started.problem });
 		redirect(303, started.location);
 	}
 };

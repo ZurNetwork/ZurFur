@@ -24,13 +24,20 @@
 	{data.account.handle} -> {data.account.name} as {data.account.role}
 	{#if data.account.role === 'owner'}
 		<form method="post" action="?/delete">
-			<label>
-				Type <code>{data.account.handle}</code> to confirm
-				<input name="confirm" required autocomplete="off" />
-				{#if form?.form?.errors.confirm}
-					<p role="alert">{form.form.errors.confirm[0]}</p>
-				{/if}
-			</label>
+			<!-- Error OUTSIDE the label (a label's subtree becomes the input's
+			     accessible name) and linked via aria-describedby instead. -->
+			<label for="confirm-handle">Type <code>{data.account.handle}</code> to confirm</label>
+			<input
+				id="confirm-handle"
+				name="confirm"
+				required
+				autocomplete="off"
+				aria-invalid={form?.form?.errors.confirm ? 'true' : undefined}
+				aria-describedby={form?.form?.errors.confirm ? 'confirm-error' : undefined}
+			/>
+			{#if form?.form?.errors.confirm}
+				<p id="confirm-error">{form.form.errors.confirm[0]}</p>
+			{/if}
 			<button>Delete</button>
 		</form>
 	{/if}

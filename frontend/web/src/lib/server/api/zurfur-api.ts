@@ -17,7 +17,7 @@ import {
 import { Context, Effect, Layer } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { PROBLEM_CONTENT_TYPE, type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import { PROBLEM_CONTENT_TYPE, type Problem, ProblemKind } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
 import {
@@ -289,7 +289,10 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 	Effect.gen(function* () {
 		// Encode through the generated schema, mirroring the decode side
 		// (Engineer ruling 2026-07-28, extending DD 39944194 D4 to the request
-		// direction): the body structurally cannot drift from the contract.
+		// direction): field NAMES cannot drift from the contract. Note toJson
+		// omits implicit-presence zero values ('' fields drop off the wire) —
+		// the backend decodes absent and empty identically, so the meaning is
+		// unchanged.
 		const request = create(CreateAccountRequestSchema, { name, handle });
 		const init: RequestInit = {
 			method: 'POST',
@@ -363,8 +366,7 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 
 /** The problem an unstubbed `me` fails with — the backend's anonymous 401 shape. */
 const anonymousProblem: Problem = {
-	type: ProblemType.NotAuthenticated,
-	code: ProblemCode.NotAuthenticated,
+	...ProblemKind.NotAuthenticated,
 	title: 'not_authenticated',
 	detail: 'No signed-in visitor (test default).',
 	status: HttpStatus.Unauthorized

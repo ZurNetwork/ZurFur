@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import AccountDetailPage from './+page.svelte';
+import { FORBIDDEN_PROBLEM } from '$lib/api/problem';
 import type { AccountMembership } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
@@ -22,13 +23,8 @@ const aliceOwner: AccountMembership = {
 	role: 'owner'
 };
 
-const forbiddenProblem: Problem = {
-	type: 'urn:zurfur:error:forbidden',
-	code: 'forbidden',
-	title: 'Forbidden',
-	detail: "You don't have permission to perform this action.",
-	status: 403
-};
+/** The REAL constant the delete action returns — so this spec pins the copy a user actually sees. */
+const forbiddenProblem: Problem = FORBIDDEN_PROBLEM;
 
 const notFoundProblem: Problem = {
 	type: 'urn:zurfur:error:account-not-found',

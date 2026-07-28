@@ -2,16 +2,21 @@ import { accountsOutcome, createAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { type Problem, ProblemCode, ProblemType } from '$lib/api/problem';
+import { type Problem, ProblemKind, renderableStatus } from '$lib/api/problem';
 import type { DeleteOutcome } from '$lib/api/account';
 import { HttpStatus } from '$lib/api/http-status';
 
 /**
- * Every outcome a completed delete can carry back via `?deleted=`. Anything
- * else in the URL — hand-typed, stale, or forged — is not an outcome and must
- * render no banner: an unvalidated query param never confirms a deletion.
+ * Every outcome a completed delete can carry back via `?deleted=` — keyed as
+ * a `Record<DeleteOutcome, true>` so adding a fourth outcome to the union is
+ * a compile error here, not a silently vanished banner. The banner renders
+ * only from this declared vocabulary; it is a flash HINT, not proof a
+ * deletion occurred (anyone can type the query param).
  */
-const DELETE_OUTCOMES: readonly DeleteOutcome[] = ['soft', 'hard', 'unknown'];
+const DELETE_OUTCOMES = { soft: true, hard: true, unknown: true } as const satisfies Record<
+	DeleteOutcome,
+	true
+>;
 
 /**
  * The caller's account listing, plus the `?deleted=` flash a completed delete
@@ -21,7 +26,10 @@ const DELETE_OUTCOMES: readonly DeleteOutcome[] = ['soft', 'hard', 'unknown'];
 export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
 	const deletedParam = url.searchParams.get('deleted');
-	const deleted = DELETE_OUTCOMES.find((known) => known === deletedParam);
+	const deleted =
+		deletedParam !== null && deletedParam in DELETE_OUTCOMES
+			? (deletedParam as DeleteOutcome)
+			: undefined;
 
 	return { ...outcome, deleted };
 };
@@ -32,8 +40,7 @@ export const load: PageServerLoad = async ({ fetch, url }) => {
  * same rendering path ({@link import('$lib/components/ProblemNote.svelte')}).
  */
 const MISSING_PARAMETERS_PROBLEM: Problem = {
-	type: ProblemType.InvalidRequest,
-	code: ProblemCode.InvalidRequest,
+	...ProblemKind.InvalidRequest,
 	title: 'Invalid values.',
 	detail: 'You need to enter valid values to proceed.',
 	status: HttpStatus.UnprocessableContent
@@ -63,7 +70,7 @@ export const actions: Actions = {
 		const outcome = await runApi(fetch, createAccountOutcome(name, handle));
 
 		if ('problem' in outcome)
-			return fail(outcome.problem.status, { problem: outcome.problem, name, handle });
+			return fail(renderableStatus(outcome.problem), { problem: outcome.problem, name, handle });
 		redirect(HttpStatus.SeeOther, '/accounts');
 	}
 };

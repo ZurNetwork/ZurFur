@@ -8,3 +8,4 @@ lexicons/node_modules
 
 # Live tutoring worksheet (session artifact, /worksheet-tutorial)
 WORKSHEET.md
+.env.bak*

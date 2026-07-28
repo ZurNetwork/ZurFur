@@ -1,31 +1,31 @@
 {
-  "uow": "7g6vt",
+  "uow": "trw07",
   "logbook": null,
-  "_logbook_note": "Two-lane unit under epic ZMVP-25 close-out: 158 (mechanical build) ∥ 28 Q8 sweep (research). Decisions of record: R9/R10 rulings 2026-07-27 (Q5 skip-label ban via required status check; Q7 12-month window + ZAL #188 telemetry commitment), recorded in contract/VERSIONING.md via PR #163 (merged, main 9fd9afab). Ratification ruling: Engineer takes a FINAL WHOLE-DOC READ before VERSIONING.md leaves DRAFT — no auto-bind on a clean Q8 sweep. Q1 spike stays deferred by R8 until the first true enum enters the corpus.",
-  "updated": "2026-07-27T19:10:00-06:00",
-  "unit_note": "ZMVP-158 owns the primary checkout (no-worktrees ruling; jj workspace only on Engineer go if lanes collide). ZMVP-28's Q8 research is checkout-free; its doc edit lands as a small commit at a safe point. Prior unit gj33s carry-overs still open: DD 39944194 Confluence rows to verify; redirect:'manual' test proposal awaiting Engineer; Engineer's ultmslqs change conflicted after epic squash (Engineer drives restack).",
+  "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
+  "updated": "2026-07-28T00:45:00-06:00",
+  "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local).",
   "tickets": [
     {
-      "key": "ZMVP-158",
-      "summary": "Typed response bodies: replace json! literals with named Serialize types (remainder outside the contract corpus; slice [1] = #156 did the nine contract endpoints)",
-      "phase": "understood-blocked-on-engineer",
-      "next_action": "Briefing done (re-measured: 18 response sites / 15 endpoints in scope; 14 payload sites out). TWO Engineer decisions block the build: G = shared-vs-per-endpoint body structs (blocks pieces A+C); AC5 scope = document-only vs adopt WireTimestamp on remainder routes. Then builder (Sonnet; D/E Haiku) on feature/zmvp-158-typed-response-bodies, first commit [uow:7g6vt]; /security-review (Opus) required pre-PR (DID-carrying bodies, field-widening threat).",
+      "key": "ZMVP-152",
+      "summary": "A user creates and deletes an Account from the browser",
+      "phase": "ui-done-ship-gates-running",
+      "next_action": "UI lane DONE (Engineer-built via interactive tutorial, 2026-07-28): /accounts list+create, /accounts/[id] detail + owner-gated ?/delete, PRG ?deleted= messages on the list, nav entry + titles. Committed as slice [6] (4b739db) on slice branch feature/zmvp-152-6-ui; check/lint/85-85 tests/build all green; Engineer's browser lap passed. Ship-gates Workflow wf_8f7a72b2-77f RUNNING (code-review ∥ security-review [Opus max — UI-only owner gating must be backend-enforced, verify] ∥ critique ∥ document). Then: triage findings → slice-[6] PR into the feature branch (Copilot) → feature→main rubber-stamp PR → issue #154 close-comment. Justfile dev-back fix + .env.example ZURFUR_ENV catch-22 = separate infra slice owed, NOT in this ticket.",
       "pr": null,
-      "branch": "feature/zmvp-158-typed-response-bodies (to create)",
+      "branch": "feature/zmvp-152-account-browser (pushed, [1]-[5]) + slice branch feature/zmvp-152-6-ui (local, 4b739db)",
       "worktree": null,
-      "snapshot": ".understand/20260727-184210_ZMVP-158_typed-response-bodies.md",
-      "updated": "2026-07-27T18:45:00-06:00"
+      "snapshot": ".understand/20260727-233245_ZMVP-152_account-create-delete-browser.md",
+      "updated": "2026-07-27T23:59:00-06:00"
     },
     {
-      "key": "ZMVP-28",
-      "summary": "Versioning contract — Q8 UNVERIFIED sweep (last research before Engineer ratification read)",
-      "phase": "q8-swept-doc-edit-pending",
-      "next_action": "Q8 sweep DONE (all six items; R1-R10 survive, R10 strengthened). NEW: Q9 fork opened (Struct/Value cannot hold >2^53 — payload representation: Struct+range rule / opaque string / typed per-kind; Engineer rules before changelog enters corpus) + CORS gap (Deprecation/Sunset not CORS-safelisted; needs Access-Control-Expose-Headers clause — Engineer picks §3 clause vs §4 test). Doc edit slice [3] lands the Q8 resolutions + corrections (§7.2 quote completion, §4 table rows, §7.8(i) availability note), then Engineer ratification read.",
-      "pr": "#163 merged",
+      "key": "ZMVP-153",
+      "summary": "A user creates and deletes a Commission from the browser; the surface tree renders",
+      "phase": "dd-decided-ready-to-build",
+      "next_action": "D1 DECIDED 2026-07-28 — DD 42762241 (Surface Tree on the Wire): projected shape now, SurfaceTree/SurfaceNode, nested + depth cap ≤63 (ZMVP-164), oneof discriminant, oneof payload{opaque_json}, created_by off, withheld envelope at birth. Backend half carved out to ZMVP-163 (corpus messages + GET /commissions/{id} + projection + R11 extension in VERSIONING.md; security-nature → Opus). Build order: ZMVP-163 (+164 before its GET ships) → then this ticket's ZurfurApi slice (rebased on 152's port slice) → Engineer UI lane 6/7/9 tree renderer via /worksheet-tutorial; 8/10/11 split/group. Epic ZMVP-149 exit = zero-curl walkthrough. Propagation: DD page + Jira (163/164 + comments on 153/75/74/72) + index + memory DONE; 6-page /design-sync ran via agent (verify report).",
+      "pr": null,
       "branch": null,
       "worktree": null,
-      "snapshot": null,
-      "updated": "2026-07-27T18:45:00-06:00"
+      "snapshot": ".understand/20260727-233430_ZMVP-153_commission-browser-tree.md",
+      "updated": "2026-07-27T23:59:00-06:00"
     }
   ]
 }
