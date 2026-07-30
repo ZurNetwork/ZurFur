@@ -2,6 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { runApi } from '$lib/server/runtime';
 import { signoutOutcome } from '$lib/server/session';
+import { HttpStatus } from '$lib/api/http-status';
 
 /**
  * `/logout` is an action, not a page — a signed-in visitor's stray GET just
@@ -9,7 +10,7 @@ import { signoutOutcome } from '$lib/server/session';
  * group guard bounces it to `/login` first.)
  */
 export const load: PageServerLoad = async () => {
-	redirect(303, '/');
+	redirect(HttpStatus.SeeOther, '/');
 };
 
 export const actions: Actions = {
@@ -22,11 +23,11 @@ export const actions: Actions = {
 	default: async ({ fetch, cookies }) => {
 		const outcome = await runApi(fetch, signoutOutcome);
 		if ('failedStatus' in outcome) {
-			error(502, 'Sign-out did not complete. Try again.');
+			error(HttpStatus.BadGateway, 'Sign-out did not complete. Try again.');
 		}
 		for (const clearedName of outcome.clearedCookies) {
 			cookies.delete(clearedName, { path: '/' });
 		}
-		redirect(303, '/');
+		redirect(HttpStatus.SeeOther, '/');
 	}
 };

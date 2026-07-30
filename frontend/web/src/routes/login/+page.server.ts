@@ -26,7 +26,7 @@ const EMPTY_HANDLE_PROBLEM: Problem = {
  */
 export const load: PageServerLoad = async ({ parent, url }) => {
 	const { session } = await parent();
-	if (session !== null) redirect(303, '/');
+	if (session !== null) redirect(HttpStatus.SeeOther, '/');
 
 	const errorCode = url.searchParams.get('error');
 	const callbackError = errorCode === null ? null : callbackErrorMessage(errorCode);
@@ -43,11 +43,12 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const handleEntry = form.get('handle');
 		const handle = typeof handleEntry === 'string' ? handleEntry.trim() : '';
-		if (handle === '') return fail(422, { problem: EMPTY_HANDLE_PROBLEM });
+		if (handle === '')
+			return fail(HttpStatus.UnprocessableContent, { problem: EMPTY_HANDLE_PROBLEM });
 
 		const started = await runApi(fetch, signinOutcome(handle));
 		if ('problem' in started)
 			return fail(renderableStatus(started.problem), { problem: started.problem });
-		redirect(303, started.location);
+		redirect(HttpStatus.SeeOther, started.location);
 	}
 };

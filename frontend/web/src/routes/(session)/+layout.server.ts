@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
+import { HttpStatus } from '$lib/api/http-status';
 
 /**
  * The session gate (ZMVP-151): every route in the `(session)` group requires
@@ -9,6 +10,6 @@ import type { LayoutServerLoad } from './$types';
  */
 export const load: LayoutServerLoad = async ({ parent }) => {
 	const { session } = await parent();
-	if (session === null) redirect(303, '/login');
+	if (session === null) redirect(HttpStatus.SeeOther, '/login');
 	return {};
 };
