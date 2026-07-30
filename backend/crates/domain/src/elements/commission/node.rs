@@ -33,13 +33,23 @@ use crate::{
 /// level **1** — chosen so the count lines up 1:1 with the wire
 /// `SurfaceTree`/`SurfaceNode` nesting the DD mints (one `SurfaceNode` message
 /// per level; the root is the first message, each child nests one level
-/// deeper). Rust's `prost` decoder dies at 64 nested `SurfaceNode` levels, so
-/// `63` is the deepest level a write may ever produce — one level of headroom
-/// under the binding ceiling (TypeScript's protobuf-es tolerates ~100, so the
-/// tighter tier governs). Enforced at every tree-growing write by the shared
-/// parent gate (`PgCommissionWrites::require_surface_parent` in adapter-pg,
-/// mirrored in adapter-mem) and backstopped by the `commission_node` table's
-/// own `CHECK` constraint.
+/// deeper). The binding ceiling is JSON, not protobuf directly — DD 40992770
+/// makes JSON/HTTP the v1 transport — so it's `serde_json`'s recursion guard
+/// that actually walks the wire shape at decode time (the pinned `prost`
+/// build's own `RECURSION_LIMIT` is 100, nowhere near the constraint here).
+/// `serde_json` defaults `remaining_depth` to 128, and each tree level costs
+/// TWO brackets on the wire (the children array plus the child object:
+/// `"children":[{...}]`), so `128 / 2 = 64` levels is the real ceiling; a
+/// 63-deep tree spends ~127 of those 128 brackets — exactly one bracket of
+/// headroom, not one whole level (corrected 2026-07-30 — an earlier draft
+/// wrongly cited a flat "prost dies at 64 levels"). Enforced at every
+/// tree-growing write by the shared parent gate
+/// (`PgCommissionWrites::require_surface_parent` in adapter-pg, mirrored in
+/// adapter-mem) and made UNFORGEABLE, not merely checked, by the
+/// `commission_node` table's bounds `CHECK` plus its composite
+/// `(parent, depth) → (id, child_depth)` foreign key (DD 34013187's idiom) —
+/// a raw write that bypasses the domain cannot construct a node whose depth
+/// disagrees with its parent's, nor one past level 63.
 pub const MAX_SURFACE_TREE_DEPTH: i32 = 63;
 
 /// The app-private, stable handle for one node in a commission's tree.

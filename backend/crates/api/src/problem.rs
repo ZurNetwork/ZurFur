@@ -294,17 +294,22 @@ impl Problem {
         )
     }
 
-    /// `422` — persisting the new node under the named parent would exceed the
+    /// `409` — persisting the new node under the named parent would exceed the
     /// commission tree's write-side depth cap (ZMVP-164; Surface Tree on the
     /// Wire DD `42762241`'s companion ruling): a stored tree may never grow
-    /// deeper than either wire decode tier can read back. The request is
-    /// well-formed — the parent exists and is a surface — the tree is simply
-    /// already as deep as it may ever go, which is why this is a `422`
-    /// (unprocessable, not a state conflict) rather than a `409` alongside
-    /// [`parent_not_a_surface`](Problem::parent_not_a_surface). Honest by
-    /// construction, like its siblings: only ever reachable past the owner
-    /// gate *and* past the absent/foreign/non-surface parent checks
-    /// ([`node_not_found`](Problem::node_not_found),
+    /// deeper than the v1 wire transport can decode back. **Engineer ruling
+    /// 2026-07-30**: this is a `409`, not a `422` — the request is
+    /// well-formed (the parent exists and is a surface), and what refuses it
+    /// is the *state* the tree is already in, not the shape of the request
+    /// body. That's exactly the family
+    /// [`parent_not_a_surface`](Problem::parent_not_a_surface) and
+    /// [`cannot_remove_root`](Problem::cannot_remove_root) already sit in —
+    /// "this node exists but its state won't allow the write" — so this
+    /// joins them as a `409` sibling, keeping its own URN (each of that
+    /// family carries a distinct `type`, never sharing `invalid-request`'s).
+    /// Honest by construction, like its siblings: only ever reachable past
+    /// the owner gate *and* past the absent/foreign/non-surface parent
+    /// checks ([`node_not_found`](Problem::node_not_found),
     /// [`parent_not_a_surface`](Problem::parent_not_a_surface)), so it can
     /// never reveal how deep a foreign node sits.
     pub fn tree_depth_exceeded() -> Self {
@@ -312,7 +317,7 @@ impl Problem {
             "urn:zurfur:error:tree-depth-exceeded",
             "tree_depth_exceeded",
             "Tree depth exceeded",
-            422,
+            409,
             "This surface is already at the commission tree's maximum depth; nothing more can be added under it.",
         )
     }
@@ -552,14 +557,17 @@ mod tests {
         );
     }
 
-    // ZMVP-164 — the write-side depth-cap refusal is its own 422, not a 409
-    // (the request is well-formed; the tree is simply as deep as it may go).
+    // ZMVP-164 — the write-side depth-cap refusal is a 409 with its OWN URN
+    // (Engineer ruling 2026-07-30): it joins the parent_not_a_surface /
+    // cannot_remove_root 409 target-state family, but — unlike the shared
+    // invalid-request type the 422 specifics below share — each member of
+    // that family keeps a distinct `type`, never collapsing onto one.
     #[test]
-    fn tree_depth_exceeded_is_its_own_422() {
+    fn tree_depth_exceeded_is_a_409_with_its_own_urn() {
         let problem = Problem::tree_depth_exceeded();
         assert_eq!(problem.r#type, "urn:zurfur:error:tree-depth-exceeded");
         assert_eq!(problem.code, "tree_depth_exceeded");
-        assert_eq!(problem.status, 422);
+        assert_eq!(problem.status, 409);
     }
 
     // The 422 specifics share the invalid-request type but carry their own code.

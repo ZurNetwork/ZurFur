@@ -5,9 +5,15 @@
 //! The domain counts a node's own nesting level with the root surface at
 //! level **1** (see [`domain::elements::commission::MAX_SURFACE_TREE_DEPTH`]),
 //! so it lines up 1:1 with the wire `SurfaceTree`/`SurfaceNode` nesting the DD
-//! mints. Rust's `prost` decoder dies at 64 nested levels, so the write path
-//! must refuse anything that would land a node at level 64 — the boundary
-//! this suite pins, at **every** route that grows the tree:
+//! mints. The binding ceiling is JSON, not protobuf directly (DD 40992770
+//! makes JSON/HTTP the v1 transport): `serde_json` defaults its recursion
+//! guard (`remaining_depth`) to 128, and each tree level costs TWO brackets
+//! on the wire (the children array plus the child object), so `128 / 2 = 64`
+//! levels is the real ceiling — the pinned `prost` build's own limit is 100,
+//! nowhere near it. The write path must refuse anything that would land a
+//! node at level 64 (a 63-deep tree already spends ~127 of those 128
+//! brackets — one bracket of headroom, not one level) — the boundary this
+//! suite pins, at **every** route that grows the tree:
 //!
 //! - `POST /commissions/{id}/surfaces` (ZMVP-71)
 //! - `POST /commissions/{id}/components` (ZMVP-72)
@@ -18,19 +24,26 @@
 //! (`PgCommissionWrites::require_surface_parent` / its `adapter-mem` mirror),
 //! so pinning the boundary once per route proves the shared guard, not four
 //! independent implementations. A node at depth 63 is always accepted; one
-//! that would land at depth 64 is always refused with the `422`
-//! `tree_depth_exceeded` problem.
+//! that would land at depth 64 is always refused with the `409`
+//! `tree_depth_exceeded` problem (Engineer ruling 2026-07-30: it joins the
+//! `409` target-state family alongside `parent_not_a_surface`, each carrying
+//! its own URN — see `Problem::tree_depth_exceeded`'s doc comment).
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no
-//! database (the write-side depth column and its `CHECK` backstop are pinned
-//! separately against real PostgreSQL in `adapter-pg`'s own integration
-//! tests).
+//! database (the write-side depth column, its bounds `CHECK`, and the
+//! composite FK that makes a wrong `depth` UNFORGEABLE rather than merely
+//! checked are pinned separately against real PostgreSQL in `adapter-pg`'s
+//! own integration tests).
 
 use std::sync::Arc;
 
 use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
-use domain::elements::{commission::CommissionId, did::Did, profile::Profile};
+use domain::elements::{
+    commission::{CommissionId, CommissionNode},
+    did::Did,
+    profile::Profile,
+};
 use reqwest::redirect::Policy;
 use serde_json::json;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -144,6 +157,30 @@ async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .id
 }
 
+/// Depth-first search for `target` within `node`'s subtree, returning its
+/// live children count.
+fn find_children(node: &CommissionNode, target: uuid::Uuid) -> Option<usize> {
+    if *node.id == target {
+        return Some(node.children.len());
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_children(child, target))
+}
+
+/// How many children `node` has **right now**, introspected off the backend
+/// — the all-or-nothing pin's tool: a rejected batch must move this number
+/// by exactly zero.
+async fn children_of(backend: &MemBackend, commission: uuid::Uuid, node: uuid::Uuid) -> usize {
+    let tree = backend
+        .commission_store()
+        .load_tree(CommissionId::new(commission))
+        .await
+        .expect("load tree")
+        .expect("tree exists");
+    find_children(&tree.root, node).expect("the node exists in the tree")
+}
+
 /// POSTs a new surface under `parent` and returns the raw response, so a
 /// caller can assert either the `201` accept case or a refusal.
 async fn post_surface(
@@ -201,9 +238,9 @@ async fn surface_chain_to_depth(
 }
 
 // A surface may be added at depth 63 (the deepest level a write may ever
-// produce — one below Rust's 64-level prost decode ceiling); one more level,
-// depth 64, is refused with the 422 tree_depth_exceeded problem, and nothing
-// is written.
+// produce — one bracket of headroom under serde_json's 128-deep JSON decode
+// guard, not one whole level); one more level, depth 64, is refused with the
+// 409 tree_depth_exceeded problem, and nothing is written.
 #[tokio::test]
 async fn surfaces_accept_depth_63_and_reject_depth_64() {
     let (base, backend) = spawn_app("did:plc:artist").await;
@@ -218,7 +255,7 @@ async fn surfaces_accept_depth_63_and_reject_depth_64() {
     let depth_63 = *chain.last().expect("chain reaches depth 63");
 
     let res = post_surface(&client, &base, id, depth_63).await;
-    common::assert_problem(res, 422, "tree_depth_exceeded").await;
+    common::assert_problem(res, 409, "tree_depth_exceeded").await;
 
     let tree = backend
         .commission_store()
@@ -272,7 +309,7 @@ async fn components_accept_depth_63_and_reject_depth_64() {
         .send()
         .await
         .expect("POST component");
-    common::assert_problem(res, 422, "tree_depth_exceeded").await;
+    common::assert_problem(res, 409, "tree_depth_exceeded").await;
 }
 
 // A declared Seat may land at depth 63 but not depth 64 — the same shared
@@ -309,7 +346,7 @@ async fn seats_accept_depth_63_and_reject_depth_64() {
         .send()
         .await
         .expect("POST seat");
-    common::assert_problem(res, 422, "tree_depth_exceeded").await;
+    common::assert_problem(res, 409, "tree_depth_exceeded").await;
 }
 
 // A declared Slot may land at depth 63 but not depth 64 — the same shared
@@ -339,13 +376,31 @@ async fn slots_accept_depth_63_and_reject_depth_64() {
         "a slot at depth 63 (parent depth 62) is accepted"
     );
 
-    // Reject: a slot under the depth-63 surface would land at depth 64 — and
-    // the whole batch is refused (all-or-nothing), not just this entry.
+    // All-or-nothing, proven for real (the commission_slots.rs sibling
+    // shape, `declaring_under_a_component_is_rejected`): a MIXED two-entry
+    // batch — one that would be fine alone under depth_62, one over the cap
+    // under depth_63 — refuses as ONE 409, and the refusing entry takes the
+    // valid one down with it. Neither lands.
+    let depth_62_children_before = children_of(&backend, id, depth_62).await;
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": depth_63, "title": "Character B" }]))
+        .json(&json!([
+            { "parent": depth_62, "title": "Would be fine alone" },
+            { "parent": depth_63, "title": "Character B (over cap)" },
+        ]))
         .send()
         .await
-        .expect("POST slots");
-    common::assert_problem(res, 422, "tree_depth_exceeded").await;
+        .expect("POST mixed slots batch");
+    common::assert_problem(res, 409, "tree_depth_exceeded").await;
+
+    assert_eq!(
+        children_of(&backend, id, depth_62).await,
+        depth_62_children_before,
+        "the refused batch left the valid entry behind too — all-or-nothing broke"
+    );
+    assert_eq!(
+        children_of(&backend, id, depth_63).await,
+        0,
+        "the over-cap entry never landed either"
+    );
 }

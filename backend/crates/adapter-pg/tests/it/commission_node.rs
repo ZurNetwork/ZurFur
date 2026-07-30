@@ -11,8 +11,8 @@ use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, NewComponent, NewSurface, NodeId, NodeKind,
-            SurfaceMode,
+            Commission, CommissionId, CommissionTitle, MAX_SURFACE_TREE_DEPTH, NewComponent,
+            NewSurface, NodeId, NodeKind, SurfaceMode,
         },
         did::Did,
         user::User,
@@ -778,12 +778,14 @@ async fn the_migration_backfills_a_root_for_pre_tree_commissions() {
 // ZMVP-164 — the write-side depth cap (Surface Tree on the Wire DD `42762241`'s
 // companion ruling): the root counts as nesting level 1, so a straight-line
 // chain of 62 more surfaces lands the deepest one at level 63 — accepted, the
-// deepest a write may ever produce. One level further, 64, is the level
-// Rust's `prost` decoder cannot read back, so it refuses with
-// `TreeDepthExceeded` — through the SAME shared parent gate every
-// tree-growing write shares (`add_surface`'s own gate; `add_component`,
-// `declare_seat`, `declare_slots` walk it identically, so pinning it once
-// here proves the shared guard, not a per-op copy).
+// deepest a write may ever produce. One level further, 64, is past
+// `serde_json`'s 128-deep JSON recursion guard at two brackets per tree
+// level (128 / 2 = 64; the pinned `prost` build's own limit is 100, nowhere
+// near it — corrected 2026-07-30), so it refuses with `TreeDepthExceeded` —
+// through the SAME shared parent gate every tree-growing write shares
+// (`add_surface`'s own gate; `add_component`, `declare_seat`,
+// `declare_slots` walk it identically, so pinning it once here proves the
+// shared guard, not a per-op copy).
 #[tokio::test]
 async fn add_surface_accepts_depth_63_and_refuses_depth_64() {
     let (pool, _container) = fresh_pool().await;
@@ -829,12 +831,18 @@ async fn add_surface_accepts_depth_63_and_refuses_depth_64() {
     uow.rollback().await.expect("rollback");
 }
 
-// The database-level backstop for the same rule (belt and suspenders, not the
-// only gate — see `commission_node_depth_cap` migration): a raw insert that
-// bypasses the domain entirely still can't land a node past depth 63, because
-// the `commission_node_depth_bounds` CHECK constraint refuses it.
+// The database-level backstop, now UNFORGEABLE rather than merely checked
+// (Engineer ruling 2026-07-30; DD 34013187's composite-FK idiom, model
+// `20260718194001_actor_projection_composite_fk.sql`): a raw insert that
+// bypasses the domain entirely can land a node at exactly the cap (accepted),
+// but never past it (the bounds CHECK) and never with a `depth` that
+// disagrees with its parent's (the composite `(parent, depth) → (id,
+// child_depth)` FK) — even when that wrong depth is itself in-range. Every
+// depth literal here binds to [`MAX_SURFACE_TREE_DEPTH`] rather than a bare
+// number, so the SQL bound and the Rust constant can never silently drift
+// apart — a change to one without the other fails this test.
 #[tokio::test]
-async fn the_depth_check_constraint_refuses_a_raw_insert_past_63() {
+async fn the_depth_constraints_are_unforgeable_at_the_raw_sql_level() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:tamper-gardener").await;
     let commission = create_commission(&pool, &owner, "Tampered").await;
@@ -848,10 +856,80 @@ async fn the_depth_check_constraint_refuses_a_raw_insert_past_63() {
         .root
         .id;
 
-    let rejected = sqlx::query(
+    // Grow a real chain to depth MAX_SURFACE_TREE_DEPTH (62 more surfaces
+    // past the root) through the domain, so the raw inserts below have real
+    // parents at depth MAX-1 and depth MAX to bind against.
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let mut parent = root;
+    let mut depth_max_minus_one = root;
+    for level in 2..=MAX_SURFACE_TREE_DEPTH {
+        let surface = NewSurface::under(commission.id, parent, owner.id, Utc::now());
+        if level == MAX_SURFACE_TREE_DEPTH {
+            depth_max_minus_one = parent;
+        }
+        parent = surface.id;
+        uow.commissions()
+            .add_surface(&surface)
+            .await
+            .expect("grows to MAX_SURFACE_TREE_DEPTH");
+    }
+    uow.commit().await.expect("commit the chain");
+    let depth_max = parent;
+
+    // Accept, at the raw SQL level: a node whose depth is exactly
+    // MAX_SURFACE_TREE_DEPTH, correctly matching its depth_max_minus_one
+    // parent's child_depth, lands cleanly.
+    let accepted = sqlx::query(
         "INSERT INTO commission_node
             (id, commission_id, parent, type, mode, position, created_by, created_at, depth)
-         VALUES ($1, $2, $3, 'surface', 'total', 0, $4, $5, 64)",
+         VALUES ($1, $2, $3, 'surface', 'total', 999, $4, $5, $6)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(*commission.id)
+    .bind(*depth_max_minus_one)
+    .bind(*owner.id)
+    .bind(Utc::now())
+    .bind(MAX_SURFACE_TREE_DEPTH)
+    .execute(&pool)
+    .await;
+    assert!(
+        accepted.is_ok(),
+        "a raw insert at exactly MAX_SURFACE_TREE_DEPTH is accepted, got: {accepted:?}"
+    );
+
+    // Refuse: a node correctly bound to a real parent at depth_max (so the
+    // composite FK is satisfied — depth_max.child_depth == MAX + 1) still
+    // violates the bounds CHECK, since MAX + 1 exceeds the cap.
+    let over_cap = sqlx::query(
+        "INSERT INTO commission_node
+            (id, commission_id, parent, type, mode, position, created_by, created_at, depth)
+         VALUES ($1, $2, $3, 'surface', 'total', 999, $4, $5, $6)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(*commission.id)
+    .bind(*depth_max)
+    .bind(*owner.id)
+    .bind(Utc::now())
+    .bind(MAX_SURFACE_TREE_DEPTH + 1)
+    .execute(&pool)
+    .await;
+    assert!(
+        over_cap
+            .expect_err("MAX + 1 violates the bounds CHECK even though the FK matches")
+            .to_string()
+            .contains("commission_node_depth_bounds"),
+        "the bounds CHECK names the violation"
+    );
+
+    // Refuse, the new pin: a depth that is itself perfectly in-range (5) but
+    // WRONG for the parent it claims (root's real child_depth is 2, not 5) —
+    // the composite FK has no `(root.id, 5)` row to reference, so this isn't
+    // merely checked after the fact, it's unrepresentable.
+    let mismatched_parent = sqlx::query(
+        "INSERT INTO commission_node
+            (id, commission_id, parent, type, mode, position, created_by, created_at, depth)
+         VALUES ($1, $2, $3, 'surface', 'total', 999, $4, $5, 5)",
     )
     .bind(uuid::Uuid::now_v7())
     .bind(*commission.id)
@@ -861,10 +939,10 @@ async fn the_depth_check_constraint_refuses_a_raw_insert_past_63() {
     .execute(&pool)
     .await;
     assert!(
-        rejected
-            .expect_err("depth 64 violates the CHECK even bypassing the domain")
+        mismatched_parent
+            .expect_err("an in-range depth that disagrees with its parent's is unrepresentable")
             .to_string()
-            .contains("commission_node_depth_bounds"),
-        "the CHECK names the violation"
+            .contains("commission_node_parent_depth_fk"),
+        "the composite FK names the violation"
     );
 }

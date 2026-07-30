@@ -210,12 +210,15 @@ impl std::error::Error for ParentNotASurface {}
 /// `anyhow::Error`) when persisting the new node would exceed the write-side
 /// depth cap ([`MAX_SURFACE_TREE_DEPTH`](crate::elements::commission::MAX_SURFACE_TREE_DEPTH),
 /// ZMVP-164) — the companion ruling of the Surface Tree on the Wire DD
-/// `42762241`: a stored tree must never grow deeper than either wire tier can
-/// decode back. Deliberately reachable **only past** [`ParentNodeNotFound`]
-/// and [`ParentNotASurface`] — a foreign or non-surface parent always answers
-/// first, so this error never confirms how deep a foreign node sits. Adapters
-/// return it so the route can `downcast_ref` and answer an honest `422` (the
-/// request is well-formed; the tree is simply already as deep as it may go).
+/// `42762241`: a stored tree must never grow deeper than the v1 wire
+/// transport can decode back. Deliberately reachable **only past**
+/// [`ParentNodeNotFound`] and [`ParentNotASurface`] — a foreign or
+/// non-surface parent always answers first, so this error never confirms how
+/// deep a foreign node sits. Adapters return it so the route can
+/// `downcast_ref` and answer an honest `409` (Engineer ruling 2026-07-30 —
+/// the 409 target-state family alongside `parent_not_a_surface`; the request
+/// is well-formed, the tree's *state* is simply already as deep as it may
+/// go).
 #[derive(Debug)]
 pub struct TreeDepthExceeded;
 

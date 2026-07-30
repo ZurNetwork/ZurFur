@@ -22,11 +22,20 @@ use std::sync::{Arc, Mutex, Weak};
 use sqlx::{Connection as _, PgConnection};
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 
 /// Name of the migrated template database inside the shared container.
 const TEMPLATE: &str = "zurfur_template";
+
+/// The Postgres image tag the shared container boots — pinned to match
+/// `docker-compose.yml`'s production Postgres (`postgres:16-alpine`), NOT
+/// `testcontainers_modules::postgres::Postgres`'s own crate default
+/// (`11-alpine`, years behind): ZMVP-164's composite-FK depth cap is the
+/// first migration to use a feature (`GENERATED ALWAYS AS (...) STORED`,
+/// PG12+) the crate default can't parse at all, which is what surfaced this
+/// drift. Tests now run against the same major version production does.
+const POSTGRES_TAG: &str = "16-alpine";
 
 /// The per-process shared container plus the coordinates to clone from it.
 struct SharedPg {
@@ -126,6 +135,7 @@ async fn shared() -> Arc<SharedPg> {
     }
 
     let container = Postgres::default()
+        .with_tag(POSTGRES_TAG)
         .start()
         .await
         .expect("postgres container should start");

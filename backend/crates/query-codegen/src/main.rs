@@ -10,11 +10,22 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use testcontainers_modules::{postgres::Postgres, testcontainers::runners::AsyncRunner};
+use testcontainers_modules::{
+    postgres::Postgres,
+    testcontainers::{ImageExt, runners::AsyncRunner},
+};
+
+/// Pinned to match `docker-compose.yml`'s production Postgres
+/// (`postgres:16-alpine`), not `testcontainers_modules::postgres::Postgres`'s
+/// own crate default (`11-alpine`) — the schema now uses PG12+-only features
+/// (e.g. `GENERATED ALWAYS AS (...) STORED`, ZMVP-164), which the crate
+/// default can't even parse. Mirrors `test-support::pg::POSTGRES_TAG`.
+const POSTGRES_TAG: &str = "16-alpine";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let container = Postgres::default()
+        .with_tag(POSTGRES_TAG)
         .start()
         .await
         .context("postgres container should start (is the container runtime up?)")?;
