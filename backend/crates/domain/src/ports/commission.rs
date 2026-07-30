@@ -206,6 +206,30 @@ impl std::fmt::Display for ParentNotASurface {
 
 impl std::error::Error for ParentNotASurface {}
 
+/// The error every tree-growing write carries (as the source of its
+/// `anyhow::Error`) when persisting the new node would exceed the write-side
+/// depth cap ([`MAX_SURFACE_TREE_DEPTH`](crate::elements::commission::MAX_SURFACE_TREE_DEPTH),
+/// ZMVP-164) — the companion ruling of the Surface Tree on the Wire DD
+/// `42762241`: a stored tree must never grow deeper than either wire tier can
+/// decode back. Deliberately reachable **only past** [`ParentNodeNotFound`]
+/// and [`ParentNotASurface`] — a foreign or non-surface parent always answers
+/// first, so this error never confirms how deep a foreign node sits. Adapters
+/// return it so the route can `downcast_ref` and answer an honest `422` (the
+/// request is well-formed; the tree is simply already as deep as it may go).
+#[derive(Debug)]
+pub struct TreeDepthExceeded;
+
+impl std::fmt::Display for TreeDepthExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the commission's tree cannot grow past its maximum depth"
+        )
+    }
+}
+
+impl std::error::Error for TreeDepthExceeded {}
+
 /// The error [`CommissionWrites::remove_node`] carries (as the source of its
 /// `anyhow::Error`) when the addressed node does not exist **in that
 /// commission** — covering both a truly absent node id and a node that belongs
@@ -273,8 +297,9 @@ pub trait CommissionWrites: Send {
     /// `commission_seat` satellite keyed by that node's id (Gate A ruling E20).
     /// The same parent gate as every tree-growing write: an absent/foreign
     /// parent refuses with [`ParentNodeNotFound`], a component parent with
-    /// [`ParentNotASurface`]. Authority (owner-only in v1) and the commission's
-    /// own existence are the caller's checks. The declaration is
+    /// [`ParentNotASurface`], a parent past the write-side depth cap with
+    /// [`TreeDepthExceeded`] (ZMVP-164). Authority (owner-only in v1) and the
+    /// commission's own existence are the caller's checks. The declaration is
     /// changelog-recorded ([`SeatDeclared`]): the caller appends the matching
     /// entry through [`ChangelogWrites`](crate::ports::ChangelogWrites) **in
     /// this same unit of work**, so the seat and its record land atomically.
@@ -322,7 +347,10 @@ pub trait CommissionWrites: Send {
     /// [`ParentNodeNotFound`] as the error source (one indistinguishable
     /// answer — see its docs); a parent that exists there but is a component
     /// fails with [`ParentNotASurface`] (components never have children —
-    /// ZMVP-72). Authority (owner-only in v1) and the commission's own
+    /// ZMVP-72); a parent already at the write-side depth cap fails with
+    /// [`TreeDepthExceeded`] (ZMVP-164; Surface Tree on the Wire DD `42762241`'s
+    /// companion ruling — no stored tree may exceed what either wire tier can
+    /// decode back). Authority (owner-only in v1) and the commission's own
     /// existence are the caller's checks, settled before this is reached.
     /// Deliberately **not** changelog-recorded: tree edits are not in the
     /// frozen entry taxonomy (ZMVP-87).
@@ -333,11 +361,13 @@ pub trait CommissionWrites: Send {
     /// [`add_surface`](Self::add_surface) — append sibling order assigned on
     /// the open transaction, an absent/foreign parent refusing with
     /// [`ParentNodeNotFound`], a component parent refusing with
-    /// [`ParentNotASurface`], authority and commission existence settled by the
-    /// caller, and no changelog entry (tree edits are not in the frozen
-    /// taxonomy) — plus the leaf's own half: the row stores **no mode**
-    /// (a component projects with its parent) and the opaque payload
-    /// semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving) (AC3).
+    /// [`ParentNotASurface`], a parent past the write-side depth cap refusing
+    /// with [`TreeDepthExceeded`] (ZMVP-164), authority and commission
+    /// existence settled by the caller, and no changelog entry (tree edits
+    /// are not in the frozen taxonomy) — plus the leaf's own half: the row
+    /// stores **no mode** (a component projects with its parent) and the
+    /// opaque payload semantically unmodified — round-trips as an equal JSON
+    /// value (jsonb is not byte-preserving) (AC3).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()>;
 
     /// Prune the commission's tree: remove `node` **and its entire subtree**
@@ -394,10 +424,11 @@ pub trait CommissionWrites: Send {
     /// [`add_component`](Self::add_component) contract: append sibling order
     /// assigned on the open transaction, an absent/foreign parent refusing with
     /// [`ParentNodeNotFound`], a component parent refusing with
-    /// [`ParentNotASurface`], authority and commission existence settled by the
-    /// caller. The component's payload is the empty object — the Slot's
-    /// substance lives in the satellite, which is why the generic component
-    /// add cannot declare one.
+    /// [`ParentNotASurface`], a parent past the write-side depth cap refusing
+    /// with [`TreeDepthExceeded`] (ZMVP-164), authority and commission
+    /// existence settled by the caller. The component's payload is the empty
+    /// object — the Slot's substance lives in the satellite, which is why the
+    /// generic component add cannot declare one.
     ///
     /// **No changelog entry**: the frozen ZMVP-87 taxonomy carries
     /// `seat_declared` for Seats but no Slot variant, and the taxonomy is not

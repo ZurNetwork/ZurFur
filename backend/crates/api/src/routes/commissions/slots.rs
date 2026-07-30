@@ -24,7 +24,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewSlot, NodeId, SlotTitle},
-    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
+    ports::{ParentNodeNotFound, ParentNotASurface, TreeDepthExceeded, UnitOfWork},
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -71,7 +71,9 @@ pub(super) struct DeclareSlotBody {
 /// blank normalizing to absent. Each parent walks the same gates as every tree
 /// write: absent/foreign is the indistinguishable
 /// [`node_not_found`](Problem::node_not_found) 404, a component parent the
-/// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a
+/// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface), a
+/// parent already at the write-side depth cap
+/// [`tree_depth_exceeded`](Problem::tree_depth_exceeded) (ZMVP-164); a
 /// malformed body is a `422`. Returns `201 Created` with the node id of each
 /// newly declared slot's carrying component, in request order — `{"ids": ["…", …]}` —
 /// since no tree read exposes ids until the projection lands (ZMVP-75).
@@ -124,6 +126,8 @@ pub(super) async fn declare_slots(
                 Problem::node_not_found()
             } else if err.downcast_ref::<ParentNotASurface>().is_some() {
                 Problem::parent_not_a_surface()
+            } else if err.downcast_ref::<TreeDepthExceeded>().is_some() {
+                Problem::tree_depth_exceeded()
             } else {
                 err.into()
             }

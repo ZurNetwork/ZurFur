@@ -63,8 +63,8 @@ pub use fact::Fact;
 pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
 pub use markup::{Markup, MarkupError, MarkupShape};
 pub use node::{
-    CommissionNode, CommissionTree, NewComponent, NewSurface, NodeId, NodeKind, NodeRow,
-    RootSurface, SurfaceMode, TreeAssemblyError,
+    CommissionNode, CommissionTree, MAX_SURFACE_TREE_DEPTH, NewComponent, NewSurface, NodeId,
+    NodeKind, NodeRow, RootSurface, SurfaceMode, TreeAssemblyError,
 };
 pub use positioning::{GrantLevel, Placement};
 pub use seat::{

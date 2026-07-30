@@ -803,6 +803,7 @@ pub mod commission {
     pub struct RequireSurfaceParentRow {
         pub type_tag: String,
         pub mode: Option<String>,
+        pub depth: i32,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -824,6 +825,7 @@ pub mod commission {
         created_by: uuid::Uuid,
         created_at: chrono::DateTime<chrono::Utc>,
         payload: &serde_json::Value,
+        depth: i32,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/add_component.sql"))
             .bind(id)
@@ -832,6 +834,7 @@ pub mod commission {
             .bind(created_by)
             .bind(created_at)
             .bind(payload)
+            .bind(depth)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -889,6 +892,7 @@ pub mod commission {
         mode: Option<&str>,
         created_by: uuid::Uuid,
         created_at: chrono::DateTime<chrono::Utc>,
+        depth: i32,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/add_surface.sql"))
             .bind(id)
@@ -897,6 +901,7 @@ pub mod commission {
             .bind(mode)
             .bind(created_by)
             .bind(created_at)
+            .bind(depth)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -1006,6 +1011,7 @@ pub mod commission {
         parent: Option<uuid::Uuid>,
         created_by: uuid::Uuid,
         created_at: chrono::DateTime<chrono::Utc>,
+        depth: i32,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/declare_seat_node.sql"))
             .bind(id)
@@ -1013,6 +1019,7 @@ pub mod commission {
             .bind(parent)
             .bind(created_by)
             .bind(created_at)
+            .bind(depth)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -1048,6 +1055,7 @@ pub mod commission {
         parent: Option<uuid::Uuid>,
         created_by: uuid::Uuid,
         created_at: chrono::DateTime<chrono::Utc>,
+        depth: i32,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/declare_slot_node.sql"))
             .bind(id)
@@ -1055,6 +1063,7 @@ pub mod commission {
             .bind(parent)
             .bind(created_by)
             .bind(created_at)
+            .bind(depth)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())

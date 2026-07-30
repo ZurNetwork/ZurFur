@@ -15,10 +15,10 @@ use domain::elements::{
     commission::{
         ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
         CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
-        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSeat,
-        NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat,
-        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotTitle,
-        SurfaceMode, Visibility, derive_deadline_status,
+        GrantLevel, LapsedDeadline, LifecycleStep, MAX_SURFACE_TREE_DEPTH, NewChangelogEntry,
+        NewComponent, NewSeat, NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement,
+        RootSurface, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+        SlotTitle, SurfaceMode, Visibility, derive_deadline_status,
     },
     invitation::InvitationState,
     maturity::Maturity,
@@ -26,33 +26,57 @@ use domain::elements::{
 };
 use domain::ports::{
     CannotRemoveRoot, ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites,
-    NodeNotFound, ParentNodeNotFound, ParentNotASurface,
+    NodeNotFound, ParentNodeNotFound, ParentNotASurface, TreeDepthExceeded,
 };
 use serde_json::Value;
 
 use crate::MemBackend;
 
+/// What [`require_surface_parent`] hands back on success — the mem mirror of
+/// `PgCommissionWrites`' private `ParentGate`: the parent's inherited
+/// [`SurfaceMode`] (`add_surface` uses it; the other tree-growing writes
+/// don't) and its own stored `depth`, from which the caller computes the new
+/// child's depth (`parent.depth + 1`).
+struct ParentGate {
+    /// The parent surface's mode.
+    mode: SurfaceMode,
+    /// The parent's own nesting level (root = `1`; see
+    /// [`MAX_SURFACE_TREE_DEPTH`]) — already proven `< MAX_SURFACE_TREE_DEPTH`
+    /// by [`require_surface_parent`], so `depth + 1` is always a valid child
+    /// depth.
+    depth: i32,
+}
+
 /// The shared **parent gate** of every tree-growing write — the mem mirror of
-/// `PgCommissionWrites::require_surface_parent` (ZMVP-71/72): the named parent
-/// must exist in `commission`'s own tree (an absent id and a node from another
-/// commission both refuse with [`ParentNodeNotFound`], indistinguishably,
-/// *before* anything about the node is revealed) and must be a surface, else
-/// [`ParentNotASurface`] (components are leaves; nothing grows under one). One
-/// path, so the two add ops can't drift apart on either rule. Returns the
-/// parent's [`SurfaceMode`] on success — the mode `add_surface` inherits;
-/// `add_component` has no use for it.
+/// `PgCommissionWrites::require_surface_parent` (ZMVP-71/72/164): the named
+/// parent must exist in `commission`'s own tree (an absent id and a node from
+/// another commission both refuse with [`ParentNodeNotFound`],
+/// indistinguishably, *before* anything about the node is revealed), must be
+/// a surface, else [`ParentNotASurface`] (components are leaves; nothing
+/// grows under one), and must sit *below* the write-side depth cap, else
+/// [`TreeDepthExceeded`] (ZMVP-164; Surface Tree on the Wire DD `42762241`'s
+/// companion ruling). One path, so every tree-growing write can't drift apart
+/// on any of the three rules.
 fn require_surface_parent(
     nodes: &HashMap<NodeId, StoredNode>,
     parent: NodeId,
     commission: CommissionId,
-) -> anyhow::Result<SurfaceMode> {
-    match nodes.get(&parent) {
-        Some(node) if node.commission_id == commission => match node.kind {
-            NodeKind::Surface { mode } => Ok(mode),
-            NodeKind::Component => Err(ParentNotASurface.into()),
-        },
-        _ => Err(ParentNodeNotFound.into()),
+) -> anyhow::Result<ParentGate> {
+    let node = match nodes.get(&parent) {
+        Some(node) if node.commission_id == commission => node,
+        _ => return Err(ParentNodeNotFound.into()),
+    };
+    let mode = match node.kind {
+        NodeKind::Surface { mode } => mode,
+        NodeKind::Component => return Err(ParentNotASurface.into()),
+    };
+    if node.depth >= MAX_SURFACE_TREE_DEPTH {
+        return Err(TreeDepthExceeded.into());
     }
+    Ok(ParentGate {
+        mode,
+        depth: node.depth,
+    })
 }
 
 /// The next append `position` within `parent`'s sibling group — the mem mirror
@@ -158,6 +182,10 @@ pub(crate) struct StoredNode {
     pub(crate) created_at: domain::datetime::DateTimeUtc,
     /// The type-owned payload, opaque here exactly as in pg.
     pub(crate) payload: Value,
+    /// The node's own nesting level — root = `1` (see
+    /// [`MAX_SURFACE_TREE_DEPTH`]; ZMVP-164) — the mem mirror of the pg
+    /// `commission_node.depth` column.
+    pub(crate) depth: i32,
 }
 
 /// One declared Slot's **satellite** as the mem backend keeps it — the
@@ -398,6 +426,10 @@ impl CommissionWrites for MemCommissionWrites {
                     created_by: root.created_by,
                     created_at: root.created_at,
                     payload: Value::Object(Default::default()),
+                    // The root is always nesting level 1 (see
+                    // MAX_SURFACE_TREE_DEPTH) — the mem mirror of
+                    // `create_root_surface.sql`'s hardcoded `depth = 1`.
+                    depth: 1,
                 },
             );
         }
@@ -421,45 +453,48 @@ impl CommissionWrites for MemCommissionWrites {
     /// pg `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2), behind the same
     /// shared parent gate ([`require_surface_parent`]): absent/foreign refuses
     /// with [`ParentNodeNotFound`], a component parent with
-    /// [`ParentNotASurface`] (ZMVP-72 — components are leaves). The mode is
-    /// **inherited from the parent** (Engineer ruling 2026-07-07, PR #103) —
+    /// [`ParentNotASurface`] (ZMVP-72 — components are leaves), and a parent at
+    /// the write-side depth cap with [`TreeDepthExceeded`] (ZMVP-164). The mode
+    /// is **inherited from the parent** (Engineer ruling 2026-07-07, PR #103) —
     /// the gate hands it back on success, since a surface parent always
-    /// carries one.
+    /// carries one — and the new surface's own depth is `parent.depth + 1`.
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
         let mut nodes = self
             .0
             .nodes
             .lock()
             .expect("MemBackend nodes mutex poisoned");
-        let mode = require_surface_parent(&nodes, surface.parent, surface.commission_id)?;
+        let parent = require_surface_parent(&nodes, surface.parent, surface.commission_id)?;
         let position = next_position(&nodes, surface.parent);
         nodes.insert(
             surface.id,
             StoredNode {
                 commission_id: surface.commission_id,
                 parent: Some(surface.parent),
-                kind: NodeKind::Surface { mode },
+                kind: NodeKind::Surface { mode: parent.mode },
                 position,
                 created_by: surface.created_by,
                 created_at: surface.created_at,
                 payload: Value::Object(Default::default()),
+                depth: parent.depth + 1,
             },
         );
         Ok(())
     }
 
     /// Grow a leaf under an existing parent surface — the mem mirror of the pg
-    /// component insert (ZMVP-72 AC1): the same shared parent gate, the same
-    /// append order, kind [`NodeKind::Component`] (no mode exists to store —
-    /// AC2), and the opaque payload held verbatim so it reads back exactly as
-    /// written (AC3).
+    /// component insert (ZMVP-72 AC1): the same shared parent gate (absent/
+    /// foreign, non-surface, and past-the-depth-cap all refuse there —
+    /// ZMVP-164), the same append order, kind [`NodeKind::Component`] (no mode
+    /// exists to store — AC2), the opaque payload held verbatim so it reads
+    /// back exactly as written (AC3), and depth `parent.depth + 1`.
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
         let mut nodes = self
             .0
             .nodes
             .lock()
             .expect("MemBackend nodes mutex poisoned");
-        require_surface_parent(&nodes, component.parent, component.commission_id)?;
+        let parent = require_surface_parent(&nodes, component.parent, component.commission_id)?;
         let position = next_position(&nodes, component.parent);
         nodes.insert(
             component.id,
@@ -471,6 +506,7 @@ impl CommissionWrites for MemCommissionWrites {
                 created_by: component.created_by,
                 created_at: component.created_at,
                 payload: component.payload.clone(),
+                depth: parent.depth + 1,
             },
         );
         Ok(())
@@ -550,14 +586,16 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
     /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
-    /// Slot, the same shared parent gate ([`require_surface_parent`]) and
-    /// append order as [`add_component`](Self::add_component) plant an
-    /// ordinary [`NodeKind::Component`] leaf with the empty payload, and the
-    /// Slot itself lands as the [`StoredSlot`] satellite keyed by that
-    /// component's node id. All maps belong to this unit's staging snapshot,
-    /// so the whole batch commits or vanishes together — a refusal mid-batch
-    /// errors the unit and nothing is applied. No changelog entry (the frozen
-    /// taxonomy has no Slot variant), and no occupant exists to store.
+    /// Slot, the same shared parent gate ([`require_surface_parent`] — absent/
+    /// foreign, non-surface, and past-the-depth-cap all refuse there,
+    /// ZMVP-164) and append order as [`add_component`](Self::add_component)
+    /// plant an ordinary [`NodeKind::Component`] leaf with the empty payload
+    /// and depth `parent.depth + 1`, and the Slot itself lands as the
+    /// [`StoredSlot`] satellite keyed by that component's node id. All maps
+    /// belong to this unit's staging snapshot, so the whole batch commits or
+    /// vanishes together — a refusal mid-batch errors the unit and nothing is
+    /// applied. No changelog entry (the frozen taxonomy has no Slot variant),
+    /// and no occupant exists to store.
     async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in new_slots {
             {
@@ -566,7 +604,7 @@ impl CommissionWrites for MemCommissionWrites {
                     .nodes
                     .lock()
                     .expect("MemBackend nodes mutex poisoned");
-                require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
+                let parent = require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
                 let position = next_position(&nodes, slot.parent);
                 nodes.insert(
                     slot.id,
@@ -578,6 +616,7 @@ impl CommissionWrites for MemCommissionWrites {
                         created_by: slot.created_by,
                         created_at: slot.created_at,
                         payload: Value::Object(Default::default()),
+                        depth: parent.depth + 1,
                     },
                 );
             }
@@ -680,11 +719,13 @@ impl CommissionWrites for MemCommissionWrites {
     }
     /// Declare a seat — the mem mirror of the pg adapter's node + satellite
     /// pair (ZMVP-76): behind the same shared parent gate
-    /// ([`require_surface_parent`]), one [`StoredNode`] (an ordinary component
-    /// — the untyped ZMVP-72 contract) and one [`StoredSeat`] land under the
-    /// same [`NodeId`] in this unit's staging snapshot, so both halves commit
-    /// or vanish together. The occupant is never written here: every seat is
-    /// born vacant (AC3; ZMVP-79 fills it).
+    /// ([`require_surface_parent`] — absent/foreign, non-surface, and
+    /// past-the-depth-cap all refuse there, ZMVP-164), one [`StoredNode`] (an
+    /// ordinary component — the untyped ZMVP-72 contract, depth
+    /// `parent.depth + 1`) and one [`StoredSeat`] land under the same
+    /// [`NodeId`] in this unit's staging snapshot, so both halves commit or
+    /// vanish together. The occupant is never written here: every seat is born
+    /// vacant (AC3; ZMVP-79 fills it).
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         {
             let mut nodes = self
@@ -692,7 +733,7 @@ impl CommissionWrites for MemCommissionWrites {
                 .nodes
                 .lock()
                 .expect("MemBackend nodes mutex poisoned");
-            require_surface_parent(&nodes, seat.parent, seat.commission_id)?;
+            let parent = require_surface_parent(&nodes, seat.parent, seat.commission_id)?;
             let position = next_position(&nodes, seat.parent);
             nodes.insert(
                 seat.id,
@@ -704,6 +745,7 @@ impl CommissionWrites for MemCommissionWrites {
                     created_by: seat.created_by,
                     created_at: seat.created_at,
                     payload: Value::Object(Default::default()),
+                    depth: parent.depth + 1,
                 },
             );
         }

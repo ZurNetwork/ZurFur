@@ -14,9 +14,10 @@ use domain::{
         commission::{
             ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
             CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSeat, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
-            Placement, RootSurface, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
-            SeatPrompt, SurfaceMode, Visibility, derive_deadline_status,
+            LifecycleStep, MAX_SURFACE_TREE_DEPTH, NewComponent, NewSeat, NewSlot, NewSurface,
+            NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat, SeatInvitation,
+            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, SurfaceMode, Visibility,
+            derive_deadline_status,
         },
         invitation::InvitationState,
         maturity::{Maturity, MaturityRating},
@@ -24,7 +25,7 @@ use domain::{
     },
     ports::{
         CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
-        ParentNotASurface,
+        ParentNotASurface, TreeDepthExceeded,
     },
 };
 use sqlx::{PgConnection, PgPool};
@@ -126,38 +127,65 @@ pub struct PgCommissionWrites<'a> {
     pub(crate) conn: &'a mut PgConnection,
 }
 
+/// What [`PgCommissionWrites::require_surface_parent`] hands back on success:
+/// the parent's inherited [`SurfaceMode`] (see `add_surface`) and its own
+/// stored `depth`, from which the caller computes the new child's depth
+/// (`parent.depth + 1`) for its insert — named per the semantic style
+/// rulebook's ruling 3 rather than returned as a bare tuple.
+struct ParentGate {
+    /// The parent surface's mode — `add_surface` inherits it; the other
+    /// tree-growing writes have no use for it.
+    mode: SurfaceMode,
+    /// The parent's own nesting level (root = `1`; see
+    /// [`MAX_SURFACE_TREE_DEPTH`]). Already proven `< MAX_SURFACE_TREE_DEPTH`
+    /// by the gate that produced this value, so `depth + 1` is always a valid
+    /// child depth.
+    depth: i32,
+}
+
 impl PgCommissionWrites<'_> {
-    /// The shared **parent gate** of every tree-growing write (ZMVP-71/72), on
-    /// the open transaction: the named parent must exist in `commission`'s own
-    /// tree — an absent id and a node from another commission both refuse with
-    /// [`ParentNodeNotFound`], indistinguishably, *before* anything about the
-    /// node is revealed — and must be a surface, else [`ParentNotASurface`]
-    /// (components are leaves; nothing grows under one). Locks the parent row
-    /// (`FOR UPDATE`), so concurrent appends under one parent serialize instead
-    /// of racing to the same `position` slot and aborting on the deferred
-    /// UNIQUE at commit (PR #103 review; Engineer-ruled fix) — one path,
-    /// shared by both add ops, so neither can drift out of the lock's
-    /// protection. Returns the parent's [`SurfaceMode`] on success — the mode
-    /// `add_surface` inherits (Engineer ruling 2026-07-07, PR #103);
-    /// `add_component` has no use for it.
+    /// The shared **parent gate** of every tree-growing write (ZMVP-71/72/164),
+    /// on the open transaction: the named parent must exist in `commission`'s
+    /// own tree — an absent id and a node from another commission both refuse
+    /// with [`ParentNodeNotFound`], indistinguishably, *before* anything about
+    /// the node is revealed — must be a surface, else [`ParentNotASurface`]
+    /// (components are leaves; nothing grows under one) — and must sit *below*
+    /// the write-side depth cap, else [`TreeDepthExceeded`] (ZMVP-164; Surface
+    /// Tree on the Wire DD `42762241`'s companion ruling: a stored tree must
+    /// never grow deeper than either wire tier can decode back). Locks the
+    /// parent row (`FOR UPDATE`), so concurrent appends under one parent
+    /// serialize instead of racing to the same `position` slot and aborting on
+    /// the deferred UNIQUE at commit (PR #103 review; Engineer-ruled fix) — one
+    /// path, shared by every tree-growing write, so none can drift out of the
+    /// lock's protection *or* the depth cap. Returns the parent's
+    /// [`ParentGate`] on success.
     async fn require_surface_parent(
         &mut self,
         parent: NodeId,
         commission: CommissionId,
-    ) -> anyhow::Result<SurfaceMode> {
+    ) -> anyhow::Result<ParentGate> {
         let row = sql::require_surface_parent(&mut *self.conn, *parent, *commission).await?;
         let Some(row) = row else {
             return Err(ParentNodeNotFound.into());
         };
-        match NodeKind::from_columns(&row.type_tag, row.mode.as_deref()) {
-            Some(NodeKind::Surface { mode }) => Ok(mode),
-            Some(NodeKind::Component) => Err(ParentNotASurface.into()),
-            None => Err(anyhow::anyhow!(
-                "unknown node envelope ({:?}, {:?})",
-                row.type_tag,
-                row.mode
-            )),
+        let mode = match NodeKind::from_columns(&row.type_tag, row.mode.as_deref()) {
+            Some(NodeKind::Surface { mode }) => mode,
+            Some(NodeKind::Component) => return Err(ParentNotASurface.into()),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unknown node envelope ({:?}, {:?})",
+                    row.type_tag,
+                    row.mode
+                ));
+            }
+        };
+        if row.depth >= MAX_SURFACE_TREE_DEPTH {
+            return Err(TreeDepthExceeded.into());
         }
+        Ok(ParentGate {
+            mode,
+            depth: row.depth,
+        })
     }
 }
 
@@ -218,13 +246,15 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// open transaction, behind the shared parent gate
     /// ([`require_surface_parent`](Self::require_surface_parent) —
     /// [`ParentNodeNotFound`] for absent/foreign, [`ParentNotASurface`] for a
-    /// component parent), which also locks the row and hands back its mode —
+    /// component parent, [`TreeDepthExceeded`] past the write-side cap,
+    /// ZMVP-164), which also locks the row and hands back its mode —
     /// **inherited** by the new surface (Engineer ruling 2026-07-07, PR #103;
-    /// inheritance never widens — see [`NewSurface::under`]). `position` is
-    /// assigned as `max(sibling position) + 1` in a subquery on this same
-    /// transaction, so append order can't race.
+    /// inheritance never widens — see [`NewSurface::under`]) — and its depth,
+    /// from which the new surface's own depth (`parent.depth + 1`) is derived.
+    /// `position` is assigned as `max(sibling position) + 1` in a subquery on
+    /// this same transaction, so append order can't race.
     async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        let mode = self
+        let parent = self
             .require_surface_parent(surface.parent, surface.commission_id)
             .await?;
 
@@ -233,9 +263,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *surface.id,
             *surface.commission_id,
             Some(*surface.parent),
-            Some(mode.as_str()),
+            Some(parent.mode.as_str()),
             *surface.created_by,
             surface.created_at,
+            parent.depth + 1,
         )
         .await?;
         Ok(())
@@ -243,14 +274,18 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Grow a leaf under an existing parent surface (ZMVP-72 AC1), on the open
     /// transaction — the component mirror of [`add_surface`](Self::add_surface):
-    /// the same shared parent gate, the same racing-proof append `position`
-    /// subquery. The row stores `type = 'component'` with a **NULL `mode`**
-    /// (the surface-XOR-mode CHECK's other arm — a component projects with its
-    /// parent, AC2) and the opaque payload as jsonb, semantically unmodified —
-    /// round-trips as an equal JSON value (jsonb is not byte-preserving)
-    /// (AC3; a top-level JSON `null` lands as jsonb `'null'`, never SQL `NULL`).
+    /// the same shared parent gate (absent/foreign, non-surface, and
+    /// past-the-depth-cap all refuse there — ZMVP-164), the same racing-proof
+    /// append `position` subquery, the new component's own depth derived as
+    /// `parent.depth + 1`. The row stores `type = 'component'` with a **NULL
+    /// `mode`** (the surface-XOR-mode CHECK's other arm — a component projects
+    /// with its parent, AC2) and the opaque payload as jsonb, semantically
+    /// unmodified — round-trips as an equal JSON value (jsonb is not
+    /// byte-preserving) (AC3; a top-level JSON `null` lands as jsonb `'null'`,
+    /// never SQL `NULL`).
     async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
-        self.require_surface_parent(component.parent, component.commission_id)
+        let parent = self
+            .require_surface_parent(component.parent, component.commission_id)
             .await?;
 
         sql::add_component(
@@ -261,6 +296,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             *component.created_by,
             component.created_at,
             &component.payload,
+            parent.depth + 1,
         )
         .await?;
         Ok(())
@@ -330,19 +366,21 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
     /// ruling): per Slot, two inserts on the open transaction behind the
-    /// shared parent gate — an ordinary component row for the tree
+    /// shared parent gate (absent/foreign, non-surface, and past-the-depth-cap
+    /// all refuse there — ZMVP-164) — an ordinary component row for the tree
     /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
-    /// subquery, the empty payload) and the Slot itself as the
-    /// `commission_slot` satellite (title, notes), keyed by that component's
-    /// node id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
-    /// transaction for the whole batch, so every component and satellite lands
-    /// or none does — the first refused Slot aborts and the caller's rollback
-    /// takes the earlier inserts with it. There is no occupant column to write
-    /// (fill is the Character epic's), and no changelog entry (the frozen
-    /// taxonomy has no Slot variant).
+    /// subquery, the empty payload, depth `parent.depth + 1`) and the Slot
+    /// itself as the `commission_slot` satellite (title, notes), keyed by that
+    /// component's node id (the Slot mirror of the Seat satellite ruling, Gate
+    /// A E20). One transaction for the whole batch, so every component and
+    /// satellite lands or none does — the first refused Slot aborts and the
+    /// caller's rollback takes the earlier inserts with it. There is no
+    /// occupant column to write (fill is the Character epic's), and no
+    /// changelog entry (the frozen taxonomy has no Slot variant).
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in slots {
-            self.require_surface_parent(slot.parent, slot.commission_id)
+            let parent = self
+                .require_surface_parent(slot.parent, slot.commission_id)
                 .await?;
 
             sql::declare_slot_node(
@@ -352,6 +390,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
                 Some(*slot.parent),
                 *slot.created_by,
                 slot.created_at,
+                parent.depth + 1,
             )
             .await?;
 
@@ -476,14 +515,16 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Declare a seat under an existing parent surface (ZMVP-76), on the open
     /// transaction — one identity, two inserts that land or vanish together:
     /// the tree grows an ordinary **component** node (the untyped ZMVP-72
-    /// contract — the same shared parent gate as every tree-growing write, the
-    /// same racing-proof append `position` subquery, `NULL` mode, empty
-    /// payload), and the interpreted seat data lands in the `commission_seat`
-    /// satellite keyed by that node's id (Gate A ruling E20). The satellite's
-    /// `occupant` column is never written here: **every seat is born vacant**
-    /// (AC3; ZMVP-79 fills it).
+    /// contract — the same shared parent gate as every tree-growing write,
+    /// absent/foreign, non-surface, and past-the-depth-cap all refusing there
+    /// (ZMVP-164) — the same racing-proof append `position` subquery, `NULL`
+    /// mode, empty payload, depth `parent.depth + 1`), and the interpreted
+    /// seat data lands in the `commission_seat` satellite keyed by that node's
+    /// id (Gate A ruling E20). The satellite's `occupant` column is never
+    /// written here: **every seat is born vacant** (AC3; ZMVP-79 fills it).
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
-        self.require_surface_parent(seat.parent, seat.commission_id)
+        let parent = self
+            .require_surface_parent(seat.parent, seat.commission_id)
             .await?;
 
         sql::declare_seat_node(
@@ -493,6 +534,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             Some(*seat.parent),
             *seat.created_by,
             seat.created_at,
+            parent.depth + 1,
         )
         .await?;
 

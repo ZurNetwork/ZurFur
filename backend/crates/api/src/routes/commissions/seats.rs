@@ -25,7 +25,7 @@ use domain::{
         ChangelogEntryKind, CommissionId, NewChangelogEntry, NewSeat, NodeId, SeatKind, SeatLink,
         SeatPrompt,
     },
-    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
+    ports::{ParentNodeNotFound, ParentNotASurface, TreeDepthExceeded, UnitOfWork},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -70,7 +70,9 @@ pub(super) struct DeclareSeatBody {
 /// refused by the store as one indistinguishable [`ParentNodeNotFound`],
 /// answered [`node_not_found`](Problem::node_not_found); a parent that exists
 /// here but is a component is [`ParentNotASurface`], answered with the honest
-/// `409` [`parent_not_a_surface`](Problem::parent_not_a_surface). The seat's
+/// `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a parent
+/// already at the write-side depth cap is [`TreeDepthExceeded`], answered
+/// [`tree_depth_exceeded`](Problem::tree_depth_exceeded) (ZMVP-164). The seat's
 /// node, its satellite, and its `seat_declared` changelog entry land in **one
 /// unit of work** — a seat can never exist without its record. Returns `201
 /// Created` with the seat's node id — `{"id": "…"}` — the identity later
@@ -132,6 +134,8 @@ pub(super) async fn declare_seat(
                 Problem::node_not_found()
             } else if err.downcast_ref::<ParentNotASurface>().is_some() {
                 Problem::parent_not_a_surface()
+            } else if err.downcast_ref::<TreeDepthExceeded>().is_some() {
+                Problem::tree_depth_exceeded()
             } else {
                 err.into()
             }

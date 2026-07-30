@@ -294,6 +294,29 @@ impl Problem {
         )
     }
 
+    /// `422` — persisting the new node under the named parent would exceed the
+    /// commission tree's write-side depth cap (ZMVP-164; Surface Tree on the
+    /// Wire DD `42762241`'s companion ruling): a stored tree may never grow
+    /// deeper than either wire decode tier can read back. The request is
+    /// well-formed — the parent exists and is a surface — the tree is simply
+    /// already as deep as it may ever go, which is why this is a `422`
+    /// (unprocessable, not a state conflict) rather than a `409` alongside
+    /// [`parent_not_a_surface`](Problem::parent_not_a_surface). Honest by
+    /// construction, like its siblings: only ever reachable past the owner
+    /// gate *and* past the absent/foreign/non-surface parent checks
+    /// ([`node_not_found`](Problem::node_not_found),
+    /// [`parent_not_a_surface`](Problem::parent_not_a_surface)), so it can
+    /// never reveal how deep a foreign node sits.
+    pub fn tree_depth_exceeded() -> Self {
+        Self::new(
+            "urn:zurfur:error:tree-depth-exceeded",
+            "tree_depth_exceeded",
+            "Tree depth exceeded",
+            422,
+            "This surface is already at the commission tree's maximum depth; nothing more can be added under it.",
+        )
+    }
+
     /// `409` — the addressed node is the commission's root surface, which is
     /// the fixed skeleton and cannot be removed (ZMVP-73 AC3; the Title is not
     /// a tree node, so no node id even addresses it). A state conflict, not an
@@ -527,6 +550,16 @@ mod tests {
             "the detail points at Archive, got {:?}",
             problem.detail
         );
+    }
+
+    // ZMVP-164 — the write-side depth-cap refusal is its own 422, not a 409
+    // (the request is well-formed; the tree is simply as deep as it may go).
+    #[test]
+    fn tree_depth_exceeded_is_its_own_422() {
+        let problem = Problem::tree_depth_exceeded();
+        assert_eq!(problem.r#type, "urn:zurfur:error:tree-depth-exceeded");
+        assert_eq!(problem.code, "tree_depth_exceeded");
+        assert_eq!(problem.status, 422);
     }
 
     // The 422 specifics share the invalid-request type but carry their own code.

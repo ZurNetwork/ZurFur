@@ -19,7 +19,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{CommissionId, NewComponent, NodeId},
-    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
+    ports::{ParentNodeNotFound, ParentNotASurface, TreeDepthExceeded, UnitOfWork},
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -70,7 +70,10 @@ fn empty_object() -> serde_json::Value {
 /// [`node_not_found`](Problem::node_not_found); a parent that exists here but
 /// is a component is [`ParentNotASurface`], answered with the honest `409`
 /// [`parent_not_a_surface`](Problem::parent_not_a_surface) (components never
-/// have children); a malformed body is a `422`. The insert runs in one unit of
+/// have children); a parent already at the write-side depth cap is
+/// [`TreeDepthExceeded`], answered
+/// [`tree_depth_exceeded`](Problem::tree_depth_exceeded) (ZMVP-164); a
+/// malformed body is a `422`. The insert runs in one unit of
 /// work; sibling order is assigned there (append = max + 1, on the
 /// transaction). Returns `201 Created` with the new node's id — `{"id": "…"}` —
 /// since no tree read exposes ids until the projection lands (ZMVP-75).
@@ -104,6 +107,8 @@ pub(super) async fn add_component(
                 Problem::node_not_found()
             } else if err.downcast_ref::<ParentNotASurface>().is_some() {
                 Problem::parent_not_a_surface()
+            } else if err.downcast_ref::<TreeDepthExceeded>().is_some() {
+                Problem::tree_depth_exceeded()
             } else {
                 err.into()
             }

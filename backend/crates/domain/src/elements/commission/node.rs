@@ -28,6 +28,20 @@ use crate::{
     },
 };
 
+/// The write-side cap on a node's own nesting level (ZMVP-164; Surface Tree on
+/// the Wire DD `42762241`'s companion ruling), counting the root surface as
+/// level **1** — chosen so the count lines up 1:1 with the wire
+/// `SurfaceTree`/`SurfaceNode` nesting the DD mints (one `SurfaceNode` message
+/// per level; the root is the first message, each child nests one level
+/// deeper). Rust's `prost` decoder dies at 64 nested `SurfaceNode` levels, so
+/// `63` is the deepest level a write may ever produce — one level of headroom
+/// under the binding ceiling (TypeScript's protobuf-es tolerates ~100, so the
+/// tighter tier governs). Enforced at every tree-growing write by the shared
+/// parent gate (`PgCommissionWrites::require_surface_parent` in adapter-pg,
+/// mirrored in adapter-mem) and backstopped by the `commission_node` table's
+/// own `CHECK` constraint.
+pub const MAX_SURFACE_TREE_DEPTH: i32 = 63;
+
 /// The app-private, stable handle for one node in a commission's tree.
 ///
 /// A UUID wrapped for type safety, mirroring [`CommissionId`]. Freshly grown

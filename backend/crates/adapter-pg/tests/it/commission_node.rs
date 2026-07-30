@@ -19,7 +19,7 @@ use domain::{
     },
     ports::{
         CannotRemoveRoot, CommissionStore, Database, NodeNotFound, ParentNodeNotFound,
-        ParentNotASurface,
+        ParentNotASurface, TreeDepthExceeded,
     },
 };
 use serde_json::json;
@@ -773,4 +773,98 @@ async fn the_migration_backfills_a_root_for_pre_tree_commissions() {
         );
         assert!(tree.root.children.is_empty());
     }
+}
+
+// ZMVP-164 — the write-side depth cap (Surface Tree on the Wire DD `42762241`'s
+// companion ruling): the root counts as nesting level 1, so a straight-line
+// chain of 62 more surfaces lands the deepest one at level 63 — accepted, the
+// deepest a write may ever produce. One level further, 64, is the level
+// Rust's `prost` decoder cannot read back, so it refuses with
+// `TreeDepthExceeded` — through the SAME shared parent gate every
+// tree-growing write shares (`add_surface`'s own gate; `add_component`,
+// `declare_seat`, `declare_slots` walk it identically, so pinning it once
+// here proves the shared guard, not a per-op copy).
+#[tokio::test]
+async fn add_surface_accepts_depth_63_and_refuses_depth_64() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:deep-gardener").await;
+    let commission = create_commission(&pool, &owner, "Deep").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    // root is depth 1; grow a straight-line chain down to depth 63 (62 more
+    // surfaces) — every call along the way is itself an acceptance pin for
+    // the level it lands on.
+    let mut parent = root;
+    for _ in 0..62 {
+        let surface = NewSurface::under(commission.id, parent, owner.id, Utc::now());
+        parent = surface.id;
+        uow.commissions()
+            .add_surface(&surface)
+            .await
+            .expect("grows to depth 63");
+    }
+
+    // `parent` now names the depth-63 surface: one more level would be depth
+    // 64 — refused, and nothing is written.
+    let past_cap = NewSurface::under(commission.id, parent, owner.id, Utc::now());
+    let err = uow
+        .commissions()
+        .add_surface(&past_cap)
+        .await
+        .expect_err("depth 64 refuses");
+    assert!(
+        err.downcast_ref::<TreeDepthExceeded>().is_some(),
+        "depth 64 surfaces as TreeDepthExceeded, got: {err:?}"
+    );
+    uow.rollback().await.expect("rollback");
+}
+
+// The database-level backstop for the same rule (belt and suspenders, not the
+// only gate — see `commission_node_depth_cap` migration): a raw insert that
+// bypasses the domain entirely still can't land a node past depth 63, because
+// the `commission_node_depth_bounds` CHECK constraint refuses it.
+#[tokio::test]
+async fn the_depth_check_constraint_refuses_a_raw_insert_past_63() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:tamper-gardener").await;
+    let commission = create_commission(&pool, &owner, "Tampered").await;
+
+    let store = PgCommissionStore::new(pool.clone());
+    let root = store
+        .load_tree(commission.id)
+        .await
+        .expect("load")
+        .expect("tree exists")
+        .root
+        .id;
+
+    let rejected = sqlx::query(
+        "INSERT INTO commission_node
+            (id, commission_id, parent, type, mode, position, created_by, created_at, depth)
+         VALUES ($1, $2, $3, 'surface', 'total', 0, $4, $5, 64)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(*commission.id)
+    .bind(*root)
+    .bind(*owner.id)
+    .bind(Utc::now())
+    .execute(&pool)
+    .await;
+    assert!(
+        rejected
+            .expect_err("depth 64 violates the CHECK even bypassing the domain")
+            .to_string()
+            .contains("commission_node_depth_bounds"),
+        "the CHECK names the violation"
+    );
 }

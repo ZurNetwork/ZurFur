@@ -14,7 +14,7 @@ pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
     CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
-    ParentNotASurface,
+    ParentNotASurface, TreeDepthExceeded,
 };
 pub use file::FileStore;
 
