@@ -44,4 +44,23 @@ describe('deleteAccountForm', () => {
 		expect(form.valid).toBe(false);
 		expect(form.errors.confirm).toBeDefined();
 	});
+
+	it('fails closed for an empty-string handle — a blank confirm must NOT validate against it', async () => {
+		const submitted = new FormData();
+		submitted.set('confirm', '');
+
+		const form = await superValidate(submitted, effect(deleteAccountForm('')));
+
+		expect(form.valid).toBe(false);
+		expect(form.errors.confirm).toBeDefined();
+	});
+
+	it('fails closed for an empty-string handle even for whitespace-only confirm', async () => {
+		const submitted = new FormData();
+		submitted.set('confirm', '   ');
+
+		const form = await superValidate(submitted, effect(deleteAccountForm('')));
+
+		expect(form.valid).toBe(false);
+	});
 });

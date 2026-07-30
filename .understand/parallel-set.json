@@ -8,10 +8,10 @@
     {
       "key": "ZMVP-152",
       "summary": "A user creates and deletes an Account from the browser",
-      "phase": "ui-done-ship-gates-running",
-      "next_action": "UI lane DONE (Engineer-built via interactive tutorial, 2026-07-28): /accounts list+create, /accounts/[id] detail + owner-gated ?/delete, PRG ?deleted= messages on the list, nav entry + titles. Committed as slice [6] (4b739db) on slice branch feature/zmvp-152-6-ui; check/lint/85-85 tests/build all green; Engineer's browser lap passed. Ship-gates Workflow wf_8f7a72b2-77f RUNNING (code-review ∥ security-review [Opus max — UI-only owner gating must be backend-enforced, verify] ∥ critique ∥ document). Then: triage findings → slice-[6] PR into the feature branch (Copilot) → feature→main rubber-stamp PR → issue #154 close-comment. Justfile dev-back fix + .env.example ZURFUR_ENV catch-22 = separate infra slice owed, NOT in this ticket.",
-      "pr": null,
-      "branch": "feature/zmvp-152-account-browser (pushed, [1]-[5]) + slice branch feature/zmvp-152-6-ui (local, 4b739db)",
+      "phase": "epic-pr-open-gates-green",
+      "next_action": "Slices [1]-[10] complete (UI Engineer-built via /worksheet-tutorial; Superforms+Effect-adapter delete guard; HttpStatus/ProblemKind vocab). Ship-gates ran THREE rounds (r1 slice-level wf_8f7a72b2, r2 delta wf_fb6e3f3b, r3 epic-level wf_5e148c76 on PR #169) — all findings closed incl. the empty-handle guard degeneracy (minLength load-bearing, fail-closed specs). Slice PR #168 squash-merged (2722ac3); epic PR #169 open, CI 7/7 green, Copilot triaged (2 fixed, 1 refuted), full local `just gate` green (buf CLI now installed ~/.local/bin). REMAINING: Engineer merges #169 → issue #154 close-comment → Jira Done → integrate (sync main, delete branches). Justfile dev-back fix + .env.example ZURFUR_ENV catch-22 = separate infra slice still owed. Follow-ups filed: ZMVP-165 (Superforms migration), #167 (mint-cap policy).",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/169",
+      "branch": "feature/zmvp-152-account-browser (pushed, [1]-[10]; slice branch feature/zmvp-152-6-ui merged via #168)",
       "worktree": null,
       "snapshot": ".understand/20260727-233245_ZMVP-152_account-create-delete-browser.md",
       "updated": "2026-07-27T23:59:00-06:00"

@@ -1,11 +1,16 @@
 .idea
 .cursor
 **/target
+
+# Env files hold live credentials (did:plc rotation key, OAuth private key,
+# DB/JWT secrets) — ignore the whole class, never just the suffixes we've
+# seen; only the example template is tracked.
 .env
+.env.*
+!.env.example
 
 # JS schema-validity harness for lexicons/ (ZMVP-104)
 lexicons/node_modules
 
 # Live tutoring worksheet (session artifact, /worksheet-tutorial)
 WORKSHEET.md
-.env.bak*

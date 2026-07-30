@@ -13,7 +13,10 @@
 
 <!-- The three arms are the whole DeleteOutcome vocabulary (narrowed in load);
      'unknown' stays deliberately non-committal — R8 forbids reading the
-     fallback as confirming either deletion. -->
+     fallback as confirming either deletion. The 'soft' arm is real but
+     CURRENTLY UNREACHABLE in a browser (⚠️ F2): the backend's evidence check
+     is a stub-false (accounts.rs `account_has_facts`), so every live delete
+     lands 'hard' until facts exist. -->
 {#if data.deleted === 'soft'}
 	<p>The account was deactivated.</p>
 {:else if data.deleted === 'hard'}

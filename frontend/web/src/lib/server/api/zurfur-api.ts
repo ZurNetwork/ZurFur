@@ -167,7 +167,8 @@ function problemFailure(
 				new ContractViolation({ path, status: response.status, detail: 'malformed problem body' })
 			);
 		}
-		if (problem.code === 'not_authenticated') return Effect.fail(new NotAuthenticated({ problem }));
+		if (problem.code === ProblemKind.NotAuthenticated.code)
+			return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
 	};
 	return parsedBody(response, path).pipe(Effect.flatMap(classified));
@@ -376,7 +377,7 @@ const anonymousProblem: Problem = {
 const anonymousDefaults: ZurfurApiShape = {
 	me: Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	startSignin: () => Effect.fail(new NetworkFailure({ cause: new TypeError('no signin stubbed') })),
-	signout: Effect.fail(new SignoutFailed({ status: 500 })),
+	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem }))

@@ -72,6 +72,34 @@ describe('/accounts/[id] page', () => {
 		await expect.element(page.getByTestId('problem')).toHaveTextContent(notFoundProblem.detail);
 	});
 
+	it('renders the confirm error outside the label, wired to the input via aria-describedby', async () => {
+		const confirmMessage = 'Type alice.zurfur.app exactly to confirm';
+		const failedConfirm = {
+			form: {
+				id: 'delete',
+				valid: false,
+				posted: true,
+				data: { confirm: 'wrong.zurfur.app' },
+				errors: { confirm: [confirmMessage] }
+			}
+		};
+		render(AccountDetailPage, {
+			data: accountData(aliceOwner),
+			form: failedConfirm as never
+		});
+
+		const errorNote = page.getByText(confirmMessage);
+		await expect.element(errorNote).toHaveAttribute('id', 'confirm-error');
+		await expect.element(page.getByRole('textbox')).toHaveAttribute('aria-invalid', 'true');
+		await expect
+			.element(page.getByRole('textbox'))
+			.toHaveAttribute('aria-describedby', 'confirm-error');
+		// The a11y invariant the markup documents: the error must live OUTSIDE
+		// the label, else it is welded into the input's accessible name.
+		const insideLabel = document.getElementById('confirm-error')?.closest('label') ?? null;
+		expect(insideLabel).toBeNull();
+	});
+
 	it('renders a form.problem at the top level even when the owner gate is closed', async () => {
 		const member: AccountMembership = { ...aliceOwner, role: 'member' };
 		render(AccountDetailPage, {
