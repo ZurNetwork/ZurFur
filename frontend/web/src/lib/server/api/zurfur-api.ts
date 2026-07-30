@@ -6,11 +6,26 @@
  * failures are the tagged union in {@link import('./errors')}.
  */
 
-import { type DescMessage, fromJson, type JsonValue, type MessageShape } from '@bufbuild/protobuf';
+import {
+	create,
+	type DescMessage,
+	fromJson,
+	type JsonValue,
+	type MessageShape,
+	toJson
+} from '@bufbuild/protobuf';
 import { Context, Effect, Layer } from 'effect';
+import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { PROBLEM_CONTENT_TYPE, type Problem } from '$lib/api/problem';
+import { PROBLEM_CONTENT_TYPE, type Problem, ProblemKind } from '$lib/api/problem';
+import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
+import {
+	CreateAccountRequestSchema,
+	CreateAccountResponseSchema,
+	DeleteAccountResponseSchema,
+	ListAccountsResponseSchema
+} from './generated/zurfur/api/v1/account_pb';
 import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
@@ -61,6 +76,25 @@ export interface ZurfurApiShape {
 	 * through on its own).
 	 */
 	readonly signout: Effect.Effect<ReadonlyArray<string>, SignoutFailed | NetworkFailure>;
+	/** `GET /accounts` — every live account the caller holds a role in, role riding per row (R7 wrapped on the wire, unwrapped here). */
+	readonly listAccounts: Effect.Effect<
+		ReadonlyArray<AccountMembership>,
+		ApiProblem | NetworkFailure | ContractViolation
+	>;
+	/** `POST /accounts` — found an account; the caller becomes its Owner. Rejects with `handle_taken` (409) or `invalid_request` (422). */
+	readonly createAccount: (
+		name: string,
+		handle: string
+	) => Effect.Effect<CreatedAccount, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
+	 * `DELETE /accounts/{id}` — Owner-only. Succeeds with which deletion
+	 * happened (⚠️ F3: an outcome value this build doesn't recognize resolves
+	 * to `'unknown'`, never a decode failure). Rejects with `forbidden` (403,
+	 * non-Owner) or `account_not_found` (404).
+	 */
+	readonly deleteAccount: (
+		id: string
+	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
 }
 
 /** The port tag — programs ask for `ZurfurApi`, the seam decides which Layer answers. */
@@ -133,7 +167,8 @@ function problemFailure(
 				new ContractViolation({ path, status: response.status, detail: 'malformed problem body' })
 			);
 		}
-		if (problem.code === 'not_authenticated') return Effect.fail(new NotAuthenticated({ problem }));
+		if (problem.code === ProblemKind.NotAuthenticated.code)
+			return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
 	};
 	return parsedBody(response, path).pipe(Effect.flatMap(classified));
@@ -210,6 +245,110 @@ const liveSignout = (fetch: FetchFunction) =>
 		return clearedNames;
 	});
 
+/**
+ * Any non-2xx account response, classified the shared way — 401
+ * `not_authenticated` folds into `ApiProblem` too (unlike `me`, none of the
+ * account calls has a distinct "am I signed in" branch for callers to key
+ * on; the session gate above these routes already owns that question).
+ */
+function accountProblemFailure(
+	response: Response,
+	path: string
+): Effect.Effect<never, ApiProblem | ContractViolation> {
+	return problemFailure(response, path).pipe(
+		Effect.catchTag('NotAuthenticated', ({ problem }) => new ApiProblem({ problem }))
+	);
+}
+
+const liveListAccounts = (fetch: FetchFunction) =>
+	Effect.gen(function* () {
+		const response = yield* backendFetch(fetch, '/accounts');
+		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		const raw = yield* parsedBody(response, '/accounts');
+		return yield* Effect.try({
+			try: () => {
+				const message = decodeContract(ListAccountsResponseSchema, raw);
+				const accounts: AccountMembership[] = message.accounts.map((row) => ({
+					id: row.id,
+					did: row.did,
+					handle: row.handle,
+					name: row.name,
+					role: row.role
+				}));
+				return accounts;
+			},
+			catch: () =>
+				new ContractViolation({
+					path: '/accounts',
+					status: response.status,
+					detail: 'malformed account listing payload'
+				})
+		});
+	});
+
+const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =>
+	Effect.gen(function* () {
+		// Encode through the generated schema, mirroring the decode side
+		// (Engineer ruling 2026-07-28, extending DD 39944194 D4 to the request
+		// direction): field NAMES cannot drift from the contract. Note toJson
+		// omits implicit-presence zero values ('' fields drop off the wire) —
+		// the backend decodes absent and empty identically, so the meaning is
+		// unchanged.
+		const request = create(CreateAccountRequestSchema, { name, handle });
+		const init: RequestInit = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(CreateAccountRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, '/accounts', init);
+		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		const raw = yield* parsedBody(response, '/accounts');
+		return yield* Effect.try({
+			try: () => {
+				const message = decodeContract(CreateAccountResponseSchema, raw);
+				const created: CreatedAccount = {
+					id: message.id,
+					did: message.did,
+					handle: message.handle,
+					name: message.name
+				};
+				return created;
+			},
+			catch: () =>
+				new ContractViolation({
+					path: '/accounts',
+					status: response.status,
+					detail: 'malformed created account payload'
+				})
+		});
+	});
+
+/** R8's defined fallback for `DeleteAccountResponse.outcome` (⚠️ F3): a value this client build doesn't recognize yet becomes `'unknown'` — never a thrown/decoded failure, and never read as confirming either soft or hard deletion. */
+function toDeleteOutcome(outcome: string): DeleteOutcome {
+	if (outcome === 'soft' || outcome === 'hard') return outcome;
+	return 'unknown';
+}
+
+const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
+	Effect.gen(function* () {
+		const path = `/accounts/${encodeURIComponent(id)}`;
+		const response = yield* backendFetch(fetch, path, { method: 'DELETE' });
+		if (!response.ok) return yield* accountProblemFailure(response, path);
+		const raw = yield* parsedBody(response, path);
+		return yield* Effect.try({
+			try: () => {
+				const message = decodeContract(DeleteAccountResponseSchema, raw);
+				return toDeleteOutcome(message.outcome);
+			},
+			catch: () =>
+				new ContractViolation({
+					path,
+					status: response.status,
+					detail: 'malformed delete outcome payload'
+				})
+		});
+	});
+
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
 	ZurfurApi,
@@ -218,25 +357,30 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 		return ZurfurApi.of({
 			me: liveMe(fetch),
 			startSignin: (handle) => liveStartSignin(fetch, handle),
-			signout: liveSignout(fetch)
+			signout: liveSignout(fetch),
+			listAccounts: liveListAccounts(fetch),
+			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
+			deleteAccount: (id) => liveDeleteAccount(fetch, id)
 		});
 	})
 );
 
 /** The problem an unstubbed `me` fails with — the backend's anonymous 401 shape. */
 const anonymousProblem: Problem = {
-	type: 'urn:zurfur:error:not-authenticated',
-	code: 'not_authenticated',
+	...ProblemKind.NotAuthenticated,
 	title: 'not_authenticated',
 	detail: 'No signed-in visitor (test default).',
-	status: 401
+	status: HttpStatus.Unauthorized
 };
 
 /** Anonymous-by-default stub behaviors for {@link zurfurApiTest}. */
 const anonymousDefaults: ZurfurApiShape = {
 	me: Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	startSignin: () => Effect.fail(new NetworkFailure({ cause: new TypeError('no signin stubbed') })),
-	signout: Effect.fail(new SignoutFailed({ status: 500 }))
+	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
+	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem }))
 };
 
 /**

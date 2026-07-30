@@ -12,6 +12,8 @@
  * (the terse machine string), never on `type` (a non-dereferenceable
  * `urn:zurfur:error:*` URN naming the class).
  */
+import { HttpStatus } from './http-status';
+
 export interface Problem {
 	type: string;
 	code: string;
@@ -27,3 +29,51 @@ export interface Problem {
 
 /** The content type every backend problem response carries. */
 export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
+
+/**
+ * The problem kinds the frontend mints locally, each entry the type/code PAIR
+ * (the hyphenated URN and the snake_case code clients branch on) — one entry
+ * per kind, spread at the mint site, so a mismatched pairing is unwritable
+ * rather than doc-enforced (Engineer ruling 2026-07-28, revised from split
+ * enums on the round-2 gate evidence). Not a mirror of the backend's full
+ * registry — wire problems arrive already paired; an entry lands here when
+ * the frontend mints that kind itself.
+ */
+export const ProblemKind = {
+	InvalidRequest: { type: 'urn:zurfur:error:invalid-request', code: 'invalid_request' },
+	AccountNotFound: { type: 'urn:zurfur:error:account-not-found', code: 'account_not_found' },
+	NotAuthenticated: { type: 'urn:zurfur:error:not-authenticated', code: 'not_authenticated' },
+	Forbidden: { type: 'urn:zurfur:error:forbidden', code: 'forbidden' }
+} as const satisfies Record<string, Pick<Problem, 'type' | 'code'>>;
+
+/** The union of every locally-mintable kind (a `{type, code}` pair). */
+export type ProblemKind = (typeof ProblemKind)[keyof typeof ProblemKind];
+
+/**
+ * Field-for-field the backend's own `Problem::forbidden()` — reused verbatim
+ * rather than invented (same convention as the derived not-found in
+ * $lib/server/accounts.ts): a local authorization pre-check answers the SAME
+ * condition the backend would 403, so it must say the same thing. It only
+ * ever DENIES — the backend stays authoritative for every request that gets
+ * through — but if an Owner-only rule ever widens (e.g. Admins), a gate
+ * minting this must move in lockstep or it denies what the backend allows.
+ */
+export const FORBIDDEN_PROBLEM: Problem = {
+	...ProblemKind.Forbidden,
+	title: 'Forbidden',
+	detail: "You don't have permission to perform this action.",
+	status: HttpStatus.Forbidden
+};
+
+/**
+ * The status a decoded problem can safely put on an HTTP response. Wire
+ * `status` is a proto3 implicit-presence int32 — a body that omits it decodes
+ * to 0, and `fail()` forwards whatever it's given into a `Response`, which
+ * throws a RangeError outside 200–599. Anything outside the error range
+ * collapses to 500 so a malformed problem degrades to a plain server error
+ * instead of crashing the render of a handled one.
+ */
+export function renderableStatus(problem: Problem): number {
+	const { status } = problem;
+	return status >= 400 && status <= 599 ? status : HttpStatus.InternalServerError;
+}
