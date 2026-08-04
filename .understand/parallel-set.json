@@ -6,6 +6,17 @@
   "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local).",
   "tickets": [
     {
+      "key": "ZMVP-165",
+      "summary": "Superforms migration — one-channel forms (login + accounts)",
+      "phase": "pr-open",
+      "next_action": "await merge of PR #172 (Copilot requested). Engineer built the migration; Claude ran ship-gates (13 findings applied: spec-regex fix, 253 cap, claim-vs-auth punycode split [Engineer ruling 2026-08-05], stale-flash guard, App.Superforms.Message, problemMessage helper, a11y describedby, formStub + grammar table). 158/158 + check/lint/build green. Follow-up carved: ZMVP-173 (https-only authorize relay). [id] route = migrate-on-next-touch.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/172",
+      "branch": "feature/zmvp-165-superforms-migration",
+      "worktree": null,
+      "snapshot": null,
+      "updated": "2026-08-05T16:55:00-06:00"
+    },
+    {
       "key": "ZMVP-152",
       "summary": "A user creates and deletes an Account from the browser",
       "phase": "epic-pr-open-gates-green",
