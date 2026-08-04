@@ -12,7 +12,9 @@ dev:
     just dev-back & just dev-auth & just dev-web & wait
 
 dev-back:
-    cargo watch -C backend -x run
+    # -p api: the workspace has a second binary (contract-gen) since ZMVP-25;
+    # a bare `run` is ambiguous and cargo-watch dies silently under `just dev`.
+    cargo watch -C backend -x 'run -p api'
 
 dev-auth:
     cd frontend/auth && yarn dev
