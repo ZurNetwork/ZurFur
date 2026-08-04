@@ -11,7 +11,13 @@ const CALLBACK_ERROR_MESSAGES: Record<string, string> = {
 
 const FALLBACK_MESSAGE = 'Sign-in failed. Try again.';
 
-/** Human copy for a callback error code; unknown codes fall back rather than leak. */
+/**
+ * Human copy for a callback error code; unknown codes fall back rather than
+ * leak. `Object.hasOwn` (not bare indexing) so prototype names like
+ * `?error=constructor` fall back instead of stringifying an Object built-in.
+ */
 export function callbackErrorMessage(code: string): string {
-	return CALLBACK_ERROR_MESSAGES[code] ?? FALLBACK_MESSAGE;
+	return Object.hasOwn(CALLBACK_ERROR_MESSAGES, code)
+		? CALLBACK_ERROR_MESSAGES[code]
+		: FALLBACK_MESSAGE;
 }
