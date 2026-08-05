@@ -2,9 +2,12 @@ import { accountsOutcome, createAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { type Problem, ProblemKind, renderableStatus } from '$lib/api/problem';
 import type { DeleteOutcome } from '$lib/api/account';
 import { HttpStatus } from '$lib/api/http-status';
+import { superValidate } from 'sveltekit-superforms';
+import { effect } from 'sveltekit-superforms/adapters';
+import { createAccountForm } from '$lib/server/forms/create-account';
+import { problemMessage } from '$lib/server/forms/problem-message';
 
 /**
  * Every outcome a completed delete can carry back via `?deleted=` — keyed as
@@ -21,56 +24,39 @@ const DELETE_OUTCOMES = { soft: true, hard: true, unknown: true } as const satis
 /**
  * The caller's account listing, plus the `?deleted=` flash a completed delete
  * redirects back with — narrowed against {@link DeleteOutcome} so the page
- * renders from the declared vocabulary, not from raw query text.
+ * renders from the declared vocabulary, not from raw query text — and a
+ * pristine {@link createAccountForm} superform for the create form below it.
  */
 export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
+	const form = await superValidate(effect(createAccountForm));
 	const deletedParam = url.searchParams.get('deleted');
 	const deleted =
 		deletedParam !== null && Object.hasOwn(DELETE_OUTCOMES, deletedParam)
 			? (deletedParam as DeleteOutcome)
 			: undefined;
 
-	return { ...outcome, deleted };
-};
-
-/**
- * Rendered through the same problem seam as backend problems, but minted
- * locally — an empty name or handle never needs a round-trip. Same shape,
- * same rendering path ({@link import('$lib/components/ProblemNote.svelte')}).
- */
-const MISSING_PARAMETERS_PROBLEM: Problem = {
-	...ProblemKind.InvalidRequest,
-	title: 'Invalid values.',
-	detail: 'You need to enter valid values to proceed.',
-	status: HttpStatus.UnprocessableContent
+	return { ...outcome, deleted, form };
 };
 
 export const actions: Actions = {
 	/**
-	 * Found an account: validate locally, then POST /accounts. A problem
-	 * re-renders the form with the typed values riding back on the fail
-	 * payload (SvelteKit's repopulate-from-fail pattern — neither field is a
-	 * secret); success redirects to the clean listing (PRG).
+	 * Found an account: validate locally against {@link createAccountForm},
+	 * then POST /accounts. A local validation failure fails 422 with the
+	 * superform (field errors render per-input); a backend problem rides back
+	 * as the same form's `message` via superforms' `message()`; success
+	 * redirects to the clean listing (PRG). One channel throughout — values,
+	 * field errors, and the backend `Problem` all ride the superform.
 	 */
 	default: async ({ request, fetch }) => {
-		const form = await request.formData();
-		const formName = form.get('name');
-		const name = typeof formName === 'string' ? formName.trim() : '';
+		const form = await superValidate(request, effect(createAccountForm));
+		if (!form.valid) {
+			return fail(HttpStatus.UnprocessableContent, { form });
+		}
 
-		const formHandle = form.get('handle');
-		const handle = typeof formHandle === 'string' ? formHandle.trim() : '';
+		const outcome = await runApi(fetch, createAccountOutcome(form.data.name, form.data.handle));
 
-		if (name === '' || handle === '')
-			return fail(HttpStatus.UnprocessableContent, {
-				problem: MISSING_PARAMETERS_PROBLEM,
-				name,
-				handle
-			});
-		const outcome = await runApi(fetch, createAccountOutcome(name, handle));
-
-		if ('problem' in outcome)
-			return fail(renderableStatus(outcome.problem), { problem: outcome.problem, name, handle });
+		if ('problem' in outcome) return problemMessage(form, outcome.problem);
 		redirect(HttpStatus.SeeOther, '/accounts');
 	}
 };

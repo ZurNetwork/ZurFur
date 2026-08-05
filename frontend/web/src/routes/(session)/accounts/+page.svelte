@@ -1,8 +1,22 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import ProblemNote from '$lib/components/ProblemNote.svelte';
-	import type { ActionData, PageData } from './$types';
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	import { superForm } from 'sveltekit-superforms';
+	import type { PageData } from './$types';
+	let { data }: { data: PageData } = $props();
+	// superForm seeds from the initial load value by design and manages its
+	// own reactivity from there.
+	// svelte-ignore state_referenced_locally
+	const { form, errors, enhance, constraints, message } = superForm(data.form);
+
+	// Under use:enhance a failed submit re-renders WITHOUT re-running load or
+	// changing the URL, so a stale ?deleted= flash would survive every failed
+	// create. A failed submit is visible as field errors or a form message —
+	// suppress the flash once either exists.
+	const submitFailed = $derived(
+		$message !== undefined ||
+			Object.values($errors).some((fieldErrors) => fieldErrors !== undefined)
+	);
 </script>
 
 <svelte:head>
@@ -17,12 +31,14 @@
      CURRENTLY UNREACHABLE in a browser (⚠️ F2): the backend's evidence check
      is a stub-false (accounts.rs `account_has_facts`), so every live delete
      lands 'hard' until facts exist. -->
-{#if data.deleted === 'soft'}
-	<p>The account was deactivated.</p>
-{:else if data.deleted === 'hard'}
-	<p>The account was deleted.</p>
-{:else if data.deleted === 'unknown'}
-	<p>The account was removed. It may still exist.</p>
+{#if !submitFailed}
+	{#if data.deleted === 'soft'}
+		<p>The account was deactivated.</p>
+	{:else if data.deleted === 'hard'}
+		<p>The account was deleted.</p>
+	{:else if data.deleted === 'unknown'}
+		<p>The account was removed. It may still exist.</p>
+	{/if}
 {/if}
 
 {#if data.problem}
@@ -40,17 +56,49 @@
 	</ul>
 {/if}
 
-<!-- Explicit action: posting to the bare pathname keeps a stale ?deleted=
-     flash from riding along into a validation re-render. -->
-<form method="post" action={resolve('/accounts')}>
-	<label>Name <input name="name" required value={form?.name ?? ''} /></label>
+<!-- Explicit action: posting to the bare pathname keeps the no-JS fallback
+     from carrying a stale ?deleted= flash; under use:enhance the same job is
+     done by the submitFailed guard above. -->
+<form method="post" action={resolve('/accounts')} use:enhance>
+	<label
+		>Name <input
+			name="name"
+			required
+			bind:value={$form.name}
+			aria-invalid={$errors.name ? 'true' : undefined}
+			aria-describedby={$errors.name ? 'name-error' : undefined}
+			{...$constraints.name}
+		/></label
+	>
+	{#if $errors.name}
+		<ul role="alert" id="name-error" data-testid="name-error">
+			{#each $errors.name as errorMessage (errorMessage)}
+				<li>{errorMessage}</li>
+			{/each}
+		</ul>
+	{/if}
 	<label>
 		Handle
-		<input name="handle" required placeholder="studio.zurfur.app" value={form?.handle ?? ''} />
+		<input
+			name="handle"
+			required
+			placeholder="studio.zurfur.app"
+			bind:value={$form.handle}
+			aria-invalid={$errors.handle ? 'true' : undefined}
+			aria-describedby={$errors.handle ? 'handle-error' : undefined}
+			{...$constraints.handle}
+		/>
 	</label>
+	{#if $errors.handle}
+		<ul role="alert" id="handle-error" data-testid="handle-error">
+			{#each $errors.handle as errorMessage (errorMessage)}
+				<li>{errorMessage}</li>
+			{/each}
+		</ul>
+	{/if}
 	<button>Found Account</button>
 </form>
 
-{#if form?.problem}
-	<ProblemNote problem={form.problem} />
+{#if $message}
+	<ProblemNote problem={$message} />
 {/if}

@@ -4,14 +4,18 @@ import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
+import type { SuperValidated } from 'sveltekit-superforms';
 
 type LoadEvent = Parameters<typeof load>[0];
 type ActionEvent = Parameters<(typeof actions)['default']>[0];
 
+/** The action's fail payload: everything rides the superform (message = backend Problem). */
+type CreateForm = SuperValidated<{ name: string; handle: string }, Problem>;
+
 /** `load`'s actual return, pinned past the generated type's `MaybeWithVoid` noise. */
-type ListLoadData =
-	| { accounts: ReadonlyArray<AccountMembership>; deleted?: DeleteOutcome }
-	| { problem: Problem; deleted?: DeleteOutcome };
+type ListLoadData = { deleted?: DeleteOutcome; form: CreateForm } & (
+	{ accounts: ReadonlyArray<AccountMembership> } | { problem: Problem }
+);
 
 const aliceStudio: AccountMembership = {
 	id: 'acct-alice',
@@ -39,14 +43,20 @@ async function createAction(
 	if (name !== null) body.set('name', name);
 	if (handle !== null) body.set('handle', handle);
 	const request = new Request('http://localhost/accounts', { method: 'POST', body });
-	return actions.default({ request, fetch } as unknown as ActionEvent);
+	return (await actions.default({ request, fetch } as unknown as ActionEvent)) as {
+		status: number;
+		data: { form: CreateForm };
+	};
 }
 
 describe('/accounts load', () => {
-	it('returns the rows the stubbed api hands it (AC1)', async () => {
+	it('returns the rows the stubbed api hands it, plus a pristine form (AC1)', async () => {
 		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
 		const result = await runLoad(loadEvent(fetch));
-		expect(result).toEqual({ accounts: [aliceStudio], deleted: undefined });
+		expect(result).toMatchObject({ accounts: [aliceStudio] });
+		expect(result.deleted).toBeUndefined();
+		expect(result.form.posted).toBe(false);
+		expect(result.form.message).toBeUndefined();
 	});
 
 	it.each([
@@ -73,61 +83,66 @@ describe('/accounts load', () => {
 });
 
 describe('/accounts create action', () => {
-	it('rejects an empty name and handle locally without reaching the backend', async () => {
+	it('rejects an empty name and handle locally with per-field errors, never reaching the backend', async () => {
 		const failure = await createAction(unreachableFetch('must not reach the backend'), '', '');
-		expect(failure).toMatchObject({
-			status: 422,
-			data: {
-				problem: { code: 'invalid_request', title: 'Invalid values.' },
-				name: '',
-				handle: ''
-			}
-		});
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.valid).toBe(false);
+		expect(failure.data.form.errors.name).toContain('Name cannot be empty');
+		expect(failure.data.form.errors.handle).toContain('Handle cannot be empty');
 	});
 
-	it('rejects an empty handle locally, carrying the typed name back', async () => {
+	it('rejects a punycode handle locally — the DD 26050561 claim site', async () => {
+		const failure = await createAction(
+			unreachableFetch('must not reach the backend'),
+			'Sneaky Studio',
+			'xn--sneaky.example'
+		);
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.errors.handle).toContain('Punycode (xn--) labels are not allowed');
+	});
+
+	it('rejects an empty handle locally, carrying the typed name back on the form', async () => {
 		const failure = await createAction(
 			unreachableFetch('must not reach the backend'),
 			'Alice Studio',
 			''
 		);
-		expect(failure).toMatchObject({
-			status: 422,
-			data: {
-				problem: { code: 'invalid_request' },
-				name: 'Alice Studio',
-				handle: ''
-			}
-		});
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.errors.handle).toContain('Handle cannot be empty');
+		expect(failure.data.form.errors.name).toBeUndefined();
+		expect(failure.data.form.data.name).toBe('Alice Studio');
 	});
 
-	it('hands a backend problem to the page, carrying the typed values back', async () => {
+	it('hands a backend problem to the page as the form message, values riding the form', async () => {
 		const { fetch } = fetchStub(() =>
 			problemResponse(409, 'handle_taken', 'That handle is already claimed.')
 		);
 		const failure = await createAction(fetch, 'New Studio', 'taken.zurfur.app');
-		expect(failure).toMatchObject({
-			status: 409,
-			data: {
-				problem: { code: 'handle_taken' },
-				name: 'New Studio',
-				handle: 'taken.zurfur.app'
-			}
+		expect(failure.status).toBe(409);
+		expect(failure.data.form.message).toMatchObject({ code: 'handle_taken' });
+		expect(failure.data.form.data).toMatchObject({
+			name: 'New Studio',
+			handle: 'taken.zurfur.app'
 		});
 	});
 
-	it('redirects to the listing on success', async () => {
+	it('redirects to the listing on success, sending TRIMMED values to the backend', async () => {
 		const created = {
 			id: 'acct-new',
 			did: 'did:plc:new',
 			handle: 'new.zurfur.app',
 			name: 'New Studio'
 		};
-		const { fetch } = fetchStub(() => Response.json(created, { status: 201 }));
+		let sentBody: unknown;
+		const { fetch } = fetchStub((_url, init) => {
+			sentBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+			return Response.json(created, { status: 201 });
+		});
 		const redirect = await expectRedirect(() =>
-			createAction(fetch, 'New Studio', 'new.zurfur.app')
+			createAction(fetch, '  New Studio  ', '  new.zurfur.app  ')
 		);
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/accounts');
+		expect(sentBody).toMatchObject({ name: 'New Studio', handle: 'new.zurfur.app' });
 	});
 });

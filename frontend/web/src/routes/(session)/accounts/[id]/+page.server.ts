@@ -28,6 +28,11 @@ export const actions: Actions = {
 	 * role gate is only an affordance. A problem re-renders in place; success
 	 * redirects to the list carrying `?deleted=<outcome>` so it can say WHICH
 	 * deletion happened (soft vs hard — DD 23003138 decision 6).
+	 *
+	 * NOTE (ZMVP-165): this action still returns `fail(…, { problem })` +
+	 * ActionData — the pre-migration idiom, not an endorsed alternative. The
+	 * house pattern is now the one-channel superform (`problemMessage` from
+	 * `$lib/server/forms/problem-message`); migrate on next touch.
 	 */
 	delete: async ({ params, fetch, request }) => {
 		const callerAccountOutcome = await runApi(fetch, accountOutcome(params.id));
