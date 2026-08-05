@@ -71,7 +71,11 @@
 		/></label
 	>
 	{#if $errors.name}
-		<p role="alert" id="name-error" data-testid="name-error">{$errors.name}</p>
+		<ul role="alert" id="name-error" data-testid="name-error">
+			{#each $errors.name as errorMessage (errorMessage)}
+				<li>{errorMessage}</li>
+			{/each}
+		</ul>
 	{/if}
 	<label>
 		Handle
@@ -86,7 +90,11 @@
 		/>
 	</label>
 	{#if $errors.handle}
-		<p role="alert" id="handle-error" data-testid="handle-error">{$errors.handle}</p>
+		<ul role="alert" id="handle-error" data-testid="handle-error">
+			{#each $errors.handle as errorMessage (errorMessage)}
+				<li>{errorMessage}</li>
+			{/each}
+		</ul>
 	{/if}
 	<button>Found Account</button>
 </form>
