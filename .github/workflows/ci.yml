@@ -145,3 +145,9 @@ jobs:
       - run: yarn run lint
       - run: yarn run test
       - run: yarn run build
+      # ZesTTY twins gate (ZMVP-177, DD 46596098 D2): twins current + types
+      # clean, then the guards zts-check doesn't cover (orphan twins, .zts
+      # outside src/, stale .zts-twins list). Mirrors `just zts-check`; the
+      # checker is the npm exact-pinned devDependency installed above.
+      - run: rm -rf .zts-check && npx --no-install zts-check .
+      - run: bash ../../scripts/zts-twins.sh --guard
