@@ -16,7 +16,7 @@
 //! - The owner revokes a pending offer (`200`); revoking nothing pending is an
 //!   idempotent `200` no-op.
 //! - The floors: anonymous is `401`; a participant who is not the owner is `403`;
-//!   an unknown/cross-commission seat is a `404 node_not_found`.
+//!   an unknown/cross-commission seat is a `404 element_not_found`.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -26,7 +26,7 @@ use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, NodeId},
+    commission::{Commission, CommissionId, CommissionTitle, ElementId, SKELETON},
     did::Did,
     profile::Profile,
 };
@@ -146,28 +146,32 @@ async fn create_commission(
         .expect("exactly one new commission was persisted")
 }
 
-/// The commission's root node id, introspected off the backend.
-async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
-    *backend
-        .commission_store()
-        .load_tree(CommissionId::new(commission))
+/// The commission's only tab id, introspected off the backend. There is no
+/// ROUTE that hands a caller a tab id yet — reading the composition is
+/// ZMVP-163's `GET` — so tests read it from the store.
+async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
+    let tabs = backend
+        .tabs_of(CommissionId::new(commission))
         .await
-        .expect("load tree")
-        .expect("every commission has a tree")
-        .root
-        .id
+        .expect("load tabs");
+    *tabs.first().expect("every commission has its tabs").id
 }
 
-/// Declares a vacant seat over HTTP and returns its node id.
+/// The one surface the placeholder skeleton declares.
+fn only_surface() -> &'static str {
+    SKELETON[0].surfaces[0]
+}
+
+/// Declares a vacant seat over HTTP and returns its element id.
 async fn declare_seat(
     client: &reqwest::Client,
     base: &str,
     commission: uuid::Uuid,
-    parent: uuid::Uuid,
+    tab: uuid::Uuid,
 ) -> uuid::Uuid {
     let res = client
         .post(format!("{base}/commissions/{commission}/seats"))
-        .json(&json!({ "parent": parent, "kind": "Creator" }))
+        .json(&json!({ "tab": tab, "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
         .expect("POST seat");
@@ -183,8 +187,8 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&client, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&client, &base, id, tab).await;
 
     let res = client
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -206,7 +210,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .expect("the invitee was provisioned");
     let found = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(id), NodeId::new(seat), invitee.id)
+        .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
         .await
         .expect("query")
         .expect("a pending offer was recorded");
@@ -221,15 +225,15 @@ async fn inviting_to_a_filled_seat_is_a_conflict() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&client, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&client, &base, id, tab).await;
 
     // Fill the seat (stand-in for ZMVP-79's accept).
     let occupant = backend
         .provision(&Did::new("did:plc:occupant".to_string()))
         .await
         .expect("provision occupant");
-    backend.occupy_seat(NodeId::new(seat), occupant.id);
+    backend.occupy_seat(ElementId::new(seat), occupant.id);
 
     let res = client
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -241,7 +245,7 @@ async fn inviting_to_a_filled_seat_is_a_conflict() {
 }
 
 // Floor — inviting to a seat that isn't one of this commission's seats
-// (fabricated) is a node_not_found 404.
+// (fabricated) is an element_not_found 404.
 #[tokio::test]
 async fn inviting_to_an_unknown_seat_is_not_found() {
     let (base, backend) = spawn_app("did:plc:artist").await;
@@ -255,10 +259,10 @@ async fn inviting_to_an_unknown_seat_is_not_found() {
         .send()
         .await
         .expect("POST invite fabricated seat");
-    common::assert_problem(res, 404, "node_not_found").await;
+    common::assert_problem(res, 404, "element_not_found").await;
 }
 
-// Floor — a seat that belongs to a DIFFERENT commission is a node_not_found 404
+// Floor — a seat that belongs to a DIFFERENT commission is an element_not_found 404
 // (the seats read is commission-scoped, so it is no cross-commission oracle).
 #[tokio::test]
 async fn a_seat_from_another_commission_is_not_found() {
@@ -268,8 +272,8 @@ async fn a_seat_from_another_commission_is_not_found() {
     let target = create_commission(&client, &base, &backend).await;
     // A second commission (mine), with a real seat of its own.
     let other = create_commission(&client, &base, &backend).await;
-    let other_root = root_of(&backend, other).await;
-    let other_seat = declare_seat(&client, &base, other, other_root).await;
+    let other_tab = tab_of(&backend, other).await;
+    let other_seat = declare_seat(&client, &base, other, other_tab).await;
 
     let res = client
         .post(format!("{base}/commissions/{target}/invitations"))
@@ -277,7 +281,7 @@ async fn a_seat_from_another_commission_is_not_found() {
         .send()
         .await
         .expect("POST invite cross-commission seat");
-    common::assert_problem(res, 404, "node_not_found").await;
+    common::assert_problem(res, 404, "element_not_found").await;
 }
 
 // AC3 — re-inviting an already-pending User to the same seat is idempotent: the
@@ -288,8 +292,8 @@ async fn re_inviting_a_pending_user_is_idempotent() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&client, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&client, &base, id, tab).await;
 
     let first = client
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -326,8 +330,8 @@ async fn owner_revokes_a_pending_invitation() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&client, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&client, &base, id, tab).await;
 
     let res = client
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -353,7 +357,7 @@ async fn owner_revokes_a_pending_invitation() {
     assert!(
         backend
             .commission_store()
-            .find_pending_seat_invitation(CommissionId::new(id), NodeId::new(seat), invitee.id)
+            .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
             .await
             .expect("query")
             .is_none(),
@@ -368,8 +372,8 @@ async fn revoking_with_nothing_pending_is_a_no_op() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&client, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&client, &base, id, tab).await;
 
     let res = client
         .delete(format!("{base}/commissions/{id}/invitations"))
@@ -429,8 +433,8 @@ async fn anonymous_visitor_cannot_invite() {
     let signed_in = client();
     sign_in(&signed_in, &base).await;
     let id = create_commission(&signed_in, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let seat = declare_seat(&signed_in, &base, id, root).await;
+    let tab = tab_of(&backend, id).await;
+    let seat = declare_seat(&signed_in, &base, id, tab).await;
 
     let res = client()
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -454,8 +458,8 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
 
     // Commission B holds the pending offer.
     let b = create_commission(&client, &base, &backend).await;
-    let b_root = root_of(&backend, b).await;
-    let b_seat = declare_seat(&client, &base, b, b_root).await;
+    let b_tab = tab_of(&backend, b).await;
+    let b_seat = declare_seat(&client, &base, b, b_tab).await;
     let res = client
         .post(format!("{base}/commissions/{b}/invitations"))
         .json(&json!({ "seat": b_seat, "user": "did:plc:invitee" }))
@@ -481,7 +485,7 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
         .expect("invitee was provisioned by the invite");
     let still_pending = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(b), NodeId::new(b_seat), invitee.id)
+        .find_pending_seat_invitation(CommissionId::new(b), ElementId::new(b_seat), invitee.id)
         .await
         .expect("query");
     assert!(

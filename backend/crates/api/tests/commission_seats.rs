@@ -1,7 +1,7 @@
 //! ZMVP-76 — the owner declares a Seat on the commission, over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface (the store-layer seams —
-//! the persisted participant row, the node+satellite atomicity, the parent
+//! the persisted participant row, the element+satellite atomicity, the address
 //! gate — are covered in `adapter-mem`/`adapter-pg`):
 //!
 //! - **AC1** — the owner declares a Seat with a typed kind via
@@ -19,8 +19,9 @@
 //!   taxonomy) atomically with the seat.
 //! - The floors: anonymous is `401`; a non-participant (and a truly absent
 //!   commission) gets the one uniform `commission_not_found` 404 — never a
-//!   403; a fabricated/foreign parent is a `node_not_found` 404; a component
-//!   parent is a `409`; a malformed body or invalid kind/prompt/link is `422`.
+//!   403; a fabricated/foreign tab is a `tab_not_found` 404; an undeclared
+//!   surface is a `422 unknown_surface`; a malformed body or invalid
+//!   kind/prompt/link is `422`.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -30,7 +31,7 @@ use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
 use chrono::Utc;
 use domain::elements::{
-    commission::{ChangelogEntryKind, Commission, CommissionId, CommissionTitle},
+    commission::{ChangelogEntryKind, Commission, CommissionId, CommissionTitle, SKELETON},
     did::Did,
     profile::Profile,
     user::User,
@@ -135,19 +136,23 @@ async fn create_commission(
     *all.last().expect("a commission was persisted").id
 }
 
-/// The commission's root node id, introspected off the backend.
-async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
-    *backend
-        .commission_store()
-        .load_tree(CommissionId::new(commission))
+/// The commission's only tab id, introspected off the backend. There is no
+/// ROUTE that hands a caller a tab id yet — reading the composition is
+/// ZMVP-163's `GET` — so tests read it from the store.
+async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
+    let tabs = backend
+        .tabs_of(CommissionId::new(commission))
         .await
-        .expect("load tree")
-        .expect("every commission has a tree")
-        .root
-        .id
+        .expect("load tabs");
+    *tabs.first().expect("every commission has its tabs").id
 }
 
-/// POSTs a seat declaration and returns the created seat's node id from the
+/// The one surface the placeholder skeleton declares.
+fn only_surface() -> &'static str {
+    SKELETON[0].surfaces[0]
+}
+
+/// POSTs a seat declaration and returns the created seat's element id from the
 /// `201` body.
 async fn declare_seat(
     client: &reqwest::Client,
@@ -165,7 +170,7 @@ async fn declare_seat(
     let body: serde_json::Value = res.json().await.expect("201 body is JSON");
     body["id"]
         .as_str()
-        .expect("the body carries the new seat's node id")
+        .expect("the body carries the new seat's element id")
         .parse()
         .expect("the id is a UUID")
 }
@@ -188,7 +193,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 }
 
 // AC1/AC2/AC3 — the owner declares seats with typed kinds and requirements:
-// each lands as a vacant satellite keyed by the returned node id, kinds repeat
+// each lands as a vacant satellite keyed by the returned element id, kinds repeat
 // freely across the commission, requirements are optional per seat, and the
 // declaration appends the seat_declared changelog entry atomically.
 #[tokio::test]
@@ -197,14 +202,15 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
     let first = declare_seat(
         &client,
         &base,
         id,
         &json!({
-            "parent": root,
+            "tab": tab,
+            "surface": only_surface(),
             "kind": "Creator",
             "prompt": "Two refs, please.",
             "link": "https://forms.example/apply",
@@ -217,7 +223,8 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
         &client,
         &base,
         id,
-        &json!({ "parent": root, "kind": "Creator" }),
+        &json!({ "tab": tab,
+            "surface": only_surface(), "kind": "Creator" }),
     )
     .await;
 
@@ -248,17 +255,17 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
     assert!(second_seat.prompt.is_none() && second_seat.link.is_none());
     assert!(second_seat.is_vacant());
 
-    // The seat's node is in the tree, under the root.
-    let tree = backend
-        .commission_store()
-        .load_tree(CommissionId::new(id))
+    // The seat's element is in the composition, at the declared address.
+    let elements = backend
+        .elements_of(CommissionId::new(id))
         .await
-        .expect("load tree")
-        .expect("tree exists");
-    assert_eq!(
-        tree.root.children.len(),
-        2,
-        "seats are components in the tree"
+        .expect("load elements");
+    assert_eq!(elements.len(), 2, "seats ride ordinary elements");
+    assert!(
+        elements
+            .iter()
+            .all(|element| element.address.surface.as_str() == only_surface()),
+        "each at the surface it was declared into"
     );
 
     // The declarations are changelog-recorded: creation + two seat_declared.
@@ -289,11 +296,12 @@ async fn an_anonymous_caller_cannot_declare_a_seat() {
     let signed_in = client();
     sign_in(&signed_in, &base).await;
     let id = create_commission(&signed_in, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
     let res = client()
         .post(format!("{base}/commissions/{id}/seats"))
-        .json(&json!({ "parent": root, "kind": "Creator" }))
+        .json(&json!({ "tab": tab,
+            "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
         .expect("anonymous POST");
@@ -317,11 +325,11 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     let client = client();
     sign_in(&client, &base).await;
     let foreign = seed_foreign_commission(&backend).await;
-    let foreign_root = root_of(&backend, foreign).await;
+    let foreign_tab = tab_of(&backend, foreign).await;
 
     let hidden = client
         .post(format!("{base}/commissions/{foreign}/seats"))
-        .json(&json!({ "parent": foreign_root, "kind": "Creator" }))
+        .json(&json!({ "tab": foreign_tab, "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
         .expect("probe foreign");
@@ -331,7 +339,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     let absent_id = uuid::Uuid::now_v7();
     let absent = client
         .post(format!("{base}/commissions/{absent_id}/seats"))
-        .json(&json!({ "parent": foreign_root, "kind": "Creator" }))
+        .json(&json!({ "tab": foreign_tab, "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
         .expect("probe absent");
@@ -356,54 +364,56 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     );
 }
 
-// Floor — the owner naming a parent node that doesn't exist in this commission
-// (fabricated, or belonging to another tree) gets node_not_found; a component
-// parent gets the honest 409 (seats live under surfaces).
+// Floor — the owner naming a tab that doesn't exist in this commission
+// (fabricated, or belonging to another commission) gets tab_not_found; an
+// undeclared surface gets the honest 422 unknown_surface. There is no
+// component-parent arm any more: an element is never anything's parent.
 #[tokio::test]
-async fn parent_gates_hold_for_seats() {
+async fn address_gates_hold_for_seats() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
-    // Fabricated parent id.
+    // Fabricated tab id.
     let res = client
         .post(format!("{base}/commissions/{id}/seats"))
-        .json(&json!({ "parent": uuid::Uuid::now_v7(), "kind": "Creator" }))
+        .json(&json!({ "tab": uuid::Uuid::now_v7(), "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
-        .expect("POST fabricated parent");
-    common::assert_problem(res, 404, "node_not_found").await;
+        .expect("POST fabricated tab");
+    common::assert_problem(res, 404, "tab_not_found").await;
 
-    // A real node — in someone else's tree.
+    // A real tab — in someone else's commission.
     let foreign = seed_foreign_commission(&backend).await;
-    let foreign_root = root_of(&backend, foreign).await;
+    let foreign_tab = tab_of(&backend, foreign).await;
     let res = client
         .post(format!("{base}/commissions/{id}/seats"))
-        .json(&json!({ "parent": foreign_root, "kind": "Creator" }))
+        .json(&json!({ "tab": foreign_tab, "surface": only_surface(), "kind": "Creator" }))
         .send()
         .await
-        .expect("POST foreign parent");
-    common::assert_problem(res, 404, "node_not_found").await;
+        .expect("POST foreign tab");
+    common::assert_problem(res, 404, "tab_not_found").await;
 
-    // A component parent: seats are components — leaves live under surfaces.
-    let res = client
-        .post(format!("{base}/commissions/{id}/components"))
-        .json(&json!({ "parent": root }))
-        .send()
-        .await
-        .expect("POST component");
-    assert_eq!(res.status(), 201);
-    let body: serde_json::Value = res.json().await.expect("201 body");
-    let component = body["id"].as_str().expect("component id");
+    // A surface the skeleton does not declare.
     let res = client
         .post(format!("{base}/commissions/{id}/seats"))
-        .json(&json!({ "parent": component, "kind": "Creator" }))
+        .json(&json!({ "tab": tab, "surface": "invented", "kind": "Creator" }))
         .send()
         .await
-        .expect("POST seat under component");
-    common::assert_problem(res, 409, "parent_not_a_surface").await;
+        .expect("POST undeclared surface");
+    common::assert_problem(res, 422, "unknown_surface").await;
+
+    assert!(
+        backend
+            .commission_store()
+            .seats(CommissionId::new(id))
+            .await
+            .expect("seats")
+            .is_empty(),
+        "no refused declaration left a seat behind"
+    );
 }
 
 // Floor — a malformed body (no kind / no parent) and an invalid kind, prompt,
@@ -414,16 +424,18 @@ async fn malformed_and_invalid_bodies_are_rejected() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
+    let surface = only_surface();
     for body in [
-        json!({ "parent": root }),                                    // no kind
-        json!({ "kind": "Creator" }),                                 // no parent
-        json!({ "parent": root, "kind": "   " }),                     // blank kind
-        json!({ "parent": root, "kind": "a\nb" }),                    // control char in kind
-        json!({ "parent": root, "kind": "x".repeat(65) }),            // kind too long
-        json!({ "parent": root, "kind": "Creator", "prompt": " " }),  // blank prompt
-        json!({ "parent": root, "kind": "Creator", "link": "a\nb" }), // control char in link
+        json!({ "tab": tab, "surface": surface }), // no kind
+        json!({ "kind": "Creator" }),              // no address
+        json!({ "tab": tab, "surface": surface, "kind": "   " }), // blank kind
+        json!({ "tab": tab, "surface": surface, "kind": "a\nb" }), // control char in kind
+        json!({ "tab": tab, "surface": surface, "kind": "x".repeat(65) }), // kind too long
+        json!({ "tab": tab, "surface": surface, "kind": "Creator", "prompt": " " }), // blank prompt
+        json!({ "tab": tab, "surface": surface, "kind": "Creator", "link": "a\nb" }), // control char in link
+        json!({ "tab": tab, "surface": "   ", "kind": "Creator" }), // blank surface label
     ] {
         let res = client
             .post(format!("{base}/commissions/{id}/seats"))
@@ -454,7 +466,7 @@ async fn malformed_and_invalid_bodies_are_rejected() {
 // under a Description-visible surface appears in the NON-participant
 // projection — the published ask — and a seat under a hidden surface does not.
 // The store-side hook this projection consumes (CommissionStore::seats, keyed
-// by node id against the projected tree) ships with this ticket; the viewer
+// by element id against the projected composition) ships with this ticket; the viewer
 // projection endpoint itself lands with ZMVP-75. Re-enable and finish this
 // test in the post-rebase arm (it asserts against the projection read).
 #[tokio::test]
@@ -464,12 +476,13 @@ async fn a_vacant_seat_under_a_description_surface_is_the_published_ask() {
     let owner_client = client();
     sign_in(&owner_client, &base).await;
     let id = create_commission(&owner_client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
     declare_seat(
         &owner_client,
         &base,
         id,
-        &json!({ "parent": root, "kind": "Creator" }),
+        &json!({ "tab": tab,
+            "surface": only_surface(), "kind": "Creator" }),
     )
     .await;
 

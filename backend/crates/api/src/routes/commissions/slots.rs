@@ -4,10 +4,10 @@
 //! an **array** — a commission's Slots usually arrive several at a time
 //! (Engineer ruling, PR #108) — and the batch lands all-or-nothing.
 //!
-//! A Slot is not a kind of tree node: declaring one plants an ordinary
-//! component under the chosen surface, while the Slot itself lives in a
-//! satellite (`commission_slot`, keyed by that component's node id — the Slot
-//! mirror of the Seat satellite ruling, Gate A E20); the generic component add
+//! A Slot is not a kind of element: declaring one contributes an ordinary
+//! element into the chosen surface, while the Slot itself lives in a
+//! satellite (`commission_slot`, keyed by that element's id — the Slot
+//! mirror of the Seat satellite ruling, Gate A E20); the generic element add
 //! cannot populate the satellite, hence this dedicated declaration route. **No fill
 //! surface exists here or anywhere** (AC3): nothing in the request, the
 //! storage, or the domain shapes can name an occupant — an empty Slot is a
@@ -23,8 +23,8 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    elements::commission::{CommissionId, NewSlot, NodeId, SlotTitle},
-    ports::{ParentNodeNotFound, ParentNotASurface, UnitOfWork},
+    elements::commission::{CommissionId, NewSlot, SlotTitle},
+    ports::UnitOfWork,
 };
 use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
@@ -33,33 +33,34 @@ use uuid::Uuid;
 use super::require_owner;
 use crate::{AppState, problem::Problem};
 
-/// `POST /commissions/{id}/slots`'s `201` body: the node id of each newly
-/// declared slot's carrying component, in request order — see [`declare_slots`].
+/// `POST /commissions/{id}/slots`'s `201` body: the id of each newly declared
+/// slot's carrying element, in request order — see [`declare_slots`].
 #[derive(Serialize)]
 struct DeclareSlotsResponse {
     ids: Vec<Uuid>,
 }
 
 /// One Slot of the `POST /commissions/{id}/slots` request body (a JSON array
-/// of these): the existing **surface** to grow under, the Slot's required
-/// title, and optional freeform notes. There is deliberately no
-/// occupant/character field — fill is not offered (AC3) — and no payload: the
-/// carrying component's payload is the empty object, the Slot's substance
-/// being the satellite's.
+/// of these): the address to contribute at (`tab` by id, `surface` by declared
+/// name), the Slot's required title, and optional freeform notes. There is
+/// deliberately no occupant/character field — fill is not offered (AC3) — and
+/// no payload: the carrying element's payload is the empty object, the Slot's
+/// substance being the satellite's.
 #[derive(Deserialize)]
 pub(super) struct DeclareSlotBody {
-    parent: Uuid,
+    tab: Uuid,
+    surface: String,
     title: String,
     #[serde(default)]
     notes: Option<String>,
 }
 
 /// Declare a batch of Slots (ZMVP-77 AC1), as the commission's owner. Each
-/// entry plants an ordinary component under the existing **surface** named by
-/// its `parent`; the Slot itself (title, notes) lands in the satellite. The
+/// entry contributes an ordinary element at the address it names; the Slot
+/// itself (title, notes) lands in the satellite. The
 /// body is a JSON array of Slot objects — one request declares a commission's
 /// Slots together (Engineer ruling, PR #108) — and the batch is
-/// **all-or-nothing**: every component and satellite land in one unit of work
+/// **all-or-nothing**: every element and satellite land in one unit of work
 /// for the whole array, so a refused Slot leaves nothing behind.
 ///
 /// Owner-only via the shared [`require_owner`] gate: a non-participant — and a
@@ -68,13 +69,14 @@ pub(super) struct DeclareSlotBody {
 /// existence oracle). An empty array is a `422` (declaring nothing is a
 /// malformed request, not a no-op). Each title is validated through
 /// [`SlotTitle`] (trimmed, blank refused with a `422`); notes are trimmed with
-/// blank normalizing to absent. Each parent walks the same gates as every tree
-/// write: absent/foreign is the indistinguishable
-/// [`node_not_found`](Problem::node_not_found) 404, a component parent the
-/// honest `409` [`parent_not_a_surface`](Problem::parent_not_a_surface); a
-/// malformed body is a `422`. Returns `201 Created` with the node id of each
-/// newly declared slot's carrying component, in request order — `{"ids": ["…", …]}` —
-/// since no tree read exposes ids until the projection lands (ZMVP-75).
+/// blank normalizing to absent. Each address walks the same gates as every
+/// element write, through the one shared mapping
+/// ([`elements::to_problem`](super::elements::to_problem)): an absent/foreign
+/// tab is the indistinguishable [`tab_not_found`](Problem::tab_not_found) 404,
+/// an undeclared (tab, surface) pair the honest `422`
+/// [`unknown_surface`](Problem::unknown_surface); a malformed body is a `422`.
+/// Returns `201 Created` with the id of each newly declared slot's carrying
+/// element, in request order — `{"ids": ["…", …]}`.
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -103,40 +105,28 @@ pub(super) async fn declare_slots(
             .map(str::trim)
             .filter(|notes| !notes.is_empty())
             .map(str::to_owned);
-        slots.push(NewSlot::under(
-            commission,
-            NodeId::new(entry.parent),
-            title,
-            notes,
-            user.id,
-            now,
+        let address = super::elements::address(entry.tab, entry.surface)?;
+        slots.push(NewSlot::contributed_at(
+            commission, address, title, notes, user.id, now,
         ));
     }
-    let node_ids: Vec<Uuid> = slots.iter().map(|slot| *slot.id).collect();
+    let element_ids: Vec<Uuid> = slots.iter().map(|slot| *slot.id).collect();
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.commissions().declare_slots(&slots).await
         })
         .await
-        .map_err(|err| {
-            if err.downcast_ref::<ParentNodeNotFound>().is_some() {
-                Problem::node_not_found()
-            } else if err.downcast_ref::<ParentNotASurface>().is_some() {
-                Problem::parent_not_a_surface()
-            } else {
-                err.into()
-            }
-        })?;
+        .map_err(super::elements::to_problem)?;
 
-    let body = DeclareSlotsResponse { ids: node_ids };
+    let body = DeclareSlotsResponse { ids: element_ids };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 #[cfg(test)]
 mod tests {
     //! Pins the `201` body's wire shape: `{"ids": ["<uuid>", …]}` — the exact
-    //! string form `json!({ "ids": node_ids })` (a `Vec<Uuid>`) used to emit
+    //! string form `json!({ "ids": element_ids })` (a `Vec<Uuid>`) used to emit
     //! (ZMVP-158 AC1/AC3).
 
     use super::*;

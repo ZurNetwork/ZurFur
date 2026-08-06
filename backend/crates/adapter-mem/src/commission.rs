@@ -13,57 +13,129 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::AccountId,
     commission::{
-        ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionFile,
-        CommissionId, CommissionTitle, CommissionTree, DeadlineStatus, DirectionStatus, FileKey,
-        GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewComponent, NewSeat,
-        NewSlot, NewSurface, NodeId, NodeKind, NodeRow, Placement, RootSurface, Seat,
-        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotTitle,
-        SurfaceMode, Visibility, derive_deadline_status,
+        Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
+        CommissionComposition, CommissionFile, CommissionId, CommissionTitle, DeadlineStatus,
+        DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, GrantLevel,
+        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewElement, NewSeat, NewSlot, Placement,
+        Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotTitle,
+        SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
+        declared_tabs, declares_surface, derive_deadline_status,
     },
     invitation::InvitationState,
     maturity::Maturity,
     user::UserId,
 };
 use domain::ports::{
-    CannotRemoveRoot, ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites,
-    NodeNotFound, ParentNodeNotFound, ParentNotASurface,
+    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, ElementNotFound,
+    UnknownSurface, UnknownTab,
 };
 use serde_json::Value;
 
 use crate::MemBackend;
 
-/// The shared **parent gate** of every tree-growing write — the mem mirror of
-/// `PgCommissionWrites::require_surface_parent` (ZMVP-71/72): the named parent
-/// must exist in `commission`'s own tree (an absent id and a node from another
-/// commission both refuse with [`ParentNodeNotFound`], indistinguishably,
-/// *before* anything about the node is revealed) and must be a surface, else
-/// [`ParentNotASurface`] (components are leaves; nothing grows under one). One
-/// path, so the two add ops can't drift apart on either rule. Returns the
-/// parent's [`SurfaceMode`] on success — the mode `add_surface` inherits;
-/// `add_component` has no use for it.
-fn require_surface_parent(
-    nodes: &HashMap<NodeId, StoredNode>,
-    parent: NodeId,
+/// Resolve a tab within `commission` — the mem mirror of
+/// `PgCommissionWrites::require_tab` (ZMVP-166), handing back the tab's
+/// **declared name** so the caller can consult the skeleton.
+///
+/// An absent id and a tab from another commission both refuse with
+/// [`UnknownTab`], indistinguishably, before anything about either is revealed.
+///
+/// pg's version also takes the tab's row lock (`SELECT … FOR UPDATE`), which is
+/// what serializes concurrent appends and removals into one tab. There is no
+/// lock to mirror here — every mem write already runs under the backend's
+/// mutexes — but the *call sites* mirror pg's exactly (both the add path and the
+/// removal path go through here, before touching any element), so the two
+/// adapters keep one discipline and one observable error order.
+///
+/// (There is no cross-commission *structural* backstop here the way pg has its
+/// composite foreign key; the fake's gate is the whole enforcement, which is why
+/// the mem parity tests exercise the foreign-tab case explicitly.)
+fn require_tab(
+    tabs: &HashMap<TabId, StoredTab>,
     commission: CommissionId,
-) -> anyhow::Result<SurfaceMode> {
-    match nodes.get(&parent) {
-        Some(node) if node.commission_id == commission => match node.kind {
-            NodeKind::Surface { mode } => Ok(mode),
-            NodeKind::Component => Err(ParentNotASurface.into()),
-        },
-        _ => Err(ParentNodeNotFound.into()),
+    tab: TabId,
+) -> anyhow::Result<TabName> {
+    match tabs.get(&tab) {
+        Some(stored) if stored.commission_id == commission => Ok(stored.tab.clone()),
+        _ => Err(UnknownTab.into()),
     }
 }
 
-/// The next append `position` within `parent`'s sibling group — the mem mirror
-/// of the pg `COALESCE(MAX(position) + 1, 0)` subquery.
-fn next_position(nodes: &HashMap<NodeId, StoredNode>, parent: NodeId) -> i32 {
-    nodes
+/// The shared **address gate** of every element write — the mem mirror of
+/// `PgCommissionWrites::require_address` (ZMVP-166): resolve the tab
+/// ([`require_tab`]), then require the code skeleton to declare this surface
+/// **inside that tab**, else [`UnknownSurface`]. One path, so the generic add
+/// and the two satellite declarations can't drift apart on either rule — and the
+/// surface half consults the very same const the pg adapter does, so the two
+/// adapters cannot disagree about which addresses are real.
+///
+/// **The order mirrors pg's, deliberately**: the pair check needs the tab's
+/// declared name, so the tab is resolved first and an address that is wrong in
+/// *both* ways refuses as [`UnknownTab`], not [`UnknownSurface`]. Mem is
+/// single-threaded behind a mutex and has no lock to take, but the observable
+/// error order is part of the contract — a parity test pins it.
+fn require_address(
+    tabs: &HashMap<TabId, StoredTab>,
+    commission: CommissionId,
+    address: &SurfaceAddress,
+) -> anyhow::Result<()> {
+    let tab = require_tab(tabs, commission, address.tab)?;
+    if !declares_surface(&tab, &address.surface) {
+        return Err(UnknownSurface.into());
+    }
+    Ok(())
+}
+
+/// The next append `position` within an element's ordering group — the mem
+/// mirror of the pg `COALESCE(MAX(position) + 1, 0)` subquery, counted over the
+/// same `(commission, tab, surface, band)` tuple the pg statement filters on.
+fn next_position(
+    elements: &HashMap<ElementId, StoredElement>,
+    commission: CommissionId,
+    address: &SurfaceAddress,
+    band: &Band,
+) -> i32 {
+    elements
         .values()
-        .filter(|node| node.parent == Some(parent))
-        .map(|node| node.position + 1)
+        .filter(|element| {
+            element.commission_id == commission
+                && element.address == *address
+                && element.band == *band
+        })
+        .map(|element| element.position + 1)
         .max()
         .unwrap_or(0)
+}
+
+/// Insert one element on the unit's staged snapshot, behind the shared address
+/// gate — the mem mirror of `PgCommissionWrites::insert_element`, and the single
+/// write path every element takes (the generic add, a Slot's carrier, a Seat's).
+fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<()> {
+    let tabs = backend.tabs.lock().expect("MemBackend tabs mutex poisoned");
+    let mut elements = backend
+        .elements
+        .lock()
+        .expect("MemBackend elements mutex poisoned");
+    require_address(&tabs, element.commission_id, &element.address)?;
+    let position = next_position(
+        &elements,
+        element.commission_id,
+        &element.address,
+        &element.band,
+    );
+    let stored = StoredElement {
+        commission_id: element.commission_id,
+        address: element.address.clone(),
+        element_type: element.element_type.clone(),
+        mode: VisibilityMode::default(),
+        band: element.band.clone(),
+        position,
+        created_by: element.created_by,
+        created_at: element.created_at,
+        payload: element.payload.clone(),
+    };
+    elements.insert(element.id, stored);
+    Ok(())
 }
 
 /// The fields of a [`Commission`] we keep behind the lock. Like `Account`,
@@ -136,33 +208,55 @@ impl StoredCommission {
     }
 }
 
-/// One commission tree node as the mem backend keeps it — the in-memory mirror
-/// of a pg `commission_node` row (ZMVP-71). Keyed by [`NodeId`] in the backend
-/// map, so the row's own id lives in the key. `Clone` so a unit of work can
-/// deep-copy the node map into its staging snapshot. `PartialEq` lets
+/// One commission element as the mem backend keeps it — the in-memory mirror of
+/// a pg `commission_element` row (ZMVP-166). Keyed by [`ElementId`] in the
+/// backend map, so the row's own id lives in the key. `Clone` so a unit of work
+/// can deep-copy the element map into its staging snapshot. `PartialEq` lets
 /// [`crate::merge_map`] diff a unit's staged value against its pristine base
 /// snapshot to tell an untouched row apart from one this unit actually wrote.
 #[derive(Clone, PartialEq)]
-pub(crate) struct StoredNode {
-    /// The tree (commission) this node belongs to.
+pub(crate) struct StoredElement {
+    /// The commission this element belongs to.
     pub(crate) commission_id: CommissionId,
-    /// The parent node, or `None` for the root surface.
-    pub(crate) parent: Option<NodeId>,
-    /// The typed envelope half (kind + mode on surfaces).
-    pub(crate) kind: NodeKind,
-    /// Sibling order within the parent (append = max + 1).
+    /// Where it sits: the (tab, surface) pair — the whole addressing model.
+    /// There is no parent field, here or in pg.
+    pub(crate) address: SurfaceAddress,
+    /// What it is — the open type tag.
+    pub(crate) element_type: ElementType,
+    /// Its own visibility mode: the third term of the effective-visibility min.
+    pub(crate) mode: VisibilityMode,
+    /// The ordering band its position is counted in.
+    pub(crate) band: Band,
+    /// Order within `(tab, surface, band)` (append = max + 1).
     pub(crate) position: i32,
-    /// Who created the node.
+    /// Who contributed the element.
     pub(crate) created_by: UserId,
-    /// When the node was created.
+    /// When it was contributed.
     pub(crate) created_at: domain::datetime::DateTimeUtc,
-    /// The type-owned payload, opaque here exactly as in pg.
-    pub(crate) payload: Value,
+    /// The type-owned payload, opaque here exactly as in pg — and carried in
+    /// its non-serializable wrapper, so the fake cannot become the easy route
+    /// around the guard the real store keeps.
+    pub(crate) payload: ElementPayload,
+}
+
+/// One commission tab as the mem backend keeps it — the in-memory mirror of a pg
+/// `commission_tab` row (ZMVP-166), keyed by [`TabId`]. Minted with the
+/// commission (the withheld-at-birth discipline), never removed. `Clone` and
+/// `PartialEq` for the same staging/merge reasons as [`StoredElement`].
+#[derive(Clone, PartialEq)]
+pub(crate) struct StoredTab {
+    /// The commission this tab belongs to — the mem stand-in for the composite
+    /// foreign key that binds an element's tab to its own commission in pg.
+    pub(crate) commission_id: CommissionId,
+    /// The declared tab id this row realizes (a skeleton name).
+    pub(crate) tab: TabName,
+    /// The tab's visibility mode: the first term of the min.
+    pub(crate) mode: VisibilityMode,
 }
 
 /// One declared Slot's **satellite** as the mem backend keeps it — the
 /// in-memory mirror of a pg `commission_slot` row (ZMVP-77). Keyed in the
-/// backend map by the [`NodeId`] of the component that carries the Slot (the
+/// backend map by the [`ElementId`] of the element that carries the Slot (the
 /// satellite's own key), exactly like the pg table. Deliberately occupant-less: fill is unrepresentable until the
 /// Character epic adds it. `Clone` so a unit of work can deep-copy the map into
 /// its staging snapshot. `PartialEq` lets [`crate::merge_map`] diff a unit's
@@ -179,11 +273,11 @@ pub(crate) struct StoredSlot {
 }
 
 impl StoredSlot {
-    /// Rebuild the read shape for the component node `id` that keys this
+    /// Rebuild the read shape for the carrying element `id` that keys this
     /// satellite.
-    fn rebuild(&self, id: NodeId) -> Slot {
+    fn rebuild(&self, id: ElementId) -> Slot {
         Slot {
-            node_id: id,
+            element_id: id,
             commission_id: self.commission_id,
             title: self.title.clone(),
             notes: self.notes.clone(),
@@ -193,8 +287,8 @@ impl StoredSlot {
 
 /// One declared Seat's interpreted half as the mem backend keeps it — the
 /// in-memory mirror of a pg `commission_seat` row (ZMVP-76), keyed by the
-/// seat's [`NodeId`] in the backend map (one identity: the tree node in
-/// [`StoredNode`], this satellite here). `Clone` so a unit of work can
+/// seat's [`ElementId`] in the backend map (one identity: the element in
+/// [`StoredElement`], this satellite here). `Clone` so a unit of work can
 /// deep-copy the seat map into its staging snapshot. `PartialEq` lets
 /// [`crate::merge_map`] diff a unit's staged value against its pristine base
 /// snapshot to tell an untouched row apart from one this unit actually wrote.
@@ -226,8 +320,8 @@ pub(crate) struct StoredSeat {
 pub(crate) struct StoredSeatInvitation {
     /// The commission whose Seat is offered.
     pub(crate) commission: CommissionId,
-    /// The Seat being offered (its tree node id).
-    pub(crate) seat: NodeId,
+    /// The Seat being offered (its carrying element id).
+    pub(crate) seat: ElementId,
     /// The User being invited.
     pub(crate) invited_user: UserId,
     /// The commission owner who issued the offer.
@@ -345,13 +439,17 @@ pub struct MemCommissionWrites(pub(crate) MemBackend);
 #[async_trait]
 impl CommissionWrites for MemCommissionWrites {
     /// Insert the freshly created commission, keyed by its id — **together with
-    /// its root surface** ([`RootSurface::of`], ZMVP-71 AC1) **and its owner's
-    /// participant row** (ZMVP-76: the owner is a permanent Participant from
-    /// birth, stamped with the commission's creation instant), the mem mirror
-    /// of the pg adapter's three inserts in one transaction: all three maps
-    /// belong to this unit's staging snapshot, so commission, root, and
-    /// membership commit or vanish together — a treeless or owner-less
-    /// commission is unrepresentable. The pg `id` is a
+    /// one tab row per tab the code skeleton declares** ([`declared_tabs`],
+    /// ZMVP-166) **and its owner's participant row** (ZMVP-76: the owner is a
+    /// permanent Participant from birth, stamped with the commission's creation
+    /// instant), the mem mirror of the pg adapter's inserts in one transaction:
+    /// all three maps belong to this unit's staging snapshot, so commission,
+    /// tabs, and membership commit or vanish together — a tabless or owner-less
+    /// commission is unrepresentable. Every tab is born
+    /// [`VisibilityMode::Total`], and nothing here reads
+    /// `commission.visibility` (the commission is the formal root; its
+    /// visibility gates *over* the composition rather than seeding it). The pg
+    /// `id` is a
     /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does
     /// not model that (a plain `insert`, the same as `MemAccountWrites::create`
     /// does for its own account id), because commission ids are freshly-minted
@@ -381,25 +479,16 @@ impl CommissionWrites for MemCommissionWrites {
                 },
             );
         }
-        let root = RootSurface::of(commission);
         {
-            let mut nodes = self
-                .0
-                .nodes
-                .lock()
-                .expect("MemBackend nodes mutex poisoned");
-            nodes.insert(
-                root.id,
-                StoredNode {
+            let mut tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
+            for tab in declared_tabs() {
+                let stored = StoredTab {
                     commission_id: commission.id,
-                    parent: None,
-                    kind: NodeKind::Surface { mode: root.mode },
-                    position: 0,
-                    created_by: root.created_by,
-                    created_at: root.created_at,
-                    payload: Value::Object(Default::default()),
-                },
-            );
+                    tab,
+                    mode: VisibilityMode::default(),
+                };
+                tabs.insert(TabId::mint(), stored);
+            }
         }
         let mut participants = self
             .0
@@ -417,118 +506,99 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Grow the tree under an existing parent surface — the mem mirror of the
-    /// pg `INSERT … position = max(sibling) + 1` (ZMVP-71 AC2), behind the same
-    /// shared parent gate ([`require_surface_parent`]): absent/foreign refuses
-    /// with [`ParentNodeNotFound`], a component parent with
-    /// [`ParentNotASurface`] (ZMVP-72 — components are leaves). The mode is
-    /// **inherited from the parent** (Engineer ruling 2026-07-07, PR #103) —
-    /// the gate hands it back on success, since a surface parent always
-    /// carries one.
-    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        let mut nodes = self
-            .0
-            .nodes
-            .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        let mode = require_surface_parent(&nodes, surface.parent, surface.commission_id)?;
-        let position = next_position(&nodes, surface.parent);
-        nodes.insert(
-            surface.id,
-            StoredNode {
-                commission_id: surface.commission_id,
-                parent: Some(surface.parent),
-                kind: NodeKind::Surface { mode },
-                position,
-                created_by: surface.created_by,
-                created_at: surface.created_at,
-                payload: Value::Object(Default::default()),
-            },
-        );
-        Ok(())
+    /// Contribute one element into a declared surface — the mem mirror of the pg
+    /// `INSERT … position = max + 1 within (tab, surface, band)` (ZMVP-166),
+    /// behind the same shared address gate ([`require_address`]), in the same
+    /// order: an absent/foreign tab refuses with [`UnknownTab`], and only then a
+    /// surface the skeleton does not declare **in that tab** with
+    /// [`UnknownSurface`]. The element is born [`VisibilityMode::Total`] and its
+    /// opaque payload is held verbatim, so it reads back exactly as written.
+    async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
+        insert_element(&self.0, element)
     }
 
-    /// Grow a leaf under an existing parent surface — the mem mirror of the pg
-    /// component insert (ZMVP-72 AC1): the same shared parent gate, the same
-    /// append order, kind [`NodeKind::Component`] (no mode exists to store —
-    /// AC2), and the opaque payload held verbatim so it reads back exactly as
-    /// written (AC3).
-    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
-        let mut nodes = self
+    /// Remove one element — the mem mirror of the pg gate + tab lock + `DELETE`
+    /// + renumber (ZMVP-166): the target must exist in `commission` (an absent
+    /// id and a foreign element both refuse with [`ElementNotFound`],
+    /// indistinguishably, so removal probes reveal nothing), its tab must
+    /// resolve through the **same gate the add path uses** ([`require_tab`] —
+    /// where pg takes the row lock that serializes a removal against a
+    /// concurrent append), whatever shares its identity leaves with it (the pg
+    /// `ON DELETE CASCADE` on the Slot/Seat satellites and a seat's pending
+    /// invitations, walked here explicitly), and the remaining
+    /// `(tab, surface, band)` group renumbers to contiguous positions — all on
+    /// the unit's staging snapshot, so removal and renumber commit or vanish
+    /// together. There is no protected element: tabs and surfaces are skeleton,
+    /// not elements.
+    async fn remove_element(
+        &mut self,
+        commission: CommissionId,
+        element: ElementId,
+    ) -> anyhow::Result<()> {
+        // `tabs` before `elements`, the SAME order `insert_element` takes — the
+        // mem mirror of pg's "lock the tab row before touching an element row",
+        // and the reason the two maps can never be acquired in opposite orders
+        // by two paths.
+        let tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
+        let mut elements = self
             .0
-            .nodes
+            .elements
             .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        require_surface_parent(&nodes, component.parent, component.commission_id)?;
-        let position = next_position(&nodes, component.parent);
-        nodes.insert(
-            component.id,
-            StoredNode {
-                commission_id: component.commission_id,
-                parent: Some(component.parent),
-                kind: NodeKind::Component,
-                position,
-                created_by: component.created_by,
-                created_at: component.created_at,
-                payload: component.payload.clone(),
-            },
-        );
-        Ok(())
-    }
-
-    /// Prune the tree — the mem mirror of the pg gate + cascading `DELETE` +
-    /// renumber (ZMVP-73): the target must exist in `commission`'s own tree
-    /// (an absent id and a foreign node both refuse with [`NodeNotFound`],
-    /// indistinguishably — a foreign *root* included, so removal probes reveal
-    /// nothing) and must not be the root ([`CannotRemoveRoot`], AC3). The
-    /// subtree the pg self-referential cascade takes is walked and dropped
-    /// here explicitly, and the remaining sibling group renumbers to
-    /// contiguous positions — all on the unit's staging snapshot, so prune and
-    /// renumber commit or vanish together.
-    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
-        let mut nodes = self
-            .0
-            .nodes
-            .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        let parent = match nodes.get(&node) {
-            Some(stored) if stored.commission_id == commission => match stored.parent {
-                Some(parent) => parent,
-                None => return Err(CannotRemoveRoot.into()),
-            },
-            _ => return Err(NodeNotFound.into()),
+            .expect("MemBackend elements mutex poisoned");
+        let Some(removed) = elements
+            .get(&element)
+            .filter(|stored| stored.commission_id == commission)
+            .cloned()
+        else {
+            return Err(ElementNotFound.into());
         };
+        // The removal's tab, resolved through the same gate the add path uses —
+        // pg takes this as a row lock between its element gate and its DELETE.
+        // A miss is corruption (pg's composite foreign key makes it unwritable),
+        // and corruption answers with the same UnknownTab pg would.
+        require_tab(&tabs, commission, removed.address.tab)?;
+        drop(tabs);
+        elements.remove(&element);
 
-        // The subtree, walked breadth-first from the target (the mem mirror of
-        // the pg cascade).
-        let mut doomed = vec![node];
-        let mut next = 0;
-        while next < doomed.len() {
-            let current = doomed[next];
-            doomed.extend(
-                nodes
-                    .iter()
-                    .filter(|(_, stored)| stored.parent == Some(current))
-                    .map(|(id, _)| *id),
-            );
-            next += 1;
-        }
-        for id in doomed {
-            nodes.remove(&id);
-        }
-
-        // Renumber the surviving sibling group to contiguous positions.
-        let mut siblings: Vec<(NodeId, i32)> = nodes
+        // Renumber the vacated ordering group to contiguous positions.
+        let mut group: Vec<(ElementId, i32)> = elements
             .iter()
-            .filter(|(_, stored)| stored.parent == Some(parent))
+            .filter(|(_, stored)| {
+                stored.commission_id == commission
+                    && stored.address == removed.address
+                    && stored.band == removed.band
+            })
             .map(|(id, stored)| (*id, stored.position))
             .collect();
-        siblings.sort_by_key(|(_, position)| *position);
-        for (index, (id, _)) in siblings.into_iter().enumerate() {
-            nodes
+        group.sort_by_key(|(_, position)| *position);
+        for (index, (id, _)) in group.into_iter().enumerate() {
+            elements
                 .get_mut(&id)
-                .expect("sibling was just enumerated")
+                .expect("group member was just enumerated")
                 .position = index as i32;
+        }
+        drop(elements);
+
+        // The identity-sharing satellites, and a seat's pending offers: the mem
+        // mirror of the pg cascades off `commission_element (id)`.
+        self.0
+            .slots
+            .lock()
+            .expect("MemBackend slots mutex poisoned")
+            .remove(&element);
+        let had_seat = self
+            .0
+            .seats
+            .lock()
+            .expect("MemBackend seats mutex poisoned")
+            .remove(&element)
+            .is_some();
+        if had_seat {
+            self.0
+                .seat_invitations
+                .lock()
+                .expect("MemBackend seat_invitations mutex poisoned")
+                .retain(|_, invitation| invitation.seat != element);
         }
         Ok(())
     }
@@ -550,37 +620,26 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
     /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
-    /// Slot, the same shared parent gate ([`require_surface_parent`]) and
-    /// append order as [`add_component`](Self::add_component) plant an
-    /// ordinary [`NodeKind::Component`] leaf with the empty payload, and the
-    /// Slot itself lands as the [`StoredSlot`] satellite keyed by that
-    /// component's node id. All maps belong to this unit's staging snapshot,
-    /// so the whole batch commits or vanishes together — a refusal mid-batch
-    /// errors the unit and nothing is applied. No changelog entry (the frozen
-    /// taxonomy has no Slot variant), and no occupant exists to store.
+    /// Slot, the same shared address gate ([`require_address`]) and append
+    /// order as [`insert_element`] plant an ordinary [`ElementType::slot`]-typed
+    /// element with the empty payload, and the Slot itself lands as the
+    /// [`StoredSlot`] satellite keyed by that element's id. All maps belong to
+    /// this unit's staging snapshot, so the whole batch commits or vanishes
+    /// together — a refusal mid-batch errors the unit and nothing is applied.
+    /// No changelog entry (the frozen taxonomy has no Slot variant), and no
+    /// occupant exists to store.
     async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in new_slots {
-            {
-                let mut nodes = self
-                    .0
-                    .nodes
-                    .lock()
-                    .expect("MemBackend nodes mutex poisoned");
-                require_surface_parent(&nodes, slot.parent, slot.commission_id)?;
-                let position = next_position(&nodes, slot.parent);
-                nodes.insert(
-                    slot.id,
-                    StoredNode {
-                        commission_id: slot.commission_id,
-                        parent: Some(slot.parent),
-                        kind: NodeKind::Component,
-                        position,
-                        created_by: slot.created_by,
-                        created_at: slot.created_at,
-                        payload: Value::Object(Default::default()),
-                    },
-                );
-            }
+            let carrier = NewElement::carrying(
+                slot.id,
+                slot.commission_id,
+                slot.address.clone(),
+                ElementType::slot(),
+                slot.created_by,
+                slot.created_at,
+            );
+            insert_element(&self.0, &carrier)?;
+
             let mut slots = self
                 .0
                 .slots
@@ -613,26 +672,83 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(false)
     }
 
-    /// Remove the commission and, with it, its changelog entries — the mem
-    /// mirror of the pg `DELETE FROM commission` plus `commission_changelog`'s
-    /// `ON DELETE CASCADE` (ZMVP-66; ruling E35). Lands on the unit's staged
-    /// snapshot, so it commits or rolls back with the caller's fact gate
-    /// (ruling E17), like every write here. An absent commission is a no-op,
-    /// per the port contract. A future commission-child map added to
-    /// [`MemBackend`] must cascade here too, mirroring its pg table's cascade.
+    /// Remove the commission and, with it, its changelog entries **and its whole
+    /// composition** — the mem mirror of the pg `DELETE FROM commission` plus
+    /// every child table's `ON DELETE CASCADE` (ZMVP-66; ruling E35). Lands on
+    /// the unit's staged snapshot, so it commits or rolls back with the caller's
+    /// fact gate (ruling E17), like every write here. An absent commission is a
+    /// no-op, per the port contract.
+    ///
+    /// The composition arm (tabs, elements, surface modes, and the Slot/Seat
+    /// satellites with a seat's pending offers) is swept because without it
+    /// [`load_composition`](CommissionStore::load_composition) would answer `Some` for
+    /// a commission pg answers `None` for — the fake lying about "gone
+    /// entirely". Maps this ticket does **not** own (participants, files,
+    /// positioning) still don't cascade here; that divergence predates ZMVP-166
+    /// and belongs to whoever owns them.
+    ///
+    /// A future commission-child map added to [`MemBackend`] must cascade here
+    /// too, mirroring its pg table's cascade.
     async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
-        let mut commissions = self
-            .0
-            .commissions
+        {
+            let mut commissions = self
+                .0
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned");
+            commissions.remove(&id);
+        }
+        {
+            let mut changelog = self
+                .0
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned");
+            changelog.retain(|entry| entry.commission_id != id);
+        }
+
+        // The composition, in the order pg's cascade reaches it: a seat's
+        // offers, the satellites, the elements they rode, then the tabs and
+        // surface modes.
+        let doomed_seats: Vec<ElementId> = {
+            let mut seats = self
+                .0
+                .seats
+                .lock()
+                .expect("MemBackend seats mutex poisoned");
+            let doomed: Vec<ElementId> = seats
+                .iter()
+                .filter(|(_, seat)| seat.commission_id == id)
+                .map(|(seat_id, _)| *seat_id)
+                .collect();
+            seats.retain(|_, seat| seat.commission_id != id);
+            doomed
+        };
+        self.0
+            .seat_invitations
             .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        commissions.remove(&id);
-        let mut changelog = self
-            .0
-            .changelog
+            .expect("MemBackend seat_invitations mutex poisoned")
+            .retain(|_, invitation| !doomed_seats.contains(&invitation.seat));
+        self.0
+            .slots
             .lock()
-            .expect("MemBackend changelog mutex poisoned");
-        changelog.retain(|entry| entry.commission_id != id);
+            .expect("MemBackend slots mutex poisoned")
+            .retain(|_, slot| slot.commission_id != id);
+        self.0
+            .elements
+            .lock()
+            .expect("MemBackend elements mutex poisoned")
+            .retain(|_, element| element.commission_id != id);
+        self.0
+            .tabs
+            .lock()
+            .expect("MemBackend tabs mutex poisoned")
+            .retain(|_, tab| tab.commission_id != id);
+        self.0
+            .surface_modes
+            .lock()
+            .expect("MemBackend surface_modes mutex poisoned")
+            .retain(|(commission, _), _| *commission != id);
         Ok(())
     }
 
@@ -678,35 +794,24 @@ impl CommissionWrites for MemCommissionWrites {
         }
         Ok(())
     }
-    /// Declare a seat — the mem mirror of the pg adapter's node + satellite
-    /// pair (ZMVP-76): behind the same shared parent gate
-    /// ([`require_surface_parent`]), one [`StoredNode`] (an ordinary component
-    /// — the untyped ZMVP-72 contract) and one [`StoredSeat`] land under the
-    /// same [`NodeId`] in this unit's staging snapshot, so both halves commit
-    /// or vanish together. The occupant is never written here: every seat is
-    /// born vacant (AC3; ZMVP-79 fills it).
+    /// Declare a seat — the mem mirror of the pg adapter's element + satellite
+    /// pair (ZMVP-76): behind the same shared address gate
+    /// ([`require_address`]), one [`StoredElement`] (an ordinary
+    /// [`ElementType::seat`]-typed element) and one [`StoredSeat`] land under
+    /// the same [`ElementId`] in this unit's staging snapshot, so both halves
+    /// commit or vanish together. The occupant is never written here: every
+    /// seat is born vacant (AC3; ZMVP-79 fills it).
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
-        {
-            let mut nodes = self
-                .0
-                .nodes
-                .lock()
-                .expect("MemBackend nodes mutex poisoned");
-            require_surface_parent(&nodes, seat.parent, seat.commission_id)?;
-            let position = next_position(&nodes, seat.parent);
-            nodes.insert(
-                seat.id,
-                StoredNode {
-                    commission_id: seat.commission_id,
-                    parent: Some(seat.parent),
-                    kind: NodeKind::Component,
-                    position,
-                    created_by: seat.created_by,
-                    created_at: seat.created_at,
-                    payload: Value::Object(Default::default()),
-                },
-            );
-        }
+        let carrier = NewElement::carrying(
+            seat.id,
+            seat.commission_id,
+            seat.address.clone(),
+            ElementType::seat(),
+            seat.created_by,
+            seat.created_at,
+        );
+        insert_element(&self.0, &carrier)?;
+
         let mut seats = self
             .0
             .seats
@@ -1114,37 +1219,87 @@ impl CommissionStore for MemCommissionStore {
             .copied())
     }
 
-    /// Load and assemble the whole tree — the mem mirror of the pg one-query
-    /// read (ZMVP-71): filter the node map by commission, then share the same
-    /// [`CommissionTree::assemble`] the pg adapter uses. `None` for a
-    /// commission nobody created (no rows = no root); assembly failures on a
-    /// non-empty row set surface as errors (corruption, unreachable through
-    /// the write ports).
-    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>> {
-        let rows: Vec<NodeRow> = {
-            let nodes = self
-                .0
-                .nodes
-                .lock()
-                .expect("MemBackend nodes mutex poisoned");
-            nodes
+    /// Load the whole composition — the mem mirror of the pg three-query read
+    /// (ZMVP-166): the tab, surface-mode, and element maps each filtered by
+    /// commission and ordered the way the pg statements order them, so a caller
+    /// observes the same shape from either adapter. `None` when the commission
+    /// has **no tabs** (tabs are minted with the commission, so that means no
+    /// such commission); an empty `elements` list is the ordinary state of a
+    /// fresh one and is not absence.
+    async fn load_composition(
+        &self,
+        id: CommissionId,
+    ) -> anyhow::Result<Option<CommissionComposition>> {
+        let mut tabs: Vec<TabRow> = {
+            let stored = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
+            stored
                 .iter()
-                .filter(|(_, node)| node.commission_id == id)
-                .map(|(node_id, node)| NodeRow {
-                    id: *node_id,
-                    parent: node.parent,
-                    kind: node.kind,
-                    position: node.position,
-                    created_by: node.created_by,
-                    created_at: node.created_at,
-                    payload: node.payload.clone(),
+                .filter(|(_, tab)| tab.commission_id == id)
+                .map(|(tab_id, tab)| TabRow {
+                    id: *tab_id,
+                    tab: tab.tab.clone(),
+                    mode: tab.mode,
                 })
                 .collect()
         };
-        if rows.is_empty() {
+        if tabs.is_empty() {
             return Ok(None);
         }
-        Ok(Some(CommissionTree::assemble(rows)?))
+        tabs.sort_by(|left, right| left.tab.as_str().cmp(right.tab.as_str()));
+
+        let surface_modes = self
+            .0
+            .surface_modes
+            .lock()
+            .expect("MemBackend surface_modes mutex poisoned")
+            .iter()
+            .filter(|((commission, _), _)| *commission == id)
+            .map(|((_, surface), mode)| (surface.clone(), *mode))
+            .collect();
+
+        let mut elements: Vec<ElementRow> = {
+            let stored = self
+                .0
+                .elements
+                .lock()
+                .expect("MemBackend elements mutex poisoned");
+            stored
+                .iter()
+                .filter(|(_, element)| element.commission_id == id)
+                .map(|(element_id, element)| ElementRow {
+                    id: *element_id,
+                    address: element.address.clone(),
+                    element_type: element.element_type.clone(),
+                    mode: element.mode,
+                    band: element.band.clone(),
+                    position: element.position,
+                    created_by: element.created_by,
+                    created_at: element.created_at,
+                    payload: element.payload.clone(),
+                })
+                .collect()
+        };
+        elements.sort_by(|left, right| {
+            (
+                *left.address.tab,
+                left.address.surface.as_str(),
+                left.band.as_str(),
+                left.position,
+            )
+                .cmp(&(
+                    *right.address.tab,
+                    right.address.surface.as_str(),
+                    right.band.as_str(),
+                    right.position,
+                ))
+        });
+
+        let composition = CommissionComposition {
+            tabs,
+            surface_modes,
+            elements,
+        };
+        Ok(Some(composition))
     }
 
     /// Answers from the **persisted membership map** (ZMVP-76, Engineer
@@ -1197,7 +1352,7 @@ impl CommissionStore for MemCommissionStore {
     async fn find_pending_seat_invitation(
         &self,
         commission: CommissionId,
-        seat: NodeId,
+        seat: ElementId,
         user: UserId,
     ) -> anyhow::Result<Option<SeatInvitation>> {
         let invitations = self
@@ -1317,17 +1472,17 @@ impl MemBackend {
         MemChangelogStore(self.clone()).entries(commission).await
     }
 
-    /// The declared Slot whose component node is `node`, or `None` (inspect
+    /// The declared Slot whose carrying element is `element`, or `None` (inspect
     /// helper — the satellite read; ZMVP-77 exposes no read port yet, the
-    /// viewer-facing surface being ZMVP-75's projection).
-    pub async fn find_slot(&self, node: NodeId) -> anyhow::Result<Option<Slot>> {
+    /// viewer-facing surface being ZMVP-170's projection).
+    pub async fn find_slot(&self, element: ElementId) -> anyhow::Result<Option<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
-        Ok(slots.get(&node).map(|stored| stored.rebuild(node)))
+        Ok(slots.get(&element).map(|stored| stored.rebuild(element)))
     }
 
     /// Every Slot declared on `commission`, in declaration order (the carrying
-    /// components' node ids are UUIDv7, so sorting by node id is creation
-    /// order) — the "zero or more" count of ZMVP-77 AC2 (inspect helper).
+    /// elements' ids are UUIDv7, so sorting by element id is creation order) —
+    /// the "zero or more" count of ZMVP-77 AC2 (inspect helper).
     pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
         let mut found: Vec<Slot> = slots
@@ -1335,8 +1490,84 @@ impl MemBackend {
             .filter(|(_, stored)| stored.commission_id == commission)
             .map(|(id, stored)| stored.rebuild(*id))
             .collect();
-        found.sort_by_key(|slot| *slot.node_id);
+        found.sort_by_key(|slot| *slot.element_id);
         Ok(found)
+    }
+
+    /// The commission's tabs, in declared order (inspect helper). ZMVP-166
+    /// exposes no *route* that hands a caller a tab id — reading the composition
+    /// is ZMVP-163's `GET` — so this is how a test learns the id its element
+    /// writes must address.
+    pub async fn tabs_of(&self, commission: CommissionId) -> anyhow::Result<Vec<TabRow>> {
+        let composition = MemCommissionStore(self.clone())
+            .load_composition(commission)
+            .await?;
+        Ok(composition.map(|loaded| loaded.tabs).unwrap_or_default())
+    }
+
+    /// The commission's elements, in `(tab, surface, band, position)` order
+    /// (inspect helper — the composition read reached without wiring a store).
+    pub async fn elements_of(&self, commission: CommissionId) -> anyhow::Result<Vec<ElementRow>> {
+        let composition = MemCommissionStore(self.clone())
+            .load_composition(commission)
+            .await?;
+        Ok(composition
+            .map(|loaded| loaded.elements)
+            .unwrap_or_default())
+    }
+
+    /// Plant one extra tab row on the shared store under an arbitrary declared
+    /// name, returning its [`TabId`] (test-only seeder; the mem mirror of a raw
+    /// `INSERT INTO commission_tab`).
+    ///
+    /// Exists for **one** case: exercising an address whose tab is real and
+    /// belongs to this commission, but whose `(tab, surface)` pair the skeleton
+    /// does not declare. The placeholder skeleton has a single tab, so no
+    /// ordinary path can produce that shape — and it is precisely the shape the
+    /// pair check exists to refuse. ZMVP-171's real, multi-tab skeleton makes
+    /// this reachable without a seeder; until then, this stands in.
+    pub fn seed_tab(&self, commission: CommissionId, tab: TabName) -> TabId {
+        let id = TabId::mint();
+        let stored = StoredTab {
+            commission_id: commission,
+            tab,
+            mode: VisibilityMode::default(),
+        };
+        self.tabs
+            .lock()
+            .expect("MemBackend tabs mutex poisoned")
+            .insert(id, stored);
+        id
+    }
+
+    /// Widen (or narrow) a **tab's** mode directly on the shared store
+    /// (test-only seeder). There is no widening port yet — ZMVP-74 owns that act
+    /// — so this stands in for it, letting a test drive the three-term
+    /// projection against a composition that isn't uniformly closed. Panics if
+    /// `tab` is not a tab of this store (the test set it up wrong).
+    pub fn set_tab_mode(&self, tab: TabId, mode: VisibilityMode) {
+        self.tabs
+            .lock()
+            .expect("MemBackend tabs mutex poisoned")
+            .get_mut(&tab)
+            .expect("set_tab_mode: no such tab")
+            .mode = mode;
+    }
+
+    /// Widen (or narrow) a **surface's** mode for one commission directly on the
+    /// shared store (test-only seeder; ZMVP-74 owns the real act, as for
+    /// [`set_tab_mode`](Self::set_tab_mode)). Writing the entry is what takes the
+    /// surface off the "absent row = Total" default.
+    pub fn set_surface_mode(
+        &self,
+        commission: CommissionId,
+        surface: SurfaceName,
+        mode: VisibilityMode,
+    ) {
+        self.surface_modes
+            .lock()
+            .expect("MemBackend surface_modes mutex poisoned")
+            .insert((commission, surface), mode);
     }
 
     /// Fill a declared Seat's occupant slot directly on the shared store
@@ -1344,7 +1575,7 @@ impl MemBackend {
     /// invitation is ZMVP-79 — so this stands in for it, letting an api test
     /// exercise the "already occupied" refusal (ZMVP-78) against a truly filled
     /// seat. Panics if `seat` is not a declared seat (the test set it up wrong).
-    pub fn occupy_seat(&self, seat: NodeId, occupant: UserId) {
+    pub fn occupy_seat(&self, seat: ElementId, occupant: UserId) {
         let mut seats = self.seats.lock().expect("MemBackend seats mutex poisoned");
         seats
             .get_mut(&seat)
@@ -1371,8 +1602,8 @@ impl MemBackend {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use domain::elements::commission::{NewSlot, NodeId, NodeKind, SlotTitle, SurfaceMode};
-    use domain::ports::{CannotRemoveRoot, NodeNotFound, ParentNodeNotFound, ParentNotASurface};
+    use domain::elements::commission::{NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle};
+    use domain::ports::{ElementNotFound, UnknownSurface, UnknownTab};
     use serde_json::json;
 
     use super::*;
@@ -1811,113 +2042,107 @@ mod tests {
         );
     }
 
-    // ZMVP-71 AC1 (store layer) — a commission is born with its root surface in
-    // the same unit of work: after create+commit the loaded tree is exactly one
-    // root — kind Surface, mode Total (a birth commission is Private), the
-    // owner as creator, the commission's own creation instant — with no
-    // children. There is no write that could remove it (removal is ZMVP-73's
-    // guarded op), so "cannot be removed" holds by construction.
+    // ZMVP-166 (store layer) — a commission is born with its SKELETON TABS in
+    // the same unit of work: after create+commit the loaded composition holds
+    // exactly the declared tabs, every one born Total (the closed door), and no
+    // elements. Tab state exists explicitly from the first instant — the
+    // withheld-at-birth discipline — so absence never has to mean anything.
     #[tokio::test]
-    async fn creating_a_commission_mints_its_root_surface() {
+    async fn creating_a_commission_mints_its_skeleton_tabs() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Rooted", owner);
+        let created = commission("Composed", owner);
         let id = created.id;
-        let created_at = created.created_at;
 
         let mut uow = database.begin().await.unwrap();
         uow.commissions().create(&created).await.unwrap();
         uow.commit().await.unwrap();
 
-        let tree = backend
+        let composition = backend
             .commission_store()
-            .load_tree(id)
+            .load_composition(id)
             .await
             .unwrap()
-            .expect("a created commission always has a tree");
-        assert!(
-            matches!(
-                tree.root.kind,
-                NodeKind::Surface {
-                    mode: SurfaceMode::Total
-                }
-            ),
-            "born Private = root Total (the closed-door default)"
-        );
-        assert_eq!(tree.root.created_by, owner, "the owner is the creator");
+            .expect("a created commission always has its tabs");
+        let names: Vec<&str> = composition
+            .tabs
+            .iter()
+            .map(|tab| tab.tab.as_str())
+            .collect();
+        let declared: Vec<String> = declared_tabs()
+            .iter()
+            .map(|tab| tab.as_str().to_owned())
+            .collect();
         assert_eq!(
-            tree.root.created_at, created_at,
-            "the root is born with the commission"
+            names, declared,
+            "exactly the code-declared skeleton, nothing more"
         );
-        assert!(tree.root.children.is_empty(), "a fresh tree is just a root");
+        assert!(
+            composition
+                .tabs
+                .iter()
+                .all(|tab| tab.mode == VisibilityMode::Total),
+            "every tab is born Total — the commission's own visibility is NOT copied in"
+        );
+        assert!(
+            composition.elements.is_empty(),
+            "a fresh commission is composed of nothing"
+        );
+        assert!(
+            composition.surface_modes.is_empty(),
+            "no surface has been widened, so no override row exists"
+        );
     }
 
-    // ZMVP-71 AC2/AC3 (store layer) — surfaces grow under any existing surface:
-    // two siblings under the root keep append order, a nested surface attaches
-    // under its parent, and every new surface is born Total.
+    // ZMVP-166 — elements append within their (tab, surface, band) group: two
+    // contributions keep append order, and every element is born Total.
     #[tokio::test]
-    async fn add_surface_grows_the_tree_in_append_order() {
+    async fn add_element_appends_within_its_group() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
         let created = commission("Growing", owner);
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
-        let root = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists")
-            .root
-            .id;
+        let address = only_address(&backend, id).await;
 
-        let first = NewSurface::under(id, root, owner, Utc::now());
-        let second = NewSurface::under(id, root, owner, Utc::now());
+        let first = element_at(id, address.clone(), owner);
+        let second = element_at(id, address.clone(), owner);
         let (first_id, second_id) = (first.id, second.id);
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_surface(&first).await.unwrap();
-        uow.commissions().add_surface(&second).await.unwrap();
+        uow.commissions().add_element(&first).await.unwrap();
+        uow.commissions().add_element(&second).await.unwrap();
         uow.commit().await.unwrap();
 
-        // Nest one under the first child.
-        let nested = NewSurface::under(id, first_id, owner, Utc::now());
-        let nested_id = nested.id;
-        let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_surface(&nested).await.unwrap();
-        uow.commit().await.unwrap();
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 2);
-        assert_eq!(tree.root.children[0].id, first_id, "append order holds");
-        assert_eq!(tree.root.children[1].id, second_id);
+        let elements = backend.elements_of(id).await.unwrap();
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0].id, first_id, "append order holds");
+        assert_eq!(elements[0].position, 0);
+        assert_eq!(elements[1].id, second_id);
+        assert_eq!(elements[1].position, 1);
         assert!(
-            tree.root.children.iter().all(|child| matches!(
-                child.kind,
-                NodeKind::Surface {
-                    mode: SurfaceMode::Total
-                }
-            )),
-            "every new surface is born Total (AC3)"
+            elements
+                .iter()
+                .all(|element| element.mode == VisibilityMode::Total),
+            "every element is born Total — over-claiming has to be an explicit act"
         );
-        assert_eq!(
-            tree.root.children[0].children[0].id, nested_id,
-            "a surface grows under any existing surface, not just the root"
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.band == Band::default()),
+            "everything lands in the placeholder band (ZMVP-171 owns the vocabulary)"
         );
     }
 
-    // ZMVP-71 — the parent must exist in THIS commission's tree: a fabricated
-    // parent id and a parent belonging to another commission both fail with
-    // ParentNodeNotFound (one indistinguishable answer — no probing other
-    // trees), and neither write lands.
+    // ZMVP-166 — the tab must exist in THIS commission: a fabricated tab id and
+    // one belonging to another commission both fail with UnknownTab (one
+    // indistinguishable answer — no probing other commissions), and neither
+    // write lands. In pg the cross-commission case is additionally
+    // unrepresentable (the composite foreign key); the fake has only this gate,
+    // which is why the case is pinned here explicitly.
     #[tokio::test]
-    async fn add_surface_refuses_absent_and_foreign_parents() {
+    async fn add_element_refuses_absent_and_foreign_tabs() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
@@ -1927,113 +2152,283 @@ mod tests {
         let theirs_id = theirs.id;
         backend.create_commission(&mine).await.unwrap();
         backend.create_commission(&theirs).await.unwrap();
-        let their_root = backend
-            .commission_store()
-            .load_tree(theirs_id)
-            .await
-            .unwrap()
-            .expect("their tree exists")
-            .root
-            .id;
+        let their_address = only_address(&backend, theirs_id).await;
 
-        // A parent id that exists nowhere.
-        let fabricated = NewSurface::under(
-            mine_id,
-            NodeId::new(uuid::Uuid::now_v7()),
-            owner,
-            Utc::now(),
-        );
+        // A tab id that exists nowhere.
+        let fabricated_address = SurfaceAddress::new(TabId::mint(), only_surface());
+        let fabricated = element_at(mine_id, fabricated_address, owner);
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
-            .add_surface(&fabricated)
+            .add_element(&fabricated)
             .await
             .unwrap_err();
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "absent parent surfaces as ParentNodeNotFound, got: {err:?}"
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "absent tab surfaces as UnknownTab, got: {err:?}"
         );
         drop(uow);
 
-        // A real node — in someone else's tree.
-        let cross = NewSurface::under(mine_id, their_root, owner, Utc::now());
+        // A real tab — belonging to someone else's commission.
+        let cross = element_at(mine_id, their_address, owner);
         let mut uow = database.begin().await.unwrap();
-        let err = uow.commissions().add_surface(&cross).await.unwrap_err();
+        let err = uow.commissions().add_element(&cross).await.unwrap_err();
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "a foreign tab is indistinguishable from an absent one, got: {err:?}"
         );
         drop(uow);
 
-        let tree = backend
-            .commission_store()
-            .load_tree(mine_id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert!(tree.root.children.is_empty(), "no refused write landed");
+        assert!(
+            backend.elements_of(mine_id).await.unwrap().is_empty(),
+            "no refused write landed"
+        );
+        assert!(
+            backend.elements_of(theirs_id).await.unwrap().is_empty(),
+            "and nothing leaked into the other commission either"
+        );
     }
 
-    // ZMVP-71 (transactionality) — a staged surface is invisible until commit
+    // ZMVP-166 — the surface must be one the CODE SKELETON declares. Surfaces
+    // have no rows, so the const is the only authority, and an unrecognized name
+    // is refused rather than created (fail-closed) — the same answer the pg
+    // adapter gives, from the same const.
+    #[tokio::test]
+    async fn add_element_refuses_an_undeclared_surface() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Fail-closed", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let tab = backend.tabs_of(id).await.unwrap()[0].id;
+
+        let invented = SurfaceAddress::new(tab, "invented".parse::<SurfaceName>().unwrap());
+        let element = element_at(id, invented, owner);
+        let mut uow = database.begin().await.unwrap();
+        let err = uow.commissions().add_element(&element).await.unwrap_err();
+        assert!(
+            err.downcast_ref::<UnknownSurface>().is_some(),
+            "an undeclared surface surfaces as UnknownSurface, got: {err:?}"
+        );
+        drop(uow);
+
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "nothing landed, and no surface was invented"
+        );
+    }
+
+    // ZMVP-166 — the skeleton check is on the PAIR: a surface that is perfectly
+    // real under its own tab, addressed under a DIFFERENT tab of the same
+    // commission, is refused with UnknownSurface — the pair is not declared, and
+    // the tab itself is real, so this is not an UnknownTab. Same answer the pg
+    // adapter gives, from the same const.
+    #[tokio::test]
+    async fn add_element_refuses_a_real_surface_under_the_wrong_tab() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Wrongly addressed", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        // A real tab row of THIS commission whose name the skeleton does not
+        // pair with the surface below. (The placeholder skeleton has one tab, so
+        // the shape has to be seeded; ZMVP-171's real skeleton makes it
+        // ordinary.)
+        let other = backend.seed_tab(id, "other".parse::<TabName>().unwrap());
+        let wrongly_addressed = SurfaceAddress::new(other, only_surface());
+        let element = element_at(id, wrongly_addressed, owner);
+
+        let mut uow = database.begin().await.unwrap();
+        let err = uow.commissions().add_element(&element).await.unwrap_err();
+        assert!(
+            err.downcast_ref::<UnknownSurface>().is_some(),
+            "the (tab, surface) pair is undeclared — UnknownSurface, not UnknownTab \
+             (the tab is real), got: {err:?}"
+        );
+        drop(uow);
+
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "nothing landed under a place the skeleton never described"
+        );
+    }
+
+    // ZMVP-166 — the gate ORDER is part of the contract, because the pair check
+    // needs the tab's declared name and so cannot run first. An address that is
+    // wrong in BOTH ways answers UnknownTab; both adapters must agree, or one
+    // request would get two different answers depending on the store.
+    #[tokio::test]
+    async fn an_address_wrong_in_both_ways_answers_unknown_tab() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Doubly wrong", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+
+        let doubly_wrong =
+            SurfaceAddress::new(TabId::mint(), "invented".parse::<SurfaceName>().unwrap());
+        let element = element_at(id, doubly_wrong, owner);
+        let mut uow = database.begin().await.unwrap();
+        let err = uow.commissions().add_element(&element).await.unwrap_err();
+        assert!(
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "the tab is resolved FIRST, so a fabricated tab wins over an \
+             undeclared surface, got: {err:?}"
+        );
+        drop(uow);
+    }
+
+    // ZMVP-166 — the opaque payload round-trips: whatever JSON went in reads back
+    // as an equal value, and the core never interprets it.
+    #[tokio::test]
+    async fn an_elements_payload_round_trips_opaquely() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Opaque", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let address = only_address(&backend, id).await;
+
+        let body = json!({
+            "kind": "text",
+            "body": "Reference: 三毛猫 🐾",
+            "nested": { "list": [1, 2, 3], "flag": true, "nothing": null },
+        });
+        let payload = ElementPayload::from(body.clone());
+        let element = NewElement::contributed(
+            id,
+            address,
+            "note".parse::<ElementType>().unwrap(),
+            payload,
+            owner,
+            Utc::now(),
+        );
+        let element_id = element.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().add_element(&element).await.unwrap();
+        uow.commit().await.unwrap();
+
+        let stored = backend.elements_of(id).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, element_id);
+        assert_eq!(
+            stored[0].payload.as_value(),
+            &body,
+            "the payload is carried opaque"
+        );
+        assert_eq!(stored[0].element_type.as_str(), "note");
+    }
+
+    // ZMVP-166 (transactionality) — a staged element is invisible until commit
     // and discarded on drop, exactly like every other unit-of-work write.
     #[tokio::test]
-    async fn add_surface_commits_and_rolls_back_with_the_unit() {
+    async fn add_element_commits_and_rolls_back_with_the_unit() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
         let created = commission("Tx", owner);
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
-        let root = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists")
-            .root
-            .id;
+        let address = only_address(&backend, id).await;
 
         {
-            let surface = NewSurface::under(id, root, owner, Utc::now());
+            let element = element_at(id, address, owner);
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().add_surface(&surface).await.unwrap();
-            let shared = backend
-                .commission_store()
-                .load_tree(id)
-                .await
-                .unwrap()
-                .expect("tree exists");
+            uow.commissions().add_element(&element).await.unwrap();
             assert!(
-                shared.root.children.is_empty(),
-                "an open unit's staged surface is invisible to a shared read"
+                backend.elements_of(id).await.unwrap().is_empty(),
+                "an open unit's staged element is invisible to a shared read"
             );
-            // `uow` drops here without `commit` -> the staged surface is discarded.
+            // `uow` drops here without `commit` -> the staged element is discarded.
         }
 
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
         assert!(
-            tree.root.children.is_empty(),
-            "a dropped unit of work persists no surface"
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "a dropped unit of work persists no element"
         );
     }
 
-    // load_tree for a commission nobody created is None, mirroring `find`.
+    // ZMVP-166 — the three-term projection, read end to end off a real
+    // composition: an element that claims more than its surface allows is INERT.
     #[tokio::test]
-    async fn load_tree_answers_none_for_an_unknown_commission() {
+    async fn effective_visibility_clamps_against_the_loaded_composition() {
+        let backend = MemBackend::new();
+        let owner = user_id();
+        let created = commission("Clamped", owner);
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let address = only_address(&backend, id).await;
+
+        let element = element_at(id, address.clone(), owner);
+        let mut uow = backend.database().begin().await.unwrap();
+        uow.commissions().add_element(&element).await.unwrap();
+        uow.commit().await.unwrap();
+
+        // Everything closed at birth: the element projects Total.
+        let store = backend.commission_store();
+        let composition = store.load_composition(id).await.unwrap().expect("composed");
+        let only = &composition.elements[0];
+        assert_eq!(
+            composition.effective_visibility_of(only),
+            VisibilityMode::Total,
+            "a commission nobody widened shows nothing"
+        );
+
+        // Widen the tab and the surface wide open (ZMVP-74 owns the real act);
+        // the element's OWN mode is still Total, so it stays closed.
+        backend.set_tab_mode(address.tab, VisibilityMode::Description);
+        backend.set_surface_mode(id, address.surface.clone(), VisibilityMode::Description);
+        let composition = store.load_composition(id).await.unwrap().expect("composed");
+        let only = &composition.elements[0];
+        assert_eq!(
+            composition.effective_visibility_of(only),
+            VisibilityMode::Total,
+            "the element is the narrowest term, and it can always close further"
+        );
+
+        // Narrow the surface back down and over-claim on the element: the
+        // surface still wins, because the result is the MIN.
+        backend.set_surface_mode(id, address.surface.clone(), VisibilityMode::Presentation);
+        let mut composition = store.load_composition(id).await.unwrap().expect("composed");
+        composition.elements[0].mode = VisibilityMode::Description;
+        let only = &composition.elements[0];
+        assert_eq!(
+            composition.effective_visibility_of(only),
+            VisibilityMode::Presentation,
+            "an over-claiming element is inert, never a leak"
+        );
+    }
+
+    // load_composition for a commission nobody created is None, mirroring `find` —
+    // and distinct from a created-but-empty one, which is Some with tabs and no
+    // elements.
+    #[tokio::test]
+    async fn load_composition_answers_none_for_an_unknown_commission() {
         let backend = MemBackend::new();
         assert!(
             backend
                 .commission_store()
-                .load_tree(CommissionId::new(uuid::Uuid::now_v7()))
+                .load_composition(CommissionId::new(uuid::Uuid::now_v7()))
                 .await
                 .unwrap()
                 .is_none()
         );
+
+        let created = commission("Empty", user_id());
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let composition = backend
+            .commission_store()
+            .load_composition(id)
+            .await
+            .unwrap()
+            .expect("an existing commission composes to Some, however empty");
+        assert!(composition.elements.is_empty(), "empty is not absent");
     }
 
     // ZMVP-85 (store layer) — the direction status sets, replaces, and clears
@@ -2458,378 +2853,271 @@ mod tests {
         uow.commit().await.unwrap();
     }
 
-    /// Seeds a committed commission and returns `(its id, its root node id)`.
-    async fn rooted_commission(backend: &MemBackend, owner: UserId) -> (CommissionId, NodeId) {
-        let created = commission("Componented", owner);
+    /// Seeds a committed commission and returns `(its id, its only address)` —
+    /// the placeholder skeleton declares exactly one tab holding exactly one
+    /// surface, so "the address" is unambiguous.
+    async fn composed_commission(
+        backend: &MemBackend,
+        owner: UserId,
+    ) -> (CommissionId, SurfaceAddress) {
+        let created = commission("Composed", owner);
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
-        let root = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists")
-            .root
-            .id;
-        (id, root)
+        let address = only_address(backend, id).await;
+        (id, address)
     }
 
-    // ZMVP-72 AC1/AC2/AC3 (store layer) — a component grows as a leaf under a
-    // surface (root and non-root alike), carries kind Component (no mode is
-    // even representable), and its opaque payload reads back exactly as
-    // written — semantically byte-for-byte, nested structure, unicode, numbers,
-    // booleans, in-payload nulls and all.
-    #[tokio::test]
-    async fn add_component_grows_a_leaf_whose_payload_round_trips() {
-        let backend = MemBackend::new();
-        let database = backend.database();
-        let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
-
-        let surface = NewSurface::under(id, root, owner, Utc::now());
-        let surface_id = surface.id;
-        let payload = json!({
-            "kind": "text",
-            "body": "Reference: 三毛猫 🐾 — \"line\\break\"",
-            "revision": 3,
-            "ratio": 1.5,
-            "flags": [true, false, null],
-            "nested": { "empty": {}, "list": [] },
-        });
-        let on_root = NewComponent::under(id, root, payload.clone(), owner, Utc::now());
-        let nested = NewComponent::under(id, surface_id, json!(null), owner, Utc::now());
-        let (on_root_id, nested_id) = (on_root.id, nested.id);
-
-        let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_surface(&surface).await.unwrap();
-        uow.commissions().add_component(&on_root).await.unwrap();
-        uow.commissions().add_component(&nested).await.unwrap();
-        uow.commit().await.unwrap();
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 2);
-        assert_eq!(tree.root.children[0].id, surface_id, "append order");
-        let component = &tree.root.children[1];
-        assert_eq!(component.id, on_root_id);
-        assert!(
-            matches!(component.kind, NodeKind::Component),
-            "a component carries no mode of its own"
-        );
-        assert_eq!(component.created_by, owner);
-        assert_eq!(component.payload, payload, "the payload is opaque (AC3)");
-        assert!(component.children.is_empty());
-
-        let nested = &tree.root.children[0].children[0];
-        assert_eq!(nested.id, nested_id, "grows under a non-root surface too");
-        assert_eq!(
-            nested.payload,
-            json!(null),
-            "even a top-level JSON null round-trips verbatim"
-        );
+    /// The commission's one skeleton address (see [`composed_commission`]).
+    async fn only_address(backend: &MemBackend, commission: CommissionId) -> SurfaceAddress {
+        let tab = backend.tabs_of(commission).await.unwrap()[0].id;
+        SurfaceAddress::new(tab, only_surface())
     }
 
-    // ZMVP-72 AC1/AC2 — components are leaves: growing ANYTHING under one —
-    // another component or a surface — refuses with ParentNotASurface, and the
-    // refused write leaves nothing behind.
-    #[tokio::test]
-    async fn nothing_grows_under_a_component() {
-        let backend = MemBackend::new();
-        let database = backend.database();
-        let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
-
-        let component = NewComponent::under(id, root, json!({}), owner, Utc::now());
-        let component_id = component.id;
-        let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_component(&component).await.unwrap();
-        uow.commit().await.unwrap();
-
-        let child_component = NewComponent::under(id, component_id, json!({}), owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .add_component(&child_component)
-            .await
-            .expect_err("a component under a component refuses");
-        assert!(
-            err.downcast_ref::<ParentNotASurface>().is_some(),
-            "expected ParentNotASurface, got: {err:?}"
-        );
-        drop(uow);
-
-        let child_surface = NewSurface::under(id, component_id, owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .add_surface(&child_surface)
-            .await
-            .expect_err("a surface under a component refuses too");
-        assert!(
-            err.downcast_ref::<ParentNotASurface>().is_some(),
-            "expected ParentNotASurface, got: {err:?}"
-        );
-        drop(uow);
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 1);
-        assert!(
-            tree.root.children[0].children.is_empty(),
-            "a component never has children"
-        );
+    /// The one surface the placeholder skeleton declares.
+    fn only_surface() -> SurfaceName {
+        SKELETON[0].surfaces[0]
+            .parse::<SurfaceName>()
+            .expect("the skeleton declares valid labels")
     }
 
-    /// The `(id, position)` pairs of `parent`'s current children, in position
-    /// order — read straight off the shared node map, so a test can assert the
-    /// renumbering invariant (positions contiguous from 0) that the assembled
-    /// tree deliberately hides.
-    fn sibling_positions(backend: &MemBackend, parent: NodeId) -> Vec<(NodeId, i32)> {
-        let nodes = backend.nodes.lock().expect("nodes mutex");
-        let mut pairs: Vec<(NodeId, i32)> = nodes
+    /// An untyped element at `address` — the shape most of these tests only need
+    /// to exist, so its type tag and payload carry no meaning.
+    fn element_at(commission: CommissionId, address: SurfaceAddress, owner: UserId) -> NewElement {
+        NewElement::contributed(
+            commission,
+            address,
+            "note".parse::<ElementType>().unwrap(),
+            ElementPayload::default(),
+            owner,
+            Utc::now(),
+        )
+    }
+
+    /// The `(id, position)` pairs of one ordering group, in position order —
+    /// read straight off the shared element map, so a test can assert the
+    /// renumbering invariant (positions contiguous from 0).
+    fn group_positions(
+        backend: &MemBackend,
+        commission: CommissionId,
+        address: &SurfaceAddress,
+    ) -> Vec<(ElementId, i32)> {
+        let elements = backend.elements.lock().expect("elements mutex");
+        let mut pairs: Vec<(ElementId, i32)> = elements
             .iter()
-            .filter(|(_, node)| node.parent == Some(parent))
-            .map(|(id, node)| (*id, node.position))
+            .filter(|(_, element)| {
+                element.commission_id == commission && element.address == *address
+            })
+            .map(|(id, element)| (*id, element.position))
             .collect();
         pairs.sort_by_key(|(_, position)| *position);
         pairs
     }
 
-    /// Runs `remove_node` in its own committed unit of work.
-    async fn remove_node(
+    /// Runs `remove_element` in its own committed unit of work.
+    async fn remove_element(
         database: &std::sync::Arc<dyn domain::ports::Database>,
         commission: CommissionId,
-        node: NodeId,
+        element: ElementId,
     ) -> anyhow::Result<()> {
         let mut uow = database.begin().await?;
-        uow.commissions().remove_node(commission, node).await?;
+        uow.commissions()
+            .remove_element(commission, element)
+            .await?;
         uow.commit().await
     }
 
-    // ZMVP-73 AC1 (store layer) — removing a mid-tree surface takes its ENTIRE
-    // subtree (a component and a nested surface with its own component), leaves
-    // the other siblings intact, and renumbers the remaining sibling group so
-    // positions stay contiguous, in the same transaction.
+    // ZMVP-166 — removing an element takes exactly that element (there is no
+    // subtree to take: elements are leaves, always) and renumbers the remaining
+    // ordering group so positions stay contiguous from 0, in the same
+    // transaction.
     #[tokio::test]
-    async fn remove_surface_takes_its_whole_subtree_and_renumbers() {
+    async fn remove_element_takes_only_it_and_renumbers_the_group() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        // root -> [first, doomed, last]; under doomed: a component and a
-        // surface holding another component.
-        let first = NewSurface::under(id, root, owner, Utc::now());
-        let doomed = NewSurface::under(id, root, owner, Utc::now());
-        let last = NewSurface::under(id, root, owner, Utc::now());
-        let in_doomed =
-            NewComponent::under(id, doomed.id, json!({"kind": "text"}), owner, Utc::now());
-        let nested = NewSurface::under(id, doomed.id, owner, Utc::now());
-        let in_nested = NewComponent::under(id, nested.id, json!({}), owner, Utc::now());
+        let first = element_at(id, address.clone(), owner);
+        let doomed = element_at(id, address.clone(), owner);
+        let last = element_at(id, address.clone(), owner);
         let (first_id, doomed_id, last_id) = (first.id, doomed.id, last.id);
-
         let mut uow = database.begin().await.unwrap();
-        {
-            let mut commissions = uow.commissions();
-            commissions.add_surface(&first).await.unwrap();
-            commissions.add_surface(&doomed).await.unwrap();
-            commissions.add_surface(&last).await.unwrap();
-            commissions.add_component(&in_doomed).await.unwrap();
-            commissions.add_surface(&nested).await.unwrap();
-            commissions.add_component(&in_nested).await.unwrap();
+        for element in [&first, &doomed, &last] {
+            uow.commissions().add_element(element).await.unwrap();
         }
         uow.commit().await.unwrap();
-
-        remove_node(&database, id, doomed_id).await.unwrap();
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
         assert_eq!(
-            tree.root.children.len(),
-            2,
-            "the surface and its whole subtree went together"
+            group_positions(&backend, id, &address),
+            vec![(first_id, 0), (doomed_id, 1), (last_id, 2)],
         );
-        assert_eq!(tree.root.children[0].id, first_id, "sibling order holds");
-        assert_eq!(tree.root.children[1].id, last_id);
-        assert!(
-            tree.root.children.iter().all(|c| c.children.is_empty()),
-            "nothing of the subtree survives"
-        );
+
+        remove_element(&database, id, doomed_id).await.unwrap();
+
         assert_eq!(
-            sibling_positions(&backend, root),
+            group_positions(&backend, id, &address),
             vec![(first_id, 0), (last_id, 1)],
-            "the remaining siblings renumber to contiguous positions"
+            "the survivors renumber contiguously from 0, order preserved"
         );
     }
 
-    // ZMVP-73 AC2 (store layer) — removing a component removes just that leaf;
-    // its siblings survive in order with contiguous positions.
+    // ZMVP-166 — the target must exist in THIS commission: a fabricated element
+    // id and one belonging to another commission both fail with ElementNotFound
+    // (one indistinguishable answer — removal probes reveal nothing about other
+    // commissions), and neither removal lands.
     #[tokio::test]
-    async fn remove_component_removes_only_the_leaf() {
+    async fn remove_refuses_absent_and_foreign_elements() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (mine, my_address) = composed_commission(&backend, owner).await;
+        let theirs = commission("Theirs", user_id());
+        let theirs_id = theirs.id;
+        backend.create_commission(&theirs).await.unwrap();
+        let their_address = only_address(&backend, theirs_id).await;
 
-        let doomed = NewComponent::under(id, root, json!({"kind": "text"}), owner, Utc::now());
-        let surface = NewSurface::under(id, root, owner, Utc::now());
-        let kept = NewComponent::under(id, root, json!({}), owner, Utc::now());
-        let (doomed_id, surface_id, kept_id) = (doomed.id, surface.id, kept.id);
-
+        let ours = element_at(mine, my_address, owner);
+        let theirs_element = element_at(theirs_id, their_address, user_id());
+        let (our_id, their_id) = (ours.id, theirs_element.id);
         let mut uow = database.begin().await.unwrap();
-        {
-            let mut commissions = uow.commissions();
-            commissions.add_component(&doomed).await.unwrap();
-            commissions.add_surface(&surface).await.unwrap();
-            commissions.add_component(&kept).await.unwrap();
-        }
+        uow.commissions().add_element(&ours).await.unwrap();
+        uow.commissions()
+            .add_element(&theirs_element)
+            .await
+            .unwrap();
         uow.commit().await.unwrap();
 
-        remove_node(&database, id, doomed_id).await.unwrap();
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
+        let err = remove_element(&database, mine, ElementId::new(uuid::Uuid::now_v7()))
             .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 2, "only the one leaf went");
-        assert_eq!(tree.root.children[0].id, surface_id, "order holds");
-        assert_eq!(tree.root.children[1].id, kept_id);
+            .unwrap_err();
+        assert!(
+            err.downcast_ref::<ElementNotFound>().is_some(),
+            "an absent element surfaces as ElementNotFound, got: {err:?}"
+        );
+
+        let err = remove_element(&database, mine, their_id).await.unwrap_err();
+        assert!(
+            err.downcast_ref::<ElementNotFound>().is_some(),
+            "a foreign element is indistinguishable from an absent one, got: {err:?}"
+        );
+
         assert_eq!(
-            sibling_positions(&backend, root),
-            vec![(surface_id, 0), (kept_id, 1)],
-            "positions renumber contiguously"
+            backend.elements_of(mine).await.unwrap()[0].id,
+            our_id,
+            "our element survives"
+        );
+        assert_eq!(
+            backend.elements_of(theirs_id).await.unwrap()[0].id,
+            their_id,
+            "and so, untouched, does theirs"
         );
     }
 
-    // ZMVP-73 AC3 (store layer) — the root surface refuses removal with
-    // CannotRemoveRoot, and the whole tree (root and children) is untouched.
+    // ZMVP-166 / ruling E35 — deleting the commission sweeps its WHOLE
+    // composition, so `load_composition` answers None afterwards exactly as pg
+    // does. Without this the fake would answer Some for a commission that is
+    // "gone entirely" — an adapter lie the api suites (which all run on the
+    // fake) would inherit.
     #[tokio::test]
-    async fn removing_the_root_is_refused() {
+    async fn deleting_the_commission_sweeps_its_whole_composition() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        let child = NewSurface::under(id, root, owner, Utc::now());
-        let child_id = child.id;
+        let element = element_at(id, address.clone(), owner);
+        let seat = NewSeat::contributed_at(
+            id,
+            address.clone(),
+            "Creator".parse::<SeatKind>().unwrap(),
+            None,
+            None,
+            owner,
+            Utc::now(),
+        );
+        let seat_id = seat.id;
+        let slot = NewSlot::contributed_at(
+            id,
+            address.clone(),
+            "The knight".parse::<SlotTitle>().unwrap(),
+            None,
+            owner,
+            Utc::now(),
+        );
+        let slot_id = slot.id;
+        let invited = user_id();
+        let invitation = SeatInvitation::issue(id, seat_id, invited, owner, Utc::now());
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_surface(&child).await.unwrap();
+        uow.commissions().add_element(&element).await.unwrap();
+        uow.commissions().declare_seat(&seat).await.unwrap();
+        uow.commissions().declare_slots(&[slot]).await.unwrap();
+        uow.commissions()
+            .create_seat_invitation(&invitation)
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        backend.set_surface_mode(id, address.surface, VisibilityMode::Description);
+
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().delete(id).await.unwrap();
         uow.commit().await.unwrap();
 
-        let err = remove_node(&database, id, root)
-            .await
-            .expect_err("the root refuses removal");
+        let store = backend.commission_store();
         assert!(
-            err.downcast_ref::<CannotRemoveRoot>().is_some(),
-            "expected CannotRemoveRoot, got: {err:?}"
+            store.load_composition(id).await.unwrap().is_none(),
+            "a deleted commission composes to None, exactly as in pg"
         );
-
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.id, root, "the root survives");
-        assert_eq!(tree.root.children[0].id, child_id, "so does its subtree");
-    }
-
-    // ZMVP-73 — the target must exist in THIS commission's tree: a fabricated
-    // node id and a node belonging to another commission both refuse with
-    // NodeNotFound (one indistinguishable answer). Someone else's ROOT through
-    // my commission id is also NodeNotFound — never CannotRemoveRoot, which
-    // would leak what a foreign node is — and nothing is removed anywhere.
-    #[tokio::test]
-    async fn remove_refuses_absent_and_foreign_nodes() {
-        let backend = MemBackend::new();
-        let database = backend.database();
-        let owner = user_id();
-        let (mine, _) = rooted_commission(&backend, owner).await;
-        let (theirs, their_root) = rooted_commission(&backend, user_id()).await;
-
-        let err = remove_node(&database, mine, NodeId::new(uuid::Uuid::now_v7()))
-            .await
-            .expect_err("a fabricated node refuses");
+        assert!(store.seats(id).await.unwrap().is_empty());
+        assert!(backend.slots_of(id).await.unwrap().is_empty());
+        assert!(backend.find_slot(slot_id).await.unwrap().is_none());
         assert!(
-            err.downcast_ref::<NodeNotFound>().is_some(),
-            "expected NodeNotFound, got: {err:?}"
-        );
-
-        let err = remove_node(&database, mine, their_root)
-            .await
-            .expect_err("a foreign node refuses");
-        assert!(
-            err.downcast_ref::<NodeNotFound>().is_some(),
-            "a foreign root is indistinguishable from an absent node, got: {err:?}"
-        );
-
-        assert!(
-            backend
-                .commission_store()
-                .load_tree(theirs)
+            store
+                .find_pending_seat_invitation(id, seat_id, invited)
                 .await
                 .unwrap()
-                .is_some(),
-            "the foreign tree is untouched"
+                .is_none(),
+            "a deleted commission's seat takes its pending offers with it"
         );
     }
 
-    // ZMVP-73 (transactionality) — a staged removal is invisible until commit
-    // and discarded on drop, exactly like every other unit-of-work write.
+    // ZMVP-166 (transactionality) — a staged removal is invisible until commit
+    // and discarded on drop, like every other unit-of-work write.
     #[tokio::test]
     async fn remove_commits_and_rolls_back_with_the_unit() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        let surface = NewSurface::under(id, root, owner, Utc::now());
-        let surface_id = surface.id;
+        let element = element_at(id, address, owner);
+        let element_id = element.id;
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_surface(&surface).await.unwrap();
+        uow.commissions().add_element(&element).await.unwrap();
         uow.commit().await.unwrap();
 
         {
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().remove_node(id, surface_id).await.unwrap();
-            let shared = backend
-                .commission_store()
-                .load_tree(id)
+            uow.commissions()
+                .remove_element(id, element_id)
                 .await
-                .unwrap()
-                .expect("tree exists");
+                .unwrap();
             assert_eq!(
-                shared.root.children.len(),
+                backend.elements_of(id).await.unwrap().len(),
                 1,
                 "an open unit's staged removal is invisible to a shared read"
             );
-            // `uow` drops here without `commit` -> the staged removal is discarded.
+            // `uow` drops here without `commit` -> the removal is discarded.
         }
 
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
         assert_eq!(
-            tree.root.children.len(),
+            backend.elements_of(id).await.unwrap().len(),
             1,
             "a dropped unit of work removes nothing"
+        );
+
+        remove_element(&database, id, element_id).await.unwrap();
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "a committed removal is visible"
         );
     }
 
@@ -2905,20 +3193,20 @@ mod tests {
         );
     }
 
-    // ZMVP-76 AC1/AC2/AC3 (store layer) — declaring a seat grows ONE component
-    // node in the tree AND its interpreted satellite sharing the id, atomically
-    // in the unit: kind + requirements read back, the seat is born vacant, and
-    // kinds repeat freely across a commission's seats.
+    // ZMVP-76 AC1/AC2/AC3 (store layer) — declaring a seat contributes ONE
+    // element AND its interpreted satellite sharing the id, atomically in the
+    // unit: kind + requirements read back, the seat is born vacant, and kinds
+    // repeat freely across a commission's seats.
     #[tokio::test]
-    async fn declare_seat_lands_a_node_and_its_satellite_together() {
+    async fn declare_seat_lands_an_element_and_its_satellite_together() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        let first = NewSeat::under(
+        let first = NewSeat::contributed_at(
             id,
-            root,
+            address.clone(),
             "Creator".parse::<SeatKind>().unwrap(),
             Some("Two refs, please.".parse::<SeatPrompt>().unwrap()),
             Some("https://forms.example/apply".parse::<SeatLink>().unwrap()),
@@ -2926,9 +3214,9 @@ mod tests {
             Utc::now(),
         );
         // A second seat of the SAME kind — kinds repeat freely (AC1).
-        let second = NewSeat::under(
+        let second = NewSeat::contributed_at(
             id,
-            root,
+            address.clone(),
             "Creator".parse::<SeatKind>().unwrap(),
             None,
             None,
@@ -2942,22 +3230,22 @@ mod tests {
         uow.commissions().declare_seat(&second).await.unwrap();
         uow.commit().await.unwrap();
 
-        // The tree half: two component nodes under the root, in append order.
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 2);
-        assert_eq!(tree.root.children[0].id, first_id, "append order");
-        assert_eq!(tree.root.children[1].id, second_id);
+        // The composition half: two elements at the address, in append order.
+        let elements = backend.elements_of(id).await.unwrap();
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0].id, first_id, "append order");
+        assert_eq!(elements[1].id, second_id);
         assert!(
-            tree.root
-                .children
+            elements
                 .iter()
-                .all(|child| matches!(child.kind, NodeKind::Component)),
-            "a seat's node is an ordinary component (the untyped v1 contract)"
+                .all(|element| element.element_type == ElementType::seat()),
+            "a seat's element carries the seat type tag"
+        );
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.mode == VisibilityMode::Total),
+            "a seat's element is born Total like any other"
         );
 
         // The interpreted half: the satellite rows, keyed by the same ids.
@@ -2996,19 +3284,19 @@ mod tests {
     }
 
     // ZMVP-76 (transactionality) — a dropped unit discards BOTH halves of a
-    // staged seat: neither the node nor the satellite survives, so a
+    // staged seat: neither the element nor the satellite survives, so a
     // half-declared seat is unrepresentable.
     #[tokio::test]
     async fn a_dropped_unit_discards_both_halves_of_a_seat() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
         {
-            let seat = NewSeat::under(
+            let seat = NewSeat::contributed_at(
                 id,
-                root,
+                address,
                 "Client".parse::<SeatKind>().unwrap(),
                 None,
                 None,
@@ -3020,13 +3308,10 @@ mod tests {
             // drops without commit -> rollback
         }
 
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert!(tree.root.children.is_empty(), "no node landed");
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "no element landed"
+        );
         assert!(
             backend
                 .commission_store()
@@ -3038,74 +3323,73 @@ mod tests {
         );
     }
 
-    // ZMVP-76 — a seat walks the same parent gate as every tree-growing write:
-    // absent/foreign parents refuse with ParentNodeNotFound, a component
-    // parent with ParentNotASurface, and nothing lands either time.
+    // ZMVP-76/166 — a seat walks the same address gate as every element write:
+    // an absent/foreign tab refuses with UnknownTab, an undeclared surface with
+    // UnknownSurface, and NEITHER half lands either time.
     #[tokio::test]
-    async fn declare_seat_walks_the_shared_parent_gate() {
+    async fn declare_seat_walks_the_shared_address_gate() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
-        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+        let (id, address) = composed_commission(&backend, owner).await;
+        let theirs = commission("Theirs", user_id());
+        let theirs_id = theirs.id;
+        backend.create_commission(&theirs).await.unwrap();
+        let their_address = only_address(&backend, theirs_id).await;
 
-        let kind = || "Creator".parse::<SeatKind>().unwrap();
-        // Absent parent.
-        let fabricated = NewSeat::under(
-            id,
-            NodeId::new(uuid::Uuid::now_v7()),
-            kind(),
-            None,
-            None,
-            owner,
-            Utc::now(),
-        );
+        let seat_at = |address: SurfaceAddress| {
+            NewSeat::contributed_at(
+                id,
+                address,
+                "Creator".parse::<SeatKind>().unwrap(),
+                None,
+                None,
+                owner,
+                Utc::now(),
+            )
+        };
+
+        // A tab id that exists nowhere.
+        let fabricated = seat_at(SurfaceAddress::new(TabId::mint(), only_surface()));
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
             .declare_seat(&fabricated)
             .await
-            .expect_err("absent parent refuses");
+            .unwrap_err();
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "expected ParentNodeNotFound, got: {err:?}"
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "absent tab surfaces as UnknownTab, got: {err:?}"
         );
         drop(uow);
 
-        // Foreign parent — indistinguishable from absent.
-        let cross = NewSeat::under(id, their_root, kind(), None, None, owner, Utc::now());
+        // A real tab — belonging to someone else's commission.
+        let cross = seat_at(their_address);
         let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .declare_seat(&cross)
-            .await
-            .expect_err("foreign parent refuses");
+        let err = uow.commissions().declare_seat(&cross).await.unwrap_err();
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "a foreign tab is indistinguishable from an absent one, got: {err:?}"
         );
         drop(uow);
 
-        // A component parent — seats live under surfaces, like every leaf.
-        let component = NewComponent::under(id, root, json!({}), owner, Utc::now());
-        let component_id = component.id;
+        // A surface the skeleton does not declare.
+        let invented = seat_at(SurfaceAddress::new(
+            address.tab,
+            "invented".parse::<SurfaceName>().unwrap(),
+        ));
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_component(&component).await.unwrap();
-        uow.commit().await.unwrap();
-        let under_component =
-            NewSeat::under(id, component_id, kind(), None, None, owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .declare_seat(&under_component)
-            .await
-            .expect_err("a component parent refuses");
+        let err = uow.commissions().declare_seat(&invented).await.unwrap_err();
         assert!(
-            err.downcast_ref::<ParentNotASurface>().is_some(),
-            "expected ParentNotASurface, got: {err:?}"
+            err.downcast_ref::<UnknownSurface>().is_some(),
+            "an undeclared surface surfaces as UnknownSurface, got: {err:?}"
         );
         drop(uow);
 
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "no refused declaration left an element behind"
+        );
         assert!(
             backend
                 .commission_store()
@@ -3113,268 +3397,248 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty(),
-            "no refused seat landed"
+            "nor a satellite"
         );
     }
 
-    // ZMVP-72 — the component's parent must exist in THIS commission's tree: a
-    // fabricated parent id and a surface belonging to another commission both
-    // fail with ParentNodeNotFound (one indistinguishable answer), never
-    // ParentNotASurface (which would leak that a foreign node exists and is a
-    // component or not).
+    // ZMVP-166 — removing a seat's element sweeps its satellite AND its pending
+    // invitations, the mem mirror of the pg `ON DELETE CASCADE` chain off
+    // `commission_element (id)`. This is what keeps "one identity, two rows"
+    // honest through a removal.
     #[tokio::test]
-    async fn add_component_refuses_absent_and_foreign_parents() {
+    async fn removing_a_seats_element_sweeps_its_satellite_and_offers() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (mine, _) = rooted_commission(&backend, owner).await;
-        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        let fabricated = NewComponent::under(
-            mine,
-            NodeId::new(uuid::Uuid::now_v7()),
-            json!({}),
+        let seat = NewSeat::contributed_at(
+            id,
+            address,
+            "Creator".parse::<SeatKind>().unwrap(),
+            None,
+            None,
             owner,
             Utc::now(),
         );
+        let seat_id = seat.id;
+        let invited = user_id();
+        let invitation = SeatInvitation::issue(id, seat_id, invited, owner, Utc::now());
         let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .add_component(&fabricated)
+        uow.commissions().declare_seat(&seat).await.unwrap();
+        uow.commissions()
+            .create_seat_invitation(&invitation)
             .await
-            .expect_err("absent parent refuses");
+            .unwrap();
+        uow.commit().await.unwrap();
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "expected ParentNodeNotFound, got: {err:?}"
+            backend
+                .commission_store()
+                .find_pending_seat_invitation(id, seat_id, invited)
+                .await
+                .unwrap()
+                .is_some(),
+            "the offer stands before the removal"
         );
-        drop(uow);
 
-        let cross = NewComponent::under(mine, their_root, json!({}), owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .add_component(&cross)
-            .await
-            .expect_err("foreign parent refuses");
+        remove_element(&database, id, seat_id).await.unwrap();
+
         assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "the element is gone"
         );
-        drop(uow);
-
-        let tree = backend
-            .commission_store()
-            .load_tree(mine)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert!(tree.root.children.is_empty(), "no refused write landed");
+        assert!(
+            backend
+                .commission_store()
+                .seats(id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the satellite cascaded away with it"
+        );
+        assert!(
+            backend
+                .commission_store()
+                .find_pending_seat_invitation(id, seat_id, invited)
+                .await
+                .unwrap()
+                .is_none(),
+            "and so did the pending offer on that seat"
+        );
     }
 
-    // ZMVP-77 AC1/AC2 (store layer) — declaring a Slot lands an ordinary
-    // component leaf (empty payload; the substance is the satellite's) PLUS the
-    // satellite carrying the title and optional notes, keyed by the node id. A
-    // commission holds zero, then several, Slots; nothing about an occupant is
-    // representable anywhere (fill is the Character epic's).
+    // ZMVP-77 AC1 (store layer) — declaring Slots contributes one element per
+    // Slot AND its title/notes satellite sharing the id, all in one unit: the
+    // batch lands together, in request order, and nothing anywhere can name an
+    // occupant.
     #[tokio::test]
-    async fn declare_slot_creates_a_leaf_with_its_satellite() {
+    async fn declare_slot_creates_an_element_with_its_satellite() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        assert!(
-            backend.slots_of(id).await.unwrap().is_empty(),
-            "a fresh commission holds zero Slots (a valid state)"
-        );
-
-        let noted = NewSlot::under(
+        let knight = NewSlot::contributed_at(
             id,
-            root,
+            address.clone(),
             "The knight".parse::<SlotTitle>().unwrap(),
-            Some("full plate, no cape".to_string()),
+            Some("plate, not chain".to_string()),
             owner,
             Utc::now(),
         );
-        let bare = NewSlot::under(
+        let mage = NewSlot::contributed_at(
             id,
-            root,
+            address.clone(),
             "The mage".parse::<SlotTitle>().unwrap(),
             None,
             owner,
             Utc::now(),
         );
-        let (noted_id, bare_id) = (noted.id, bare.id);
+        let (knight_id, mage_id) = (knight.id, mage.id);
 
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .declare_slots(&[noted, bare])
+            .declare_slots(&[knight, mage])
             .await
             .unwrap();
         uow.commit().await.unwrap();
 
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
-        assert_eq!(tree.root.children.len(), 2);
-        assert_eq!(tree.root.children[0].id, noted_id, "append order holds");
-        assert_eq!(tree.root.children[1].id, bare_id);
-        for child in &tree.root.children {
-            assert!(
-                matches!(child.kind, NodeKind::Component),
-                "each Slot's carrying node is an ordinary component leaf"
-            );
-            assert_eq!(child.payload, json!({}), "the substance is the satellite's");
-            assert!(child.children.is_empty());
-        }
-
-        let noted_slot = backend
-            .find_slot(noted_id)
-            .await
-            .unwrap()
-            .expect("satellite exists");
-        assert_eq!(noted_slot.title.as_str(), "The knight");
-        assert_eq!(noted_slot.notes.as_deref(), Some("full plate, no cape"));
-        assert_eq!(noted_slot.commission_id, id);
-        let bare_slot = backend
-            .find_slot(bare_id)
-            .await
-            .unwrap()
-            .expect("satellite exists");
-        assert!(bare_slot.notes.is_none(), "omitted notes stay absent");
-
-        assert_eq!(
-            backend.slots_of(id).await.unwrap().len(),
-            2,
-            "the commission holds two declared Slots (zero or more, AC2)"
+        let elements = backend.elements_of(id).await.unwrap();
+        assert_eq!(elements.len(), 2, "one element per Slot");
+        assert_eq!(elements[0].id, knight_id, "request order is append order");
+        assert_eq!(elements[1].id, mage_id);
+        assert!(
+            elements
+                .iter()
+                .all(|element| element.element_type == ElementType::slot()),
+            "a Slot's element carries the slot type tag"
         );
+        assert!(
+            elements
+                .iter()
+                .all(|element| *element.payload.as_value() == json!({})),
+            "the carrying element's payload is empty — the substance is the satellite's"
+        );
+
+        let slots = backend.slots_of(id).await.unwrap();
+        assert_eq!(slots.len(), 2, "zero or more Slots (AC2)");
+        let knight = slots.iter().find(|s| s.element_id == knight_id).unwrap();
+        assert_eq!(knight.title.as_str(), "The knight");
+        assert_eq!(knight.notes.as_deref(), Some("plate, not chain"));
+        let mage = slots.iter().find(|s| s.element_id == mage_id).unwrap();
+        assert_eq!(mage.title.as_str(), "The mage");
+        assert!(mage.notes.is_none(), "notes are optional");
     }
 
-    // ZMVP-77 — the parent gates match every other tree write: absent and
-    // foreign parents are one indistinguishable ParentNodeNotFound, a component
-    // parent is ParentNotASurface, and no refused declaration leaves a node or
-    // a satellite behind.
+    // ZMVP-77/166 — Slots walk the same address gate, and the batch is
+    // ALL-OR-NOTHING: a refusal partway through leaves nothing behind, because
+    // the whole batch rides one unit of work.
     #[tokio::test]
-    async fn declare_slot_refuses_bad_parents() {
+    async fn declare_slot_refuses_bad_addresses_and_takes_the_batch_with_it() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (mine, my_root) = rooted_commission(&backend, owner).await;
-        let (_, their_root) = rooted_commission(&backend, user_id()).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
-        let component = NewComponent::under(mine, my_root, json!({}), owner, Utc::now());
-        let component_id = component.id;
-        let mut uow = database.begin().await.unwrap();
-        uow.commissions().add_component(&component).await.unwrap();
-        uow.commit().await.unwrap();
+        let slot_at = |address: SurfaceAddress, title: &str| {
+            NewSlot::contributed_at(
+                id,
+                address,
+                title.parse::<SlotTitle>().unwrap(),
+                None,
+                owner,
+                Utc::now(),
+            )
+        };
 
-        let title = || "The knight".parse::<SlotTitle>().unwrap();
-
-        let fabricated = NewSlot::under(
-            mine,
-            NodeId::new(uuid::Uuid::now_v7()),
-            title(),
-            None,
-            owner,
-            Utc::now(),
-        );
+        // The first Slot is fine; the second names a tab that exists nowhere.
+        let good = slot_at(address.clone(), "Fine");
+        let bad = slot_at(SurfaceAddress::new(TabId::mint(), only_surface()), "Doomed");
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
-            .declare_slots(&[fabricated])
-            .await
-            .expect_err("absent parent refuses");
-        assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "expected ParentNodeNotFound, got: {err:?}"
-        );
-        drop(uow);
-
-        let cross = NewSlot::under(mine, their_root, title(), None, owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .declare_slots(&[cross])
-            .await
-            .expect_err("foreign parent refuses");
-        assert!(
-            err.downcast_ref::<ParentNodeNotFound>().is_some(),
-            "a foreign-tree parent is indistinguishable from an absent one, got: {err:?}"
-        );
-        drop(uow);
-
-        let nested = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        let err = uow
-            .commissions()
-            .declare_slots(&[nested])
-            .await
-            .expect_err("component parent refuses");
-        assert!(
-            err.downcast_ref::<ParentNotASurface>().is_some(),
-            "expected ParentNotASurface, got: {err:?}"
-        );
-        drop(uow);
-
-        // The batch is all-or-nothing (PR #108 ruling): a refused Slot
-        // mid-batch takes the valid ones down with it.
-        let good = NewSlot::under(mine, my_root, title(), None, owner, Utc::now());
-        let bad = NewSlot::under(mine, component_id, title(), None, owner, Utc::now());
-        let mut uow = database.begin().await.unwrap();
-        uow.commissions()
             .declare_slots(&[good, bad])
             .await
-            .expect_err("a refused Slot fails the whole batch");
-        drop(uow);
-
+            .unwrap_err();
         assert!(
-            backend.slots_of(mine).await.unwrap().is_empty(),
-            "no refused declaration — including a batch's valid half — left a satellite behind"
+            err.downcast_ref::<UnknownTab>().is_some(),
+            "absent tab surfaces as UnknownTab, got: {err:?}"
         );
+        drop(uow);
+        assert!(
+            backend.elements_of(id).await.unwrap().is_empty(),
+            "the EARLIER Slot of the aborted batch left nothing behind (all-or-nothing)"
+        );
+        assert!(backend.slots_of(id).await.unwrap().is_empty());
+
+        // An undeclared surface refuses the same way.
+        let invented = slot_at(
+            SurfaceAddress::new(address.tab, "invented".parse::<SurfaceName>().unwrap()),
+            "Invented",
+        );
+        let mut uow = database.begin().await.unwrap();
+        let err = uow
+            .commissions()
+            .declare_slots(&[invented])
+            .await
+            .unwrap_err();
+        assert!(
+            err.downcast_ref::<UnknownSurface>().is_some(),
+            "an undeclared surface surfaces as UnknownSurface, got: {err:?}"
+        );
+        drop(uow);
+        assert!(backend.slots_of(id).await.unwrap().is_empty());
     }
 
-    // ZMVP-77 (transactionality) — the node and its satellite land (or vanish)
-    // together: staged writes are invisible until commit and a dropped unit
-    // discards both halves.
+    // ZMVP-77 (transactionality) — a dropped unit discards both halves of a
+    // staged Slot, and removing its element cascades the satellite away.
     #[tokio::test]
     async fn declare_slot_commits_and_rolls_back_with_the_unit() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, root) = rooted_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner).await;
 
+        let staged = NewSlot::contributed_at(
+            id,
+            address.clone(),
+            "Uncommitted".parse::<SlotTitle>().unwrap(),
+            None,
+            owner,
+            Utc::now(),
+        );
+        let staged_id = staged.id;
         {
-            let slot = NewSlot::under(
-                id,
-                root,
-                "Never lands".parse::<SlotTitle>().unwrap(),
-                None,
-                owner,
-                Utc::now(),
-            );
-            let slot_id = slot.id;
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().declare_slots(&[slot]).await.unwrap();
+            uow.commissions().declare_slots(&[staged]).await.unwrap();
             assert!(
-                backend.find_slot(slot_id).await.unwrap().is_none(),
+                backend.find_slot(staged_id).await.unwrap().is_none(),
                 "an open unit's staged Slot is invisible to a shared read"
             );
-            // `uow` drops here without `commit` -> both halves are discarded.
+            // drops without commit -> rollback
         }
+        assert!(backend.find_slot(staged_id).await.unwrap().is_none());
+        assert!(backend.elements_of(id).await.unwrap().is_empty());
 
-        assert!(backend.slots_of(id).await.unwrap().is_empty());
-        let tree = backend
-            .commission_store()
-            .load_tree(id)
-            .await
-            .unwrap()
-            .expect("tree exists");
+        // Committed, then removed: the satellite leaves with its element.
+        let kept = NewSlot::contributed_at(
+            id,
+            address,
+            "Kept".parse::<SlotTitle>().unwrap(),
+            None,
+            owner,
+            Utc::now(),
+        );
+        let kept_id = kept.id;
+        let mut uow = database.begin().await.unwrap();
+        uow.commissions().declare_slots(&[kept]).await.unwrap();
+        uow.commit().await.unwrap();
+        assert!(backend.find_slot(kept_id).await.unwrap().is_some());
+
+        remove_element(&database, id, kept_id).await.unwrap();
         assert!(
-            tree.root.children.is_empty(),
-            "a dropped unit of work persists neither the node nor the satellite"
+            backend.find_slot(kept_id).await.unwrap().is_none(),
+            "the satellite cascaded away with its element"
         );
     }
 }

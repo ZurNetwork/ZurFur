@@ -7,11 +7,12 @@
 //! Seat is structural **only**: Role keeps authority, aliases keep display
 //! (DD Decision 3) — so [`SeatKind`] is an *open* vocabulary of its own,
 //! deliberately **not** the administrative `Role` enum (or the commission-role
-//! set ZMVP-83 later grants). In the content tree a Seat is a **component**
-//! under a surface (the untyped v1 contract of ZMVP-72 — typing comes with the
-//! catalog): the node gives tree position and visibility inheritance, while the
-//! interpreted seat data — kind, requirements, the occupant — lives in a
-//! satellite store row **keyed by the seat node's id**
+//! set ZMVP-83 later grants). In the composition a Seat is an ordinary
+//! **element** contributed into a declared surface, typed
+//! [`ElementType::seat`](super::ElementType::seat): the element gives it its
+//! address, its order, and its own visibility mode, while the interpreted seat
+//! data — kind, requirements, the occupant — lives in a satellite store row
+//! **keyed by that element's id**
 //! ([`CommissionWrites::declare_seat`](crate::ports::CommissionWrites::declare_seat)).
 //!
 //! Alongside the Seat this ticket persists **participant-hood** itself (the
@@ -22,7 +23,10 @@
 use crate::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, NodeId},
+        commission::{
+            CommissionId,
+            element::{ElementId, SurfaceAddress},
+        },
         user::UserId,
     },
     string_builder::{StringBuilder, StringBuilderViolation},
@@ -334,31 +338,35 @@ impl AsRef<str> for SeatLink {
     }
 }
 
-/// A freshly declared Seat, ready to persist under an existing **surface**
+/// A freshly declared Seat, ready to persist into a declared **surface**
 /// ([`CommissionWrites::declare_seat`](crate::ports::CommissionWrites::declare_seat),
 /// ZMVP-76).
 ///
-/// Built with [`NewSeat::under`]. One id, two rows: the store persists a
-/// component **node** (tree position + visibility inheritance, empty payload —
-/// the untyped ZMVP-72 contract) *and* the interpreted seat satellite row
-/// keyed by that same node id, atomically. There is deliberately no occupant
-/// field: **every Seat is born vacant** (AC3's at-most-one occupant is a
-/// single slot by construction; filling it is ZMVP-79's invitation-mediated
-/// act, never part of declaration). Sibling `position` is absent as on
-/// [`NewComponent`](super::NewComponent): the store assigns append order
-/// in-transaction.
+/// Built with [`NewSeat::contributed_at`]. One id, two rows: the store persists an
+/// **element** (its address, its order, its own mode — born `Total` — and the
+/// empty payload) *and* the interpreted seat satellite row keyed by that same
+/// element id, atomically. There is deliberately no occupant field: **every Seat
+/// is born vacant** (AC3's at-most-one occupant is a single slot by
+/// construction; filling it is ZMVP-79's invitation-mediated act, never part of
+/// declaration). `position` is absent as on
+/// [`NewElement`](super::NewElement): the store assigns append order
+/// in-transaction, within the band.
 #[derive(Debug)]
 pub struct NewSeat {
-    /// The freshly minted node key (UUIDv7) — the seat's identity everywhere:
-    /// the tree node and the satellite row share it.
-    pub id: NodeId,
-    /// The commission whose tree this grows. The store verifies `parent`
-    /// belongs to this same commission.
+    /// The freshly minted element key (UUIDv7) — the seat's identity
+    /// everywhere: the element and the satellite row share it.
+    pub id: ElementId,
+    /// The commission this Seat is declared on. The store verifies `tab`
+    /// belongs to this same commission (and the composite foreign key makes a
+    /// cross-commission tab unrepresentable regardless).
     pub commission_id: CommissionId,
-    /// The existing **surface** to grow under: the seat inherits that
-    /// surface's visibility (a vacant Seat under a Description-visible surface
-    /// is the published ask — AC4). The store refuses a component parent.
-    pub parent: NodeId,
+    /// Where the carrying element sits: the (tab, surface) pair. The seat
+    /// projects under that surface's mode (a vacant Seat under a
+    /// Description-visible surface is the published ask — AC4). An absent or
+    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); a (tab,
+    /// surface) pair the [`SKELETON`](super::SKELETON) does not declare refuses with
+    /// [`UnknownSurface`](crate::ports::UnknownSurface).
+    pub address: SurfaceAddress,
     /// The seat's semantic kind (Creator, Client, …) — open vocabulary, kinds
     /// repeat freely across a commission's seats.
     pub kind: SeatKind,
@@ -374,30 +382,33 @@ pub struct NewSeat {
 }
 
 impl NewSeat {
-    /// A new Seat under `parent`, born **vacant**, carrying its kind and
-    /// whatever requirements (prompt and/or link — both optional) ride it.
-    /// Mints the node id; authority (owner-only in v1) and the
-    /// parent-is-a-surface rule are the route's/store's concern, settled when
-    /// this is persisted.
+    /// A new Seat contributed at `address`, born **vacant**, carrying its kind
+    /// and whatever requirements (prompt and/or link — both optional) ride it.
+    /// Mints the element id; authority (owner-only in v1), the tab's existence,
+    /// and the surface's declaration are the route's/store's concern, settled
+    /// when this is persisted.
     ///
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     commission::{CommissionId, NewSeat, NodeId, SeatKind},
+    ///     commission::{CommissionId, NewSeat, SeatKind, SurfaceAddress, SurfaceName, TabId},
     ///     user::UserId,
     /// };
     ///
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
-    /// let parent = NodeId::new(uuid::Uuid::now_v7());
+    /// let address = SurfaceAddress::new(
+    ///     TabId::new(uuid::Uuid::now_v7()),
+    ///     "content".parse::<SurfaceName>().unwrap(),
+    /// );
     /// let owner = UserId::new(uuid::Uuid::now_v7());
     /// let kind = "Creator".parse::<SeatKind>().unwrap();
-    /// let seat = NewSeat::under(commission, parent, kind, None, None, owner, Utc::now());
-    /// assert_eq!(seat.parent, parent);
+    /// let seat = NewSeat::contributed_at(commission, address.clone(), kind, None, None, owner, Utc::now());
+    /// assert_eq!(seat.address, address);
     /// assert_eq!(seat.kind.as_str(), "Creator");
     /// ```
-    pub fn under(
+    pub fn contributed_at(
         commission: CommissionId,
-        parent: NodeId,
+        address: SurfaceAddress,
         kind: SeatKind,
         prompt: Option<SeatPrompt>,
         link: Option<SeatLink>,
@@ -405,9 +416,9 @@ impl NewSeat {
         now: DateTimeUtc,
     ) -> Self {
         Self {
-            id: NodeId::new(uuid::Uuid::now_v7()),
+            id: ElementId::mint(),
             commission_id: commission,
-            parent,
+            address,
             kind,
             prompt,
             link,
@@ -419,19 +430,20 @@ impl NewSeat {
 
 /// One stored Seat as read back
 /// ([`CommissionStore::seats`](crate::ports::CommissionStore::seats)) — the
-/// interpreted satellite half; the node half (tree position, creator, instant,
-/// visibility inheritance) lives in the loaded tree under the same id.
+/// interpreted satellite half; the element half (address, order, creator,
+/// instant, its own visibility mode) lives in the loaded composition under the
+/// same id.
 ///
 /// This is the **projection hook** for ZMVP-76 AC4: the viewer projection
-/// (ZMVP-75, not in this lineage yet) joins these rows against the projected
-/// tree by node id to render a vacant Seat under Description-visible surfaces
-/// as the published ask. `occupant` is the whole occupancy model: a single
+/// (ZMVP-170, not in this lineage yet) joins these rows against the projected
+/// composition by element id to render a vacant Seat under a Description-visible
+/// surface as the published ask. `occupant` is the whole occupancy model: a single
 /// `Option` — at most one occupant is unrepresentable to violate (AC3) — and
 /// `None` from declaration until ZMVP-79 seats someone.
 #[derive(Debug)]
 pub struct Seat {
-    /// The seat's identity: its tree node's id (the satellite key).
-    pub id: NodeId,
+    /// The seat's identity: its carrying element's id (the satellite key).
+    pub id: ElementId,
     /// The seat's semantic kind (open vocabulary; kinds repeat freely).
     pub kind: SeatKind,
     /// The free-text requirement prompt, if the vacant seat carries one.
@@ -532,21 +544,24 @@ mod tests {
         );
     }
 
-    // AC1/AC3 — a declared seat's envelope: fresh id, the parent surface, the
-    // acting user, its kind and requirements — and NO occupant field anywhere
-    // (born vacant by construction).
+    // AC1/AC3 — a declared seat's envelope: fresh id, the (tab, surface) it is
+    // contributed into, the acting user, its kind and requirements — and NO
+    // occupant field anywhere (born vacant by construction).
     #[test]
     fn a_new_seat_is_born_vacant_with_its_requirements() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
-        let parent = NodeId::new(uuid::Uuid::now_v7());
+        let address = SurfaceAddress::new(
+            super::super::element::TabId::new(uuid::Uuid::now_v7()),
+            "content".parse().unwrap(),
+        );
         let owner = UserId::new(uuid::Uuid::now_v7());
         let kind = "Creator".parse::<SeatKind>().unwrap();
         let prompt = "Two refs, please.".parse::<SeatPrompt>().unwrap();
         let link = "https://forms.example/apply".parse::<SeatLink>().unwrap();
 
-        let seat = NewSeat::under(
+        let seat = NewSeat::contributed_at(
             commission,
-            parent,
+            address.clone(),
             kind.clone(),
             Some(prompt.clone()),
             Some(link.clone()),
@@ -555,7 +570,7 @@ mod tests {
         );
 
         assert_eq!(seat.commission_id, commission);
-        assert_eq!(seat.parent, parent);
+        assert_eq!(seat.address, address);
         assert_eq!(seat.kind, kind);
         assert_eq!(seat.prompt, Some(prompt));
         assert_eq!(seat.link, Some(link));

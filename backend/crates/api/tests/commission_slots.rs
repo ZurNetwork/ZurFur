@@ -9,7 +9,7 @@
 //!   arrive several at a time; the batch lands all-or-nothing, an empty array
 //!   is a `422`): each with a required title (trimmed, blank refused with a
 //!   `422`) and optional freeform notes (trimmed; blank normalizes to absent).
-//!   Each Slot is carried by an ordinary component leaf in the tree, its
+//!   Each Slot is carried by an ordinary element in the composition, its
 //!   title/notes riding in the satellite.
 //! - **AC2** — a commission holds zero or more Slots; an empty (unfilled) Slot
 //!   is a valid, permanent state — there is no occupant anywhere to be missing.
@@ -18,8 +18,8 @@
 //! - The floors: anonymous is `401`; a non-participant (and a truly absent
 //!   commission) gets the one uniform `commission_not_found` 404 — never a 403,
 //!   and byte-identical bodies, so no existence oracle; a fabricated/foreign
-//!   parent is a `node_not_found` 404; a component parent is a `409`
-//!   `parent_not_a_surface`; a malformed body is a `422`. Declaring a Slot
+//!   tab is a `tab_not_found` 404; an undeclared surface is a `422`
+//!   `unknown_surface`; a malformed body is a `422`. Declaring a Slot
 //!   appends **no** changelog entry — the frozen ZMVP-87 taxonomy carries
 //!   `seat_declared` for Seats but no Slot variant.
 //!
@@ -31,7 +31,7 @@ use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use api::{AppState, Config, Environment};
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, NodeId, NodeKind},
+    commission::{Commission, CommissionId, CommissionTitle, ElementId, ElementType, SKELETON},
     did::Did,
     profile::Profile,
     user::User,
@@ -43,7 +43,7 @@ use tower_sessions::{MemoryStore, SessionManagerLayer};
 mod common;
 
 /// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect the tree and slots that were
+/// [`MemBackend`] so a test can introspect the composition and slots that were
 /// persisted. `did` is the identity `sign_in` will authenticate as.
 async fn spawn_app(did: &str) -> (String, MemBackend) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -136,20 +136,24 @@ async fn create_commission(
     *all.last().expect("a commission was persisted").id
 }
 
-/// The commission's root node id, introspected off the backend.
-async fn root_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
-    *backend
-        .commission_store()
-        .load_tree(CommissionId::new(commission))
+/// The commission's only tab id, introspected off the backend. There is no
+/// ROUTE that hands a caller a tab id yet — reading the composition is
+/// ZMVP-163's `GET` — so tests read it from the store.
+async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
+    let tabs = backend
+        .tabs_of(CommissionId::new(commission))
         .await
-        .expect("load tree")
-        .expect("every commission has a tree")
-        .root
-        .id
+        .expect("load tabs");
+    *tabs.first().expect("every commission has its tabs").id
+}
+
+/// The one surface the placeholder skeleton declares.
+fn only_surface() -> &'static str {
+    SKELETON[0].surfaces[0]
 }
 
 /// POSTs a Slot-declaration batch (a JSON array of Slot objects) and returns
-/// the carrying components' node ids from the `201` body, in request order.
+/// the carrying elements' ids from the `201` body, in request order.
 async fn declare_slots(
     client: &reqwest::Client,
     base: &str,
@@ -166,7 +170,7 @@ async fn declare_slots(
     let body: serde_json::Value = res.json().await.expect("201 body is JSON");
     body["ids"]
         .as_array()
-        .expect("the body carries the new node ids")
+        .expect("the body carries the new element ids")
         .iter()
         .map(|id| {
             id.as_str()
@@ -194,8 +198,8 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     id
 }
 
-// AC1/AC2 — the owner declares Slots under the root and under a nested surface:
-// each lands as a component leaf (no mode, empty payload, the owner's envelope)
+// AC1/AC2 — the owner declares Slots into a declared surface: each lands as an
+// ordinary element (born Total, empty payload, the owner's envelope)
 // whose satellite carries the trimmed title and the notes (present on one,
 // absent on the other) — a commission going from zero Slots to two. No
 // changelog entry is appended (the frozen taxonomy has no Slot variant).
@@ -205,7 +209,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
     // Zero Slots is a valid state (AC2).
     assert!(
@@ -217,20 +221,6 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         "a fresh commission holds zero Slots"
     );
 
-    // Grow a nested surface over HTTP to prove slots attach under any surface.
-    let res = client
-        .post(format!("{base}/commissions/{id}/surfaces"))
-        .json(&json!({ "parent": root }))
-        .send()
-        .await
-        .expect("POST surface");
-    assert_eq!(res.status(), 201);
-    let surface: uuid::Uuid = res.json::<serde_json::Value>().await.expect("body")["id"]
-        .as_str()
-        .expect("id")
-        .parse()
-        .expect("uuid");
-
     // One request declares both (the array contract, PR #108 ruling); the 201
     // ids come back in request order.
     let ids = declare_slots(
@@ -238,8 +228,8 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         &base,
         id,
         &json!([
-            { "parent": root, "title": "  The knight  ", "notes": "  full plate, no cape  " },
-            { "parent": surface, "title": "The mage" },
+            { "tab": tab, "surface": only_surface(), "title": "  The knight  ", "notes": "  full plate, no cape  " },
+            { "tab": tab, "surface": only_surface(), "title": "The mage" },
         ]),
     )
     .await;
@@ -251,38 +241,34 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         .expect("find me")
         .expect("signed in");
 
-    // The tree half: both slots are ordinary component leaves.
-    let tree = backend
-        .commission_store()
-        .load_tree(CommissionId::new(id))
+    // The composition half: both slots ride ordinary elements, typed `slot`.
+    let elements = backend
+        .elements_of(CommissionId::new(id))
         .await
-        .expect("load tree")
-        .expect("tree exists");
-    assert_eq!(tree.root.children.len(), 2);
-    let on_root = &tree.root.children[1];
-    assert_eq!(*on_root.id, noted, "the 201 id reappears in the tree");
-    assert!(
-        matches!(on_root.kind, NodeKind::Component),
-        "the Slot's carrying node is a component (no mode of its own)"
-    );
-    assert_eq!(on_root.created_by, me.id, "the envelope names the creator");
+        .expect("load elements");
+    assert_eq!(elements.len(), 2);
     assert_eq!(
-        on_root.payload,
-        json!({}),
-        "the carrying component's payload is empty — the Slot lives in the satellite"
+        *elements[0].id, noted,
+        "the 201 ids reappear in the composition, in request order"
     );
-    assert!(
-        on_root.children.is_empty(),
-        "the carrying component is a leaf"
-    );
-    assert_eq!(
-        *tree.root.children[0].children[0].id, bare,
-        "Slots grow under non-root surfaces too"
-    );
+    assert_eq!(*elements[1].id, bare);
+    for element in &elements {
+        assert_eq!(
+            element.element_type,
+            ElementType::slot(),
+            "the Slot's carrying element is typed `slot`"
+        );
+        assert_eq!(element.created_by, me.id, "the envelope names the creator");
+        assert_eq!(
+            element.payload.as_value(),
+            &json!({}),
+            "the carrying element's payload is empty — the Slot lives in the satellite"
+        );
+    }
 
     // The satellite half: trimmed title, notes present/absent as declared.
     let noted_slot = backend
-        .find_slot(NodeId::new(noted))
+        .find_slot(ElementId::new(noted))
         .await
         .expect("find slot")
         .expect("the declared slot has its satellite");
@@ -295,7 +281,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     assert_eq!(noted_slot.commission_id, CommissionId::new(id));
 
     let bare_slot = backend
-        .find_slot(NodeId::new(bare))
+        .find_slot(ElementId::new(bare))
         .await
         .expect("find slot")
         .expect("satellite exists");
@@ -323,18 +309,18 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
 }
 
 // AC1 — the title is required: a blank title (and a missing one) is a 422, and
-// nothing lands — no node, no satellite.
+// nothing lands — no element, no satellite.
 #[tokio::test]
 async fn a_blank_or_missing_title_is_rejected() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": root, "title": "   " }]))
+        .json(&json!([{ "tab": tab, "surface": only_surface(), "title": "   " }]))
         .send()
         .await
         .expect("POST blank title");
@@ -342,7 +328,7 @@ async fn a_blank_or_missing_title_is_rejected() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": root }]))
+        .json(&json!([{ "tab": tab, "surface": only_surface() }]))
         .send()
         .await
         .expect("POST missing title");
@@ -357,13 +343,14 @@ async fn a_blank_or_missing_title_is_rejected() {
         .expect("POST empty batch");
     common::assert_problem(res, 422, "invalid_request").await;
 
-    let tree = backend
-        .commission_store()
-        .load_tree(CommissionId::new(id))
-        .await
-        .expect("load tree")
-        .expect("tree exists");
-    assert!(tree.root.children.is_empty(), "no refused write landed");
+    assert!(
+        backend
+            .elements_of(CommissionId::new(id))
+            .await
+            .expect("load elements")
+            .is_empty(),
+        "no refused write landed"
+    );
     assert!(
         backend
             .slots_of(CommissionId::new(id))
@@ -381,60 +368,63 @@ async fn blank_notes_normalize_to_absent() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
-    let node = declare_slots(
+    let element = declare_slots(
         &client,
         &base,
         id,
-        &json!([{ "parent": root, "title": "The bard", "notes": "   " }]),
+        &json!([{ "tab": tab, "surface": only_surface(), "title": "The bard", "notes": "   " }]),
     )
     .await[0];
 
     let slot = backend
-        .find_slot(NodeId::new(node))
+        .find_slot(ElementId::new(element))
         .await
         .expect("find slot")
         .expect("satellite exists");
     assert!(slot.notes.is_none(), "blank notes are not stored");
 }
 
-// AC1 — declaring under a component (a Slot's own carrying component included)
-// is rejected with a 409 parent_not_a_surface, and nothing lands.
+// AC1/ZMVP-166 — declaring into a surface the skeleton does not declare is
+// rejected with a 422 unknown_surface, and the batch is ALL-OR-NOTHING: a
+// refusing entry takes the valid ones with it. (The retired tree's
+// "declaring under a component" case has no analogue: nothing is ever an
+// element's child, so there is no illegal parent left to name.)
 #[tokio::test]
-async fn declaring_under_a_component_is_rejected() {
+async fn an_undeclared_surface_is_rejected_and_takes_the_batch_with_it() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let root = root_of(&backend, id).await;
-    let slot = declare_slots(
+    let tab = tab_of(&backend, id).await;
+    declare_slots(
         &client,
         &base,
         id,
-        &json!([{ "parent": root, "title": "First" }]),
+        &json!([{ "tab": tab, "surface": only_surface(), "title": "First" }]),
     )
-    .await[0];
+    .await;
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": slot, "title": "Nested?" }]))
+        .json(&json!([{ "tab": tab, "surface": "invented", "title": "Nowhere?" }]))
         .send()
         .await
-        .expect("POST slot under slot");
-    common::assert_problem(res, 409, "parent_not_a_surface").await;
+        .expect("POST undeclared surface");
+    common::assert_problem(res, 422, "unknown_surface").await;
 
     // All-or-nothing: a refusing slot mid-batch takes the valid one with it.
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
         .json(&json!([
-            { "parent": root, "title": "Would be fine alone" },
-            { "parent": slot, "title": "Nested?" },
+            { "tab": tab, "surface": only_surface(), "title": "Would be fine alone" },
+            { "tab": uuid::Uuid::now_v7(), "surface": only_surface(), "title": "Doomed" },
         ]))
         .send()
         .await
         .expect("POST mixed batch");
-    common::assert_problem(res, 409, "parent_not_a_surface").await;
+    common::assert_problem(res, 404, "tab_not_found").await;
 
     let slots = backend
         .slots_of(CommissionId::new(id))
@@ -454,11 +444,11 @@ async fn an_anonymous_caller_cannot_declare_a_slot() {
     let signed_in = client();
     sign_in(&signed_in, &base).await;
     let id = create_commission(&signed_in, &base, &backend).await;
-    let root = root_of(&backend, id).await;
+    let tab = tab_of(&backend, id).await;
 
     let res = client()
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": root, "title": "The knight" }]))
+        .json(&json!([{ "tab": tab, "surface": only_surface(), "title": "The knight" }]))
         .send()
         .await
         .expect("anonymous POST");
@@ -474,11 +464,11 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     let client = client();
     sign_in(&client, &base).await;
     let foreign = seed_foreign_commission(&backend).await;
-    let foreign_root = root_of(&backend, foreign).await;
+    let foreign_tab = tab_of(&backend, foreign).await;
 
     let hidden = client
         .post(format!("{base}/commissions/{foreign}/slots"))
-        .json(&json!([{ "parent": foreign_root, "title": "Probe" }]))
+        .json(&json!([{ "tab": foreign_tab, "surface": only_surface(), "title": "Probe" }]))
         .send()
         .await
         .expect("probe foreign");
@@ -488,7 +478,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     let absent_id = uuid::Uuid::now_v7();
     let absent = client
         .post(format!("{base}/commissions/{absent_id}/slots"))
-        .json(&json!([{ "parent": foreign_root, "title": "Probe" }]))
+        .json(&json!([{ "tab": foreign_tab, "surface": only_surface(), "title": "Probe" }]))
         .send()
         .await
         .expect("probe absent");
@@ -513,11 +503,11 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     );
 }
 
-// Floor — the owner naming a parent node that doesn't exist in this commission
-// (fabricated, or belonging to another tree) gets node_not_found; the foreign
-// case answers identically to the fabricated one.
+// Floor — the owner naming a tab that doesn't exist in this commission
+// (fabricated, or belonging to another commission) gets tab_not_found; the
+// foreign case answers identically to the fabricated one.
 #[tokio::test]
-async fn an_unknown_or_foreign_parent_is_node_not_found() {
+async fn an_unknown_or_foreign_tab_is_tab_not_found() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
@@ -525,24 +515,24 @@ async fn an_unknown_or_foreign_parent_is_node_not_found() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": uuid::Uuid::now_v7(), "title": "The knight" }]))
+        .json(&json!([{ "tab": uuid::Uuid::now_v7(), "surface": only_surface(), "title": "The knight" }]))
         .send()
         .await
-        .expect("POST fabricated parent");
-    common::assert_problem(res, 404, "node_not_found").await;
+        .expect("POST fabricated tab");
+    common::assert_problem(res, 404, "tab_not_found").await;
 
     let foreign = seed_foreign_commission(&backend).await;
-    let foreign_root = root_of(&backend, foreign).await;
+    let foreign_tab = tab_of(&backend, foreign).await;
     let res = client
         .post(format!("{base}/commissions/{id}/slots"))
-        .json(&json!([{ "parent": foreign_root, "title": "The knight" }]))
+        .json(&json!([{ "tab": foreign_tab, "surface": only_surface(), "title": "The knight" }]))
         .send()
         .await
-        .expect("POST foreign parent");
-    common::assert_problem(res, 404, "node_not_found").await;
+        .expect("POST foreign tab");
+    common::assert_problem(res, 404, "tab_not_found").await;
 }
 
-// Floor — a malformed body (no parent) is a 422.
+// Floor — a malformed body (no address) is a 422.
 #[tokio::test]
 async fn a_malformed_body_is_rejected() {
     let (base, backend) = spawn_app("did:plc:artist").await;

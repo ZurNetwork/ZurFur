@@ -778,15 +778,32 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct LoadTreeRow {
+    pub struct LoadElementsRow {
         pub id: uuid::Uuid,
-        pub parent: Option<uuid::Uuid>,
-        pub type_tag: String,
-        pub mode: Option<String>,
+        pub tab_id: uuid::Uuid,
+        pub surface: String,
+        pub element_type: String,
+        pub mode: String,
+        pub band: String,
         pub position: i32,
         pub created_by: uuid::Uuid,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub payload: serde_json::Value,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LoadSurfaceModesRow {
+        pub surface: String,
+        pub mode: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LoadTabsRow {
+        pub id: uuid::Uuid,
+        pub tab: String,
+        pub mode: String,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -800,9 +817,17 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct RequireSurfaceParentRow {
-        pub type_tag: String,
-        pub mode: Option<String>,
+    pub struct RemoveElementGateRow {
+        pub tab_id: uuid::Uuid,
+        pub surface: String,
+        pub band: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct RequireTabRow {
+        pub id: uuid::Uuid,
+        pub tab: String,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -815,20 +840,37 @@ pub mod commission {
         pub occupant: Option<uuid::Uuid>,
     }
 
-    /// `queries/commission/add_component.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn add_component(
+    /// `queries/commission/add_element.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Contribute one element into a declared surface (ZMVP-166). The single insert
+    /// path: the generic element add, a Slot's carrying element, and a Seat's all
+    /// come through here, differing only in the `type` tag and payload they bind, so
+    /// there is no second place an element can be born.
+    ///
+    /// `position` is assigned in the same statement as max + 1 WITHIN THE BAND —
+    /// (commission, tab, surface, band) — so append order cannot race; the caller
+    /// holds the tab's row lock (require_tab.sql) for the duration.
+    pub async fn add_element(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         commission_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
+        tab_id: uuid::Uuid,
+        surface: &str,
+        r#type: &str,
+        mode: &str,
+        band: &str,
         created_by: uuid::Uuid,
         created_at: chrono::DateTime<chrono::Utc>,
         payload: &serde_json::Value,
     ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!("../queries/commission/add_component.sql"))
+        sqlx::query(include_str!("../queries/commission/add_element.sql"))
             .bind(id)
             .bind(commission_id)
-            .bind(parent)
+            .bind(tab_id)
+            .bind(surface)
+            .bind(r#type)
+            .bind(mode)
+            .bind(band)
             .bind(created_by)
             .bind(created_at)
             .bind(payload)
@@ -880,28 +922,6 @@ pub mod commission {
             .map(|r| r.rows_affected())
     }
 
-    /// `queries/commission/add_surface.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn add_surface(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
-        mode: Option<&str>,
-        created_by: uuid::Uuid,
-        created_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!("../queries/commission/add_surface.sql"))
-            .bind(id)
-            .bind(commission_id)
-            .bind(parent)
-            .bind(mode)
-            .bind(created_by)
-            .bind(created_at)
-            .execute(conn)
-            .await
-            .map(|r| r.rows_affected())
-    }
-
     /// `queries/commission/create_commission.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn create_commission(
         conn: impl sqlx::PgExecutor<'_>,
@@ -928,28 +948,6 @@ pub mod commission {
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
-    }
-
-    /// `queries/commission/create_root_surface.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn create_root_surface(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-        mode: Option<&str>,
-        created_by: uuid::Uuid,
-        created_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!(
-            "../queries/commission/create_root_surface.sql"
-        ))
-        .bind(id)
-        .bind(commission_id)
-        .bind(mode)
-        .bind(created_by)
-        .bind(created_at)
-        .execute(conn)
-        .await
-        .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/create_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
@@ -987,6 +985,31 @@ pub mod commission {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/create_tab.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Mint one of the commission's skeleton tabs, in the same unit of work as the
+    /// commission row itself (ZMVP-166; Flat Composition DD 45514754). Tab state
+    /// exists explicitly from birth — the withheld-at-birth discipline — so absence
+    /// of a tab row never has to mean anything. `mode` is bound rather than left to
+    /// the column DEFAULT so the closed door is stated by the code that mints it,
+    /// not inferred from schema.
+    pub async fn create_tab(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        tab: &str,
+        mode: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/create_tab.sql"))
+            .bind(id)
+            .bind(commission_id)
+            .bind(tab)
+            .bind(mode)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/current_placement.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn current_placement(
         conn: impl sqlx::PgExecutor<'_>,
@@ -996,26 +1019,6 @@ pub mod commission {
             .bind(commission_id)
             .fetch_optional(conn)
             .await
-    }
-
-    /// `queries/commission/declare_seat_node.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn declare_seat_node(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
-        created_by: uuid::Uuid,
-        created_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!("../queries/commission/declare_seat_node.sql"))
-            .bind(id)
-            .bind(commission_id)
-            .bind(parent)
-            .bind(created_by)
-            .bind(created_at)
-            .execute(conn)
-            .await
-            .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/declare_seat_satellite.sql`, contract inferred from the SQL against the migrated schema.
@@ -1040,30 +1043,14 @@ pub mod commission {
         .map(|r| r.rows_affected())
     }
 
-    /// `queries/commission/declare_slot_node.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn declare_slot_node(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
-        created_by: uuid::Uuid,
-        created_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!("../queries/commission/declare_slot_node.sql"))
-            .bind(id)
-            .bind(commission_id)
-            .bind(parent)
-            .bind(created_by)
-            .bind(created_at)
-            .execute(conn)
-            .await
-            .map(|r| r.rows_affected())
-    }
-
     /// `queries/commission/declare_slot_satellite.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The declared Slot's interpreted half (ZMVP-77), keyed by the carrying
+    /// element's id — one identity, two rows (Gate A ruling E20). Deliberately no
+    /// occupant column of any kind: fill is the Character epic's.
     pub async fn declare_slot_satellite(
         conn: impl sqlx::PgExecutor<'_>,
-        node_id: uuid::Uuid,
+        element_id: uuid::Uuid,
         commission_id: uuid::Uuid,
         title: &str,
         notes: Option<&str>,
@@ -1071,7 +1058,7 @@ pub mod commission {
         sqlx::query(include_str!(
             "../queries/commission/declare_slot_satellite.sql"
         ))
-        .bind(node_id)
+        .bind(element_id)
         .bind(commission_id)
         .bind(title)
         .bind(notes)
@@ -1201,12 +1188,47 @@ pub mod commission {
             .await
     }
 
-    /// `queries/commission/load_tree.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn load_tree(
+    /// `queries/commission/load_elements.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every element of one commission — the element third of the whole-composition
+    /// read (ZMVP-166), one indexed query on commission_id. Ordered by the addressing
+    /// tuple so the ordering the store assigns is the ordering a caller observes,
+    /// without a sort in Rust.
+    pub async fn load_elements(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Vec<LoadTreeRow>> {
-        sqlx::query_as(include_str!("../queries/commission/load_tree.sql"))
+    ) -> sqlx::Result<Vec<LoadElementsRow>> {
+        sqlx::query_as(include_str!("../queries/commission/load_elements.sql"))
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/load_surface_modes.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The commission's widened surface modes — the second term of the min
+    /// (ZMVP-166). SPARSE by design: a surface nobody widened has NO ROW, and an
+    /// absent row means Total (the closed door said by saying nothing), so this
+    /// returning fewer rows than there are declared surfaces is the normal case.
+    pub async fn load_surface_modes(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<LoadSurfaceModesRow>> {
+        sqlx::query_as(include_str!("../queries/commission/load_surface_modes.sql"))
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/load_tabs.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every tab of one commission — the first term of the effective-visibility min
+    /// (ZMVP-166). Ordered by the declared tab id for determinism.
+    pub async fn load_tabs(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<LoadTabsRow>> {
+        sqlx::query_as(include_str!("../queries/commission/load_tabs.sql"))
             .bind(commission_id)
             .fetch_all(conn)
             .await
@@ -1262,62 +1284,121 @@ pub mod commission {
             .await
     }
 
-    /// `queries/commission/remove_node_delete.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn remove_node_delete(
+    /// `queries/commission/remove_element_delete.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Remove one element (ZMVP-166). Scoped by commission_id as well as the unique
+    /// id, so the statement is self-contained rather than leaning on id uniqueness
+    /// (PR #109 review). Elements are leaves — nothing is orphaned — but whatever
+    /// shares the element's identity (a Slot or Seat satellite, and a seat's pending
+    /// invitations) leaves with it via ON DELETE CASCADE.
+    pub async fn remove_element_delete(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!("../queries/commission/remove_node_delete.sql"))
-            .bind(id)
-            .bind(commission_id)
-            .execute(conn)
-            .await
-            .map(|r| r.rows_affected())
-    }
-
-    /// `queries/commission/remove_node_gate.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn remove_node_gate(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-        commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Option<Option<uuid::Uuid>>> {
-        sqlx::query_scalar(include_str!("../queries/commission/remove_node_gate.sql"))
-            .bind(id)
-            .bind(commission_id)
-            .fetch_optional(conn)
-            .await
-    }
-
-    /// `queries/commission/remove_node_renumber.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn remove_node_renumber(
-        conn: impl sqlx::PgExecutor<'_>,
-        parent: uuid::Uuid,
         commission_id: uuid::Uuid,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
-            "../queries/commission/remove_node_renumber.sql"
+            "../queries/commission/remove_element_delete.sql"
         ))
-        .bind(parent)
+        .bind(id)
         .bind(commission_id)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
     }
 
-    /// `queries/commission/require_surface_parent.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn require_surface_parent(
+    /// `queries/commission/remove_element_gate.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The removal gate (ZMVP-166): the target must exist in THIS commission — an
+    /// absent element id and one belonging to another commission both match nothing,
+    /// indistinguishably (ElementNotFound), so removal probes reveal nothing about
+    /// other commissions. Returns the ordering group the removal will have to
+    /// renumber — and, in `tab_id`, the row the caller must LOCK (require_tab.sql)
+    /// before it deletes anything.
+    ///
+    /// Deliberately NOT `FOR UPDATE`: this reads an element to learn which TAB to
+    /// lock, and the three columns it reads (tab_id, surface, band) are immutable for
+    /// the life of a row — no statement anywhere updates them, only `position`
+    /// moves. So a lock-free read here cannot go stale in a way that matters, and
+    /// taking the tab lock afterwards still serializes the delete + renumber against
+    /// every concurrent append. If the element itself disappears in that window, the
+    /// DELETE affects zero rows and the removal re-refuses as ElementNotFound.
+    pub async fn remove_element_gate(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Option<RequireSurfaceParentRow>> {
+    ) -> sqlx::Result<Option<RemoveElementGateRow>> {
         sqlx::query_as(include_str!(
-            "../queries/commission/require_surface_parent.sql"
+            "../queries/commission/remove_element_gate.sql"
         ))
         .bind(id)
         .bind(commission_id)
         .fetch_optional(conn)
         .await
+    }
+
+    /// `queries/commission/remove_element_renumber.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Renumber a vacated ordering group to contiguous positions from 0, preserving
+    /// order (ZMVP-166). The group is (commission, tab, surface, band) — the same
+    /// tuple the append counts within and the deferred UNIQUE covers. Scoped by
+    /// commission_id so the statement never leans on tab_id uniqueness alone as its
+    /// scoping mechanism (PR #109 review). The UNIQUE is DEFERRABLE, so the
+    /// intermediate collisions this UPDATE passes through cannot trip it inside the
+    /// transaction.
+    pub async fn remove_element_renumber(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        tab_id: uuid::Uuid,
+        surface: &str,
+        band: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/commission/remove_element_renumber.sql"
+        ))
+        .bind(commission_id)
+        .bind(tab_id)
+        .bind(surface)
+        .bind(band)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/require_tab.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The shared TAB GATE — and the one SERIALIZATION POINT — of every composition
+    /// write (ZMVP-166): the named tab must exist in this commission, and its row is
+    /// locked for the rest of the transaction.
+    ///
+    /// Existence: an absent id and a tab belonging to another commission both match
+    /// nothing, indistinguishably, so a probe reveals nothing about other
+    /// commissions (UnknownTab). This is the friendly half of a rule the schema
+    /// already enforces: the composite foreign key (tab_id, commission_id) ->
+    /// commission_tab (id, commission_id) makes a cross-commission element unwritable
+    /// regardless. The gate exists so the route can answer 404 instead of surfacing a
+    /// constraint violation.
+    ///
+    /// Vocabulary: `tab` comes back because the surface check is on the PAIR — the
+    /// skeleton declares which surfaces live in which tab, and only the tab's
+    /// DECLARED NAME (never its per-commission id) can answer that. The adapter
+    /// re-validates the stored token into a TabName before consulting the skeleton.
+    ///
+    /// FOR UPDATE locks the tab row, so every write that touches this tab's ordering
+    /// groups SERIALIZES: concurrent appends cannot race to one (surface, band,
+    /// position) slot and abort on the deferred UNIQUE at commit (the PR #103
+    /// hardening, carried over from the retired parent gate), and a concurrent
+    /// removal's renumbering cannot interleave with an append into the same group.
+    /// BOTH write paths take this lock, and take it before touching any element row.
+    pub async fn require_tab(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Option<RequireTabRow>> {
+        sqlx::query_as(include_str!("../queries/commission/require_tab.sql"))
+            .bind(id)
+            .bind(commission_id)
+            .fetch_optional(conn)
+            .await
     }
 
     /// `queries/commission/revoke_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
@@ -1842,23 +1923,20 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "actor_identity::create",
     "actor_identity::intern",
     "changelog::append",
-    "commission::add_component",
+    "commission::add_element",
     "commission::add_file",
     "commission::add_participant",
-    "commission::add_surface",
     "commission::create_commission",
-    "commission::create_root_surface",
     "commission::create_seat_invitation",
-    "commission::declare_seat_node",
+    "commission::create_tab",
     "commission::declare_seat_satellite",
-    "commission::declare_slot_node",
     "commission::declare_slot_satellite",
     "commission::delete",
     "commission::grant_view",
     "commission::place_append",
     "commission::place_repoint_current",
-    "commission::remove_node_delete",
-    "commission::remove_node_renumber",
+    "commission::remove_element_delete",
+    "commission::remove_element_renumber",
     "commission::revoke_seat_invitation",
     "commission::revoke_view",
     "commission::set_archived",

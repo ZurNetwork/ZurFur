@@ -26,7 +26,7 @@ use std::ops::Deref;
 use crate::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, NodeId},
+        commission::{CommissionId, ElementId},
         invitation::{InvitationError, InvitationState},
         user::UserId,
     },
@@ -83,9 +83,9 @@ pub struct SeatInvitation {
     pub id: SeatInvitationId,
     /// The commission whose Seat is offered.
     pub commission: CommissionId,
-    /// The Seat being offered — its tree node id (the `commission_seat`
+    /// The Seat being offered — its carrying element's id (the `commission_seat`
     /// satellite key). The invited User occupies it only by accepting (ZMVP-79).
-    pub seat: NodeId,
+    pub seat: ElementId,
     /// The User being invited. They fill the Seat only by accepting (ZMVP-79).
     pub invited_user: UserId,
     /// The commission owner who issued the offer (the route's owner-only gate
@@ -112,13 +112,13 @@ impl SeatInvitation {
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     commission::{CommissionId, NodeId, SeatInvitation},
+    ///     commission::{CommissionId, ElementId, SeatInvitation},
     ///     invitation::InvitationState,
     ///     user::UserId,
     /// };
     ///
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
-    /// let seat = NodeId::new(uuid::Uuid::now_v7());
+    /// let seat = ElementId::new(uuid::Uuid::now_v7());
     /// let invited = UserId::new(uuid::Uuid::now_v7());
     /// let inviter = UserId::new(uuid::Uuid::now_v7());
     /// let invitation = SeatInvitation::issue(commission, seat, invited, inviter, Utc::now());
@@ -128,7 +128,7 @@ impl SeatInvitation {
     /// ```
     pub fn issue(
         commission: CommissionId,
-        seat: NodeId,
+        seat: ElementId,
         invited_user: UserId,
         inviter: UserId,
         now: DateTimeUtc,
@@ -159,14 +159,14 @@ impl SeatInvitation {
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     commission::{CommissionId, NodeId, SeatInvitation},
+    ///     commission::{CommissionId, ElementId, SeatInvitation},
     ///     invitation::{InvitationError, InvitationState},
     ///     user::UserId,
     /// };
     ///
     /// let mut invitation = SeatInvitation::issue(
     ///     CommissionId::new(uuid::Uuid::now_v7()),
-    ///     NodeId::new(uuid::Uuid::now_v7()),
+    ///     ElementId::new(uuid::Uuid::now_v7()),
     ///     UserId::new(uuid::Uuid::now_v7()),
     ///     UserId::new(uuid::Uuid::now_v7()),
     ///     Utc::now(),
@@ -195,8 +195,8 @@ mod tests {
         CommissionId::new(uuid::Uuid::now_v7())
     }
 
-    fn seat() -> NodeId {
-        NodeId::new(uuid::Uuid::now_v7())
+    fn seat() -> ElementId {
+        ElementId::new(uuid::Uuid::now_v7())
     }
 
     fn user() -> UserId {

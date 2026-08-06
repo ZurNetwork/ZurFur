@@ -12,20 +12,18 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTitle,
-            CommissionTree, DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, NewComponent, NewSeat, NewSlot, NewSurface, NodeId, NodeKind, NodeRow,
-            Placement, RootSurface, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
-            SeatPrompt, SurfaceMode, Visibility, derive_deadline_status,
+            ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
+            CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, ElementPayload,
+            ElementRow, ElementType, FileKey, GrantLevel, LapsedDeadline, LifecycleStep,
+            NewElement, NewSeat, NewSlot, Placement, Seat, SeatInvitation, SeatInvitationId,
+            SeatKind, SeatLink, SeatPrompt, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+            Visibility, VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
         },
         invitation::InvitationState,
         maturity::{Maturity, MaturityRating},
         user::UserId,
     },
-    ports::{
-        CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
-        ParentNotASurface,
-    },
+    ports::{CommissionStore, CommissionWrites, ElementNotFound, UnknownSurface, UnknownTab},
 };
 use sqlx::{PgConnection, PgPool};
 
@@ -62,10 +60,13 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   current pointer, and the view-grant keys. Commission-owned bookkeeping that
 ///   cascades with the commission (Ownership Separation DD `29130754`), never a
 ///   fact that blocks its deletion.
-/// - `commission_node` (ZMVP-71): the content tree. Nodes are the commission's
-///   own composition, not evidence that work happened — the Tree Storage DD
-///   (`28409880`) has the whole tree cascade with its commission, which is what
-///   ZMVP-66's "gone entirely" relies on.
+/// - `commission_tab` / `commission_element` / `commission_surface_mode`
+///   (ZMVP-166): the flat composition — the commission's tabs, the elements
+///   contributed into its surfaces, and the surface modes it has widened. All
+///   three are the commission's own composition, not evidence that work
+///   happened, so all three cascade with it (the Flat Composition DD `45514754`
+///   inheriting the retired tree's stance) — which is what ZMVP-66's "gone
+///   entirely" relies on.
 /// - `commission_file` (ZMVP-88): the Index-canonical link for a file entry (an
 ///   uploaded work-in-progress). A file entry is **not** a Product — no fact-lock —
 ///   so it cascades away with the commission, keeping a commission with only file
@@ -74,9 +75,9 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   commission-referencing — the hard-delete cascade (ZMVP-66) severs them through
 ///   [`FileStore::delete`](domain::ports::FileStore::delete), not the row cascade.
 /// - `commission_slot` (ZMVP-77): the declared-Slot satellite (title/notes on a
-///   slot's component node). A declaration is composition like the node it
+///   slot's carrying element). A declaration is composition like the element it
 ///   decorates, not evidence that work happened; it cascades with the
-///   commission (ruling E35) and with its own node.
+///   commission (ruling E35) and with its own element.
 /// - `commission_participant` (ZMVP-76): who is inside the closed door — living
 ///   membership, not evidence of work; it cascades away (the owner-floor trigger
 ///   deliberately lets cascaded deletes through).
@@ -91,12 +92,14 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 ///   `account_invitations`.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
+    "commission_element",
     "commission_file",
     "commission_invitation",
-    "commission_node",
     "commission_participant",
     "commission_seat",
     "commission_slot",
+    "commission_surface_mode",
+    "commission_tab",
     "commission_placement",
     "commission_current_placement",
     "commission_view_grant",
@@ -127,57 +130,133 @@ pub struct PgCommissionWrites<'a> {
 }
 
 impl PgCommissionWrites<'_> {
-    /// The shared **parent gate** of every tree-growing write (ZMVP-71/72), on
-    /// the open transaction: the named parent must exist in `commission`'s own
-    /// tree — an absent id and a node from another commission both refuse with
-    /// [`ParentNodeNotFound`], indistinguishably, *before* anything about the
-    /// node is revealed — and must be a surface, else [`ParentNotASurface`]
-    /// (components are leaves; nothing grows under one). Locks the parent row
-    /// (`FOR UPDATE`), so concurrent appends under one parent serialize instead
-    /// of racing to the same `position` slot and aborting on the deferred
-    /// UNIQUE at commit (PR #103 review; Engineer-ruled fix) — one path,
-    /// shared by both add ops, so neither can drift out of the lock's
-    /// protection. Returns the parent's [`SurfaceMode`] on success — the mode
-    /// `add_surface` inherits (Engineer ruling 2026-07-07, PR #103);
-    /// `add_component` has no use for it.
-    async fn require_surface_parent(
+    /// **THE serialization point of every composition write** (ZMVP-166), on the
+    /// open transaction: resolve the tab within `commission` and take its row
+    /// lock, handing back the tab's *declared name*.
+    ///
+    /// One statement, one discipline, both write paths:
+    ///
+    /// - the **add** side ([`require_address`](Self::require_address), and so
+    ///   every element/Slot/Seat insert) locks here before assigning a
+    ///   `position`;
+    /// - the **remove** side ([`remove_element`](CommissionWrites::remove_element))
+    ///   locks here — after learning *which* tab from its own gate — before the
+    ///   `DELETE` and the group renumbering.
+    ///
+    /// Because both take the same lock on the same row before touching any
+    /// element, an append and a removal aimed at one tab **cannot interleave**:
+    /// they run one after the other, so a renumbering `UPDATE` can never run
+    /// between an append's `max(position) + 1` subquery and its `INSERT` (which
+    /// would land two rows on one position and abort the whole unit on the
+    /// deferred `UNIQUE` at commit — the race reproduced in review). Adding a
+    /// third write path means routing it through here too.
+    ///
+    /// An absent tab id and one belonging to another commission both refuse with
+    /// [`UnknownTab`], indistinguishably, before anything about either is
+    /// revealed. (The composite foreign key makes the cross-commission case
+    /// unwritable regardless; this gate only buys an honest 404 instead of a
+    /// constraint violation.) The stored `tab` token is re-validated into a
+    /// [`TabName`] on the way out — a value outside the label rules means row
+    /// tampering and surfaces as an `Err`, never a silent pass.
+    async fn require_tab(
         &mut self,
-        parent: NodeId,
         commission: CommissionId,
-    ) -> anyhow::Result<SurfaceMode> {
-        let row = sql::require_surface_parent(&mut *self.conn, *parent, *commission).await?;
-        let Some(row) = row else {
-            return Err(ParentNodeNotFound.into());
+        tab: TabId,
+    ) -> anyhow::Result<TabName> {
+        let Some(row) = sql::require_tab(&mut *self.conn, *tab, *commission).await? else {
+            return Err(UnknownTab.into());
         };
-        match NodeKind::from_columns(&row.type_tag, row.mode.as_deref()) {
-            Some(NodeKind::Surface { mode }) => Ok(mode),
-            Some(NodeKind::Component) => Err(ParentNotASurface.into()),
-            None => Err(anyhow::anyhow!(
-                "unknown node envelope ({:?}, {:?})",
-                row.type_tag,
-                row.mode
-            )),
+        Ok(TabName::try_from(row.tab)?)
+    }
+
+    /// The shared **address gate** of every element write (ZMVP-166), on the
+    /// open transaction — one path, so the generic add and the two satellite
+    /// declarations cannot drift apart on either rule:
+    ///
+    /// 1. the **tab** must exist in `commission` (and its row is locked) —
+    ///    [`require_tab`](Self::require_tab);
+    /// 2. the **skeleton** must declare this surface *inside that tab*, else
+    ///    [`UnknownSurface`]. The pair is the unit: a surface that is real under
+    ///    some other tab is refused here exactly like an invented name, because
+    ///    an element may only land where the skeleton describes a place for it.
+    ///    Surfaces have no rows, so the const is the only authority — the same
+    ///    one adapter-mem checks, in the same order.
+    ///
+    /// **The order is load-bearing**: the surface check *needs* the tab's
+    /// declared name, so an address that is wrong in both ways refuses as
+    /// [`UnknownTab`]. adapter-mem mirrors this exactly, or the two adapters
+    /// would answer one request differently.
+    ///
+    /// Deliberately returns nothing: an element is born `Total` and inherits no
+    /// mode from anything (the tree's inheritance rule had no survivor in a
+    /// model where the min is computed at read).
+    async fn require_address(
+        &mut self,
+        commission: CommissionId,
+        address: &SurfaceAddress,
+    ) -> anyhow::Result<()> {
+        let tab = self.require_tab(commission, address.tab).await?;
+        if !declares_surface(&tab, &address.surface) {
+            return Err(UnknownSurface.into());
         }
+        Ok(())
+    }
+
+    /// Insert one element behind the shared gate — the single write path every
+    /// element takes (the generic add, a Slot's carrier, a Seat's), differing
+    /// only in the `type` tag and payload bound. `position` is assigned by the
+    /// statement itself as max + 1 within `(tab, surface, band)`, under the tab
+    /// lock the gate took.
+    async fn insert_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
+        self.require_address(element.commission_id, &element.address)
+            .await?;
+
+        sql::add_element(
+            &mut *self.conn,
+            *element.id,
+            *element.commission_id,
+            *element.address.tab,
+            element.address.surface.as_str(),
+            element.element_type.as_str(),
+            VisibilityMode::default().as_str(),
+            element.band.as_str(),
+            *element.created_by,
+            element.created_at,
+            // The one place an element's payload is unwrapped on the write side:
+            // a `jsonb` bind. `ElementPayload` carries no `Serialize`, so this
+            // SQL boundary is the *only* door its content can leave through
+            // (ZMVP-170 owns the read-side projection).
+            element.payload.as_value(),
+        )
+        .await?;
+        Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
     /// Insert a freshly created commission as one row (`INSERT INTO commission`)
-    /// **plus its root surface** as one `commission_node` row ([`RootSurface::of`],
-    /// ZMVP-71 AC1) **plus its owner's participant row** as one
+    /// **plus one `commission_tab` row per tab the code skeleton declares**
+    /// ([`declared_tabs`], ZMVP-166) **plus its owner's participant row** as one
     /// `commission_participant` row (ZMVP-76: the owner is a permanent
     /// Participant from birth, stamped with the commission's own creation
     /// instant), all on this same open transaction — a commission can never
-    /// land without its tree or its owner's membership. The
+    /// land without its tab state or its owner's membership. The
     /// [`LifecycleStep`](domain::elements::commission::LifecycleStep)
     /// and [`Visibility`](domain::elements::commission::Visibility) are each stored as
     /// their stable `as_str()` token in the `lifecycle` / `visibility` text columns,
-    /// the root's `mode` token is the visibility's alias mapping
-    /// ([`Visibility::as_root_mode`](domain::elements::commission::Visibility::as_root_mode)),
-    /// and the nullable deadline maps to a nullable `timestamptz`. The ids are
-    /// caller-/adapter-minted UUIDv7, so no conflict handling is needed; any store
-    /// failure surfaces as an opaque error.
+    /// and the nullable deadline maps to a nullable `timestamptz`.
+    ///
+    /// Every tab is minted [`VisibilityMode::Total`] — the closed door, bound
+    /// explicitly rather than left to the column DEFAULT, so the code that mints
+    /// the row is the code that says what it means. **Nothing here reads
+    /// `commission.visibility`**: the commission's own visibility is the
+    /// outermost gate, applied over the composition rather than copied into it
+    /// (the retired tree had to seed its root's mode from that column; the flat
+    /// model gives every term its own).
+    ///
+    /// The ids are caller-/adapter-minted UUIDv7, so no conflict handling is
+    /// needed; any store failure surfaces as an opaque error.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         sql::create_commission(
             &mut *self.conn,
@@ -193,16 +272,16 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         )
         .await?;
 
-        let root = RootSurface::of(commission);
-        sql::create_root_surface(
-            &mut *self.conn,
-            *root.id,
-            *commission.id,
-            Some(root.mode.as_str()),
-            *root.created_by,
-            root.created_at,
-        )
-        .await?;
+        for tab in declared_tabs() {
+            sql::create_tab(
+                &mut *self.conn,
+                *TabId::mint(),
+                *commission.id,
+                tab.as_str(),
+                VisibilityMode::default().as_str(),
+            )
+            .await?;
+        }
 
         sql::add_participant(
             &mut *self.conn,
@@ -214,100 +293,82 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Grow the tree under an existing parent surface (ZMVP-71 AC2), on the
-    /// open transaction, behind the shared parent gate
-    /// ([`require_surface_parent`](Self::require_surface_parent) —
-    /// [`ParentNodeNotFound`] for absent/foreign, [`ParentNotASurface`] for a
-    /// component parent), which also locks the row and hands back its mode —
-    /// **inherited** by the new surface (Engineer ruling 2026-07-07, PR #103;
-    /// inheritance never widens — see [`NewSurface::under`]). `position` is
-    /// assigned as `max(sibling position) + 1` in a subquery on this same
-    /// transaction, so append order can't race.
-    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        let mode = self
-            .require_surface_parent(surface.parent, surface.commission_id)
-            .await?;
-
-        sql::add_surface(
-            &mut *self.conn,
-            *surface.id,
-            *surface.commission_id,
-            Some(*surface.parent),
-            Some(mode.as_str()),
-            *surface.created_by,
-            surface.created_at,
-        )
-        .await?;
-        Ok(())
+    /// Contribute one element into a declared surface (ZMVP-166), on the open
+    /// transaction, behind the shared address gate
+    /// ([`require_address`](Self::require_address) — [`UnknownTab`] for an
+    /// absent/foreign tab, [`UnknownSurface`] for an undeclared (tab, surface)
+    /// pair), which
+    /// also locks the tab row. `position` is assigned as `max(position) + 1`
+    /// **within `(tab, surface, band)`** in a subquery on this same
+    /// transaction, so append order can't race. The row stores the element's
+    /// own `mode` as `total` (born closed — over-claiming has to be a separate,
+    /// explicit act) and the opaque payload as jsonb, semantically unmodified —
+    /// it round-trips as an equal JSON value (jsonb is not byte-preserving; a
+    /// top-level JSON `null` lands as jsonb `'null'`, never SQL `NULL`).
+    async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
+        self.insert_element(element).await
     }
 
-    /// Grow a leaf under an existing parent surface (ZMVP-72 AC1), on the open
-    /// transaction — the component mirror of [`add_surface`](Self::add_surface):
-    /// the same shared parent gate, the same racing-proof append `position`
-    /// subquery. The row stores `type = 'component'` with a **NULL `mode`**
-    /// (the surface-XOR-mode CHECK's other arm — a component projects with its
-    /// parent, AC2) and the opaque payload as jsonb, semantically unmodified —
-    /// round-trips as an equal JSON value (jsonb is not byte-preserving)
-    /// (AC3; a top-level JSON `null` lands as jsonb `'null'`, never SQL `NULL`).
-    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
-        self.require_surface_parent(component.parent, component.commission_id)
+    /// Remove one element (ZMVP-166), on the open transaction — four statements
+    /// sharing it.
+    ///
+    /// 1. **The target gate**: one `SELECT` scoped to `commission_id`, so an
+    ///    absent element id and one in another commission refuse as one
+    ///    indistinguishable [`ElementNotFound`] before anything about the
+    ///    element is revealed. It hands back the ordering group to renumber —
+    ///    and the tab to lock.
+    /// 2. **The tab lock**, through the same
+    ///    [`require_tab`](Self::require_tab) statement every *add* takes, and
+    ///    taken before anything is written. This is what makes a removal and a
+    ///    concurrent append into one tab **serialize** instead of racing: the
+    ///    renumbering `UPDATE` below can no longer slip between an append's
+    ///    `max(position) + 1` subquery and its `INSERT`, which is exactly how
+    ///    two rows used to land on one `position` and abort the whole unit on
+    ///    the deferred `UNIQUE` at commit (reproduced in review). The gate above
+    ///    reads unlocked on purpose: `tab_id`/`surface`/`band` are immutable for
+    ///    a row's life, so there is nothing there to go stale.
+    /// 3. **The `DELETE`**, scoped by `(id, commission_id)` and asserted to
+    ///    affect exactly one row — an element that vanished between the gate and
+    ///    the lock re-refuses as [`ElementNotFound`] rather than silently
+    ///    proceeding. Satellites and a seat's pending invitations leave via `ON
+    ///    DELETE CASCADE`, whose rows the command count does not include.
+    /// 4. **The renumber**: the vacated `(commission, tab, surface, band)` group
+    ///    goes contiguous again (`ROW_NUMBER` over the surviving order); the
+    ///    group's `UNIQUE` is deferred, so intermediate states inside the
+    ///    transaction can't trip it.
+    ///
+    /// Every write is scoped by `commission_id`, not just the unique `id`, so
+    /// each statement is self-contained (PR #109 review). There is no
+    /// protected-element arm: tabs and surfaces are skeleton, not elements, so
+    /// no element id addresses one.
+    async fn remove_element(
+        &mut self,
+        commission: CommissionId,
+        element: ElementId,
+    ) -> anyhow::Result<()> {
+        let Some(group) = sql::remove_element_gate(&mut *self.conn, *element, *commission).await?
+        else {
+            return Err(ElementNotFound.into());
+        };
+        // The element's own tab, locked on the same statement the add path uses
+        // — the two orderings into this group now serialize. The name it returns
+        // is the add path's business; here only the lock matters.
+        self.require_tab(commission, TabId::new(group.tab_id))
             .await?;
 
-        sql::add_component(
-            &mut *self.conn,
-            *component.id,
-            *component.commission_id,
-            Some(*component.parent),
-            *component.created_by,
-            component.created_at,
-            &component.payload,
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Prune the tree (ZMVP-73), on the open transaction — three statements
-    /// sharing it. First the target gate: one `SELECT` scoped to
-    /// `commission_id`, so an absent node id and a node in another
-    /// commission's tree refuse as one indistinguishable [`NodeNotFound`]
-    /// **before** anything about the node is revealed (a foreign *root* is
-    /// therefore never [`CannotRemoveRoot`]); a root here — `parent IS NULL` —
-    /// refuses with [`CannotRemoveRoot`] (AC3). Then one `DELETE` of the node
-    /// row, scoped by `(id, commission_id)` and asserted to affect exactly one
-    /// row (a node that vanished between the gate and here re-refuses as
-    /// [`NodeNotFound`] rather than silently proceeding); the self-referential
-    /// `ON DELETE CASCADE` takes the entire subtree with it (Tree Storage DD
-    /// `28409880` Decision 5). Finally the remaining sibling group — matched by
-    /// `(parent, commission_id)` — renumbers to contiguous positions
-    /// (`ROW_NUMBER` over the surviving order); the `UNIQUE (parent, position)`
-    /// constraint is deferred, so intermediate states inside the transaction
-    /// can't trip it. Every write is scoped by `commission_id`, not just the
-    /// unique `id`/`parent`, so each statement is self-contained (PR #109 review).
-    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
-        let row = sql::remove_node_gate(&mut *self.conn, *node, *commission).await?;
-        let Some(parent) = row else {
-            return Err(NodeNotFound.into());
-        };
-        let Some(parent) = parent else {
-            return Err(CannotRemoveRoot.into());
-        };
-
-        // Scope the delete by `commission_id` too — not just the unique `id` — so the
-        // statement is self-contained rather than leaning on `id` uniqueness, and
-        // assert it removed exactly the target row: a node that vanished between the
-        // SELECT above and here (a concurrent removal) affects zero rows and surfaces
-        // as `NodeNotFound` instead of silently proceeding to renumber (PR #109
-        // review). The subtree still leaves via `ON DELETE CASCADE`, whose rows the
-        // command count does not include.
-        let deleted = sql::remove_node_delete(&mut *self.conn, *node, *commission).await?;
+        let deleted = sql::remove_element_delete(&mut *self.conn, *element, *commission).await?;
         if deleted != 1 {
-            return Err(NodeNotFound.into());
+            return Err(ElementNotFound.into());
         }
 
-        // Renumber the vacated sibling group, scoped by `commission_id` as well so
-        // the subquery matches the gate above and never leans on `parent` UUID
-        // uniqueness as the sole scoping mechanism (PR #109 review).
-        sql::remove_node_renumber(&mut *self.conn, parent, *commission).await?;
+        sql::remove_element_renumber(
+            &mut *self.conn,
+            *commission,
+            group.tab_id,
+            &group.surface,
+            &group.band,
+        )
+        .await?;
         Ok(())
     }
 
@@ -330,30 +391,28 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
     /// ruling): per Slot, two inserts on the open transaction behind the
-    /// shared parent gate — an ordinary component row for the tree
-    /// (`type = 'component'`, NULL `mode`, the racing-proof append `position`
-    /// subquery, the empty payload) and the Slot itself as the
-    /// `commission_slot` satellite (title, notes), keyed by that component's
-    /// node id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
-    /// transaction for the whole batch, so every component and satellite lands
+    /// shared address gate — an ordinary element (typed
+    /// [`ElementType::slot`], the racing-proof append `position` subquery, the
+    /// empty payload, born `total`) through the one
+    /// [`insert_element`](Self::insert_element) path, and the Slot itself as
+    /// the `commission_slot` satellite (title, notes), keyed by that element's
+    /// id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
+    /// transaction for the whole batch, so every element and satellite lands
     /// or none does — the first refused Slot aborts and the caller's rollback
     /// takes the earlier inserts with it. There is no occupant column to write
     /// (fill is the Character epic's), and no changelog entry (the frozen
     /// taxonomy has no Slot variant).
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in slots {
-            self.require_surface_parent(slot.parent, slot.commission_id)
-                .await?;
-
-            sql::declare_slot_node(
-                &mut *self.conn,
-                *slot.id,
-                *slot.commission_id,
-                Some(*slot.parent),
-                *slot.created_by,
+            let carrier = NewElement::carrying(
+                slot.id,
+                slot.commission_id,
+                slot.address.clone(),
+                ElementType::slot(),
+                slot.created_by,
                 slot.created_at,
-            )
-            .await?;
+            );
+            self.insert_element(&carrier).await?;
 
             sql::declare_slot_satellite(
                 &mut *self.conn,
@@ -473,28 +532,25 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declare a seat under an existing parent surface (ZMVP-76), on the open
+    /// Declare a seat into a declared surface (ZMVP-76), on the open
     /// transaction — one identity, two inserts that land or vanish together:
-    /// the tree grows an ordinary **component** node (the untyped ZMVP-72
-    /// contract — the same shared parent gate as every tree-growing write, the
-    /// same racing-proof append `position` subquery, `NULL` mode, empty
-    /// payload), and the interpreted seat data lands in the `commission_seat`
-    /// satellite keyed by that node's id (Gate A ruling E20). The satellite's
-    /// `occupant` column is never written here: **every seat is born vacant**
-    /// (AC3; ZMVP-79 fills it).
+    /// the composition gains an ordinary **element** (typed
+    /// [`ElementType::seat`], through the same shared address gate and the same
+    /// racing-proof append `position` subquery as every element write, born
+    /// `total`, empty payload), and the interpreted seat data lands in the
+    /// `commission_seat` satellite keyed by that element's id (Gate A ruling
+    /// E20). The satellite's `occupant` column is never written here: **every
+    /// seat is born vacant** (AC3; ZMVP-79 fills it).
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
-        self.require_surface_parent(seat.parent, seat.commission_id)
-            .await?;
-
-        sql::declare_seat_node(
-            &mut *self.conn,
-            *seat.id,
-            *seat.commission_id,
-            Some(*seat.parent),
-            *seat.created_by,
+        let carrier = NewElement::carrying(
+            seat.id,
+            seat.commission_id,
+            seat.address.clone(),
+            ElementType::seat(),
+            seat.created_by,
             seat.created_at,
-        )
-        .await?;
+        );
+        self.insert_element(&carrier).await?;
 
         sql::declare_seat_satellite(
             &mut *self.conn,
@@ -688,6 +744,14 @@ fn to_placement(
     }
 }
 
+/// Re-validate a stored `mode` token into its [`VisibilityMode`] — the one gate
+/// every composition read passes through, so a tampered or unmigrated token can
+/// never become a silently-widened mode at any of the three terms.
+fn to_mode(token: &str) -> anyhow::Result<VisibilityMode> {
+    VisibilityMode::parse(token)
+        .ok_or_else(|| anyhow::anyhow!("unknown visibility mode token {token:?}"))
+}
+
 /// Rebuild a domain [`SeatInvitation`] from its generated row (ZMVP-78),
 /// re-validating the stored `state` discriminant — an `Err` on row tampering,
 /// never a panic. The Seat mirror of `to_invitation` in the account adapter.
@@ -695,7 +759,7 @@ fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatI
     Ok(SeatInvitation {
         id: SeatInvitationId::new(row.id),
         commission: CommissionId::new(row.commission_id),
-        seat: NodeId::new(row.seat_id),
+        seat: ElementId::new(row.seat_id),
         invited_user: UserId::new(row.invited_user),
         inviter: UserId::new(row.inviter),
         state: InvitationState::try_from(row.state)?,
@@ -952,41 +1016,78 @@ impl CommissionStore for PgCommissionStore {
             .map(Some)
     }
 
-    /// Load and assemble the commission's whole tree: **one** indexed query
-    /// (`WHERE commission_id = $1`, the Tree Storage DD's read model), rows
-    /// re-validated through the domain gates ([`NodeKind::from_columns`] — an
-    /// unknown type tag, a modeless surface, or a mode token outside the
-    /// vocabulary means row tampering and surfaces as an `Err`), then nested by
-    /// [`CommissionTree::assemble`] in Rust. `None` when no rows exist — no
-    /// commission (a created one always has its root).
-    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>> {
-        let rows = sql::load_tree(&self.pool, *id).await?;
-        if rows.is_empty() {
+    /// Load the commission's whole composition (ZMVP-166): **three** indexed
+    /// queries, one per part — its tabs, its widened surface modes, and its
+    /// elements — each `WHERE commission_id = $1`, each ordered in SQL so the
+    /// caller inherits a deterministic order without a sort in Rust. Three
+    /// reads rather than a join because the three are independent sets, not one
+    /// shape: a commission has tabs it has no elements in, and surface modes for
+    /// surfaces nothing has been contributed to.
+    ///
+    /// Every stored token is re-validated through its domain gate
+    /// ([`VisibilityMode::parse`], the label newtypes' `TryFrom`) — a value
+    /// outside its vocabulary means row tampering or a missed migration and
+    /// surfaces as an `Err`, never a silent default. `None` when the commission
+    /// has **no tabs**, which (since tabs are minted with the commission and
+    /// backfilled for older ones) means no such commission; an empty `elements`
+    /// list is the ordinary state of a fresh one and is *not* absence.
+    async fn load_composition(
+        &self,
+        id: CommissionId,
+    ) -> anyhow::Result<Option<CommissionComposition>> {
+        let tab_rows = sql::load_tabs(&self.pool, *id).await?;
+        if tab_rows.is_empty() {
             return Ok(None);
         }
-        let rows =
-            rows.into_iter()
-                .map(|row| {
-                    let kind = NodeKind::from_columns(&row.type_tag, row.mode.as_deref())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "unknown node envelope ({:?}, {:?})",
-                                row.type_tag,
-                                row.mode
-                            )
-                        })?;
-                    Ok(NodeRow {
-                        id: NodeId::new(row.id),
-                        parent: row.parent.map(NodeId::new),
-                        kind,
-                        position: row.position,
-                        created_by: UserId::new(row.created_by),
-                        created_at: row.created_at,
-                        payload: row.payload,
-                    })
+        let tabs = tab_rows
+            .into_iter()
+            .map(|row| {
+                let mode = to_mode(&row.mode)?;
+                Ok(TabRow {
+                    id: TabId::new(row.id),
+                    tab: row.tab.try_into()?,
+                    mode,
                 })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(Some(CommissionTree::assemble(rows)?))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let surface_modes = sql::load_surface_modes(&self.pool, *id)
+            .await?
+            .into_iter()
+            .map(|row| Ok((SurfaceName::try_from(row.surface)?, to_mode(&row.mode)?)))
+            .collect::<anyhow::Result<_>>()?;
+
+        let elements = sql::load_elements(&self.pool, *id)
+            .await?
+            .into_iter()
+            .map(|row| {
+                let mode = to_mode(&row.mode)?;
+                let address = SurfaceAddress::new(
+                    TabId::new(row.tab_id),
+                    SurfaceName::try_from(row.surface)?,
+                );
+                Ok(ElementRow {
+                    id: ElementId::new(row.id),
+                    address,
+                    element_type: row.element_type.try_into()?,
+                    mode,
+                    band: row.band.try_into()?,
+                    position: row.position,
+                    created_by: UserId::new(row.created_by),
+                    created_at: row.created_at,
+                    // Wrapped on the way out of the row, so nothing downstream
+                    // ever holds the raw, serializable value.
+                    payload: ElementPayload::from(row.payload),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let composition = CommissionComposition {
+            tabs,
+            surface_modes,
+            elements,
+        };
+        Ok(Some(composition))
     }
 
     /// One `EXISTS` over the **persisted membership record** (ZMVP-76,
@@ -1032,7 +1133,7 @@ impl CommissionStore for PgCommissionStore {
     async fn find_pending_seat_invitation(
         &self,
         commission: CommissionId,
-        seat: NodeId,
+        seat: ElementId,
         user: UserId,
     ) -> anyhow::Result<Option<SeatInvitation>> {
         sql::find_pending_seat_invitation(
@@ -1047,7 +1148,7 @@ impl CommissionStore for PgCommissionStore {
         .transpose()
     }
 
-    /// The commission's seat satellites (ZMVP-76) in declaration order (node
+    /// The commission's seat satellites (ZMVP-76) in declaration order (element
     /// ids are UUIDv7, so id order is declaration order): one indexed query
     /// over `commission_seat`, each row's `kind`/`prompt`/`link` re-validated
     /// through its domain gate (`SeatKind`'s `TryFrom<String>` & co.) — a stored value
@@ -1058,7 +1159,7 @@ impl CommissionStore for PgCommissionStore {
         rows.into_iter()
             .map(|row| {
                 Ok(Seat {
-                    id: NodeId::new(row.id),
+                    id: ElementId::new(row.id),
                     kind: SeatKind::try_from(row.kind)?,
                     prompt: row.prompt.map(SeatPrompt::try_from).transpose()?,
                     link: row.link.map(SeatLink::try_from).transpose()?,

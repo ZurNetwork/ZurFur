@@ -13,8 +13,7 @@ pub mod file;
 pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
-    CannotRemoveRoot, CommissionStore, CommissionWrites, NodeNotFound, ParentNodeNotFound,
-    ParentNotASurface,
+    CommissionStore, CommissionWrites, ElementNotFound, UnknownSurface, UnknownTab,
 };
 pub use file::FileStore;
 

@@ -11,7 +11,8 @@ use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, NewSeat, NodeId, SeatInvitation, SeatKind,
+            Commission, CommissionId, CommissionTitle, ElementId, NewSeat, SKELETON,
+            SeatInvitation, SeatKind, SurfaceAddress, SurfaceName,
         },
         did::Did,
         invitation::InvitationState,
@@ -41,7 +42,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     user
 }
 
-/// Create a commission (which mints its root and its owner's participant row) in
+/// Create a commission (which mints its tabs and its owner's participant row) in
 /// one committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
@@ -60,28 +61,31 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commissi
     commission
 }
 
-/// The commission's root node id.
-async fn root_of(pool: &PgPool, commission: CommissionId) -> NodeId {
-    PgCommissionStore::new(pool.clone())
-        .load_tree(commission)
+/// The commission's one skeleton address — the placeholder skeleton declares
+/// exactly one tab holding exactly one surface, so this is unambiguous.
+async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
+    let composition = PgCommissionStore::new(pool.clone())
+        .load_composition(commission)
         .await
-        .expect("load tree")
-        .expect("every commission has a tree")
-        .root
-        .id
+        .expect("load composition")
+        .expect("every commission has its tabs");
+    let surface = SKELETON[0].surfaces[0]
+        .parse::<SurfaceName>()
+        .expect("the skeleton declares valid labels");
+    SurfaceAddress::new(composition.tabs[0].id, surface)
 }
 
-/// Declare a vacant Seat under `parent` in one committed unit of work; returns
-/// its node id (the seat invitations reference it).
+/// Declare a vacant Seat at `address` in one committed unit of work; returns
+/// its element id (the seat invitations reference it).
 async fn declare_seat(
     pool: &PgPool,
     commission: CommissionId,
-    parent: NodeId,
+    address: SurfaceAddress,
     owner: &User,
-) -> NodeId {
-    let seat = NewSeat::under(
+) -> ElementId {
+    let seat = NewSeat::contributed_at(
         commission,
-        parent,
+        address,
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
@@ -112,7 +116,7 @@ async fn issue(pool: &PgPool, invitation: &SeatInvitation) {
 
 /// How many `commission_invitation` rows exist for `(seat, user)` in any state —
 /// the raw row count, so a "no second row" claim is proven against the table.
-async fn rows_for(pool: &PgPool, seat: NodeId, user: UserId) -> i64 {
+async fn rows_for(pool: &PgPool, seat: ElementId, user: UserId) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM commission_invitation WHERE seat_id = $1 AND invited_user = $2",
     )
@@ -131,8 +135,8 @@ async fn create_then_find_pending_returns_the_invitation() {
     let owner = provision(&pool, "did:plc:seat-inv-owner").await;
     let invitee = provision(&pool, "did:plc:seat-inv-invitee").await;
     let commission = create_commission(&pool, &owner, "Invited").await;
-    let root = root_of(&pool, commission.id).await;
-    let seat = declare_seat(&pool, commission.id, root, &owner).await;
+    let address = address_of(&pool, commission.id).await;
+    let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
     let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
     let invitation_id = invitation.id;
@@ -171,8 +175,8 @@ async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
     let owner = provision(&pool, "did:plc:dup-owner").await;
     let invitee = provision(&pool, "did:plc:dup-invitee").await;
     let commission = create_commission(&pool, &owner, "Duped").await;
-    let root = root_of(&pool, commission.id).await;
-    let seat = declare_seat(&pool, commission.id, root, &owner).await;
+    let address = address_of(&pool, commission.id).await;
+    let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
     let first = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
     let first_id = first.id;
@@ -204,8 +208,8 @@ async fn two_users_may_hold_pending_invitations_to_one_seat() {
     let alice = provision(&pool, "did:plc:race-alice").await;
     let bob = provision(&pool, "did:plc:race-bob").await;
     let commission = create_commission(&pool, &owner, "Contested").await;
-    let root = root_of(&pool, commission.id).await;
-    let seat = declare_seat(&pool, commission.id, root, &owner).await;
+    let address = address_of(&pool, commission.id).await;
+    let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
     for invitee in [&alice, &bob] {
         issue(
@@ -250,8 +254,8 @@ async fn revoke_flips_state_and_clears_the_pending_offer() {
     let owner = provision(&pool, "did:plc:rev-owner").await;
     let invitee = provision(&pool, "did:plc:rev-invitee").await;
     let commission = create_commission(&pool, &owner, "Revoked").await;
-    let root = root_of(&pool, commission.id).await;
-    let seat = declare_seat(&pool, commission.id, root, &owner).await;
+    let address = address_of(&pool, commission.id).await;
+    let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
     let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
     let invitation_id = invitation.id;
@@ -302,8 +306,8 @@ async fn find_pending_is_scoped_to_its_commission() {
     let owner = provision(&pool, "did:plc:scope-owner").await;
     let invitee = provision(&pool, "did:plc:scope-invitee").await;
     let commission = create_commission(&pool, &owner, "Scoped").await;
-    let root = root_of(&pool, commission.id).await;
-    let seat = declare_seat(&pool, commission.id, root, &owner).await;
+    let address = address_of(&pool, commission.id).await;
+    let seat = declare_seat(&pool, commission.id, address, &owner).await;
     let other = create_commission(&pool, &owner, "Other").await;
 
     let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());

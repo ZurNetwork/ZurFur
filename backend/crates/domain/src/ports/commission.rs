@@ -9,10 +9,9 @@ use crate::{
     elements::{
         account::AccountId,
         commission::{
-            ChannelPointer, Commission, CommissionFile, CommissionId, CommissionTree,
-            DeadlineStatus, DirectionStatus, FileKey, GrantLevel, LapsedDeadline, NewComponent,
-            NewSeat, NewSlot, NewSurface, NodeId, Placement, Seat, SeatInvitation,
-            SeatInvitationId,
+            ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
+            DeadlineStatus, DirectionStatus, ElementId, FileKey, GrantLevel, LapsedDeadline,
+            NewElement, NewSeat, NewSlot, Placement, Seat, SeatInvitation, SeatInvitationId,
         },
         maturity::Maturity,
         user::UserId,
@@ -89,31 +88,44 @@ pub trait CommissionStore: Send + Sync {
     async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool>;
 
     /// The commission's declared [`Seat`]s (ZMVP-76) — the interpreted satellite
-    /// rows, keyed by their tree node ids, in declaration order. An unknown
-    /// commission (or one with no seats) is simply the empty list.
+    /// rows, keyed by their carrying elements' ids, in declaration order. An
+    /// unknown commission (or one with no seats) is simply the empty list.
     ///
     /// **This is the ask-projection hook (AC4):** the viewer projection
-    /// (ZMVP-75) joins these rows against the projected tree by node id, so a
-    /// vacant Seat under a Description-visible surface renders as the published
-    /// ask — and a seat under a hidden surface never leaves the server. The
+    /// (ZMVP-170) joins these rows against the projected composition by element
+    /// id, so a vacant Seat under a Description-visible surface renders as the
+    /// published ask — and a seat under a hidden one never leaves the server. The
     /// rows themselves are raw and Total-tier (they include `occupant`);
     /// authorization/projection is the caller's concern, settled before this
     /// is read.
     async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>>;
 
-    /// Load the commission's **whole content tree** — one indexed read of every
-    /// node row, assembled into the nested [`CommissionTree`] in Rust (ZMVP-71;
-    /// Tree Storage DD `28409880` Decision 4). `None` if no such commission
-    /// exists; a commission is never treeless (its root is minted with it and
-    /// backfilled for those that predate the tree), so a found commission always
-    /// yields a tree. Corrupt row sets (no/multiple roots, detached nodes)
-    /// surface as errors, never a partial tree.
+    /// Load the commission's **whole composition** — every tab, every widened
+    /// surface mode, and every element (ZMVP-166; Flat Composition DD
+    /// `45514754`). `None` if no such commission exists; a commission is never
+    /// tabless (its skeleton tabs are minted with it, and backfilled for those
+    /// that predate the model), so a found commission always yields a
+    /// composition — an *empty* one, with tabs and no elements, being the
+    /// ordinary state of a fresh commission.
     ///
-    /// **The returned tree is raw and server-internal** — `Total`-tier content
-    /// included, deliberately not serializable (see [`CommissionTree`]). Callers
-    /// serialize only through the viewer projection ZMVP-75 introduces;
-    /// authorization is the caller's concern, settled before this is read.
-    async fn load_tree(&self, id: CommissionId) -> anyhow::Result<Option<CommissionTree>>;
+    /// All three parts travel together deliberately: effective visibility is
+    /// `min(tab, surface, element)`, so a load returning only elements would put
+    /// every caller one forgotten lookup away from projecting unclamped content.
+    ///
+    /// **The returned composition is raw and server-internal** — `Total`-tier
+    /// content included, deliberately not serializable (see
+    /// [`CommissionComposition`], and
+    /// [`ElementPayload`](crate::elements::commission::ElementPayload) for the
+    /// content itself). Callers serialize only through the viewer projection
+    /// ZMVP-170 introduces; authorization is the caller's concern, settled
+    /// before this is read.
+    ///
+    /// Named for what it returns — the whole [`CommissionComposition`], not
+    /// just its elements.
+    async fn load_composition(
+        &self,
+        id: CommissionId,
+    ) -> anyhow::Result<Option<CommissionComposition>>;
 
     /// The [`CommissionFile`] entry `key` names **within `commission`**, or `None`
     /// if this commission holds no such entry (ZMVP-88). Scoped to `commission` by
@@ -137,13 +149,13 @@ pub trait CommissionStore: Send + Sync {
     /// duplicate. Only ever returns a **pending** offer — accepted/revoked
     /// invitations are history, not live offers. Scoped to `commission` **in the
     /// query itself**, not by caller discipline: a seat id from some other
-    /// commission's tree never matches, so a handler that authorized against one
+    /// commission never matches, so a handler that authorized against one
     /// commission cannot reach another's offers (the closed-door rule
     /// [`CommissionStore::is_participant`] documents, enforced by construction).
     async fn find_pending_seat_invitation(
         &self,
         commission: CommissionId,
-        seat: NodeId,
+        seat: ElementId,
         user: UserId,
     ) -> anyhow::Result<Option<SeatInvitation>>;
 
@@ -166,115 +178,123 @@ pub trait CommissionStore: Send + Sync {
     async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>>;
 }
 
-/// The error an [`CommissionWrites::add_surface`] failure carries (as the source
-/// of its `anyhow::Error`) when the named parent node does not exist **in that
-/// commission** — covering both a truly absent node id and a node that belongs
-/// to some other commission's tree, indistinguishably. One answer for both by
-/// design: the closed-door policy means a caller must learn nothing about other
-/// commissions' trees from probing parent ids (the same collapse
-/// [`CommissionStore::is_participant`] documents for commissions themselves).
-/// Adapters return it so the route can `downcast_ref` and answer `404` rather
-/// than a generic `500` — the [`HandleTaken`](crate::ports::HandleTaken) pattern.
+/// The error an element-writing call carries (as the source of its
+/// `anyhow::Error`) when the named tab does not exist **in that commission** —
+/// covering both a truly absent tab id and one belonging to some other
+/// commission, indistinguishably. One answer for both by design: the closed-door
+/// policy means a caller must learn nothing about other commissions from probing
+/// tab ids (the same collapse [`CommissionStore::is_participant`] documents for
+/// commissions themselves).
+///
+/// This is the *friendly* half of a rule the schema already enforces
+/// structurally: `commission_element`'s **composite** foreign key
+/// `(tab_id, commission_id) → commission_tab (id, commission_id)` makes an
+/// element citing another commission's tab unwritable at the database. The gate
+/// exists so the route can answer `404` instead of surfacing a constraint
+/// violation — never as the thing standing between a caller and another
+/// commission's data. Adapters return it so the route can `downcast_ref` — the
+/// [`HandleTaken`](crate::ports::HandleTaken) pattern.
 #[derive(Debug)]
-pub struct ParentNodeNotFound;
+pub struct UnknownTab;
 
-impl std::fmt::Display for ParentNodeNotFound {
+impl std::fmt::Display for UnknownTab {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "parent node not found in this commission")
+        write!(f, "tab not found in this commission")
     }
 }
 
-impl std::error::Error for ParentNodeNotFound {}
+impl std::error::Error for UnknownTab {}
 
-/// The error a tree-growing write carries (as the source of its
-/// `anyhow::Error`) when the named parent node **exists in the caller's own
-/// commission** but is a component, not a surface (ZMVP-72): components are
-/// leaves — always the child of a surface, never with children — so nothing
-/// grows under one. Distinct from [`ParentNodeNotFound`] and deliberately
-/// reachable **only past** it: a parent outside the caller's tree always
-/// answers not-found first, so this error never confirms what a foreign node
-/// is. Adapters return it so the route can `downcast_ref` and answer an honest
-/// `409` (the caller owns the commission and already sees the node).
+/// The error an element-writing call carries (as the source of its
+/// `anyhow::Error`) when the composition [`SKELETON`](crate::elements::commission::SKELETON)
+/// does not declare the named surface **in the named tab**.
+///
+/// **The refusal is about the pair, not the surface alone**: a surface that is
+/// perfectly real under some *other* tab is refused here just as an invented
+/// name is, because an element may only be contributed where the skeleton
+/// actually describes a place for it.
+///
+/// Surfaces are **code-declared, global and invariant**: the same set exists for
+/// every commission, and no write creates one. So unlike [`UnknownTab`] this
+/// leaks nothing — "no tab called `main` holds a surface called `xyz`" is a fact
+/// about the program, not about anyone's commission — and it is honest to answer
+/// as a malformed request (`422`) rather than hiding it behind a 404. Both
+/// adapters check the same const
+/// ([`declares_surface`](crate::elements::commission::declares_surface)), so the
+/// two cannot disagree about which addresses are real.
+///
+/// **Ordering note.** Because the check needs the tab's *declared name*, the
+/// adapters resolve the tab **first**: an address that is wrong in both ways
+/// (unknown tab *and* undeclared surface) refuses as [`UnknownTab`]. Both
+/// adapters must keep that order, or the two would answer the same request
+/// differently.
 #[derive(Debug)]
-pub struct ParentNotASurface;
+pub struct UnknownSurface;
 
-impl std::fmt::Display for ParentNotASurface {
+impl std::fmt::Display for UnknownSurface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the parent node is a component, not a surface")
+        write!(f, "no such declared surface")
     }
 }
 
-impl std::error::Error for ParentNotASurface {}
+impl std::error::Error for UnknownSurface {}
 
-/// The error [`CommissionWrites::remove_node`] carries (as the source of its
-/// `anyhow::Error`) when the addressed node does not exist **in that
-/// commission** — covering both a truly absent node id and a node that belongs
-/// to some other commission's tree, indistinguishably (the removal twin of
-/// [`ParentNodeNotFound`], and the same closed-door collapse: probing node ids
-/// through a removal must reveal nothing about other commissions' trees —
-/// not even that a foreign node is a root, which is why this always answers
-/// **before** [`CannotRemoveRoot`] can). Adapters return it so the route can
-/// `downcast_ref` and answer `404` rather than a generic `500`.
+/// The error [`CommissionWrites::remove_element`] carries (as the source of its
+/// `anyhow::Error`) when the addressed element does not exist **in that
+/// commission** — covering both a truly absent element id and one belonging to
+/// some other commission, indistinguishably (the removal twin of
+/// [`UnknownTab`], and the same closed-door collapse: probing element ids
+/// through a removal must reveal nothing about other commissions). Adapters
+/// return it so the route can `downcast_ref` and answer `404` rather than a
+/// generic `500`.
+///
+/// There is deliberately **no sibling "cannot remove" error**. The tree needed
+/// one because its root was a removable-looking node; the flat model has no such
+/// thing — tabs and surfaces are skeleton, not elements, so no element id
+/// addresses one, and every element is removable by construction.
 #[derive(Debug)]
-pub struct NodeNotFound;
+pub struct ElementNotFound;
 
-impl std::fmt::Display for NodeNotFound {
+impl std::fmt::Display for ElementNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "node not found in this commission")
+        write!(f, "element not found in this commission")
     }
 }
 
-impl std::error::Error for NodeNotFound {}
-
-/// The error [`CommissionWrites::remove_node`] carries (as the source of its
-/// `anyhow::Error`) when the addressed node is the commission's **root
-/// surface** (ZMVP-73 AC3): the root is the fixed skeleton — every commission
-/// has exactly one, minted with it — so pruning it is refused outright.
-/// Deliberately reachable **only past** [`NodeNotFound`]: a root in someone
-/// else's commission answers not-found first, so this error never confirms
-/// what a foreign node is. (The Title needs no sibling error: it is a
-/// `commission` envelope field, not a tree node, so no node id addresses it —
-/// irremovable by construction.) Adapters return it so the route can
-/// `downcast_ref` and answer an honest `409` (the caller owns the commission
-/// and already sees the root).
-#[derive(Debug)]
-pub struct CannotRemoveRoot;
-
-impl std::fmt::Display for CannotRemoveRoot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the root surface cannot be removed")
-    }
-}
-
-impl std::error::Error for CannotRemoveRoot {}
+impl std::error::Error for ElementNotFound {}
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`), so no
 /// private-store commission write can skip a transaction (ZMVP-65; DD `24150017`).
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`Commission`] — **together with its root
-    /// surface** ([`RootSurface::of`](crate::elements::commission::RootSurface::of),
-    /// ZMVP-71 AC1) **and its owner's participant row** (ZMVP-76, Engineer
+    /// Persist a freshly created [`Commission`] — **together with its skeleton
+    /// tab rows** ([`declared_tabs`](crate::elements::commission::declared_tabs),
+    /// ZMVP-166) **and its owner's participant row** (ZMVP-76, Engineer
     /// ruling: participant-hood is persisted; the owner is a permanent
     /// Participant from birth), in this same write. Both are minted *inside*
-    /// the implementation, not by the caller, so a treeless — or owner-less —
+    /// the implementation, not by the caller, so a tabless — or owner-less —
     /// commission is unrepresentable: no call site exists that could persist
     /// the row and forget either. One private-side write on the open unit of
     /// work.
+    ///
+    /// Minting the tabs at birth is the **withheld-at-birth discipline**: tab
+    /// state exists explicitly from the first instant, born
+    /// [`Total`](crate::elements::commission::VisibilityMode::Total), so absence
+    /// of a tab row never has to *mean* anything (R4's "absence ≠ withheld").
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
 
-    /// Declare a [`NewSeat`] under an existing parent **surface** (ZMVP-76
-    /// AC1/AC2), atomically as **one node + one satellite row sharing the seat's
-    /// id**, on the open transaction: the tree grows a component (the untyped
-    /// ZMVP-72 contract — empty payload, append sibling order, no mode; the
-    /// node is position + visibility inheritance) and the interpreted seat data
-    /// (kind, requirements, the vacant occupant slot) lands in the
-    /// `commission_seat` satellite keyed by that node's id (Gate A ruling E20).
-    /// The same parent gate as every tree-growing write: an absent/foreign
-    /// parent refuses with [`ParentNodeNotFound`], a component parent with
-    /// [`ParentNotASurface`]. Authority (owner-only in v1) and the commission's
-    /// own existence are the caller's checks. The declaration is
+    /// Declare a [`NewSeat`] into a declared **surface** (ZMVP-76 AC1/AC2),
+    /// atomically as **one element + one satellite row sharing the seat's id**,
+    /// on the open transaction: the composition gains an ordinary element (typed
+    /// [`ElementType::seat`](crate::elements::commission::ElementType::seat),
+    /// empty payload, append order within the band, born `Total`) and the
+    /// interpreted seat data (kind, requirements, the vacant occupant slot)
+    /// lands in the `commission_seat` satellite keyed by that element's id
+    /// (Gate A ruling E20). The same gates as every element write: an
+    /// absent/foreign tab refuses with [`UnknownTab`], an undeclared surface
+    /// with [`UnknownSurface`]. Authority (owner-only in v1) and the
+    /// commission's own existence are the caller's checks. The declaration is
     /// changelog-recorded ([`SeatDeclared`]): the caller appends the matching
     /// entry through [`ChangelogWrites`](crate::ports::ChangelogWrites) **in
     /// this same unit of work**, so the seat and its record land atomically.
@@ -308,63 +328,59 @@ pub trait CommissionWrites: Send {
     /// private-side write, never a cross-store dual write.
     async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()>;
 
-    /// Grow the commission's tree: persist a [`NewSurface`] under its parent
-    /// (ZMVP-71 AC2). Sibling order is assigned here, **on the open
-    /// transaction** — append = max sibling `position` + 1 — and
-    /// implementations must **serialize same-parent appends** (the pg adapter
-    /// locks the parent row `FOR UPDATE`; the mem fake's single lock is
-    /// coarser), so concurrent adds cannot race to one position NOR abort on
-    /// the position uniqueness at commit (Tree Storage DD `28409880` Decision 3;
-    /// hardened per the PR #103 review). The birth mode is inherited from the
-    /// parent (see [`NewSurface::under`]). The parent must exist in
-    /// `surface.commission_id`'s tree as a surface: an absent parent, one
-    /// belonging to another commission, *or* a modeless node all fail with
-    /// [`ParentNodeNotFound`] as the error source (one indistinguishable
-    /// answer — see its docs); a parent that exists there but is a component
-    /// fails with [`ParentNotASurface`] (components never have children —
-    /// ZMVP-72). Authority (owner-only in v1) and the commission's own
-    /// existence are the caller's checks, settled before this is reached.
-    /// Deliberately **not** changelog-recorded: tree edits are not in the
-    /// frozen entry taxonomy (ZMVP-87).
-    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()>;
-
-    /// Grow the commission's tree with a leaf: persist a [`NewComponent`] under
-    /// its parent **surface** (ZMVP-72 AC1). The same contract as
-    /// [`add_surface`](Self::add_surface) — append sibling order assigned on
-    /// the open transaction, an absent/foreign parent refusing with
-    /// [`ParentNodeNotFound`], a component parent refusing with
-    /// [`ParentNotASurface`], authority and commission existence settled by the
-    /// caller, and no changelog entry (tree edits are not in the frozen
-    /// taxonomy) — plus the leaf's own half: the row stores **no mode**
-    /// (a component projects with its parent) and the opaque payload
-    /// semantically unmodified — round-trips as an equal JSON value (jsonb is not byte-preserving) (AC3).
-    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()>;
-
-    /// Prune the commission's tree: remove `node` **and its entire subtree**
-    /// (ZMVP-73) — removal is subtree-deep, so a surface takes every
-    /// descendant (nested surfaces and components) with it, while a component,
-    /// being a leaf, goes singly. Runs on the open transaction, which also
-    /// **renumbers the remaining sibling group** (contiguous from 0, order
-    /// preserved) so positions stay consistent — prune and renumber commit or
-    /// roll back together.
+    /// Contribute a [`NewElement`] into a declared surface (ZMVP-166; Flat
+    /// Composition DD `45514754`). Order is assigned here, **on the open
+    /// transaction** — append = max `position` + 1 **within
+    /// `(tab, surface, band)`** — and implementations must **serialize
+    /// concurrent appends** into one such group (the pg adapter locks the tab
+    /// row `FOR UPDATE`; the mem fake's single lock is coarser), so concurrent
+    /// adds cannot race to one position NOR abort on the position uniqueness at
+    /// commit (the PR #103 hardening, carried over).
     ///
-    /// The target must exist in `commission`'s own tree: an absent node id
-    /// *and* a node belonging to another commission fail with [`NodeNotFound`]
-    /// as the error source (one indistinguishable answer — see its docs); the
-    /// root surface refuses with [`CannotRemoveRoot`], reachable only past
-    /// that gate (AC3; the Title is not a node, so it is irremovable by
-    /// construction). Authority (owner-only in v1) and the commission's own
-    /// existence are the caller's checks, settled before this is reached.
-    /// Deliberately **not** changelog-recorded: tree edits are not in the
-    /// frozen entry taxonomy (ZMVP-87).
+    /// The element is born [`Total`](crate::elements::commission::VisibilityMode::Total)
+    /// (see [`NewElement::contributed`] — there is no mode to pass), the payload
+    /// is stored semantically unmodified (it round-trips as an equal JSON value;
+    /// jsonb is not byte-preserving), and the band is the placeholder
+    /// [`Band::default`](crate::elements::commission::Band::default).
     ///
-    /// **Plugin note (ZMVP-73):** when plugin-owned subtrees land, a plugin's
-    /// append point is a node like any other — removing it removes the
-    /// plugin's whole subtree through this same path. That removal must then
-    /// emit an event the owning plugin can observe (its signal to drop
-    /// external state tied to the subtree). No such event machinery exists
-    /// yet — plugins don't — so this is a recorded need, not a hook.
-    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()>;
+    /// The tab must exist in `element.commission_id`: an absent tab id *and* one
+    /// belonging to another commission both fail with [`UnknownTab`] as the
+    /// error source (one indistinguishable answer — see its docs; the composite
+    /// foreign key makes the cross-commission case unwritable regardless). A
+    /// surface the skeleton does not declare fails with [`UnknownSurface`].
+    /// Authority (owner-only in v1) and the commission's own existence are the
+    /// caller's checks, settled before this is reached. Deliberately **not**
+    /// changelog-recorded: composition edits are not in the frozen entry
+    /// taxonomy (ZMVP-87).
+    async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()>;
+
+    /// Remove `element` from the commission's composition (ZMVP-166). Elements
+    /// are leaves — there is no subtree to take, and nothing can be left orphaned
+    /// — so this removes exactly one row, plus whatever hangs off its identity by
+    /// cascade (a Slot or Seat satellite, and a seat's pending invitations).
+    /// Runs on the open transaction, which also **renumbers the remaining
+    /// `(tab, surface, band)` group** (contiguous from 0, order preserved) so
+    /// positions stay consistent — removal and renumber commit or roll back
+    /// together.
+    ///
+    /// The target must exist in `commission`: an absent element id *and* one
+    /// belonging to another commission both fail with [`ElementNotFound`] (one
+    /// indistinguishable answer — see its docs). There is no protected element:
+    /// tabs and surfaces are skeleton, not elements, so no element id addresses
+    /// one. Authority (owner-only in v1) and the commission's own existence are
+    /// the caller's checks, settled before this is reached. Deliberately **not**
+    /// changelog-recorded (ZMVP-87's frozen taxonomy).
+    ///
+    /// **Plugin note (carried from ZMVP-73):** when plugin-contributed elements
+    /// land, removing one must emit an event the owning plugin can observe (its
+    /// signal to drop external state tied to it). No such event machinery exists
+    /// yet — plugins don't — so this is a recorded need, not a hook. The
+    /// per-plugin bound and the write gate are ZMVP-167's.
+    async fn remove_element(
+        &mut self,
+        commission: CommissionId,
+        element: ElementId,
+    ) -> anyhow::Result<()>;
 
     /// Record a file entry's [`CommissionFile`] link (ZMVP-88) — the Index-canonical
     /// row tying an uploaded file's opaque [`FileKey`] to its commission. Written on
@@ -382,22 +398,24 @@ pub trait CommissionWrites: Send {
     /// Declare **Slots** on the commission — a batch, all in this one write
     /// (Engineer ruling, PR #108: a commission's Slots usually arrive several
     /// at a time, so declaration is an array operation). A Slot is not a kind
-    /// of node: for each [`NewSlot`] the store plants an ordinary component
-    /// leaf under the parent **surface**, and persists the Slot itself — the
-    /// required title and optional notes — as its satellite row, keyed by that
-    /// component's node id (ZMVP-77 AC1; the Slot mirror of the Seat satellite
-    /// ruling, Gate A E20). The whole batch lands or none of it does: the
-    /// first refused Slot aborts the write, and the open transaction takes
-    /// the earlier inserts with it.
+    /// of element: for each [`NewSlot`] the store contributes an ordinary
+    /// element (typed
+    /// [`ElementType::slot`](crate::elements::commission::ElementType::slot))
+    /// into the named **surface**, and persists the Slot itself — the required
+    /// title and optional notes — as its satellite row, keyed by that element's
+    /// id (ZMVP-77 AC1; the Slot mirror of the Seat satellite ruling, Gate A
+    /// E20). The whole batch lands or none of it does: the first refused Slot
+    /// aborts the write, and the open transaction takes the earlier inserts
+    /// with it.
     ///
-    /// The carrying component follows exactly the
-    /// [`add_component`](Self::add_component) contract: append sibling order
-    /// assigned on the open transaction, an absent/foreign parent refusing with
-    /// [`ParentNodeNotFound`], a component parent refusing with
-    /// [`ParentNotASurface`], authority and commission existence settled by the
-    /// caller. The component's payload is the empty object — the Slot's
-    /// substance lives in the satellite, which is why the generic component
-    /// add cannot declare one.
+    /// The carrying element follows exactly the
+    /// [`add_element`](Self::add_element) contract: append order assigned on the
+    /// open transaction within `(tab, surface, band)`, an absent/foreign tab
+    /// refusing with [`UnknownTab`], an undeclared surface refusing with
+    /// [`UnknownSurface`], authority and commission existence settled by the
+    /// caller. The element's payload is the empty object — the Slot's substance
+    /// lives in the satellite, which is why the generic element add cannot
+    /// declare one.
     ///
     /// **No changelog entry**: the frozen ZMVP-87 taxonomy carries
     /// `seat_declared` for Seats but no Slot variant, and the taxonomy is not

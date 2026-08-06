@@ -51,8 +51,8 @@ pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
 
 pub(crate) use commission::{
-    StoredChangelogEntry, StoredCommission, StoredNode, StoredPlacement, StoredSeat,
-    StoredSeatInvitation, StoredSlot,
+    StoredChangelogEntry, StoredCommission, StoredElement, StoredPlacement, StoredSeat,
+    StoredSeatInvitation, StoredSlot, StoredTab,
 };
 
 use std::collections::HashMap;
@@ -68,7 +68,8 @@ use domain::elements::{
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
     commission::{
-        CommissionFile, CommissionId, FileKey, GrantLevel, NodeId, SeatInvitationId, StoredFile,
+        CommissionFile, CommissionId, ElementId, FileKey, GrantLevel, SeatInvitationId, StoredFile,
+        SurfaceName, TabId, VisibilityMode,
     },
     did::Did,
     handle::Handle,
@@ -141,11 +142,23 @@ pub struct MemBackend {
     /// `29130754` D5). At most one key per pair (upsert on grant); a revoke removes
     /// the entry (hard-delete).
     pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, AccountId), GrantLevel>>>,
-    /// [`StoredNode`] parts keyed by [`NodeId`] — the commission content tree
-    /// (ZMVP-71), the in-memory mirror of the pg `commission_node` table. A
+    /// [`StoredElement`] parts keyed by [`ElementId`] — the commission's flat
+    /// composition (ZMVP-166), the in-memory mirror of the pg
+    /// `commission_element` table. A domain map, staged and applied by the Unit
+    /// of Work exactly like `commissions`.
+    pub(crate) elements: Arc<Mutex<HashMap<ElementId, StoredElement>>>,
+    /// [`StoredTab`] parts keyed by [`TabId`] — the commission's tabs
+    /// (ZMVP-166), the in-memory mirror of the pg `commission_tab` table. A
     /// domain map, staged and applied by the Unit of Work exactly like
-    /// `commissions`: a commission and its root surface commit together.
-    pub(crate) nodes: Arc<Mutex<HashMap<NodeId, StoredNode>>>,
+    /// `commissions`: a commission and its skeleton tabs commit together.
+    pub(crate) tabs: Arc<Mutex<HashMap<TabId, StoredTab>>>,
+    /// The per-commission surface-mode overrides keyed by `(commission,
+    /// surface)` (ZMVP-166) — the in-memory mirror of the pg
+    /// `commission_surface_mode` table. **Sparse**: an absent entry means
+    /// [`VisibilityMode::Total`], the closed door said by saying nothing. Nothing
+    /// in ZMVP-166 writes here (widening is ZMVP-74's act); the map exists so the
+    /// read half and the test seeder have the same shape pg does.
+    pub(crate) surface_modes: Arc<Mutex<HashMap<(CommissionId, SurfaceName), VisibilityMode>>>,
     /// Commission file-entry **links** keyed by [`FileKey`] (ZMVP-88) — the
     /// in-memory mirror of the pg `commission_file` table. A domain map, so it is
     /// staged and applied by the Unit of Work exactly like `commissions`: the link
@@ -159,12 +172,12 @@ pub struct MemBackend {
     /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
     /// nor clobber it.
     pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredFile>>>,
-    /// [`StoredSlot`] satellites keyed by the carrying component's [`NodeId`]
+    /// [`StoredSlot`] satellites keyed by the carrying element's [`ElementId`]
     /// (ZMVP-77) — the in-memory mirror of the pg `commission_slot` table. A
     /// domain map, staged and applied by the Unit of Work exactly like
-    /// `nodes`: a Slot's carrying component and its satellite commit (or
+    /// `elements`: a Slot's carrying element and its satellite commit (or
     /// vanish) together.
-    pub(crate) slots: Arc<Mutex<HashMap<NodeId, StoredSlot>>>,
+    pub(crate) slots: Arc<Mutex<HashMap<ElementId, StoredSlot>>>,
     /// Participant membership keyed by `(commission, user)` → when it began —
     /// the in-memory mirror of the pg `commission_participant` table (ZMVP-76).
     /// The owner's row is inserted with the commission itself and is the
@@ -172,12 +185,12 @@ pub struct MemBackend {
     /// trigger's guarantee holds in mem by there being no removal path). A
     /// domain map, staged and applied by the Unit of Work like `commissions`.
     pub(crate) participants: Arc<Mutex<HashMap<(CommissionId, UserId), DateTimeUtc>>>,
-    /// [`StoredSeat`] parts keyed by the seat's [`NodeId`] — the in-memory
-    /// mirror of the pg `commission_seat` satellite (ZMVP-76): the node map
-    /// carries the seat's tree half, this map its interpreted half, sharing
-    /// the id. A domain map, staged and applied by the Unit of Work like
-    /// `nodes`: a seat's node and satellite commit together.
-    pub(crate) seats: Arc<Mutex<HashMap<NodeId, StoredSeat>>>,
+    /// [`StoredSeat`] parts keyed by the seat's [`ElementId`] — the in-memory
+    /// mirror of the pg `commission_seat` satellite (ZMVP-76): the element map
+    /// carries the seat's composition half, this map its interpreted half,
+    /// sharing the id. A domain map, staged and applied by the Unit of Work like
+    /// `elements`: a seat's element and satellite commit together.
+    pub(crate) seats: Arc<Mutex<HashMap<ElementId, StoredSeat>>>,
     /// [`StoredSeatInvitation`] parts keyed by [`SeatInvitationId`] — the
     /// in-memory mirror of the pg `commission_invitation` table (ZMVP-78): the
     /// owner's pending offer of a Seat to a User. The at-most-one-*pending*-per-
@@ -315,10 +328,22 @@ impl MemBackend {
                     .expect("MemBackend view_grants mutex poisoned")
                     .clone(),
             )),
-            nodes: Arc::new(Mutex::new(
-                self.nodes
+            elements: Arc::new(Mutex::new(
+                self.elements
                     .lock()
-                    .expect("MemBackend nodes mutex poisoned")
+                    .expect("MemBackend elements mutex poisoned")
+                    .clone(),
+            )),
+            tabs: Arc::new(Mutex::new(
+                self.tabs
+                    .lock()
+                    .expect("MemBackend tabs mutex poisoned")
+                    .clone(),
+            )),
+            surface_modes: Arc::new(Mutex::new(
+                self.surface_modes
+                    .lock()
+                    .expect("MemBackend surface_modes mutex poisoned")
                     .clone(),
             )),
             files: Arc::new(Mutex::new(
@@ -539,12 +564,37 @@ impl MemBackend {
                 .expect("MemBackend view_grants mutex poisoned"),
         );
         merge_map(
-            &mut self.nodes.lock().expect("MemBackend nodes mutex poisoned"),
-            &base.nodes.lock().expect("MemBackend nodes mutex poisoned"),
-            &staged
-                .nodes
+            &mut self
+                .elements
                 .lock()
-                .expect("MemBackend nodes mutex poisoned"),
+                .expect("MemBackend elements mutex poisoned"),
+            &base
+                .elements
+                .lock()
+                .expect("MemBackend elements mutex poisoned"),
+            &staged
+                .elements
+                .lock()
+                .expect("MemBackend elements mutex poisoned"),
+        );
+        merge_map(
+            &mut self.tabs.lock().expect("MemBackend tabs mutex poisoned"),
+            &base.tabs.lock().expect("MemBackend tabs mutex poisoned"),
+            &staged.tabs.lock().expect("MemBackend tabs mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .surface_modes
+                .lock()
+                .expect("MemBackend surface_modes mutex poisoned"),
+            &base
+                .surface_modes
+                .lock()
+                .expect("MemBackend surface_modes mutex poisoned"),
+            &staged
+                .surface_modes
+                .lock()
+                .expect("MemBackend surface_modes mutex poisoned"),
         );
         merge_map(
             &mut self.files.lock().expect("MemBackend files mutex poisoned"),
