@@ -1,0 +1,37 @@
+// The ZesTTY wiring canary (ZMVP-176) — a deliberately PERMANENT sample
+// exercising all four language features, so the twins gate always has at
+// least one pair to check and the toolchain can never silently rot. Not
+// imported by the app; do not delete without replacing the canary.
+import { type Result, Ok, Err } from "@zestty/core";
+
+enum Meter {
+  Empty {},
+  Filled { percent: number },
+}
+
+export function describe(m: Meter): string {
+  return match (m) {
+    Empty {} => "empty",
+    Filled { percent } => `${percent}%`,
+  };
+}
+
+export function clamp(n: number): Result<number, string> {
+  return if (n < 0) { Err("negative") } else { Ok(n) };
+}
+
+// v0.2.0 features (Phase 5): newtype, literal match + wildcard, and `?`.
+newtype Label = string;
+
+export function tone(mood: "up" | "down" | "flat"): string {
+  return match (mood) {
+    "up" => "rising",
+    "down" => "falling",
+    _ => "steady",
+  };
+}
+
+export function label(n: number): Result<Label, string> {
+  const value = clamp(n)?;
+  return Ok(Label(`v${value}`));
+}

@@ -21,3 +21,6 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# ZesTTY check workspace (never committed — ZMVP-176; upstream ZesTTY#16)
+.zts-check/
