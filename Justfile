@@ -150,6 +150,7 @@ gate:
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test
     yarn --cwd frontend/web run build
+    just zts-check
 
 # --- Setup ---
 
@@ -168,6 +169,23 @@ clean:
     cargo clean
     rm -rf frontend/auth/node_modules
     rm -rf frontend/web/node_modules frontend/web/.svelte-kit frontend/web/build
+
+# --- ZesTTY: The Dialect (DD 46596098, committed-twins mode) ---
+
+# Regenerate the committed ZesTTY twins (.zts → @generated .ts) and the
+# style-ignore list (scripts/zts-twins.sh — the one definition of the list).
+# Clears .zts-check first (upstream ZesTTY#16: a stale manifest must never
+# survive into a run). Named gen-* beside gen-queries/gen-contract.
+gen-zts:
+    cd frontend/web && rm -rf .zts-check && npx --no-install zts-check . --twins
+    bash scripts/zts-twins.sh --write
+
+# The ZesTTY gate: twins current + types clean + no orphan twins + no .zts
+# outside src/ + the style-ignore list matches the sources. Runs in CI via
+# the web job (ZMVP-177) and locally via `just gate`.
+zts-check:
+    cd frontend/web && rm -rf .zts-check && npx --no-install zts-check .
+    bash scripts/zts-twins.sh --guard
 
 # --- Internal ---
 

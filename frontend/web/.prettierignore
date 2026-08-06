@@ -8,3 +8,8 @@ bun.lockb
 # Miscellaneous
 /static/
 src/lib/server/api/generated/
+
+# ZesTTY twins (@generated .ts) are ALSO prettier-exempt — via the third
+# --ignore-path (.zts-twins) in the lint/format scripts, not this file, since
+# the twin list is machine-maintained (just gen-zts). Do not "clean up" the
+# extra --ignore-path flags in package.json.
