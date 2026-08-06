@@ -31,11 +31,12 @@ export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
 	const form = await superValidate(effect(createAccountForm));
 	const deletedParam = url.searchParams.get('deleted');
-	const deleted =
-		deletedParam !== null && Object.hasOwn(DELETE_OUTCOMES, deletedParam)
-			? (deletedParam as DeleteOutcome)
-			: undefined;
-
+	const deleted: DeleteOutcome | undefined = match (url.searchParams.get('deleted')) {
+    "soft" => "soft",
+    "hard" => "hard",
+    "unknown" => "unknown",
+    _ => undefined
+  }
 	return { ...outcome, deleted, form };
 };
 
@@ -56,7 +57,9 @@ export const actions: Actions = {
 
 		const outcome = await runApi(fetch, createAccountOutcome(form.data.name, form.data.handle));
 
-		if ('problem' in outcome) return problemMessage(form, outcome.problem);
-		redirect(HttpStatus.SeeOther, '/accounts');
+    return match (await runApi(fetch, createAccountOutcome(form.data.name, form.data.handle))) {
+      Err { error } => problemMessage(form, error),
+      Ok { value: _ } => redirect(HttpStatus.SeeOther, '/accounts')
+    }
 	}
 };
