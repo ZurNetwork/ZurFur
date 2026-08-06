@@ -3,7 +3,7 @@
 //! growing one hotspot — the same seam-splitting move as [`super`] itself:
 //!
 //! - [`create`] — `POST /commissions` (ZMVP-65 + the creation changelog entry;
-//!   ZMVP-71 mints the root surface in the same unit of work).
+//!   ZMVP-166 mints the commission's skeleton tabs in the same unit of work).
 //! - [`list`] — `GET /commissions` (ZMVP-157: the signed-in user's owned
 //!   commissions, owner-POV only — frontend enablement for ZMVP-153).
 //! - [`changelog`] — `GET /commissions/{id}/changelog` (the ordered read).
@@ -16,18 +16,17 @@
 //!   /commissions/{id}/unarchive` (the soft archive/un-archive acts, ZMVP-68).
 //! - [`maturity`] — `PUT /commissions/{id}/maturity` (ZMVP-31: the owner rates
 //!   the commission; replace-only, no clear).
-//! - [`surfaces`] — `POST /commissions/{id}/surfaces` (ZMVP-71: the owner grows
-//!   the content tree).
-//! - [`components`] — `POST /commissions/{id}/components` (ZMVP-72: the owner
-//!   adds a leaf under a surface).
-//! - [`remove`] — `DELETE /commissions/{id}/nodes/{node}` (ZMVP-73: the owner
-//!   prunes a node and its subtree; the root refuses).
+//! - [`elements`] — `POST /commissions/{id}/elements` and
+//!   `DELETE /commissions/{id}/elements/{element}` (ZMVP-166: the owner composes
+//!   the commission). **One pair of routes** where the tree needed three
+//!   (`/surfaces`, `/components`, `/nodes/{node}`): tabs and surfaces are a
+//!   code-declared skeleton, so an element is the only thing anyone writes.
 //! - [`slots`] — `POST /commissions/{id}/slots` (ZMVP-77: the owner declares a
-//!   batch of Slots — each carried by an ordinary component, its title/notes
+//!   batch of Slots — each carried by an ordinary element, its title/notes
 //!   in the satellite; an all-or-nothing array; fill deferred to the Character
 //!   epic).
 //! - [`seats`] — `POST /commissions/{id}/seats` (ZMVP-76: the owner declares a
-//!   vacant, typed Seat — a component plus its interpreted satellite).
+//!   vacant, typed Seat — an element plus its interpreted satellite).
 //! - [`invitations`] — `POST`/`DELETE /commissions/{id}/invitations` (ZMVP-78:
 //!   the owner invites a User to a vacant Seat, or revokes a pending offer;
 //!   accept/decline is ZMVP-79).
@@ -94,10 +93,10 @@ pub(super) fn from_wire_timestamp(
 mod archive;
 mod changelog;
 mod channel;
-mod components;
 mod create;
 mod deadline;
 mod delete;
+mod elements;
 mod files;
 mod invitations;
 mod list;
@@ -105,11 +104,9 @@ mod markup;
 mod maturity;
 mod notes;
 mod positioning;
-mod remove;
 mod seats;
 mod slots;
 mod status;
-mod surfaces;
 
 /// Slack, in bytes, added above [`Config::max_upload_bytes`](crate::Config::max_upload_bytes)
 /// for the request body-size limit on the upload route: a `multipart/form-data`
@@ -168,14 +165,10 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
             delete(positioning::revoke_view),
         )
         .route("/commissions/{id}/maturity", put(maturity::set_maturity))
-        .route("/commissions/{id}/surfaces", post(surfaces::add_surface))
+        .route("/commissions/{id}/elements", post(elements::add_element))
         .route(
-            "/commissions/{id}/components",
-            post(components::add_component),
-        )
-        .route(
-            "/commissions/{id}/nodes/{node}",
-            delete(remove::remove_node),
+            "/commissions/{id}/elements/{element}",
+            delete(elements::remove_element),
         )
         .route("/commissions/{id}/slots", post(slots::declare_slots))
         .route("/commissions/{id}/seats", post(seats::declare_seat))
@@ -259,7 +252,7 @@ async fn require_participant(
 /// authority is an honest `403` — today that arm is unreachable (the owner is
 /// the only participant until ZMVP-79 seats more). Consumed by every
 /// owner-gated commission handler ([`channel`], [`delete`], [`archive`],
-/// [`surfaces`], [`seats`], [`invitations`]). Returns the resolved [`Commission`]
+/// [`elements`], [`seats`], [`invitations`]). Returns the resolved [`Commission`]
 /// so callers needn't re-read it.
 async fn require_owner(
     state: &AppState,

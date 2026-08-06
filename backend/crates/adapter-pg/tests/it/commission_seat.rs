@@ -6,7 +6,7 @@
 //! cascade still sweeps everything); a re-add for an already-seated pair is a
 //! silent no-op that preserves the original created_at (ZMVP-140, ahead of
 //! ZMVP-79's seat acceptance re-adding an existing participant); and a
-//! declared Seat lands as one component node plus its interpreted satellite
+//! declared Seat lands as one ordinary element plus its interpreted satellite
 //! sharing the id, read back through `seats()`. Requires a container runtime
 //! socket (DOCKER_HOST honored).
 
@@ -15,13 +15,13 @@ use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, NewSeat, NodeId, NodeKind, SeatKind,
-            SeatLink, SeatPrompt,
+            Commission, CommissionId, CommissionTitle, ElementType, NewSeat, SKELETON, SeatKind,
+            SeatLink, SeatPrompt, SurfaceAddress, SurfaceName, TabId, VisibilityMode,
         },
         did::Did,
         user::{User, UserId},
     },
-    ports::{CommissionStore, Database, ParentNodeNotFound},
+    ports::{CommissionStore, Database, UnknownTab},
 };
 
 /// The ZMVP-76 migration (create `commission_participant` + owner backfill +
@@ -59,7 +59,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     user
 }
 
-/// Create a commission (which mints its root AND its owner's participant row)
+/// Create a commission (which mints its tabs AND its owner's participant row)
 /// in one committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
@@ -78,15 +78,18 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commissi
     commission
 }
 
-/// The commission's root node id.
-async fn root_of(pool: &PgPool, commission: CommissionId) -> NodeId {
-    PgCommissionStore::new(pool.clone())
-        .load_tree(commission)
+/// The commission's one skeleton address — the placeholder skeleton declares
+/// exactly one tab holding exactly one surface, so this is unambiguous.
+async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
+    let composition = PgCommissionStore::new(pool.clone())
+        .load_composition(commission)
         .await
-        .expect("load tree")
-        .expect("every commission has a tree")
-        .root
-        .id
+        .expect("load composition")
+        .expect("every commission has its tabs");
+    let surface = SKELETON[0].surfaces[0]
+        .parse::<SurfaceName>()
+        .expect("the skeleton declares valid labels");
+    SurfaceAddress::new(composition.tabs[0].id, surface)
 }
 
 /// The participant rows for a commission, as raw `(user_id)` values.
@@ -174,7 +177,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
 
 // Ruling B2, the retroactive half — commissions created BEFORE the membership
 // table existed get their owner's row backfilled by the migration (the ZMVP-71
-// root pattern), stamped with the commission's creation instant.
+// skeleton pattern), stamped with the commission's creation instant.
 #[tokio::test]
 async fn the_migration_backfills_the_owners_participant_row() {
     let (pool, _container) = bare_pool().await;
@@ -355,17 +358,17 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
 // Ruling E35 — the commission-delete cascade still sweeps EVERYTHING (what
 // ZMVP-66's "gone entirely" relies on): participants (the floor trigger lets
 // cascaded deletes through — the commission row is already gone when they
-// fire), seats, and nodes all vanish with the commission row.
+// fire), seats, and elements all vanish with the commission row.
 #[tokio::test]
 async fn deleting_the_commission_cascades_participants_and_seats_away() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:cascade-owner").await;
     let commission = create_commission(&pool, &owner, "Doomed").await;
-    let root = root_of(&pool, commission.id).await;
+    let address = address_of(&pool, commission.id).await;
 
-    let seat = NewSeat::under(
+    let seat = NewSeat::contributed_at(
         commission.id,
-        root,
+        address.clone(),
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
@@ -390,7 +393,7 @@ async fn deleting_the_commission_cascades_participants_and_seats_away() {
         "SELECT
             (SELECT count(*) FROM commission_participant WHERE commission_id = $1),
             (SELECT count(*) FROM commission_seat WHERE commission_id = $1),
-            (SELECT count(*) FROM commission_node WHERE commission_id = $1)",
+            (SELECT count(*) FROM commission_element WHERE commission_id = $1)",
     )
     .bind(*commission.id)
     .fetch_one(&pool)
@@ -399,24 +402,24 @@ async fn deleting_the_commission_cascades_participants_and_seats_away() {
     assert_eq!(
         leftovers,
         (0, 0, 0),
-        "participant/seat/node rows all cascade away with the commission"
+        "participant/seat/element rows all cascade away with the commission"
     );
 }
 
-// AC1/AC2/AC3 (pg) — a declared seat lands as one component node plus its
+// AC1/AC2/AC3 (pg) — a declared seat lands as one element plus its
 // interpreted satellite sharing the id, atomically; seats() reads the kind,
 // requirements, and the vacant occupant slot back; kinds repeat freely; and a
 // rolled-back unit leaves neither half behind.
 #[tokio::test]
-async fn declare_seat_lands_a_node_and_its_satellite_together() {
+async fn declare_seat_lands_an_element_and_its_satellite_together() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:declarer").await;
     let commission = create_commission(&pool, &owner, "Seatful").await;
-    let root = root_of(&pool, commission.id).await;
+    let address = address_of(&pool, commission.id).await;
 
-    let first = NewSeat::under(
+    let first = NewSeat::contributed_at(
         commission.id,
-        root,
+        address.clone(),
         "Creator".parse::<SeatKind>().expect("valid kind"),
         Some(
             "Two refs, please."
@@ -431,9 +434,9 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
         owner.id,
         Utc::now(),
     );
-    let second = NewSeat::under(
+    let second = NewSeat::contributed_at(
         commission.id,
-        root,
+        address.clone(),
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
@@ -455,19 +458,26 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
     uow.commit().await.expect("commit");
 
     let store = PgCommissionStore::new(pool.clone());
-    let tree = store
-        .load_tree(commission.id)
+    let composition = store
+        .load_composition(commission.id)
         .await
         .expect("load")
-        .expect("tree exists");
-    assert_eq!(tree.root.children.len(), 2);
-    assert_eq!(tree.root.children[0].id, first_id, "append order");
+        .expect("composed");
+    assert_eq!(composition.elements.len(), 2);
+    assert_eq!(composition.elements[0].id, first_id, "append order");
     assert!(
-        tree.root
-            .children
+        composition
+            .elements
             .iter()
-            .all(|child| matches!(child.kind, NodeKind::Component)),
-        "a seat's node is an ordinary component (the untyped v1 contract)"
+            .all(|element| element.element_type == ElementType::seat()),
+        "a seat's element carries the seat type tag"
+    );
+    assert!(
+        composition
+            .elements
+            .iter()
+            .all(|element| element.mode == VisibilityMode::Total),
+        "and is born Total like any other element"
     );
 
     let seats = store.seats(commission.id).await.expect("seats");
@@ -492,9 +502,9 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
     assert!(second_seat.prompt.is_none() && second_seat.link.is_none());
 
     // A rolled-back declaration leaves neither half behind.
-    let third = NewSeat::under(
+    let third = NewSeat::contributed_at(
         commission.id,
-        root,
+        address.clone(),
         "Client".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
@@ -514,29 +524,31 @@ async fn declare_seat_lands_a_node_and_its_satellite_together() {
     );
     assert_eq!(
         store
-            .load_tree(commission.id)
+            .load_composition(commission.id)
             .await
             .expect("load")
-            .expect("tree exists")
-            .root
-            .children
+            .expect("composed")
+            .elements
             .len(),
         2,
-        "the rolled-back node never landed"
+        "the rolled-back element never landed"
     );
 }
 
-// The shared parent gate holds for seats too: a fabricated parent refuses with
-// ParentNodeNotFound before anything lands.
+// The shared address gate holds for seats too: a fabricated tab refuses with
+// UnknownTab before anything lands.
 #[tokio::test]
-async fn declare_seat_refuses_an_absent_parent() {
+async fn declare_seat_refuses_an_absent_tab() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:gated").await;
     let commission = create_commission(&pool, &owner, "Gated").await;
 
-    let fabricated = NewSeat::under(
+    // The commission's real surface, reached through the file's own helper, so
+    // the skeleton token is spelled in exactly one place here.
+    let declared = address_of(&pool, commission.id).await;
+    let fabricated = NewSeat::contributed_at(
         commission.id,
-        NodeId::new(uuid::Uuid::now_v7()),
+        SurfaceAddress::new(TabId::mint(), declared.surface),
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
@@ -549,10 +561,10 @@ async fn declare_seat_refuses_an_absent_parent() {
         .commissions()
         .declare_seat(&fabricated)
         .await
-        .expect_err("absent parent refuses");
+        .expect_err("absent tab refuses");
     assert!(
-        err.downcast_ref::<ParentNodeNotFound>().is_some(),
-        "expected ParentNodeNotFound, got: {err:?}"
+        err.downcast_ref::<UnknownTab>().is_some(),
+        "expected UnknownTab, got: {err:?}"
     );
     uow.rollback().await.expect("rollback");
 

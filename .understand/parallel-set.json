@@ -6,6 +6,17 @@
   "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local).",
   "tickets": [
     {
+      "key": "ZMVP-166",
+      "summary": "storage: flat commission composition — commission_tab + commission_element, drop commission_node",
+      "phase": "pr-open",
+      "next_action": "Built by the Opus hardest-build lane (644 tests), ship-gates round applied (2 races fixed [tab lock on remove; tab-scoped surface check], satellite composite-FK teeth, participant-residue DELETE [Engineer ruling], ElementPayload no-Serialize newtype, 9 critique items; 655 tests, independently verified). Engineer ruled 422/404 split + tab_not_found + UUID-addressing-waits-for-163. Note: wrong-both-ways address now answers UnknownTab 404 (gate-order inversion, pinned both adapters). Slices: [1] infra+docs [2] re-model. Await Copilot triage + Engineer merge; unblocks ZMVP-163/169.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/173",
+      "branch": "feature/zmvp-166-flat-composition-storage",
+      "worktree": null,
+      "snapshot": ".understand/20260804-170104_ZMVP-166_flat-composition-storage.md",
+      "updated": "2026-08-05T19:55:00-06:00"
+    },
+    {
       "key": "ZMVP-165",
       "summary": "Superforms migration — one-channel forms (login + accounts)",
       "phase": "merged",

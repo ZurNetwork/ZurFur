@@ -31,8 +31,8 @@ use chrono::Utc;
 use domain::elements::{
     account::AccountId,
     commission::{
-        ChannelPointer, Commission, CommissionId, CommissionTitle, GrantLevel, NewComponent,
-        NewSurface, NodeId,
+        ChannelPointer, Commission, CommissionId, CommissionTitle, ElementId, GrantLevel,
+        NewElement,
     },
     did::Did,
     maturity::Maturity,
@@ -357,16 +357,16 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         self.0.set_archived(id, archived_at).await
     }
 
-    async fn add_surface(&mut self, surface: &NewSurface) -> anyhow::Result<()> {
-        self.0.add_surface(surface).await
+    async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
+        self.0.add_element(element).await
     }
 
-    async fn add_component(&mut self, component: &NewComponent) -> anyhow::Result<()> {
-        self.0.add_component(component).await
-    }
-
-    async fn remove_node(&mut self, commission: CommissionId, node: NodeId) -> anyhow::Result<()> {
-        self.0.remove_node(commission, node).await
+    async fn remove_element(
+        &mut self,
+        commission: CommissionId,
+        element: ElementId,
+    ) -> anyhow::Result<()> {
+        self.0.remove_element(commission, element).await
     }
 
     async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {

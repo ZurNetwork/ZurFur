@@ -132,21 +132,38 @@ impl Problem {
         )
     }
 
-    /// `404` — the addressed tree node doesn't exist in this commission
-    /// (ZMVP-71). Reached only past the commission's own gate (the caller is
+    /// `404` — the addressed element doesn't exist in this commission
+    /// (ZMVP-166). Reached only past the commission's own gate (the caller is
     /// already its owner), so unlike
     /// [`commission_not_found`](Problem::commission_not_found) it hides
-    /// nothing *about this commission* — but it deliberately answers a node id
-    /// that exists in **someone else's** tree identically to one that exists
-    /// nowhere (the store refuses both as one case), so node ids can't be used
-    /// to probe other commissions' trees.
-    pub fn node_not_found() -> Self {
+    /// nothing *about this commission* — but it deliberately answers an element
+    /// id that exists in **someone else's** commission identically to one that
+    /// exists nowhere (the store refuses both as one case), so element ids can't
+    /// be used to probe other commissions.
+    pub fn element_not_found() -> Self {
         Self::new(
-            "urn:zurfur:error:node-not-found",
-            "node_not_found",
-            "Node not found",
+            "urn:zurfur:error:element-not-found",
+            "element_not_found",
+            "Element not found",
             404,
-            "No such node in this commission.",
+            "No such element in this commission.",
+        )
+    }
+
+    /// `404` — the addressed tab doesn't exist in this commission (ZMVP-166).
+    /// The element mirror of [`element_not_found`](Problem::element_not_found),
+    /// and the same closed-door collapse: a tab id belonging to another
+    /// commission answers identically to one that exists nowhere, so tab ids
+    /// can't be used to probe other commissions. (The composite foreign key
+    /// makes the cross-commission write unrepresentable anyway; this is the
+    /// honest answer rather than a leaked constraint violation.)
+    pub fn tab_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:tab-not-found",
+            "tab_not_found",
+            "Tab not found",
+            404,
+            "No such tab in this commission.",
         )
     }
 
@@ -277,38 +294,25 @@ impl Problem {
         )
     }
 
-    /// `409` — the named parent node exists (in the caller's own commission)
-    /// but is a component, and components never have children (ZMVP-72:
-    /// "always the child of a surface, never with children"). A state
-    /// conflict, not an authority failure — and honest by construction: it is
-    /// only ever reachable past the owner gate *and* past the absent/foreign
-    /// parent check ([`node_not_found`](Problem::node_not_found)), so it can
-    /// never reveal anything about another commission's tree.
-    pub fn parent_not_a_surface() -> Self {
+    /// `422` — the addressed `(tab, surface)` pair is not one the composition
+    /// skeleton declares (ZMVP-166): either no such surface exists at all, or
+    /// it exists under a different tab than the one addressed.
+    ///
+    /// A `422` and **not** a 404, deliberately: the skeleton is code-declared,
+    /// global, and invariant, so "no tab declares a surface called `xyz`" is a
+    /// fact about the program, not about anyone's commission. Hiding it behind
+    /// a not-found would protect nothing and tell an honest caller nothing
+    /// about what they got wrong. (Its siblings
+    /// [`tab_not_found`](Problem::tab_not_found) and
+    /// [`element_not_found`](Problem::element_not_found) *are* 404s, because
+    /// those ids do name per-commission rows.)
+    pub fn unknown_surface() -> Self {
         Self::new(
-            "urn:zurfur:error:parent-not-a-surface",
-            "parent_not_a_surface",
-            "Parent is not a surface",
-            409,
-            "Components are leaves: nothing can be added under a component.",
-        )
-    }
-
-    /// `409` — the addressed node is the commission's root surface, which is
-    /// the fixed skeleton and cannot be removed (ZMVP-73 AC3; the Title is not
-    /// a tree node, so no node id even addresses it). A state conflict, not an
-    /// authority failure — and honest by construction: like
-    /// [`parent_not_a_surface`](Problem::parent_not_a_surface) it is only ever
-    /// reachable past the owner gate *and* past the absent/foreign target
-    /// check ([`node_not_found`](Problem::node_not_found)), so it can never
-    /// confirm that a foreign node is a root.
-    pub fn cannot_remove_root() -> Self {
-        Self::new(
-            "urn:zurfur:error:cannot-remove-root",
-            "cannot_remove_root",
-            "The root surface cannot be removed",
-            409,
-            "Every commission keeps its root surface; remove its children instead.",
+            "urn:zurfur:error:unknown-surface",
+            "unknown_surface",
+            "Unknown surface",
+            422,
+            "No such surface under that tab: a commission's surfaces are a fixed, declared set per tab.",
         )
     }
 

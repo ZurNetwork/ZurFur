@@ -3,11 +3,11 @@
 //! define them, title them, count them — whose *filling* is deferred wholesale
 //! to the Character epic.
 //!
-//! A Slot is not a kind of tree node. Declaring one plants an ordinary
-//! [`NodeKind::Component`] leaf under the chosen surface — plain tree
-//! mechanics — while the Slot itself (the required title, optional freeform
+//! A Slot is not a kind of element. Declaring one contributes an ordinary
+//! [`Element`](super::ElementRow) — typed [`ElementType::slot`] — into the
+//! chosen surface, while the Slot itself (the required title, optional freeform
 //! notes) lives in the satellite `commission_slot` table keyed by that
-//! component's node id (mirroring the Seat satellite of Gate A ruling E20).
+//! element's id (mirroring the Seat satellite of Gate A ruling E20).
 //! "Deliberately not Participants" stands: a
 //! Slot holds a Character, never a User, so nothing here touches seats, roles,
 //! or the participant set.
@@ -19,9 +19,12 @@
 //! assignment surface (public-vs-private character gates, live reference)
 //! arrives with the Character epic.
 //!
-//! [`NodeKind::Component`]: super::NodeKind::Component
+//! [`ElementType::slot`]: super::ElementType::slot
 
-use super::{CommissionId, node::NodeId};
+use super::{
+    CommissionId,
+    element::{ElementId, SurfaceAddress},
+};
 use crate::{
     datetime::DateTimeUtc,
     elements::user::UserId,
@@ -117,29 +120,31 @@ impl SlotTitle {
     }
 }
 
-/// A freshly declared Slot, ready to persist under an existing **surface**
+/// A freshly declared Slot, ready to persist into a declared **surface**
 /// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots),
 /// ZMVP-77).
 ///
-/// Built with [`NewSlot::under`]. The store plants an ordinary component leaf
-/// — exactly a [`NewComponent`](super::NewComponent)'s envelope: no mode,
-/// append sibling order, the empty payload — and persists the Slot itself —
-/// the required [`SlotTitle`] and optional freeform notes — as the satellite
-/// beside it, keyed by that component's node id.
+/// Built with [`NewSlot::contributed_at`]. The store contributes an ordinary
+/// element — exactly a [`NewElement`](super::NewElement)'s envelope: born
+/// `Total`, append order within the band, the empty payload — and persists the
+/// Slot itself — the required [`SlotTitle`] and optional freeform notes — as the
+/// satellite beside it, keyed by that element's id.
 /// There is deliberately **no occupant field of any kind**: fill is the
 /// Character epic's, and an undeclarable field can't be filled by accident.
 #[derive(Debug)]
 pub struct NewSlot {
-    /// The freshly minted node key (UUIDv7) of the component that will carry
+    /// The freshly minted element key (UUIDv7) of the element that will carry
     /// this Slot — it also keys the satellite row.
-    pub id: NodeId,
-    /// The commission whose tree this grows. The store verifies `parent`
-    /// belongs to this same commission.
+    pub id: ElementId,
+    /// The commission this Slot is declared on. The store verifies `tab`
+    /// belongs to this same commission (and the composite foreign key makes a
+    /// cross-commission tab unrepresentable regardless).
     pub commission_id: CommissionId,
-    /// The existing **surface** to grow under. A Slot's carrying component is
-    /// a leaf, so the store refuses a parent that is itself a component
-    /// ([`ParentNotASurface`](crate::ports::ParentNotASurface)).
-    pub parent: NodeId,
+    /// Where the carrying element sits: the (tab, surface) pair. An absent or
+    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); a (tab,
+    /// surface) pair the [`SKELETON`](super::SKELETON) does not declare refuses with
+    /// [`UnknownSurface`](crate::ports::UnknownSurface).
+    pub address: SurfaceAddress,
     /// The Slot's required title (AC1), validated at the boundary.
     pub title: SlotTitle,
     /// Optional freeform notes (AC1) — carried verbatim; the boundary trims and
@@ -153,38 +158,42 @@ pub struct NewSlot {
 }
 
 impl NewSlot {
-    /// A new Slot under `parent`, titled `title`, with optional `notes`. Mints
-    /// the node id; authority (owner-only in v1) and the parent-is-a-surface
-    /// rule are the store's/route's concern, settled when this is persisted.
+    /// A new Slot contributed at `address`, titled `title`, with optional
+    /// `notes`. Mints the element id; authority (owner-only in v1), the tab's
+    /// existence, and the surface's declaration are the store's/route's concern,
+    /// settled when this is persisted.
     ///
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     commission::{CommissionId, NewSlot, NodeId, SlotTitle},
+    ///     commission::{CommissionId, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, TabId},
     ///     user::UserId,
     /// };
     ///
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
-    /// let parent = NodeId::new(uuid::Uuid::now_v7());
+    /// let address = SurfaceAddress::new(
+    ///     TabId::new(uuid::Uuid::now_v7()),
+    ///     "content".parse::<SurfaceName>().unwrap(),
+    /// );
     /// let owner = UserId::new(uuid::Uuid::now_v7());
     /// let title = "The knight".parse::<SlotTitle>().unwrap();
-    /// let slot = NewSlot::under(commission, parent, title, None, owner, Utc::now());
-    /// assert_eq!(slot.parent, parent);
+    /// let slot = NewSlot::contributed_at(commission, address.clone(), title, None, owner, Utc::now());
+    /// assert_eq!(slot.address, address);
     /// assert_eq!(slot.title.as_str(), "The knight");
     /// assert!(slot.notes.is_none());
     /// ```
-    pub fn under(
+    pub fn contributed_at(
         commission: CommissionId,
-        parent: NodeId,
+        address: SurfaceAddress,
         title: SlotTitle,
         notes: Option<String>,
         created_by: UserId,
         now: DateTimeUtc,
     ) -> Self {
         Self {
-            id: NodeId::mint(),
+            id: ElementId::mint(),
             commission_id: commission,
-            parent,
+            address,
             title,
             notes,
             created_by,
@@ -194,7 +203,7 @@ impl NewSlot {
 }
 
 /// One **declared** Slot as read back — the satellite row rebuilt (title,
-/// notes) plus the node id that keys it. A commission holds zero or more of
+/// notes) plus the element id that keys it. A commission holds zero or more of
 /// these (AC2).
 ///
 /// Deliberately occupant-less: an empty Slot is not a Slot *waiting* on
@@ -203,9 +212,9 @@ impl NewSlot {
 /// (and its storage) in that change, not before.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slot {
-    /// The id of the component that carries this Slot in the tree — also the
-    /// satellite row's key.
-    pub node_id: NodeId,
+    /// The id of the element that carries this Slot — also the satellite row's
+    /// key (one identity, two rows).
+    pub element_id: ElementId,
     /// The commission the Slot belongs to.
     pub commission_id: CommissionId,
     /// The Slot's required title.
@@ -232,18 +241,21 @@ mod tests {
         assert_eq!("   \t ".parse::<SlotTitle>(), Err(SlotTitleError::Empty));
     }
 
-    // AC1 — a new Slot's envelope: fresh id, the surface it grows under, the
-    // acting user, its title and optional notes carried as given.
+    // AC1 — a new Slot's envelope: fresh id, the (tab, surface) it is
+    // contributed into, the acting user, its title and optional notes as given.
     #[test]
     fn a_new_slot_carries_title_and_optional_notes() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
-        let parent = NodeId::new(uuid::Uuid::now_v7());
+        let address = SurfaceAddress::new(
+            super::super::element::TabId::new(uuid::Uuid::now_v7()),
+            "content".parse().unwrap(),
+        );
         let owner = UserId::new(uuid::Uuid::now_v7());
         let title = "The mage".parse::<SlotTitle>().unwrap();
 
-        let slot = NewSlot::under(
+        let slot = NewSlot::contributed_at(
             commission,
-            parent,
+            address.clone(),
             title.clone(),
             Some("robes, not armor".to_string()),
             owner,
@@ -251,7 +263,7 @@ mod tests {
         );
 
         assert_eq!(slot.commission_id, commission);
-        assert_eq!(slot.parent, parent);
+        assert_eq!(slot.address, address);
         assert_eq!(slot.title, title);
         assert_eq!(slot.notes.as_deref(), Some("robes, not armor"));
         assert_eq!(slot.created_by, owner);

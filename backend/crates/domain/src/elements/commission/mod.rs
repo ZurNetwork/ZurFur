@@ -6,19 +6,20 @@
 //! [`LifecycleStep`], a nullable deadline, and a creation stamp. A commission is
 //! created by any authenticated User with **no Account required** (a user-scoped
 //! write; ZMVP-47, DD 26247170). Everything else the glossary describes — the
-//! content tree of Surfaces/Components, Seats/Slots, participants beyond the
-//! creator, account [`positioning`] (placement + view grants, ZMVP-70), and
+//! flat composition of Tabs/Surfaces/Elements, Seats/Slots, participants beyond
+//! the creator, account [`positioning`] (placement + view grants, ZMVP-70), and
 //! lifecycle/status transitions — materializes in later tickets, not here. (There
 //! is no "managing-account association": Ownership Separation DD `29130754` deleted
 //! that concept — accounts own positioning, never the commission.)
 //!
 //! A commission is **isolated from accounts**: it survives account deletion and its
 //! participants are always Users, never accounts. Visibility is carried as a flat
-//! [`Visibility`] field defaulting to `Private` (the closed-door policy) — the three
-//! values are the aliases the per-surface Surfaces DD (`28246028`) keeps for the
-//! root surface's mode ([`Visibility::as_root_mode`]): since ZMVP-71 every
-//! commission's root surface is born from this field, and ZMVP-74 makes the root
-//! mode the authoritative direction (reconciling this flat column).
+//! [`Visibility`] field defaulting to `Private` (the closed-door policy). Since the
+//! Flat Composition DD (`45514754`, ZMVP-166) it is a **plain envelope field, not
+//! an alias for anything**: the commission is the formal root, and its visibility
+//! is the outermost gate under which the composition's own three-term
+//! [`effective_visibility`] applies. (It used to double as the root surface's mode —
+//! the tree had no other home for it; the flat model gives every term its own.)
 //!
 //! The [`fact`] submodule carries the [`Fact`] contract (ZMVP-67) — what it means
 //! for a type to be commission-anchored evidence that blocks hard deletion. The
@@ -28,15 +29,18 @@
 //! the two account-facing rails (ZMVP-70): [`Placement`] (account-side, where the
 //! commission sits) and the [`GrantLevel`] key-to-see (commission-side) — neither
 //! confers in-commission authority (Ownership Separation DD `29130754`). The
-//! [`node`] submodule carries the content **tree** (ZMVP-71): every commission is
-//! born with a root surface, the owner grows surfaces under it, and the raw
-//! loaded tree deliberately never serializes (projection is ZMVP-75). The
+//! [`element`] submodule carries the **flat composition** (ZMVP-166; Flat
+//! Composition DD `45514754`): typed Elements contributed into code-declared
+//! Surfaces, grouped by Tabs, with effective visibility the min of three terms —
+//! and, as before, the raw loaded composition deliberately never serializes,
+//! down to the [`ElementPayload`] that holds an element's content (projection is
+//! ZMVP-170). The
 //! [`file`] submodule carries the file-entry shapes (ZMVP-88): the opaque
 //! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
 //! Index-canonical link. The [`markup`] submodule carries the [`Markup`]
 //! annotation shapes (ZMVP-90) that ride the `markup_added` changelog entry's
 //! payload. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
-//! Character positions as tree components with a title/notes satellite — fill
+//! Character positions as elements with a title/notes satellite — fill
 //! deferred wholesale to the Character epic. The [`seat`] submodule carries the
 //! **Seat** (ZMVP-76): the 1:1 structural participant position declared vacant,
 //! and — with it — the persisted participant-membership model whose permanent
@@ -47,10 +51,10 @@
 //! filling the Seat on acceptance is ZMVP-79.
 
 pub mod changelog;
+pub mod element;
 pub mod fact;
 pub mod file;
 pub mod markup;
-pub mod node;
 pub mod positioning;
 pub mod seat;
 pub mod seat_invitation;
@@ -59,13 +63,14 @@ pub mod slot;
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
 };
+pub use element::{
+    Band, CommissionComposition, CompositionLabelError, DeclaredTab, ElementId, ElementPayload,
+    ElementRow, ElementType, LABEL_MAX_CHARS, NewElement, SKELETON, SurfaceAddress, SurfaceName,
+    TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface, effective_visibility,
+};
 pub use fact::Fact;
 pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
 pub use markup::{Markup, MarkupError, MarkupShape};
-pub use node::{
-    CommissionNode, CommissionTree, NewComponent, NewSurface, NodeId, NodeKind, NodeRow,
-    RootSurface, SurfaceMode, TreeAssemblyError,
-};
 pub use positioning::{GrantLevel, Placement};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
@@ -199,7 +204,7 @@ impl AsRef<str> for CommissionTitle {
 ///
 /// Build one with [`Commission::create`], which stamps a fresh UUIDv7 id and opens
 /// it in [`LifecycleStep::Draft`] owned by its creator. The struct holds no
-/// participant list, content tree, or managing account — those are later tickets;
+/// participant list, composition, or managing account — those are later tickets;
 /// this is only the always-present envelope. Persisting it is one private-side
 /// write ([`crate::ports::CommissionWrites::create`]).
 ///
@@ -226,7 +231,7 @@ pub struct Commission {
     /// carries no deadline (DESIGN/Commission).
     pub deadline: Option<DateTimeUtc>,
     /// The commission's maturity posture (ZMVP-31; Maturity Vocabulary DD
-    /// `29982722`) — an envelope field like the deadline, **not** a tree node
+    /// `29982722`) — an envelope field like the deadline, **not** an element
     /// (the Surfaces DD pins where it *renders*: the Presentation tier, so it
     /// gates before any content shows). **`None` at birth by invariant**: a
     /// fresh commission is Private (root `Total` — nobody outside sees
@@ -723,12 +728,15 @@ mod tests {
 
 /// Who may see a commission (DESIGN/Commission, the Closed-Door Policy).
 ///
-/// The three values are the flat aliases the per-surface Surfaces DD (`28246028`)
-/// preserves for the future root-surface mode — `Private` = root at `Total`,
-/// `Listed` = root at `Presentation`, `Public` = root at `Description`. A birth
-/// commission defaults to [`Private`](Visibility::Private); widening is an explicit
-/// later act, and when the content tree lands this field is reinterpreted as the
-/// root mode rather than replaced.
+/// A **plain envelope field** since the Flat Composition DD (`45514754`,
+/// ZMVP-166): the commission is the formal root, so this is the outermost gate,
+/// applied *before* the composition's own three-term
+/// [`effective_visibility`] — never an alias for a node's mode. (In the retired
+/// tree it doubled as the root surface's mode, via an `as_root_mode` mapping the
+/// flat model deletes: tabs, surfaces, and elements each carry their own
+/// [`VisibilityMode`] now, so nothing needs this field to stand in for one.) A
+/// birth commission defaults to [`Private`](Visibility::Private); widening is an
+/// explicit later act (ZMVP-74).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
     /// Closed door — nobody outside the participants sees the commission at all,
@@ -751,22 +759,6 @@ impl Visibility {
             Self::Private => "private",
             Self::Listed => "listed",
             Self::Public => "public",
-        }
-    }
-
-    /// The root-surface [`SurfaceMode`] this alias names (Surfaces DD `28246028`
-    /// amendment 2: the flat values are simply the root's mode — one mechanism):
-    /// `Private` = root `Total`, `Listed` = root `Presentation`, `Public` = root
-    /// `Description`. [`RootSurface::of`] uses this to give every commission its
-    /// root at creation and the ZMVP-71 migration applies the same mapping to
-    /// backfill roots for commissions that predate the tree; making the root
-    /// mode the *authoritative* direction (and reconciling this flat column) is
-    /// ZMVP-74.
-    pub fn as_root_mode(&self) -> SurfaceMode {
-        match self {
-            Self::Private => SurfaceMode::Total,
-            Self::Listed => SurfaceMode::Presentation,
-            Self::Public => SurfaceMode::Description,
         }
     }
 }

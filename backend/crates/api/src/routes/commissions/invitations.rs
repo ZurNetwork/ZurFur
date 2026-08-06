@@ -24,7 +24,7 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{CommissionId, NodeId, SeatInvitation},
+        commission::{CommissionId, ElementId, SeatInvitation},
         did::Did,
         invitation::InvitationState,
     },
@@ -60,7 +60,7 @@ struct RevokeSeatInvitationResponse {
 }
 
 /// The `POST /commissions/{id}/invitations` request body: the `seat` to offer
-/// (its tree node id, from the seat-declaration `201`) and the `user` to invite,
+/// (its element id, from the seat-declaration `201`) and the `user` to invite,
 /// named by their public `did` (identity precedes us — we recognize by DID,
 /// never by our internal id).
 ///
@@ -77,9 +77,9 @@ pub(super) struct InviteToSeatBody {
 /// The invitee is provisioned by DID (idempotent, like an account invite) so the
 /// offer can reference a real `UserId` even for someone who has never visited.
 /// Inviting to a seat that isn't one of **this** commission's seats — fabricated,
-/// or belonging to another commission — is a [`node_not_found`](Problem::node_not_found)
-/// 404 (the seats read is scoped to the commission, so it is no cross-commission
-/// oracle). Inviting to an already-occupied seat is a
+/// or belonging to another commission — is an
+/// [`element_not_found`](Problem::element_not_found) 404 (the seats read is
+/// scoped to the commission, so it is no cross-commission oracle). Inviting to an already-occupied seat is a
 /// [`seat_filled`](Problem::seat_filled) 409 (a Seat holds at most one occupant,
 /// ZMVP-76 AC3). Re-inviting an already-pending User to the same seat is
 /// idempotent — the existing offer is returned (`200`), never a second row
@@ -112,16 +112,16 @@ pub(super) async fn invite_to_seat(
         )
     })?;
     let seat_id = body.seat;
-    let seat = NodeId::new(seat_id);
+    let seat = ElementId::new(seat_id);
 
     // The seat must be one of THIS commission's declared seats — a fabricated or
-    // cross-commission id is `node_not_found` (the seats read is commission-scoped,
+    // cross-commission id is `element_not_found` (the seats read is commission-scoped,
     // so it can't confirm a foreign seat) — and it must be vacant.
     let seats = state.commissions.seats(commission).await?;
     let target = seats
         .iter()
         .find(|s| s.id == seat)
-        .ok_or_else(Problem::node_not_found)?;
+        .ok_or_else(Problem::element_not_found)?;
     if target.occupant.is_some() {
         return Err(Problem::seat_filled());
     }
@@ -232,7 +232,7 @@ pub(super) async fn revoke_seat_invitation(
             "Provide the seat and invited user to revoke, e.g. {\"seat\": \"…\", \"user\": \"did:plc:…\"}.",
         )
     })?;
-    let seat = NodeId::new(body.seat);
+    let seat = ElementId::new(body.seat);
     // Kept by value: the response echoes it on every path (including the idempotent
     // no-ops where no invitation row — and so no id — is available to report).
     let invited_did = body.user;
