@@ -122,6 +122,7 @@ fn every_declared_route_is_served() {
         ("PATCH", "/accounts/{id}/handle"),
         ("GET", "/commissions"),
         ("POST", "/commissions"),
+        ("GET", "/commissions/{id}"),
     ]
     .into_iter()
     .map(|(verb, path)| (verb.to_string(), path.to_string()))
@@ -142,11 +143,12 @@ fn every_declared_route_is_served() {
         );
     }
 
-    // And the declared set covers the whole v1 surface — nine endpoints.
+    // And the declared set covers the whole v1 surface — ten endpoints (the
+    // nine of the 2026-07-25 scope ruling, plus the single-commission read
+    // ZMVP-163 mints).
     assert_eq!(
         declared.len(),
-        9,
-        "the v1 corpus declares nine endpoints (Engineer scope ruling \
-         2026-07-25); got {declared:?}"
+        10,
+        "the v1 corpus declares ten endpoints; got {declared:?}"
     );
 }

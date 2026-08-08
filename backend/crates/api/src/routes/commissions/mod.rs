@@ -6,6 +6,9 @@
 //!   ZMVP-166 mints the commission's skeleton tabs in the same unit of work).
 //! - [`list`] — `GET /commissions` (ZMVP-157: the signed-in user's owned
 //!   commissions, owner-POV only — frontend enablement for ZMVP-153).
+//! - [`get`] — `GET /commissions/{id}` (ZMVP-163: one commission plus the
+//!   viewer's projection of its flat composition — the ONLY route composition
+//!   content leaves through, and the shape ZMVP-75's tiered viewer extends).
 //! - [`changelog`] — `GET /commissions/{id}/changelog` (the ordered read).
 //! - [`notes`] — `POST /commissions/{id}/notes` (free text into the record).
 //! - [`channel`] — `PUT`/`DELETE /commissions/{id}/channel` (the linked-channel
@@ -98,6 +101,7 @@ mod deadline;
 mod delete;
 mod elements;
 mod files;
+mod get;
 mod invitations;
 mod list;
 mod markup;
@@ -136,7 +140,7 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         )
         .route(
             "/commissions/{id}",
-            axum::routing::delete(delete::delete_commission),
+            get(get::get_commission).delete(delete::delete_commission),
         )
         .route(
             "/commissions/{id}/changelog",

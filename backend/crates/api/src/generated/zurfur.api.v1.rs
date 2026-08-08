@@ -223,10 +223,10 @@ pub struct Maturity {
     pub graphic: bool,
 }
 /// One row of `GET /api/v1/commissions` — the envelope a listing renders.
-/// The content tree is deliberately absent (the future single-commission
-/// surface's job); `owner` is omitted because this endpoint is owner-POV only.
-/// This is the FIRST place a Commission is serialized anywhere in the API —
-/// the precedent later commission surfaces inherit.
+/// The composition is deliberately absent (the single-commission surface's job
+/// — see `GetCommissionResponse`); `owner` is omitted because this endpoint is
+/// owner-POV only. This is the FIRST place a Commission is serialized anywhere
+/// in the API — the precedent later commission surfaces inherit.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Commission {
     /// Opaque commission id (R6).
@@ -282,4 +282,181 @@ pub struct CreateCommissionRequest {
     /// Optional at-birth maturity; same shape re-rating speaks later.
     #[prost(message, optional, tag = "3")]
     pub maturity: ::core::option::Option<Maturity>,
+}
+/// One of a commission's Tabs — the coarse space an Element sits in, and the
+/// first term of the visibility min.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommissionTab {
+    /// Opaque tab id (R6). What `CommissionElement.tab_id` and
+    /// `CommissionSurface.tab_id` cite.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The declared tab's stable name from the core skeleton. Extensible
+    /// vocabulary (R8) owned by the type catalog; clients tolerate unknowns.
+    #[prost(string, tag = "2")]
+    pub tab: ::prost::alloc::string::String,
+    /// The tab's visibility mode. Vocabulary (R8): `presentation` |
+    /// `description` | `total`. Defaults to `total` — the closed door.
+    #[prost(string, tag = "3")]
+    pub mode: ::prost::alloc::string::String,
+}
+/// One core-declared Surface — a named position Elements are contributed into.
+///
+/// Surfaces have no rows of their own: their STRUCTURE is code (global and
+/// invariant, identical for every commission), and only their per-commission
+/// MODE is data. They are served here rather than left for the client to know
+/// so the renderer walks one authority instead of a second copy of the
+/// skeleton that could drift from the server's.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommissionSurface {
+    /// The declared surface's stable id. Extensible vocabulary (R8).
+    #[prost(string, tag = "1")]
+    pub surface: ::prost::alloc::string::String,
+    /// The tab this surface lives in, BY ID — never a parent pointer (DD D5).
+    #[prost(string, tag = "2")]
+    pub tab_id: ::prost::alloc::string::String,
+    /// The surface's per-commission visibility mode — the second term of the
+    /// min. Same vocabulary as `CommissionTab.mode`; `total` when never widened.
+    #[prost(string, tag = "3")]
+    pub mode: ::prost::alloc::string::String,
+}
+/// One contributed Element: a core-owned envelope plus a type-owned payload the
+/// core never interprets.
+///
+/// **Kind is data, not a `oneof` arm.** The surface-vs-component `oneof`
+/// discriminant of DD 42762241 D3 is a deliberately UNTAKEN door: Elements are
+/// ONE message, so there is no unknown-arm case to fail closed at the message
+/// level. An unknown element `kind` is the RENDERER's fail-closed case
+/// (ZMVP-170), not the wire's.
+///
+/// Deliberately absent, each an exposure that would be forever while its
+/// omission stays additive:
+///    * `created_by` — off in v1 (DD 42762241 D5, carried forward by 45514754
+///      D9): no new correlation surface, and it carries no information while
+///      every writer is the owner.
+///    * `position` / `band` — R3 forbids a stored ordinal on the wire, and a
+///      sparse one would be a gap oracle for how many Elements were projected
+///      away. Order is SERVED: the order of `GetCommissionResponse.elements` is
+///      the order, densely, after the visibility filter. The ordering-band
+///      vocabulary is also still undecided (type catalog), so nothing here
+///      pre-empts it.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CommissionElement {
+    /// Opaque element id (R6).
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The tab it sits in, by id.
+    #[prost(string, tag = "2")]
+    pub tab_id: ::prost::alloc::string::String,
+    /// The declared surface it was contributed into, by id.
+    #[prost(string, tag = "3")]
+    pub surface: ::prost::alloc::string::String,
+    /// What the element IS — the type tag the renderer switches on, and the
+    /// client-facing discriminant (DD 46596098). Extensible vocabulary (R8),
+    /// open in v1: the core stores and returns it and never interprets it.
+    /// A renderer that does not know a kind renders fail-closed, never raw.
+    #[prost(string, tag = "4")]
+    pub kind: ::prost::alloc::string::String,
+    /// The element's OWN visibility mode — the third term of the min, not the
+    /// effective one. All three terms are served (the three-level grain) so the
+    /// client can explain what it sees; the server has already applied the min.
+    #[prost(string, tag = "5")]
+    pub mode: ::prost::alloc::string::String,
+    /// The type-owned half, opaque to the core.
+    ///
+    /// A `oneof` over a single arm, deliberately (DD 42762241 D4, carried
+    /// forward): `google.protobuf.Struct` is DISQUALIFIED — pbjson floats every
+    /// integer and errors above 2^53 while protobuf-es silently truncates, so a
+    /// payload could arrive corrupted on one tier and rejected on the other. The
+    /// canonical JSON string passes numeric precision through untouched, and the
+    /// `oneof` keeps typed per-kind arms addable when the catalog lands
+    /// (VERSIONING.md R11's third case: mixed ownership over a deferred
+    /// vocabulary). Always set — an element with no payload carries `"{}"`.
+    #[prost(oneof = "commission_element::Payload", tags = "6")]
+    pub payload: ::core::option::Option<commission_element::Payload>,
+}
+/// Nested message and enum types in `CommissionElement`.
+pub mod commission_element {
+    /// The type-owned half, opaque to the core.
+    ///
+    /// A `oneof` over a single arm, deliberately (DD 42762241 D4, carried
+    /// forward): `google.protobuf.Struct` is DISQUALIFIED — pbjson floats every
+    /// integer and errors above 2^53 while protobuf-es silently truncates, so a
+    /// payload could arrive corrupted on one tier and rejected on the other. The
+    /// canonical JSON string passes numeric precision through untouched, and the
+    /// `oneof` keeps typed per-kind arms addable when the catalog lands
+    /// (VERSIONING.md R11's third case: mixed ownership over a deferred
+    /// vocabulary). Always set — an element with no payload carries `"{}"`.
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Payload {
+        #[prost(string, tag = "6")]
+        OpaqueJson(::prost::alloc::string::String),
+    }
+}
+/// `GET /api/v1/commissions/{id}` — the addressed commission.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetCommissionRequest {
+    /// The commission's opaque id (R6), from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `GET /api/v1/commissions/{id}` — the commission envelope plus the viewer's
+/// PROJECTION of its composition.
+///
+/// The envelope fields are flat and duplicated rather than nesting `Commission`,
+/// matching `CreateCommissionResponse`: each endpoint's response evolves
+/// independently of the listing row. Field semantics are documented on
+/// `Commission`.
+///
+/// **Only what the viewer may see is here.** Projection happens server-side at
+/// serialization; no wider payload ever leaves the server. Elements, surfaces
+/// and tabs the viewer's tier does not reach are absent — and absent is all a
+/// client can tell, which is the point: there is no count, gap, or ordinal to
+/// infer what was filtered.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetCommissionResponse {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub lifecycle: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub visibility: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "5")]
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
+    #[prost(message, optional, tag = "6")]
+    pub maturity: ::core::option::Option<Maturity>,
+    #[prost(string, optional, tag = "7")]
+    pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "8")]
+    pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "9")]
+    pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "10")]
+    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
+    /// Whether the composition was WITHHELD from this viewer — stated, never
+    /// inferred from `elements` being empty (DD 42762241 D6; R4: absence may only
+    /// mean "not set", so "there is nothing here" and "you may not see what is
+    /// here" must never be the same bytes).
+    ///
+    /// Minted at birth on purpose. `false` on every response v1 serves — the
+    /// participant path is the only one that exists, and a participant is never
+    /// withheld from. It is declared now because the tiered viewer (ZMVP-75) is
+    /// exactly where "ship owner-only, extend later" would quietly have made an
+    /// empty list mean two different things.
+    #[prost(bool, tag = "11")]
+    pub composition_withheld: bool,
+    /// The commission's tabs, in skeleton order.
+    #[prost(message, repeated, tag = "12")]
+    pub tabs: ::prost::alloc::vec::Vec<CommissionTab>,
+    /// The declared surfaces, in skeleton order within their tab.
+    #[prost(message, repeated, tag = "13")]
+    pub surfaces: ::prost::alloc::vec::Vec<CommissionSurface>,
+    /// Every element the viewer may see, in served order: by tab, then surface
+    /// (both in skeleton order), then by the server's ordering within the
+    /// surface. Dense — never derived from ids (R6) and never a stored ordinal
+    /// (R3).
+    #[prost(message, repeated, tag = "14")]
+    pub elements: ::prost::alloc::vec::Vec<CommissionElement>,
 }

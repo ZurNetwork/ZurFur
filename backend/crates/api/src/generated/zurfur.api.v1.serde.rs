@@ -656,6 +656,439 @@ impl<'de> serde::Deserialize<'de> for Commission {
         deserializer.deserialize_struct("zurfur.api.v1.Commission", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for CommissionElement {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.tab_id.is_empty() {
+            len += 1;
+        }
+        if !self.surface.is_empty() {
+            len += 1;
+        }
+        if !self.kind.is_empty() {
+            len += 1;
+        }
+        if !self.mode.is_empty() {
+            len += 1;
+        }
+        if self.payload.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.CommissionElement", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.tab_id.is_empty() {
+            struct_ser.serialize_field("tabId", &self.tab_id)?;
+        }
+        if !self.surface.is_empty() {
+            struct_ser.serialize_field("surface", &self.surface)?;
+        }
+        if !self.kind.is_empty() {
+            struct_ser.serialize_field("kind", &self.kind)?;
+        }
+        if !self.mode.is_empty() {
+            struct_ser.serialize_field("mode", &self.mode)?;
+        }
+        if let Some(v) = self.payload.as_ref() {
+            match v {
+                commission_element::Payload::OpaqueJson(v) => {
+                    struct_ser.serialize_field("opaqueJson", v)?;
+                }
+            }
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for CommissionElement {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "tab_id",
+            "tabId",
+            "surface",
+            "kind",
+            "mode",
+            "opaque_json",
+            "opaqueJson",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            TabId,
+            Surface,
+            Kind,
+            Mode,
+            OpaqueJson,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "tabId" | "tab_id" => Ok(GeneratedField::TabId),
+                            "surface" => Ok(GeneratedField::Surface),
+                            "kind" => Ok(GeneratedField::Kind),
+                            "mode" => Ok(GeneratedField::Mode),
+                            "opaqueJson" | "opaque_json" => Ok(GeneratedField::OpaqueJson),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = CommissionElement;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.CommissionElement")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<CommissionElement, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut tab_id__ = None;
+                let mut surface__ = None;
+                let mut kind__ = None;
+                let mut mode__ = None;
+                let mut payload__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::TabId => {
+                            if tab_id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tabId"));
+                            }
+                            tab_id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Surface => {
+                            if surface__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("surface"));
+                            }
+                            surface__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Kind => {
+                            if kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kind"));
+                            }
+                            kind__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Mode => {
+                            if mode__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("mode"));
+                            }
+                            mode__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::OpaqueJson => {
+                            if payload__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("opaqueJson"));
+                            }
+                            payload__ = map_.next_value::<::std::option::Option<_>>()?.map(commission_element::Payload::OpaqueJson);
+                        }
+                    }
+                }
+                Ok(CommissionElement {
+                    id: id__.unwrap_or_default(),
+                    tab_id: tab_id__.unwrap_or_default(),
+                    surface: surface__.unwrap_or_default(),
+                    kind: kind__.unwrap_or_default(),
+                    mode: mode__.unwrap_or_default(),
+                    payload: payload__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.CommissionElement", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for CommissionSurface {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.surface.is_empty() {
+            len += 1;
+        }
+        if !self.tab_id.is_empty() {
+            len += 1;
+        }
+        if !self.mode.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.CommissionSurface", len)?;
+        if !self.surface.is_empty() {
+            struct_ser.serialize_field("surface", &self.surface)?;
+        }
+        if !self.tab_id.is_empty() {
+            struct_ser.serialize_field("tabId", &self.tab_id)?;
+        }
+        if !self.mode.is_empty() {
+            struct_ser.serialize_field("mode", &self.mode)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for CommissionSurface {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "surface",
+            "tab_id",
+            "tabId",
+            "mode",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Surface,
+            TabId,
+            Mode,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "surface" => Ok(GeneratedField::Surface),
+                            "tabId" | "tab_id" => Ok(GeneratedField::TabId),
+                            "mode" => Ok(GeneratedField::Mode),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = CommissionSurface;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.CommissionSurface")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<CommissionSurface, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut surface__ = None;
+                let mut tab_id__ = None;
+                let mut mode__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Surface => {
+                            if surface__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("surface"));
+                            }
+                            surface__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::TabId => {
+                            if tab_id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tabId"));
+                            }
+                            tab_id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Mode => {
+                            if mode__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("mode"));
+                            }
+                            mode__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(CommissionSurface {
+                    surface: surface__.unwrap_or_default(),
+                    tab_id: tab_id__.unwrap_or_default(),
+                    mode: mode__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.CommissionSurface", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for CommissionTab {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.tab.is_empty() {
+            len += 1;
+        }
+        if !self.mode.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.CommissionTab", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.tab.is_empty() {
+            struct_ser.serialize_field("tab", &self.tab)?;
+        }
+        if !self.mode.is_empty() {
+            struct_ser.serialize_field("mode", &self.mode)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for CommissionTab {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "tab",
+            "mode",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            Tab,
+            Mode,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "tab" => Ok(GeneratedField::Tab),
+                            "mode" => Ok(GeneratedField::Mode),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = CommissionTab;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.CommissionTab")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<CommissionTab, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut tab__ = None;
+                let mut mode__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Tab => {
+                            if tab__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tab"));
+                            }
+                            tab__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Mode => {
+                            if mode__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("mode"));
+                            }
+                            mode__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(CommissionTab {
+                    id: id__.unwrap_or_default(),
+                    tab: tab__.unwrap_or_default(),
+                    mode: mode__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.CommissionTab", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for CreateAccountRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -1459,6 +1892,414 @@ impl<'de> serde::Deserialize<'de> for DeleteAccountResponse {
             }
         }
         deserializer.deserialize_struct("zurfur.api.v1.DeleteAccountResponse", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetCommissionRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetCommissionRequest", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetCommissionRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetCommissionRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetCommissionRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetCommissionRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(GetCommissionRequest {
+                    id: id__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetCommissionRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetCommissionResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.title.is_empty() {
+            len += 1;
+        }
+        if !self.lifecycle.is_empty() {
+            len += 1;
+        }
+        if !self.visibility.is_empty() {
+            len += 1;
+        }
+        if self.deadline.is_some() {
+            len += 1;
+        }
+        if self.maturity.is_some() {
+            len += 1;
+        }
+        if self.direction_status.is_some() {
+            len += 1;
+        }
+        if self.deadline_status.is_some() {
+            len += 1;
+        }
+        if self.linked_channel.is_some() {
+            len += 1;
+        }
+        if self.created_at.is_some() {
+            len += 1;
+        }
+        if self.composition_withheld {
+            len += 1;
+        }
+        if !self.tabs.is_empty() {
+            len += 1;
+        }
+        if !self.surfaces.is_empty() {
+            len += 1;
+        }
+        if !self.elements.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetCommissionResponse", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.title.is_empty() {
+            struct_ser.serialize_field("title", &self.title)?;
+        }
+        if !self.lifecycle.is_empty() {
+            struct_ser.serialize_field("lifecycle", &self.lifecycle)?;
+        }
+        if !self.visibility.is_empty() {
+            struct_ser.serialize_field("visibility", &self.visibility)?;
+        }
+        if let Some(v) = self.deadline.as_ref() {
+            struct_ser.serialize_field("deadline", v)?;
+        }
+        if let Some(v) = self.maturity.as_ref() {
+            struct_ser.serialize_field("maturity", v)?;
+        }
+        if let Some(v) = self.direction_status.as_ref() {
+            struct_ser.serialize_field("directionStatus", v)?;
+        }
+        if let Some(v) = self.deadline_status.as_ref() {
+            struct_ser.serialize_field("deadlineStatus", v)?;
+        }
+        if let Some(v) = self.linked_channel.as_ref() {
+            struct_ser.serialize_field("linkedChannel", v)?;
+        }
+        if let Some(v) = self.created_at.as_ref() {
+            struct_ser.serialize_field("createdAt", v)?;
+        }
+        if self.composition_withheld {
+            struct_ser.serialize_field("compositionWithheld", &self.composition_withheld)?;
+        }
+        if !self.tabs.is_empty() {
+            struct_ser.serialize_field("tabs", &self.tabs)?;
+        }
+        if !self.surfaces.is_empty() {
+            struct_ser.serialize_field("surfaces", &self.surfaces)?;
+        }
+        if !self.elements.is_empty() {
+            struct_ser.serialize_field("elements", &self.elements)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetCommissionResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "title",
+            "lifecycle",
+            "visibility",
+            "deadline",
+            "maturity",
+            "direction_status",
+            "directionStatus",
+            "deadline_status",
+            "deadlineStatus",
+            "linked_channel",
+            "linkedChannel",
+            "created_at",
+            "createdAt",
+            "composition_withheld",
+            "compositionWithheld",
+            "tabs",
+            "surfaces",
+            "elements",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            Title,
+            Lifecycle,
+            Visibility,
+            Deadline,
+            Maturity,
+            DirectionStatus,
+            DeadlineStatus,
+            LinkedChannel,
+            CreatedAt,
+            CompositionWithheld,
+            Tabs,
+            Surfaces,
+            Elements,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "title" => Ok(GeneratedField::Title),
+                            "lifecycle" => Ok(GeneratedField::Lifecycle),
+                            "visibility" => Ok(GeneratedField::Visibility),
+                            "deadline" => Ok(GeneratedField::Deadline),
+                            "maturity" => Ok(GeneratedField::Maturity),
+                            "directionStatus" | "direction_status" => Ok(GeneratedField::DirectionStatus),
+                            "deadlineStatus" | "deadline_status" => Ok(GeneratedField::DeadlineStatus),
+                            "linkedChannel" | "linked_channel" => Ok(GeneratedField::LinkedChannel),
+                            "createdAt" | "created_at" => Ok(GeneratedField::CreatedAt),
+                            "compositionWithheld" | "composition_withheld" => Ok(GeneratedField::CompositionWithheld),
+                            "tabs" => Ok(GeneratedField::Tabs),
+                            "surfaces" => Ok(GeneratedField::Surfaces),
+                            "elements" => Ok(GeneratedField::Elements),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetCommissionResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetCommissionResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetCommissionResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut title__ = None;
+                let mut lifecycle__ = None;
+                let mut visibility__ = None;
+                let mut deadline__ = None;
+                let mut maturity__ = None;
+                let mut direction_status__ = None;
+                let mut deadline_status__ = None;
+                let mut linked_channel__ = None;
+                let mut created_at__ = None;
+                let mut composition_withheld__ = None;
+                let mut tabs__ = None;
+                let mut surfaces__ = None;
+                let mut elements__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Title => {
+                            if title__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("title"));
+                            }
+                            title__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Lifecycle => {
+                            if lifecycle__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("lifecycle"));
+                            }
+                            lifecycle__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Visibility => {
+                            if visibility__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("visibility"));
+                            }
+                            visibility__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Deadline => {
+                            if deadline__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("deadline"));
+                            }
+                            deadline__ = map_.next_value()?;
+                        }
+                        GeneratedField::Maturity => {
+                            if maturity__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("maturity"));
+                            }
+                            maturity__ = map_.next_value()?;
+                        }
+                        GeneratedField::DirectionStatus => {
+                            if direction_status__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("directionStatus"));
+                            }
+                            direction_status__ = map_.next_value()?;
+                        }
+                        GeneratedField::DeadlineStatus => {
+                            if deadline_status__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("deadlineStatus"));
+                            }
+                            deadline_status__ = map_.next_value()?;
+                        }
+                        GeneratedField::LinkedChannel => {
+                            if linked_channel__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("linkedChannel"));
+                            }
+                            linked_channel__ = map_.next_value()?;
+                        }
+                        GeneratedField::CreatedAt => {
+                            if created_at__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("createdAt"));
+                            }
+                            created_at__ = map_.next_value()?;
+                        }
+                        GeneratedField::CompositionWithheld => {
+                            if composition_withheld__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("compositionWithheld"));
+                            }
+                            composition_withheld__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Tabs => {
+                            if tabs__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tabs"));
+                            }
+                            tabs__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Surfaces => {
+                            if surfaces__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("surfaces"));
+                            }
+                            surfaces__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Elements => {
+                            if elements__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("elements"));
+                            }
+                            elements__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(GetCommissionResponse {
+                    id: id__.unwrap_or_default(),
+                    title: title__.unwrap_or_default(),
+                    lifecycle: lifecycle__.unwrap_or_default(),
+                    visibility: visibility__.unwrap_or_default(),
+                    deadline: deadline__,
+                    maturity: maturity__,
+                    direction_status: direction_status__,
+                    deadline_status: deadline_status__,
+                    linked_channel: linked_channel__,
+                    created_at: created_at__,
+                    composition_withheld: composition_withheld__.unwrap_or_default(),
+                    tabs: tabs__.unwrap_or_default(),
+                    surfaces: surfaces__.unwrap_or_default(),
+                    elements: elements__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetCommissionResponse", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for GetMeRequest {

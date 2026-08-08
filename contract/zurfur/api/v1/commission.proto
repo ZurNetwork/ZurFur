@@ -49,10 +49,10 @@ message Maturity {
 }
 
 // One row of `GET /api/v1/commissions` — the envelope a listing renders.
-// The content tree is deliberately absent (the future single-commission
-// surface's job); `owner` is omitted because this endpoint is owner-POV only.
-// This is the FIRST place a Commission is serialized anywhere in the API —
-// the precedent later commission surfaces inherit.
+// The composition is deliberately absent (the single-commission surface's job
+// — see `GetCommissionResponse`); `owner` is omitted because this endpoint is
+// owner-POV only. This is the FIRST place a Commission is serialized anywhere
+// in the API — the precedent later commission surfaces inherit.
 message Commission {
   // Opaque commission id (R6).
   string id = 1;
@@ -95,6 +95,157 @@ message CreateCommissionRequest {
   optional Maturity maturity = 3;
 }
 
+// ── The flat composition (DD 45514754) ──────────────────────────────────────
+//
+// A commission's content is a FLAT set of typed Elements contributed into
+// core-declared Surfaces, grouped by Tabs. There is deliberately **no
+// recursive message in this corpus and no depth concept at all**: the model's
+// depth is a compile-time fact (commission > tab > surface > element), so the
+// tree's whole failure class is unrepresentable rather than capped. The
+// superseded tree shape (`SurfaceTree`/`SurfaceNode`, DD 42762241) was never
+// minted; what survives from it is carried below and marked.
+//
+// Effective visibility is `min(tab, surface, element)` under the commission's
+// own `visibility`, computed SERVER-SIDE at serialization. Anything the
+// viewer's tier does not permit is not in this response at all — these
+// messages are the projection's output, never the stored composition.
+
+// One of a commission's Tabs — the coarse space an Element sits in, and the
+// first term of the visibility min.
+message CommissionTab {
+  // Opaque tab id (R6). What `CommissionElement.tab_id` and
+  // `CommissionSurface.tab_id` cite.
+  string id = 1;
+  // The declared tab's stable name from the core skeleton. Extensible
+  // vocabulary (R8) owned by the type catalog; clients tolerate unknowns.
+  string tab = 2;
+  // The tab's visibility mode. Vocabulary (R8): `presentation` |
+  // `description` | `total`. Defaults to `total` — the closed door.
+  string mode = 3;
+}
+
+// One core-declared Surface — a named position Elements are contributed into.
+//
+// Surfaces have no rows of their own: their STRUCTURE is code (global and
+// invariant, identical for every commission), and only their per-commission
+// MODE is data. They are served here rather than left for the client to know
+// so the renderer walks one authority instead of a second copy of the
+// skeleton that could drift from the server's.
+message CommissionSurface {
+  // The declared surface's stable id. Extensible vocabulary (R8).
+  string surface = 1;
+  // The tab this surface lives in, BY ID — never a parent pointer (DD D5).
+  string tab_id = 2;
+  // The surface's per-commission visibility mode — the second term of the
+  // min. Same vocabulary as `CommissionTab.mode`; `total` when never widened.
+  string mode = 3;
+}
+
+// One contributed Element: a core-owned envelope plus a type-owned payload the
+// core never interprets.
+//
+// **Kind is data, not a `oneof` arm.** The surface-vs-component `oneof`
+// discriminant of DD 42762241 D3 is a deliberately UNTAKEN door: Elements are
+// ONE message, so there is no unknown-arm case to fail closed at the message
+// level. An unknown element `kind` is the RENDERER's fail-closed case
+// (ZMVP-170), not the wire's.
+//
+// Deliberately absent, each an exposure that would be forever while its
+// omission stays additive:
+//   * `created_by` — off in v1 (DD 42762241 D5, carried forward by 45514754
+//     D9): no new correlation surface, and it carries no information while
+//     every writer is the owner.
+//   * `position` / `band` — R3 forbids a stored ordinal on the wire, and a
+//     sparse one would be a gap oracle for how many Elements were projected
+//     away. Order is SERVED: the order of `GetCommissionResponse.elements` is
+//     the order, densely, after the visibility filter. The ordering-band
+//     vocabulary is also still undecided (type catalog), so nothing here
+//     pre-empts it.
+message CommissionElement {
+  // Opaque element id (R6).
+  string id = 1;
+  // The tab it sits in, by id.
+  string tab_id = 2;
+  // The declared surface it was contributed into, by id.
+  string surface = 3;
+  // What the element IS — the type tag the renderer switches on, and the
+  // client-facing discriminant (DD 46596098). Extensible vocabulary (R8),
+  // open in v1: the core stores and returns it and never interprets it.
+  // A renderer that does not know a kind renders fail-closed, never raw.
+  string kind = 4;
+  // The element's OWN visibility mode — the third term of the min, not the
+  // effective one. All three terms are served (the three-level grain) so the
+  // client can explain what it sees; the server has already applied the min.
+  string mode = 5;
+  // The type-owned half, opaque to the core.
+  //
+  // A `oneof` over a single arm, deliberately (DD 42762241 D4, carried
+  // forward): `google.protobuf.Struct` is DISQUALIFIED — pbjson floats every
+  // integer and errors above 2^53 while protobuf-es silently truncates, so a
+  // payload could arrive corrupted on one tier and rejected on the other. The
+  // canonical JSON string passes numeric precision through untouched, and the
+  // `oneof` keeps typed per-kind arms addable when the catalog lands
+  // (VERSIONING.md R11's third case: mixed ownership over a deferred
+  // vocabulary). Always set — an element with no payload carries `"{}"`.
+  oneof payload {
+    string opaque_json = 6;
+  }
+}
+
+// `GET /api/v1/commissions/{id}` — the addressed commission.
+message GetCommissionRequest {
+  // The commission's opaque id (R6), from the path.
+  string id = 1;
+}
+
+// `GET /api/v1/commissions/{id}` — the commission envelope plus the viewer's
+// PROJECTION of its composition.
+//
+// The envelope fields are flat and duplicated rather than nesting `Commission`,
+// matching `CreateCommissionResponse`: each endpoint's response evolves
+// independently of the listing row. Field semantics are documented on
+// `Commission`.
+//
+// **Only what the viewer may see is here.** Projection happens server-side at
+// serialization; no wider payload ever leaves the server. Elements, surfaces
+// and tabs the viewer's tier does not reach are absent — and absent is all a
+// client can tell, which is the point: there is no count, gap, or ordinal to
+// infer what was filtered.
+message GetCommissionResponse {
+  string id = 1;
+  string title = 2;
+  string lifecycle = 3;
+  string visibility = 4;
+  optional google.protobuf.Timestamp deadline = 5;
+  optional Maturity maturity = 6;
+  optional string direction_status = 7;
+  optional string deadline_status = 8;
+  optional string linked_channel = 9;
+  google.protobuf.Timestamp created_at = 10;
+
+  // Whether the composition was WITHHELD from this viewer — stated, never
+  // inferred from `elements` being empty (DD 42762241 D6; R4: absence may only
+  // mean "not set", so "there is nothing here" and "you may not see what is
+  // here" must never be the same bytes).
+  //
+  // Minted at birth on purpose. `false` on every response v1 serves — the
+  // participant path is the only one that exists, and a participant is never
+  // withheld from. It is declared now because the tiered viewer (ZMVP-75) is
+  // exactly where "ship owner-only, extend later" would quietly have made an
+  // empty list mean two different things.
+  bool composition_withheld = 11;
+
+  // The commission's tabs, in skeleton order.
+  repeated CommissionTab tabs = 12;
+  // The declared surfaces, in skeleton order within their tab.
+  repeated CommissionSurface surfaces = 13;
+  // Every element the viewer may see, in served order: by tab, then surface
+  // (both in skeleton order), then by the server's ordering within the
+  // surface. Dense — never derived from ids (R6) and never a stored ordinal
+  // (R3).
+  repeated CommissionElement elements = 14;
+}
+
 // The commissions service. Session-gated; Problems per problem.proto.
 service CommissionService {
   // The caller's owned commissions, owner-POV only (the non-participant
@@ -111,6 +262,16 @@ service CommissionService {
     option (google.api.http) = {
       post: "/api/v1/commissions"
       body: "*"
+    };
+  }
+
+  // One commission with the viewer's projection of its composition. The closed
+  // door is the uniform 404: a caller who may not see the commission and a
+  // caller naming one that does not exist get the same answer, so the response
+  // is never an existence oracle.
+  rpc GetCommission(GetCommissionRequest) returns (GetCommissionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/commissions/{id}"
     };
   }
 }

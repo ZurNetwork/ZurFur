@@ -101,7 +101,11 @@ async fn sign_in(client: &reqwest::Client, base: &str, handle: &str) {
 /// moved `createdAt`/`deadline` from `Z` to `+00:00` and the old
 /// all-`<VOLATILE>` normalization was blind to it.
 fn normalized(value: &Value) -> Value {
-    const VOLATILE_KEYS: &[&str] = &["id", "did"];
+    // `tabId` joins the volatile set for the composition read: it is a real,
+    // freshly minted UUID (the id an element or surface cites its tab by), so
+    // it is as volatile as `id` — while still being *asserted*, because the
+    // key's presence and camelCase spelling are what the golden pins.
+    const VOLATILE_KEYS: &[&str] = &["id", "did", "tabId"];
     const TIMESTAMP_KEYS: &[&str] = &["createdAt", "deadline"];
     match value {
         Value::Object(map) => Value::Object(
@@ -350,5 +354,38 @@ async fn commission_wire_shapes() {
         normalized(&rows[0]),
         expected,
         "the listing row matches the created resource, shape-for-shape"
+    );
+
+    // The single-commission read (ZMVP-163): the same envelope, flat, plus the
+    // composition. A commission with nothing contributed carries its skeleton
+    // and NO `elements` key at all — canonical ProtoJSON omits an empty
+    // repeated field, which is exactly why `compositionWithheld` had to be
+    // minted: "the key is not here" must keep meaning only "nothing is here"
+    // (R4), so withholding says so out loud instead of borrowing that silence.
+    let id = created["id"].as_str().expect("the created id");
+    let one: Value = c
+        .get(format!("{base}/commissions/{id}"))
+        .send()
+        .await
+        .expect("GET /commissions/{id}")
+        .json()
+        .await
+        .expect("json");
+    let expected_one = json!({
+        "id": "<VOLATILE>",
+        "title": "A golden ref sheet",
+        "lifecycle": "draft",
+        "visibility": "private",
+        "maturity": { "rating": "safe" },
+        "createdAt": "<TS>Z",
+        "tabs": [{ "id": "<VOLATILE>", "tab": "main", "mode": "total" }],
+        "surfaces": [{ "surface": "content", "tabId": "<VOLATILE>", "mode": "total" }],
+    });
+    assert_eq!(
+        normalized(&one),
+        expected_one,
+        "the read serves the envelope flat beside the skeleton; `elements` and \
+         `compositionWithheld` are omitted while empty/false (§7.7), and every \
+         key is lowerCamelCase (R1)"
     );
 }

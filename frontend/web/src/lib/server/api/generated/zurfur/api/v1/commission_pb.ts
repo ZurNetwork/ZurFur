@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/commission.proto.
  */
 export const file_zurfur_api_v1_commission: GenFile = /*@__PURE__*/
-  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEiGAoWTGlzdENvbW1pc3Npb25zUmVxdWVzdCKfAwoYQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIbCg5saW5rZWRfY2hhbm5lbBgJIAEoCUgEiAEBEi4KCmNyZWF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgsKCV9kZWFkbGluZUILCglfbWF0dXJpdHlCEwoRX2RpcmVjdGlvbl9zdGF0dXNCEgoQX2RlYWRsaW5lX3N0YXR1c0IRCg9fbGlua2VkX2NoYW5uZWwiKwoITWF0dXJpdHkSDgoGcmF0aW5nGAEgASgJEg8KB2dyYXBoaWMYAiABKAgikQMKCkNvbW1pc3Npb24SCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbCJJChdMaXN0Q29tbWlzc2lvbnNSZXNwb25zZRIuCgtjb21taXNzaW9ucxgBIAMoCzIZLnp1cmZ1ci5hcGkudjEuQ29tbWlzc2lvbiKlAQoXQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QSDQoFdGl0bGUYASABKAkSMQoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYAyABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQFCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eTKYAgoRQ29tbWlzc2lvblNlcnZpY2USfQoPTGlzdENvbW1pc3Npb25zEiUuenVyZnVyLmFwaS52MS5MaXN0Q29tbWlzc2lvbnNSZXF1ZXN0GiYuenVyZnVyLmFwaS52MS5MaXN0Q29tbWlzc2lvbnNSZXNwb25zZSIbgtPkkwIVEhMvYXBpL3YxL2NvbW1pc3Npb25zEoMBChBDcmVhdGVDb21taXNzaW9uEiYuenVyZnVyLmFwaS52MS5DcmVhdGVDb21taXNzaW9uUmVxdWVzdBonLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlIh6C0+STAhg6ASoiEy9hcGkvdjEvY29tbWlzc2lvbnNiBnByb3RvMw", [file_google_api_annotations, file_google_protobuf_timestamp]);
+  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEiGAoWTGlzdENvbW1pc3Npb25zUmVxdWVzdCKfAwoYQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIbCg5saW5rZWRfY2hhbm5lbBgJIAEoCUgEiAEBEi4KCmNyZWF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgsKCV9kZWFkbGluZUILCglfbWF0dXJpdHlCEwoRX2RpcmVjdGlvbl9zdGF0dXNCEgoQX2RlYWRsaW5lX3N0YXR1c0IRCg9fbGlua2VkX2NoYW5uZWwiKwoITWF0dXJpdHkSDgoGcmF0aW5nGAEgASgJEg8KB2dyYXBoaWMYAiABKAgikQMKCkNvbW1pc3Npb24SCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbCJJChdMaXN0Q29tbWlzc2lvbnNSZXNwb25zZRIuCgtjb21taXNzaW9ucxgBIAMoCzIZLnp1cmZ1ci5hcGkudjEuQ29tbWlzc2lvbiKlAQoXQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QSDQoFdGl0bGUYASABKAkSMQoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYAyABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQFCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eSI2Cg1Db21taXNzaW9uVGFiEgoKAmlkGAEgASgJEgsKA3RhYhgCIAEoCRIMCgRtb2RlGAMgASgJIkIKEUNvbW1pc3Npb25TdXJmYWNlEg8KB3N1cmZhY2UYASABKAkSDgoGdGFiX2lkGAIgASgJEgwKBG1vZGUYAyABKAkifgoRQ29tbWlzc2lvbkVsZW1lbnQSCgoCaWQYASABKAkSDgoGdGFiX2lkGAIgASgJEg8KB3N1cmZhY2UYAyABKAkSDAoEa2luZBgEIAEoCRIMCgRtb2RlGAUgASgJEhUKC29wYXF1ZV9qc29uGAYgASgJSABCCQoHcGF5bG9hZCIiChRHZXRDb21taXNzaW9uUmVxdWVzdBIKCgJpZBgBIAEoCSLOBAoVR2V0Q29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIbCg5saW5rZWRfY2hhbm5lbBgJIAEoCUgEiAEBEi4KCmNyZWF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhwKFGNvbXBvc2l0aW9uX3dpdGhoZWxkGAsgASgIEioKBHRhYnMYDCADKAsyHC56dXJmdXIuYXBpLnYxLkNvbW1pc3Npb25UYWISMgoIc3VyZmFjZXMYDSADKAsyIC56dXJmdXIuYXBpLnYxLkNvbW1pc3Npb25TdXJmYWNlEjIKCGVsZW1lbnRzGA4gAygLMiAuenVyZnVyLmFwaS52MS5Db21taXNzaW9uRWxlbWVudEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsMpYDChFDb21taXNzaW9uU2VydmljZRJ9Cg9MaXN0Q29tbWlzc2lvbnMSJS56dXJmdXIuYXBpLnYxLkxpc3RDb21taXNzaW9uc1JlcXVlc3QaJi56dXJmdXIuYXBpLnYxLkxpc3RDb21taXNzaW9uc1Jlc3BvbnNlIhuC0+STAhUSEy9hcGkvdjEvY29tbWlzc2lvbnMSgwEKEENyZWF0ZUNvbW1pc3Npb24SJi56dXJmdXIuYXBpLnYxLkNyZWF0ZUNvbW1pc3Npb25SZXF1ZXN0GicuenVyZnVyLmFwaS52MS5DcmVhdGVDb21taXNzaW9uUmVzcG9uc2UiHoLT5JMCGDoBKiITL2FwaS92MS9jb21taXNzaW9ucxJ8Cg1HZXRDb21taXNzaW9uEiMuenVyZnVyLmFwaS52MS5HZXRDb21taXNzaW9uUmVxdWVzdBokLnp1cmZ1ci5hcGkudjEuR2V0Q29tbWlzc2lvblJlc3BvbnNlIiCC0+STAhoSGC9hcGkvdjEvY29tbWlzc2lvbnMve2lkfWIGcHJvdG8z", [file_google_api_annotations, file_google_protobuf_timestamp]);
 
 /**
  * `GET /api/v1/commissions` takes no input; the session is the argument.
@@ -142,10 +142,10 @@ export const MaturitySchema: GenMessage<Maturity> = /*@__PURE__*/
 
 /**
  * One row of `GET /api/v1/commissions` — the envelope a listing renders.
- * The content tree is deliberately absent (the future single-commission
- * surface's job); `owner` is omitted because this endpoint is owner-POV only.
- * This is the FIRST place a Commission is serialized anywhere in the API —
- * the precedent later commission surfaces inherit.
+ * The composition is deliberately absent (the single-commission surface's job
+ * — see `GetCommissionResponse`); `owner` is omitted because this endpoint is
+ * owner-POV only. This is the FIRST place a Commission is serialized anywhere
+ * in the API — the precedent later commission surfaces inherit.
  *
  * @generated from message zurfur.api.v1.Commission
  */
@@ -288,6 +288,319 @@ export const CreateCommissionRequestSchema: GenMessage<CreateCommissionRequest> 
   messageDesc(file_zurfur_api_v1_commission, 5);
 
 /**
+ * One of a commission's Tabs — the coarse space an Element sits in, and the
+ * first term of the visibility min.
+ *
+ * @generated from message zurfur.api.v1.CommissionTab
+ */
+export type CommissionTab = Message<"zurfur.api.v1.CommissionTab"> & {
+  /**
+   * Opaque tab id (R6). What `CommissionElement.tab_id` and
+   * `CommissionSurface.tab_id` cite.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * The declared tab's stable name from the core skeleton. Extensible
+   * vocabulary (R8) owned by the type catalog; clients tolerate unknowns.
+   *
+   * @generated from field: string tab = 2;
+   */
+  tab: string;
+
+  /**
+   * The tab's visibility mode. Vocabulary (R8): `presentation` |
+   * `description` | `total`. Defaults to `total` — the closed door.
+   *
+   * @generated from field: string mode = 3;
+   */
+  mode: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.CommissionTab.
+ * Use `create(CommissionTabSchema)` to create a new message.
+ */
+export const CommissionTabSchema: GenMessage<CommissionTab> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 6);
+
+/**
+ * One core-declared Surface — a named position Elements are contributed into.
+ *
+ * Surfaces have no rows of their own: their STRUCTURE is code (global and
+ * invariant, identical for every commission), and only their per-commission
+ * MODE is data. They are served here rather than left for the client to know
+ * so the renderer walks one authority instead of a second copy of the
+ * skeleton that could drift from the server's.
+ *
+ * @generated from message zurfur.api.v1.CommissionSurface
+ */
+export type CommissionSurface = Message<"zurfur.api.v1.CommissionSurface"> & {
+  /**
+   * The declared surface's stable id. Extensible vocabulary (R8).
+   *
+   * @generated from field: string surface = 1;
+   */
+  surface: string;
+
+  /**
+   * The tab this surface lives in, BY ID — never a parent pointer (DD D5).
+   *
+   * @generated from field: string tab_id = 2;
+   */
+  tabId: string;
+
+  /**
+   * The surface's per-commission visibility mode — the second term of the
+   * min. Same vocabulary as `CommissionTab.mode`; `total` when never widened.
+   *
+   * @generated from field: string mode = 3;
+   */
+  mode: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.CommissionSurface.
+ * Use `create(CommissionSurfaceSchema)` to create a new message.
+ */
+export const CommissionSurfaceSchema: GenMessage<CommissionSurface> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 7);
+
+/**
+ * One contributed Element: a core-owned envelope plus a type-owned payload the
+ * core never interprets.
+ *
+ * **Kind is data, not a `oneof` arm.** The surface-vs-component `oneof`
+ * discriminant of DD 42762241 D3 is a deliberately UNTAKEN door: Elements are
+ * ONE message, so there is no unknown-arm case to fail closed at the message
+ * level. An unknown element `kind` is the RENDERER's fail-closed case
+ * (ZMVP-170), not the wire's.
+ *
+ * Deliberately absent, each an exposure that would be forever while its
+ * omission stays additive:
+ *   * `created_by` — off in v1 (DD 42762241 D5, carried forward by 45514754
+ *     D9): no new correlation surface, and it carries no information while
+ *     every writer is the owner.
+ *   * `position` / `band` — R3 forbids a stored ordinal on the wire, and a
+ *     sparse one would be a gap oracle for how many Elements were projected
+ *     away. Order is SERVED: the order of `GetCommissionResponse.elements` is
+ *     the order, densely, after the visibility filter. The ordering-band
+ *     vocabulary is also still undecided (type catalog), so nothing here
+ *     pre-empts it.
+ *
+ * @generated from message zurfur.api.v1.CommissionElement
+ */
+export type CommissionElement = Message<"zurfur.api.v1.CommissionElement"> & {
+  /**
+   * Opaque element id (R6).
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * The tab it sits in, by id.
+   *
+   * @generated from field: string tab_id = 2;
+   */
+  tabId: string;
+
+  /**
+   * The declared surface it was contributed into, by id.
+   *
+   * @generated from field: string surface = 3;
+   */
+  surface: string;
+
+  /**
+   * What the element IS — the type tag the renderer switches on, and the
+   * client-facing discriminant (DD 46596098). Extensible vocabulary (R8),
+   * open in v1: the core stores and returns it and never interprets it.
+   * A renderer that does not know a kind renders fail-closed, never raw.
+   *
+   * @generated from field: string kind = 4;
+   */
+  kind: string;
+
+  /**
+   * The element's OWN visibility mode — the third term of the min, not the
+   * effective one. All three terms are served (the three-level grain) so the
+   * client can explain what it sees; the server has already applied the min.
+   *
+   * @generated from field: string mode = 5;
+   */
+  mode: string;
+
+  /**
+   * The type-owned half, opaque to the core.
+   *
+   * A `oneof` over a single arm, deliberately (DD 42762241 D4, carried
+   * forward): `google.protobuf.Struct` is DISQUALIFIED — pbjson floats every
+   * integer and errors above 2^53 while protobuf-es silently truncates, so a
+   * payload could arrive corrupted on one tier and rejected on the other. The
+   * canonical JSON string passes numeric precision through untouched, and the
+   * `oneof` keeps typed per-kind arms addable when the catalog lands
+   * (VERSIONING.md R11's third case: mixed ownership over a deferred
+   * vocabulary). Always set — an element with no payload carries `"{}"`.
+   *
+   * @generated from oneof zurfur.api.v1.CommissionElement.payload
+   */
+  payload: {
+    /**
+     * @generated from field: string opaque_json = 6;
+     */
+    value: string;
+    case: "opaqueJson";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message zurfur.api.v1.CommissionElement.
+ * Use `create(CommissionElementSchema)` to create a new message.
+ */
+export const CommissionElementSchema: GenMessage<CommissionElement> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 8);
+
+/**
+ * `GET /api/v1/commissions/{id}` — the addressed commission.
+ *
+ * @generated from message zurfur.api.v1.GetCommissionRequest
+ */
+export type GetCommissionRequest = Message<"zurfur.api.v1.GetCommissionRequest"> & {
+  /**
+   * The commission's opaque id (R6), from the path.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.GetCommissionRequest.
+ * Use `create(GetCommissionRequestSchema)` to create a new message.
+ */
+export const GetCommissionRequestSchema: GenMessage<GetCommissionRequest> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 9);
+
+/**
+ * `GET /api/v1/commissions/{id}` — the commission envelope plus the viewer's
+ * PROJECTION of its composition.
+ *
+ * The envelope fields are flat and duplicated rather than nesting `Commission`,
+ * matching `CreateCommissionResponse`: each endpoint's response evolves
+ * independently of the listing row. Field semantics are documented on
+ * `Commission`.
+ *
+ * **Only what the viewer may see is here.** Projection happens server-side at
+ * serialization; no wider payload ever leaves the server. Elements, surfaces
+ * and tabs the viewer's tier does not reach are absent — and absent is all a
+ * client can tell, which is the point: there is no count, gap, or ordinal to
+ * infer what was filtered.
+ *
+ * @generated from message zurfur.api.v1.GetCommissionResponse
+ */
+export type GetCommissionResponse = Message<"zurfur.api.v1.GetCommissionResponse"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string title = 2;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string lifecycle = 3;
+   */
+  lifecycle: string;
+
+  /**
+   * @generated from field: string visibility = 4;
+   */
+  visibility: string;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp deadline = 5;
+   */
+  deadline?: Timestamp | undefined;
+
+  /**
+   * @generated from field: optional zurfur.api.v1.Maturity maturity = 6;
+   */
+  maturity?: Maturity | undefined;
+
+  /**
+   * @generated from field: optional string direction_status = 7;
+   */
+  directionStatus?: string | undefined;
+
+  /**
+   * @generated from field: optional string deadline_status = 8;
+   */
+  deadlineStatus?: string | undefined;
+
+  /**
+   * @generated from field: optional string linked_channel = 9;
+   */
+  linkedChannel?: string | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp created_at = 10;
+   */
+  createdAt?: Timestamp | undefined;
+
+  /**
+   * Whether the composition was WITHHELD from this viewer — stated, never
+   * inferred from `elements` being empty (DD 42762241 D6; R4: absence may only
+   * mean "not set", so "there is nothing here" and "you may not see what is
+   * here" must never be the same bytes).
+   *
+   * Minted at birth on purpose. `false` on every response v1 serves — the
+   * participant path is the only one that exists, and a participant is never
+   * withheld from. It is declared now because the tiered viewer (ZMVP-75) is
+   * exactly where "ship owner-only, extend later" would quietly have made an
+   * empty list mean two different things.
+   *
+   * @generated from field: bool composition_withheld = 11;
+   */
+  compositionWithheld: boolean;
+
+  /**
+   * The commission's tabs, in skeleton order.
+   *
+   * @generated from field: repeated zurfur.api.v1.CommissionTab tabs = 12;
+   */
+  tabs: CommissionTab[];
+
+  /**
+   * The declared surfaces, in skeleton order within their tab.
+   *
+   * @generated from field: repeated zurfur.api.v1.CommissionSurface surfaces = 13;
+   */
+  surfaces: CommissionSurface[];
+
+  /**
+   * Every element the viewer may see, in served order: by tab, then surface
+   * (both in skeleton order), then by the server's ordering within the
+   * surface. Dense — never derived from ids (R6) and never a stored ordinal
+   * (R3).
+   *
+   * @generated from field: repeated zurfur.api.v1.CommissionElement elements = 14;
+   */
+  elements: CommissionElement[];
+};
+
+/**
+ * Describes the message zurfur.api.v1.GetCommissionResponse.
+ * Use `create(GetCommissionResponseSchema)` to create a new message.
+ */
+export const GetCommissionResponseSchema: GenMessage<GetCommissionResponse> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 10);
+
+/**
  * The commissions service. Session-gated; Problems per problem.proto.
  *
  * @generated from service zurfur.api.v1.CommissionService
@@ -314,6 +627,19 @@ export const CommissionService: GenService<{
     methodKind: "unary";
     input: typeof CreateCommissionRequestSchema;
     output: typeof CreateCommissionResponseSchema;
+  },
+  /**
+   * One commission with the viewer's projection of its composition. The closed
+   * door is the uniform 404: a caller who may not see the commission and a
+   * caller naming one that does not exist get the same answer, so the response
+   * is never an existence oracle.
+   *
+   * @generated from rpc zurfur.api.v1.CommissionService.GetCommission
+   */
+  getCommission: {
+    methodKind: "unary";
+    input: typeof GetCommissionRequestSchema;
+    output: typeof GetCommissionResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_zurfur_api_v1_commission, 0);
