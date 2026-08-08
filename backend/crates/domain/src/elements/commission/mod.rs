@@ -56,6 +56,7 @@ pub mod fact;
 pub mod file;
 pub mod markup;
 pub mod positioning;
+pub mod projection;
 pub mod seat;
 pub mod seat_invitation;
 pub mod slot;
@@ -72,6 +73,9 @@ pub use fact::Fact;
 pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
 pub use markup::{Markup, MarkupError, MarkupShape};
 pub use positioning::{GrantLevel, Placement};
+pub use projection::{
+    ProjectedComposition, ProjectedElement, ProjectedSurface, ProjectedTab, ViewerTier,
+};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
