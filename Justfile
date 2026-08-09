@@ -9,15 +9,12 @@ dev:
     just up
     just _wait-for-db
     just _wait-for-pds
-    just dev-back & just dev-auth & just dev-web & wait
+    just dev-back & just dev-web & wait
 
 dev-back:
     # -p api: the workspace has a second binary (contract-gen) since ZMVP-25;
     # a bare `run` is ambiguous and cargo-watch dies silently under `just dev`.
     cargo watch -C backend -x 'run -p api'
-
-dev-auth:
-    cd frontend/auth && yarn dev
 
 # The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
 dev-web:
@@ -159,14 +156,12 @@ setup:
     @echo "Installing tools..."
     cargo install just cargo-watch bacon
     cargo install sqlx-cli --no-default-features --features postgres
-    cd frontend/auth && yarn install
     cd frontend/web && yarn install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
 
 clean:
     cargo clean
-    rm -rf frontend/auth/node_modules
     rm -rf frontend/web/node_modules frontend/web/.svelte-kit frontend/web/build
 
 # --- Internal ---
