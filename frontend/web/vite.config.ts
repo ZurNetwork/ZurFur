@@ -4,7 +4,9 @@ import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 
 // The dev server port Caddy proxies its catch-all to (ZMVP-150). 5174, not the
-// Vite default 5173 — that belongs to frontend/auth. strictPort makes the port
+// Vite default 5173 — that belonged to the retired React auth frontend
+// (deleted, ZMVP-148); kept so existing .env files and Caddy upstreams stay
+// valid. strictPort makes the port
 // deterministic so Caddy's upstream can't silently drift to an incremented port.
 // Any value that isn't a real TCP port falls back — unset/empty (Number('') is
 // 0, a random ephemeral bind that would 502 Caddy's fixed upstream) but also
