@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { handleField } from './handle';
 
-export { ATPROTO_HANDLE } from './handle';
+export { ATPROTO_HANDLE } from '$lib/types/handle-format';
 
 /**
  * The `/login` sign-in form: one handle, validated by the shared

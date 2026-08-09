@@ -5,28 +5,29 @@ import AccountsPage from './+page.svelte';
 import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import { formStub } from '$lib/testing/superforms';
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	displayName: 'Alice',
 	avatarUrl: undefined
 };
 
 const aliceStudio: AccountMembership = {
-	id: 'acct-alice',
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	id: accountId('acct-alice'),
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	name: 'Alice Studio',
 	role: 'owner'
 };
 
 const bobCollective: AccountMembership = {
-	id: 'acct-bob',
-	did: 'did:plc:bob',
-	handle: 'bob.zurfur.app',
+	id: accountId('acct-bob'),
+	did: did('did:plc:bob'),
+	handle: handleFromTrusted('bob.zurfur.app'),
 	name: 'Bob Collective',
 	role: 'member'
 };
@@ -52,7 +53,9 @@ function createForm(
 	overrides: {
 		name?: string;
 		handle?: string;
-		errors?: { name?: string[]; handle?: string[] };
+		// `| undefined` admitted: a cleared superforms error is a key SET to
+		// undefined, and specs must be able to build that shape.
+		errors?: { name?: string[] | undefined; handle?: string[] | undefined };
 		message?: Problem;
 	} = {}
 ) {
@@ -60,7 +63,7 @@ function createForm(
 }
 
 function listingData(
-	accounts: ReadonlyArray<AccountMembership>,
+	accounts: readonly AccountMembership[],
 	deleted?: DeleteOutcome,
 	form: ReturnType<typeof createForm> = createForm()
 ) {
@@ -156,6 +159,16 @@ describe('/accounts page', () => {
 		await expect.element(page.getByText('The account was deleted.')).not.toBeInTheDocument();
 	});
 
+	it('shows the flash again once every field error is CLEARED (undefined-valued keys, not deleted)', async () => {
+		// superforms clears an error by setting its key to undefined in place —
+		// the key survives. The flash guard must test values, not key count.
+		render(AccountsPage, {
+			data: listingData([], 'hard', createForm({ errors: { handle: undefined } }))
+		});
+
+		await expect.element(page.getByText('The account was deleted.')).toBeInTheDocument();
+	});
+
 	it('renders no banner when deleted is not part of the vocabulary (garbage narrows to undefined)', async () => {
 		render(AccountsPage, { data: listingData([]) });
 
@@ -164,14 +177,14 @@ describe('/accounts page', () => {
 			.not.toBeInTheDocument();
 	});
 
-	it('scopes problem locators when data.problem and the form message can both render (caution case)', async () => {
+	it('scopes problem locators when data.problem and the form message can both render (caution case)', () => {
 		render(AccountsPage, {
 			data: problemData(rateLimitedProblem, createForm({ message: handleTakenProblem }))
 		});
 
 		const problems = page.getByTestId('problem').elements();
 		expect(problems).toHaveLength(2);
-		const detailTexts = problems.map((element) => element.textContent?.trim());
+		const detailTexts = problems.map((element) => element.textContent.trim());
 		expect(detailTexts).toEqual(
 			expect.arrayContaining([rateLimitedProblem.detail, handleTakenProblem.detail])
 		);

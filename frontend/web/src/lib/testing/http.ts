@@ -14,10 +14,23 @@ import type { FetchFunction } from '$lib/api/client';
 type ResponseFn = (url: string, init?: RequestInit) => Response;
 
 /** What `fetchStub` hands back: the stub itself plus the URLs it saw. */
-type FetchStub = {
+interface FetchStub {
 	fetch: FetchFunction;
 	calls: string[];
-};
+}
+
+/**
+ * Every `fetch` first-argument shape reduced to its URL string. Template-
+ * stringifying `RequestInfo | URL` directly would silently produce
+ * `"[object Request]"` for the `Request` arm (its `toString` is the
+ * Object.prototype default) — `Request.url` and `URL.toString()` are the
+ * arms that actually carry the URL.
+ */
+export function requestUrl(input: RequestInfo | URL): string {
+	if (typeof input === 'string') return input;
+	if (input instanceof URL) return input.toString();
+	return input.url;
+}
 
 /**
  * A `fetch` stub answering every call with a fresh response from `respond`
@@ -26,18 +39,19 @@ type FetchStub = {
  */
 export function fetchStub(respond: ResponseFn): FetchStub {
 	const calls: string[] = [];
-	const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-		calls.push(String(input));
-		return respond(String(input), init);
+	// resolve-then so a throwing responder REJECTS like real fetch (which
+	// never throws synchronously) instead of throwing out of the stub call.
+	const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+		const url = requestUrl(input);
+		calls.push(url);
+		return Promise.resolve().then(() => respond(url, init));
 	}) as FetchFunction;
 	return { fetch, calls };
 }
 
 /** A `fetch` stub that fails like a dead backend (connection refused, DNS, …). */
 export function unreachableFetch(message = 'fetch failed'): FetchFunction {
-	return (async () => {
-		throw new TypeError(message);
-	}) as FetchFunction;
+	return () => Promise.reject(new TypeError(message));
 }
 
 /** A registry-shaped `application/problem+json` response for `code` at `status`. */

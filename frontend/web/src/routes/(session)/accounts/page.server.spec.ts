@@ -3,6 +3,7 @@ import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http'
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import type { Problem } from '$lib/api/problem';
 import type { SuperValidated } from 'sveltekit-superforms';
 
@@ -10,20 +11,22 @@ type LoadEvent = Parameters<typeof load>[0];
 type ActionEvent = Parameters<(typeof actions)['default']>[0];
 
 /** The action's fail payload: everything rides the superform (message = backend Problem). */
-type CreateForm = SuperValidated<{ name: string; handle: string }, Problem>;
+type CreateForm = SuperValidated<{ name: string; handle: string }>;
 
 /** `load`'s actual return, pinned past the generated type's `MaybeWithVoid` noise. */
 type ListLoadData = { deleted?: DeleteOutcome; form: CreateForm } & (
-	{ accounts: ReadonlyArray<AccountMembership> } | { problem: Problem }
+	{ accounts: readonly AccountMembership[] } | { problem: Problem }
 );
 
 const aliceStudio: AccountMembership = {
-	id: 'acct-alice',
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	id: accountId('acct-alice'),
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	name: 'Alice Studio',
 	role: 'owner'
 };
+
+const createDefaultAction = actions.default;
 
 function loadEvent(fetch: typeof globalThis.fetch, search = ''): LoadEvent {
 	const event = { fetch, url: new URL(`http://localhost/accounts${search}`) };
@@ -43,7 +46,7 @@ async function createAction(
 	if (name !== null) body.set('name', name);
 	if (handle !== null) body.set('handle', handle);
 	const request = new Request('http://localhost/accounts', { method: 'POST', body });
-	return (await actions.default({ request, fetch } as unknown as ActionEvent)) as {
+	return (await createDefaultAction({ request, fetch } as unknown as ActionEvent)) as {
 		status: number;
 		data: { form: CreateForm };
 	};
@@ -55,6 +58,10 @@ describe('/accounts load', () => {
 		const result = await runLoad(loadEvent(fetch));
 		expect(result).toMatchObject({ accounts: [aliceStudio] });
 		expect(result.deleted).toBeUndefined();
+		// superforms deprecates `posted` toward v3 without a drop-in replacement
+		// for "did this pristine load produce a submitted form"; revisit on the
+		// v3 upgrade.
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		expect(result.form.posted).toBe(false);
 		expect(result.form.message).toBeUndefined();
 	});
@@ -72,6 +79,12 @@ describe('/accounts load', () => {
 	it('narrows an unrecognized ?deleted= value (garbage) to undefined', async () => {
 		const { fetch } = fetchStub(() => Response.json({ accounts: [] }));
 		const result = await runLoad(loadEvent(fetch, '?deleted=lol'));
+		expect(result.deleted).toBeUndefined();
+	});
+
+	it('narrows a prototype name (?deleted=constructor) to undefined, not an inherited built-in', async () => {
+		const { fetch } = fetchStub(() => Response.json({ accounts: [] }));
+		const result = await runLoad(loadEvent(fetch, '?deleted=constructor'));
 		expect(result.deleted).toBeUndefined();
 	});
 
@@ -135,7 +148,9 @@ describe('/accounts create action', () => {
 		};
 		let sentBody: unknown;
 		const { fetch } = fetchStub((_url, init) => {
-			sentBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+			// See the matching comment in `zurfur-api.spec.ts`: the body is always
+			// a JSON string here, narrowed before parsing.
+			sentBody = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
 			return Response.json(created, { status: 201 });
 		});
 		const redirect = await expectRedirect(() =>

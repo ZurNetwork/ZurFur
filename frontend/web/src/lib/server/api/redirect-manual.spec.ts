@@ -17,6 +17,7 @@ import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
+import { requestUrl } from '$lib/testing/http';
 import { RequestFetch, ZurfurApi, ZurfurApiLive } from './zurfur-api';
 
 /** Run a program against the LIVE layer over a real fetch. */
@@ -39,14 +40,17 @@ function listen(server: Server): Promise<string> {
 			if (address === null || typeof address === 'string') {
 				throw new Error('expected a TCP AddressInfo');
 			}
-			resolve(`http://127.0.0.1:${address.port}`);
+			resolve(`http://127.0.0.1:${String(address.port)}`);
 		});
 	});
 }
 
 function close(server: Server): Promise<void> {
 	return new Promise((resolve, reject) => {
-		server.close((error) => (error === undefined ? resolve() : reject(error)));
+		server.close((error) => {
+			if (error === undefined) resolve();
+			else reject(error);
+		});
 	});
 }
 
@@ -79,8 +83,8 @@ describe('redirect: "manual" — real 303 + Location + Set-Cookie survive undici
 
 	// The real `fetch` (undici), talking to the real server above — API_PREFIX
 	// still gets prepended by backendFetch, so the server matches on suffix.
-	const realFetch: FetchFunction = ((input: RequestInfo | URL, init?: RequestInit) =>
-		fetch(`${origin}${String(input).replace(/^\/api\/v1/, '')}`, init)) as FetchFunction;
+	const realFetch: FetchFunction = (input: RequestInfo | URL, init?: RequestInit) =>
+		fetch(`${origin}${requestUrl(input).replace(/^\/api\/v1/, '')}`, init);
 
 	it('liveStartSignin reads the real 303 status and Location header', async () => {
 		const location = await runLive(realFetch, startSignin('alice.zurfur.app'));

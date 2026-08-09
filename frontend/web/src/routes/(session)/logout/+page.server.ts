@@ -9,11 +9,11 @@ import { HttpStatus } from '$lib/api/http-status';
  * goes home. (An anonymous one never reaches this load: the `(session)`
  * group guard bounces it to `/login` first.)
  */
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = () => {
 	redirect(HttpStatus.SeeOther, '/');
 };
 
-export const actions: Actions = {
+export const actions = {
 	/**
 	 * End the session via the backend and mirror the cookie clears onto the
 	 * browser's response — the SSR proxy rewrites the host, so SvelteKit will
@@ -30,4 +30,4 @@ export const actions: Actions = {
 		}
 		redirect(HttpStatus.SeeOther, '/');
 	}
-};
+} satisfies Actions;

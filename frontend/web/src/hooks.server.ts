@@ -20,7 +20,7 @@ const DEFAULT_API_UPSTREAM = 'http://127.0.0.1:8081';
  */
 export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	const apiUpstream = env.ZURFUR_API_UPSTREAM ?? DEFAULT_API_UPSTREAM;
-	const incomingCookie = event.request.headers.get('cookie');
+	const incomingCookie = event.request.headers.get('cookie') ?? undefined;
 
 	const proxied = rewriteApiRequest({
 		request,

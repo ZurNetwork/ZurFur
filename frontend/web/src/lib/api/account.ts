@@ -3,7 +3,14 @@
  * generated `account_pb` messages at the `ZurfurApi` boundary
  * ({@link import('../server/api/zurfur-api')}), mirroring how {@link import('./session').Session}
  * is handled. Generated types never cross the runes seam (DD 39944194).
+ *
+ * `id`/`handle`/`did` are branded ({@link import('../types/brand')}), not
+ * bare `string` — the decode boundary casts through the trusted-decode
+ * constructors (`accountId`, `handleFromTrusted`, `did`), so a bare string
+ * can no longer be passed where one of these is expected by accident.
  */
+
+import type { AccountId, Did, Handle } from '$lib/types/brand';
 
 /**
  * One row of `GET /accounts`: an account the caller holds a role in, with
@@ -11,9 +18,9 @@
  * delete affordance.
  */
 export interface AccountMembership {
-	id: string;
-	did: string;
-	handle: string;
+	id: AccountId;
+	did: Did;
+	handle: Handle;
 	name: string;
 	/**
 	 * Extensible string vocabulary (`contract/VERSIONING.md` R8): `owner` |
@@ -28,9 +35,9 @@ export interface AccountMembership {
 
 /** The account `POST /accounts` founded — the caller becomes its Owner. */
 export interface CreatedAccount {
-	id: string;
-	did: string;
-	handle: string;
+	id: AccountId;
+	did: Did;
+	handle: Handle;
 	name: string;
 }
 

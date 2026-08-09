@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { Session } from '$lib/api/session';
+import { did, handleFromTrusted } from '$lib/types/brand';
 import { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
 import { zurfurApiTest, type ZurfurApi } from './api/zurfur-api';
-import { sessionOrAnonymous, sessionOrNull, signinOutcome, signoutOutcome } from './session';
+import { optionalSession, sessionOrAnonymous, signinOutcome, signoutOutcome } from './session';
 
 const alice: Session = {
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	displayName: 'Alice',
 	avatarUrl: undefined
 };
@@ -20,15 +21,15 @@ function runTest<A, E>(
 	return Effect.runPromise(program.pipe(Effect.provide(zurfurApiTest(overrides))));
 }
 
-describe('sessionOrNull', () => {
+describe('optionalSession', () => {
 	it('carries the session for a signed-in visitor', async () => {
-		const session = await runTest({ me: Effect.succeed(alice) }, sessionOrNull);
+		const session = await runTest({ me: Effect.succeed(alice) }, optionalSession);
 		expect(session).toEqual(alice);
 	});
 
-	it('is null for an anonymous visitor (the 401 branch)', async () => {
-		const session = await runTest({}, sessionOrNull);
-		expect(session).toBeNull();
+	it('is undefined for an anonymous visitor (the 401 branch)', async () => {
+		const session = await runTest({}, optionalSession);
+		expect(session).toBeUndefined();
 	});
 });
 
@@ -36,7 +37,7 @@ describe('sessionOrAnonymous', () => {
 	it('degrades an unreachable backend to anonymous', async () => {
 		const unreachableMe = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
 		const session = await runTest({ me: unreachableMe }, sessionOrAnonymous);
-		expect(session).toBeNull();
+		expect(session).toBeUndefined();
 	});
 
 	it('surfaces a broken contract instead of treating it as signed-out', async () => {

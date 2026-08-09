@@ -3,6 +3,7 @@ import { fetchStub, problemResponse } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership } from '$lib/api/account';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import type { Problem } from '$lib/api/problem';
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -12,12 +13,14 @@ type DeleteEvent = Parameters<(typeof actions)['delete']>[0];
 type DetailLoadData = { account: AccountMembership } | { problem: Problem };
 
 const aliceStudio: AccountMembership = {
-	id: 'acct-alice',
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	id: accountId('acct-alice'),
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	name: 'Alice Studio',
 	role: 'owner'
 };
+
+const deleteAction = actions.delete;
 
 function loadEvent(fetch: typeof globalThis.fetch, id: string): LoadEvent {
 	const event = { params: { id }, fetch };
@@ -75,7 +78,7 @@ describe('/accounts/[id] delete action', () => {
 	it('redirects to the listing carrying the outcome when the exact handle confirms', async () => {
 		const { fetch } = deleteFlowStub([aliceStudio], () => Response.json({ outcome: 'hard' }));
 		const redirect = await expectRedirect(() =>
-			actions.delete(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'))
+			deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'))
 		);
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/accounts?deleted=hard');
@@ -86,7 +89,7 @@ describe('/accounts/[id] delete action', () => {
 			Response.json({ outcome: 'quarantined' })
 		);
 		const redirect = await expectRedirect(() =>
-			actions.delete(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'))
+			deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'))
 		);
 		expect(redirect.location).toBe('/accounts?deleted=unknown');
 	});
@@ -95,7 +98,7 @@ describe('/accounts/[id] delete action', () => {
 		const { fetch, calls } = deleteFlowStub([aliceStudio], () => {
 			throw new Error('the delete must not be reached');
 		});
-		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'bob.zurfur.app'));
+		const failure = await deleteAction(deleteEvent(fetch, 'acct-alice', 'bob.zurfur.app'));
 		expect(failure).toMatchObject({ status: 422, data: { form: { valid: false } } });
 		expect(calls).toHaveLength(1);
 	});
@@ -105,7 +108,7 @@ describe('/accounts/[id] delete action', () => {
 		const { fetch, calls } = deleteFlowStub([aliceAsMember], () => {
 			throw new Error('the delete must not be reached');
 		});
-		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
+		const failure = await deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
 		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
 		expect(calls).toHaveLength(1);
 	});
@@ -115,7 +118,7 @@ describe('/accounts/[id] delete action', () => {
 		const { fetch, calls } = deleteFlowStub([aliceAsMember], () => {
 			throw new Error('the delete must not be reached');
 		});
-		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'wrong.zurfur.app'));
+		const failure = await deleteAction(deleteEvent(fetch, 'acct-alice', 'wrong.zurfur.app'));
 		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
 		expect(calls).toHaveLength(1);
 	});
@@ -124,7 +127,7 @@ describe('/accounts/[id] delete action', () => {
 		const { fetch, calls } = deleteFlowStub([aliceStudio], () => {
 			throw new Error('the delete must not be reached');
 		});
-		const failure = await actions.delete(
+		const failure = await deleteAction(
 			deleteEvent(fetch, 'acct-nobody-holds-a-role-in', 'alice.zurfur.app')
 		);
 		expect(failure).toMatchObject({
@@ -136,7 +139,7 @@ describe('/accounts/[id] delete action', () => {
 
 	it('fails carrying the problem when the backend itself rejects the delete (stale Owner role)', async () => {
 		const { fetch } = deleteFlowStub([aliceStudio], () => problemResponse(403, 'forbidden'));
-		const failure = await actions.delete(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
+		const failure = await deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
 		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
 	});
 });

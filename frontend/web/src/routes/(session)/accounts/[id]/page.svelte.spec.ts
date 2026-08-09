@@ -6,19 +6,20 @@ import { FORBIDDEN_PROBLEM } from '$lib/api/problem';
 import type { AccountMembership } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	displayName: 'Alice',
 	avatarUrl: undefined
 };
 
 const aliceOwner: AccountMembership = {
-	id: 'acct-alice',
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	id: accountId('acct-alice'),
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	name: 'Alice Studio',
 	role: 'owner'
 };

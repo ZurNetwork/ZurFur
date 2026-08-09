@@ -19,15 +19,15 @@ import { problemMessage } from '$lib/server/forms/problem-message';
  */
 export const load: PageServerLoad = async ({ parent, url }) => {
 	const { session } = await parent();
-	if (session !== null) redirect(HttpStatus.SeeOther, '/');
+	if (session !== undefined) redirect(HttpStatus.SeeOther, '/');
 
 	const form = await superValidate(effect(loginForm));
-	const errorCode = url.searchParams.get('error');
-	const callbackError = errorCode === null ? null : callbackErrorMessage(errorCode);
+	const errorCode = url.searchParams.get('error') ?? undefined;
+	const callbackError = errorCode === undefined ? undefined : callbackErrorMessage(errorCode);
 	return { callbackError, form };
 };
 
-export const actions: Actions = {
+export const actions = {
 	/**
 	 * Validate locally against {@link loginForm} (shape + punycode rejection),
 	 * then proxy the sign-in start through SSR (the browser cannot read the
@@ -46,4 +46,4 @@ export const actions: Actions = {
 		if ('problem' in started) return problemMessage(form, started.problem);
 		redirect(HttpStatus.SeeOther, started.location);
 	}
-};
+} satisfies Actions;

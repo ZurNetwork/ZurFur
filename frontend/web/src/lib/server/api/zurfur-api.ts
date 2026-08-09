@@ -20,6 +20,7 @@ import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import { PROBLEM_CONTENT_TYPE, type Problem, ProblemKind } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import {
 	CreateAccountRequestSchema,
 	CreateAccountResponseSchema,
@@ -49,9 +50,9 @@ import {
  */
 export function decodeContract<Desc extends DescMessage>(
 	schema: Desc,
-	value: unknown
+	value: JsonValue
 ): MessageShape<Desc> {
-	return fromJson(schema, value as JsonValue, { ignoreUnknownFields: true });
+	return fromJson(schema, value, { ignoreUnknownFields: true });
 }
 
 /** What each `ZurfurApi` call does; failures per call are in the signature. */
@@ -75,10 +76,10 @@ export interface ZurfurApiShape {
 	 * the SSR proxy rewrites the host, so SvelteKit won't pass `set-cookie`
 	 * through on its own).
 	 */
-	readonly signout: Effect.Effect<ReadonlyArray<string>, SignoutFailed | NetworkFailure>;
+	readonly signout: Effect.Effect<readonly string[], SignoutFailed | NetworkFailure>;
 	/** `GET /accounts` — every live account the caller holds a role in, role riding per row (R7 wrapped on the wire, unwrapped here). */
 	readonly listAccounts: Effect.Effect<
-		ReadonlyArray<AccountMembership>,
+		readonly AccountMembership[],
 		ApiProblem | NetworkFailure | ContractViolation
 	>;
 	/** `POST /accounts` — found an account; the caller becomes its Owner. Rejects with `handle_taken` (409) or `invalid_request` (422). */
@@ -119,10 +120,17 @@ function backendFetch(
 	});
 }
 
+/**
+ * `JSON.parse`, typed by what it actually produces: every JSON text parses to a
+ * `JsonValue` — a true fact the lib's `any` signature is too weak to state, so
+ * it is recorded here once by annotation (no assertion involved).
+ */
+const parseJsonValue: (text: string) => JsonValue = JSON.parse;
+
 /** Parse the body as JSON or fail `ContractViolation` naming the endpoint and status. */
-function parsedBody(response: Response, path: string): Effect.Effect<unknown, ContractViolation> {
+function parsedBody(response: Response, path: string): Effect.Effect<JsonValue, ContractViolation> {
 	return Effect.tryPromise({
-		try: () => response.json() as Promise<unknown>,
+		try: async () => parseJsonValue(await response.text()),
 		catch: () => new ContractViolation({ path, status: response.status, detail: 'unparsable body' })
 	});
 }
@@ -145,7 +153,7 @@ function problemFailure(
 	if (!contentType.startsWith(PROBLEM_CONTENT_TYPE)) return Effect.fail(violation);
 
 	const classified = (
-		body: unknown
+		body: JsonValue
 	): Effect.Effect<never, NotAuthenticated | ApiProblem | ContractViolation> => {
 		// Decode through the generated schema (ZMVP-162): the contract's one
 		// Problem declaration, mapped to the plain component-facing interface.
@@ -191,8 +199,8 @@ const liveMe = (fetch: FetchFunction) =>
 			try: () => {
 				const message = decodeContract(GetMeResponseSchema, raw);
 				const session: Session = {
-					did: message.did,
-					handle: message.handle,
+					did: did(message.did),
+					handle: message.handle === undefined ? undefined : handleFromTrusted(message.handle),
 					displayName: message.displayName,
 					avatarUrl: message.avatarUrl
 				};
@@ -215,8 +223,8 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		const init: RequestInit = { method: 'POST', body: form, redirect: 'manual' };
 		const response = yield* backendFetch(fetch, '/signin', init);
 		if (isRedirectStatus(response.status)) {
-			const location = response.headers.get('location');
-			if (location === null) {
+			const location = response.headers.get('location') ?? undefined;
+			if (location === undefined) {
 				return yield* new ContractViolation({
 					path: '/signin',
 					status: response.status,
@@ -269,9 +277,9 @@ const liveListAccounts = (fetch: FetchFunction) =>
 			try: () => {
 				const message = decodeContract(ListAccountsResponseSchema, raw);
 				const accounts: AccountMembership[] = message.accounts.map((row) => ({
-					id: row.id,
-					did: row.did,
-					handle: row.handle,
+					id: accountId(row.id),
+					did: did(row.did),
+					handle: handleFromTrusted(row.handle),
 					name: row.name,
 					role: row.role
 				}));
@@ -307,9 +315,9 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 			try: () => {
 				const message = decodeContract(CreateAccountResponseSchema, raw);
 				const created: CreatedAccount = {
-					id: message.id,
-					did: message.did,
-					handle: message.handle,
+					id: accountId(message.id),
+					did: did(message.did),
+					handle: handleFromTrusted(message.handle),
 					name: message.name
 				};
 				return created;

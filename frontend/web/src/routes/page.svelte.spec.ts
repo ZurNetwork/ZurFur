@@ -2,18 +2,19 @@ import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Landing from './+page.svelte';
+import { did, handleFromTrusted } from '$lib/types/brand';
 
 describe('/ landing', () => {
 	it('shows the sign-in CTA when signed out', async () => {
-		render(Landing, { data: { session: null } });
+		render(Landing, { data: { session: undefined } });
 
 		await expect.element(page.getByTestId('signin-cta')).toHaveAttribute('href', '/login');
 	});
 
 	it('shows who is signed in (ruling 9b: / is the provisioning proof)', async () => {
 		const alice = {
-			did: 'did:plc:alice',
-			handle: 'alice.zurfur.app',
+			did: did('did:plc:alice'),
+			handle: handleFromTrusted('alice.zurfur.app'),
 			displayName: 'Alice',
 			avatarUrl: undefined
 		};

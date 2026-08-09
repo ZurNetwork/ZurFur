@@ -20,7 +20,7 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 	return await runApi(fetch, accountOutcome(params.id));
 };
 
-export const actions: Actions = {
+export const actions = {
 	/**
 	 * Owner-only delete, guarded in fail-closed order: role membership first
 	 * (authorization precedes validation), then the type-the-handle confirm
@@ -58,4 +58,4 @@ export const actions: Actions = {
 
 		redirect(HttpStatus.SeeOther, `/accounts?deleted=${outcome.outcome}`);
 	}
-};
+} satisfies Actions;

@@ -4,6 +4,8 @@
  * plain data that crosses the runes seam into layouts and components.
  */
 
+import type { Did, Handle } from '$lib/types/brand';
+
 /**
  * The JSON `/me` contract (ZMVP-151 slice 1): `did` always present for a
  * live session; the profile keys are OMITTED when the PDS was unreachable
@@ -13,11 +15,18 @@
  * `ZurfurApi` — its `me` signature is the compile-time parity proof.
  */
 export interface Session {
-	did: string;
-	/** Absent (not null) when the profile did not resolve — the /api/v1 wire
-	 * omits unset keys (contract R4), which is also DD 39944194's own idiom:
-	 * `T | undefined` is TypeScript's Option. */
-	handle?: string;
-	displayName?: string;
-	avatarUrl?: string;
+	did: Did;
+	/**
+	 * `undefined` when the profile did not resolve — the /api/v1 wire omits
+	 * unset keys (contract R4), which is also DD 39944194's own idiom:
+	 * `T | undefined` is TypeScript's Option. Written `?: string | undefined`
+	 * rather than `?: string`: under `exactOptionalPropertyTypes` the two mean
+	 * different things — this type is built from the generated `GetMeResponse`
+	 * message, whose optional scalar fields are always-present keys holding
+	 * `string | undefined`, not keys that can be omitted, so the type says
+	 * exactly that.
+	 */
+	handle?: Handle | undefined;
+	displayName?: string | undefined;
+	avatarUrl?: string | undefined;
 }

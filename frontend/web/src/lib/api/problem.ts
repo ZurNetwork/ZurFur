@@ -65,6 +65,18 @@ export const FORBIDDEN_PROBLEM: Problem = {
 	status: HttpStatus.Forbidden
 };
 
+/** Upper bound of the renderable error range; the lower is {@link HttpStatus.BadRequest}. */
+const ERROR_STATUS_MAX = 599;
+
+/**
+ * Whether a status sits in the renderable 400–599 error range — the ONE
+ * statement of that range; {@link renderableStatus} and the superforms-facing
+ * `ErrorStatus` predicate both delegate here so the bounds cannot drift.
+ */
+export function isRenderableErrorStatus(status: number): boolean {
+	return status >= HttpStatus.BadRequest && status <= ERROR_STATUS_MAX;
+}
+
 /**
  * The status a decoded problem can safely put on an HTTP response. Wire
  * `status` is a proto3 implicit-presence int32 — a body that omits it decodes
@@ -74,6 +86,5 @@ export const FORBIDDEN_PROBLEM: Problem = {
  * instead of crashing the render of a handled one.
  */
 export function renderableStatus(problem: Problem): number {
-	const { status } = problem;
-	return status >= 400 && status <= 599 ? status : HttpStatus.InternalServerError;
+	return isRenderableErrorStatus(problem.status) ? problem.status : HttpStatus.InternalServerError;
 }

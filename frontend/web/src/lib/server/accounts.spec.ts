@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount } from '$lib/api/account';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import { ApiProblem } from './api/errors';
 import { zurfurApiTest, type ZurfurApi } from './api/zurfur-api';
 import {
@@ -19,9 +20,9 @@ function runTest<A, E>(
 }
 
 const aliceStudio: AccountMembership = {
-	id: 'acct-alice',
-	did: 'did:plc:alice',
-	handle: 'alice.zurfur.app',
+	id: accountId('acct-alice'),
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
 	name: 'Alice Studio',
 	role: 'owner'
 };
@@ -100,9 +101,9 @@ describe('accountOutcome (⚠️ F1 — derived from the listing, no GET /accoun
 describe('createAccountOutcome', () => {
 	it('carries the founded account on success', async () => {
 		const created: CreatedAccount = {
-			id: 'acct-new',
-			did: 'did:plc:new',
-			handle: 'new.zurfur.app',
+			id: accountId('acct-new'),
+			did: did('did:plc:new'),
+			handle: handleFromTrusted('new.zurfur.app'),
 			name: 'New Studio'
 		};
 		const outcome = await runTest(

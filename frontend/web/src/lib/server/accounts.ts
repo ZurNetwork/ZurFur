@@ -12,7 +12,7 @@ import { ZurfurApi } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
 
 /** The two ways the listing comes back: the rows, or a problem to render. */
-export type AccountsOutcome = { accounts: ReadonlyArray<AccountMembership> } | { problem: Problem };
+export type AccountsOutcome = { accounts: readonly AccountMembership[] } | { problem: Problem };
 
 /** Every account the caller holds a role in, or the problem that blocked the read. */
 export const accountsOutcome: Effect.Effect<

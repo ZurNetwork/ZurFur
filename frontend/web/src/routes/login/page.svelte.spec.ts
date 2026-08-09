@@ -16,11 +16,8 @@ function loginForm(
 	return formStub({ handle: overrides.handle ?? '' }, overrides);
 }
 
-function loginData(
-	form: ReturnType<typeof loginForm> = loginForm(),
-	callbackError: string | null = null
-) {
-	return { session: null, callbackError, form };
+function loginData(form: ReturnType<typeof loginForm> = loginForm(), callbackError?: string) {
+	return { session: undefined, callbackError, form };
 }
 
 describe('/login page', () => {

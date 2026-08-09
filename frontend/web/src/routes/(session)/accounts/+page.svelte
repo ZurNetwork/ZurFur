@@ -12,9 +12,12 @@
 	// Under use:enhance a failed submit re-renders WITHOUT re-running load or
 	// changing the URL, so a stale ?deleted= flash would survive every failed
 	// create. A failed submit is visible as field errors or a form message —
-	// suppress the flash once either exists.
+	// suppress the flash once either exists. The `!== undefined` test is
+	// load-bearing: superforms clears a field error by SETTING its key to
+	// undefined, never deleting it, so key count alone latches true forever.
 	const submitFailed = $derived(
 		$message !== undefined ||
+			// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- ValidationErrors' types say values are never undefined; superforms' runtime clear-in-place says otherwise
 			Object.values($errors).some((fieldErrors) => fieldErrors !== undefined)
 	);
 </script>
