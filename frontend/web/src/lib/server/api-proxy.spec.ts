@@ -19,7 +19,7 @@ describe('rewriteApiRequest', () => {
 		const rewritten = rewriteApiRequest({
 			request,
 			eventOrigin,
-			incomingCookie: null,
+			incomingCookie: undefined,
 			apiUpstream
 		});
 
@@ -32,7 +32,7 @@ describe('rewriteApiRequest', () => {
 		const rewritten = rewriteApiRequest({
 			request,
 			eventOrigin,
-			incomingCookie: null,
+			incomingCookie: undefined,
 			apiUpstream
 		});
 
@@ -45,7 +45,7 @@ describe('rewriteApiRequest', () => {
 		const rewritten = rewriteApiRequest({
 			request,
 			eventOrigin,
-			incomingCookie: null,
+			incomingCookie: undefined,
 			apiUpstream
 		});
 
@@ -69,7 +69,7 @@ describe('rewriteApiRequest', () => {
 		const rewritten = rewriteApiRequest({
 			request,
 			eventOrigin,
-			incomingCookie: null,
+			incomingCookie: undefined,
 			apiUpstream
 		});
 
@@ -118,7 +118,7 @@ describe('rewriteApiRequest', () => {
 		const rewritten = rewriteApiRequest({
 			request,
 			eventOrigin,
-			incomingCookie: null,
+			incomingCookie: undefined,
 			apiUpstream
 		});
 
@@ -162,7 +162,12 @@ describe('rewriteApiRequest', () => {
 	it('does NOT treat /api/v1foo as an /api/v1 match (prefix, not stem)', () => {
 		const request = sameOriginRequest('/api/v1foo');
 
-		const result = rewriteApiRequest({ request, eventOrigin, incomingCookie: null, apiUpstream });
+		const result = rewriteApiRequest({
+			request,
+			eventOrigin,
+			incomingCookie: undefined,
+			apiUpstream
+		});
 
 		expect(result).toBe(request);
 		expect(result.url).toBe(`${eventOrigin}/api/v1foo`);

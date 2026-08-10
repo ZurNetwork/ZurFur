@@ -5,14 +5,14 @@
 	/**
 	 * The signed-in/out corner every page carries: handle + avatar + sign-out
 	 * when a session exists (falling back to the DID when the profile could
-	 * not be resolved — the `/me` contract's null case), a sign-in link
-	 * otherwise.
+	 * not be resolved — the `/me` contract's absent-handle case), a sign-in
+	 * link otherwise.
 	 */
-	let { session }: { session: Session | null } = $props();
+	let { session }: { session: Session | undefined } = $props();
 </script>
 
 <header>
-	{#if session !== null}
+	{#if session !== undefined}
 		<nav>
 			<a href={resolve('/accounts')} data-testid="accounts-link">Accounts</a>
 		</nav>

@@ -19,7 +19,7 @@
 <!-- Deliberately NOT ProblemNote: callback errors are redirect codes with local
      copy (callback-errors.ts), not RFC 9457 problems off the wire — minting a
      fake Problem for them would misuse the seam. -->
-{#if data.callbackError !== null}
+{#if data.callbackError !== undefined}
 	<p role="alert" data-testid="callback-error">{data.callbackError}</p>
 {/if}
 

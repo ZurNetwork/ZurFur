@@ -14,6 +14,6 @@ import { HttpStatus } from '$lib/api/http-status';
  */
 export const load: LayoutServerLoad = async ({ parent }) => {
 	const { session } = await parent();
-	if (session === null) redirect(HttpStatus.SeeOther, '/login');
+	if (session === undefined) redirect(HttpStatus.SeeOther, '/login');
 	return {};
 };

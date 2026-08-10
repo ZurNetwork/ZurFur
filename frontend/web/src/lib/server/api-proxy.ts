@@ -32,27 +32,28 @@ export interface RewriteApiRequestInput {
 	/** `event.url.origin` — the browser-visible origin the app resolves against. */
 	eventOrigin: string;
 	/**
-	 * The incoming request's raw `cookie` header (`event.request.headers.get('cookie')`),
-	 * or `null` when the caller sent none. Only the `zurfur.sid` pair is extracted
-	 * from it and forwarded, and only to the API upstream — never the whole header.
+	 * The incoming request's raw `cookie` header (`event.request.headers.get('cookie')`,
+	 * platform null converted at contact), or `undefined` when the caller sent none.
+	 * Only the `zurfur.sid` pair is extracted from it and forwarded, and only to
+	 * the API upstream — never the whole header.
 	 */
-	incomingCookie: string | null;
+	incomingCookie: string | undefined;
 	/** The internal axum origin (`ZURFUR_API_UPSTREAM`, e.g. `http://127.0.0.1:8081`). */
 	apiUpstream: string;
 }
 
 /**
- * Extract ONLY the `zurfur.sid` pair from a raw `cookie` header, or `null` when
- * it is absent. Cookies are host-scoped by hostname and NOT by port, so on
+ * Extract ONLY the `zurfur.sid` pair from a raw `cookie` header, or `undefined`
+ * when it is absent. Cookies are host-scoped by hostname and NOT by port, so on
  * `127.0.0.1` every other local dev tool shares one cookie jar — forwarding the
  * whole header would leak those unrelated cookies straight to axum. We parse
  * defensively: pairs are `;`-separated with optional surrounding whitespace, and
  * a value may itself contain `=` (e.g. base64 padding), so each pair is split on
  * its FIRST `=` only.
  */
-function extractSessionCookie(incomingCookie: string | null): string | null {
-	if (incomingCookie === null) {
-		return null;
+function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
+	if (incomingCookie === undefined) {
+		return undefined;
 	}
 
 	const pairs = incomingCookie.split(';');
@@ -69,7 +70,7 @@ function extractSessionCookie(incomingCookie: string | null): string | null {
 			return `${SESSION_COOKIE_NAME}=${value}`;
 		}
 	}
-	return null;
+	return undefined;
 }
 
 /**
@@ -117,7 +118,7 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	const rewritten = new Request(upstreamUrl, request);
 	rewritten.headers.delete('cookie');
 	const sessionCookie = extractSessionCookie(incomingCookie);
-	if (sessionCookie !== null) {
+	if (sessionCookie !== undefined) {
 		rewritten.headers.set('cookie', sessionCookie);
 	}
 	return rewritten;

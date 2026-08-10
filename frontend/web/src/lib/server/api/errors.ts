@@ -30,7 +30,7 @@ export class ContractViolation extends Data.TaggedError('ContractViolation')<{
 	readonly detail: string;
 }> {
 	override get message(): string {
-		return `API contract violation: ${this.path} responded ${this.status} — ${this.detail}`;
+		return `API contract violation: ${this.path} responded ${String(this.status)} — ${this.detail}`;
 	}
 }
 

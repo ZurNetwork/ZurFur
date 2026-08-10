@@ -8,13 +8,13 @@
     {
       "key": "ZMVP-166",
       "summary": "storage: flat commission composition \u2014 commission_tab + commission_element, drop commission_node",
-      "phase": "pr-open",
-      "next_action": "Built by the Opus hardest-build lane (644 tests), ship-gates round applied (2 races fixed [tab lock on remove; tab-scoped surface check], satellite composite-FK teeth, participant-residue DELETE [Engineer ruling], ElementPayload no-Serialize newtype, 9 critique items; 655 tests, independently verified). Engineer ruled 422/404 split + tab_not_found + UUID-addressing-waits-for-163. Note: wrong-both-ways address now answers UnknownTab 404 (gate-order inversion, pinned both adapters). Slices: [1] infra+docs [2] re-model. Await Copilot triage + Engineer merge; unblocks ZMVP-163/169.",
-      "pr": "https://github.com/ZurNetwork/ZurFur/pull/173",
-      "branch": "feature/zmvp-166-flat-composition-storage",
+      "phase": "merged-done",
+      "next_action": "DONE: merged to main as 8d92eb1 via PR #173 (2026-08-05). Unblocked ZMVP-163 (built) and ZMVP-169. Ledger corrected 2026-08-09.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/173 (MERGED)",
+      "branch": "deleted (was feature/zmvp-166-flat-composition-storage)",
       "worktree": null,
       "snapshot": ".understand/20260804-170104_ZMVP-166_flat-composition-storage.md",
-      "updated": "2026-08-05T19:55:00-06:00"
+      "updated": "2026-08-09T14:30:00-06:00"
     },
     {
       "key": "ZMVP-165",
@@ -42,12 +42,12 @@
       "key": "ZMVP-164",
       "summary": "Write-side surface-tree depth cap \u226463 (DD 42762241 companion)",
       "phase": "superseded-wont-do",
-      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754 (Commission Composition \u2014 flat extension points): no recursion \u2192 no depth cap; ZMVP-164 \u2192 Won't Do, PR #170 closed unmerged. Salvage landed separately: PG-16 testcontainers pin (test-support::pg + query-codegen) as PR #171 (Copilot requested, awaits Engineer merge). Housekeeping ticket carved for branch feature/zmvp-164-tree-depth-cap + ~/code/zurfur-zmvp164 worktree cleanup.",
-      "pr": "https://github.com/ZurNetwork/ZurFur/pull/170 (CLOSED unmerged) \u00b7 salvage https://github.com/ZurNetwork/ZurFur/pull/171",
-      "branch": "feature/zmvp-164-tree-depth-cap (kept for reference until cleanup)",
-      "worktree": null,
+      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754; Won't Do, PR #170 closed unmerged; salvage PR #171 MERGED. Cleanup attempted 2026-08-09: worktree ~/code/zurfur-zmvp164 is CLEAN + no compose stack, but the deletion commands (git worktree remove; branch deletes local+origin) were permission-blocked \u2014 handed to the Engineer to run.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/170 (CLOSED unmerged) \u00b7 salvage https://github.com/ZurNetwork/ZurFur/pull/171 (MERGED)",
+      "branch": "feature/zmvp-164-tree-depth-cap (deletion pending, Engineer's hands)",
+      "worktree": "~/code/zurfur-zmvp164 (removal pending, Engineer's hands)",
       "snapshot": null,
-      "updated": "2026-08-04T15:40:00-06:00"
+      "updated": "2026-08-09T14:30:00-06:00"
     },
     {
       "key": "ZMVP-153",
@@ -59,6 +59,17 @@
       "worktree": null,
       "snapshot": ".understand/20260727-233430_ZMVP-153_commission-browser-tree.md",
       "updated": "2026-07-27T23:59:00-06:00"
+    },
+    {
+      "key": "ZMVP-196",
+      "summary": "web: strict TypeScript linting + branded (nominal) domain types",
+      "phase": "pr-open",
+      "next_action": "PR #179 open (stacked on chore PR #178, auto-retargets to main when it merges), Jira In Review. Ship-gates round applied: ?deleted=constructor Map fix (blocker), superforms cleared-error flash-guard restored, satisfies-Actions ×4 (requireAction harness deleted), Session.did/handle branded, error-status range single-sourced, brand.spec + problem.spec added, rulebook globs hoisted + testing-import ban. Gate: eslint 0 err, svelte-check 0 err, 170 tests. Declined: superforms.ts whole-object cast nit (documented TS quirk). Await Copilot triage + Engineer merge (order: #178 → #179).",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/179",
+      "branch": "feature/zmvp-196-strict-lint-brands",
+      "worktree": null,
+      "snapshot": null,
+      "updated": "2026-08-09T14:30:00-06:00"
     },
     {
       "key": "ZMVP-163",

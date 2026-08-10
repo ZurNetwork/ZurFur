@@ -11,15 +11,24 @@ import { problemMessage } from '$lib/server/forms/problem-message';
 
 /**
  * Every outcome a completed delete can carry back via `?deleted=` — keyed as
- * a `Record<DeleteOutcome, true>` so adding a fourth outcome to the union is
- * a compile error here, not a silently vanished banner. The banner renders
+ * `{ [K in DeleteOutcome]: K }` so adding a fourth outcome to the union is a
+ * compile error here, not a silently vanished banner. The banner renders
  * only from this declared vocabulary; it is a flash HINT, not proof a
  * deletion occurred (anyone can type the query param).
  */
-const DELETE_OUTCOMES = { soft: true, hard: true, unknown: true } as const satisfies Record<
-	DeleteOutcome,
-	true
->;
+const DELETE_OUTCOMES = { soft: 'soft', hard: 'hard', unknown: 'unknown' } as const satisfies {
+	[K in DeleteOutcome]: K;
+};
+
+/**
+ * {@link DELETE_OUTCOMES} as a string-keyed lookup: `.get` with raw query
+ * text PARSES it — a known outcome comes back as its `DeleteOutcome`,
+ * anything else as `undefined` — with no assertion in the path. A `Map`
+ * (not a bare-indexed object) for the same reason `callback-errors.ts`
+ * uses one: a prototype name like `?deleted=constructor` must miss cleanly
+ * instead of resolving an `Object.prototype` built-in.
+ */
+const DELETE_OUTCOME_BY_PARAM = new Map<string, DeleteOutcome>(Object.entries(DELETE_OUTCOMES));
 
 /**
  * The caller's account listing, plus the `?deleted=` flash a completed delete
@@ -30,16 +39,15 @@ const DELETE_OUTCOMES = { soft: true, hard: true, unknown: true } as const satis
 export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
 	const form = await superValidate(effect(createAccountForm));
-	const deletedParam = url.searchParams.get('deleted');
-	const deleted =
-		deletedParam !== null && Object.hasOwn(DELETE_OUTCOMES, deletedParam)
-			? (deletedParam as DeleteOutcome)
-			: undefined;
+	const deleted = DELETE_OUTCOME_BY_PARAM.get(url.searchParams.get('deleted') ?? '');
 
 	return { ...outcome, deleted, form };
 };
 
-export const actions: Actions = {
+// `satisfies` (not an `Actions` annotation) so the concrete action keys
+// survive for specs to call directly — the annotation erases them to an
+// index signature under noUncheckedIndexedAccess.
+export const actions = {
 	/**
 	 * Found an account: validate locally against {@link createAccountForm},
 	 * then POST /accounts. A local validation failure fails 422 with the
@@ -59,4 +67,4 @@ export const actions: Actions = {
 		if ('problem' in outcome) return problemMessage(form, outcome.problem);
 		redirect(HttpStatus.SeeOther, '/accounts');
 	}
-};
+} satisfies Actions;

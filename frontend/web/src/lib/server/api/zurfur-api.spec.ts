@@ -187,7 +187,10 @@ describe('ZurfurApi.createAccount (live)', () => {
 		};
 		const { fetch, calls } = fetchStub(() => Response.json(created, { status: 201 }));
 		const spyingFetch: typeof fetch = async (input, init) => {
-			sentBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+			// `liveCreateAccount` always sends a JSON string body — narrow before
+			// parsing rather than stringifying the whole `BodyInit` union (whose
+			// other arms, e.g. `ReadableStream`, have no meaningful `toString`).
+			sentBody = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
 			return fetch(input, init);
 		};
 		const account = await runLive(spyingFetch, createAccount('New Studio', 'new.zurfur.app'));

@@ -5,6 +5,8 @@ import { actions, load } from './+page.server';
 
 type ActionEvent = Parameters<(typeof actions)['default']>[0];
 
+const logoutAction = actions.default;
+
 function logoutEvent(response: () => Response) {
 	const deleted: string[] = [];
 	const event = {
@@ -37,7 +39,7 @@ describe('/logout action', () => {
 				})
 		);
 
-		const redirect = await expectRedirect(() => actions.default(event));
+		const redirect = await expectRedirect(() => logoutAction(event));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/');
 		expect(deleted).toEqual(['zurfur.sid']);
@@ -45,7 +47,7 @@ describe('/logout action', () => {
 
 	it('fails loudly when the backend does not end the session', async () => {
 		const { event, deleted } = logoutEvent(() => new Response('boom', { status: 500 }));
-		await expect(actions.default(event)).rejects.toMatchObject({ status: 502 });
+		await expect(logoutAction(event)).rejects.toMatchObject({ status: 502 });
 		expect(deleted).toEqual([]);
 	});
 });

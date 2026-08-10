@@ -11,30 +11,30 @@ import { ZurfurApi } from './api/zurfur-api';
 import type { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
 
 /**
- * Who is signed in, if anyone: `null` on the backend's 401 `not_authenticated`
- * (anonymous or expired). Any other problem, a broken contract, or an
- * unreachable backend stays in the error channel.
+ * Who is signed in, if anyone: `undefined` on the backend's 401
+ * `not_authenticated` (anonymous or expired). Any other problem, a broken
+ * contract, or an unreachable backend stays in the error channel.
  */
-export const sessionOrNull: Effect.Effect<
-	Session | null,
+export const optionalSession: Effect.Effect<
+	Session | undefined,
 	ApiProblem | NetworkFailure | ContractViolation,
 	ZurfurApi
 > = Effect.gen(function* () {
 	const api = yield* ZurfurApi;
 	return yield* api.me;
-}).pipe(Effect.catchTag('NotAuthenticated', () => Effect.succeed(null)));
+}).pipe(Effect.catchTag('NotAuthenticated', () => Effect.succeed(undefined)));
 
 /**
- * {@link sessionOrNull}, degrading an unreachable backend to anonymous too —
+ * {@link optionalSession}, degrading an unreachable backend to anonymous too —
  * the root layout's stance: a dead backend renders signed-out rather than a
  * 500. A contract violation or unexpected problem still surfaces; a
  * regression must not masquerade as "signed out".
  */
 export const sessionOrAnonymous: Effect.Effect<
-	Session | null,
+	Session | undefined,
 	ApiProblem | ContractViolation,
 	ZurfurApi
-> = sessionOrNull.pipe(Effect.catchTag('NetworkFailure', () => Effect.succeed(null)));
+> = optionalSession.pipe(Effect.catchTag('NetworkFailure', () => Effect.succeed(undefined)));
 
 /** The two ways a sign-in start comes back: bounce to the PDS, or a problem to render. */
 export type SigninOutcome = { location: string } | { problem: Problem };
@@ -59,7 +59,7 @@ export function signinOutcome(
 }
 
 /** How a sign-out lands: cookie names to mirror-clear, or the status that broke it. */
-export type SignoutOutcome = { clearedCookies: ReadonlyArray<string> } | { failedStatus: number };
+export type SignoutOutcome = { clearedCookies: readonly string[] } | { failedStatus: number };
 
 /**
  * End the session backend-side. Success carries the cookie names the backend

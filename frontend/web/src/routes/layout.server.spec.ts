@@ -21,15 +21,15 @@ describe('root layout load', () => {
 		expect(result).toEqual({ session: me });
 	});
 
-	it('carries null for an anonymous visitor (backend 401)', async () => {
+	it('carries undefined for an anonymous visitor (backend 401)', async () => {
 		const { fetch } = fetchStub(() => problemResponse(401, 'not_authenticated'));
 		const result = await load(layoutEvent(fetch));
-		expect(result).toEqual({ session: null });
+		expect(result).toStrictEqual({ session: undefined });
 	});
 
 	it('degrades to signed-out when the backend is unreachable', async () => {
 		const result = await load(layoutEvent(unreachableFetch()));
-		expect(result).toEqual({ session: null });
+		expect(result).toStrictEqual({ session: undefined });
 	});
 
 	it('surfaces a broken contract instead of treating it as signed-out', async () => {

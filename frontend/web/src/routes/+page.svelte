@@ -11,7 +11,7 @@
 
 <h1>Zurfur</h1>
 
-{#if data.session !== null}
+{#if data.session !== undefined}
 	<p data-testid="signed-in-as">Signed in as {data.session.handle ?? data.session.did}.</p>
 	<p>Your commissions will appear here (ZMVP-153).</p>
 {:else}

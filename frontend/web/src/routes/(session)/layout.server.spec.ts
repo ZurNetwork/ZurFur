@@ -5,12 +5,12 @@ import { load } from './+layout.server';
 type LoadEvent = Parameters<typeof load>[0];
 
 function guardEvent(session: unknown): LoadEvent {
-	return { parent: async () => ({ session }) } as unknown as LoadEvent;
+	return { parent: () => Promise.resolve({ session }) } as unknown as LoadEvent;
 }
 
 describe('(session) guard', () => {
 	it('bounces an anonymous visit to /login', async () => {
-		const redirect = await expectRedirect(() => load(guardEvent(null)));
+		const redirect = await expectRedirect(() => load(guardEvent(undefined)));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/login');
 	});
