@@ -22,9 +22,11 @@ const API_PREFIX = '/api/v1';
 
 /**
  * The ONLY cookie ever forwarded to the upstream: the host-only session cookie.
- * Named once so the filter below and any future caller can't drift apart.
+ * Named once so the filter below and any future caller can't drift apart —
+ * exported so the mock `ZurfurApi` Layer (ZMVP-198, `zurfur-api-mock.ts`)
+ * reports the same name `signout` clears, rather than a hand-copied literal.
  */
-const SESSION_COOKIE_NAME = 'zurfur.sid';
+export const SESSION_COOKIE_NAME = 'zurfur.sid';
 
 export interface RewriteApiRequestInput {
 	/** The outgoing request SvelteKit's `handleFetch` handed us. */

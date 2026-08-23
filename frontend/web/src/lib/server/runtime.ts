@@ -9,6 +9,7 @@
 import { Effect, Layer, ManagedRuntime } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { RequestFetch, ZurfurApi, ZurfurApiLive } from './api/zurfur-api';
+import { mockModeEnabled, zurfurApiMock } from './api/zurfur-api-mock';
 
 /**
  * The process-wide runtime. Holds the request-independent service graph —
@@ -21,18 +22,33 @@ import { RequestFetch, ZurfurApi, ZurfurApiLive } from './api/zurfur-api';
 const runtime = ManagedRuntime.make(Layer.empty);
 
 /**
- * Run an API program for one request: provide the live `ZurfurApi` over the
- * request's own `fetch` (SSR rewrite + cookie forwarding ride inside it), then
- * settle to a promise. Unhandled tagged failures reject and surface as a 500 —
- * `catchTags` the ones a page turns into `redirect()`/`fail()`/data BEFORE
- * the seam, so the error channel documents what's left to blow up.
+ * The mock `ZurfurApi` Layer, built ONCE at module scope (ZMVP-198) — every
+ * entry `zurfurApiMock()` returns is already LAZY (`Effect.suspend`/
+ * `Effect.sync` closures over the shared store, see `zurfur-api-mock.ts`),
+ * so state is read at effect-RUN time regardless of how long ago the Layer
+ * itself was built; rebuilding it per request (as an earlier revision did)
+ * bought nothing. `hooks.server.ts`'s boot-time prod guard is what actually
+ * keeps this dead weight outside dev — `mockModeEnabled()` below is always
+ * `false` in a real server.
+ */
+const ZurfurApiMockLive: Layer.Layer<ZurfurApi> = zurfurApiMock();
+
+/**
+ * Run an API program for one request: provide `ZurfurApi` — the mock Layer
+ * when {@link mockModeEnabled} says `ZURFUR_WEB_MOCK` is live, the real one
+ * otherwise (the ONE line that picks) — over the request's own `fetch` (SSR
+ * rewrite + cookie forwarding ride inside it for the live Layer; the mock
+ * Layer ignores it), then settle to a promise. Unhandled tagged failures
+ * reject and surface as a 500 — `catchTags` the ones a page turns into
+ * `redirect()`/`fail()`/data BEFORE the seam, so the error channel documents
+ * what's left to blow up.
  */
 export function runApi<A, E>(
 	fetch: FetchFunction,
 	program: Effect.Effect<A, E, ZurfurApi>
 ): Promise<A> {
 	const provided = program.pipe(
-		Effect.provide(ZurfurApiLive),
+		Effect.provide(mockModeEnabled() ? ZurfurApiMockLive : ZurfurApiLive),
 		Effect.provideService(RequestFetch, fetch)
 	);
 	return runtime.runPromise(provided);

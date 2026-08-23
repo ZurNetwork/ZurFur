@@ -6,8 +6,7 @@
 
 import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
-import { type Problem, ProblemKind } from '$lib/api/problem';
-import { HttpStatus } from '$lib/api/http-status';
+import { ACCOUNT_NOT_FOUND_PROBLEM, type Problem } from '$lib/api/problem';
 import { ZurfurApi } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
 
@@ -27,21 +26,6 @@ export const accountsOutcome: Effect.Effect<
 	Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<AccountsOutcome>({ problem }))
 );
 
-/**
- * The synthetic 404 ⚠️ F1's derived read answers for an id absent from the
- * listing. Field-for-field the domain's own `Problem::account_not_found`
- * (`backend/crates/api/src/problem.rs`) — reused verbatim rather than
- * invented, because the two cases mean the same thing: "not in your list"
- * IS "you hold no role in it", the same authorization answer a real detail
- * endpoint would give.
- */
-const accountNotFoundProblem: Problem = {
-	...ProblemKind.AccountNotFound,
-	title: 'Account not found',
-	detail: 'No such account.',
-	status: HttpStatus.NotFound
-};
-
 /** The two ways a single-account read comes back: the row, or a problem (including the derived not-found) to render. */
 export type AccountOutcome = { account: AccountMembership } | { problem: Problem };
 
@@ -58,7 +42,7 @@ export function accountOutcome(
 		Effect.map((outcome): AccountOutcome => {
 			if ('problem' in outcome) return outcome;
 			const account = outcome.accounts.find((row) => row.id === id);
-			return account === undefined ? { problem: accountNotFoundProblem } : { account };
+			return account === undefined ? { problem: ACCOUNT_NOT_FOUND_PROBLEM } : { account };
 		})
 	);
 }
