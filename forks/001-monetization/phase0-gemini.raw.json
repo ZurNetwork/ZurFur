@@ -1,0 +1,219 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "**PHASE 0 — GROUNDING**\n\nListen up. We are operating a pre-alpha, solo-dev platform built around a heavily NSFW furry community, without the legal cover of a registered business entity. Before we waste time debating fantasy monetization sequences that will get our accounts frozen on day one, here is the empirical reality we are bound by. \n\n1. **Stripe bans adult content platforms:** Stripe’s Acceptable Use Policy explicitly prohibits adult content and requires extensive pre-approval and continuous monitoring for \"content creation platforms.\" \n*Source:* Stripe Support - Prohibited and Restricted Businesses List FAQs (`https://support.stripe.com/...`) — *\"The restriction applies to any business that offers or sells pornography... Content creation platforms must be preapproved\"*.\n\n2. **Paddle bans adult content:** Paddle, a leading Merchant of Record (MoR), explicitly refuses to process payments for adult material.\n*Source:* Paddle - Understanding Paddle's Acceptable Use Policy (`https://www.paddle.com/legal/acceptable-use-policy`) — *\"Adult and other age-restricted content and services, including sexually-oriented or pornographic products or services... are forbidden\"*.\n\n3. **Lemon Squeezy bans adult content AND design services:** Lemon Squeezy prohibits both NSFW material and the exact type of commission work Zurfur hosts.\n*Source:* Lemon Squeezy Docs - Prohibited Products (`https://docs.lemonsqueezy.com/help/policies/prohibited-products`) — Prohibits *\"Sexually-oriented or pornographic content of any kind\"* as well as *\"Services of any kind (including marketing, design, web development, consulting)\"*.\n\n4. **NLnet Grants strictly require open-source licensing:** NLnet grants are viable but carry a hard licensing gate.\n*Source:* NLnet Foundation - Apply for funding (`https://nlnet.nl/propose/`) — *\"All software and hardware developed must be published under a recognised free and open source license in its entirety\"*.\n\n5. **GitHub Sponsors fees are 0% for individuals:** GitHub takes no cut from sponsorships directed at personal accounts.\n*Source:* GitHub Docs - GitHub Sponsors billing (`https://docs.github.com/en/billing/managing-billing-for-github-sponsors/...`) — *\"GitHub Sponsors does not charge any fees for sponsorships from personal accounts, so 100% of these sponsorships go to the sponsored developer\"*.\n\n6. **Ko-fi commission fees vs. Gold tier:** Ko-fi takes a cut of commissions unless the creator pays a flat subscription. \n*Source:* Ko-fi Pricing 2026 (`https://ko-fi.com/pricing`) — The free plan takes *\"5% on product sales, memberships, or commissions,\"* while Ko-fi Gold costs *\"$12/month. 0% on everything\"*.\n\n7. **Skeb pushes hefty fees to the creator:** Skeb's take rate is significant and borne entirely by the artist, setting a market anchor for transaction fees.\n*Source:* Reddit r/Skeb - Summary of Handling Fee (`https://www.reddit.com/r/Skeb/...`) — *\"Basic handling fee: 9.8%: normal rate. 6.8%: discounted rate when the creator puts Skeb URL on Twitter Bio\"*.\n\n8. **VGen creator fee is 5%:** VGen sets a baseline platform fee for structured commission workflows.\n*Source:* Little Cathedral - Interview: How To Commission in VGen (`https://littlecathedral.com/...`) — *\"Yes, VGen takes a %5 fee for each transaction from the artist\"*.\n\n9. **Open Source Collective (OSC) host fee is 10%:** Acting as a fiscal host without requiring an entity costs a flat cut of all incoming funds.\n*Source:* Open Collective Docs - Fees (`https://docs.opencollective.com/help/fiscal-hosts/open-source-collective/fees`) — *\"Open Source Collective (OSC) charges a fixed 10% host fee on incoming funds\"*.\n\n10. **FLAG (Correction to brief):** The brief claims NLnet requires a \"European dimension.\" This is outdated or sub-fund specific. NLnet's core grants are open globally as long as they serve Next Generation Internet goals. \n*Source:* Open Funding Guide (`https://github.com/ralphtheninja/open-funding`) referencing NLnet criteria — *\"we invite you to submit - even if you live outside of Europe\"*.",
+            "thoughtSignature": "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"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "groundingMetadata": {
+        "searchEntryPoint": {
+          "renderedContent": "\u003cstyle\u003e\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n\u003c/style\u003e\n\u003cdiv class=\"container\"\u003e\n  \u003cdiv class=\"headline\"\u003e\n    \u003csvg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"\u003e\n      \u003cpath fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/\u003e\n      \u003cpath fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/\u003e\n      \u003cpath fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/\u003e\n      \u003cpath fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/\u003e\n    \u003c/svg\u003e\n    \u003csvg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\"\u003e\n      \u003ccircle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/\u003e\n      \u003cpath d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/\u003e\n      \u003cpath d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/\u003e\n      \u003cpath d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/\u003e\n      \u003cpath d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/\u003e\n    \u003c/svg\u003e\n    \u003cdiv class=\"gradient-container\"\u003e\u003cdiv class=\"gradient\"\u003e\u003c/div\u003e\u003c/div\u003e\n  \u003c/div\u003e\n  \u003cdiv class=\"carousel\"\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22NLnet%22+grant+requirements+open+source+license&client=app-vertex-grounding&safesearch=active\"\u003e&quot;NLnet&quot; grant requirements open source license\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Skeb%22+fee+rate+creator+2026&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Skeb&quot; fee rate creator 2026\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Stripe%22+restricted+businesses+adult+content&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Stripe&quot; restricted businesses adult content\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22VGen%22+take+rate+fee+creator&client=app-vertex-grounding&safesearch=active\"\u003e&quot;VGen&quot; take rate fee creator\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Ko-fi%22+gold+fee+rate&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Ko-fi&quot; gold fee rate\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Open+Source+Collective%22+10%25+fee+host&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Open Source Collective&quot; 10% fee host\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Paddle%22+acceptable+use+policy+adult+content&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Paddle&quot; acceptable use policy adult content\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22Lemon+Squeezy%22+restricted+businesses+adult+content&client=app-vertex-grounding&safesearch=active\"\u003e&quot;Lemon Squeezy&quot; restricted businesses adult content\u003c/a\u003e\n\u003ca class=\"chip\" href=\"https://www.google.com/search?q=%22GitHub+Sponsors%22+fees+open+source+license+requirement&client=app-vertex-grounding&safesearch=active\"\u003e&quot;GitHub Sponsors&quot; fees open source license requirement\u003c/a\u003e\n  \u003c/div\u003e\n\u003c/div\u003e"
+        },
+        "groundingChunks": [
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFNqlgV5KL4wn4hX1I01MWym37DotdzMgsmO-IWXmOBAsgmCtaMeCd2OBcj_SAqCeoLT8FePmqq4Lv9SyLCggPuoH0CiYpS9zea6Uq2uXS4MB3iL3VdYDvQvnU8hWBatDpVGSTiQ0enN7MDK9vpzBEIVpoTBKOEYArY5eBZkfg2yHz9e5xqtaF11A==",
+              "title": "stripe.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEZvPtzpXaRD7wc4_3pWbRrP8BIwrMBppQvyT1osYnLKAnPTsqiaZ0-a8IUhbTLbI4YnzGBdoGqeG6INuDN8rNFlcHmuMXQDHuMHl-226b2a4m_DY0Y4BTQCB4FtogOJOoFkuKBYdC9WX9rptpmQxtoBdlIoOqc23WST7dw60s8vGgmvdAomS8EECNURsFzow==",
+              "title": "paddle.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFlk4gResMqW5eu_sZGS5Djwzxfevx_mnhymUh7WKi-Aj0-xeR92coepywYfL0jGuD8wN0W_blzBVrflpfKSe1gEdxX9pOWJnvOmHznjE8xz_qubHgvyND_UXHNZLb1c1tTiQjRQOqQlZ47cXposuTJuujknLMrMdEw-AVW",
+              "title": "lemonsqueezy.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGduQ1mMbqDMSbUbH2YVd1Fm5fW1Fmnyra_HIqD6WRsNG9xs4hgRLMOdEBQzB_hKAWdT8lVv3R0w-hqoz7Kqwa-xUbhScfBLxxu4IjNKltlUOHbJg==",
+              "title": "nlnet.nl"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHzJrCPtGG0SmC3bsVnzSa2ipVHYz2lX9Ri11_x-zkzNROapdEKIeMxj9uFaR21ST0PpXgmuu5OgGZpe6FACStzaM1x4ZVaBdtRbLlPtIcB0jbTlgK37ZhElNVwYG8hkRXBhJXRJIVA21xzHkNuBrOhLN2ql_PCHnGOFdyI_v8_dpJz_84Ypw==",
+              "title": "github.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFzgFb-X_X-KshEmlDKrKy7Qvya9qhl8eTJNUYXTgWhSQEqrRzzGnfupM5HxqzlU5rZgsBRyANDJrxwJUdns6fRWgWUbddRJp9Z9AnU5myv7VK7WnSC90F6fFBpXm8Wy82_FbDf",
+              "title": "schoolmaker.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGAkCRBeVayfE3ht4MDcPMHlysZpfk62ixgk0cRMa6Yk2zC3M3nvDDIYXm_IrB-lHEnQxBhhAP6v6h_1hB_RWOo2uQe5ZTHmZxJq_W8LV61RRBKhWKfQ5mkZVAUdS8H-NtM24KIo4gqdhV4rKTqP8a9jzxTElEuQXOvzOdeUA==",
+              "title": "reddit.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQECyy6p3C_KqvX7I0U_vKLRDda4blDb8VQfxxq9G7rx6BZF1vab89mLcD568WdE6J_JhIhzYj8lprPDleHCqXaZUgMx6dHRN41ciV0klDiJo5ltQiyRSvGSb_gQlS60sg-C_lONVsXplYaCXd3ehAll25AbnIHgC110ORr4xcUZHcpqfChcNd4Alme_TNA=",
+              "title": "littlecathedral.com"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGMJmEiDV28LeZcKfhdb95lY6d7qRKbLW_N79ZVKBUkPlzHoQeyZ5vkYUrrzaRtU68MX6_NcVmGjR_aLFbtUyJ0jnRYM2iZOCkAZbn2YpMd4iiQJmykcUjyAlFTpr6eNVtcaUcbZXRy311pwrZmsON2SUw9qYFD3qk=",
+              "title": "oscollective.org"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG-f8es6-WYDdKkPoghvXv6MSd7p-eSW3Yko1qm2lrR_8qKBKq7utAJ3rrSvc4O56k7Ls-mAVhI8PPm0dYomJtJ8Lhv0akptFBxzel1e7UpobMAN0TJTEZJHf2jAUlh2fxoctk=",
+              "title": "github.com"
+            }
+          }
+        ],
+        "groundingSupports": [
+          {
+            "segment": {
+              "startIndex": 744,
+              "endIndex": 792,
+              "text": "Content creation platforms must be preapproved\"*"
+            },
+            "groundingChunkIndices": [
+              0
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 942,
+              "endIndex": 1193,
+              "text": "Paddle - Understanding Paddle's Acceptable Use Policy (`https://www.paddle.com/legal/acceptable-use-policy`) — *\"Adult and other age-restricted content and services, including sexually-oriented or pornographic products or services... are forbidden\"*"
+            },
+            "groundingChunkIndices": [
+              1
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 1362,
+              "endIndex": 1637,
+              "text": "Lemon Squeezy Docs - Prohibited Products (`https://docs.lemonsqueezy.com/help/policies/prohibited-products`) — Prohibits *\"Sexually-oriented or pornographic content of any kind\"* as well as *\"Services of any kind (including marketing, design, web development, consulting)\"*"
+            },
+            "groundingChunkIndices": [
+              2
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 1767,
+              "endIndex": 1959,
+              "text": "NLnet Foundation - Apply for funding (`https://nlnet.nl/propose/`) — *\"All software and hardware developed must be published under a recognised free and open source license in its entirety\"*"
+            },
+            "groundingChunkIndices": [
+              3
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 2093,
+              "endIndex": 2360,
+              "text": "GitHub Docs - GitHub Sponsors billing (`https://docs.github.com/en/billing/managing-billing-for-github-sponsors/...`) — *\"GitHub Sponsors does not charge any fees for sponsorships from personal accounts, so 100% of these sponsorships go to the sponsored developer\"*"
+            },
+            "groundingChunkIndices": [
+              4
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 2659,
+              "endIndex": 2677,
+              "text": "0% on everything\"*"
+            },
+            "groundingChunkIndices": [
+              5
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 2971,
+              "endIndex": 3040,
+              "text": "6.8%: discounted rate when the creator puts Skeb URL on Twitter Bio\"*"
+            },
+            "groundingChunkIndices": [
+              6
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 3155,
+              "endIndex": 3316,
+              "text": "Little Cathedral - Interview: How To Commission in VGen (`https://littlecathedral.com/...`) — *\"Yes, VGen takes a %5 fee for each transaction from the artist\"*"
+            },
+            "groundingChunkIndices": [
+              7
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 3474,
+              "endIndex": 3667,
+              "text": "Open Collective Docs - Fees (`https://docs.opencollective.com/help/fiscal-hosts/open-source-collective/fees`) — *\"Open Source Collective (OSC) charges a fixed 10% host fee on incoming funds\"*"
+            },
+            "groundingChunkIndices": [
+              8
+            ]
+          },
+          {
+            "segment": {
+              "startIndex": 3904,
+              "endIndex": 4068,
+              "text": "Open Funding Guide (`https://github.com/ralphtheninja/open-funding`) referencing NLnet criteria — *\"we invite you to submit - even if you live outside of Europe\"*"
+            },
+            "groundingChunkIndices": [
+              9
+            ]
+          }
+        ],
+        "webSearchQueries": [
+          "\"NLnet\" grant requirements open source license",
+          "\"Skeb\" fee rate creator 2026",
+          "\"Stripe\" restricted businesses adult content",
+          "\"VGen\" take rate fee creator",
+          "\"Ko-fi\" gold fee rate",
+          "\"Open Source Collective\" 10% fee host",
+          "\"Paddle\" acceptable use policy adult content",
+          "\"Lemon Squeezy\" restricted businesses adult content",
+          "\"GitHub Sponsors\" fees open source license requirement"
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 2896,
+    "candidatesTokenCount": 1024,
+    "totalTokenCount": 8662,
+    "cachedContentTokenCount": 1448,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 2896
+      }
+    ],
+    "cacheTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1448
+      }
+    ],
+    "thoughtsTokenCount": 4742,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.1-pro-preview",
+  "responseId": "I_iLaqifPLKc-8YPg6Wj8AE"
+}

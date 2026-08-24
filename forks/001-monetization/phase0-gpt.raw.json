@@ -1,0 +1,550 @@
+{
+  "id": "resp_0cd3c067649ee035006a8bf86ede9487d0b56c4bebdcb97926",
+  "object": "response",
+  "created_at": 1787557999,
+  "status": "completed",
+  "background": false,
+  "billing": {
+    "payer": "developer"
+  },
+  "completed_at": 1787558110,
+  "error": null,
+  "frequency_penalty": 0.0,
+  "incomplete_details": null,
+  "instructions": "You are one seat in a multi-model design boardroom for the Zurfur project. Argue independently and bluntly; no cheerleading. Keep your visible answer under 1500 words.",
+  "max_output_tokens": 8000,
+  "max_tool_calls": null,
+  "model": "gpt-5.6-sol",
+  "moderation": null,
+  "output": [
+    {
+      "id": "rs_0cd3c067649ee035006a8bf87000c887d09aa1d18053acc75a",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfzlrLY2C8Ip_JBS3qS5sfpQ1UQYj9s8BDA5Ns_ulLevC7GXN_I2lVi8eph4THF9DebKgHSspkmEksnSaJNc6RhICyTbZt2b3vSmJXWT5Jy6ZFQNeIJqKmtzv8LZh1PAEkVp65aVKEWI6p-3_HROOwy7BPDC5-psrPMgbVft5TxiOFHFasXJwvDcBB0eKvGaP9wd9g4vcRTwQAaJgX05Ann1-dicMKYXUukXpMAKJKdcnvX142bBqduICVjKXHKnHDzWK8vubePILn8-KWU99lXgMUmoaaDHOaG_0VYIdpviwaINv4AP4bje4YGaTioJE77dlh6xvwDehRwmiVWhT63qT_hm8q3OsIhA4xriTaQ5v2-KqxheVia_iCuc9B2K8zUe1T0SjdaivjYReY3C8ApRuGxeUKR0_SfDCaHd1tmm7BEMDa8xT1WrN1vx2J_hqXiQYI6mtegCaGtUMKfhqAgPXtNsRCccFFrqu9spMwaqv66TaaSWG0q9gGPAJ_zKDltnJiGGU-N6lE6g2YlQdaVHx6UFzipS3UxRkIcdHH5HtRj3sYqqSn9BPE8AfOhl7pTchzRc9ODZBh_SGg6--coIN1TgNrN7XgmpSSr3E9cxm076Y_qJZ5jWPj8ViiUVGG19IBuV0kaWLjYuzQtRzQdzsGp6_dw9X8mwYPqSDge6pfV71CXopEwtWpmEfyR3ksfFi3_Ndsc7Mh_zfowcPR5m-Pa98S6OqBE2qUR9FDylxZiUQAukK9piuTUmhm2ELKLSEO-vrZ7MF3NwKsSsNnuKv3y0AsSrkkQcGcUGU-PjYi_mOibjAZEPlALjFHGTPv51imI28s4ua8r2PYCPqvncZ-pLY3UHLAM8WEGzkqon4wxRS2yBFlHIQD0I3PoPMcTfyRILkN1nK834qh98jyBwBPeWiVQXz192NsnX31_Ms66RR5hjFnJXfWgYKW78P3InNbqIFhLJahdURkrttUyF-K_XsF1gVaILeTkXDZzswP5jIP-_cc30JJGmFNLYKKFe9vn3a_jDFirlTT1k8Wa-23YFFO5jYyzf-7-rCweRStHR9PzCHL-QMZ7tPrZu0O2pxpRiYK_CptGuilKaUAoP4K9uQHmOWA7YgZyZGn8zxPheA3qrZ5VEGSB7AvbK0cPMgVApR1fIQVT_JAO1IRsanoyuBzDTdL1Ychdwtsp47BNm2PyrbaCgzCVS87XetuhrzvomjejJYe_wyeuSz1l6cR4HrUYjuJu7BCzknKX4XGqoPJLHme7jpjj-LhhzWyXic4HvtleCPhpXmhaDEjji9HyRzqO9mDYcCH0NdS90X6_lMsYtR9WN1TlJVj2RqMogeUzwAv0V8CcnV1o9TQ0ainrPvPmTuhArlR8OajN7jBwWCUQgYiyJG7nFJMDZCNWrP5xO2v-ZWLn-IOJQY-N_OFdQ8bFtCe4CK25uAT3ndkU-KeNBKBocVlyS091_F6gXQtgyTXff-NkcdlBFBmCyvcUpvX51vlIDqh7STNhmtl9xt9W9CZO6LODJs-5qY1V4Ol_t24loV6dN68fPdJtGupbQOMOW0exlfTvlncxxJQGgyKgDPVukupdXeHVs19J07BC2tT5JkUj_DksibIzts3B7-hvYlkMnxTRgAl9UA1RVNZKTTFb4e6VElqeY0D5l0-WU_r-8erqwD6AV_9ekmvfmwExyYKoy0isNHjmrYsSOfdQdpQkuuCN4_tA-CtQdGZNHxPjo4iILTlsyQcRWQB1MvOzDZSNV9vUBsMp61tJe8SChDTSmw0MI53ZfGp9cdi5S7Zfdf0r834IWLFxGttMlLWmuGo9hLSlKcvpEFL2y5YDuSMYuFqXoh5VjzzKqwamL-FLExtN864GXMQSIuc6YAPzodSfXi9b7vsKarrv2A5db8CqFMH5AJ8Y2RcabY6h21M-PVJJW4phwn8odgWd_ClUgEba22GNwOMxB4FjHBojy6AsIl68B_fa1yibQlVLMNcMvPcPRnF-GHVXoJsaI8yMNoZNbsTvSppCk9VcQAtigossBzSPGi7WsuPXUENAkR9dhyQeHZbjRISAA==",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf87299a087d0a9a370c36bbb2a4e",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:docs.github.com sponsors fees sponsored developer organization 100% fees countries",
+          "site:opencollective.com open source collective host fee 10% open source license",
+          "site:nlnet.nl 2026-11-03 call FOSS European dimension",
+          "AT Protocol Community Fund Raft Foundation fiscal host official"
+        ],
+        "query": "site:docs.github.com sponsors fees sponsored developer organization 100% fees countries"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf876ccf887d0b74a18b074b613f0",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfQWK_gBjMWOYxxo-LgcfhXFBjMK-3NYcMuUT1CuygybSeQBhOOpdiBoXZHKfJ1cb7sICj6kbypkwcabnWxuxNQ-zLI8GM0kTiYJLkrriaDeCabdYypvAoaTQy049poCwVzNwfiWPUd3YFwzNPVYs1u_lPyjUukZOIMPaHniJhMxGjucyBBlgcmgudB_R3FxdD9_HHBlDjq7_EkTfBti780s4zUR2mie_v7-hs-7NIGtAUrKhbVLlS00rV3lgPw7XVbt8xVwnOV70voNJWrJwaYB4sTWIO8ZtPoapkPwdtw7fV52kewRlR8BwxLQGCP0AM3-UCDEbgdrDAPFj5OPf3w3DYmkdHf4fd9iZsCdFpbjJV5CAX_JdMLcfS-ZgHfKkRasBlzCtnnAUxwszoZngVzs6GtHdACjv__zDAsUzXG6gQ0rXjsFopaYnSstGy5FO0GoCS4aD1H8bcZsEzKQ1oDjcQUY22uPz2zFLbPXhdFVj4EOACR8hjunwvancHXf5Ki2BNSvgwRU_Uph8LKFal44vo3qW738OX9GvGEdsHLYBi0HCmvm04LlVkvCRxINHBrul7Qyec8iFPeVe_9p56Mu_g9UHcR32Dlx54TP8nUVA2_C4WQpfGgQ7NQqP7LgEXyL8ch24FlACR10cQtc3_RQjjXLkLManHUCk4LuKE3AkuK_S6wxCWr7SC9I5YBnuL1pbouKNs6ilIKUVNwRh7Xn0Zw8otOMJgRLNGiby1YfasNgP-jTQ295WxY5BxJqJzBtob9V6ksuIxbdD5lqwSgxM46jz_R7A26_QgZs17E1o2Q8UfiL6zEfplCJ4FcyplFRUyL0IpWWi7hdyTmXm6NKtoSpy8t7I6uAiHQSQBHELDvG6aj9a_DGCwkzZpQ342lvQmdOBUQu56mjcT0JmNxKmoH7ngoub_dJn-gkfBSv5MYzX7phAdyO3RIARMxT7Jf7fgwElC_wfUdeg5_0cu21ZwWuNNsr6SlmthzTH7lCL_IGGXjp6np-63WYYOlH8w7O30l-uBaltKuBKc2xmT4zRTSDwBSH3hvxK5U2oRRkHW7Y8U7vT-MQNTY2qMMEKWjyIHzpJUykSjY9CJs9EZTR1Loki56OsHSt1T3RaTqdZqgKa4-c3Y2n9PehFcZkTkLj2L3keOEwXQbX47IMf84sdICdnfsj3eVEnlh12E86J6noycnPah2phZ6y5J4utcVj20ceuJg1S9HwZ_-UGgyA==",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf87718f887d0be9891768b060648",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:nlnet.nl/propose 2026-11-03 NLnet open call September 2026",
+          "site:nlnet.nl \"November 3rd 2026\"",
+          "site:nlnet.nl \"European dimension\" FOSS license call",
+          "site:atprotocol.dev community fund Raft Foundation grants"
+        ],
+        "query": "site:nlnet.nl/propose 2026-11-03 NLnet open call September 2026"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf87a589087d09cb9f054a807464c",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfe2QxbP5XZdemhCIwrFULaRM2w1tUSe65gnfRiVlJisKIX_yR2QWvQYWb_fNg_Cl31S-a60trlfMa3ZQbanPLcn8Kyx75Q1Xi9RMjk26x-UzJRN7g6GqT_gCNPDQ-Pba0Reaz_xvpp_UZEANJuxqKOxIl30xABJpNniJD-x7V7xOL-Z0jIs7zgFVpjx2cIONDtbvWNQtYlCpPA5XLhnlJfaQDytsg8SXFDQTGqtFUUtQ0p58S4L3JJ3QrAZQOWGMD95XR190d8b8swOyl4seJ6x5ZHpbbd5YrfcfKJIfnVvLUcxd6eXkfWWDZpwB_6W1ksrZHW-LT0itNZZUSdzkR2Yybn0kh7jDnHT1C6-EJMubDAFC1OV7kc8J2ot7BoEeMssEhRXgPcnJk-vJznngRjgLBn9dJkpd5OTQBEGoLvGVPwPMTYVeQZGuYjCBuMpax5vFXHhzSDpv4cAEGB0Vxx-40KYkfZJ_Ouo3afVz0Dk-bM_wbRHr03UlN1XMKibj8O3M6ooREM2ElHB1qBtcaWOjBqJXKBtTKHk2m-9U10Gm36RenR-N8XsO2aMmBaFcB_JvyCCF9yPZKqmWy8Nrnv0uXNwx3VwzU7RTnO0U8ipJbLDikEXO0Z9OU5EbwPRHcoeBlGMWWXeAYYaNa01KvQFN2OxDEJ4yTQ27quHwr8zUKqyb4--HwV5Gjxh3ascFVwismZ-pxMSRZD60QllxyerHbBRvEnD6htk1L4NN_OEH-fmV0hLwfl3dv8HhD7YmiEorjQd5-hFYAmOsqK53rUBp0UUxRNlyp9vlXLIpEcIIY1hAfaV32lVrVJzYY7RhBTYotrvQR_76xOt54vtVTpI1KyM6YH5busOQcg4ZlksM-In3-0Wbj6wJKTuCGwBAJYSn-kl8cgvpH6rr3Tzfp39w45RctoR1HSup4FjPqiaIRHYkuuDOX-YS4pu3ENEJZFbnaXw-EIThn7DJhmBXUhaAEODgDk0vU9KVHzi9-AEtgIGt7A_VIueN-DupaEG1lIMjVnY1K1-Esvyii9AxOiCbWRvhIOO6DA9QxULOzsSLR9WZQHOY7GlXF-T5-Z8fDGtdloyQs8TPRcLwf1fal-ahnj1OUZYD9CmzuHTOK_udOoE6BD5JQ-ZTSAfoWbUjAImVP8cL9GsdpPttC617jg_0fH-Jk6YMAIIWeFKrgwgay9MmRoHRN_1jyJLtfxSrekuQhxRVdK0gLWwpy9OZAYPbFAe_SoZXGGvMH1y4BZWBmJK9S8hDbfUZA96x6kOF3btgrSez6zpPQS_jYRby5T_oPr8iC9vaHk03ERBuBpllyQiBKqi8RfyoKbBoanvpcm1NIbMl9KOwThEbg5Hz79KDUCIE_5hUSykRgHGHzENRqG1M2G8IgzvyMVp4rBfG1GCr7Tkg9EQPiCYIwFbNe6fmGDwHJu3IJL5i8LdtgWX2Kl0WvoKgxV0EEyf8f4aBZHqqkYEZuY_MoodMCiNjQ_Jmz7YnCMDWOQOhsXq8ubWQVgeZoxzP3uKWl0sc_4y-s",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf87b221c87d09da1a475582fe2cd",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:paddle.com/legal prohibited adult content acceptable use policy",
+          "site:lemonsqueezy.com acceptable use adult content prohibited merchant of record",
+          "site:polar.sh terms prohibited adult content merchant of record individuals",
+          "site:dodopayments.com prohibited adult content individual merchant of record"
+        ],
+        "query": "site:paddle.com/legal prohibited adult content acceptable use policy"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf87ee3b887d0aa48ac07af6fac94",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfevBXWI5dQ0fNmVkNH3Nf0vC-N8U2Wp2akTr7xUxnfz09tgLCW5esTfsHFVgbLPZGwEEXJY4cO_uHAFExO1d6MCcDuX4aoxWkI0ayRQ4guBO2RiGuwI5RFsurjP65JZebs2X6J1x9mnUcKERQkQVa0pnNe5tHeWF6f6Wb1M1QHBIGaP0qkY9NRPgUmchozfZn7R2rnTA6XErmBEWdn2dmf_U4SZMdhrFS89diDe4zofuR5x28WyqudPZIoZwrnXlfTjyGtrM7zB6g_5i3XLSD9N-2fcQatLRoC8jmtXYB1ShLcMZ4TwQAn8VQKoxYUe2Kfibgsue9VK49CGtddf4gLMJYOf0wgj7O4az6oJLfMxG4cDn7G5QKbesag29kQnBH3Y53K0ziYukHUdVM7VIiBCTaOl2BO3ZeJAy3gdC2YiMHfDv6uZro6yKteA8067ajJRN1U0viWz6pItIrtXFrppPKAnLDXpX69zKf8xHrDyhk3frqtKYyD3o5NaASE_FZIvRycamt8NX3B6vaADO9WaFGYd65RgfPHYz-seGx2YUjOUCbTpM9E7albgQVNch4qtrq6tB_5jtFaloBpXsP-1YOP6-p8NjIGMyNAuWzHsbUQ8LloRM9Z92IlGIHD4knadB370qWrcY3JPeRwVlLl8fpSUCGKCeJT0-ZNFNpjpj-ZhKAeGwOtlGMUaiMofIQqkz6olzArCaBl6Pl01Vc-5y91fyzVQ-rY8pPogslL-j4JMZ08bDxXn2idbS45YuFSAnb-2M-LWhxPkd9nCvBeZ0TQIARLwa9LD4Y2yyZtDYPBvsKYyj8bA8GACykRxDE0wKkES05JRYJyWBPydjkzO5c4f4jqpVwWr-WXjSroVh3ZlcUlMkJzxKx6t2VlrSPNTaKNYslHdfmoPwbYgRBKc0Yb__g1BvDWZGQ4nmz1Szo1lJUYzUDezWu-k3Hwz6QhxRs7GwPJ4bNuHv9Blcah4WK0az4Ru_WBlxWdq5AtSIh8lD2sW7HLbOf-SRn-Hug-J6iEZDuRFZboqhozwAd-_ZfurvLMCAjWUBTvOW6HEutj9LMuqC7qKTAqqIl7RerjQcNceRnV46sQXbHSfmj0ViEt4cPCNFOvMdrukQYDPlsGgWaADetN0rwrodCwZ0lByhj1--q4BeHwLjrUSuGimYsurDm033B2mf5GPgIeIaDULCTqIfMHsKqvD0JrJ-9",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf87f063087d0aa8f4d8b0ddb147e",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "Lemon Squeezy prohibited products adult content official docs",
+          "site:docs.lemonsqueezy.com adult content prohibited products",
+          "site:docs.dodopayments.com acceptable use adult content prohibited",
+          "site:dodopayments.com/legal adult content prohibited"
+        ],
+        "query": "Lemon Squeezy prohibited products adult content official docs"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf883ca6887d099806935233c9f2d",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfLwamwyBxCDDVyCTmnDo3Ivg3vjYj3BpXCnl9s1Ynx0quE1rl0vgPxL_CLFBk4FlIxd4MSf7ZNvGbUApGfQFLlSSKsmggReq5s8CZFlZDXbKULo7pp1VlhCmP7jr8d0c4MmV2mndbUZtBneYbu6poL7KgftR5Zye_TSbuhuUWvLeEa3DQ1rMxm5RUa5qA1wikGR_-ZOd8nScRFG8PMBMou6kq1ezajrxsaO3D6IdXZbF2s0lcA61aNU96IUILKA7IzEIwccm8KR4KjWKc1cAC8TMoW5pqhHiMwrKRca-OcxVZiu3jYwAomh8ePoZPvokUb8hdb1XgLMH4bZDrxTRVyl94gfq3oh3NzbyHuCE-A-X_0wWrf_Vm2Ro7CMtV5EuT0bXqCmaFUQBZwv3LouvWf1CleX9yKNFUXD2V91gla9pseSWO7Y9phgTZglm345PVwUqdWdvycZhvNvvtjxb7Zby6varNElFzOHp80wMAsaF8AqN8BjW2g4ZkWB3zPVNxeJEMJKgF6tk4E4OUd7BpRcj1riGSK4lZytNZTjQNs1JMbg1FLGi_LEynb2oho_3FuYT8xG1CV4NHbWZfa8A8vqCp7MwXW6HFV2_cWVLJkCVIc2ddYa8JdsRV86B-ynR42twdiNATGLBDPg9RbZ9Kcg_S_UErDCYtexUt6dUH0rmqln0ufcTc9_9SEVEoCGAJtYSoyNKK9zUqhdWuNKG_Ni7kGdGRGjG5bELFzBis4za5S_XWg_kzhdRqm0jnn9J5QW2fGqR1QT8wSqFlrMfPHVD08jHHYn0tWvsEhHIuwJgbdouslN3bQseXbmKI65S8xI3ZfoZomg2TSz_p-DxPtpJVv40iBEgTCyQija1EOOVscbg281TCHfCMU0Q4ot40tKEzFr7_GTodXrkK9Nee1r2xZBavhAzOEYIKSOVr1vd13Vj9Bqa93W8p-y85P3JzVsZdSIEZnCrHfhY5638FHJsF5EwqyiK9n8AMVXL0CTw8S1FwPYs_ySZGCuJ-hRPXi3-umqRD-4JIU7ijGUyYE2NKIOelDe3cSrMqHm1vSJ2Dk62nh1Wwe9iNJFUy-rnaQv1hTfFUnuHbhyZObZPwlZ96C4xshQCj9MYjv5OODrmJF1pYjisin5hFWXYxXqCLA3heROwi3QqS3ObQJssckPvQbyXyLwAhs4-oMS2DTLsDnUo68poCna2NdsKEiV1L1ooQsBBVvViBQyWNxRaqQLiISwzelIfkm_s5BzSTGoCQynbqhWGhoETmNZFghj_rz-FwIsQPL0zUQg0pJDBR8_i7vyQflXogwWLl5BHXfYyCVzC7aHVaPPDKsIK8gL8VIc9SYI5tqNwr2Yt8vv8-lC_bWFADI-cR752wbqbDG8U1e9mpmO92BiyXbJ3HPEntoXMqYOjaAZlu_j2L4vK1M8xtP1oenoPiHJ0pa5wjZ9SBH3i8MiQMFf1dySR5PVoThUUvI0OIaw6Hd90lmmikGw==",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf884f08c87d09f26ad63c5cfba40",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:docs.polar.sh merchant of record individual seller identity verification",
+          "site:paddle.com/help sole proprietor Paddle seller account",
+          "site:docs.lemonsqueezy.com sole proprietor individual store identity",
+          "site:docs.dodopayments.com individual seller onboarding sole proprietor"
+        ],
+        "query": "site:docs.polar.sh merchant of record individual seller identity verification"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8883fc487d08fef74b14677acbb",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfKdfPQiQYH34YTFqcI-4OPp7jxZK-1iUVyBJ7gGXubrULqQ7oTgQGIbvvG7w9F2Yn3HMCgp_IkO0lhCeUCqNdj31RFufwQksM2A1yfxU2alw-RhX3zFTR15EO76F9u0L9C23BZo-tuABYOLAftRwwn74_UnGe1kvvhk9q-kmNgFCiz0p4KEI4ZNLAFIH9X7qCxi4_TtHvboUe8S8DSQpuV0BjCSwQfyNJQWAqnIa8s08Lv43a-1_8XKrlw0dEsCCOu8ZmH3AJKfvU-wghHpv9eUUEr1ArK1vRr-NosT2DFyu2-KFHgswMVPWQQoHrNUSV71B8A63fS_Zzg9Kfw1wHqycaMAYHIvXONxL7yyp58pTGcaOboYdVlccVhp7oG9vgUKshUXSw_mH1iM0YloE6RCNhSKsihA4l2cinPNqyuXahpTkZa8qlWYPIc39AY07C7bXT6SvqfvxOEhIzQDFtQl6Y9q0s64LQl_9P5dQ7TqZHehNdIPKJkEctCU6gJtnTEnYK-hd5zxWKpO47QhBxAOnhftnEnYlGuM_O4s-zVxhrx5EgyuM_Y1lkyY8NoGrvWMc0RAp9TpjuEsQ2VlS9ptyYTT4x2LNXOW3_4TZe5M60c7f5j7KWZhetV9I2lAdP1dtu63va257MqER6WFWfQz9JxL4kCJ4WHUtxdjuqIcT3QcCYyGBvtrKxt-e6tAo4RfMs8sQhiWyFJXPvsa4GMQ7vgWQetZ3S_tq4NbLzg-3EFhYFEM1qTdi5eWypsqjFt2NC9xcvmHTLJwqHTwQHhCjs5vfAgiFjKTp7NT1tML5hZjWVSslMw10jFQh3SFflOqK2p3caBkQEIukIUwlQUx-60sA1EFfrEV_zppuzl0RmTEFIsg4fT5VxYPmrNQy9wQZUzuNXSGGd8laoAQayTTOkxG_KNxF76YAbHFtLg5wG6Ite5FbsYbtPcRxerKNzCx8UjXn5iMK7fX5h5vnWElHxiI02Cg0OsFRSDS63SjOM4RbgZDnyuMZSslxuxkxXt02_9FcrZXvFvlbLY7yrCOhlyny7vm1-8Vimov9nZHStamIu4pC148vz3x2L3bchsdYaqZ4PNoNFjo-oxnJGjvAllGhMXaCL1h5rKPCzJjg-Uy7XaD-bN62SXaIt0rIrgs1gNp6rptUS5fbY22HqNOkAZiy6zSDbUa58Deo5JhSk0QT_iPl0N_rdY9BTJBilTRosmZFVPWOofg9v-A03VpJ1QNDNTzuMFh0wYOyN36__zfTON6iDrll6T-WQCj5YFxT_LOnoI8s1rdWmPVQDacJ-NmAMbVjZ06Mn8I_PZ5na5TwZ6x6dNBZLvdeW3CWo3uPhtc2tJNl_zIUyRoPGBQ==",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf889227887d0a92621f656c6cb3b",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:docs.stripe.com/connect/direct-charges application_fee_amount connected account balance platform fee",
+          "site:stripe.com/legal/restricted-businesses adult content content creation platforms preapproval",
+          "site:docs.stripe.com/connect supported countries platform account country",
+          "site:stripe.com/global availability business country account"
+        ],
+        "query": "site:docs.stripe.com/connect/direct-charges application_fee_amount connected account balance platform fee"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf88dea4887d0bf36dfec72f060da",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfZjvkbdzLPTIwFc1KUgRmzxixMgkFJDg7LmGEI6OS8WaRAvSFsDTNV9vkjx76QVKNM0HQZMBdgex__xKvfavj6OxjDrZSuIw8G_H4FzrjpJ4ziP-wNXGES56E8WOJziR92g2WEhKlaX1TR5d4I3qZhfAGRsPWLFPnNaxcMInN4im9vHDz0kenAO0BVADsJZ2E81jDA_oIRvOiqGvg7yOeaJfXQNXXbq7RKd0gcWCShjOsFPshc27_MpT8M9E4LW98nepPMTIygVkTkPsj_FAxFivrcRRTklbfamSAKx-y5HEVi9QVGQhLcWEBHRtF8-H7HWUmDxRKtgIHgrieu3YAFONsTlSgDrSPhYrCWTTh33QDDI2fiIhp73PD4rKIQURUrdnNc4Fa_ndpkI-wdypBg_jTeolWG4UCmJFE71_WbpyUvcutpfIVYNC01bZDeSp2ILKL4wInewGg4GlUvJOe_QyCyV-bqihZDGHSp9paWBL_ufB48oZ9-yu0m_J0L1vD2dqXcYl4CRXkI2ntKHcs10v47ClDANKmwY2tDH1P1CeO5luEzlj6ROVXSdZdkX9UOz3iaO_fXD8cq_yN150OUpfnwLcIlpElcjT50OTCzeyHIYyhbFbVYuMqf_q5f4a_rsDzJuLNMhR31lHhpQhetvcMK_KdKwcvrUJey0-unDhRchfwj6ER8IdAvMwvIW6VtkYaIJOvekgBAeQJHGdx-NxCp1d0gUSui3D-i3Q4e41HeyjcN7M-2o-3s4lxniLJOnZG9o-0S25uiyxeSBL3RGX5XFAfzxLD0_jBRNFz7pOaG2UdWZ90r5XmsuR2PcC2VVul7T4MrAGckHYNWHbimquXl7TW6pckB32a9lWMhXHNRsgVy2HcdA-E7EQN-O5tW4Zf1rtkK6bhBBoYSdulG0FEs3HPA9QIBXWWjPFWAaCm6xDZcrpbVlJ8J7uMcVMrRejcV7crgQN30LlEN3dwj2rcERkRqRWedT1QxBJpHAbUtmsDt0ln1eHIkl9W5ckJLzwcsrpikqSjyYo7vyQsZm-VmDbubAlLPz1xbJhoyVUNXmpLcBnB7W91XdRcLCq1NZG_EyZ3RHlMjWxrwQhm_yMeO8xsoMVpbrEEkW4AQCFGYCbdsZIJBz7_Rvy5Q-PG9AP5G3xre_a-yGMBTx-uYPw1wfDL5hY_lYfYGxenb3j8UHcxS-mIiow7ZYT0UVRJCp7FsS2ZMVZel9KpRgx3yQ-fw_OXZP2_RFhwjMYlYDZr-r8Zb6eL-SeYyjoBAu4Z4a2GfgjIp_ryDNQFl18eSZjaWo5Xk2hCIRFeFKAYuRsxrCpphtXoeQfUi_KLmZxsB8F2arOPRVCRH_QRaHTIiaESkEs9fPlvEPRyv5VLtuSiLJP57-hc4zyH62RQN4Bvr4p9RuYSk5bUi5jZwOLMf0Ct0eJJ5pCsvX3vLBbIXDStnziGcv0iZFb-Tn-OeqpwfyglnUXJCmcY1ySDoK8Iu-6Aysh3TXHAcQIFYGtpiMbm8pt6gIE608TvhTKBW-TL3LyjxuqMvFnBMyEBfAxYf7lyyZkpnvO3NW5SGdFnRLq0-92twjklokRNRPJNP2dYH4Zogd0NL0YvPORlTmFYIr2r7qBkClV8S5tSDl_cBjobj5QCqa_nr3DAqiCMtRl9mZsa2YglKTIFlP4ib4-URW4mB1cHOnWSQNQhGCuqWOgpiW1DPFAVMODs14ZqcSvl9c2BAS1SF9wVogRINr_9cYlkghCwkB2SCjTdA3KDCwo=",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf88fa31087d09e81258c4548f1b6",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:vgen.co commission fee 5% official",
+          "site:skeb.jp fees 9.8% official",
+          "site:artconomy.com Shield 6% $3 official",
+          "site:commissions.gg pricing 5% client fee official"
+        ],
+        "query": "site:vgen.co commission fee 5% official"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8938fe487d0b4c8deaf439d4cc6",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfiFazN7OkhMXGqoHH6Zrzb2K51lwXkXPMJTdGOTI16N9x95atiKq_mUT6W-lSMRbDgH5TuGL4k3b2rTF5uVW0dBn29cgRPibcRbsGq07LqI0jQOWr5bk3TsG3gEYpsLITMTbaapcpsGFX9ISqd1vIqYD4TMSiG7Nh2_SfzXyJ_AXZ3dtFOrdldXPxgkeRWNa91AHlzVOMKmXKZD8uau-EWPHPR0zqneVGqHnaYsY4anJie950-t9H15_Irf2sSqWyFgQOLnuTrwmQSx6B6d2VRWjqfAQcOmUSV2OHjG8DaBtoT6_mcrAJHzEOHJjEIpJoP5fi6D81pyj9iTpvVBwuFwrzeL_7Z9wLmGkagVaZdpHXayxnW2rYH60T5VBa6G7u7Iw6J_8MlBffuPBuTGjgq7BkNunWzWnbOCNFuj_TeyiuoSbWcx1kWQrntgz0sZ9DgPig7YVubT5fZp7DXzOnVrBFx_j_Hb_bSaisddwqxtEcwPltsza9YZChddcwdvXdOvi5BG5WKrPEZD8apKOm9xWGLQC4db1sl6-OhokS4j4g8_7Msb9h0-GxwZ40ixDRuUP8LnZdA_Hqa0EBjGsUlfrLCGHQNfCv3qpMcs47vywF5cZh_iLZvtU89eOB5PG2vS29OjOyy_-hnDXnG4X5o2QnxTaCxG3vUnm0JbinFpda5nqrEJMwCIK8z-aks4Kb2Eh9gF_Wk6OnaNmftUZR1PfkPaiMutrDyJAhB-XGzSu_fbDxEBtN1fcHmfRegL-re3BA0C8zvFnXVUJREIEkwzOG_erekE8F0VmNiG_zLM7_YeT4bsH9dS4SCeqTWseAYlExXmUg3_CPIQOpqAbeydUd8PAQoVI80LCdZf3dU_B4MKr6jHeXfpS-PmvmeFBnkX9z1YQTPapbYYU4IcNalhHeB-fwTRxUKHUyHGIix1jzuSO8nUg-qMeiY4vE-YBD3ktn7TnM4ZZB-05U9QkMOzMxQSSKS6L8SA1_96HAmCGf3noKWaCse9fjIrr3tjm19pBhu1mhx6GEbxIkGl4B0f6LBI1xlwVPT74-_NtMNe1clU_vZH4w_5bCDHtJX2zXnvLVNwbIBiv4MGSoH5Y26Ay5amwCVjmuAavUTQQnoyGPHpSFFz3cgx7LXufR5oTXsSpnFcVepQwoBJ2z1AlPW4YqvIfcgYQMaael6BD2sax6roKrBjFUX2InNCHRIHHm2GtNSjXHFYlbM27brhXwDRwubgkYV-u7Nn4A4khezeBKj5ZPdLrxD0N52QfNRz6RUU_-lQUtgTEnZGPcOpjbgvwhJkwTvGb8FdHV7enZjPZzpUOyeom86FljCkXsOP6RHCYCVK-sEy6i35_pE_cbAcRzpilG9c44PuAt77ERmN4ZUgcwFK76pCkGHWs9Y0kt51LLEASPaH5ar0x8WcdKxLsyEyqAFKNyaNvVwwRkohGV2VXAgmVp0A4IZa569V3x",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf894d89c87d0abe18baafd8b2039",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:patreon.com/pricing 10% platform fee official 2026",
+          "site:help.ko-fi.com fees 5% Gold $12 month official",
+          "site:toyhou.se premium pricing $5 month official",
+          "ArtTrackr Pro $9 month official pricing"
+        ],
+        "query": "site:patreon.com/pricing 10% platform fee official 2026"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf89c62b087d0af8b4b5b4ad07c4e",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jf-7knGBiS5Xd265jXGNrGZXb1xkSRts1_YU84UE8K_BATQPyegkD_HbF7jPlCdCRLVO8seB8SB0ljLJDpLnYdnwaldL_vLMYMIFvwvsoZ8DA62yfRexXcLJpIL0LxCf6mYdhr6N2NR-sUkOOiCs33Ggq_4KdqQIA5UiRNiOu2Kx1YjGJFmcTMqDB0_QLQrSL1WXU5pMXHiS51BNoNgUq7jeLhl5qhipp-L8A6KbegGA-U2TcIhIYZ1F5vulN7ntMYe_5HjQZne6e81w_iXnxmiCNHw83EtBUl2Gp3ZL-PuMeCT0fXGCgmVHcSa05611G8oeT92eCtd6kdlIUuEEovI-G-ED4MolvSc-TIzJXr_-Tr9StpG2BRvyYRADfY5IpzKfS0GZBDoh6cK98dVVVF-gFEgiCN67wrY7JWvUwrAAV9y3XxJxuVnwxtESP0a1kxt8kCnbRid1A0Nv8Spx37qM4CvmgYaNcJFTbxQoSeN7sLeQrKwqciC8Hk7iKms5jAIUQwfPFwFHDrc6B1JnwHYjZOuO9eLiSZGMyU3Jj54YITj93DZjjpL2fHc2vg_2fhrc3TUT7FHNhOtmca-t-yCcuvvnSsw4TulvkiTUEvHXOB-Wm798zTeh3gjTWy5UygMoLie54thDhM0MAVUBW0SvOhaFE7RxsjTwSzJH7TaTwo0zW6MdZDmh1pnBMy-LGkOy8WwHagwPbSw8bxhJRJ8alK0H5eU9RseR8ecvyVQCbZ0Vc70Avhpnz5nyZOxuhbT0a1Og-lafM5jxE-hnu4bMpWZmTsT3UGKUdOFdRNJl2SI2SjLAXA7MXu8LqzD92eOPbkxt9hIkd4LpJaBEKtRax__hjrmbOWO9n2JuKuKCLErJrcVu2FzVw6_-dBN5-4g-xweCJ5ZrRcwvCBq3IMdE2Ay0MbWjKtbLAiC1QvbFphEKwya492-VSMn0jPuWlQE0VZdrwoSbzUaoHk4PaS3LAWSLAkgTtqzeWNTZADQFTA33viE50vgoNCgBTmJnek8S5sbf_ftmq6J7b54XZ4SqGP2n_7Mw7_ko3kBs6A6W943HxBEMRm6PE-lJtN5OzMQnSktZucRikLB6RAJLmuw_mlLsvPqGqJRyPg0AyjpcodXpx4rBR8zIQZNxNdzyuhv7LL6EljPJsP6BH2Sj6DRtRgPlwqpgm9VVRbc35lCkk=",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf89c88e887d0aaa8f8c9c764f941",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:help.ko-fi.com \"5%\" \"Gold\" fees",
+          "site:ko-fi.com/gold \"$12\"",
+          "site:help.ko-fi.com service fee commissions memberships shop donations",
+          "site:toyhou.se/~premium Toyhouse premium pricing"
+        ],
+        "query": "site:help.ko-fi.com \"5%\" \"Gold\" fees"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8a1979487d0be1d7103476773ce",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfryosF40ZdGJgphngbWMjxVbvCMQgdg45XMBpL06t1KcvYtM8aWpqCoev2poCSL0rXDYAXSowLzPqJ9dMDzVpTH9JepZRTsaYICaCR7UUhuh2J6xHXucWPS85U3GGXnOJqlC3kKpwucAuB_jjJDaVOxAuSN2P2DysLLHffpSxw4Xd7wMdT3A7Zo0jC5DP7vGOppc5ckNPvfT4l1nTO64O5I6EAHKxfLnxS3PrLm9J_j9kDV-QvupFyrZxkLxs9b_oovWq91GWgUjIDT7N6jnu9pe4R3UCwgrsSnzOkWqvspUdW2CMC0ZqnCyEGDKs07wSUy-s2sWhkYiPsKCqouW_2CeyUAceUOOwSAGlvRl0I_ZLa6N-rxjokNM48kI-dni9-i4RXlpZX8jiSN2P3HD2-xg4agFrkOS8vKWtYzgKUzxgBReTVJ2HW6ug9jTf5b-cqYVY0q1jk4azKle8C1aBony6ZMDFIH6SYw8Zv3Wu1dXIBYWXUWGrQ2m9goH8foMSHWxez4wK99HpQPIFfvhbiXR0onIRNFhm1B9TJ0EfM4xIgdvca1StdhQIElHpReLpymPN4zif8XIJA4ETO3n9hlC6jdUIhlRK3WSHlxdJaH8lMbrbwAlV3HYFoamwH2q-C0WJqWl_Iv_RTimkReInYbIuDcCeIo87fYceOfEYbbAaxruGlmi82rfNVjDQlHGhwntpx9aZ7s2YBIyKYn1tHxG_vCtmfCAS8nDPb2hVCFCIbdlISYyWLxxUwfONu2Fr7Pc-VSFpi8xDAwuJKqgTFWeDrLuR4kZR92uH11D4heFZ9IjnFgAOhj10ZkP9zGCdcEbIjrKsn0RRJ2LYmZUEA-4xJ0yRBiyV4BltuQPl-mqtDlqe4CiK50D2_SIoU4pxDZFcuEzzRC2Ex_4B3IYkbvpb5QTouWSzusr-RhiCzreEnR5fbuhza-a8G0E6oEPCdtUPqaYmAXp1zIURdxIy4dwI6lfRRHZaSDjBoQif46imJiUsKbGyko4PHYxDLUKhjpC76cQfzDKuhp0icc_JaAYhdG8OuATEMRSUgv6MnPaIA7TIO0-W_ps8syGy7cfoFDsUSnoTa4VeceoYTwtB1y8g0dkiqSBrMeOJNYMwvxBFPxV0KL3FzhfoseQ0ihCeLaizyKJJMTBWrzKIT4i25jCFOKc_Sa6WsFjddsDgXuIYQoBpjvIVyobsbr8NYVJctjLdU3IyPyYEwnXbz37TzMsGpU0sQjq7nhb7HPVePlB2zQkICJDd7mpIEFWd3Ma0Vw0wn-OSNSaZgSD5Ied0MMiHsTl_WCuM2vsv-w79MqZTRm_DBE3KWzBrhiss-N8n5r7v2mHyLFFwh4Rg1X7Drg_Czk8URrYliEqqgzPbyPHgz3XeF27FF7JUsm551gDc2LaC7-n_io9lrQnmnR0t-Wneok5EUZfn4FlYwpO8M5-jrya_H4w5xwvvmk33QQE8pMiNlEMb1lfV-wRntj0omhAo_QKS_dF8lnUbQKj05Yyj_FvPziTrrLlgsDqtcqSrbI7NQR2Vsgap9Ib-At1znOUwjHPxqSwfHgqgueFYyuelwsVR6tKQAbYkLHFIUO0me--8iU9TM-EboB5X1Tb1eA==",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf8a2e66c87d0984c571e10acb61e",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:docs.github.com sponsors eligibility open source license repository requirements",
+          "site:opensource.guide legal no license public repository copyright",
+          "site:choosealicense.com no license public repository rights",
+          "site:opensource.org open source license definition permission source code"
+        ],
+        "query": "site:docs.github.com sponsors eligibility open source license repository requirements"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8a9209887d0bfdd6837a6c4ba08",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfLEjw8Ub8zLwZCDxgHDYFAFX_w_l4GEKAweM0fKdy2xx3FeNQi6aeokrjl_I5YHYQjzIfqdSl6iT0OTgUjCKHQuicpBWWiHLOozFuCg4yP_1QUa9OPDswuaBqJGEikMBVqTvMNRgVZmHvZ59ju8Po4ZbI6SaxKi72NXc-JKEcU6hOJGiCKZZLjuZD6UJEnxVP2pcrDwCHQuutNto64UV8W-XVrJGCCiDDUTNkz3eO_JSdgAn8zeWAgox66aicYR0tiUq4POPgVvV2VXlw6C1q_D-5M-jr1TZ-zm36pwviQx_Wy-K67AYf8Y2wI3Hab1cEUqhfeMXd3RQFO5pZ4WLSxU4InDRjzM4lDfmi3_QX1PYCrb_JMAJXUrNUkYWkvWvyXvpYgKGKnVuziS6EQBt1ZIJ9du7LjZKf-ZgAfxpxRKfS5oMDWMJEkoLKaw-OpiWQnQgVsRYVoVjuv8F0P8vgwXQ4Vm6Gizr1b0k7ALcvBdSTGMPiWL1o1V952YZResuDMBlZxn3cf3wlWc6tbmRIhJ0mZWen32LXV92HhK_8AerkqTVePHc9F9jcSMvxltH5k6XfckMD2y6rXNiZ0enUf0MIYdeP3M0GC5C_cIYL84Llj4VX-2ZwzVxQXBlOorcKCPDWZ5j4nppgScOOE6u0InYYjmxawqOx2pt8iYMba1lBOo6YJOgLQaZ7obetIvMc3sbAVMquuhMMq1EK2ZsMe0TVWex7uyNFnkadEEcnzzAeCmhB6kV_mURftM6jrYjDrM-fbwQGNVZPv2IIEmKIaWAScV-NIklbfsb8AYOnStHxUbO4tIyykB8fScCOPf1EGaveNWgNOoeBUyWTah0c9pruClpgQOTJl9YU8lOp66rULxldyYQ-rgIKN_xr2lEILYq3QTYwQgzQs8nQumCdMgnUuMjiwdPzaSzOFJPqzOJhp_qWMrCaXiOayhXDl4ZZ2Z_WU6Yt62dEW1dopmS7OUQB7IEU1UWLMUwRRSaoGFWJz3GRufKZNLpn1s3snvHqCVJKWCpiuSiEji8nMUlBRaRhdVLKswTuRObCmDSXsiNYgi-P1J3EzjlFABdShVqWSV1GcwvimQgdOSbll5IZpr6UEpx-qYlOhe8KOgifQoI_MdJw3JRhsYGjX4X4BJsCqYk48jUVS2xC3Gde4nIaCYCevIzlfZlg-u5MTLRhLW9DZMAqhcWq3EXxG4eHOn2xb5bBxo8UIofmUv1Bo99iz9KGZo4C3WkoTbEFrRVHSu-xcV30-t-aeOrwWXSAk_rLGyGtshvGcx5bZL0vc56v2FATOaPM9A2MOWQyBvpg2FKLGOd-Lbbtarq7noVhkzPsfbI8aZzJYWHHHHi15mZNYTqlAyQnZm3zIuX_izQFUvzQvrZ9umWQJSq9AUm30dSgWhLweWmNFTrwoXX1nBSLTe6frXfzzfPnE2jYbfq29ABIPeOBESlB6hejnXBG2LaswvX48gyFN-3-sEabJiN-L5_X1A51EInixvmnX0UO6rTUID1LLwj8yX0z-s5LNvHMQ7KuTCz8S54pMaoCLp9MMe-u-sz5-dJIuAXSOh9XIoce94acbOvkI8_ZGwbgcEQ2ZAZfgzaWi3KBKs4w-NeSEOrDjY7E-dbOxUmGK1aB3ud70aYsiBuq8kaYnR31thVa_2pKA1YJSV0zEiXfYKxIrH9Ex2kSAk-eH4Ksb1bqdmjPF58XeV5qjtuj0rAIxiQel8EsbZu6UCrQVmUcF0Z9dl0VwcDdjHQ4heu5iQo9tamgRorMgdfjK2Gp0M4epymD70qC-rbSgrPesTgpYNNRb4mZ_MZGTt93RSuEmZQw_QJdob_-jJ9WBFYqBpFGq-MW0yJDCgdGSzc3HBT-pkNvY8Ufe5hbZtL6O8SXENsXdWFBvJSIB23AxXpNaTfehQrPki__mAARNUWyUzcbyuH72mg3bQBxC6OqHCm9Y2QPvFBtzs-6tSu3hLEVz39HrkNcsb31BGhxbH_--_oOTDbxLWgXMLb0RgExE4y90jYOugCbATb353VMMRuqaSPizNjnLoMqMrV5BO-JLjI55d3P5Y3O9VfXo5be_qNvfCk-p11DwYhujsRf2e-EYjmGOJwcu-bZt56n6FVFlQehENtkKZU0KBqvFkOoMfLYpf7thc7kNziC4Sl7GMRy7yYX4jWHNpaTbLBHSosx-KQd9Rr5k1S0TJk8vBpW3DGtYtaaCK6r66LdtHk6At_czVYf0mfmQAJJMhZMGtmTZ349sDqxcplCSAwGW0KT9qfgq0ARm34Zrr-xK4f73mZgPaNdPFc2_thfmNBnrxf-Yp6fDsfFNHD2CBKxgRSJk9rsfhvmw0u0Ugp-hywC4g_ZNV4JqaNmzMvijkAmq40vWEj3s7T9mF_RTDyczDaneEKfHTjABwWnlUg_3zzXBJOSCTBIDsLMNKYsB8oUK51-n8ynOQ6--eSUhuqcQXkk5PnkLd-MU-xhA9bIPaPfzG-BE2t5AQFdfBra7rdzGUqf8DG1cSXWaW0ztWRr6jRlxjuQpepvEqIOmCszTeJcJcyAhTn66RW--QqTFSAkm9IaRDpFL4Tnhul5j9yiyBku1EcvHf-xFQg9StqYzdWbdFH92WsMKCbQ",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf8ab897487d0b0555eb9cec8bd5b",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:help.ko-fi.com NSFW adult content commissions policy",
+          "site:ko-fi.com/terms adult sexually explicit content",
+          "site:docs.github.com sponsors adult content policy",
+          "site:opencollective.com terms adult content prohibited"
+        ],
+        "query": "site:help.ko-fi.com NSFW adult content commissions policy"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8b1085c87d0927302044be36b09",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfzE95-sgPkwChUHoRGuoEczwOcLfyWbv9A-Oe9a3XZR1AOBSAZ7Qcbi_5UOXD0THSS-ntOKswxoTlDoK4wlk01z-sWbnUvHU64ejkqu0WRHPDglCiN_xQJ-c1qw8pco3q8TQFRDM0Y5G5VoMcuXWFjruam_RKbHhxaOkpzSDewtuNErmrPMU1ICRSzDsNx5FkRNnR-JEYn38HmC42M0X5HggPi7zDeNAilFJVqCVH1pRQXHnqqoS8NrL5w_uNSTVRmdbER-_fiAnd7WnsaBY-b65mTaEJ2pBhlueTHovwRt1Lm1bOc2PG3KgLQyHjJcHbsLHQ05ZrfIsCk81maT-fTcetEKeNtAP_OUZO1X3pa_-bUVnYRKXPsAqjnvYrkdqCG8RX0zRDd6j0CXfxeappDS7LXjg1NO4TPrgaGYVCyx1l-gA0tkPIOWm2lxIe28s8gpXn0SOtqqWEtNKzNUM98OlkVdBQexc55ersMGlZygZYwjzaGGpoGLFCRhjYU3hK0Q2J-_bl68Irnw9ldRnpg_5luG3_2A5SVNtrf3U97dE1blTZpm8JtyZHPG1Dhb6xnxYcsLJ6LjO_KZhNBo3RQVtt7XspeV6JOGKp5dKh6Mo5f0Hi98wrgqrTDr-ddTa-SRLZ8BaQp6tGbNIRAYJo7i1acAiS084KmYxQ_pq2EDz4XBkoVWOKFT3PgR-lzS8PFykDB1iHr3UyM0cajBZ59S76u06-TQgl8V9WjGW7B80U5jGz89VbjKFlScJeXVJLsCWw7I9N-GaUSR2IUxpHda5HvNQeHax1aySxO-8sqGaIGeY3ch8zPAOqbKRcv2fOBAefzl8O9PpajpmuMEVUCe-QXS0-8IkaKPUGMWQOHuBk_OSgIAIn8m1nfBM2HCF_yD3RM60bVhUTqRmEoEEz9SLsug5kBu1aAupnEscnUwQFo8xM4uyzurCVu2luJb3v_J0mnRiKeETg8kmrXTamups53PBPaa16J_nFF-H_flHdk0b2qxqzIwN_yn8BHM-4H6x9aFEusyH9b1sZxAMQd6Sj1S9KkAq2cI5dAQQKeXP96iMsYkiGvvW-3m-uVkQstEyFqvwQ29LomOCLnrk8LJVsvhq6aw3y-MlYVgUESX8NoIwK8hkBYvyfktQ-HiyG0y5zCoCm8826VLJfooARmOUZRFH-vJ8X-BK6OR6jCnzeOu0QCwFZ7OlrSI3jf67JDN9KnmzoVKyo6sy84MLMTvkrvUPJOlRsO8gF1C-9POIGhWsnsVTsiBkPP0xiJICNCF9fd81FKCnLSH0GOVkQhwG7JSxNYrBRO2GbIluTKvKINK0t_rd17-4FhGAJ-2AtgfKTRma1ugE0JxtHD7WgB34gm9iVNtuJC-C6SWx5cH7Jl00OrMBJqZMEvflAP4TYB-CUs56ZPJJB7YapE8O2CbyL-mZS5JwVV5puPvtXp-ABaGqyjq_GF9CT5iX1yDcUemgaZYYTULhzFiTr3BWXsSv9NV0LiE5wx18wvyJDYp4yjbIc9uyBcuO7x_DG9kvovrODfoneYLsR8EcK7GPOC80lTmwCzP0ZyHm4l7g5fyu-MBcEYNcw3f_taxloxuwRcG31QgWpHfurLA93JKKi-ZWkiWqOX5L84_3DZb_Ri7TplKnpaZVtVJEJNXTE3mkPAqeIucyGLadwSbBz5KSQgRHF9Zv20l_Fbqj3PPRKfdWAvQDSy81IctVCXdWliOzNDVxxdWgVNfd_uV9jOpqDfpBhxbyAuFJ1uKcpjRHoV3VnUbqVGqoMCH-zEmCHRuxbtJy2npPA6RO4HvZv38SJE8J2MHZ_m3sVmOsG82ripmINBxsQ99KM3ktw5_JIoLA-A6Gt4DmsEkcUN1sfmBmUcNDEEsQ6DKBLhzCxDaCSIp74d6z4uUfgu24403hI9FuakvmxClTIS-ebdJmIVXcuPlAkcC0R4cTnL5HbMzIET7fBWe5YMxQhJSvhnkwUiJ-ueSG33YRRyWdId4kt6Ovj3UOrfDC3pAye2ScXmH-vaxnQrb9vV3BOdWC8PkuW_T8tSAVhrA0kQQF5cqJgDkGzrfMgY4jQU1_own_FZFDR6BsHpeeXIwHPm3KfbMD0AIN_Hze4xA8yO_lFhvv_mHEyVF5r3lGosSTK2wZqjf8t05RqjIE19rb_LvF6NTNdk1763AedyfzjdiHBJzMncHeyMHlzYoVvo9qLb3efJ3d8b9c2Oc30AqbCCmZHtTNJHiyGng6zsDIc3tbVCctinP-mXbMSp1bioA97AeolYxQeYXktLdcwtSm4_sj8nQt3jgJN56KQ9lYzCVqFNlu9SqtS4zk-IO_pmi3aI3A8DYJvt3DIq8Y17zMFIZtASt4lXHMY9efKf9aoAl-2uSa9ZEC4V5saNagZ61Y1VEV5xxtYgNeRFYq5vQTVQQjUO5sG9mMmjHvZX9Y0nuxMGVw7vkPgBgYabkSNbmpNtWWRjgMVBmDrA2Fl2ChXmgbDc44AhrSFERWkEiWq4-jTqadg97jZ0c9kiQaRUErcj23uXjG4PsEvxOxWE6K2xWeNMEwHVvis6QJ1EXwlXSkO-1kp2AkKyftLK3G4yibZDqjukYUmIrCAdqvMTbHVS3yVSfQTmkArQ_vOyxPnoVGEu84dmsAPJdWPM0BFcbWvwaX_0sVyW7cvYuHYnfQ0ZhcpLeCIuuMgy5ZlBjcUvCAM6DirT4TW9WXx2ij3Pt8Zj_48i2zduucPEDy_vALk19Wo-tsST3_TNKCnkuHNKbWytg_XORuu0ot8JQf1jSl84VUnsCSDotg=",
+      "summary": []
+    },
+    {
+      "id": "ws_0cd3c067649ee035006a8bf8b3389c87d084a0b2f6dab26e68",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "queries": [
+          "site:atprotocol.dev/community-fund 2026 grant application AT Protocol Community Fund",
+          "site:atprotocol.dev \"Community Fund\" \"2026\" grant",
+          "site:atprotocol.dev \"First Indiesky Grant\" Northsky",
+          "site:opencollective.com/atprotocol current community fund"
+        ],
+        "query": "site:atprotocol.dev/community-fund 2026 grant application AT Protocol Community Fund"
+      }
+    },
+    {
+      "id": "rs_0cd3c067649ee035006a8bf8b9480087d08af12e5cd17b8d76",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqi_jfgYTG_gwXn7WKSp7m0NUgDJI9PbqCiA-X6LjbcPOlgyMy5b0-uuZH13sLjx5xIC7K-0dH-O4q3FNw16r57NJkLIf_sfyu_TwOOb9jQY_GLomZOYKmfWzMci-ndygxiqMH-ZRPzufwORKyaka-tdR07oByH5f25RDDkBRqmvCarSMffqDtKJo2JMPCxU48nt65TwAe4qCPQKkeKy5hrmqU2LNFKBHGxdm1AiIsqcTQAg1oeoDwNYwA1nJ_dZa4KZFKQPJ0kNqGhsGQMTEV1n8UX_YnGhui9n4yFtfi16CciRbgUY_BQCih53Jftd-Xygkx4HM8aA-TOkYqo0n_aw7Pl_SxwJTsbd6vcvjK-AOv2zez4L5fQG7A1CqmcSxbs9H4SqtyXbXalBd1kVyWs94Sygb5tSL8JjvC1Sqv0PKZQZgMQynZCyeIxbN_nsU6zp5jvDSH2gD_5bNpopFHQsbxXr-vfb-1N6D66jWtMhX5aj-_PiVzonkI4gxe9cUaPmS9S3MWNpb6jjpeq4JZLbYdfIrghx-LaCEC8azwSgUQ_BHRr8ZajxV2jE9stC6ZiaF14kLROMagcFPVLC3e_lGQJug3TB6SGLwgSw6iBNRxYYARCUCZVETszd1SgQ3568a1Vc5r79z7GDiVz7wQkqCY4mhOc59Pl3fsQDfaw7MWrTz0HkAiIqaGTf2iQiX7T9GAexhAWTxPvzTJiUlYHYhcMn-ICfzzvV09njM41aYhgQYaHA0XP_qmOnkpudKFOubylxGa4w5F7uWHaDMeaPEQ_EYA9WvN-gjNvrpSmYXw7xxdOUfGuA0rie1BYbYPDNpqYqm33xNZ52sM80sVECVqFUrVbhgpDgexxqKE3oimRoYKpilrG0dTAW3gRWBR-d79dEGEWSo6UblI-EgULfB51CG4hJ0cagQ_6Tbmvfo28LRdPFS17KSQTWlMRsm2aDho2rWCb7h_4xAcxRXbwshPCAMXvxeiFKa0ZE15Gkml12A7y1sp7tX6x809lAZ5qCG3cvNEk3r570PQwgS7lmomtv8GZbW6AQmbSBWrPQSRaCv7Cd75nnMgh_sa-3RBWJDYRXIObTt4zyHezb87am8sylvWrgLMvIg9jAGjp-Lj-25bWlGALa-mjIaYOQ668iBVyzXTVAsQYN4k75i7wa1CRnVnGyjOXrBt6d7EtL1oCQtVZ9JhlH7F4aTsc8vNMcAsqzthb1a08DyWVIJTmpDxKDCkUFFgwsFhbZONQ53qK_YQkGWIUsrbTiO7dCS9I0n6EQbqniH5hUoB-s-1SYFJdwpDJlOI9_yqWtfo_RhU7GjF4OYjRMLQ_vQaqKrz1ux0HIcrw2-18nLeMVHrBsh2iczIRPUwMTnvOwWCW6Un0iN53BuaF7DpifemkIXW-nFu9UUl57hrsAKJ58-wETSxjp6Yj-EP67cTxuwXtCVemDCJbFBHePFsEzNfM-Mio_9RqIGESMa0Hut9p146a_HW9MvkyvGQhU4-HoTw4DTAux4PZi2Mx4oA3jAf2iZFnSvgcb-MJ8Wi-V4ISs9kHMvSK74GKC-K4UvishPcPTqy3J8UAT9LoWln5RsleroRLdT_AU-dkjgu48wkwwqAjD2q07T6ehydPNAzM2T9i6twwcpQ_p8tAWtIU1ZK__JoFybcqOrSjPfti6RjLn8AlxgOJWJrFsWriyWWyARz86uTbWiB2CfV17kOzKoWQPrfNxNTobnHFt2h808qEZ8SmmWNGE8AycdfrQLUAaKiDJgaRra1r9za4bPxFwhNQz0LnnBEC4ToAuz1tQ8pULgrzQcCBL0GK7lwY5G-bIp4lSvIZteDPNLgGwxY0iaGUqQ4Rz23bqgzj70pZ2KJw9b-RIHTWGT_pGbVjNC3dZlaqROcvAwdadKMNLSOtNqUj3iHSabIU0Hpdukhecr2mg9TFEtsTC_9yP54A56-GTc2XzYsgiIXqob3m-LlNYtiVsqusgv357zjUl09RdxpY2Od0QjRVriT-80d6zBNbL4cxlUYfCGJ7Nb5eNhZuG3dWNxzU8lPbJDOiAeRrOBUMJaEuXNyW4XAumjLPFq1Y6E9uIqum9bdJRA71FVPD_gxCgq8HeN3NVVqmNzlJeMCj5zLLg-Ncbvqm57cPvx3W7iZBy8YQldVfrtJ18re97qUY8fjDXTOkK-tpT4zQFMoRb6G_Roqo8KH0H536b-xFlAFNq2B15aP6GjQsYo9sNjaZY9nGKPMZk1pojtEQcIYHb0Ie2kWQmS_ON4TgpQW3jxMCS94yi6UK1cHSEzaxjRp7Mm9SIG27JIdfrYgEsVFnsw7Z4plNOpzJrIAHXJLjedwDmZ6bNW0ploA_GIarT17k_ugOSg_0r7TrqY66xykJ2GYLqMGFRoG1GI9CgXFAmc_YZA_jnSGwC_ZnDsBeVSj0aR0D2cHngaXERnxJErB3n5Jl0b3oHFqi6eVUVU_xTh9RLmW4ycfupqD2jXCYOofa6op_L2YCEB437sDddejWbV8O47lqNk8V3c5M88vajTpo-SvL1ooQteW5czQblDcxVUo4qvlGSguB6q-ubDt5mgJ3i0rx1aOvQSh7XaGiDRZ2u61VJRkhmRFrIoCwFCUATSGrzJzUsHATLsYtrdD0quHafrKGngGgPqMaQ-m3yxrEft0eOh-DziWhMNQFRWto995cwvsHXqDRKV3OU09qndzZQ2Aj_pw8BEYZ8_k1KhhU2Vn23ke8g_tsOsIV5LHD-HQDgk_yZ_kCaBAolqjBHV5XAWvkcxd84cJHHtSr7uEuPr9xIb7ae1QPCWsrpm6iVaKOi2Dy-Twm4sXKjNfbHiTpTu3mGALhnJDIXBHNRl_1f7OoMc63_VKNcxiEBET4xUL3PdlKxu9lwxnubXKQHSDT6EZUVTvN2-9tAsjeLlpCKrtJtJqveNmIpBUNkyHz1TNneHq6sgQsA9fimXmANkZWSQOBpBh4zfcgjND1Qad8JNmIkEbrXTT3riGub9FxdNQ4GT7fQnbc48WfPzH7OiBhkLTGqj8FlizyaYh2Z5xg2d4qpsMOCciAQNkt3bbmkM5w5CqcXoTgbPMJWFdPn9zqGnKnmi7DQILMKMeV3mA6XA_n7eyWe57nrAB3tQcAMuhRK9aD9l_jNTxGkPeB-mh8eVYJK59MUmEfmfJN_9sPGOSuvqFz3S1zvuUc5IyVDUQ5DecGsAke681JrI43eHDpxf-Fqn1ihf-qo0zut302EKYCAqnSR2fCiLhbD_eM8uFH7dwQckwQH8bvPPmuNuDZYgRTmFKl-pBWCnB-hgsSiyUnRREOrpoxbdMR8jWA8eZb4rpcQSFqS_xxTCLJlu8LkAngkJEiQZEPD1N3-5y139bEZ6RvOOOkL30OJO3Y7RD3qvR-QQiyKEm4BqSqHkBmm078ceWW8Rw49GFOlg4To6s2R7NV2TZDdR-CM4MavvQRZOjdERxqDKTx4QzUWqvWhlyGM0GO1oGnBv7xytpZaMG4j_9t3jAxqxuIb7FusAozgtYz69SrcMzACv5gW-ibmrG0KyWu_98zmgYKUVO452jI_jm3IPHVmHOpuda3oJTjwnUIZu_QG3YZ25W2z5jpk3TBl4tLGWXX2C-lVcfxdN2CUOsmxo_XAXMQSwIQp69kQrW7FigwwSbMNZiSO5Y1FICatAjTfGMt4Ppxyf5si6qATpS1CNAhCEXCVaYVzFiiXBneUo2CRl4RGz_aKphRvcC739mAYfNgg0DNMSNSWvU7bFXNK1Qa3mkaL5WTWnnY_Dz3SICtWR467yV6fCcYwwVfURkjkgPXTYtrF4NTKatKlXwdN16bWR2D4C5b-LU-SysJNSttE_RNh0hp3M5r7LwcXjLG8madeOWQL09XQQHHrSdcPgZ9l4VYSMewar9jH7E8U_qMiHjbIxed5pa8ylSuoKVn2hgMt8DqWV8qKMeGDFlA0kS2b93qPzZO9ksZ4bQVMbBaq0DB03vZGHfnW9kfX7arR1tToobnJPB3gN5BP0caGxPY6_CoxYndGv2WPFye0lPzAx1Figkz-m5D0G8gLqIjaEpPvXQcLHa6CFp-VhvtCW03a1x3GZYiPWaihS_40wQw5iJYcp9B63a8MSdEygepba_P0nOK-5M2Q6YMBIBFlvv0zHRfkZGeeRIi7-q",
+      "summary": []
+    },
+    {
+      "id": "msg_0cd3c067649ee035006a8bf8be7cd487d0b38d644af100e6a8",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "end_index": 716,
+              "start_index": 539,
+              "title": "Licensing a repository - GitHub Docs",
+              "url": "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 1283,
+              "start_index": 1111,
+              "title": "About GitHub Sponsors for open source contributors - GitHub Docs",
+              "url": "https://docs.github.com/en/sponsors/receiving-sponsorships-through-github-sponsors/about-github-sponsors-for-open-source-contributors?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 1773,
+              "start_index": 1596,
+              "title": "About GitHub Sponsors - GitHub Docs",
+              "url": "https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors?source=post_page---------------------------&utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 2295,
+              "start_index": 2118,
+              "title": "About GitHub Sponsors - GitHub Docs",
+              "url": "https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors?source=post_page---------------------------&utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 2713,
+              "start_index": 2622,
+              "title": "Open Source Collective application - Open Collective",
+              "url": "https://opencollective.com/opensource/apply/intro?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 3120,
+              "start_index": 3029,
+              "title": "Open Source Collective application - Open Collective",
+              "url": "https://opencollective.com/opensource/apply/intro?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 3501,
+              "start_index": 3438,
+              "title": "Ko-fi Pricing | Just 0-5% fees",
+              "url": "https://ko-fi.com/home/pricing?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 4001,
+              "start_index": 3885,
+              "title": "Ko-fi Content Guidelines \u2013 Ko-fi Help",
+              "url": "https://help.ko-fi.com/hc/en-us/articles/360007937553-Ko-fi-Content-Guidelines?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 4322,
+              "start_index": 4265,
+              "title": "NLnet; Apply for a grant",
+              "url": "https://nlnet.nl/propose/?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 4710,
+              "start_index": 4649,
+              "title": "NLnet; Apply for funding",
+              "url": "https://nlnet.nl/funding.html?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 5169,
+              "start_index": 5112,
+              "title": "NLnet; Apply for a grant",
+              "url": "https://nlnet.nl/propose/?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 5596,
+              "start_index": 5501,
+              "title": "The First Indiesky Grant: Northsky",
+              "url": "https://atprotocol.dev/the-first-indiesky-grant-northsky/?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 5993,
+              "start_index": 5898,
+              "title": "AT Protocol Community Fund - Open Collective",
+              "url": "https://opencollective.com/atprotocoldev/transactions?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 6471,
+              "start_index": 6348,
+              "title": "Understanding Paddle\u2019s Acceptable Use Policy (AUP): What Am I Not Allowed To Sell? - Help Center - Paddle",
+              "url": "https://www.paddle.com/help/start/intro-to-paddle/what-am-i-not-allowed-to-sell-on-paddle?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 6908,
+              "start_index": 6776,
+              "title": "Docs: Prohibited Products \u2022 Lemon Squeezy",
+              "url": "https://docs.lemonsqueezy.com/help/getting-started/prohibited-products?aff_ref=Ga9DOelB&utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 7238,
+              "start_index": 7146,
+              "title": "Acceptable use - Polar",
+              "url": "https://docs.polar.sh/merchant-of-record/acceptable-use?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 7662,
+              "start_index": 7554,
+              "title": "Merchant Acceptance Policy - Dodo Payments Documentation",
+              "url": "https://docs.dodopayments.com/miscellaneous/merchant-acceptance?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 8184,
+              "start_index": 8069,
+              "title": "Create direct charges | Stripe Documentation",
+              "url": "https://docs.stripe.com/connect/direct-charges?platform=web&ui=embedded-form&utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 8782,
+              "start_index": 8657,
+              "title": "Prohibited and Restricted Businesses List \u2014 FAQs : Stripe: Help & Support",
+              "url": "https://support.stripe.com/questions/prohibited-and-restricted-businesses-list-faqs?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 9145,
+              "start_index": 9086,
+              "title": "Stripe global availability",
+              "url": "https://stripe.com/global?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 9695,
+              "start_index": 9585,
+              "title": "What are VGen\u2019s fees? \u2013 VGen Help Center",
+              "url": "https://help.vgen.co/hc/en-us/articles/12820094917655-What-are-VGen-s-fees?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 10026,
+              "start_index": 9962,
+              "title": "Artconomy Art Smarts - The official blog of Artconomy.com",
+              "url": "https://artconomy.com/blog/?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 10396,
+              "start_index": 10315,
+              "title": "VGen Alternative for Artists: 0% Fees | commissions.gg",
+              "url": "https://www.commissions.gg/vgen-alternative?utm_source=openai"
+            },
+            {
+              "type": "url_citation",
+              "end_index": 10769,
+              "start_index": 10661,
+              "title": "Regarding Invite Code Trading on Toyhouse",
+              "url": "https://toyhou.se/~forums/18.announcements/41.regarding-invite-code-trading?utm_source=openai"
+            }
+          ],
+          "logprobs": [],
+          "text": "## Phase 0 \u2014 Empirical grounding  \n**Verified as of August 24, 2026. No recommendation or sequencing argument follows.**\n\n1. **A public repository without a license is not legally open source.**  \n   Source: `https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository`  \n   GitHub states that without a license, default copyright applies and others may not reproduce, distribute, or create derivatives; a repository needs a license to be \u201ctruly open source.\u201d ([docs.github.com](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository?utm_source=openai))\n\n2. **GitHub Sponsors requires contribution to an open-source project and permits individual sponsored developers.**  \n   Source: `https://docs.github.com/en/sponsors/receiving-sponsorships-through-github-sponsors/about-github-sponsors-for-open-source-contributors`  \n   Anyone contributing value to an open-source project and resident in a supported region may apply as a sponsored developer. ([docs.github.com](https://docs.github.com/en/sponsors/receiving-sponsorships-through-github-sponsors/about-github-sponsors-for-open-source-contributors?utm_source=openai))\n\n3. **GitHub Sponsors is not unconditionally \u201c0%.\u201d** **BRIEF PARTLY WRONG.**  \n   Source: `https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors`  \n   Personal-account sponsorships carry no GitHub fee and remit 100%; organization-account sponsorships can incur up to 6%. ([docs.github.com](https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors?source=post_page---------------------------&utm_source=openai))\n\n4. **\u201cGitHub Sponsors supports 140+ recipient countries\u201d \u2014 UNSOURCED.**  \n   Source checked: `https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors`  \n   GitHub publishes a current supported-region list, but the official page does not state the \u201c140+ countries\u201d figure. I will not rely on that number. ([docs.github.com](https://docs.github.com/en/sponsors/getting-started-with-github-sponsors/about-github-sponsors?source=post_page---------------------------&utm_source=openai))\n\n5. **Open Source Collective accepts open-source software projects and charges 10% of funds raised.**  \n   Source: `https://opencollective.com/opensource/apply/intro`  \n   OSC says applicants must be open-source projects; its listed fee is 10%, covering accounting, payments, tax reporting, invoicing, liability, and support. ([opencollective.com](https://opencollective.com/opensource/apply/intro?utm_source=openai))\n\n6. **OSC fiscal hosting can substitute for forming a project entity for financial administration.**  \n   Source: `https://opencollective.com/opensource/apply/intro`  \n   OSC explicitly offers its umbrella to projects that do not want to create a legal entity or bank account and handles associated administration. ([opencollective.com](https://opencollective.com/opensource/apply/intro?utm_source=openai))\n\n7. **Ko-fi charges 5% for memberships, shops, and commissions; Gold remains $12/month for 0% platform fees.**  \n   Source: `https://ko-fi.com/home/pricing`  \n   Ko-fi lists a free plan with a 5% service fee and Gold at $12/month with 0% platform fees; payments go directly to the creator\u2019s PayPal or Stripe account. ([ko-fi.com](https://ko-fi.com/home/pricing?utm_source=openai))\n\n8. **Ko-fi is not generally compatible with explicit adult-content fundraising.**  \n   Source: `https://help.ko-fi.com/hc/en-us/articles/360007937553-Ko-fi-Content-Guidelines`  \n   Ko-fi prohibits pornography, sexualized nudity sold as a product, and payments connected to uncensored prohibited adult content hosted elsewhere, although some limited NSFW-tagged material is allowed. ([help.ko-fi.com](https://help.ko-fi.com/hc/en-us/articles/360007937553-Ko-fi-Content-Guidelines?utm_source=openai))\n\n9. **NLnet\u2019s next calls open September 3, 2026 and close November 3, 2026 at 12:00 CEST.**  \n   Source: `https://nlnet.nl/propose/`  \n   The application page says submissions are currently closed and new calls will run from September 3 through November 3, 2026. ([nlnet.nl](https://nlnet.nl/propose/?utm_source=openai))\n\n10. **NLnet requires libre/open licensing and ordinarily offers \u20ac5,000\u2013\u20ac50,000 grants; individuals may apply.**  \n    Source: `https://nlnet.nl/funding.html`  \n    NLnet says all project software must be released under a recognized FOSS license; eligibility can include individuals, organizations, nonprofits, and companies. ([nlnet.nl](https://nlnet.nl/funding.html?utm_source=openai))\n\n11. **The upcoming 2026 NLnet calls\u2019 \u201cEuropean dimension\u201d requirement is UNSOURCED.** **BRIEF OVERSTATES CURRENT EVIDENCE.**  \n    Source checked: `https://nlnet.nl/propose/`  \n    The forthcoming call-specific guides are not yet published. \u201cEuropean dimension\u201d appears in older, closed NGI-fund rules, not on the current September\u2013November 2026 call notice. I will not treat it as a confirmed gate. ([nlnet.nl](https://nlnet.nl/propose/?utm_source=openai))\n\n12. **The AT Protocol Community Fund is fiscally hosted by Raft Foundation and operates a grant program.**  \n    Source: `https://atprotocol.dev/the-first-indiesky-grant-northsky/`  \n    The fund awarded NorthSky $5,000 and says interested grant applicants should contact the fund by email or through the ATProto Community Forum. ([atprotocol.dev](https://atprotocol.dev/the-first-indiesky-grant-northsky/?utm_source=openai))\n\n13. **The AT Protocol Community Fund remained financially active in 2026.**  \n    Source: `https://opencollective.com/atprotocoldev/transactions`  \n    Its ledger records multiple contributions and paid expenses during May\u2013July 2026 across IndieSky, Smoke Signal, Lexicon Garden, and ATmosphereConf. ([opencollective.com](https://opencollective.com/atprotocoldev/transactions?utm_source=openai))\n\n14. **Paddle prohibits adult content and digital marketplaces enabling third-party sellers.**  \n    Source: `https://www.paddle.com/help/start/intro-to-paddle/what-am-i-not-allowed-to-sell-on-paddle`  \n    Paddle bans sexually oriented or pornographic products/services and products that enable non-Paddle sellers to sell through a digital marketplace. ([paddle.com](https://www.paddle.com/help/start/intro-to-paddle/what-am-i-not-allowed-to-sell-on-paddle?utm_source=openai))\n\n15. **Lemon Squeezy prohibits pornography, services, and marketplaces.**  \n    Source: `https://docs.lemonsqueezy.com/help/getting-started/prohibited-products`  \n    Its prohibited list includes sexually oriented content, design or consulting services, and marketplaces selling other parties\u2019 products. ([docs.lemonsqueezy.com](https://docs.lemonsqueezy.com/help/getting-started/prohibited-products?aff_ref=Ga9DOelB&utm_source=openai))\n\n16. **Polar prohibits adult services or content.**  \n    Source: `https://docs.polar.sh/merchant-of-record/acceptable-use`  \n    Polar\u2019s Merchant-of-Record acceptable-use policy expressly lists adult services or content as unsupported. ([docs.polar.sh](https://docs.polar.sh/merchant-of-record/acceptable-use?utm_source=openai))\n\n17. **Dodo Payments prohibits NSFW content and manual commission/freelance services.**  \n    Source: `https://docs.dodopayments.com/miscellaneous/merchant-acceptance`  \n    Dodo excludes explicit or suggestive adult content and custom design, development, coaching, freelancing, and other labor-dominant services. ([docs.dodopayments.com](https://docs.dodopayments.com/miscellaneous/merchant-acceptance?utm_source=openai))\n\n18. **Stripe Connect direct charges place the charge on the artist\u2019s connected account and transfer only the application fee to the platform.**  \n    Source: `https://docs.stripe.com/connect/direct-charges`  \n    Stripe says the connected account receives the payment, while `application_fee_amount` is transferred to the platform; refunds and chargebacks normally reduce the connected account\u2019s balance. ([docs.stripe.com](https://docs.stripe.com/connect/direct-charges?platform=web&ui=embedded-form&utm_source=openai))\n\n19. **Stripe requires content-creation platforms to obtain preapproval\u2014but explicit adult content remains prohibited.** **BRIEF\u2019S \u201cNSFW PRE-CLEARANCE\u201d IS WRONG IF IT MEANS PORNOGRAPHIC CONTENT CAN BE APPROVED.**  \n    Source: `https://support.stripe.com/questions/prohibited-and-restricted-businesses-list-faqs`  \n    Stripe requires platform preapproval and moderation controls, while separately stating it cannot work with businesses selling adult content or services. ([support.stripe.com](https://support.stripe.com/questions/prohibited-and-restricted-businesses-list-faqs?utm_source=openai))\n\n20. **Stripe payment availability depends on the platform business being established in a supported country or region.**  \n    Source: `https://stripe.com/global`  \n    Stripe publishes a finite supported-country list and says payments are not yet supported for businesses outside those jurisdictions. ([stripe.com](https://stripe.com/global?utm_source=openai))\n\n21. **Current competitor take rates:** VGen 5%; Skeb 6.8%\u20139.8%; Patreon standard 10%.  \n    Sources:  \n    `https://help.vgen.co/hc/en-us/articles/12820094917655-What-are-VGen-s-fees`  \n    `https://lp.skeb.jp/creator?locale=en`  \n    `https://www.patreon.com/pricing`  \n    VGen charges artists 5% plus processing; Skeb charges creators up to 9.8%, discounted to 8.3% or 6.8%; Patreon\u2019s standard platform fee is 10% plus ancillary fees. ([help.vgen.co](https://help.vgen.co/hc/en-us/articles/12820094917655-What-are-VGen-s-fees?utm_source=openai))\n\n22. **Artconomy\u2019s free-plan Shield price remains 6% + $3, with lower rates on paid plans.**  \n    Source: `https://artconomy.com/blog/`  \n    Artconomy lists Free Shield at 6% + $3 and Basic Shield at 5.75% + $2.75, alongside separate processing/payout components. ([artconomy.com](https://artconomy.com/blog/?utm_source=openai))\n\n23. **Commissions.gg now advertises 0% platform fees to both creators and clients.** **BRIEF OUTDATED.**  \n    Source: `https://www.commissions.gg/vgen-alternative`  \n    Its current page says \u201c0% commission, forever\u201d for artists and clients, contradicting the snapshot\u2019s 5% client fee. ([commissions.gg](https://www.commissions.gg/vgen-alternative?utm_source=openai))\n\n24. **Current Toyhouse premium and ArtTrackr Pro prices \u2014 UNSOURCED.**  \n    Toyhouse has an old official post citing $4.95/month, but it dates to 2014; I found no current authoritative ArtTrackr $9/month page. I will not rely on either present-day price anchor. ([toyhou.se](https://toyhou.se/~forums/18.announcements/41.regarding-invite-code-trading?utm_source=openai))"
+        }
+      ],
+      "phase": "final_answer",
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": 0.0,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "prompt_cache_retention": "24h",
+  "reasoning": {
+    "context": "all_turns",
+    "effort": "medium",
+    "mode": "standard",
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "tool_choice": "auto",
+  "tool_usage": {
+    "image_gen": {
+      "input_tokens": 0,
+      "input_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "output_tokens": 0,
+      "output_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "total_tokens": 0
+    },
+    "web_search": {
+      "num_requests": 12
+    }
+  },
+  "tools": [
+    {
+      "type": "web_search",
+      "return_token_budget": "default",
+      "search_content_types": [
+        "text"
+      ],
+      "search_context_size": "medium",
+      "user_location": {
+        "type": "approximate",
+        "city": null,
+        "country": "US",
+        "region": null,
+        "timezone": null
+      }
+    }
+  ],
+  "top_logprobs": 0,
+  "top_p": 0.98,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 104987,
+    "input_tokens_details": {
+      "cache_write_tokens": 5784,
+      "cached_tokens": 0
+    },
+    "output_tokens": 4816,
+    "output_tokens_details": {
+      "reasoning_tokens": 2501
+    },
+    "total_tokens": 109803
+  },
+  "user": null,
+  "metadata": {}
+}
