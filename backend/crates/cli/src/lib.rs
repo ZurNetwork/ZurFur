@@ -18,7 +18,7 @@
 //!
 //! **Where commands go**: [`Command`] is the root; each domain namespace is a
 //! module under [`commands`] exposing its own `clap::Subcommand` enum and a
-//! `run` fn over the [`Runtime`]. `session` is pre-declared here; `account`
+//! `run` fn over the [`Runtime`]. `health` and `session` live here; `account`
 //! and `commission` are the Engineer's operation tickets — add a module, a
 //! variant on [`Command`], and an arm in [`dispatch`].
 
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{CommandFactory as _, Parser, Subcommand};
-use composition::{Config, Runtime};
+use composition::{Config, ConnectError, Runtime};
 
 pub mod commands;
 mod output;
@@ -54,6 +54,8 @@ pub struct Cli {
 /// tool-level `completions`).
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Probe the database the way `GET /health` does.
+    Health,
     /// The acting identity: `login`, `logout`, `whoami`.
     Session {
         #[command(subcommand)]
@@ -105,6 +107,7 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
 /// over the in-memory fakes — no database, no process spawn.
 pub async fn dispatch(runtime: &Runtime, command: Command) -> Result<serde_json::Value, CliError> {
     match command {
+        Command::Health => commands::health::run(runtime).await,
         Command::Session { op } => commands::session::run(runtime, op).await,
         Command::Completions { .. } => {
             unreachable!("completions never reach dispatch; `run` answers it without a runtime")
@@ -116,9 +119,10 @@ pub async fn dispatch(runtime: &Runtime, command: Command) -> Result<serde_json:
 /// Every failure here is infrastructure: exit class 3.
 async fn connect(config_dir: Option<PathBuf>) -> Result<Runtime, CliError> {
     let config = Config::load_from(config_dir).map_err(|e| CliError::infra("config", e))?;
-    Runtime::connect(config)
-        .await
-        .map_err(|e| CliError::infra("runtime", e))
+    Runtime::connect(config).await.map_err(|e| match e {
+        ConnectError::Database(_) => CliError::infra("database_unreachable", e),
+        ConnectError::Setup(_) => CliError::infra("runtime", e),
+    })
 }
 
 /// Print the outcome per the conventions and yield the process exit code:

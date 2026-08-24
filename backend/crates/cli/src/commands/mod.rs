@@ -3,4 +3,5 @@
 //! [`dispatch`](crate::dispatch) routes to it. `account` and `commission`
 //! land with the Engineer's operation tickets under epic ZMVP-199.
 
+pub mod health;
 pub mod session;
