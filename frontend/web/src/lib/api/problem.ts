@@ -65,6 +65,61 @@ export const FORBIDDEN_PROBLEM: Problem = {
 	status: HttpStatus.Forbidden
 };
 
+/**
+ * Field-for-field the backend's own `Problem::not_authenticated()`
+ * (`backend/crates/api/src/problem.rs`) — reused verbatim rather than
+ * invented, same convention as {@link FORBIDDEN_PROBLEM}: a local mint that
+ * answers the backend's own "no session" condition must say the same thing.
+ * The mock `ZurfurApi` Layer (ZMVP-198, `zurfur-api-mock.ts`) mints this
+ * everywhere it needs an anonymous 401 — it never invents its own wording.
+ */
+export const NOT_AUTHENTICATED_PROBLEM: Problem = {
+	...ProblemKind.NotAuthenticated,
+	title: 'Not authenticated',
+	detail: 'You must be signed in to do that.',
+	status: HttpStatus.Unauthorized
+};
+
+/**
+ * The synthetic 404 ⚠️ F1's derived read (`$lib/server/accounts.ts`'s
+ * `accountOutcome`) answers for an id absent from the listing. Field-for-field
+ * the domain's own `Problem::account_not_found` (`backend/crates/api/src/problem.rs`)
+ * — reused verbatim rather than invented, because the two cases mean the same
+ * thing: "not in your list" IS "you hold no role in it", the same
+ * authorization answer a real detail endpoint would give. The mock `ZurfurApi`
+ * Layer (ZMVP-198) reuses it too, for the same reason `deleteAccount`'s
+ * unknown-id case answers with.
+ */
+export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
+	...ProblemKind.AccountNotFound,
+	title: 'Account not found',
+	detail: 'No such account.',
+	status: HttpStatus.NotFound
+};
+
+/**
+ * Field-for-field the backend's own `Problem::invalid_request(detail)`
+ * (`backend/crates/api/src/problem.rs:363-371`) — a FACTORY, not a fixed
+ * constant, because the backend's own is one too: the wire `type`/`code`/
+ * `title` never vary, only `detail` (a per-occurrence dynamic message —
+ * e.g. `POST /accounts`, `backend/crates/api/src/routes/accounts.rs:325-326`,
+ * answers a malformed handle with exactly this shape, `detail` carrying
+ * `Handle::try_new`'s specific validation failure). The backend has no more
+ * specific code for a bad handle at creation time — `handle_taken` (409) is
+ * a different condition entirely — so this generic shape IS the correct
+ * mirror, not a stand-in for a missing specific one. The mock `ZurfurApi`
+ * Layer (ZMVP-198) mints this for `createAccount`'s local handle-shape
+ * check, same convention as {@link FORBIDDEN_PROBLEM}.
+ */
+export function invalidRequestProblem(detail: string): Problem {
+	return {
+		...ProblemKind.InvalidRequest,
+		title: 'Invalid request',
+		detail,
+		status: HttpStatus.UnprocessableContent
+	};
+}
+
 /** Upper bound of the renderable error range; the lower is {@link HttpStatus.BadRequest}. */
 const ERROR_STATUS_MAX = 599;
 

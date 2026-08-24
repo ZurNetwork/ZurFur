@@ -20,6 +20,14 @@ dev-back:
 dev-web:
     cd frontend/web && yarn dev
 
+# Mock-mode dev loop (ZMVP-198): the SvelteKit app alone, no axum, no Docker,
+# no Caddy — ZurfurApi is served by the in-memory mock Layer (runtime.ts's
+# seam branch), boot signed in, and /mock/signin completes the login form
+# without OAuth. Deliberately skips `just up`/wait-for-*: there is nothing to
+# wait for.
+dev-mock:
+    cd frontend/web && ZURFUR_WEB_MOCK=1 yarn dev
+
 # --- Docker ---
 
 up:
