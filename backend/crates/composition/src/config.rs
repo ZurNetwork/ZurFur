@@ -4,6 +4,7 @@
 //! References: CLAUDE.md "Configuration"; the repo memory `config-and-runtime`.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use figment::{
     Figment,
@@ -238,18 +239,28 @@ impl Config {
     ///
     /// References: CLAUDE.md "Configuration".
     pub fn load() -> Result<Self, Box<figment::Error>> {
+        Self::load_from(None)
+    }
+
+    /// [`load`](Config::load) with the config directory chosen by the caller
+    /// (the CLI's `--config-dir`). `None` falls back to `ZURFUR_CONFIG_DIR`,
+    /// then the repo's `backend/config`.
+    ///
+    /// Anchoring: the default is relative to this crate's `CARGO_MANIFEST_DIR`
+    /// (`backend/crates/composition` → `backend/config`) rather than the
+    /// current working directory, because cargo, cargo-watch, and `just` each
+    /// run from a different CWD. A deployed binary points elsewhere via
+    /// `ZURFUR_CONFIG_DIR` or the explicit argument.
+    pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, Box<figment::Error>> {
         let profile = std::env::var("ZURFUR_ENV").unwrap_or_else(|_| "dev".into());
 
-        // Anchor the config directory to this crate rather than the current working
-        // directory: cargo, cargo-watch, and `just` all run from different CWDs, so a
-        // relative `config/...` path resolves inconsistently. `CARGO_MANIFEST_DIR` is
-        // `backend/crates/composition`; the config lives at `backend/config`. A deployed binary
-        // can point elsewhere via `ZURFUR_CONFIG_DIR`.
-        let config_dir = std::env::var("ZURFUR_CONFIG_DIR")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../config").into());
+        let config_dir = config_dir
+            .or_else(|| std::env::var_os("ZURFUR_CONFIG_DIR").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config")));
+        let profile_file = config_dir.join(format!("{profile}.toml"));
 
         Figment::new()
-            .merge(Toml::file(format!("{config_dir}/{profile}.toml")))
+            .merge(Toml::file(profile_file))
             .merge(Env::raw().only(&["DATABASE_URL"]))
             .merge(Env::prefixed("ZURFUR_"))
             .extract()

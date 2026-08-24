@@ -60,6 +60,11 @@ time = { version = "0.3" }
 rmp-serde = { version = "1" }
 async-trait = { version = "0.1" }
 serde_json = "1.0"
+# The `zurfur` CLI (ZMVP-201): argument parsing + shell completions; assert_cmd
+# spawns the built binary in its process-level tests.
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+assert_cmd = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }

@@ -102,6 +102,10 @@ web-smoke:
 test:
     cargo test --workspace
 
+# The terminal driving adapter (epic ZMVP-199): `just zurfur -- session whoami`.
+zurfur *ARGS:
+    cargo run --quiet --package cli -- {{ARGS}}
+
 # Regenerate both adapters' src/queries.rs (typed query functions) from the
 # queries/*.sql trees, described against a throwaway migrated Postgres. Run
 # after adding/changing a .sql file or a migration, then commit the result —
