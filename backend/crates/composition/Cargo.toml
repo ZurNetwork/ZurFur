@@ -1,0 +1,25 @@
+[package]
+publish = false
+name = "composition"
+version = "0.1.0"
+edition = "2024"
+
+# The composition root shared by every driving adapter (`api`, `cli`): the
+# runtime `Config` and the `Runtime` bag of live ports. HTTP-free by
+# construction — `tests/no_http_deps.rs` guards it (ZMVP-200).
+[dependencies]
+domain = { path = "../domain" }
+adapter-pg = { path = "../adapter-pg" }
+adapter-atproto = { path = "../adapter-atproto" }
+figment = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+# Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
+base64 = { workspace = true }
+# Build the OAuth redirect URI from `public_url`.
+fluent-uri = { workspace = true }
+
+[dev-dependencies]
+# `figment::Jail` — the config-precedence test.
+figment = { workspace = true, features = ["test"] }

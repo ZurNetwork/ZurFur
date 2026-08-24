@@ -12,25 +12,22 @@ pbjson = { workspace = true }
 pbjson-types = { workspace = true }
 domain = { path = "../domain" }
 adapter-pg = { path = "../adapter-pg" }
+# The shared composition root: Config + the Runtime port bag (ZMVP-200).
+composition = { path = "../composition" }
 axum = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-figment = { workspace = true }
 dotenvy = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-adapter-atproto = { path = "../adapter-atproto/" }
-fluent-uri = { version = "0.4.1", features = ["std"] }
 tower-sessions = { workspace = true }
 # `SetResponseHeaderLayer` (set-header feature) — the no-store cache header layer
 # over the cookie surface in `app()` (ZMVP-151, CWE-525).
 tower-http = { workspace = true }
-# Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
-base64 = { workspace = true }
 # The deadline sweeper takes a Postgres transaction-scoped advisory lock
 # (`pg_try_advisory_xact_lock`) for single-writer leader election across api
 # instances (see `sweep.rs`); that

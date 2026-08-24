@@ -142,19 +142,16 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 name = "api"
 version = "0.1.0"
 dependencies = [
- "adapter-atproto",
  "adapter-mem",
  "adapter-pg",
  "anyhow",
  "async-trait",
  "axum",
- "base64",
  "chrono",
+ "composition",
  "contract-gen",
  "domain",
  "dotenvy",
- "figment",
- "fluent-uri",
  "pbjson",
  "pbjson-types",
  "prost 0.14.4",
@@ -775,6 +772,21 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "composition"
+version = "0.1.0"
+dependencies = [
+ "adapter-atproto",
+ "adapter-pg",
+ "anyhow",
+ "base64",
+ "domain",
+ "figment",
+ "fluent-uri",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -1430,8 +1442,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8cb01cd46b0cf372153850f4c6c272d9cbea2da513e07538405148f95bd789f3"
 dependencies = [
  "atomic",
+ "parking_lot",
  "pear",
  "serde",
+ "tempfile",
  "toml",
  "uncased",
  "version_check",
