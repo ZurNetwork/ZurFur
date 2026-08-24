@@ -1,6 +1,8 @@
 //! The runtime [`Config`], its figment loader, and the boot-time custody guard.
 //!
-//! Moved verbatim from `api` (ZMVP-200) so the CLI boots from the same source.
+//! Moved from `api` (ZMVP-200) so the CLI boots from the same source, with
+//! two additions: [`Environment`] accepts the lowercase spellings (closing the
+//! `.env.example` catch-22) and [`Config::load_from`] takes the directory.
 //! References: CLAUDE.md "Configuration"; the repo memory `config-and-runtime`.
 
 use std::net::SocketAddr;
@@ -265,6 +267,18 @@ impl Config {
     /// `ZURFUR_CONFIG_DIR` or the explicit argument.
     pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, Box<figment::Error>> {
         let profile = std::env::var(PROFILE_ENV).unwrap_or_else(|_| "dev".into());
+        // The profile names a file; keep it a bare name so `ZURFUR_ENV=../x`
+        // can never walk out of the config dir (today the `Environment` enum
+        // happens to reject it too — this guard is where the risk is).
+        if profile.is_empty()
+            || !profile
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(Box::new(figment::Error::from(format!(
+                "{PROFILE_ENV} must be a bare profile name (letters, digits, '-'), got {profile:?}"
+            ))));
+        }
 
         let config_dir = config_dir
             .or_else(|| std::env::var_os(CONFIG_DIR_ENV).map(PathBuf::from))
@@ -328,6 +342,9 @@ mod tests {
                     did_key_root_key = "ZmlsZQ=="
                 "#,
             )?;
+            // Jail restores what it mutates but inherits the process env —
+            // clear it so a developer's `.env` (via `just`) can't leak in.
+            jail.clear_env();
             jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
             jail.set_env("ZURFUR_ENV", "dev");
             jail.set_env("DATABASE_URL", "postgres://from-env");
@@ -344,6 +361,23 @@ mod tests {
         });
     }
 
+    // The profile selector is a file name: no path components allowed.
+    #[test]
+    #[allow(clippy::result_large_err)] // figment::Jail's closure signature
+    fn a_traversing_profile_is_refused() {
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
+            jail.set_env("ZURFUR_ENV", "../etc/passwd");
+            jail.set_env("DATABASE_URL", "postgres://x");
+            let Err(error) = Config::load() else {
+                panic!("a traversing profile must be refused");
+            };
+            assert!(error.to_string().contains("bare profile name"), "{error}");
+            Ok(())
+        });
+    }
+
     // A required key missing from every layer fails the load — never a
     // default. A valid `dev` profile with an empty file, so the only thing
     // wrong is the absent `public_url`/`log_level`/`did_key_root_key`.
@@ -351,6 +385,7 @@ mod tests {
     #[allow(clippy::result_large_err)] // figment::Jail's closure signature
     fn a_missing_required_key_fails_the_load() {
         figment::Jail::expect_with(|jail| {
+            jail.clear_env();
             jail.create_file("dev.toml", "env = \"DEV\"\n")?;
             jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
             jail.set_env("ZURFUR_ENV", "dev");

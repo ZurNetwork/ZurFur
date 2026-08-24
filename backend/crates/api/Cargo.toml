@@ -37,11 +37,14 @@ sqlx = { workspace = true }
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }
-tempfile = "3"
+tempfile = { workspace = true }
 adapter-mem = { path = "../adapter-mem" }
 # Implement port-trait test doubles (the fact-bearing unit-of-work wrapper in
 # the ZMVP-66 delete tests) against the async port traits.
 async-trait = { workspace = true }
 # Shared template-database harness (one Postgres container per test process).
 test-support = { path = "../test-support" }
+# `tests/whoami_parity.rs`: the CLI's hand-copied `whoami` projection must
+# render exactly like the generated `GetMeResponse` (ZMVP-203).
+cli = { path = "../cli" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }

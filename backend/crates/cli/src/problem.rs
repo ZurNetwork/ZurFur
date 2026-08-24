@@ -134,11 +134,11 @@ mod tests {
 
     #[test]
     fn a_problem_renders_class_code_detail() {
-        let error = CliError::domain("not_logged_in", "run `zurfur session login` first");
+        let error = CliError::domain("not_authenticated", "run `zurfur session login` first");
         let rendered = serde_json::to_string(&error.problem()).unwrap();
         assert_eq!(
             rendered,
-            r#"{"class":"domain","code":"not_logged_in","detail":"run `zurfur session login` first"}"#
+            r#"{"class":"domain","code":"not_authenticated","detail":"run `zurfur session login` first"}"#
         );
     }
 

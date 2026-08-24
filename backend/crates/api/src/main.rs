@@ -43,9 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     // The live composition is shared with the CLI (ZMVP-200); migrations are
     // the driver's explicit call, so a driver can never run them by accident.
-    let app_state: AppState = composition::Runtime::connect(config)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let app_state: AppState = composition::Runtime::connect(config).await?;
     adapter_pg::migrate(&app_state.pool).await?;
     tracing::info!("migrations applied");
     let http_addr = app_state.config.http_addr;

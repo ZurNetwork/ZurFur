@@ -65,6 +65,9 @@ serde_json = "1.0"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 assert_cmd = "2"
+# The CLI's identity file (ZMVP-203): platform config dir + atomic replace.
+directories = "6"
+tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }

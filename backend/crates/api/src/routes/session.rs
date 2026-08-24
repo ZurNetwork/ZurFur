@@ -23,8 +23,8 @@ use axum::{
     routing::{get, post},
 };
 use domain::{
-    elements::{did::Did, profile::Profile, user::UserId},
-    ports::{ProfileCache, ProfileSource, UnitOfWork},
+    elements::{profile::Profile, user::UserId},
+    ports::UnitOfWork,
 };
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -191,7 +191,7 @@ async fn signin_callback(
 /// PDS with nothing cached still returns `200`, with the profile KEYS OMITTED and
 /// the DID present (absence is not an error).
 ///
-/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`resolve_profile`].
+/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`Profile::resolve_through`].
 ///
 /// ```text
 /// GET /me   (Cookie: zurfur.sid=...)
@@ -210,7 +210,8 @@ async fn me(
     let Ok(Some(user)) = state.users.find(UserId::new(id)).await else {
         return Err(Problem::not_authenticated());
     };
-    let profile = resolve_profile(&*state.profile_cache, &*state.profile_source, &user.did).await;
+    let profile =
+        Profile::resolve_through(&*state.profile_cache, &*state.profile_source, &user.did).await;
     let did = user.did.to_string();
     let body = match profile {
         // A resolved profile: the handle is always present, display name and avatar
@@ -246,32 +247,4 @@ async fn logout(session: Session) -> Response {
             .into_response();
     }
     Redirect::to("/").into_response()
-}
-
-/// Read-through resolution of a visitor's profile: a fresh cache hit is served
-/// without waking the PDS (ZMVP-10 criterion 2); a miss reads the PDS and caches
-/// the result; a PDS failure degrades to `None` rather than erroring (criterion 3).
-///
-/// The cache fill is pool-backed and best-effort — a documented exception to the
-/// compile-enforced Unit of Work (DD `24150017`): a read-through cache write on the
-/// GET path has no transactional invariant, so it is not routed through a write
-/// transaction (which would make a read endpoint open one for nothing). A `put`
-/// failure is swallowed so a cache hiccup never fails the page.
-async fn resolve_profile(
-    cache: &dyn ProfileCache,
-    source: &dyn ProfileSource,
-    did: &Did,
-) -> Option<Profile> {
-    if let Ok(Some(profile)) = cache.get(did).await {
-        return Some(profile);
-    }
-    match source.fetch(did).await {
-        Ok(profile) => {
-            // Best-effort, pool-backed cache write (guard exception): a cache failure
-            // must not fail the page, so it is swallowed.
-            let _ = cache.put(&profile).await;
-            Some(profile)
-        }
-        Err(_) => None,
-    }
 }

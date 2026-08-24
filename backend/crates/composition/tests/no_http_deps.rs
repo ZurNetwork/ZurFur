@@ -1,11 +1,14 @@
 //! The dependency guard (ZMVP-200, board finding): `composition` is the
 //! composition root for EVERY driving adapter, including the non-HTTP `cli`, so
-//! it must never link a web framework. Runs `cargo tree` over this crate's
+//! neither may link a web framework. Runs `cargo tree` over each crate's
 //! normal (non-dev) dependency graph and refuses any HTTP-stack crate in it.
 //! A trip here means a driven adapter grew an HTTP dependency it must not have
 //! — fix the adapter, never this list.
 
 use std::process::Command;
+
+/// The crates that must stay HTTP-server-free: the root and the terminal driver.
+const GUARDED: &[&str] = &["composition", "cli"];
 
 /// Crates that belong to an HTTP *server* driver, never to the composition
 /// root or the adapters beneath it. Client-side HTTP (`reqwest`, and the
@@ -14,12 +17,18 @@ use std::process::Command;
 const FORBIDDEN: &[&str] = &["axum", "axum-core", "tower-sessions"];
 
 #[test]
-fn composition_links_no_http_stack() {
+fn composition_and_cli_link_no_http_stack() {
+    for package in GUARDED {
+        assert_http_free(package);
+    }
+}
+
+fn assert_http_free(package: &str) {
     let output = Command::new(env!("CARGO"))
         .args([
             "tree",
             "--package",
-            "composition",
+            package,
             "--edges",
             "normal",
             "--prefix",
@@ -43,6 +52,6 @@ fn composition_links_no_http_stack() {
         .collect();
     assert!(
         offenders.is_empty(),
-        "composition must stay HTTP-free but links {offenders:?}\n{tree}"
+        "{package} must stay HTTP-free but links {offenders:?}\n{tree}"
     );
 }

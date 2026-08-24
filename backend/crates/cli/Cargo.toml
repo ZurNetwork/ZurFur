@@ -22,9 +22,14 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+figment = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-dotenvy = { workspace = true }
+# The identity file: platform config dir, atomic replace, fingerprint, stamp.
+directories = { workspace = true }
+tempfile = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 # Process-level harness: spawn the real `zurfur` binary and assert on

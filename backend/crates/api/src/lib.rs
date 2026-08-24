@@ -27,13 +27,11 @@ use axum::{
 };
 use tower_http::set_header::SetResponseHeaderLayer;
 
+pub(crate) use composition::transaction;
 /// The composition root is shared with the CLI (ZMVP-200): the runtime
 /// [`Config`], the custody guard, and the live-port bag — re-exported so this
 /// crate's handlers and tests keep naming the bag `AppState`.
-pub use composition::{
-    Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime as AppState, ensure_custody_hardened,
-    transaction,
-};
+pub use composition::{Config, Environment, Runtime as AppState};
 
 /// The contract's generated message types (DD 40992770; `@generated` by
 /// `contract-gen`, regenerate with `just gen-contract`). Drift from

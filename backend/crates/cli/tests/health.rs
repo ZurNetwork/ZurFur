@@ -22,10 +22,12 @@ async fn a_reachable_database_reports_ok() {
     assert!(report["latency_ms"].is_number());
     assert!(
         output.get_output().stderr.is_empty(),
-        "stderr must stay silent on success"
+        "with RUST_LOG=off nothing may reach stderr on success"
     );
 }
 
+// The runtime cannot even connect: `service_unavailable`, detail = the
+// connect failure (the probe's own timeout is covered in `tests/in_process.rs`).
 #[test]
 fn an_unreachable_database_is_a_distinct_infra_problem() {
     // Port 1 on loopback: refused immediately, nobody listens there.
@@ -36,5 +38,11 @@ fn an_unreachable_database_is_a_distinct_infra_problem() {
     assert!(output.get_output().stdout.is_empty());
     let problem = problem(&output.get_output().stderr);
     assert_eq!(problem["class"], "infra");
-    assert_eq!(problem["code"], "database_unreachable");
+    assert_eq!(problem["code"], "service_unavailable");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains("database unreachable")
+    );
 }

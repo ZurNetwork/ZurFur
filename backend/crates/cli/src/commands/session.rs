@@ -1,33 +1,95 @@
-//! The `session` namespace: who the CLI acts as. Ops are declared here so the
-//! command tree is complete; `login` (ZMVP-204) and `logout`/`whoami`
-//! (ZMVP-203) fill them in. Until then each answers an honest
-//! `not_implemented` infrastructure problem — never a fake success.
+//! The `session` namespace: who the CLI acts as. `whoami` and `logout`
+//! (ZMVP-203) read and clear the identity file; `login` (ZMVP-204) is blocked
+//! on the Engineer's client-model ruling and answers an honest
+//! `not_implemented` problem until then — never a fake success.
+
+use std::path::Path;
 
 use clap::Subcommand;
 use composition::Runtime;
+use domain::elements::profile::Profile;
+use serde::Serialize;
 
-use crate::CliError;
+use crate::{CliError, identity, principal::Principal};
 
 /// The session operations.
 #[derive(Debug, Subcommand)]
 pub enum SessionOp {
     /// Sign in through the browser and record the acting identity.
     Login,
-    /// Forget the acting identity.
+    /// Forget the acting identity (the local record only).
     Logout,
-    /// Show the acting identity.
+    /// Show the acting identity, the way `GET /me` reports it.
     Whoami,
 }
 
-/// Run one session op over the runtime.
-pub async fn run(_runtime: &Runtime, op: SessionOp) -> Result<serde_json::Value, CliError> {
-    let name = match op {
-        SessionOp::Login => "session login",
-        SessionOp::Logout => "session logout",
-        SessionOp::Whoami => "session whoami",
-    };
-    Err(CliError::infra(
-        "not_implemented",
-        format!("`{name}` is not built yet (ZMVP-203 / ZMVP-204)"),
-    ))
+/// `whoami`'s projection — the same keys, spelling, and omissions as the
+/// HTTP `GetMeResponse`: the DID always; handle/displayName/avatarUrl only
+/// when the profile resolved. A hand copy of the generated contract type
+/// (which lives inside `api`, behind axum); `api/tests/whoami_parity.rs`
+/// asserts the two render identically until the contract moves to a leaf
+/// crate (DD 40992770 D11).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Whoami {
+    did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
+}
+
+impl Whoami {
+    /// The `GET /me` projection rule: a resolved profile contributes its
+    /// handle + optionals; no profile degrades to the bare DID.
+    pub fn project(did: String, profile: Option<Profile>) -> Self {
+        match profile {
+            Some(profile) => Whoami {
+                did,
+                handle: Some(profile.handle),
+                display_name: profile.display_name,
+                avatar_url: profile.avatar_url,
+            },
+            None => Whoami {
+                did,
+                handle: None,
+                display_name: None,
+                avatar_url: None,
+            },
+        }
+    }
+}
+
+/// `logout`: forget the local identity. Needs no runtime — `run` in `lib.rs`
+/// answers it before any config or database is touched, so "forget my
+/// credential" can never be blocked by a broken stack.
+pub fn logout(identity_path: &Path) -> Result<serde_json::Value, CliError> {
+    let removed = identity::delete(identity_path)?;
+    Ok(serde_json::json!({ "loggedOut": true, "hadIdentity": removed }))
+}
+
+/// Run one session op over the runtime, with the identity file at `identity_path`.
+pub async fn run(
+    runtime: &Runtime,
+    identity_path: &Path,
+    op: SessionOp,
+) -> Result<serde_json::Value, CliError> {
+    match op {
+        SessionOp::Login => Err(CliError::infra(
+            "not_implemented",
+            "`session login` is blocked on the client-model ruling (ZMVP-204)",
+        )),
+        SessionOp::Logout => logout(identity_path),
+        SessionOp::Whoami => {
+            let principal = Principal::resolve(runtime, identity_path).await?;
+            let did = principal.user.did;
+            let profile =
+                Profile::resolve_through(&*runtime.profile_cache, &*runtime.profile_source, &did)
+                    .await;
+            let body = Whoami::project(did.to_string(), profile);
+            Ok(serde_json::to_value(body).expect("Whoami serializes"))
+        }
+    }
 }
