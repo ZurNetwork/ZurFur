@@ -4,12 +4,17 @@
 //! for data), runs the command, and maps the outcome to the exit-code classes
 //! documented on [`cli::ExitClass`]. Ctrl-C ends the run with the interrupted
 //! class, never a panic.
+//!
+//! No `.env` loading, deliberately: `dotenvy::dotenv()` walks every parent of
+//! the CWD, so a user binary run from an arbitrary directory would take
+//! `DATABASE_URL` / the root key / `ZURFUR_CLI_HOME` from whatever `.env` sits
+//! above it (security review, ZMVP-203 F1). The dev loop gets `.env` through
+//! `just` (`dotenv-load`); anything else sets the environment explicitly.
 
 use clap::Parser as _;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    dotenvy::dotenv().ok();
     let args = cli::Cli::parse();
     cli::init_tracing();
 

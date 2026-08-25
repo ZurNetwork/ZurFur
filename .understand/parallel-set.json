@@ -1,13 +1,13 @@
 {
   "uow": "trw07",
   "logbook": null,
-  "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 \u2225 ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) \u2192 /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
-  "updated": "2026-08-09T00:00:00-06:00",
-  "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local).",
+  "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
+  "updated": "2026-08-24T16:00:00-06:00",
+  "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
   "tickets": [
     {
       "key": "ZMVP-166",
-      "summary": "storage: flat commission composition \u2014 commission_tab + commission_element, drop commission_node",
+      "summary": "storage: flat commission composition — commission_tab + commission_element, drop commission_node",
       "phase": "merged-done",
       "next_action": "DONE: merged to main as 8d92eb1 via PR #173 (2026-08-05). Unblocked ZMVP-163 (built) and ZMVP-169. Ledger corrected 2026-08-09.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/173 (MERGED)",
@@ -18,7 +18,7 @@
     },
     {
       "key": "ZMVP-165",
-      "summary": "Superforms migration \u2014 one-channel forms (login + accounts)",
+      "summary": "Superforms migration — one-channel forms (login + accounts)",
       "phase": "merged",
       "next_action": "DONE 2026-08-05: merged to main as 739baae5 via PR #172 (4 slices; ship-gates 13 findings applied; 1 Copilot round [array-coercion error lists]; 158 web tests). Engineer built, Claude gate-hardened. Follow-ups: ZMVP-173 (https-only authorize relay), [id] route migrate-on-next-touch, punycode = claim-time only (Engineer ruling 2026-08-05). Branch deleted; main synced.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/172 (MERGED)",
@@ -31,7 +31,7 @@
       "key": "ZMVP-152",
       "summary": "A user creates and deletes an Account from the browser",
       "phase": "merged-done",
-      "next_action": "DONE 2026-07-30: merged to main as d927357 via PR #169 (11 slices; 3 ship-gate rounds; 2 Copilot rounds; 128 web tests). Jira Done + close-comment; issue #154 closed; branches deleted; main synced. Follow-ups live on: ZMVP-165 (Superforms migration \u2014 Engineer's SvelteKit lane), #167 (mint-cap policy), infra slice owed (Justfile dev-back fix [stashed-restored, uncommitted on main] + .env.example ZURFUR_ENV catch-22).",
+      "next_action": "DONE 2026-07-30: merged to main as d927357 via PR #169 (11 slices; 3 ship-gate rounds; 2 Copilot rounds; 128 web tests). Jira Done + close-comment; issue #154 closed; branches deleted; main synced. Follow-ups live on: ZMVP-165 (Superforms migration — Engineer's SvelteKit lane), #167 (mint-cap policy), infra slice owed (Justfile dev-back fix [stashed-restored, uncommitted on main] + .env.example ZURFUR_ENV catch-22).",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/169 (MERGED)",
       "branch": "deleted (was feature/zmvp-152-account-browser)",
       "worktree": null,
@@ -40,10 +40,10 @@
     },
     {
       "key": "ZMVP-164",
-      "summary": "Write-side surface-tree depth cap \u226463 (DD 42762241 companion)",
+      "summary": "Write-side surface-tree depth cap ≤63 (DD 42762241 companion)",
       "phase": "superseded-wont-do",
-      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754; Won't Do, PR #170 closed unmerged; salvage PR #171 MERGED. Cleanup attempted 2026-08-09: worktree ~/code/zurfur-zmvp164 is CLEAN + no compose stack, but the deletion commands (git worktree remove; branch deletes local+origin) were permission-blocked \u2014 handed to the Engineer to run.",
-      "pr": "https://github.com/ZurNetwork/ZurFur/pull/170 (CLOSED unmerged) \u00b7 salvage https://github.com/ZurNetwork/ZurFur/pull/171 (MERGED)",
+      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754; Won't Do, PR #170 closed unmerged; salvage PR #171 MERGED. Cleanup attempted 2026-08-09: worktree ~/code/zurfur-zmvp164 is CLEAN + no compose stack, but the deletion commands (git worktree remove; branch deletes local+origin) were permission-blocked — handed to the Engineer to run.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/170 (CLOSED unmerged) · salvage https://github.com/ZurNetwork/ZurFur/pull/171 (MERGED)",
       "branch": "feature/zmvp-164-tree-depth-cap (deletion pending, Engineer's hands)",
       "worktree": "~/code/zurfur-zmvp164 (removal pending, Engineer's hands)",
       "snapshot": null,
@@ -53,7 +53,7 @@
       "key": "ZMVP-153",
       "summary": "A user creates and deletes a Commission from the browser; the flat commission composition renders",
       "phase": "remodeled-ready-to-build",
-      "next_action": "RE-MODELED 2026-08-04 \u2014 DD 45514754 (Commission Composition \u2014 flat extension points) supersedes-in-part DD 42762241: flat Elements-into-Surfaces + Tabs, min(tab, element), no recursion. ZMVP-163 rebodied flat (still security-nature \u2192 Opus; blocked by new storage ticket commission_tab/commission_element). Renderer premise now a flat skeleton walk (simpler \u2014 recursion was the hard part); AC2/AC4 rescoped. Build order: storage ticket \u2192 ZMVP-163 \u2192 this ticket's ZurfurApi slice \u2192 Engineer UI lane via /worksheet-tutorial. Epic ZMVP-149 exit = zero-curl walkthrough (unchanged). Propagation 2026-08-04: DD page + 3 supersession banners + 15-page /design-sync + Jira sweep + index + memory \u2014 see agents' reports.",
+      "next_action": "RE-MODELED 2026-08-04 — DD 45514754 (Commission Composition — flat extension points) supersedes-in-part DD 42762241: flat Elements-into-Surfaces + Tabs, min(tab, element), no recursion. ZMVP-163 rebodied flat (still security-nature → Opus; blocked by new storage ticket commission_tab/commission_element). Renderer premise now a flat skeleton walk (simpler — recursion was the hard part); AC2/AC4 rescoped. Build order: storage ticket → ZMVP-163 → this ticket's ZurfurApi slice → Engineer UI lane via /worksheet-tutorial. Epic ZMVP-149 exit = zero-curl walkthrough (unchanged). Propagation 2026-08-04: DD page + 3 supersession banners + 15-page /design-sync + Jira sweep + index + memory — see agents' reports.",
       "pr": null,
       "branch": null,
       "worktree": null,
@@ -73,13 +73,86 @@
     },
     {
       "key": "ZMVP-163",
-      "summary": "flat composition wire + GET /commissions/{id} \u2014 projection, corpus, route",
+      "summary": "flat composition wire + GET /commissions/{id} — projection, corpus, route",
       "phase": "built-gate-green-awaiting-engineer-review",
       "next_action": "Built 2026-08-08 by the Designer (Opus) in jj workspace ~/code/zurfur-backend: slices myuvqtzovyru + uqpvoqxpwswr. Gate green (670 tests, buf breaking additive). NOT pushed. 6 pre-merge Engineer forks + 2 findings (ZMVP-74 ownership gap; UUIDv7 timestamp note). /security-review owed pre-PR. MUST LAND BEFORE the contract leaf-crate extraction (DD 47939586). Briefing: .understand/20260808-ZMVP-163_flat-composition-wire-and-get.md",
       "branch": "jj changes in workspace backend",
       "worktree": "~/code/zurfur-backend",
       "updated": "2026-08-08T20:30:00-06:00"
+    },
+    {
+      "key": "ZMVP-200",
+      "summary": "composition: extract Config + runtime wiring out of api",
+      "phase": "pr-open",
+      "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/185 (→ main)",
+      "branch": "feature/zmvp-200-composition",
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T18:30:00-06:00"
+    },
+    {
+      "key": "ZMVP-201",
+      "summary": "cli: crate scaffold, conventions, harnesses, just glue",
+      "phase": "pr-open",
+      "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/186 (→ feature/zmvp-200-composition)",
+      "branch": "feature/zmvp-201-cli-scaffold",
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T18:30:00-06:00"
+    },
+    {
+      "key": "ZMVP-202",
+      "summary": "cli: health",
+      "phase": "pr-open",
+      "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/187 (→ feature/zmvp-201-cli-scaffold)",
+      "branch": "feature/zmvp-202-cli-health",
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T18:30:00-06:00"
+    },
+    {
+      "key": "ZMVP-203",
+      "summary": "cli: identity file + principal; session whoami/logout",
+      "phase": "pr-open",
+      "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, logout↔grant revocation, error-code vocabulary, CLI migration ownership. RULED 2026-08-24: FromStr for Did = the untrusted door (in #188).",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/188 (→ feature/zmvp-202-cli-health)",
+      "branch": "feature/zmvp-203-cli-identity",
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T18:30:00-06:00"
+    },
+    {
+      "key": "ZMVP-204",
+      "summary": "cli: login",
+      "phase": "ruled-ready-to-build",
+      "next_action": "RULED 2026-08-24: option C (trusted-driver pick) — login --handle resolves an EXISTING User, never provisions; no OAuth in the CLI until a PDS-write ticket (post-v1) re-opens option A. Build after #188 merges (stack on feature/zmvp-203-cli-identity); /security-review confirms no write path from login.",
+      "pr": null,
+      "branch": null,
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T19:00:00-06:00"
+    },
+    {
+      "key": "ZMVP-205",
+      "summary": "application layer landing zone",
+      "phase": "engineer-lane",
+      "next_action": "Engineer-owned fork: use cases in domain vs application crate; blueprint = create_account.",
+      "pr": null,
+      "branch": null,
+      "worktree": null,
+      "snapshot": null,
+      "uow": "sh3ll",
+      "updated": "2026-08-24T16:00:00-06:00"
     }
   ],
-  "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend\u2192Rust/Leptos) was REVERTED by the Engineer 2026-08-09 \u2014 the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED \u2014 flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]]."
+  "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend→Rust/Leptos) was REVERTED by the Engineer 2026-08-09 — the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED — flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]].",
+  "units": {}
 }
