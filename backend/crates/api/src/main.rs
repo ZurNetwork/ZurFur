@@ -10,8 +10,6 @@
 //! References: CLAUDE.md "Architecture"/"Configuration"/"Database".
 
 use api::{AppState, Config, Environment};
-use base64::Engine as _;
-use fluent_uri::Uri;
 use tower_sessions::{
     Expiry, SessionManagerLayer,
     cookie::{SameSite, time},
@@ -43,98 +41,24 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let pool = adapter_pg::connect(&config.database_url).await?;
-    tracing::info!("database pool established");
-    adapter_pg::migrate(&pool).await?;
+    // The live composition is shared with the CLI (ZMVP-200); migrations are
+    // the driver's explicit call, so a driver can never run them by accident.
+    let app_state: AppState = composition::Runtime::connect(config).await?;
+    adapter_pg::migrate(&app_state.pool).await?;
     tracing::info!("migrations applied");
-    let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
-    tracing::info!(addr = %config.http_addr, env = ?config.env, "starting HTTP server");
+    let http_addr = app_state.config.http_addr;
+    let listener = tokio::net::TcpListener::bind(http_addr).await?;
+    tracing::info!(addr = %http_addr, env = ?app_state.config.env, "starting HTTP server");
 
-    // The redirect URI is fixed at client-construction time (jacquard sends
-    // redirect_uris[0] in the PAR request), so it must be registered here from the
-    // public origin — not overridden per request.
-    let redirect_uri =
-        Uri::parse(format!("{}/signin-callback", config.public_url)).map_err(|(e, uri)| {
-            anyhow::anyhow!("invalid public_url, cannot build redirect URI ({uri}): {e}")
-        })?;
-    // Build the session layer before moving `pool` and `config` into AppState.
-    let store = adapter_pg::PgSessionStore::new(pool.clone());
+    let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
+    let secure_cookies = matches!(app_state.config.env, Environment::PROD | Environment::STG);
     let session_layer = SessionManagerLayer::new(store)
         .with_name("zurfur.sid")
         .with_http_only(true)
         .with_same_site(SameSite::Lax)
-        // Secure cookies are only sent over HTTPS; dev serves plain HTTP on
-        // loopback, so setting Secure there would make the browser drop the cookie.
-        .with_secure(matches!(config.env, Environment::PROD | Environment::STG))
+        .with_secure(secure_cookies)
         .with_expiry(Expiry::OnInactivity(time::Duration::days(7)));
 
-    // ZMVP-49: the live DID minter is the REAL one. It generates each account's
-    // secp256k1 rotation keys, signs an identity-only PLC genesis operation,
-    // custodies the keys envelope-encrypted under a DEV-ONLY root key (KMS is the
-    // URGENT follow-up ZMVP-53), and submits to a no-op directory (C2 —
-    // `plc_directory_submit` defaults off, so nothing hits canonical plc.directory).
-    let root_key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(config.did_key_root_key.trim())
-        .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
-    // Boot-time custody guard: refuse to run any configuration that would mint real
-    // identities under dev-only key custody (config-root-backed in prod/stg, or
-    // submitting under the shipped example key). Enforces "harden before real
-    // accounts" — cloud KMS is ZMVP-53.
-    api::ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
-    let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
-    let key_store = std::sync::Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
-    // The OAuth store seals its at-rest secrets (the DPoP private key, refresh/
-    // access tokens, and the in-flight PKCE verifier) under the SAME root key as
-    // custody — one key-management path, already covered by the boot guard above
-    // (ZMVP-12). A DB read alone yields no usable upstream session.
-    let oauth_vault = adapter_atproto::SecretVault::from_bytes(&root_key_bytes)?;
-    let op_log = std::sync::Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
-    let directory = adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
-        endpoint: config.plc_directory_endpoint.clone(),
-        enabled: config.plc_directory_submit,
-    });
-    let did_minter = std::sync::Arc::new(adapter_atproto::RealDidMinter::new(
-        key_store, op_log, directory,
-    ));
-
-    let app_state = AppState {
-        config,
-        auth: std::sync::Arc::new(adapter_atproto::AtprotoAuthenticator::new(
-            redirect_uri,
-            pool.clone(),
-            oauth_vault,
-        )),
-        // Reads go through the pool-backed stores; every private-store write goes
-        // through the one `database` factory (also pool-backed) — both built from
-        // the same `pool` (DD `24150017`, compile-enforced Unit of Work).
-        users: std::sync::Arc::new(adapter_pg::PgUserStore::new(pool.clone())),
-        profile_source: std::sync::Arc::new(adapter_atproto::AtprotoProfileSource::new()),
-        // Cache profiles for an hour; a staler entry is refetched from the PDS.
-        profile_cache: std::sync::Arc::new(adapter_pg::PgProfileCache::new(
-            pool.clone(),
-            std::time::Duration::from_secs(60 * 60),
-        )),
-        // The live DID minter is the real minter, built above.
-        did_minter,
-        // Account/membership reads off the pool; their writes (and all other
-        // private-store writes) flow through the transaction-bound `database`.
-        accounts: std::sync::Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
-        // Commission + changelog reads off the pool (ZMVP-87); the changelog
-        // append is a UnitOfWork view, so it rides `database` like every write.
-        commissions: std::sync::Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
-        changelog: std::sync::Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
-        // ZMVP-88: the v1 local file-entry blob store — a pg `bytea` table behind
-        // the FileStore port. A mock/local implementation until the blob-architecture
-        // walkthrough replaces it (the port keeps the opaque keys valid).
-        files: std::sync::Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
-        database: std::sync::Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
-        pool,
-    };
-    // ZMVP-86 (ruling E12): the deadline sweeper — the crate's first background
-    // task. A tokio interval driving the pure `sweep_deadlines(now)` policy on
-    // the wall clock; each sweep is one unit of work (mark Late + append the
-    // system changelog entry, atomically), so a crash or failure between ticks
-    // loses nothing — the next tick re-sweeps whatever still stands lapsed.
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),
         // The sweeper takes a Postgres advisory lock for single-writer leader election
