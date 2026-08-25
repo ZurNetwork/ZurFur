@@ -4,10 +4,7 @@
 //! outside world — the OAuth handshake with the PDS — is the `Authenticator` port,
 //! so this drives the real HTTP stack, routing, session layer, provisioning, and
 //! session→User resolution without a network or a database.
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend};
-use api::{AppState, Config, Environment};
+use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -22,41 +19,15 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     let addr = listener.local_addr().expect("local addr");
 
     // Hold a handle to the shared backend so we can introspect it after the flow.
-    let backend = MemBackend::new();
-    let state = AppState {
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        database: backend.database(),
-        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        // No route exercised here touches the database, so a lazy (never-connected)
-        // pool keeps the test free of a container.
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "e2ealice.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(
+                Did::new(did.to_string()),
+                "e2ealice.bsky.social",
+            ))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

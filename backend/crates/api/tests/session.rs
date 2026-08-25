@@ -6,8 +6,8 @@
 //! storage tech (`PgSessionStore` is exercised in adapter-pg's own tests).
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::{MemAuthenticator, MemProfileSource};
+use api::AppState;
 use async_trait::async_trait;
 use domain::{
     elements::{did::Did, profile::Profile},
@@ -72,36 +72,16 @@ async fn serve(auth: Arc<dyn Authenticator>, source: Arc<MemProfileSource>) -> S
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        // No route here touches Postgres, so a lazy (never-connected) pool keeps the
-        // test free of a container.
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth,
-        users: backend.user_store(),
-        profile_source: source,
-        profile_cache: backend.profile_cache(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        database: backend.database(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    // `auth`/`source` are supplied per-call (a `FailingAuthenticator`, or a
+    // profile source poisoned via `set_unreachable`), so the shared fixture is
+    // built for its config/pool/stores and then overridden with them.
+    let test_support::runtime::MemRuntime { mut runtime, .. } =
+        test_support::runtime::mem(&Did::new(DID.to_string()))
+            .public_url(format!("http://{addr}"))
+            .build();
+    runtime.auth = auth;
+    runtime.profile_source = source;
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
