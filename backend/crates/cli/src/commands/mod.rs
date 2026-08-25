@@ -4,4 +4,5 @@
 //! land with the Engineer's operation tickets under epic ZMVP-199.
 
 pub mod health;
+pub mod migrate;
 pub mod session;

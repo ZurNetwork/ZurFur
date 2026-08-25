@@ -78,8 +78,11 @@ pub enum Command {
 /// booting anything (it must work when the stack is broken).
 #[derive(Debug, Subcommand)]
 pub enum BackendCommand {
-    /// Probe the database the way `GET /health` does.
+    /// Probe the database the way `GET /health` does (reports the schema
+    /// state; never refuses on it).
     Health,
+    /// Apply pending migrations — the ONLY way the CLI changes the schema.
+    Migrate,
     /// The acting identity: `login`, `logout`, `whoami`.
     Session {
         #[command(subcommand)]
@@ -125,6 +128,7 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
         Command::Backend(command) => {
             let identity_path = identity::default_path()?;
             let runtime = connect(cli.config_dir).await?;
+            require_current_schema(&runtime, &command).await?;
             let value = dispatch(&runtime, &identity_path, command).await?;
             Ok(Output::json(value, format))
         }
@@ -143,7 +147,42 @@ pub async fn dispatch(
 ) -> Result<serde_json::Value, CliError> {
     match command {
         BackendCommand::Health => commands::health::run(runtime).await,
+        BackendCommand::Migrate => commands::migrate::run(runtime).await,
         BackendCommand::Session { op } => commands::session::run(runtime, identity_path, op).await,
+    }
+}
+
+/// The schema-drift gate (ZMVP-206, Engineer ruling: option B): a command
+/// that acts on data refuses a database whose applied migrations are behind
+/// the embedded set, ahead of it, or has no ledger at all — so the CLI never runs against
+/// a schema it wasn't built for and never migrates by accident. `migrate` is
+/// exempt (it is the fix); `health` is exempt (it reports the state instead).
+pub async fn require_current_schema(
+    runtime: &Runtime,
+    command: &BackendCommand,
+) -> Result<(), CliError> {
+    if matches!(command, BackendCommand::Migrate | BackendCommand::Health) {
+        return Ok(());
+    }
+    let status = adapter_pg::schema_status(&runtime.pool)
+        .await
+        .map_err(|e| CliError::infra("service_unavailable", format!("schema check failed: {e}")))?;
+    match status {
+        adapter_pg::SchemaStatus::Current => Ok(()),
+        adapter_pg::SchemaStatus::Behind { pending } => Err(CliError::infra(
+            "service_unavailable",
+            format!("schema is {pending} migration(s) behind — run `zurfur migrate`"),
+        )),
+        adapter_pg::SchemaStatus::Unknown => Err(CliError::infra(
+            "service_unavailable",
+            "database has no schema yet — run `zurfur migrate`",
+        )),
+        adapter_pg::SchemaStatus::Ahead { unknown } => Err(CliError::infra(
+            "service_unavailable",
+            format!(
+                "schema has {unknown} migration(s) this build does not know — upgrade `zurfur`"
+            ),
+        )),
     }
 }
 

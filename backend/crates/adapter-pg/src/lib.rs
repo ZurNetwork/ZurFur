@@ -54,7 +54,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use sqlx::SqlSafeStr;
-use sqlx::migrate::{Migration, MigrationType, Migrator};
+use sqlx::migrate::{Migrate as _, Migration, MigrationType, Migrator};
 use sqlx::postgres::PgPoolOptions;
 
 /// The driver error a pool connect can fail with — re-exported so a
@@ -193,6 +193,83 @@ pub fn migrator() -> Migrator {
         migrations: Cow::Owned(migrations),
         ..Migrator::DEFAULT
     }
+}
+
+/// Where the database's applied migrations stand against the embedded set —
+/// the one drift check both drivers read (ZMVP-206). `api` migrates on boot
+/// and never asks; the CLI asks before every command and refuses to act on a
+/// database that is not [`Current`](SchemaStatus::Current), so schema changes
+/// there happen only through an explicit `zurfur migrate`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaStatus {
+    /// Every embedded migration is applied.
+    Current,
+    /// The ledger exists but `pending` embedded migrations are not applied.
+    Behind { pending: usize },
+    /// The ledger records `unknown` versions this binary does not embed — a
+    /// newer build migrated it. Refused like `Behind`: the fix is a newer
+    /// binary, never `migrate` (which would also refuse — sqlx rejects a
+    /// ledger it cannot account for).
+    Ahead { unknown: usize },
+    /// No migration ledger at all — a bare database.
+    Unknown,
+}
+
+/// Compare the applied-migrations ledger (`_sqlx_migrations`) with the
+/// embedded set. Read-only: it never creates the ledger table (that is the
+/// migrator's job on first run), which is how a bare database reads as
+/// [`SchemaStatus::Unknown`] rather than being touched.
+pub async fn schema_status(pool: &PgPool) -> Result<SchemaStatus, sqlx::Error> {
+    let migrator = migrator();
+    let ledger_exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(format!("public.{}", migrator.table_name))
+        .fetch_one(pool)
+        .await?;
+    if !ledger_exists {
+        return Ok(SchemaStatus::Unknown);
+    }
+    let mut conn = pool.acquire().await?;
+    let applied = conn.list_applied_migrations(&migrator.table_name).await?;
+    let applied_versions: std::collections::HashSet<i64> =
+        applied.iter().map(|m| m.version).collect();
+    let embedded_versions: std::collections::HashSet<i64> =
+        EMBEDDED_MIGRATIONS.iter().map(|(v, _, _)| *v).collect();
+    let unknown = applied_versions.difference(&embedded_versions).count();
+    if unknown > 0 {
+        return Ok(SchemaStatus::Ahead { unknown });
+    }
+    let pending = embedded_versions.difference(&applied_versions).count();
+    if pending == 0 {
+        Ok(SchemaStatus::Current)
+    } else {
+        Ok(SchemaStatus::Behind { pending })
+    }
+}
+
+/// Apply every pending embedded migration and report how many ran and the
+/// latest embedded version. The CLI's `migrate`; `api` uses [`migrate`].
+pub async fn migrate_reporting(pool: &PgPool) -> Result<MigrationReport, sqlx::Error> {
+    let before = match schema_status(pool).await? {
+        SchemaStatus::Behind { pending } => pending,
+        SchemaStatus::Unknown => EMBEDDED_MIGRATIONS.len(),
+        SchemaStatus::Current | SchemaStatus::Ahead { .. } => 0,
+    };
+    migrator().run(pool).await?;
+    let latest = EMBEDDED_MIGRATIONS.last().map(|(v, _, _)| *v);
+    let report = MigrationReport {
+        applied: before,
+        version: latest,
+    };
+    Ok(report)
+}
+
+/// What [`migrate_reporting`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationReport {
+    /// Migrations applied by this run (`0` when already current).
+    pub applied: usize,
+    /// The latest embedded migration version — the schema the binary expects.
+    pub version: Option<i64>,
 }
 
 /// Liveness probe: `true` when a trivial `SELECT 1` round-trips within 2s.

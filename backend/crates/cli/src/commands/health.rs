@@ -10,8 +10,10 @@ use serde_json::json;
 
 use crate::CliError;
 
-/// Probe the pool. `{"status":"ok","database":"up","latency_ms":N}` on
-/// success; otherwise a `service_unavailable` infrastructure problem (the
+/// Probe the pool. `{"status":"ok","database":"up","schema":"current"|
+/// "behind"|"ahead"|"unknown","latency_ms":N}` on success — `health` reports the
+/// schema state where every other command refuses it (ZMVP-206); otherwise a
+/// `service_unavailable` infrastructure problem (the
 /// API's own code for a down dependency — one vocabulary, Engineer ruling
 /// 2026-08-24) whose `detail` says the pool exists but the database did not
 /// answer in time, as opposed to the runtime's connect failure.
@@ -25,9 +27,22 @@ pub async fn run(runtime: &Runtime) -> Result<serde_json::Value, CliError> {
             "the database did not answer the health query within its timeout",
         ));
     }
+    let schema = match adapter_pg::schema_status(&runtime.pool).await {
+        Ok(adapter_pg::SchemaStatus::Current) => "current",
+        Ok(adapter_pg::SchemaStatus::Behind { .. }) => "behind",
+        Ok(adapter_pg::SchemaStatus::Ahead { .. }) => "ahead",
+        Ok(adapter_pg::SchemaStatus::Unknown) => "unknown",
+        Err(error) => {
+            // Reported as `unknown` (health describes, it does not refuse),
+            // but never silently: the cause goes to stderr.
+            tracing::warn!(%error, "schema status could not be read");
+            "unknown"
+        }
+    };
     let report = json!({
         "status": "ok",
         "database": "up",
+        "schema": schema,
         "latency_ms": latency_ms,
     });
     Ok(report)
