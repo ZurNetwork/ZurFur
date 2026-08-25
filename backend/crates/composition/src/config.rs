@@ -12,6 +12,18 @@ use figment::{
 };
 use serde::Deserialize;
 
+/// The environment variable naming the config profile (`dev`/`stg`/`prod`).
+pub const PROFILE_ENV: &str = "ZURFUR_ENV";
+/// The environment variable overriding the config directory.
+pub const CONFIG_DIR_ENV: &str = "ZURFUR_CONFIG_DIR";
+/// The one un-prefixed variable, shared with sqlx tooling.
+pub const DATABASE_URL_ENV: &str = "DATABASE_URL";
+/// The prefix every other `Config` field answers to (`ZURFUR_<FIELD>`).
+pub const ENV_PREFIX: &str = "ZURFUR_";
+/// `ENV_PREFIX` + [`Config::did_key_root_key`] — named because every harness
+/// that boots a runtime has to set it.
+pub const ROOT_KEY_ENV: &str = "ZURFUR_DID_KEY_ROOT_KEY";
+
 /// The deployment profile, selected by `ZURFUR_ENV` (`dev` → [`DEV`]). The only
 /// behavioral fork it drives today is cookie security: [`STG`] and [`PROD`] set
 /// the session cookie `Secure` (HTTPS-only) in `main`, while [`DEV`] leaves it
@@ -252,17 +264,17 @@ impl Config {
     /// run from a different CWD. A deployed binary points elsewhere via
     /// `ZURFUR_CONFIG_DIR` or the explicit argument.
     pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, Box<figment::Error>> {
-        let profile = std::env::var("ZURFUR_ENV").unwrap_or_else(|_| "dev".into());
+        let profile = std::env::var(PROFILE_ENV).unwrap_or_else(|_| "dev".into());
 
         let config_dir = config_dir
-            .or_else(|| std::env::var_os("ZURFUR_CONFIG_DIR").map(PathBuf::from))
+            .or_else(|| std::env::var_os(CONFIG_DIR_ENV).map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config")));
         let profile_file = config_dir.join(format!("{profile}.toml"));
 
         Figment::new()
             .merge(Toml::file(profile_file))
-            .merge(Env::raw().only(&["DATABASE_URL"]))
-            .merge(Env::prefixed("ZURFUR_"))
+            .merge(Env::raw().only(&[DATABASE_URL_ENV]))
+            .merge(Env::prefixed(ENV_PREFIX))
             .extract()
             .map_err(Box::new)
     }

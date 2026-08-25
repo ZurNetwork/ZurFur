@@ -57,6 +57,9 @@ use sqlx::SqlSafeStr;
 use sqlx::migrate::{Migration, MigrationType, Migrator};
 use sqlx::postgres::PgPoolOptions;
 
+/// The driver error a pool connect can fail with — re-exported so a
+/// composition root can name it without a `sqlx` dependency of its own.
+pub use sqlx::Error as SqlxError;
 /// Re-export of sqlx's connection pool so the composition root and the adapter
 /// types share one `PgPool` type without `api` depending on sqlx directly. Every
 /// `Pg*` repo in this crate is built from one of these (see their `new`).

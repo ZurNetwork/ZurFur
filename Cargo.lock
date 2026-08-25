@@ -889,6 +889,7 @@ dependencies = [
  "dotenvy",
  "serde",
  "serde_json",
+ "test-support",
  "tokio",
  "tracing",
  "tracing-subscriber",

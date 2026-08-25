@@ -21,5 +21,8 @@
 mod config;
 mod runtime;
 
-pub use config::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, ensure_custody_hardened};
-pub use runtime::{Runtime, transaction};
+pub use config::{
+    CONFIG_DIR_ENV, Config, DATABASE_URL_ENV, ENV_PREFIX, EXAMPLE_DEV_ROOT_KEY, Environment,
+    PROFILE_ENV, ROOT_KEY_ENV, ensure_custody_hardened,
+};
+pub use runtime::{ConnectError, Runtime, transaction};

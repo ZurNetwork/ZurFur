@@ -32,3 +32,6 @@ dotenvy = { workspace = true }
 assert_cmd = { workspace = true }
 # In-process harness: the port bag over the in-memory fakes.
 adapter-mem = { path = "../adapter-mem" }
+# A real throwaway Postgres for the commands that must prove a live probe.
+test-support = { path = "../test-support" }
+tokio = { workspace = true }

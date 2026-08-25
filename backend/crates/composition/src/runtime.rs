@@ -170,15 +170,23 @@ impl Runtime {
     /// pg-backed store.
     ///
     /// Caveats: fails — and the driver must not run — if the pool cannot
-    /// connect, `public_url` is not a parseable URI, the root key is not
-    /// base64, or the custody guard refuses the configuration. The error
-    /// messages never echo the secrets themselves.
+    /// connect ([`ConnectError::Database`]), or `public_url` is not a
+    /// parseable URI, the root key is not base64, or the custody guard refuses
+    /// the configuration ([`ConnectError::Setup`]). The error messages never
+    /// echo the secrets themselves.
     ///
     /// References: DESIGN "Domains and Applications"; ZMVP-200.
-    pub async fn connect(config: Config) -> anyhow::Result<Self> {
-        let pool = adapter_pg::connect(&config.database_url).await?;
+    pub async fn connect(config: Config) -> Result<Self, ConnectError> {
+        let pool = adapter_pg::connect(&config.database_url)
+            .await
+            .map_err(ConnectError::Database)?;
         tracing::info!("database pool established");
+        Self::wire(config, pool).map_err(ConnectError::Setup)
+    }
 
+    /// The adapter wiring over an already-connected pool — the part of
+    /// [`connect`](Runtime::connect) that is pure construction.
+    fn wire(config: Config, pool: PgPool) -> anyhow::Result<Self> {
         let redirect_uri =
             Uri::parse(format!("{}/signin-callback", config.public_url)).map_err(|(e, uri)| {
                 anyhow::anyhow!("invalid public_url, cannot build redirect URI ({uri}): {e}")
@@ -223,5 +231,35 @@ impl Runtime {
             pool,
         };
         Ok(runtime)
+    }
+}
+
+/// Why [`Runtime::connect`] refused to boot. Split so a driver can tell "the
+/// database is unreachable" (a transient, operator-facing condition) from a
+/// misconfiguration.
+#[derive(Debug)]
+pub enum ConnectError {
+    /// The Postgres pool could not connect to [`Config::database_url`].
+    Database(adapter_pg::SqlxError),
+    /// The configuration is unusable: bad `public_url`, bad root key, or the
+    /// custody guard refused it.
+    Setup(anyhow::Error),
+}
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectError::Database(e) => write!(f, "database unreachable: {e}"),
+            ConnectError::Setup(e) => write!(f, "runtime setup failed: {e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConnectError::Database(e) => Some(e),
+            ConnectError::Setup(e) => Some(e.as_ref()),
+        }
     }
 }
