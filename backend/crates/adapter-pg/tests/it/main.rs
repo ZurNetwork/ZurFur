@@ -27,5 +27,6 @@ mod key_store;
 mod no_bare_pool_writes;
 mod plc_operation_log;
 mod profile_cache;
+mod schema_status;
 mod session_store;
 mod single_binary_guard;
