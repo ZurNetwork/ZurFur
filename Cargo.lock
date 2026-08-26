@@ -195,6 +195,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "async-trait",
  "axum",
  "chrono",
@@ -217,6 +218,17 @@ dependencies = [
  "tower-sessions",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "domain",
+ "test-support",
+ "tokio",
  "uuid",
 ]
 
@@ -882,6 +894,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "assert_cmd",
  "chrono",
  "clap",

@@ -148,14 +148,15 @@
     {
       "key": "ZMVP-205",
       "summary": "application layer landing zone",
-      "phase": "ruled-first-engineer-lane",
+      "phase": "slice-1-pr-open",
       "next_action": "RULED 2026-08-24: new `application` crate, plain async fn use cases + domain error enums; api = routing only; cli calls the same fns. Blueprint = me + create_account. FIRST in the epic — blocks 204 and all 41 operation commands. Engineer builds (worksheet-tutorial offered); Claude sweeps per module after.",
       "pr": null,
-      "branch": null,
+      "branch": "feature/zmvp-205-application-me",
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T22:45:00-06:00"
+      "updated": "2026-08-24T22:45:00-06:00",
+      "next": "Slice 1 (crate + me) built by Claude on the Engineer's ask 2026-08-25 → PR #191 (stacked on #190). Slice 2 create_account = Engineer's. Jira In Progress."
     },
     {
       "key": "ZMVP-206",
@@ -172,9 +173,9 @@
     },
     {
       "key": "ZMVP-207",
-      "phase": "building",
+      "phase": "pr-open",
       "branch": "feature/zmvp-207-shared-mem-runtime",
-      "next": "Ruling 8 = YES (2026-08-25). test_support::runtime::mem() written + CLI harness ported; Builder sweeping the 33 api spawn_app fixtures; then gate → /prepare-pr."
+      "next": "PR #190 open 2026-08-25 (→ main), Copilot requested, Jira In Review. #191 stacks on it."
     }
   ],
   "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend→Rust/Leptos) was REVERTED by the Engineer 2026-08-09 — the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED — flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]].",
