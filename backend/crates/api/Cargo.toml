@@ -16,6 +16,8 @@ adapter-pg = { path = "../adapter-pg" }
 composition = { path = "../composition" }
 # The use-case layer both drivers call (ZMVP-205).
 application = { path = "../application" }
+# The shared leaf crate (global build-time settings) — the one thing every layer may consume.
+shared = { path = "../shared" }
 axum = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }

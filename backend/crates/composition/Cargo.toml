@@ -9,6 +9,8 @@ edition = "2024"
 # construction — `tests/no_http_deps.rs` guards it (ZMVP-200).
 [dependencies]
 domain = { path = "../domain" }
+# The transaction orchestrator `Runtime::transaction` delegates to.
+application = { path = "../application" }
 adapter-pg = { path = "../adapter-pg" }
 adapter-atproto = { path = "../adapter-atproto" }
 figment = { workspace = true }

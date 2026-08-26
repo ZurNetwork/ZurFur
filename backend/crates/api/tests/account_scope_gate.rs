@@ -104,7 +104,7 @@ async fn seed_foreign_account(backend: &MemBackend, owner_did: &str, handle: &st
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("{owner_did}:acct")),
-        Handle::try_new(handle).expect("valid handle"),
+        handle.parse::<Handle>().expect("valid handle"),
         "Host Studio".parse::<AccountName>().expect("valid name"),
         Utc::now(),
     );

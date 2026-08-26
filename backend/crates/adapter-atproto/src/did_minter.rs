@@ -398,7 +398,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn handle() -> Handle {
-        Handle::try_new("alice.zurfur.app").unwrap()
+        "alice.zurfur.app".parse::<Handle>().unwrap()
     }
 
     /// A directory that records the DID it was asked to submit, then fails — to
@@ -703,7 +703,7 @@ mod tests {
     }
 
     fn new_handle() -> Handle {
-        Handle::try_new("bob.zurfur.app").unwrap()
+        "bob.zurfur.app".parse::<Handle>().unwrap()
     }
 
     /// The fields of one appended record, as [`RecordingOpLog`] stores them.

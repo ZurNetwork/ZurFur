@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use application::user::{Me, MeError};
+use application::user::{MeError, MeQuery, MeResult};
 use clap::Subcommand;
 use composition::Runtime;
 use serde::Serialize;
@@ -41,11 +41,11 @@ pub struct Whoami {
     avatar_url: Option<String>,
 }
 
-impl From<Me> for Whoami {
+impl From<MeResult> for Whoami {
     /// The `GET /me` projection rule: a resolved profile contributes its
     /// handle + optionals; no profile degrades to the bare DID.
-    fn from(me: Me) -> Self {
-        let did = me.user.did.to_string();
+    fn from(me: MeResult) -> Self {
+        let did = me.did.to_string();
         match me.profile {
             Some(profile) => Whoami {
                 did,
@@ -85,11 +85,14 @@ pub async fn run(
         SessionOp::Logout => logout(identity_path),
         SessionOp::Whoami => {
             let principal = Principal::resolve(runtime, identity_path).await?;
+            let query = MeQuery {
+                user_id: principal.user.id,
+            };
             let me = application::user::me(
+                query,
                 &*runtime.users,
                 &*runtime.profile_cache,
                 &*runtime.profile_source,
-                principal.user.id,
             )
             .await
             .map_err(|e| match e {

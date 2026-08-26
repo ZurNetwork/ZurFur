@@ -175,7 +175,7 @@ async fn migration_backfills_one_identity_per_projection_row() {
         "the DID joins back from the band"
     );
     let resolved = store
-        .find_did_by_handle(&Handle::try_new("early.zurfur.app").unwrap())
+        .find_did_by_handle(&"early.zurfur.app".parse::<Handle>().unwrap())
         .await
         .expect("resolve");
     assert_eq!(
@@ -394,7 +394,7 @@ async fn account_create_is_atomic_with_its_identity() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new(account_did.to_string()),
-        Handle::try_new("atomic.zurfur.app").unwrap(),
+        "atomic.zurfur.app".parse::<Handle>().unwrap(),
         "Atomic Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
@@ -452,7 +452,7 @@ async fn handle_collision_discards_the_interned_identity() {
         .unwrap();
     uow.commit().await.unwrap();
 
-    let contested = Handle::try_new("contested.zurfur.app").unwrap();
+    let contested = "contested.zurfur.app".parse::<Handle>().unwrap();
     let (first, first_membership) = Account::open(
         owner.id,
         Did::new("did:plc:first-claimant".to_string()),
@@ -563,7 +563,7 @@ async fn provisioning_an_accounts_did_is_a_typed_conflict() {
     let (account, membership) = Account::open(
         owner.id,
         Did::new(account_did.to_string()),
-        Handle::try_new("typedconflict.zurfur.app").unwrap(),
+        "typedconflict.zurfur.app".parse::<Handle>().unwrap(),
         "Typed Conflict".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
