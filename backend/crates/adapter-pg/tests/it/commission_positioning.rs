@@ -63,7 +63,7 @@ async fn seed_account(pool: &PgPool, owner_did: &str, handle: &str) -> AccountId
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("did:plc:acct-{handle}")),
-        Handle::try_new(handle).expect("handle"),
+        handle.parse::<Handle>().expect("handle"),
         "PG Studio".parse::<AccountName>().expect("name"),
         Utc::now(),
     );

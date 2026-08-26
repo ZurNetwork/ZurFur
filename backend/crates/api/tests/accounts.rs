@@ -326,7 +326,7 @@ async fn a_non_owner_member_cannot_delete() {
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new("did:plc:ownedacct".to_string()),
-        Handle::try_new("owned.zurfur.app").unwrap(),
+        "owned.zurfur.app".parse::<Handle>().unwrap(),
         "Not Yours".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
@@ -782,7 +782,7 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
 
     // Seed a tombstoned account holding `gone.zurfur.app` (no soft-delete write path
     // exists yet, so insert it directly — the mem mirror of an UPDATE deleted_at).
-    let reserved = domain::elements::handle::Handle::try_new("gone.zurfur.app").unwrap();
+    let reserved = "gone.zurfur.app".parse::<Handle>().unwrap();
     backend.seed_soft_deleted_account(&Did::new("did:plc:tombstoned".to_string()), &reserved);
 
     // The resolver does not serve a tombstoned handle.
@@ -911,7 +911,7 @@ async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &st
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new("did:plc:rankacct".to_string()),
-        Handle::try_new("ranked.zurfur.app").unwrap(),
+        "ranked.zurfur.app".parse::<Handle>().unwrap(),
         "Ranked Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );

@@ -56,7 +56,7 @@ pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
 /// assert_eq!(name.as_str(), "Acme Studio"); // trimmed
 ///
 /// assert!("   ".parse::<AccountName>().is_err()); // empty after trim
-/// assert!(AccountName::try_from("x".repeat(121)).is_err()); // too long
+/// assert!("x".repeat(121).parse::<AccountName>().is_err()); // too long
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountName(String);
@@ -96,11 +96,13 @@ impl AccountName {
     }
 }
 
-impl TryFrom<String> for AccountName {
-    type Error = AccountNameError;
+/// The std parsing door: `"…".parse::<AccountName>()?` — the one validating
+/// constructor (ruling R6: `FromStr` for string parsing): trim first, then
+/// check the bounds above.
+impl std::str::FromStr for AccountName {
+    type Err = AccountNameError;
 
-    /// Validate and wrap a name: trim first, then check the bounds above.
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         StringBuilder::new(raw)
             .trimmed()
             .non_empty()
@@ -116,21 +118,11 @@ impl TryFrom<String> for AccountName {
                     // most conservative existing variant rather than panic.
                     debug_assert!(
                         false,
-                        "AccountName's TryFrom chain never calls no_control; ControlCharacter is unreachable"
+                        "AccountName's FromStr chain never calls no_control; ControlCharacter is unreachable"
                     );
                     AccountNameError::Empty
                 }
             })
-    }
-}
-
-/// The std parsing door: `"…".parse::<AccountName>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
-impl std::str::FromStr for AccountName {
-    type Err = AccountNameError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::try_from(raw.to_owned())
     }
 }
 
@@ -194,7 +186,7 @@ impl Account {
     /// let (account, membership) = Account::open(
     ///     owner,
     ///     Did::new("did:plc:example".to_string()),
-    ///     Handle::try_new("acme.zurfur.app").unwrap(),
+    ///     "acme.zurfur.app".parse::<Handle>().unwrap(),
     ///     "Acme Studio".parse::<AccountName>().unwrap(),
     ///     Utc::now(),
     /// );

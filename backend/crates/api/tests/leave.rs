@@ -130,7 +130,7 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
     let (account, owner_membership) = Account::open(
         host.id,
         Did::new("did:plc:hostacct".to_string()),
-        Handle::try_new("host.zurfur.app").unwrap(),
+        "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );

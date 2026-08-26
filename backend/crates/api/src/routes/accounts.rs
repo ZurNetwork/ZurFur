@@ -18,6 +18,9 @@
 //! References: ZMVP-14 through ZMVP-21, ZMVP-32, ZMVP-47; DESIGN/Account,
 //! DESIGN/Roles; DD "User as Actor & On-Demand Accounts" (26247170).
 
+use application::account::{
+    AccountError, AccountPorts, CreateAccountCommand, CreateAccountResult, is_zurfur_namespace,
+};
 use axum::{
     Json, Router,
     extract::{FromRequestParts, Path, State, rejection::JsonRejection},
@@ -25,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
 };
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName, ListingScope},
     did::Did,
@@ -37,6 +40,7 @@ use domain::elements::{
 };
 use domain::ports::{DidBelongsToAnotherActor, HandleTaken, UnitOfWork};
 use serde::{Deserialize, Serialize};
+use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW, HANDLE_QUARANTINE_WINDOW};
 use tower_sessions::Session;
 use uuid::Uuid;
 
@@ -195,43 +199,6 @@ impl FromRequestParts<AppState> for AccountRole {
     }
 }
 
-/// The light anti-abuse ceiling on handle changes per account within
-/// [`handle_change_window`] (DD "Account Handle Change Flow" `27852802` §3 — Bluesky's
-/// ~10-per-5-minutes spirit: a burst throttle, **not** a long cooldown, since the
-/// anti-impersonation weight lives on the quarantine, not the cadence). A build-time
-/// number the DD leaves to implementation.
-const HANDLE_CHANGE_LIMIT: i64 = 10;
-
-/// The rolling window [`HANDLE_CHANGE_LIMIT`] is counted over (DD `27852802` §3).
-fn handle_change_window() -> Duration {
-    Duration::minutes(5)
-}
-
-/// How long a vacated `*.zurfur.app` handle stays reserved (quarantined) to the account
-/// that left it before it frees for anyone else (DD `27852802` §4) — the
-/// anti-impersonation knob, a build-time number the DD leaves to implementation.
-fn handle_quarantine_window() -> Duration {
-    Duration::days(30)
-}
-
-/// Whether `handle` is in the Zurfur-issued namespace (a subdomain of `handle_domain`)
-/// rather than a brought (BYO) domain. Quarantine reserves this namespace only, and v1
-/// ships the *change* flow for it only — a BYO target needs bidirectional
-/// verify-before-commit that isn't built yet (DD `27852802` §4/§6).
-///
-/// `handle.as_str()` is already normalized (lowercase, no trailing dot) by
-/// [`Handle::try_new`]; the configured `handle_domain` is not, so we normalize it the
-/// same way before comparing — otherwise a mixed-case or trailing-dot domain (via
-/// config/env) would misclassify a Zurfur handle as BYO and silently disable both the
-/// quarantine and the change flow. Mirrors `handle_from_host` in `routes/wellknown.rs`.
-fn in_zurfur_namespace(handle: &Handle, handle_domain: &str) -> bool {
-    let domain = handle_domain
-        .trim()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    handle.as_str().ends_with(&format!(".{domain}"))
-}
-
 /// `GET /accounts` — every **live** account the signed-in visitor holds a role
 /// in (ZMVP-157; frontend enablement for ZMVP-152 AC1) — **not** owned-only:
 /// gaining a role is how a user joins an account on this platform
@@ -284,27 +251,24 @@ async fn list_accounts(
     Ok(response)
 }
 
-/// Founds a new Account for the signed-in visitor and makes them its Owner
-/// (ZMVP-14: "User creates an Account and becomes its Owner"). Onboarding
-/// *sequencing* — when to prompt, how to nudge a user who has none — is a frontend
-/// concern; this endpoint is the capability the frontend calls. An account is a
-/// sovereign entity, so founding first mints the account's own `did:plc` (the live
-/// `RealDidMinter`: generates rotation keys, signs an identity-only genesis
-/// operation, custodies the keys, and submits to a — no-op in v1 — directory).
-/// That mint is kept off the sign-in critical path precisely because it is a
-/// fallible, key-generating step. The account and the founder's Owner membership are then
-/// persisted together in one private-store transaction — never a cross-store dual
-/// write. Per DESIGN/Account a user may own several accounts, so this founds a fresh
-/// one on every call rather than being idempotent.
+/// `POST /accounts`: found a new Account for the signed-in visitor and make
+/// them its Owner (ZMVP-14). The endpoint's role is to decode the request,
+/// validate the name and handle at the domain layer, and call
+/// [`application::account::create_account`] — which orchestrates the DID
+/// minting, the quarantine check, and the persisted account + founder membership.
+/// Onboarding *sequencing* — when to prompt, how to nudge a user who has none —
+/// is a frontend concern; this endpoint is the capability the frontend calls.
 ///
-/// The caller must supply a name and a handle. Examples:
-/// - `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }` → `201 { "id", "did",
-///   "handle", "name" }`
-/// - missing/malformed body (e.g. no `handle`) → `422` (`invalid_request`), nothing minted
-/// - a blank name → `422` (`invalid_request`), nothing minted
-/// - a malformed/reserved/punycode handle → `422` (`invalid_request`), nothing minted
-/// - a handle already claimed by a live **or tombstoned** account → `409`
-///   (`handle_taken`), nothing minted
+/// The caller must supply a name and a handle. The handler returns:
+/// - `{ "name": "Acme Studio", "handle": "acme.zurfur.app" }` → `201 { "id",
+///   "did", "handle", "name" }`
+/// - missing/malformed body or blank name/malformed handle → `422` (`invalid_request`),
+///   nothing minted
+/// - handle already claimed by a live or tombstoned account → `409` (`handle_taken`),
+///   nothing minted
+///
+/// See [`application::account::create_account`] for the full logic and
+/// quarantine rules (DD "Account Handle Change Flow" `27852802`).
 async fn create_account(
     State(state): State<AppState>,
     session: Session,
@@ -321,80 +285,64 @@ async fn create_account(
     // rejects; ZMVP-48/45, DD/24870914 §6).
     let Json(body) =
         body.map_err(|_| Problem::invalid_request("A name and handle are required."))?;
-    let name = AccountName::try_from(body.name)
+    let name = body
+        .name
+        .parse::<AccountName>()
         .map_err(|err| Problem::invalid_request(err.to_string()))?;
-    let handle =
-        Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
+    let handle = body
+        .handle
+        .parse::<Handle>()
+        .map_err(|err| Problem::invalid_request(err.to_string()))?;
 
-    // Fast path: reject a handle already claimed by a *live* account up front with a
-    // friendly 409 — nothing minted. This can't see a handle reserved by a
-    // soft-deleted account, nor win against a concurrent claim; the global unique
-    // index (mapped to `HandleTaken` below) is the authoritative backstop for both.
-    if state.accounts.find_did_by_handle(&handle).await?.is_some() {
-        return Err(Problem::handle_taken());
-    }
-
-    // A handle a *different* account vacated recently is quarantined to them for a
-    // window — a squatter must not be able to found a fresh account on a just-freed
-    // identity (DD 27852802 §4). Both handle-claim sites (this and the change flow)
-    // honor the quarantine, so the reservation can't be sidestepped by founding instead
-    // of renaming. Only the Zurfur namespace is quarantined (a BYO domain is the user's
-    // own DNS); `excluding = None` because a founder claims fresh, never reclaiming.
-    if in_zurfur_namespace(&handle, &state.config.handle_domain)
-        && state
-            .accounts
-            .handle_reserved_for_other(&handle, None, Utc::now() - handle_quarantine_window())
-            .await?
-    {
-        return Err(Problem::handle_taken());
-    }
-
-    // Mint the account's sovereign DID before touching the private store. The real
-    // minter generates the account's rotation keys, signs an identity-only genesis
-    // operation binding `alsoKnownAs = at://<handle>`, custodies the keys, and
-    // submits the operation. A mint failure aborts with nothing persisted; the
-    // client may retry.
-    let did = state.did_minter.mint(&handle).await.map_err(|_| {
-        Problem::service_unavailable(
+    let command = CreateAccountCommand {
+        actor: user.id,
+        name,
+        handle,
+    };
+    let founded = application::account::create_account(
+        command,
+        account_ports(&state),
+        &state.config.handle_domain,
+        Utc::now(),
+    )
+    .await
+    .map_err(|err| match err {
+        AccountError::HandleTaken => Problem::handle_taken(),
+        AccountError::Minter(_) => Problem::service_unavailable(
             "We couldn't mint an identity for the account. Please try again.",
-        )
+        ),
+        AccountError::Store(err) => Problem::from(err),
     })?;
 
-    // The founding invariant: the account and the creator's Owner membership are
-    // minted together (`Account::open`) and persisted atomically.
-    let (account, owner) = Account::open(user.id, did, handle, name, chrono::Utc::now());
-    // One unit of work: the account row and the founder's Owner membership commit
-    // together or not at all — reached through the transaction-bound write view. A
-    // handle collision surfaces as `HandleTaken` (the global unique index — live or
-    // tombstoned, DD 23003138); map it to a 409 rather than a 500. On any error
-    // `state.transaction` rolls the unit back and preserves *this* error (never the
-    // rollback's), so the 409 downcast below still sees `HandleTaken`.
-    // The `async move` closure owns what it writes, so `account`/`owner` move in
-    // and the committed `account` is handed back out for the response body.
-    let account = match state
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.accounts().create(&account, &owner).await?;
-            Ok(account)
-        })
-        .await
-    {
-        Ok(account) => account,
-        Err(err) => {
-            if err.downcast_ref::<HandleTaken>().is_some() {
-                return Err(Problem::handle_taken());
-            }
-            return Err(err.into());
-        }
-    };
-
-    let founded = CreateAccountResponse {
-        id: account.id.to_string(),
-        did: account.did.as_str().to_owned(),
-        handle: account.handle.as_str().to_owned(),
-        name: account.name.as_str().to_owned(),
-    };
-    let response = (StatusCode::CREATED, Json(founded)).into_response();
+    let response = (
+        StatusCode::CREATED,
+        Json(CreateAccountResponse::from(founded)),
+    )
+        .into_response();
     Ok(response)
+}
+
+/// The `POST /accounts` projection of the founded account: every field a string on
+/// the wire.
+impl From<CreateAccountResult> for CreateAccountResponse {
+    fn from(founded: CreateAccountResult) -> Self {
+        CreateAccountResponse {
+            id: founded.account_id.to_string(),
+            did: founded.did.as_str().to_owned(),
+            handle: founded.handle.as_str().to_owned(),
+            name: founded.name.as_str().to_owned(),
+        }
+    }
+}
+
+/// The account use cases' ports, borrowed off the runtime bag — the one place this
+/// crate spells out which of the bag's ports `application::account` reaches.
+fn account_ports(state: &AppState) -> AccountPorts<'_> {
+    AccountPorts {
+        accounts: &*state.accounts,
+        did_minter: &*state.did_minter,
+        database: &*state.database,
+    }
 }
 
 // Mirror of the `adapter_pg::ACCOUNT_FACT_TABLES` compile guard, placed right beside
@@ -529,7 +477,7 @@ async fn delete_account(
 /// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle after
 /// onboarding (ZMVP-46, DD "Account Handle Change Flow" `27852802`). Owner-only, the
 /// new handle re-validated to the *same* guarantees as the initial claim
-/// ([`Handle::try_new`]), with both resolution halves brought into agreement without a
+/// ([`Handle`]'s `FromStr`), with both resolution halves brought into agreement without a
 /// cross-store transaction.
 ///
 /// The order is the DD's (§7): **the DID document first, the private store second.**
@@ -589,8 +537,10 @@ async fn change_handle(
         ));
     }
 
-    let new =
-        Handle::try_new(body.handle).map_err(|err| Problem::invalid_request(err.to_string()))?;
+    let new = body
+        .handle
+        .parse::<Handle>()
+        .map_err(|err| Problem::invalid_request(err.to_string()))?;
 
     // Changing to the account's own current handle is a no-op: reject it as unusable
     // rather than burn a rate-limit slot and sign a redundant chain op.
@@ -605,7 +555,7 @@ async fn change_handle(
     // persist a handle the user hasn't proved they control) — a capability carved into
     // a follow-up ticket. Migrating *from* a BYO handle *to* a `*.zurfur.app` one is
     // allowed: the target resolves under our control.
-    if !in_zurfur_namespace(&new, &state.config.handle_domain) {
+    if !is_zurfur_namespace(&new, &state.config.handle_domain) {
         return Err(Problem::unsupported_handle(
             "Changing to a brought (non-*.zurfur.app) handle isn't supported yet.",
         ));
@@ -616,7 +566,7 @@ async fn change_handle(
     // Rate limit (DD §3): a light anti-abuse throttle on how often an account renames.
     if state
         .accounts
-        .count_handle_changes_since(account.id, now - handle_change_window())
+        .count_handle_changes_since(account.id, now - HANDLE_CHANGE_WINDOW)
         .await?
         >= HANDLE_CHANGE_LIMIT
     {
@@ -635,7 +585,7 @@ async fn change_handle(
     // the write-time backstop for the tombstoned/race cases the reads can't see.)
     if state
         .accounts
-        .handle_reserved_for_other(&new, Some(account.id), now - handle_quarantine_window())
+        .handle_reserved_for_other(&new, Some(account.id), now - HANDLE_QUARANTINE_WINDOW)
         .await?
     {
         return Err(Problem::handle_taken());
@@ -1497,7 +1447,7 @@ mod tests {
         let (account, membership) = Account::open(
             owner.id,
             Did::new(format!("{owner_did}:acct")),
-            Handle::try_new(handle).expect("valid handle"),
+            handle.parse::<Handle>().expect("valid handle"),
             "Seed Studio".parse::<AccountName>().expect("valid name"),
             Utc::now(),
         );

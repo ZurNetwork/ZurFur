@@ -121,8 +121,8 @@ fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
     Ok(Account {
         id: AccountId::new(id),
         did: Did::new(did),
-        handle: Handle::try_new(handle)?,
-        name: AccountName::try_from(name)?,
+        handle: handle.parse::<Handle>()?,
+        name: name.parse::<AccountName>()?,
         created_at,
         updated_at,
         deleted_at,

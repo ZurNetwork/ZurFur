@@ -1,5 +1,5 @@
-//! The [`Runtime`]: every live port behind one `Clone`-able bag, plus the one
-//! transaction orchestrator every driver shares.
+//! The [`Runtime`]: every live port behind one `Clone`-able bag, plus a
+//! convenience over the application layer's transaction orchestrator.
 //!
 //! Moved from `api::AppState` (ZMVP-200). `api` re-exports it as `AppState`
 //! for its handlers; `cli` drives it directly.
@@ -101,51 +101,11 @@ pub struct Runtime {
     pub did_minter: Arc<dyn DidMinter>,
 }
 
-/// Run `f` inside one private-store transaction — the **one** place in this
-/// crate that orchestrates `begin`/`commit`/`rollback` (DD "Transactions as a
-/// capability" `24150017`). Opens a [`UnitOfWork`](domain::ports::UnitOfWork) via
-/// [`Database::begin`](domain::ports::Database::begin), hands it to `f` as
-/// `&mut dyn UnitOfWork`, then **commits on `Ok`, rolls back on `Err`**: the
-/// closure body *is* the transaction boundary, so a commit can never be
-/// forgotten. Strictly intra-Postgres; never a cross-store dual write.
-///
-/// `pub`, taking a bare `&dyn Database`, so both
-/// [`Runtime::transaction`] (every route) and `api`'s deadline sweeper (which
-/// holds a `Database` handle but no [`Runtime`]) share
-/// this one orchestrator rather than each re-implementing commit/rollback
-/// (ZMVP-111; Engineer ruling on PR #100). `f`'s bound is
-/// [`UnitOfWorkFn`](domain::ports::UnitOfWorkFn) plus explicit `F: Send`/`T: Send`
-/// (the returned future holds both across `.await`s, so `Fut: Send` alone would
-/// not keep a handler future `Send`), not std's `AsyncFnOnce` — see
-/// that trait's doc comment for why (a compiler limitation with higher-ranked
-/// `AsyncFnOnce` bounds, rust-lang/rust#110338).
-pub async fn transaction<T, F>(db: &dyn Database, f: F) -> anyhow::Result<T>
-where
-    F: for<'a> UnitOfWorkFn<'a, T> + Send,
-    T: Send,
-{
-    let mut uow = db.begin().await?;
-    match f(&mut *uow).await {
-        Ok(value) => {
-            uow.commit().await?;
-            Ok(value)
-        }
-        Err(err) => {
-            // The closure's error is the meaningful one (e.g. `HandleTaken` →
-            // 409); a rollback failure must never replace it. The unit is
-            // abandoned either way (an uncommitted transaction also rolls back
-            // on drop), so a rollback error here is secondary and deliberately
-            // not surfaced over `err`.
-            let _ = uow.rollback().await;
-            Err(err)
-        }
-    }
-}
-
 impl Runtime {
     /// Run `f` inside one private-store transaction — the **only** way a route
-    /// reaches a private-store write. Delegates to the crate-level
-    /// [`transaction`] orchestrator over [`self.database`](Runtime::database).
+    /// reaches a private-store write. Delegates to the application layer's
+    /// [`transaction`](application::transaction) orchestrator over
+    /// [`self.database`](Runtime::database).
     ///
     /// The call site reads `state.transaction(async |uow: &mut dyn UnitOfWork| {
     /// … }).await?` — an `async` closure, no `Box::pin`, no `&*state.database`.
@@ -154,7 +114,7 @@ impl Runtime {
         F: for<'a> UnitOfWorkFn<'a, T> + Send,
         T: Send,
     {
-        transaction(&*self.database, f).await
+        application::transaction(&*self.database, f).await
     }
 }
 
