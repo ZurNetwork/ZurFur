@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
+use application::user::{Me, MeError};
 use clap::Subcommand;
 use composition::Runtime;
-use domain::elements::profile::Profile;
 use serde::Serialize;
 
 use crate::{CliError, identity, principal::Principal};
@@ -41,11 +41,12 @@ pub struct Whoami {
     avatar_url: Option<String>,
 }
 
-impl Whoami {
+impl From<Me> for Whoami {
     /// The `GET /me` projection rule: a resolved profile contributes its
     /// handle + optionals; no profile degrades to the bare DID.
-    pub fn project(did: String, profile: Option<Profile>) -> Self {
-        match profile {
+    fn from(me: Me) -> Self {
+        let did = me.user.did.to_string();
+        match me.profile {
             Some(profile) => Whoami {
                 did,
                 handle: Some(profile.handle),
@@ -84,11 +85,18 @@ pub async fn run(
         SessionOp::Logout => logout(identity_path),
         SessionOp::Whoami => {
             let principal = Principal::resolve(runtime, identity_path).await?;
-            let did = principal.user.did;
-            let profile =
-                Profile::resolve_through(&*runtime.profile_cache, &*runtime.profile_source, &did)
-                    .await;
-            let body = Whoami::project(did.to_string(), profile);
+            let me = application::user::me(
+                &*runtime.users,
+                &*runtime.profile_cache,
+                &*runtime.profile_source,
+                principal.user.id,
+            )
+            .await
+            .map_err(|e| match e {
+                MeError::UnknownUser(_) => CliError::domain("not_authenticated", e),
+                MeError::Store(_) => CliError::infra("internal_error", e),
+            })?;
+            let body = Whoami::from(me);
             Ok(serde_json::to_value(body).expect("Whoami serializes"))
         }
     }

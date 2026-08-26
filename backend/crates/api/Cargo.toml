@@ -14,6 +14,8 @@ domain = { path = "../domain" }
 adapter-pg = { path = "../adapter-pg" }
 # The shared composition root: Config + the Runtime port bag (ZMVP-200).
 composition = { path = "../composition" }
+# The use-case layer both drivers call (ZMVP-205).
+application = { path = "../application" }
 axum = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
