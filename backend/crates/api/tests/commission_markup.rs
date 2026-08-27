@@ -406,10 +406,10 @@ async fn adding_markup_changes_no_status() {
         json!({ "title": "Ref sheet", "deadline": past.to_rfc3339() }),
     )
     .await;
-    let marked = api::sweep_deadlines(&*backend.database(), Utc::now())
+    let swept = application::commission::sweep_deadlines(&*backend.database(), Utc::now())
         .await
         .expect("sweep runs");
-    assert_eq!(marked, 1, "the seeded commission is marked Late");
+    assert_eq!(swept.marked_late, 1, "the seeded commission is marked Late");
 
     // And a value on the direction axis, set explicitly (ZMVP-85 machinery).
     let res = client

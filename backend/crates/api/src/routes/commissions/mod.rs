@@ -35,7 +35,7 @@
 //! - [`deadline`] — `PUT`/`DELETE /commissions/{id}/deadline` and
 //!   `PUT`/`DELETE /commissions/{id}/status/deadline` (the deadline envelope
 //!   field and the manual Delayed flag, ZMVP-86; the system half — the Late
-//!   sweeper — lives in [`crate::sweep_deadlines`], not on a route).
+//!   sweeper — lives in [`application::commission::sweep_deadlines`], not on a route).
 //! - [`markup`] — `POST /commissions/{id}/files/{file_id}/markup` (raw,
 //!   strictly-validated annotation onto a file entry, ZMVP-90).
 //!

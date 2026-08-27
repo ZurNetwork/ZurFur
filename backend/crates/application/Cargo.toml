@@ -13,6 +13,8 @@ publish = false
 shared = { path = "../shared" }
 domain = { path = "../domain" }
 anyhow = { workspace = true }
+# Changelog entry payloads are `serde_json::Value` (the domain's own type).
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks

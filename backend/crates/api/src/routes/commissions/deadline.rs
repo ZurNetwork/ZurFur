@@ -9,7 +9,7 @@
 //!   2026-07-05: Delayed is an explicit Participant act, never derived).
 //!
 //! **Late is the system's word**: only the deadline sweeper
-//! ([`crate::sweep_deadlines`]) sets it, and no handler here accepts or erases
+//! ([`application::commission::sweep_deadlines`]) sets it, and no handler here accepts or erases
 //! it — a Participant resolves Late through the deadline itself (extend or
 //! clear). One nullable cell per axis (ruling E29), so exclusivity holds by
 //! construction; the direction axis (ZMVP-85) is separate and the two compose

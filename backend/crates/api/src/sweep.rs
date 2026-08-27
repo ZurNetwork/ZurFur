@@ -1,29 +1,17 @@
-//! The **deadline sweeper** (ZMVP-86, conductor ruling E12): the one place the
-//! system acts on a commission — and the api crate's first background task.
+//! The **deadline sweeper**'s driver half (ZMVP-86, conductor ruling E12): the
+//! wall clock and the leader lock, and nothing else.
 //!
-//! The deadline axis is otherwise entirely Participant-moved (the manual
-//! Delayed flag, the deadline itself); the sweeper's whole authority is: when a
-//! commission's deadline has passed, set **Late** on the deadline axis and say
-//! so in the changelog as a **system entry** (no actor). It is provably scoped
-//! to exactly that — it calls
-//! [`lapsed_deadlines`](domain::ports::CommissionWrites::lapsed_deadlines)
-//! (which already excludes terminal lifecycles, already-Late commissions, and
-//! anything without a deadline — AC4) and
-//! [`set_deadline_status`](domain::ports::CommissionWrites::set_deadline_status)
-//! (scoped to the one deadline-axis column); it holds no handle that could move
-//! a Lifecycle or a direction status.
+//! The policy — what a sweep *does* — moved down to
+//! [`application::commission::sweep_deadlines`] (ZMVP-205): one sweep as of an
+//! injected `now`, in one unit of work. What is left here is what only a driver
+//! can own:
 //!
-//! Two layers, split for determinism:
-//!
-//! - [`sweep_deadlines`] — the pure policy: one sweep **as of an injected
-//!   `now`** (never a wall clock — the `datetime` doctrine), in **one unit of
-//!   work**: scan, mark Late, append each system entry, commit together. Tests
-//!   drive this directly with a chosen instant.
 //! - [`run_deadline_sweeper`] — the wall-clock loop `main` spawns: a tokio
 //!   interval (from [`Config::deadline_sweep_interval_secs`](crate::Config))
-//!   calling [`sweep_deadlines`] with `Utc::now()`, logging failures and
-//!   sweeping again next tick (a failed sweep rolls back whole and is simply
-//!   retried by time).
+//!   calling the use case with `Utc::now()`, logging failures and sweeping again
+//!   next tick (a failed sweep rolls back whole and is simply retried by time).
+//! - [`sweep_pass_as_leader`] — Postgres advisory-lock leader election, so the
+//!   pass is single-writer across api instances.
 //!
 //! Kept a policy over Postgres — no broker, no queue (the ticket's note:
 //! Kafka is a post-MVP horizon).
@@ -32,15 +20,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use adapter_pg::PgPool;
+use application::commission::sweep_deadlines;
 use chrono::Utc;
-use domain::{
-    datetime::DateTimeUtc,
-    elements::commission::{ChangelogEntryKind, NewChangelogEntry},
-    ports::{Database, UnitOfWork},
-};
-use serde_json::json;
-
-use crate::transaction;
+use domain::ports::Database;
 
 /// The Postgres advisory-lock key that gives the deadline sweeper **single-writer
 /// leader election** across api instances (finding 5). Every session/transaction
@@ -49,44 +31,6 @@ use crate::transaction;
 /// added, give it a different key. The value is arbitrary-but-fixed (`0xDEAD_11FE`, a
 /// "deadline" mnemonic).
 const DEADLINE_SWEEP_LOCK_KEY: i64 = 0xDEAD_11FE;
-
-/// Run **one** deadline sweep as of `now` (injected, never read from a wall
-/// clock here — deterministic by construction), returning how many commissions
-/// were marked Late.
-///
-/// One unit of work per sweep (ruling E12): the candidate scan
-/// ([`lapsed_deadlines`](domain::ports::CommissionWrites::lapsed_deadlines) —
-/// deadline passed, not already Late, lifecycle not terminal), each Late mark,
-/// and each matching **system** changelog entry (actor `NULL`, payload naming
-/// the missed `deadline` and the standing flag — `delayed` or null — it
-/// replaced) commit atomically or roll back together, so a marked commission
-/// without its Late entry is unrepresentable (Changelog DD D4). A standing
-/// manual Delayed upgrades to Late here (Engineer ruling 2026-07-05); a
-/// commission already Late is never re-marked or re-logged — the *next* entry
-/// for the same commission takes a fresh deadline miss (extend, then miss
-/// again).
-pub async fn sweep_deadlines(database: &dyn Database, now: DateTimeUtc) -> anyhow::Result<usize> {
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let lapsed = uow.commissions().lapsed_deadlines(now).await?;
-        for lapse in &lapsed {
-            // Log-only: `Late` is derived on lookup and never persisted
-            // (Engineer ruling 2026-07-08). This pass just records the
-            // transition once, so hooks/plugins have an event to consume.
-            let entry = NewChangelogEntry::system(
-                lapse.id,
-                ChangelogEntryKind::Late,
-                json!({
-                    "deadline": lapse.deadline,
-                    "from": lapse.status.map(|s| s.as_str()),
-                }),
-                now,
-            );
-            uow.changelog().append(&entry).await?;
-        }
-        Ok(lapsed.len())
-    })
-    .await
-}
 
 /// The wall-clock sweeper loop — what the composition root spawns
 /// (`tokio::spawn(api::run_deadline_sweeper(database, pool, every))` in `main`;
@@ -146,10 +90,10 @@ async fn sweep_pass_as_leader(
         // Not the leader this tick — leave the lock-holder to sweep; do nothing.
         return Ok(None);
     }
-    let marked = sweep_deadlines(database, Utc::now()).await?;
+    let swept = sweep_deadlines(database, Utc::now()).await?;
     // Release the advisory lock by ending the (write-free) guard transaction.
     guard.rollback().await?;
-    Ok(Some(marked))
+    Ok(Some(swept.marked_late))
 }
 
 #[cfg(test)]
