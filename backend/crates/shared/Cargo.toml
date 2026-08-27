@@ -1,0 +1,12 @@
+[package]
+publish = false
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+# The one leaf crate every layer — `domain` included — may consume: global
+# configuration and, later, whatever cross-cutting vocabulary has no owner.
+# Depends on nothing in the workspace. Runtime/env configuration is
+# `composition::Config`, not this crate. (Engineer ruling 2026-08-26.)
+[dependencies]
+chrono = { workspace = true }

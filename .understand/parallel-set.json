@@ -2,7 +2,7 @@
   "uow": "trw07",
   "logbook": null,
   "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
-  "updated": "2026-08-24T16:00:00-06:00",
+  "updated": "2026-08-26T17:30:00-06:00",
   "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
   "tickets": [
     {
@@ -148,15 +148,15 @@
     {
       "key": "ZMVP-205",
       "summary": "application layer landing zone",
-      "phase": "slice-1-pr-open",
+      "phase": "slice-2-pr-open",
       "next_action": "RULED 2026-08-24: new `application` crate, plain async fn use cases + domain error enums; api = routing only; cli calls the same fns. Blueprint = me + create_account. FIRST in the epic — blocks 204 and all 41 operation commands. Engineer builds (worksheet-tutorial offered); Claude sweeps per module after.",
-      "pr": null,
+      "pr": 192,
       "branch": "feature/zmvp-205-application-me",
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T22:45:00-06:00",
-      "next": "Slice 1 (crate + me) built by Claude on the Engineer's ask 2026-08-25 → PR #191 (stacked on #190). Slice 2 create_account = Engineer's. Jira In Progress."
+      "updated": "2026-08-26T17:30:00-06:00",
+      "next": "Slice 1 (crate + me) PR #191 (→ 207's branch). Slice 2 PR #192 (→ feature/zmvp-205-application-me) 2026-08-26: settings leaf crate, DTO convention (Query/Command in, flat Result of VALUES out), application::transaction, create_account use case + tests; ship gates applied (code+security+critique Opus, document), Copilot requested; full suite green. ACs all met. Engineer forks open (on the PR): settings linked by 7 unused crates; settings vs Config fields; change_handle migration (next slice, ensure_handle_claimable); MeResult.user_id unrendered; orphan did:plc on lost founding race (ticket); no CLI account command yet. Owed: design-sync of Domains and Applications 11763713 (application/settings/composition crates, api no longer the composition root) + a DD for the application-layer convention (offered). Then: merge 191 → 192 → feature→main rubber-stamp, Jira Done."
     },
     {
       "key": "ZMVP-206",

@@ -210,6 +210,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "shared",
  "sqlx",
  "tempfile",
  "test-support",
@@ -226,7 +227,10 @@ name = "application"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "chrono",
  "domain",
+ "shared",
  "test-support",
  "tokio",
  "uuid",
@@ -951,6 +955,7 @@ dependencies = [
  "adapter-atproto",
  "adapter-pg",
  "anyhow",
+ "application",
  "base64",
  "domain",
  "figment",
@@ -4948,6 +4953,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

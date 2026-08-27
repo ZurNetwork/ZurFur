@@ -90,7 +90,7 @@ async fn seed_account(backend: &MemBackend, owner_did: &str, handle: &str) -> Ac
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("{owner_did}:acct")),
-        Handle::try_new(handle).expect("valid handle"),
+        handle.parse::<Handle>().expect("valid handle"),
         "Seed Studio".parse::<AccountName>().expect("valid name"),
         Utc::now(),
     );
