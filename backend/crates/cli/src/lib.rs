@@ -18,14 +18,16 @@
 //!   `2` usage (clap's own) · `3` infrastructure (config, database, network).
 //! - problem `code`s reuse the API's vocabulary (`api/src/problem.rs`, DD
 //!   23592962) wherever the same refusal exists there — `not_authenticated`,
-//!   `service_unavailable`, `internal_error` — and add CLI-only codes
+//!   `invalid_request`, `handle_taken`, `service_unavailable`,
+//!   `internal_error` — and add CLI-only codes
 //!   (`config`, `identity_*`, `not_implemented`) where the API has none.
 //!
 //! **Where commands go**: [`Command`] is the root; each domain namespace is a
 //! module under [`commands`] exposing its own `clap::Subcommand` enum and a
-//! `run` fn over the [`Runtime`]. `health` and `session` live here; `account`
-//! and `commission` are the Engineer's operation tickets — add a module, a
-//! variant on [`Command`], and an arm in [`dispatch`]. A command that acts as
+//! `run` fn over the [`Runtime`]. `health`, `session` and `account` (opened
+//! with `create`, ZMVP-205) live here; the rest of the operation commands
+//! (epic ZMVP-199) follow the same recipe — add a module, a variant on
+//! [`Command`], and an arm in [`dispatch`]. A command that acts as
 //! someone resolves its [`principal::Principal`] first — the one shared path
 //! from the identity file to a `User` (ZMVP-203).
 
@@ -88,6 +90,11 @@ pub enum BackendCommand {
         #[command(subcommand)]
         op: commands::session::SessionOp,
     },
+    /// Accounts: `create`.
+    Account {
+        #[command(subcommand)]
+        op: commands::account::AccountOp,
+    },
 }
 
 /// Boot `tracing` to **stderr** under `RUST_LOG` (default `warn`), so stdout
@@ -149,6 +156,7 @@ pub async fn dispatch(
         BackendCommand::Health => commands::health::run(runtime).await,
         BackendCommand::Migrate => commands::migrate::run(runtime).await,
         BackendCommand::Session { op } => commands::session::run(runtime, identity_path, op).await,
+        BackendCommand::Account { op } => commands::account::run(runtime, identity_path, op).await,
     }
 }
 
