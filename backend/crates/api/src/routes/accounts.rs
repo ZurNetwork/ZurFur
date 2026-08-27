@@ -18,9 +18,7 @@
 //! References: ZMVP-14 through ZMVP-21, ZMVP-32, ZMVP-47; DESIGN/Account,
 //! DESIGN/Roles; DD "User as Actor & On-Demand Accounts" (26247170).
 
-use application::account::{
-    AccountError, AccountPorts, CreateAccountCommand, CreateAccountResult, is_zurfur_namespace,
-};
+use application::account::{AccountError, AccountPorts, CreateAccountCommand, CreateAccountResult};
 use axum::{
     Json, Router,
     extract::{FromRequestParts, Path, State, rejection::JsonRejection},
@@ -555,7 +553,7 @@ async fn change_handle(
     // persist a handle the user hasn't proved they control) — a capability carved into
     // a follow-up ticket. Migrating *from* a BYO handle *to* a `*.zurfur.app` one is
     // allowed: the target resolves under our control.
-    if !is_zurfur_namespace(&new, &state.config.handle_domain) {
+    if !new.is_in_namespace(&state.config.handle_domain) {
         return Err(Problem::unsupported_handle(
             "Changing to a brought (non-*.zurfur.app) handle isn't supported yet.",
         ));
@@ -1406,7 +1404,7 @@ mod tests {
                 public_url: "http://127.0.0.1".to_string(),
                 database_url: "postgres://unused".to_string(),
                 log_level: "info".to_string(),
-                handle_domain: "zurfur.app".to_string(),
+                handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
                 did_key_root_key: "unused-in-tests".to_string(),
                 plc_directory_endpoint: "https://plc.directory".to_string(),
                 plc_directory_submit: false,

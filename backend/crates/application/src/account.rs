@@ -5,7 +5,7 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         did::Did,
-        handle::Handle,
+        handle::{Handle, HandleDomain},
         user::UserId,
     },
     ports::{AccountStore, Database, DidMinter, HandleTaken, UnitOfWork},
@@ -84,33 +84,6 @@ pub struct CreateAccountResult {
     pub name: AccountName,
 }
 
-/// Whether `handle` is in the Zurfur-issued namespace (a subdomain of
-/// `handle_domain`) rather than a brought (BYO) domain. Quarantine reserves
-/// this namespace only, and v1 ships the *change* flow for it only — a BYO
-/// target needs bidirectional verify-before-commit that isn't built yet
-/// (DD `27852802` §4/§6). The `/.well-known/atproto-did` resolver in `api`
-/// classifies hosts by the same [`normalized_handle_domain`].
-///
-/// `handle.as_str()` is already normalized (lowercase, no trailing dot) by
-/// [`Handle`]'s `FromStr`; the configured `handle_domain` is not, so it goes
-/// through [`normalized_handle_domain`] before comparing — otherwise a
-/// mixed-case or trailing-dot domain (via config/env) would misclassify a
-/// Zurfur handle as BYO and silently disable the quarantine.
-pub fn is_zurfur_namespace(handle: &Handle, handle_domain: &str) -> bool {
-    let domain = normalized_handle_domain(handle_domain);
-    handle.as_str().ends_with(&format!(".{domain}"))
-}
-
-/// The configured handle namespace the way [`Handle`] normalizes one:
-/// trimmed, no leading or trailing dot, lowercase. The ONE normalizer for
-/// `Config::handle_domain` — every consumer that compares a handle against
-/// the namespace (the claim checks here, the `/.well-known/atproto-did`
-/// resolver in `api`) goes through it, so a stray-cased or trailing-dot
-/// value can never make the two disagree.
-pub fn normalized_handle_domain(handle_domain: &str) -> String {
-    handle_domain.trim().trim_matches('.').to_ascii_lowercase()
-}
-
 /// `POST /accounts`: found a new Account for `actor` and make them its Owner
 /// (ZMVP-14). Per DESIGN/Account a user may own several accounts, so this
 /// founds a fresh one on every call rather than being idempotent.
@@ -126,7 +99,7 @@ pub fn normalized_handle_domain(handle_domain: &str) -> String {
 pub async fn create_account(
     command: CreateAccountCommand,
     ports: AccountPorts<'_>,
-    handle_domain: &str,
+    handle_domain: &HandleDomain,
     now: DateTimeUtc,
 ) -> Result<CreateAccountResult, AccountError> {
     let live_claim = ports
@@ -138,7 +111,7 @@ pub async fn create_account(
         return Err(AccountError::HandleTaken);
     }
 
-    if is_zurfur_namespace(&command.handle, handle_domain) {
+    if command.handle.is_in_namespace(handle_domain) {
         let quarantined = ports
             .accounts
             .handle_reserved_for_other(&command.handle, None, now - HANDLE_QUARANTINE_WINDOW)
@@ -177,42 +150,4 @@ pub async fn create_account(
         handle: account.handle,
         name: account.name,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn handle(raw: &str) -> Handle {
-        raw.parse().expect("a valid handle")
-    }
-
-    #[test]
-    fn normalizer_strips_case_whitespace_and_dots() {
-        assert_eq!(normalized_handle_domain(" Zurfur.App. "), "zurfur.app");
-        assert_eq!(normalized_handle_domain(".zurfur.app"), "zurfur.app");
-        assert_eq!(normalized_handle_domain("zurfur.app"), "zurfur.app");
-    }
-
-    #[test]
-    fn zurfur_namespace_is_a_subdomain_of_the_configured_domain() {
-        assert!(is_zurfur_namespace(
-            &handle("alice.zurfur.app"),
-            "zurfur.app"
-        ));
-        assert!(is_zurfur_namespace(
-            &handle("alice.zurfur.app"),
-            "Zurfur.App."
-        ));
-        assert!(is_zurfur_namespace(
-            &handle("alice.zurfur.app"),
-            ".zurfur.app"
-        ));
-        assert!(!is_zurfur_namespace(
-            &handle("alice.example.com"),
-            "zurfur.app"
-        ));
-        // The apex is not a member of its own namespace; a look-alike suffix isn't either.
-        assert!(!is_zurfur_namespace(&handle("notzurfur.app"), "zurfur.app"));
-    }
 }
