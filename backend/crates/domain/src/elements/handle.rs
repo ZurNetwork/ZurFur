@@ -1,4 +1,5 @@
-//! The [`Handle`] — a validated, normalized atproto-style Account handle.
+//! The [`Handle`] — a validated, normalized atproto-style Account handle — and
+//! the [`HandleDomain`] it may live under.
 //!
 //! An Account's handle is the public, human-typeable name it is reached by. Per
 //! the DD *The Account Handle* (DESIGN/24870914 §6) it is user-chosen at
@@ -13,6 +14,11 @@
 //! segment / length rules, the `xn--` punycode reject (ZMVP-48,
 //! DD/26050561), and the Zurfur reserved-label reject (ZMVP-45). One gate, not
 //! many: every consumer inherits the whole rule set by building a `Handle`.
+//!
+//! The configured namespace itself is [`HandleDomain`], parsed once at `Config`
+//! load, and membership in it is [`Handle::is_in_namespace`] — one normalizer, so
+//! the claim checks and the `/.well-known/atproto-did` resolver can never
+//! disagree about what the Zurfur namespace is.
 //!
 //! It mirrors the [`crate::elements::account::AccountName`] idiom exactly — a
 //! `String` newtype with a validating `FromStr`, an `as_str()`, a typed error
@@ -330,6 +336,126 @@ impl Handle {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether this handle lives **inside** `domain`'s issued namespace — i.e. it
+    /// is a strict subdomain of it (`alice.zurfur.app` is; the bare apex
+    /// `zurfur.app` is not; the look-alike `notzurfur.app` is not).
+    ///
+    /// This is the one namespace test the whole system shares. The claim checks
+    /// (quarantine reservation, the v1 Zurfur-only handle *change* flow — DD
+    /// `27852802` §4/§6) and the `/.well-known/atproto-did` resolver both ask it,
+    /// so they can never disagree about what the namespace is: both sides are
+    /// already normalized — the handle by [`Handle`]'s `FromStr`, the domain by
+    /// [`HandleDomain`]'s.
+    ///
+    /// ```
+    /// use domain::elements::handle::{Handle, HandleDomain};
+    ///
+    /// let zurfur: HandleDomain = "zurfur.app".parse().unwrap();
+    /// assert!("alice.zurfur.app".parse::<Handle>().unwrap().is_in_namespace(&zurfur));
+    /// assert!(!"alice.example.com".parse::<Handle>().unwrap().is_in_namespace(&zurfur));
+    /// // A look-alike that only *ends* with the domain's text is not a member:
+    /// // membership needs a real label boundary.
+    /// assert!(!"notzurfur.app".parse::<Handle>().unwrap().is_in_namespace(&zurfur));
+    /// ```
+    pub fn is_in_namespace(&self, domain: &HandleDomain) -> bool {
+        let suffix = format!(".{}", domain.as_str());
+        self.0.ends_with(&suffix)
+    }
+}
+
+/// The DNS namespace Zurfur issues Account handles under (`zurfur.app`), as
+/// deployment configures it — normalized the same way a [`Handle`] is.
+///
+/// It exists so the namespace is **parsed once, at `Config` load**, instead of a
+/// raw `String` being re-normalized (or forgotten) at each call site: the claim
+/// checks and the well-known resolver then physically cannot disagree about what
+/// the namespace is. A stray `" Zurfur.App. "` from config or env would otherwise
+/// misclassify every Zurfur handle as brought (BYO) and silently disable both the
+/// quarantine reservation and the resolver.
+///
+/// Mirrors the [`Handle`] idiom exactly: a `String` newtype whose `FromStr` is the
+/// only constructor, plus [`as_str`](HandleDomain::as_str), [`AsRef<str>`] and
+/// [`Display`](std::fmt::Display).
+///
+/// ```
+/// use domain::elements::handle::HandleDomain;
+///
+/// let domain: HandleDomain = "  Zurfur.App.  ".parse().unwrap();
+/// assert_eq!(domain.as_str(), "zurfur.app");
+/// assert_eq!(domain.to_string(), "zurfur.app");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandleDomain(String);
+
+/// Why a string was rejected as a [`HandleDomain`]. One variant per failure
+/// class, mirroring [`HandleError`].
+///
+/// ```
+/// use domain::elements::handle::{HandleDomain, HandleDomainError};
+///
+/// assert_eq!("  . ".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandleDomainError {
+    /// Empty once normalized. Example: `""`, `"   "`, or `"."`.
+    Empty,
+}
+
+impl std::fmt::Display for HandleDomainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HandleDomainError::Empty => write!(f, "the handle domain must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for HandleDomainError {}
+
+impl FromStr for HandleDomain {
+    type Err = HandleDomainError;
+
+    /// Validate and wrap a configured handle namespace.
+    ///
+    /// The input is **normalized** the way [`Handle`]'s `FromStr` normalizes a
+    /// handle — trim surrounding whitespace, lowercase — plus stripping any
+    /// leading *and* trailing dots, so `".zurfur.app"`, `"zurfur.app."` and
+    /// `"zurfur.app"` are the same namespace. An empty result is rejected: an
+    /// empty namespace would make every handle look like a member.
+    ///
+    /// ```
+    /// use domain::elements::handle::{HandleDomain, HandleDomainError};
+    ///
+    /// assert_eq!(".zurfur.app.".parse::<HandleDomain>().unwrap().as_str(), "zurfur.app");
+    /// assert_eq!("".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+    /// ```
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let normalized = raw.trim().trim_matches('.').to_lowercase();
+        if normalized.is_empty() {
+            return Err(HandleDomainError::Empty);
+        }
+        Ok(Self(normalized))
+    }
+}
+
+impl HandleDomain {
+    /// The normalized namespace string (lowercase, trimmed, no leading or
+    /// trailing dot).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for HandleDomain {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for HandleDomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl AsRef<str> for Handle {
@@ -564,6 +690,77 @@ mod tests {
         for v in variants {
             assert!(!v.to_string().is_empty(), "{v:?} rendered an empty message");
         }
+    }
+
+    // ---- The configured namespace (HandleDomain) -------------------------
+    //
+    // Moved down from `application::account` (DD 55836674 follow-up): the
+    // namespace normalizer and the membership test are Handle policy, so they
+    // live with the Handle.
+
+    fn domain(raw: &str) -> HandleDomain {
+        raw.parse().expect("a valid handle domain")
+    }
+
+    #[test]
+    fn domain_normalizer_strips_case_whitespace_and_dots() {
+        assert_eq!(domain(" Zurfur.App. ").as_str(), "zurfur.app");
+        assert_eq!(domain(".zurfur.app").as_str(), "zurfur.app");
+        assert_eq!(domain("zurfur.app").as_str(), "zurfur.app");
+    }
+
+    #[test]
+    fn domain_rejects_an_empty_value() {
+        // An empty namespace would make every handle look like a member.
+        assert_eq!("".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+        assert_eq!("   ".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+        assert_eq!("...".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+    }
+
+    #[test]
+    fn domain_error_renders_a_message() {
+        assert!(!HandleDomainError::Empty.to_string().is_empty());
+    }
+
+    #[test]
+    fn namespace_membership_is_a_strict_subdomain() {
+        let alice = "alice.zurfur.app"
+            .parse::<Handle>()
+            .expect("a valid handle");
+        assert!(alice.is_in_namespace(&domain("zurfur.app")));
+        // The same namespace however deployment spelled it.
+        assert!(alice.is_in_namespace(&domain("Zurfur.App.")));
+        assert!(alice.is_in_namespace(&domain(".zurfur.app")));
+        // A brought (BYO) domain is not a member.
+        let byo = "alice.example.com"
+            .parse::<Handle>()
+            .expect("a valid handle");
+        assert!(!byo.is_in_namespace(&domain("zurfur.app")));
+    }
+
+    #[test]
+    fn namespace_membership_refuses_the_apex_and_look_alikes() {
+        let zurfur = domain("zurfur.app");
+        // The apex is not a member of its own namespace. `zurfur.app` is not a
+        // constructible Handle (the reserved-label gate), so a differently-named
+        // deployment domain stands in for the shape.
+        let apex_domain = domain("example.com");
+        let apex = "example.com".parse::<Handle>().expect("a valid handle");
+        assert!(!apex.is_in_namespace(&apex_domain));
+        // A look-alike that ends with the domain's *text* but not on a label
+        // boundary is refused — the leading dot is the boundary.
+        for look_alike in ["notzurfur.app", "evil-zurfur.app", "xzurfur.app"] {
+            let handle = look_alike.parse::<Handle>().expect("a valid handle");
+            assert!(
+                !handle.is_in_namespace(&zurfur),
+                "{look_alike} must not be in the zurfur.app namespace"
+            );
+        }
+        // A handle that merely *contains* the domain mid-string is refused too.
+        let embedded = "zurfur.app.evil.com"
+            .parse::<Handle>()
+            .expect("a valid handle");
+        assert!(!embedded.is_in_namespace(&zurfur));
     }
 
     // ---- RFC-9457 claim-site mapping — FULFILLED (ZMVP-44) ----

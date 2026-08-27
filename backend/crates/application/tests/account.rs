@@ -6,10 +6,14 @@ use application::account::{AccountError, AccountPorts, CreateAccountCommand, cre
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::user::{User, UserId};
-use domain::elements::{did::Did, handle::Handle, role::Role};
+use domain::elements::{did::Did, handle::Handle, handle::HandleDomain, role::Role};
 use domain::ports::{Database, DidMinter, UnitOfWork};
 
-const HANDLE_DOMAIN: &str = "zurfur.app";
+/// The configured Zurfur handle namespace, the way `Config::handle_domain`
+/// hands it to the use case: already parsed at load.
+fn handle_domain() -> HandleDomain {
+    "zurfur.app".parse().expect("a valid handle domain")
+}
 
 fn command(actor: UserId, handle: &str) -> CreateAccountCommand {
     CreateAccountCommand {
@@ -43,7 +47,7 @@ async fn founding_persists_the_account_and_seats_the_founder_as_owner() {
     let founded = create_account(
         command(user.id, "acme.zurfur.app"),
         ports,
-        HANDLE_DOMAIN,
+        &handle_domain(),
         Utc::now(),
     )
     .await
@@ -82,7 +86,7 @@ async fn a_live_handle_is_taken() {
     create_account(
         command(user.id, "acme.zurfur.app"),
         ports(),
-        HANDLE_DOMAIN,
+        &handle_domain(),
         Utc::now(),
     )
     .await
@@ -90,7 +94,7 @@ async fn a_live_handle_is_taken() {
     let error = create_account(
         command(user.id, "acme.zurfur.app"),
         ports(),
-        HANDLE_DOMAIN,
+        &handle_domain(),
         Utc::now(),
     )
     .await
@@ -133,7 +137,7 @@ async fn a_mint_failure_persists_nothing() {
     let error = create_account(
         command(user.id, "acme.zurfur.app"),
         ports,
-        HANDLE_DOMAIN,
+        &handle_domain(),
         Utc::now(),
     )
     .await
