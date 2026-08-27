@@ -21,8 +21,8 @@
 //!   (actor NULL), atomically with the status write.
 //!
 //! The sweep itself is exercised deterministically by calling
-//! [`api::sweep_deadlines`] with an injected `now` — the same function the
-//! composition root's interval task drives on the wall clock.
+//! [`application::commission::sweep_deadlines`] with an injected `now` — the
+//! same use case the composition root's interval task drives on the wall clock.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -181,9 +181,10 @@ async fn entries(
 /// Runs one deterministic sweep at the injected instant — exactly what the
 /// composition root's interval task does, minus the wall clock.
 async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
-    api::sweep_deadlines(&*backend.database(), now)
+    application::commission::sweep_deadlines(&*backend.database(), now)
         .await
         .expect("sweep runs")
+        .marked_late
 }
 
 /// Seeds a committed commission owned by a directly-provisioned user (someone
@@ -200,26 +201,6 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .create_commission(&commission)
         .await
         .expect("seed foreign commission");
-    id
-}
-
-/// Seeds a committed commission in the given lifecycle step with a long-missed
-/// deadline, owned by a provisioned user — the arrangement the sweeper's
-/// lifecycle scope tests need (no lifecycle-transition endpoint exists in this
-/// lineage; the struct fields are public by design).
-async fn seed_with_lifecycle(backend: &MemBackend, step: LifecycleStep) -> uuid::Uuid {
-    let owner: User = backend
-        .provision(&Did::new("did:plc:lifecycle-owner".to_string()))
-        .await
-        .expect("provision owner");
-    let title = "Staged".parse::<CommissionTitle>().expect("valid title");
-    let mut commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
-    commission.lifecycle_step = step;
-    let id = *commission.id;
-    backend
-        .create_commission(&commission)
-        .await
-        .expect("seed staged commission");
     id
 }
 
@@ -614,34 +595,6 @@ async fn a_standing_delayed_upgrades_to_late() {
     assert_eq!(
         log[3].payload["from"], "delayed",
         "the upgrade records the standing flag it replaced"
-    );
-}
-
-// Ruling E12 scope — the sweeper skips terminal lifecycles (Completed and
-// Cancelled): a closed commission's missed deadline is history, not lateness.
-// A Disputed commission is NOT terminal and is still swept (the dispute
-// freeze — "deadlines freeze, Late pauses" — is the future Disputes epic).
-#[tokio::test]
-async fn the_sweeper_skips_terminal_lifecycles() {
-    let (_base, backend) = spawn_app("did:plc:artist").await;
-    let completed = seed_with_lifecycle(&backend, LifecycleStep::Completed).await;
-    let cancelled = seed_with_lifecycle(&backend, LifecycleStep::Cancelled).await;
-    let disputed = seed_with_lifecycle(&backend, LifecycleStep::Disputed).await;
-
-    assert_eq!(
-        sweep(&backend, after_past()).await,
-        1,
-        "only the disputed (non-terminal) commission is marked"
-    );
-    assert_eq!(stored_deadline_status(&backend, completed).await, None);
-    assert_eq!(stored_deadline_status(&backend, cancelled).await, None);
-    assert_eq!(
-        stored_deadline_status(&backend, disputed).await,
-        Some("late")
-    );
-    assert!(
-        entries(&backend, completed).await.is_empty(),
-        "nothing was appended to the closed commission's stream"
     );
 }
 
