@@ -27,7 +27,6 @@ use axum::{
 };
 use tower_http::set_header::SetResponseHeaderLayer;
 
-pub(crate) use application::transaction;
 /// The composition root is shared with the CLI (ZMVP-200): the runtime
 /// [`Config`], the custody guard, and the live-port bag — re-exported so this
 /// crate's handlers and tests keep naming the bag `AppState`.
@@ -46,7 +45,7 @@ mod sweep;
 /// `google.protobuf.Timestamp` field (`extern_path`'d there by `contract-gen`).
 pub mod wire_time;
 
-pub use sweep::{run_deadline_sweeper, sweep_deadlines};
+pub use sweep::run_deadline_sweeper;
 
 /// Session key under which the recognized visitor's `UserId` is stored. The
 /// session carries our own key, not the DID: subsequent requests resolve
