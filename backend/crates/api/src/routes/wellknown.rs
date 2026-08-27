@@ -17,7 +17,6 @@
 //! owner's own domain, never here — the `handle_domain` suffix gate makes that
 //! explicit (a request for any other authority is not ours to answer).
 
-use application::account::normalized_handle_domain;
 use axum::{
     Router,
     extract::State,
@@ -25,7 +24,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use domain::elements::handle::Handle;
+use domain::elements::handle::{Handle, HandleDomain};
 
 use crate::AppState;
 
@@ -39,13 +38,13 @@ pub(crate) fn wellknown_router() -> Router<AppState> {
 /// Parse a request `Host` into the account [`Handle`] it addresses, or `None` if
 /// the host is not ours to resolve.
 ///
-/// The host must be a **subdomain** of `handle_domain` (it ends with
-/// `.{handle_domain}`) — the apex itself, or any other authority, yields `None`, so
-/// we only ever answer for handles in the Zurfur-issued namespace. Any optional
-/// `:port` is dropped and the whole host is normalized/validated through the shared
-/// [`Handle`] gate, so a punycode or otherwise malformed host resolves to `None`
-/// (and is answered `404`) rather than reaching the store.
-fn handle_from_host(host: &str, handle_domain: &str) -> Option<Handle> {
+/// The host must be a **subdomain** of `handle_domain` — the apex itself, or any
+/// other authority, yields `None`, so we only ever answer for handles in the
+/// Zurfur-issued namespace. Any optional `:port` is dropped and the whole host is
+/// normalized/validated through the shared [`Handle`] gate, so a punycode or
+/// otherwise malformed host resolves to `None` (and is answered `404`) rather than
+/// reaching the store.
+fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Handle> {
     // Drop an optional `:port`. A handle authority is a DNS name (no colon in the
     // host itself), so at most one colon is allowed. Anything with more — an IPv6
     // literal like `[::1]:443`, or a malformed `host:port:garbage` — is not a valid
@@ -58,17 +57,15 @@ fn handle_from_host(host: &str, handle_domain: &str) -> Option<Handle> {
     // Drop a single FQDN-root trailing dot so `alice.zurfur.app.` resolves the same
     // as `alice.zurfur.app` — consistent with `Handle`'s `FromStr`'s normalization.
     let host = host.strip_suffix('.').unwrap_or(host);
-    // Only answer for a subdomain of our handle namespace — never the apex, never a
-    // foreign authority (a BYO-domain handle resolves at its own domain, not here).
-    // The namespace goes through the one shared normalizer so this resolver and the
-    // claim checks in `application::account` can never disagree on what it is.
-    let suffix = format!(".{}", normalized_handle_domain(handle_domain));
-    if !host.to_ascii_lowercase().ends_with(&suffix) {
-        return None;
-    }
     // Normalize + validate the whole host as a handle; a bad one (punycode,
     // reserved label, malformed) is not a resolvable handle.
-    host.parse::<Handle>().ok()
+    let handle = host.parse::<Handle>().ok()?;
+    // Only answer for a subdomain of our handle namespace — never the apex, never a
+    // foreign authority (a BYO-domain handle resolves at its own domain, not here).
+    // Membership is the domain's own test, over a namespace parsed once at config
+    // load, so this resolver and the claim checks in `application::account` can
+    // never disagree on what the namespace is.
+    handle.is_in_namespace(handle_domain).then_some(handle)
 }
 
 /// `GET /.well-known/atproto-did` — resolve a Zurfur-issued handle (carried in the
@@ -108,72 +105,82 @@ async fn atproto_did(State(state): State<AppState>, headers: HeaderMap) -> Respo
 mod tests {
     use super::*;
 
+    /// The configured namespace, the way `Config::handle_domain` now arrives:
+    /// already parsed and normalized.
+    fn domain(raw: &str) -> HandleDomain {
+        raw.parse().expect("a valid handle domain")
+    }
+
     #[test]
     fn resolves_a_subdomain_of_the_handle_domain() {
-        let h = handle_from_host("alice.zurfur.app", "zurfur.app").expect("a valid subdomain");
+        let h =
+            handle_from_host("alice.zurfur.app", &domain("zurfur.app")).expect("a valid subdomain");
         assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]
     fn drops_an_optional_port() {
-        let h = handle_from_host("alice.zurfur.app:443", "zurfur.app").expect("port is dropped");
+        let h = handle_from_host("alice.zurfur.app:443", &domain("zurfur.app"))
+            .expect("port is dropped");
         assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]
     fn normalizes_mixed_case_host() {
-        let h = handle_from_host("Alice.Zurfur.App", "zurfur.app").expect("normalized");
+        let h = handle_from_host("Alice.Zurfur.App", &domain("zurfur.app")).expect("normalized");
         assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]
     fn strips_a_trailing_fqdn_dot() {
-        let h = handle_from_host("alice.zurfur.app.", "zurfur.app").expect("trailing dot dropped");
+        let h = handle_from_host("alice.zurfur.app.", &domain("zurfur.app"))
+            .expect("trailing dot dropped");
         assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]
     fn refuses_the_apex_itself() {
-        assert!(handle_from_host("zurfur.app", "zurfur.app").is_none());
+        assert!(handle_from_host("zurfur.app", &domain("zurfur.app")).is_none());
     }
 
     #[test]
     fn a_trailing_dot_or_cased_handle_domain_still_resolves() {
         // The same normalizer the claim checks use: a config value like
         // `Zurfur.App.` must not silently kill resolution platform-wide.
-        let h = handle_from_host("alice.zurfur.app", "Zurfur.App.").expect("normalized domain");
+        let h = handle_from_host("alice.zurfur.app", &domain("Zurfur.App."))
+            .expect("normalized domain");
         assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]
     fn refuses_a_foreign_authority() {
-        assert!(handle_from_host("alice.example.com", "zurfur.app").is_none());
+        assert!(handle_from_host("alice.example.com", &domain("zurfur.app")).is_none());
         // A look-alike that only contains the domain mid-string is still refused.
-        assert!(handle_from_host("zurfur.app.evil.com", "zurfur.app").is_none());
+        assert!(handle_from_host("zurfur.app.evil.com", &domain("zurfur.app")).is_none());
     }
 
     #[test]
     fn refuses_a_dot_boundary_near_miss() {
         // The suffix gate requires a real label boundary (a leading dot): a host that
         // ends in `-zurfur.app` or `xzurfur.app` is NOT a subdomain of `zurfur.app`.
-        assert!(handle_from_host("evil-zurfur.app", "zurfur.app").is_none());
-        assert!(handle_from_host("notzurfur.app", "zurfur.app").is_none());
+        assert!(handle_from_host("evil-zurfur.app", &domain("zurfur.app")).is_none());
+        assert!(handle_from_host("notzurfur.app", &domain("zurfur.app")).is_none());
     }
 
     #[test]
     fn refuses_a_multi_colon_authority() {
         // `host:port:garbage` is malformed — fail closed rather than take a prefix.
-        assert!(handle_from_host("alice.zurfur.app:443:garbage", "zurfur.app").is_none());
+        assert!(handle_from_host("alice.zurfur.app:443:garbage", &domain("zurfur.app")).is_none());
     }
 
     #[test]
     fn refuses_an_ipv6_authority() {
         // An IPv6 literal is not a handle authority.
-        assert!(handle_from_host("[::1]:443", "zurfur.app").is_none());
+        assert!(handle_from_host("[::1]:443", &domain("zurfur.app")).is_none());
     }
 
     #[test]
     fn refuses_a_punycode_host() {
-        assert!(handle_from_host("xn--80ak6aa92e.zurfur.app", "zurfur.app").is_none());
+        assert!(handle_from_host("xn--80ak6aa92e.zurfur.app", &domain("zurfur.app")).is_none());
     }
 }
