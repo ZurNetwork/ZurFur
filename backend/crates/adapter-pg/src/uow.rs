@@ -11,8 +11,8 @@
 
 use async_trait::async_trait;
 use domain::ports::{
-    AccountRepo, ActorIdentityWrites, ChangelogWrites, CommissionRepo, Database, UnitOfWork,
-    UserWrites,
+    AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionRepo, Database,
+    UnitOfWork, UserWrites, WorkflowWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -21,6 +21,7 @@ use crate::account::PgAccountWrites;
 use crate::actor_identity::PgActorIdentityWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
+use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
 
 /// The PostgreSQL [`Database`] factory: holds the pool and opens one transaction
 /// per [`begin`](Database::begin). It serves no writes itself — those live solely
@@ -95,6 +96,18 @@ impl UnitOfWork for PgUnitOfWork {
     /// (ZMVP-122). No delete exists on it — identity rows are immortal.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         Box::new(PgActorIdentityWrites { conn: &mut self.tx })
+    }
+
+    /// A view of the workflow write surface over this transaction: a card's
+    /// move and the neighbours it displaces land together, or not at all.
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
+        Box::new(PgWorkflowWrites { conn: &mut self.tx })
+    }
+
+    /// A view of the column write surface over this transaction: a rename or a
+    /// removal lands with whatever the board write beside it does.
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
+        Box::new(PgColumnWrites { conn: &mut self.tx })
     }
 
     /// Commit the unit, consuming the handle so it can't be reused. Every write

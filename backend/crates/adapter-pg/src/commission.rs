@@ -10,29 +10,29 @@
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
             CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
             ElementPayload, ElementRow, ElementType, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, Markup, MarkupKey, NewElement, NewSeat, NewSlot, Placement, Seat,
-            SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, SurfaceAddress,
-            SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode, declared_tabs,
-            declares_surface, derive_deadline_status,
+            LifecycleStep, Markup, MarkupKey, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, SurfaceAddress, SurfaceName, TabId,
+            TabName, TabRow, Visibility, VisibilityMode, declared_tabs, declares_surface,
+            derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
         maturity::{Maturity, MaturityRating},
         user::UserId,
+        workflow::{Column, ColumnId, WorkflowId},
     },
     ports::{
-        CommissionReads, CommissionStore, CommissionWrites, ElementNotFound, UnknownSurface,
-        UnknownTab,
+        ColumnStore, CommissionReads, CommissionStore, CommissionWrites, ElementNotFound,
+        UnknownSurface, UnknownTab,
     },
 };
 use sqlx::{PgConnection, PgPool};
 
-use crate::queries::commission as sql;
+use crate::{PgColumnStore, queries::commission as sql};
 
 /// THE FACT REGISTRY (ZMVP-67; Deletion DD `3014657`): the tables whose rows are
 /// commission [`Fact`](domain::elements::commission::Fact)s — evidence that blocks
@@ -60,11 +60,17 @@ pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 /// - `commission_changelog` (ZMVP-87): the commission's own memory. The Changelog
 ///   DD's retention rule — entries hard-delete **only** with the commission itself
 ///   (or legal duty) — is exactly `ON DELETE CASCADE`, not a deletion block.
-/// - `commission_placement` / `commission_current_placement` / `commission_view_grant`
-///   (ZMVP-70): account positioning — the append-only placement log, its cached
-///   current pointer, and the view-grant keys. Commission-owned bookkeeping that
-///   cascades with the commission (Ownership Separation DD `29130754`), never a
-///   fact that blocks its deletion.
+/// - `commission_view_grant` (ZMVP-70): the view-grant keys — a key to see,
+///   commission-side. Commission-owned bookkeeping that cascades with the
+///   commission (Ownership Separation DD `29130754`), never a fact that blocks
+///   its deletion. (`commission_placement` / `commission_current_placement` left
+///   this list when the account-level placement rails were **deleted** — Engineer
+///   ruling 2026-09-10; placement is the board edge below, DD D6.)
+/// - `workflow_column_commission`: one card — a commission's placement on one
+///   account's board, in one list, at one spot. THIS is placement (DD `29130754`
+///   Decision 6, "placement = workflow membership rows"), and it is account-side
+///   view state the commission never knows about, so it cascades with the
+///   commission rather than blocking its deletion.
 /// - `commission_tab` / `commission_element` / `commission_surface_mode`
 ///   (ZMVP-166): the flat composition — the commission's tabs, the elements
 ///   contributed into its surfaces, and the surface modes it has widened. All
@@ -111,9 +117,8 @@ pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_slot",
     "commission_surface_mode",
     "commission_tab",
-    "commission_placement",
-    "commission_current_placement",
     "commission_view_grant",
+    "workflow_column_commission",
 ];
 
 // Tripwire (conductor ruling E18): the constant-`false` body of
@@ -661,42 +666,6 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Append one placement-log row and repoint the current-placement cache to it,
-    /// both on the open transaction (ZMVP-70) — so the cache equals the latest log
-    /// row atomically, never via a second transaction. `RETURNING seq` carries the
-    /// freshly-assigned ordering key straight into the cache upsert, so the two
-    /// always agree on which row is current. Re-placement always appends (the log
-    /// is never rewritten); the cache upsert overwrites on the `commission_id`
-    /// primary key. A bad `commission`/`account` (no such row) fails the FK — the
-    /// store-level backstop for a check the caller settles first.
-    async fn place(
-        &mut self,
-        commission: &CommissionId,
-        account: &AccountId,
-        placed_by: &UserId,
-        at: DateTimeUtc,
-    ) -> anyhow::Result<()> {
-        let seq = sql::place_append(
-            &mut *self.conn,
-            **commission,
-            account.as_str(),
-            placed_by.as_str(),
-            at,
-        )
-        .await?;
-
-        sql::place_repoint_current(
-            &mut *self.conn,
-            **commission,
-            account.as_str(),
-            seq,
-            placed_by.as_str(),
-            at,
-        )
-        .await?;
-        Ok(())
-    }
-
     /// Upsert the grantee's key on the open transaction (ZMVP-70): one row per
     /// (commission, grantee), so re-granting replaces the level ("issuing anew").
     /// The level persists as its stable [`Display`](std::fmt::Display) token. A
@@ -821,25 +790,6 @@ impl CommissionWrites for PgCommissionWrites<'_> {
                 })
             })
             .collect()
-    }
-}
-
-/// Attach the commission id a placement row was queried by, yielding the domain
-/// [`Placement`]. Takes the four row columns directly — the log and
-/// current-pointer queries generate identically-shaped but distinct row types.
-fn to_placement(
-    seq: i64,
-    account_id: String,
-    placed_by: String,
-    placed_at: chrono::DateTime<chrono::Utc>,
-    commission_id: CommissionId,
-) -> Placement {
-    Placement {
-        seq,
-        commission_id,
-        account_id: AccountId::new(Did::new(account_id)),
-        placed_by: UserId::new(Did::new(placed_by)),
-        placed_at,
     }
 }
 
@@ -1132,47 +1082,47 @@ impl CommissionStore for PgCommissionStore {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// The current-placement pointer row (ZMVP-70), or `None` if the commission
-    /// was never placed. Read straight from the denormalized
-    /// `commission_current_placement` cache — kept equal to the latest log row by
-    /// [`place`](CommissionWrites::place).
-    async fn current_placement(
+    /// Which column of `workflow_id` currently holds this commission, or `None`
+    /// if that board does not position it.
+    ///
+    /// Scoped by board on purpose: a commission sits in at most one column **per
+    /// board** but on as many boards as care to position it (Ownership
+    /// Separation DD `29130754` D1/D6), so "the" column of a commission does not
+    /// exist. Delegates to [`PgColumnStore::find_column`] — one board edge, one
+    /// implementation.
+    async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
-    ) -> anyhow::Result<Option<Placement>> {
-        let row = sql::current_placement(&self.pool, **commission).await?;
-        Ok(row.map(|row| {
-            to_placement(
-                row.seq,
-                row.account_id,
-                row.placed_by,
-                row.placed_at,
-                *commission,
-            )
-        }))
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<Column>> {
+        PgColumnStore::new(self.pool.clone())
+            .find_column(workflow_id, commission)
+            .await
     }
 
-    /// The whole placement log in append order (ascending `seq`) — the current
-    /// placement is the last row, the origin the first (ZMVP-70). An unplaced
-    /// commission has an empty log.
-    async fn placement_log(&self, commission: &CommissionId) -> anyhow::Result<Vec<Placement>> {
-        let rows = sql::placement_log(&self.pool, **commission).await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| {
-                to_placement(
-                    row.seq,
-                    row.account_id,
-                    row.placed_by,
-                    row.placed_at,
-                    *commission,
-                )
-            })
-            .collect())
+    /// This commission's index within `column_id`, or `None` if that column does
+    /// not hold it. The card order is a plain integer index; a stored value that
+    /// cannot be a `u8` means row tampering and surfaces as an `Err`, never a
+    /// truncated position.
+    async fn current_position_in_column(
+        &self,
+        commission: &CommissionId,
+        column_id: &ColumnId,
+    ) -> anyhow::Result<Option<u8>> {
+        let Some(position) =
+            crate::queries::column::position_in_column(&self.pool, **column_id, **commission)
+                .await?
+        else {
+            return Ok(None);
+        };
+
+        u8::try_from(position)
+            .map_err(|_| anyhow::anyhow!("stored card position {position} is out of range"))
+            .map(Some)
     }
 
-    /// The [`GrantLevel`] the actor named by `account` holds on `commission`, or
-    /// `None` (ZMVP-70) — addressed by DID, the one column
+    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (ZMVP-70).
+    /// Addressed by DID, the one column
     /// [`grant_view`](CommissionWrites::grant_view) writes. The stored token is
     /// re-validated through [`GrantLevel`]'s [`FromStr`](std::str::FromStr); a
     /// value outside the vocabulary means row tampering and surfaces as an
@@ -1180,9 +1130,9 @@ impl CommissionStore for PgCommissionStore {
     async fn view_grant(
         &self,
         commission: &CommissionId,
-        account: &AccountId,
+        user: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>> {
-        let Some(level) = sql::view_grant(&self.pool, **commission, account.as_str()).await? else {
+        let Some(level) = sql::view_grant(&self.pool, **commission, user.as_str()).await? else {
             return Ok(None);
         };
         level

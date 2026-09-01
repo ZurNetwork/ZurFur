@@ -67,21 +67,26 @@ pub const ACCOUNT_FACT_TABLES: &[&str] = &[];
 ///   that forces one.
 /// - `account_handle_changes` (ZMVP-46): the handle-change audit log — `ON DELETE
 ///   CASCADE`, gone with the account.
-/// - `commission_placement` / `commission_current_placement` (ZMVP-70): the account's
-///   **positioning rails** — where a User-owned commission sits. Each FK onto
-///   `accounts` is `ON DELETE CASCADE`, so account hard-delete **severs** them while
-///   the commission itself survives untouched (Ownership Separation DD `29130754`;
-///   ZMVP-57 AC1). Positioning is environmental — never an account-anchored fact.
+/// - `workflow`: the account's **boards** — its positioning rail. A card on a
+///   board IS a commission's placement (Ownership Separation DD `29130754`
+///   Decision 6, "placement = workflow membership rows, account-side"), so this
+///   is where "where a User-owned commission sits" now lives. The FK onto
+///   `accounts` is `ON DELETE CASCADE`, so account hard-delete **severs** the
+///   boards — and, through their own cascades, every column and card on them —
+///   while the commissions themselves survive untouched (ZMVP-57 AC1).
+///   Positioning is environmental; never an account-anchored fact.
 ///
 /// `commission_view_grant` left this list with the actor re-key (DD `57081857`): a
 /// view grant is issued to a **User** now (Engineer ruling 2026-09-04), so the table
 /// no longer references `accounts` at all and has nothing to be classified against.
+/// `commission_placement` / `commission_current_placement` left it by **deletion**
+/// (Engineer ruling 2026-09-10): the account-level placement rails were the
+/// superseded managing-account log, and placement is a card on a board.
 pub const ACCOUNT_NON_FACT_TABLES: &[&str] = &[
+    "workflow",
     "account_members",
     "account_invitations",
     "account_handle_changes",
-    "commission_placement",
-    "commission_current_placement",
 ];
 
 // Tripwire (ZMVP-57 AC4, mirroring ZMVP-67's commission guard): the constant-`false`
