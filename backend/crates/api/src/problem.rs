@@ -132,6 +132,34 @@ impl Problem {
         )
     }
 
+    /// `404` — no such board. A board is account-side positioning state, so
+    /// this is an ordinary not-found rather than a closed door: a board is only
+    /// reachable past its own account's membership check, which has already
+    /// answered by the time this can be raised.
+    pub fn workflow_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:workflow-not-found",
+            "workflow_not_found",
+            "Workflow not found",
+            404,
+            "No such workflow.",
+        )
+    }
+
+    /// `404` — no such column. The board mirror of
+    /// [`workflow_not_found`](Problem::workflow_not_found): raised before the
+    /// membership check can run (a column is what names the account), so it
+    /// deliberately says only that the column is not there.
+    pub fn column_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:column-not-found",
+            "column_not_found",
+            "Column not found",
+            404,
+            "No such column.",
+        )
+    }
+
     /// `404` — the addressed element doesn't exist in this commission
     /// (ZMVP-166). Reached only past the commission's own gate (the caller is
     /// already its owner), so unlike

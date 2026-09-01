@@ -3,7 +3,7 @@
 //! first-party-`Origin` (CSRF) layer.
 
 use application::account::{
-    self, AccountError,
+    self, AccountEntity, AccountError,
     invitation::{self, issue::InviteOutcome},
 };
 use axum::{
@@ -49,7 +49,10 @@ impl From<AccountError> for Problem {
                 "Too many handle changes recently. Please wait before changing it again.",
             ),
             AccountError::IncorrectRole => Problem::forbidden(),
-            AccountError::AccountNotFound => Problem::account_not_found(),
+            AccountError::NotFound(AccountEntity::Account) => Problem::account_not_found(),
+            AccountError::NotFound(AccountEntity::Commission) => Problem::commission_not_found(),
+            AccountError::NotFound(AccountEntity::Workflow) => Problem::workflow_not_found(),
+            AccountError::NotFound(AccountEntity::Column) => Problem::column_not_found(),
             AccountError::NoPendingInvitation => Problem::no_pending_invitation(),
             AccountError::NotAMember => Problem::member_not_found(),
             AccountError::OwnerCannotLeave => Problem::owner_cannot_leave(),
@@ -61,11 +64,31 @@ impl From<AccountError> for Problem {
             AccountError::CannotTransferToSelf => Problem::invalid_request(
                 "You already own this account; transfer ownership to another member.",
             ),
-            AccountError::UserNotFound => Problem::forbidden(),
+            // A missing User answers `403`, never `404`: the caller named a DID,
+            // and distinguishing "no such user" from "not allowed" would make
+            // this endpoint an actor-existence oracle over arbitrary DIDs (the
+            // uniform-not-found posture of DD 57081857's finding F1).
+            AccountError::NotFound(AccountEntity::User) => Problem::forbidden(),
             // TODO(Engineer): status/code for this variant is unruled (409?); no use case produces it yet.
             AccountError::InvitationAlreadyPending => {
                 Problem::invalid_request("An invitation for that user is already pending.")
             }
+            // TODO(Engineer): the board-mutation vocabulary is unruled. These are
+            // the defensible defaults — a refusal the caller can act on is a 400,
+            // an internal inconsistency is a 500 — pending the error-code ruling.
+            AccountError::ContainsCommissions => Problem::invalid_request(
+                "That column still holds commissions; move them off it first.",
+            ),
+            AccountError::DuplicateName => {
+                Problem::invalid_request("Something on this board already has that name.")
+            }
+            AccountError::IncorrectNumberOfColumns => {
+                Problem::invalid_request("That board cannot hold any more columns.")
+            }
+            AccountError::NothingToDo => {
+                Problem::invalid_request("That change would leave everything as it is.")
+            }
+            AccountError::SystemError(err) => Problem::internal_error(err.to_string()),
         }
     }
 }

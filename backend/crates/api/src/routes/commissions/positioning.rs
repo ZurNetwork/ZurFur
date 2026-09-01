@@ -1,8 +1,15 @@
-//! Account positioning endpoints (Ownership Separation DD `29130754`): the
-//! owner places a commission in an account's position, and manages the view
-//! grants over it (`/placements`, `/grants`). Owner-only in v1.
+//! Account positioning endpoints (Ownership Separation DD `29130754`): a
+//! commission is placed onto an account's board, and its view grants are
+//! managed (`/placements`, `/grants`).
+//!
+//! **Placement is a card on a board** (Decision 6, "placement = workflow
+//! membership rows, account-side"), so `/placements` addresses a **column** —
+//! the column names its board, and the board names its account, so there is
+//! nothing else to say. The account-level claim this endpoint used to make had
+//! no referent in the corpus: it reconstructed the managing-account log the DD
+//! superseded.
 
-use application::commission::{place, view};
+use application::{account, commission::view};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -14,15 +21,22 @@ use domain::elements::{
     account::AccountId,
     commission::{CommissionId, GrantLevel},
     user::UserId,
+    workflow::ColumnId,
 };
 use serde::Deserialize;
 
 use crate::{AppState, extract::CallingUser, problem::Problem};
 
-/// The `POST /commissions/{id}/placements` body: the target account.
+/// The `POST /commissions/{id}/placements` body: the column to place the
+/// commission in, and where in it.
+///
+/// Deliberately **no** `account_id`: the column already determines its board and
+/// the board its account, so an account field would be either redundant or a
+/// second, contradictable source of truth.
 #[derive(Deserialize)]
 pub(super) struct PlaceBody {
-    account_id: String,
+    column_id: String,
+    index: usize,
 }
 
 /// The `POST /commissions/{id}/grants` body: the target user and the key's
@@ -41,9 +55,12 @@ pub(super) struct RevokeBody {
     pub target_user_id: String,
 }
 
-/// Places the commission in an account's position: appends a placement-log
-/// row and repoints the current-placement pointer, atomically. Owner-only.
-/// No changelog entry. Returns `204 No Content`.
+/// Places the commission on an account's board — one card, in one column, at
+/// one index. The caller must be a member of the board's account and must be
+/// able to see the commission through either rail (publicly visible, or their
+/// own standing or own key). Appends no changelog entry: positioning is
+/// account-side view state the commission never learns about. Returns `204 No
+/// Content`.
 pub(super) async fn place_commission(
     State(state): State<AppState>,
     Path(commission_id): Path<CommissionId>,
@@ -51,18 +68,20 @@ pub(super) async fn place_commission(
     body: Result<Json<PlaceBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let account_id = body
-        .account_id
-        .parse::<AccountId>()
-        .map_err(|_| Problem::invalid_request("The account must be a DID, e.g. \"did:plc:…\"."))?;
+    let column_id = body
+        .column_id
+        .parse::<ColumnId>()
+        .map_err(|_| Problem::invalid_request("The column must be a UUID."))?;
 
-    let command = place::Command {
-        account_id,
+    let index = body.index;
+    let command = account::workflow::column::commission::set_in_column::Command {
+        column_id,
+        index,
         actor_id,
         commission_id,
     };
 
-    state.app().commissions().place(command, Utc::now()).await?;
+    state.app().commissions().insert_in_column(command).await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
