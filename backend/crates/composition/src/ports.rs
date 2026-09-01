@@ -42,6 +42,8 @@ impl From<&Runtime> for Ports {
             profile_cache: state.profile_cache.clone(),
             did_minter: state.did_minter.clone(),
             files: state.files.clone(),
+            workflows: state.workflows.clone(),
+            columns: state.columns.clone(),
         }
     }
 }

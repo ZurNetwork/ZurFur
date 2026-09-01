@@ -9,8 +9,8 @@ use std::sync::Arc;
 use adapter_pg::PgPool;
 use base64::Engine as _;
 use domain::ports::{
-    AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore,
-    ProfileCache, ProfileSource, UnitOfWorkFn, UserStore,
+    AccountStore, Authenticator, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter,
+    FileStore, ProfileCache, ProfileSource, UnitOfWorkFn, UserStore, WorkflowStore,
 };
 use fluent_uri::Uri;
 
@@ -77,6 +77,17 @@ pub struct Runtime {
     /// view (`uow.changelog()`) — entries commit atomically with the domain
     /// writes they record (Changelog DD D4). pg in `main`, mem in tests.
     pub changelog: Arc<dyn ChangelogStore>,
+    /// The [`WorkflowStore`] read port (DESIGN/Workflow `9895957`): an account's
+    /// boards and where each card sits on them. The mutations are a
+    /// [`UnitOfWork`](domain::ports::UnitOfWork) view (`uow.workflows()`), since
+    /// moving a card rewrites the neighbours it displaces. pg in `main`, mem in
+    /// tests.
+    pub workflows: Arc<dyn WorkflowStore>,
+    /// The [`ColumnStore`] read port: a board's columns — the Lists of
+    /// DESIGN/Workflow. Separate from [`workflows`](Runtime::workflows) because
+    /// a column carries its own id and visibility; their *order* lives on the
+    /// workflow. pg in `main`, mem in tests.
+    pub columns: Arc<dyn ColumnStore>,
     /// The [`FileStore`] port (ZMVP-88): the private blob store behind a commission
     /// file entry. Pool-backed and **outside** the Unit of Work — the blob write is
     /// a step that precedes the unit recording the file entry (bytes cannot ride a
@@ -193,6 +204,8 @@ impl Runtime {
             accounts: Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
             commissions: Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
             changelog: Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
+            workflows: Arc::new(adapter_pg::PgWorkflowStore::new(pool.clone())),
+            columns: Arc::new(adapter_pg::PgColumnStore::new(pool.clone())),
             files: Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
             database: Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
             pool,

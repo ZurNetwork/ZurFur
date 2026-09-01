@@ -83,6 +83,8 @@ impl MemRuntimeBuilder {
             accounts: backend.account_store(),
             commissions: backend.commission_store(),
             changelog: backend.changelog_store(),
+            workflows: backend.workflow_store(),
+            columns: backend.column_store(),
             files: backend.file_store(),
             database: backend.database(),
             did_minter: Arc::new(MemDidMinter::new()),
