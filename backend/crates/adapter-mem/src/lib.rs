@@ -43,16 +43,19 @@ mod actor_identity;
 mod commission;
 mod file_store;
 mod public_records;
+mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
+pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
+use workflow::{StoredColumn, StoredWorkflow};
 
 pub(crate) use commission::{
-    StoredChangelogEntry, StoredCommission, StoredElement, StoredPlacement, StoredSeat,
-    StoredSeatInvitation, StoredSlot, StoredTab,
+    StoredChangelogEntry, StoredCommission, StoredElement, StoredSeat, StoredSeatInvitation,
+    StoredSlot, StoredTab,
 };
 pub(crate) use file_store::StoredBlob;
 
@@ -80,13 +83,15 @@ use domain::elements::{
     role::{Role, RoleAlias},
     user::{User, UserId},
     user_account::UserAccount,
+    workflow::{ColumnId, WorkflowId},
 };
 use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
-    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, CommissionRepo,
-    CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites,
+    CommissionRepo, CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore,
+    PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowStore,
+    WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -129,19 +134,25 @@ pub struct MemBackend {
     /// an entry commits atomically with the domain write it records (Changelog DD
     /// D4). Nothing here ever mutates or removes a pushed entry (append-only).
     pub(crate) changelog: Arc<Mutex<Vec<StoredChangelogEntry>>>,
-    /// The append-only commission **placement** log (ZMVP-70), in append (= `seq`)
-    /// order — the in-memory mirror of the pg `commission_placement` table. Staged
-    /// and applied by the Unit of Work like `changelog`; never rewritten.
-    pub(crate) placements: Arc<Mutex<Vec<StoredPlacement>>>,
-    /// The denormalized **current-placement** pointer keyed by commission (ZMVP-70)
-    /// — the mem mirror of `commission_current_placement`, upserted in the same
-    /// unit as each placement append so it always equals the latest log row.
-    pub(crate) current_placements: Arc<Mutex<HashMap<CommissionId, StoredPlacement>>>,
+    /// Boards keyed by [`WorkflowId`] — the mem mirror of the pg `workflow`
+    /// table. A board belongs to exactly one account; its columns live in
+    /// [`columns`](Self::columns), as they live in their own table.
+    pub(crate) workflows: Arc<Mutex<HashMap<WorkflowId, StoredWorkflow>>>,
+    /// Columns keyed by [`ColumnId`] — the mem mirror of `workflow_column`
+    /// **and** its `workflow_column_commission` cards, which a [`StoredColumn`]
+    /// carries as one ordered list (the shape the domain's `Column` holds, and
+    /// the shape `set_commissions` replaces wholesale).
+    ///
+    /// A card here IS a commission's placement (Ownership Separation DD
+    /// `29130754` D6) — account-side state the commission never learns about,
+    /// and the ONLY place placement lives since the account-level rails were
+    /// deleted (Engineer ruling 2026-09-10).
+    pub(crate) columns: Arc<Mutex<HashMap<ColumnId, StoredColumn>>>,
     /// The commission **view grants** keyed by `(commission, grantee DID)`, valued
     /// by the key's [`GrantLevel`] (ZMVP-70) — the mem mirror of
     /// `commission_view_grant`. The grantee is held as a bare [`Did`] because the
-    /// pg column is: the write port issues a key to a User and the read port asks
-    /// by an account, so persistence stores the actor's identifier and asserts
+    /// pg column is: a key is issued to a **User** (DD `29130754` D3, amended
+    /// 2026-09-04) and persistence stores the bare actor identifier, asserting
     /// nothing about its class (see the re-key migration's note). The grant is a
     /// pure key (just the level; who/when live in the changelog, DD `29130754`
     /// D5). At most one key per pair (upsert on grant); a revoke removes the entry
@@ -247,6 +258,20 @@ impl MemBackend {
         Arc::new(MemChangelogStore(self.clone()))
     }
 
+    /// The [`WorkflowStore`] read port over this backend's shared state. Holds
+    /// no map of its own yet — [`WorkflowStore`] is an empty stub, so there is
+    /// nothing to stage or merge until its first method lands.
+    pub fn workflow_store(&self) -> Arc<dyn WorkflowStore> {
+        Arc::new(MemWorkflowStore(self.clone()))
+    }
+
+    /// The [`ColumnStore`] read port over this backend's shared state. Holds no
+    /// map of its own yet, for the same reason as
+    /// [`workflow_store`](MemBackend::workflow_store).
+    pub fn column_store(&self) -> Arc<dyn ColumnStore> {
+        Arc::new(MemColumnStore(self.clone()))
+    }
+
     /// The [`ProfileCache`] read port over this backend's shared state.
     pub fn profile_cache(&self) -> Arc<dyn ProfileCache> {
         Arc::new(MemProfileCache(self.clone()))
@@ -323,16 +348,16 @@ impl MemBackend {
                     .expect("MemBackend changelog mutex poisoned")
                     .clone(),
             )),
-            placements: Arc::new(Mutex::new(
-                self.placements
+            workflows: Arc::new(Mutex::new(
+                self.workflows
                     .lock()
-                    .expect("MemBackend placements mutex poisoned")
+                    .expect("MemBackend workflows mutex poisoned")
                     .clone(),
             )),
-            current_placements: Arc::new(Mutex::new(
-                self.current_placements
+            columns: Arc::new(Mutex::new(
+                self.columns
                     .lock()
-                    .expect("MemBackend current_placements mutex poisoned")
+                    .expect("MemBackend columns mutex poisoned")
                     .clone(),
             )),
             view_grants: Arc::new(Mutex::new(
@@ -434,7 +459,7 @@ impl MemBackend {
     /// update-or-delete of a key this unit only read survive this unit's commit,
     /// instead of being clobbered back to the stale value this unit's snapshot
     /// happened to carry. The three append-log `Vec` fields (`handle_changes`,
-    /// `changelog`, `placements`) merge through [`merge_log`] instead — the same
+    /// `changelog`) merge through [`merge_log`] instead — the same
     /// idea applied by value, since a log row carries no separate key.
     ///
     /// The remaining, unmodeled gap is a genuine **same-key write-write
@@ -540,34 +565,6 @@ impl MemBackend {
                 .lock()
                 .expect("MemBackend changelog mutex poisoned"),
         );
-        merge_log(
-            &mut self
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-            &base
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-            &staged
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-        );
-        merge_map(
-            &mut self
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-            &base
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-            &staged
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-        );
         merge_map(
             &mut self
                 .view_grants
@@ -581,6 +578,34 @@ impl MemBackend {
                 .view_grants
                 .lock()
                 .expect("MemBackend view_grants mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+            &base
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+            &staged
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
+            &base
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
+            &staged
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
         );
         merge_map(
             &mut self
@@ -845,7 +870,7 @@ where
 
 /// [`MemBackend::merge`]'s per-append-log-field step — the [`merge_map`] idea
 /// applied to a `Vec`-shaped log instead of a `HashMap`. A log row (a
-/// [`StoredHandleChange`], [`StoredChangelogEntry`], or [`StoredPlacement`])
+/// [`StoredHandleChange`] or [`StoredChangelogEntry`])
 /// carries no id split from its own data, so value equality stands in for the key
 /// equality `merge_map` diffs by — sound because every row is written once, at
 /// push time, and never mutated after (the one way a row disappears is a bulk
@@ -1788,11 +1813,12 @@ impl AccountWrites for MemAccountWrites {
 
     /// Removes the account row (freeing its handle for reuse) along with every
     /// membership, invitation, and handle-change log row belonging to it, and
-    /// **severs the account's positioning rails** — the placements it held and the
-    /// current-placement pointers aimed at it (ZMVP-57 AC1). This mirrors pg's
-    /// delete: the membership/invitation/handle-change FKs are removed
-    /// children-first, while the positioning FKs onto `accounts` are `ON DELETE
-    /// CASCADE`. **View grants are no longer among the rails**: since the actor
+    /// **severs the account's positioning rail** — its boards, and with them every
+    /// column and card on them (ZMVP-57 AC1). This mirrors pg's delete: the
+    /// membership/invitation/handle-change FKs are removed children-first, while
+    /// `workflow.account_id` is `ON DELETE CASCADE` (as are the column and card
+    /// FKs hanging off it). A card IS a placement (Ownership Separation DD
+    /// `29130754` D6), so the boards going takes the placements with them. **View grants are no longer among the rails**: since the actor
     /// re-key (DD `57081857`) a grant is issued to a User (Engineer ruling
     /// 2026-09-04) and holds no reference to an account to sever — the pg table
     /// dropped its foreign key for the same reason. The **commissions themselves
@@ -1829,22 +1855,34 @@ impl AccountWrites for MemAccountWrites {
             .expect("MemBackend handle_changes mutex poisoned")
             .retain(|change| &change.account_id != account);
 
-        // Sever the account's positioning rails (the mem mirror of the ZMVP-70
-        // `ON DELETE CASCADE` on each positioning FK onto `accounts`): drop every
-        // placement-log row and current-placement pointer aimed at this account.
-        // The commissions they referenced are left in place, and so are view
-        // grants — no longer an account rail (see the doc above).
-        self.0
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned")
-            .retain(|placement| &placement.account_id != account);
+        // Sever the account's positioning rail — its boards, and with them every
+        // column and every card on them. This is the mem mirror of pg's
+        // `workflow.account_id REFERENCES accounts (id) ON DELETE CASCADE` (and
+        // the column/card cascades hanging off it). Placement IS a card on a
+        // board (Ownership Separation DD `29130754` D6), so severing the boards
+        // severs the placements — the commissions they pointed at are left
+        // untouched, being User-owned, and so are view grants, no longer an
+        // account rail at all (see the doc above).
+        let boards: Vec<WorkflowId> = {
+            let mut workflows = self
+                .0
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned");
+            let boards = workflows
+                .iter()
+                .filter(|(_, stored)| stored.account_id == *account)
+                .map(|(id, _)| id.clone())
+                .collect();
+            workflows.retain(|_, stored| stored.account_id != *account);
+            boards
+        };
 
         self.0
-            .current_placements
+            .columns
             .lock()
-            .expect("MemBackend current_placements mutex poisoned")
-            .retain(|_, placement| &placement.account_id != account);
+            .expect("MemBackend columns mutex poisoned")
+            .retain(|_, stored| !boards.contains(&stored.workflow_id));
 
         Ok(())
     }
@@ -1950,6 +1988,18 @@ impl UnitOfWork for MemUnitOfWork {
     /// snapshot (ZMVP-122). No delete exists on it — identity rows are immortal.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         Box::new(MemActorIdentityWrites(self.staged.clone()))
+    }
+
+    /// A view of the workflow write surface over this unit's staged snapshot: a
+    /// card's move and the neighbours it displaces land together, or are
+    /// discarded together.
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
+        Box::new(MemWorkflowWrites(self.staged.clone()))
+    }
+
+    /// A view of the column write surface over this unit's staged snapshot.
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
+        Box::new(MemColumnWrites(self.staged.clone()))
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {

@@ -11,27 +11,27 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
-    account::AccountId,
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
         CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionTitle,
         DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
         FileKey, GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewElement, NewSeat,
-        NewSlot, Placement, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt,
-        Slot, SlotTitle, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility,
-        VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+        NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+        SlotTitle, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
+        declared_tabs, declares_surface, derive_deadline_status,
     },
     invitation::InvitationState,
     maturity::Maturity,
     user::UserId,
+    workflow::{Column, ColumnId, LexOrdering, WorkflowId},
 };
 use domain::ports::{
-    ChangelogStore, ChangelogWrites, CommissionReads, CommissionStore, CommissionWrites,
-    ElementNotFound, UnknownSurface, UnknownTab,
+    ChangelogStore, ChangelogWrites, ColumnStore, CommissionReads, CommissionStore,
+    CommissionWrites, ElementNotFound, UnknownSurface, UnknownTab,
 };
 use serde_json::Value;
 
-use crate::MemBackend;
+use crate::{MemBackend, workflow::MemColumnStore};
 
 /// Resolve a tab within `commission` — the mem mirror of
 /// `PgCommissionWrites::require_tab` (ZMVP-166), handing back the tab's
@@ -388,43 +388,6 @@ impl StoredChangelogEntry {
             payload: self.payload.clone(),
             note: self.note.clone(),
             created_at: self.created_at,
-        }
-    }
-}
-
-/// One placement-log row as the mem backend keeps it — the in-memory mirror of a
-/// pg `commission_placement` row (ZMVP-70), and (with the latest `seq` per
-/// commission) of the `commission_current_placement` cache pointer. `Clone` so a
-/// unit of work can deep-copy the log/cache into its staging snapshot. Append-only
-/// like the pg log: nothing here mutates a pushed row (an account's hard-delete can
-/// still remove one, ZMVP-57 AC1). `PartialEq` lets the Unit-of-Work's commit-time
-/// merge diff a unit's staged log against its pristine base snapshot by value — a
-/// row carries no id apart from its own data, so equality IS identity here.
-#[derive(Clone, PartialEq)]
-pub(crate) struct StoredPlacement {
-    /// The store-assigned ordering key — the mem mirror of the pg `bigserial`
-    /// (global, monotonic): the greatest `seq` for a commission is its current
-    /// placement, the least its origin.
-    pub(crate) seq: i64,
-    /// The commission being positioned.
-    pub(crate) commission_id: CommissionId,
-    /// The account into whose position the commission was placed.
-    pub(crate) account_id: AccountId,
-    /// The User who performed the placement (the owner in v1).
-    pub(crate) placed_by: UserId,
-    /// When the placement happened.
-    pub(crate) placed_at: DateTimeUtc,
-}
-
-impl StoredPlacement {
-    /// Rebuild the domain [`Placement`] from the stored parts.
-    fn rebuild(&self) -> Placement {
-        Placement {
-            seq: self.seq,
-            commission_id: self.commission_id,
-            account_id: self.account_id.clone(),
-            placed_by: self.placed_by.clone(),
-            placed_at: self.placed_at,
         }
     }
 }
@@ -941,44 +904,6 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
-    /// Append a placement-log row and repoint the current-placement cache to it —
-    /// the mem mirror of the pg append + `commission_current_placement` upsert,
-    /// both on the unit's staged snapshot so they land atomically on commit. The
-    /// `seq` is the next over the whole placement log (the mem mirror of the pg
-    /// global `bigserial`), and the cache is overwritten with this row — so the
-    /// cache always equals the latest log row. Re-placement always appends; the
-    /// log is never rewritten.
-    async fn place(
-        &mut self,
-        commission: &CommissionId,
-        account: &AccountId,
-        placed_by: &UserId,
-        at: DateTimeUtc,
-    ) -> anyhow::Result<()> {
-        let mut placements = self
-            .0
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned");
-        let seq = placements.last().map(|p| p.seq + 1).unwrap_or(1);
-        let row = StoredPlacement {
-            seq,
-            commission_id: *commission,
-            account_id: account.clone(),
-            placed_by: placed_by.clone(),
-            placed_at: at,
-        };
-        placements.push(row.clone());
-        drop(placements);
-
-        self.0
-            .current_placements
-            .lock()
-            .expect("MemBackend current_placements mutex poisoned")
-            .insert(*commission, row);
-        Ok(())
-    }
-
     /// Upsert the grantee's key on the unit's staged snapshot — the mem mirror
     /// of the pg `commission_view_grant` upsert: one key per (commission,
     /// grantee), re-granting replaces the level. Keyed by the grantee's DID, the
@@ -1252,53 +1177,56 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
 
-    /// The current-placement pointer (ZMVP-70) from the cache map, or `None` if
-    /// the commission was never placed — the mem mirror of a
-    /// `commission_current_placement` read.
-    async fn current_placement(
-        &self,
-        commission: &CommissionId,
-    ) -> anyhow::Result<Option<Placement>> {
-        let commission = *commission;
-        Ok(self
-            .0
-            .current_placements
-            .lock()
-            .expect("MemBackend current_placements mutex poisoned")
-            .get(&commission)
-            .map(StoredPlacement::rebuild))
-    }
-
-    /// The commission's placement log in append order (ascending `seq`) — the
-    /// rows are pushed in seq order, so filtering preserves it (the mem mirror of
-    /// `ORDER BY seq`). An unplaced commission has an empty log.
-    async fn placement_log(&self, commission: &CommissionId) -> anyhow::Result<Vec<Placement>> {
-        let commission = *commission;
-        Ok(self
-            .0
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned")
-            .iter()
-            .filter(|p| p.commission_id == commission)
-            .map(StoredPlacement::rebuild)
-            .collect())
-    }
-
-    /// The [`GrantLevel`] `account` holds on `commission`, or `None` (ZMVP-70) —
-    /// the mem mirror of a `commission_view_grant` lookup.
+    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (ZMVP-70) —
+    /// the mem mirror of a `commission_view_grant` lookup. A key is issued to a
+    /// **User**, never an Account (DD `29130754` D3, amended 2026-09-04), so
+    /// membership of an account confers nothing here.
     async fn view_grant(
         &self,
         commission: &CommissionId,
-        account: &AccountId,
+        user: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>> {
         Ok(self
             .0
             .view_grants
             .lock()
             .expect("MemBackend view_grants mutex poisoned")
-            .get(&(*commission, (**account).clone()))
+            .get(&(*commission, (**user).clone()))
             .copied())
+    }
+
+    /// Which column of `workflow_id` currently holds this commission, or `None`
+    /// — the mem mirror of the pg board-edge read. Scoped by board: a commission
+    /// sits in at most one column per board and on as many boards as position it
+    /// (DD `29130754` D1/D6).
+    async fn current_column_of_workflow(
+        &self,
+        commission: &CommissionId,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<Column>> {
+        MemColumnStore(self.0.clone())
+            .find_column(workflow_id, commission)
+            .await
+    }
+
+    /// This commission's index within `column_id`, or `None` if that column does
+    /// not hold it.
+    async fn current_position_in_column(
+        &self,
+        commission: &CommissionId,
+        column_id: &ColumnId,
+    ) -> anyhow::Result<Option<u8>> {
+        let Some(column) = MemColumnStore(self.0.clone()).find(column_id).await? else {
+            return Ok(None);
+        };
+
+        let Some(index) = column.iter().position(|card| card == commission) else {
+            return Ok(None);
+        };
+
+        u8::try_from(index)
+            .map_err(|_| anyhow::anyhow!("card position {index} is out of range"))
+            .map(Some)
     }
 
     /// Load the whole composition — the mem mirror of the pg three-query read
@@ -1719,8 +1647,10 @@ impl MemBackend {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use domain::elements::account::AccountId;
     use domain::elements::commission::{NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle};
     use domain::elements::did::Did;
+    use domain::elements::workflow::{ColumnName, WorkflowName};
     use domain::ports::{ElementNotFound, UnknownSurface, UnknownTab};
     use serde_json::json;
 
@@ -2011,12 +1941,32 @@ mod tests {
         AccountId::new(mint_did())
     }
 
-    // ZMVP-70 (mem store layer) — placement appends to the log and repoints the
-    // current pointer to the latest row; a view grant upserts and revoke
-    // hard-deletes; ALL of it stages with the unit (drop = rollback) and confers
-    // NO participant-hood (Ownership Separation DD Decision 8).
+    /// A board owned by `account`, with one column on it, committed.
+    async fn board_with_a_column(
+        backend: &MemBackend,
+        account: &AccountId,
+    ) -> (WorkflowId, ColumnId) {
+        let database = backend.database();
+        let name = "Queue".parse::<WorkflowName>().expect("a valid board name");
+
+        let mut uow = database.begin().await.unwrap();
+        let mut workflow = uow.workflows().create(&name, account).await.unwrap();
+        let column_name = "Open".parse::<ColumnName>().expect("a valid column name");
+        let column = workflow.new_column(column_name, workflow.visibility.clone());
+        let column_id = column.id.clone();
+        workflow.insert(0, column).expect("the board is empty");
+        uow.workflows().set_indexes(&workflow).await.unwrap();
+        uow.commit().await.unwrap();
+
+        (workflow.id, column_id)
+    }
+
+    // ZMVP-70 (mem store layer) — a view grant upserts and revoke hard-deletes;
+    // it stages with the unit (drop = rollback) and confers NO participant-hood
+    // (Ownership Separation DD Decision 8). A key is issued to a **User**, never
+    // an account (D3 as amended 2026-09-04), so it is read back by that User.
     #[tokio::test]
-    async fn placement_and_grants_stage_lift_nothing_and_roll_back() {
+    async fn grants_stage_lift_nothing_and_roll_back() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
@@ -2024,41 +1974,7 @@ mod tests {
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let store = backend.commission_store();
-        let account = account_id();
-        let member = user_id();
-        // A view grant is issued to a **User** (Engineer ruling 2026-09-04), while
-        // the read port still asks by `AccountId`. Both address the one `grantee`
-        // DID column, so the read is addressed by the grantee's own DID — see the
-        // re-key migration's note on `commission_view_grant`.
-        let grantee = member.clone();
-        let grant_key = AccountId::new((*grantee).clone());
-
-        // Place in `account` twice; the current pointer tracks the latest row.
-        for _ in 0..2 {
-            let mut uow = database.begin().await.unwrap();
-            uow.commissions()
-                .place(&id, &account, &owner, Utc::now())
-                .await
-                .unwrap();
-            uow.commit().await.unwrap();
-        }
-        let log = store.placement_log(&id).await.unwrap();
-        assert_eq!(
-            log.len(),
-            2,
-            "each placement appends (the log is never rewritten)"
-        );
-        let current = store
-            .current_placement(&id)
-            .await
-            .unwrap()
-            .expect("current");
-        let latest = log.last().expect("the log holds the appended rows");
-        assert_eq!(
-            (current.seq, &current.account_id),
-            (latest.seq, &latest.account_id),
-            "the cached current pointer equals the latest log row",
-        );
+        let grantee = user_id();
 
         // Grant Total, then revoke — the key is gone immediately.
         let mut uow = database.begin().await.unwrap();
@@ -2068,14 +1984,14 @@ mod tests {
             .unwrap();
         uow.commit().await.unwrap();
         assert_eq!(
-            store.view_grant(&id, &grant_key).await.unwrap(),
+            store.view_grant(&id, &grantee).await.unwrap(),
             Some(GrantLevel::Total)
         );
 
-        // A view grant / placement makes the account's members no Participant (D8).
+        // A key is only a view: it makes its holder no Participant (D8).
         assert!(
-            !store.is_participant(&id, &member).await.unwrap(),
-            "positioning and keys confer no in-commission authority",
+            !store.is_participant(&id, &grantee).await.unwrap(),
+            "a key confers no in-commission authority",
         );
         assert!(
             store.is_participant(&id, &owner).await.unwrap(),
@@ -2089,44 +2005,141 @@ mod tests {
         );
         uow.commit().await.unwrap();
         assert!(
-            store.view_grant(&id, &grant_key).await.unwrap().is_none(),
+            store.view_grant(&id, &grantee).await.unwrap().is_none(),
             "a revoked key is gone immediately",
         );
 
-        // A dropped unit rolls back a placement AND a grant.
+        // A dropped unit rolls the grant back.
         {
             let mut uow = database.begin().await.unwrap();
-            uow.commissions()
-                .place(&id, &account_id(), &owner, Utc::now())
-                .await
-                .unwrap();
             uow.commissions()
                 .grant_view(&id, &grantee, GrantLevel::Description)
                 .await
                 .unwrap();
             // drop without commit
         }
-        assert_eq!(
-            store.placement_log(&id).await.unwrap().len(),
-            2,
-            "the dropped placement left no row",
-        );
         assert!(
-            store.view_grant(&id, &grant_key).await.unwrap().is_none(),
+            store.view_grant(&id, &grantee).await.unwrap().is_none(),
             "the dropped grant never landed",
         );
     }
 
-    // ZMVP-57 AC1 (mem parity) — hard-deleting an account **severs** its placement
-    // rails while the placed commission **survives untouched**. This mirrors pg's
-    // `ON DELETE CASCADE` on the placement FKs onto `accounts`: only the
-    // account-side positioning goes; the User-owned commission stays (Ownership
-    // Separation DD 29130754).
+    // ZMVP-70 (mem store layer) — **placement is a card on a board** (Ownership
+    // Separation DD `29130754` Decision 6): positioning a commission means
+    // putting it in a column, it stages with the unit (drop = rollback), and it
+    // confers NO participant-hood (Decision 8). The same commission may sit on
+    // two accounts' boards at once — the NxM the DD makes native.
+    #[tokio::test]
+    async fn placement_is_a_card_stages_lifts_nothing_and_rolls_back() {
+        let backend = MemBackend::new();
+        let database = backend.database();
+        let owner = user_id();
+        let created = commission("Positioned", owner.clone());
+        let id = created.id;
+        backend.create_commission(&created).await.unwrap();
+        let store = backend.commission_store();
+        let columns = backend.column_store();
+
+        let account = account_id();
+        let (workflow_id, column_id) = board_with_a_column(&backend, &account).await;
+        let other_account = account_id();
+        let (other_workflow, other_column) = board_with_a_column(&backend, &other_account).await;
+
+        // Place the card on the first board.
+        let mut uow = database.begin().await.unwrap();
+        let mut column = columns.find(&column_id).await.unwrap().expect("the column");
+        column.push(id).expect("an empty column takes a card");
+        uow.columns().set_commissions(&column).await.unwrap();
+        uow.commit().await.unwrap();
+
+        assert_eq!(
+            store
+                .current_column_of_workflow(&id, &workflow_id)
+                .await
+                .unwrap()
+                .map(|found| found.id),
+            Some(column_id.clone()),
+            "the board that positioned it now holds the card",
+        );
+        assert_eq!(
+            store
+                .current_position_in_column(&id, &column_id)
+                .await
+                .unwrap(),
+            Some(0),
+            "at the index the domain put it",
+        );
+
+        // The SAME commission on a SECOND account's board — no conflict, because
+        // no account ever claimed it (DD D1: users own commissions).
+        let mut uow = database.begin().await.unwrap();
+        let mut column = columns
+            .find(&other_column)
+            .await
+            .unwrap()
+            .expect("the other column");
+        column.push(id).expect("an empty column takes a card");
+        uow.columns().set_commissions(&column).await.unwrap();
+        uow.commit().await.unwrap();
+
+        assert!(
+            store
+                .current_column_of_workflow(&id, &other_workflow)
+                .await
+                .unwrap()
+                .is_some(),
+            "one commission sits on N boards at once",
+        );
+        assert!(
+            store
+                .current_column_of_workflow(&id, &workflow_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "and the first board still holds it",
+        );
+
+        // Positioning makes nobody a Participant (D8).
+        let member = user_id();
+        assert!(
+            !store.is_participant(&id, &member).await.unwrap(),
+            "positioning confers no in-commission authority",
+        );
+
+        // A dropped unit rolls a card back off the board.
+        let third = commission("Not placed", owner.clone());
+        let third_id = third.id;
+        backend.create_commission(&third).await.unwrap();
+        {
+            let mut uow = database.begin().await.unwrap();
+            let mut column = columns.find(&column_id).await.unwrap().expect("the column");
+            column
+                .push(third_id)
+                .expect("the column takes a second card");
+            uow.columns().set_commissions(&column).await.unwrap();
+            // drop without commit
+        }
+        assert!(
+            store
+                .current_column_of_workflow(&third_id, &workflow_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "the dropped card never landed",
+        );
+    }
+
+    // ZMVP-57 AC1 (mem parity) — hard-deleting an account **severs** its
+    // positioning while the positioned commission **survives untouched**. Since
+    // placement is a card on a board (DD `29130754` D6), the rail severed is the
+    // board itself: this mirrors pg's `workflow.account_id … ON DELETE CASCADE`
+    // and the column/card cascades below it. Only the account-side positioning
+    // goes; the User-owned commission stays.
     //
-    // The **view grant** used to be asserted here as a third rail. It no longer is:
-    // a grant is issued to a User (Engineer ruling 2026-09-04), so the pg table
-    // holds no reference to an account to cascade from and the mem fake mirrors
-    // that. See the re-key migration's note on `commission_view_grant`.
+    // The **view grant** used to be asserted here as a second rail. It no longer
+    // is: a grant is issued to a User (Engineer ruling 2026-09-04), so the pg
+    // table holds no reference to an account to cascade from and the mem fake
+    // mirrors that.
     #[tokio::test]
     async fn hard_deleting_an_account_severs_its_positioning_but_keeps_the_commission() {
         let backend = MemBackend::new();
@@ -2136,18 +2149,24 @@ mod tests {
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let store = backend.commission_store();
+        let columns = backend.column_store();
+        let workflows = backend.workflow_store();
         let account = account_id();
 
-        // Place the commission in the account.
+        // Position the commission on the account's board.
+        let (workflow_id, column_id) = board_with_a_column(&backend, &account).await;
         let mut uow = database.begin().await.unwrap();
-        uow.commissions()
-            .place(&id, &account, &owner, Utc::now())
-            .await
-            .unwrap();
+        let mut column = columns.find(&column_id).await.unwrap().expect("the column");
+        column.push(id).expect("an empty column takes a card");
+        uow.columns().set_commissions(&column).await.unwrap();
         uow.commit().await.unwrap();
         assert!(
-            store.current_placement(&id).await.unwrap().is_some(),
-            "placed before the delete"
+            store
+                .current_column_of_workflow(&id, &workflow_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "positioned before the delete"
         );
 
         // Hard-delete the account.
@@ -2155,14 +2174,22 @@ mod tests {
         uow.accounts().hard_delete(&account).await.unwrap();
         uow.commit().await.unwrap();
 
-        // The placement rails are severed...
+        // The positioning rail is severed — board, column and card together...
         assert!(
-            store.current_placement(&id).await.unwrap().is_none(),
-            "the current-placement pointer is severed with the account",
+            workflows.find(&workflow_id).await.unwrap().is_none(),
+            "the board is severed with the account",
         );
         assert!(
-            store.placement_log(&id).await.unwrap().is_empty(),
-            "the placement log is severed with the account",
+            columns.find(&column_id).await.unwrap().is_none(),
+            "and its columns with it",
+        );
+        assert!(
+            store
+                .current_column_of_workflow(&id, &workflow_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "so the card is gone too",
         );
         // ...but the commission itself survives untouched.
         assert!(
