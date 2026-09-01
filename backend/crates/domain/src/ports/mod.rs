@@ -9,6 +9,7 @@ pub mod actor_identity;
 pub mod changelog;
 pub mod commission;
 pub mod file;
+pub mod workflow;
 
 pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use changelog::{ChangelogStore, ChangelogWrites};
@@ -17,6 +18,7 @@ pub use commission::{
     UnknownSurface, UnknownTab,
 };
 pub use file::FileStore;
+pub use workflow::{ColumnStore, ColumnWrites, WorkflowStore, WorkflowWrites};
 
 use std::future::Future;
 
@@ -92,6 +94,19 @@ pub trait UnitOfWork: Send {
     /// (ZMVP-122, DD `34013187`). No delete exists on it — identity rows are
     /// immortal by construction.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_>;
+
+    /// A view of the workflow write surface over this transaction
+    /// (DESIGN/Workflow `9895957`). On the Unit of Work because a board
+    /// mutation is rarely one row: moving a card rewrites the neighbours it
+    /// displaces, and a locked list's recomputed order rewrites every card at
+    /// once.
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_>;
+
+    /// A view of the column write surface over this transaction. Separate from
+    /// [`workflows`](UnitOfWork::workflows) because a column carries its own id
+    /// and its own visibility; the column *order* stays a workflow write, since
+    /// it lives on the board's own `columns` list.
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_>;
 
     /// Commit the unit, consuming the handle. Every write issued through the view
     /// accessors lands atomically. Not calling this — dropping the handle — rolls
@@ -531,10 +546,11 @@ pub trait AccountWrites: Send {
     /// with no account-anchored fact carries no reputation. Only ever called for an
     /// account the caller has established holds **no account-anchored fact** (per the
     /// Account Deletion DD `23003138`); that gate is the caller's. The account's
-    /// **positioning rails** — its commission placements and view grants (ZMVP-70) — are
-    /// severed with it via `ON DELETE CASCADE`, but the placed **commissions survive
-    /// untouched**: they are User-owned, never account facts (Ownership Separation DD
-    /// `29130754`; ZMVP-57 AC1). The custody keys (`account_keys`) are left in place so
+    /// **positioning rail** — its boards, and with them every column and card on them
+    /// — is severed with it via `ON DELETE CASCADE`, but the positioned **commissions
+    /// survive untouched**: they are User-owned, never account facts (Ownership
+    /// Separation DD `29130754`; ZMVP-57 AC1). View grants are not among the severed:
+    /// a key is issued to a User, so it references no account at all. The custody keys (`account_keys`) are left in place so
     /// the native ~72h `did:plc` tombstone recovery window can still reverse the
     /// deletion. **Tombstoning the DID is a separate retryable atproto step**, never
     /// part of this private transaction (no cross-store dual write — the mint path's

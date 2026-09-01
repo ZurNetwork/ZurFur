@@ -39,6 +39,10 @@ impl Role {
             Self::Member => "member",
         }
     }
+
+    pub fn is_administrative(&self) -> bool {
+        matches!(self, Role::Owner | Role::Admin)
+    }
 }
 
 impl std::fmt::Display for Role {

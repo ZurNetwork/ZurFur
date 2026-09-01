@@ -26,9 +26,10 @@
 //! [`changelog`] submodule carries the commission's append-only memory (ZMVP-87):
 //! the frozen [`ChangelogEntryKind`] taxonomy, the entry shapes, and the
 //! [`ChannelPointer`] "where we talk" value. The [`positioning`] submodule carries
-//! the two account-facing rails (ZMVP-70): [`Placement`] (account-side, where the
-//! commission sits) and the [`GrantLevel`] key-to-see (commission-side) — neither
-//! confers in-commission authority (Ownership Separation DD `29130754`). The
+//! the commission-side rail (ZMVP-70): the [`GrantLevel`] key-to-see, which
+//! confers no in-commission authority (Ownership Separation DD `29130754`). The
+//! account-side rail is placement, and placement is a card on a board — it lives
+//! in [`crate::elements::workflow`], not here. The
 //! [`element`] submodule carries the **flat composition** (ZMVP-166; Flat
 //! Composition DD `45514754`): typed Elements contributed into code-declared
 //! Surfaces, grouped by Tabs, with effective visibility the min of three terms —
@@ -72,7 +73,7 @@ pub use element::{
 pub use fact::Fact;
 pub use file::{CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
-pub use positioning::{GrantLevel, Placement};
+pub use positioning::GrantLevel;
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };

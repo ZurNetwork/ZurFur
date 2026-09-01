@@ -7,15 +7,15 @@ use async_trait::async_trait;
 use crate::{
     datetime::DateTimeUtc,
     elements::{
-        account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
             CommissionMarkup, DeadlineStatus, DirectionStatus, ElementId, FileKey, GrantLevel,
-            LapsedDeadline, NewElement, NewSeat, NewSlot, Placement, Seat, SeatInvitation,
-            SeatInvitationId, TabId, TabRow,
+            LapsedDeadline, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
+            TabId, TabRow,
         },
         maturity::Maturity,
         user::UserId,
+        workflow::{Column, ColumnId, WorkflowId},
     },
 };
 
@@ -36,22 +36,17 @@ pub trait CommissionStore: Send + Sync {
     /// queryable, and the owner resolves it here to un-archive it).
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
-    /// The commission's **current placement** — the latest row of its append-only
-    /// placement log (ZMVP-70; Ownership Separation DD `29130754`), read from the
-    /// denormalized current-placement pointer the write side keeps in step. `None`
-    /// when the commission has never been placed (a valid state — placement is
-    /// optional). Positioning is account-side view state and confers no
-    /// in-commission authority (Decision 8).
-    async fn current_placement(
+    async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
-    ) -> anyhow::Result<Option<Placement>>;
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<Column>>;
 
-    /// The commission's whole **placement log** in append order (ascending `seq`),
-    /// so the current placement is the last row and the origin the first (ZMVP-70).
-    /// The log is append-only and never rewritten; an unplaced commission has an
-    /// empty log. Used to prove the current-placement pointer equals the latest row.
-    async fn placement_log(&self, commission: &CommissionId) -> anyhow::Result<Vec<Placement>>;
+    async fn current_position_in_column(
+        &self,
+        commission: &CommissionId,
+        column_id: &ColumnId,
+    ) -> anyhow::Result<Option<u8>>;
 
     /// The [`GrantLevel`] an `account` currently holds on `commission`, or `None`
     /// if it holds no key (ZMVP-70; Ownership Separation DD `29130754` Decision 3).
@@ -62,8 +57,8 @@ pub trait CommissionStore: Send + Sync {
     /// [`is_participant`](Self::is_participant) is unaffected by any grant.
     async fn view_grant(
         &self,
-        commission: &CommissionId,
-        account: &AccountId,
+        commission_id: &CommissionId,
+        user_id: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>>;
 
     /// Whether `user` is a **Participant** of `commission` — the authorization
@@ -563,27 +558,6 @@ pub trait CommissionWrites: Send {
         id: &CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool>;
-
-    /// **Place** the commission into `account`'s position (ZMVP-70; Ownership
-    /// Separation DD `29130754` Decision 1/6): append one row to the append-only
-    /// placement log **and** repoint the denormalized current-placement pointer to
-    /// it, atomically on the open unit — so the cached pointer equals the latest
-    /// log row after every (re)placement, by construction (no second transaction).
-    /// Re-placement always appends; the log is never rewritten (AC2). The
-    /// commission and the account must exist — the caller settles that first (a
-    /// commission owner-only act; the account resolved to a live row) — and the FK
-    /// onto `commission`/`account` is the store-level backstop. Placement confers
-    /// **no** in-commission authority (Decision 8) and — deliberately — appends no
-    /// changelog entry (the placement log *is* the record; the Changelog DD
-    /// taxonomy has no placement variant). A private-side write, never a
-    /// cross-store dual write.
-    async fn place(
-        &mut self,
-        commission: &CommissionId,
-        account: &AccountId,
-        placed_by: &UserId,
-        at: DateTimeUtc,
-    ) -> anyhow::Result<()>;
 
     /// Issue `account` a **view grant** — a key to see `commission` at `level`
     /// (ZMVP-70; Ownership Separation DD `29130754` Decision 3). At most one key

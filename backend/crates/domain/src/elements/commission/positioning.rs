@@ -3,13 +3,14 @@
 //! concept. Users own commissions; accounts own positioning, and neither rail
 //! confers any in-commission authority (DD Decision 8 — the environmental rule).
 //!
-//! Two shapes live here, kept apart exactly as the DD keeps them (Decision 6 —
-//! "they never share a table"):
-//! - [`Placement`] — an **account-side** row in the commission's append-only
-//!   placement log: the commission was placed in an account's position. The log
-//!   is never rewritten; the current placement is its latest row, the origin its
-//!   first. A denormalized current-placement pointer is kept in step with the
-//!   latest row (the pg `commission_current_placement` cache).
+//! **Placement is not here** (Engineer ruling 2026-09-10). It never was a
+//! commission-side shape: a commission's placement IS its card on an account's
+//! board (Decision 6 — "placement = workflow membership rows, account-side"), so
+//! it lives in `domain::elements::workflow` with the column that holds it. The
+//! account-level placement log this module used to carry reconstructed the
+//! managing-account log the DD superseded, and is deleted.
+//!
+//! What remains is the commission-side half of the pair:
 //! - [`GrantLevel`] — the level of a **commission-side** *key to see*, issued to
 //!   an account at an explicitly chosen level (Decision 3). A key only lifts an
 //!   account's members to at least its level, never demotes (Decision 4); it
@@ -18,16 +19,11 @@
 //!   the level per (commission, account)) — who issued it and when live only in
 //!   the changelog (Decision 5: "grant history lives only in the changelog").
 //!
-//! Neither rail is a [`Fact`](super::Fact): both are commission-owned
-//! bookkeeping that cascades away with the commission (the tables are registered
+//! A grant is not a [`Fact`](super::Fact): it is commission-owned bookkeeping
+//! that cascades away with the commission (`commission_view_grant` is registered
 //! in `COMMISSION_NON_FACT_TABLES`).
 
 use std::str::FromStr;
-
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{account::AccountId, commission::CommissionId, user::UserId},
-};
 
 /// The level a **view grant** confers — one of the three **raw root modes**
 /// (Ownership Separation DD `29130754` Decision 3). A grant names a mode floor
@@ -81,32 +77,6 @@ impl FromStr for GrantLevel {
             _ => Err(GrantLevelError)?,
         })
     }
-}
-
-/// One **placement** of a commission into an account's position — a row in the
-/// append-only placement log (ZMVP-70; Ownership Separation DD `29130754`
-/// Decision 1/6). The commission never knows it is placed; positioning is
-/// account-side view state. Placement confers **no** in-commission authority
-/// (Decision 8).
-///
-/// The log is never rewritten: re-placement appends a new row. `seq` is the
-/// store-assigned ordering key (a pg `bigserial`), so the **current** placement
-/// is the row with the greatest `seq` and the **origin** is the least. This same
-/// shape is returned for the denormalized current-placement pointer, which is
-/// kept equal to the latest row after every (re)placement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Placement {
-    /// The store-assigned ordering key (pg `bigserial`) — monotonic, so the
-    /// greatest `seq` is the current placement and the least is the origin.
-    pub seq: i64,
-    /// The commission being positioned.
-    pub commission_id: CommissionId,
-    /// The account into whose position the commission was placed.
-    pub account_id: AccountId,
-    /// The User who performed the placement (the commission owner in v1).
-    pub placed_by: UserId,
-    /// When the placement happened.
-    pub placed_at: DateTimeUtc,
 }
 
 #[cfg(test)]
