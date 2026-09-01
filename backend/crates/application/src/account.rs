@@ -1,7 +1,10 @@
 //! Use cases about [`Account`]s.
 
 use domain::{
-    elements::account::{Account, AccountId},
+    elements::{
+        account::{Account, AccountId},
+        workflow::WorkflowError,
+    },
     ports::{AccountStore, Database, DidBelongsToAnotherActor, DidMinter, HandleTaken, UserStore},
 };
 
@@ -16,6 +19,7 @@ pub mod leave;
 pub mod list;
 pub mod role;
 pub mod transfer_ownership;
+pub mod workflow;
 /// Account use cases, with the ports already bound. A namespace, not a
 /// mediator: one `impl Accounts<'_>` block per use-case file, one use case each.
 #[derive(Clone, Copy)]
@@ -66,6 +70,15 @@ impl<'a> From<&'a crate::App> for Accounts<'a> {
     }
 }
 
+#[derive(Debug)]
+pub enum AccountEntity {
+    Account,
+    User,
+    Workflow,
+    Column,
+    Commission,
+}
+
 /// Why an account use case could not answer. One enum per module: a driver
 /// maps each variant to its own surface (problem+json, `{class, code}`).
 ///
@@ -89,9 +102,6 @@ pub enum AccountError {
     /// The actor's role on the account doesn't carry the authority this use
     /// case needs — including holding no role at all (a non-member).
     IncorrectRole,
-    /// The account named by the command is not a live account: unknown, or
-    /// already soft-deleted (DD `23003138`). This may also refer to a non-existent user.
-    AccountNotFound,
     /// The target handle is already the account's current one.
     HandleUnchanged,
     /// The account has changed its handle too often recently (DD `27852802` §3).
@@ -107,8 +117,60 @@ pub enum AccountError {
     DidBelongsToAnotherActor,
     AlreadyMember,
     CannotTransferToSelf,
-    UserNotFound,
     InvitationAlreadyPending,
+    ContainsCommissions,
+    DuplicateName,
+    NotFound(AccountEntity),
+    SystemError(SystemError),
+    IncorrectNumberOfColumns,
+    NothingToDo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemError(Option<&'static str>);
+
+impl std::error::Error for SystemError {}
+
+impl std::fmt::Display for SystemError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let SystemError(e) = self;
+        match e {
+            Some(err) => write!(f, "{err}"),
+            None => write!(f, "unspecified system error"),
+        }
+    }
+}
+impl From<&'static str> for SystemError {
+    fn from(value: &'static str) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl AccountError {
+    pub fn sys_err(s: &'static str) -> AccountError {
+        Self::SystemError(SystemError::from(s))
+    }
+}
+
+impl From<WorkflowError> for AccountError {
+    fn from(value: WorkflowError) -> Self {
+        match value {
+            WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
+            v => AccountError::Infrastructure(v.into()),
+        }
+    }
+}
+
+impl std::fmt::Display for AccountEntity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Account => write!(f, "account"),
+            Self::User => write!(f, "user"),
+            Self::Column => write!(f, "column"),
+            Self::Workflow => write!(f, "workflow"),
+            Self::Commission => write!(f, "commission"),
+        }
+    }
 }
 
 impl std::fmt::Display for AccountError {
@@ -121,7 +183,6 @@ impl std::fmt::Display for AccountError {
             ),
             AccountError::Infrastructure(_) => write!(f, "an infrastructure port failed"),
             AccountError::IncorrectRole => write!(f, "This role can't perform this action"),
-            AccountError::AccountNotFound => write!(f, "This account does not exist"),
             AccountError::HandleUnchanged => write!(f, "Nothing to do"),
             AccountError::RenamedTooRecently => write!(f, "Rate limited"),
             AccountError::NoPendingInvitation => write!(f, "No pending invitation"),
@@ -140,8 +201,20 @@ impl std::fmt::Display for AccountError {
             }
             AccountError::AlreadyMember => write!(f, "Already a member"),
             AccountError::CannotTransferToSelf => write!(f, "Already the owner"),
-            Self::UserNotFound => write!(f, "User not found!"),
             Self::InvitationAlreadyPending => write!(f, "An invitation was already pending"),
+            Self::ContainsCommissions => write!(f, "Contains commissions"),
+            Self::DuplicateName => write!(f, "Duplicate name"),
+            Self::NotFound(entity) => write!(f, "{entity} not found"),
+            Self::SystemError(error) => match error.0 {
+                Some(e) => write!(f, "system error: {e}"),
+                None => {
+                    write!(f, "there was a system error while processing this request")
+                }
+            },
+            Self::IncorrectNumberOfColumns => {
+                write!(f, "The number of columns provided is erroneous")
+            }
+            Self::NothingToDo => write!(f, "nothing to do"),
         }
     }
 }
@@ -152,7 +225,6 @@ impl std::error::Error for AccountError {
             AccountError::HandleTaken
             | AccountError::UnsupportedHandle
             | AccountError::IncorrectRole
-            | AccountError::AccountNotFound
             | AccountError::RenamedTooRecently
             | AccountError::HandleUnchanged
             | AccountError::NoPendingInvitation
@@ -162,12 +234,19 @@ impl std::error::Error for AccountError {
             | AccountError::DidBelongsToAnotherActor
             | AccountError::AlreadyMember
             | AccountError::CannotTransferToSelf
+            | Self::ContainsCommissions
             | Self::InvitationAlreadyPending
-            | AccountError::UserNotFound => None,
+            | Self::IncorrectNumberOfColumns
+            | Self::NothingToDo
+            | Self::DuplicateName => None,
+            Self::NotFound(entity) => Some(entity),
+            Self::SystemError(e) => Some(e),
             AccountError::Infrastructure(e) => Some(e.as_ref()),
         }
     }
 }
+
+impl std::error::Error for AccountEntity {}
 
 /// The **one** place a store error becomes a use-case error.
 ///
@@ -211,7 +290,7 @@ pub(crate) async fn require_live_account(
         .accounts
         .find(account_id)
         .await?
-        .ok_or(AccountError::AccountNotFound)
+        .ok_or(AccountError::NotFound(AccountEntity::Account))
 }
 
 /// The ports the account use cases reach: reads off [`AccountStore`], the

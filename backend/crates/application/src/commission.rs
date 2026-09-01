@@ -44,7 +44,6 @@ pub mod list;
 pub mod markup;
 pub mod maturity;
 pub mod notes;
-pub mod place;
 pub mod seats;
 pub mod slots;
 pub mod status;
