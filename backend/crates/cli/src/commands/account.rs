@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use application::account::{self, AccountError, delete::DeleteOutcome};
+use application::account::{self, AccountEntity, AccountError, delete::DeleteOutcome};
 use chrono::Utc;
 use clap::Subcommand;
 use composition::Runtime;
@@ -134,7 +134,13 @@ pub async fn run(
                     // missing. Mapped rather than swept under a wildcard so the match
                     // stays exhaustive and a future variant lands as a compile error.
                     AccountError::IncorrectRole => CliError::domain("forbidden", err),
-                    AccountError::AccountNotFound => CliError::domain("account_not_found", err),
+                    AccountError::NotFound(AccountEntity::Account) => {
+                        CliError::domain("account_not_found", err)
+                    }
+                    // Unreachable from founding — nothing here names a user, a
+                    // board or a commission. Mapped rather than swept under a
+                    // wildcard so a future variant lands as a compile error.
+                    AccountError::NotFound(_) => CliError::domain("not_found", err),
                     // Unreachable from founding — the namespace check is change_handle's own.
                     AccountError::UnsupportedHandle => CliError::domain("unsupported_handle", err),
                     // Unreachable from founding — both are change_handle-only outcomes.
@@ -153,12 +159,17 @@ pub async fn run(
                     // Unreachable here: membership-only outcomes of invite/transfer.
                     AccountError::AlreadyMember => CliError::domain("already_member", err),
                     AccountError::CannotTransferToSelf => CliError::domain("invalid_request", err),
-                    // Unreachable from founding — no user lookup by DID happens here.
-                    AccountError::UserNotFound => CliError::domain("forbidden", err),
                     // Unreachable from founding — no invitation is issued here.
                     AccountError::InvitationAlreadyPending => {
                         CliError::domain("invalid_request", err)
                     }
+                    // Unreachable from founding — board mutations are their own
+                    // commands. Mapped to keep the match exhaustive.
+                    AccountError::ContainsCommissions
+                    | AccountError::DuplicateName
+                    | AccountError::IncorrectNumberOfColumns
+                    | AccountError::NothingToDo => CliError::domain("invalid_request", err),
+                    AccountError::SystemError(_) => CliError::domain("internal_error", err),
                 })?;
             let body = Founded::from(founded);
             Ok(serde_json::to_value(body).expect("Founded serializes"))
@@ -198,7 +209,13 @@ pub async fn run(
                     .delete(command)
                     .await
                     .map_err(|err| match err {
-                        AccountError::AccountNotFound => CliError::domain("account_not_found", err),
+                        AccountError::NotFound(AccountEntity::Account) => {
+                            CliError::domain("account_not_found", err)
+                        }
+                        // Unreachable from founding — nothing here names a user, a
+                        // board or a commission. Mapped rather than swept under a
+                        // wildcard so a future variant lands as a compile error.
+                        AccountError::NotFound(_) => CliError::domain("not_found", err),
                         AccountError::IncorrectRole => CliError::domain("forbidden", err),
                         // The terse `Display` is what the user sees; the cause goes
                         // to the diagnostics channel (stderr, before the problem
@@ -237,12 +254,17 @@ pub async fn run(
                         AccountError::CannotTransferToSelf => {
                             CliError::domain("invalid_request", err)
                         }
-                        // Unreachable from delete — no user lookup by DID happens here.
-                        AccountError::UserNotFound => CliError::domain("forbidden", err),
                         // Unreachable from delete — no invitation is issued here.
                         AccountError::InvitationAlreadyPending => {
                             CliError::domain("invalid_request", err)
                         }
+                        // Unreachable from delete — board mutations are their own
+                        // commands. Mapped to keep the match exhaustive.
+                        AccountError::ContainsCommissions
+                        | AccountError::DuplicateName
+                        | AccountError::IncorrectNumberOfColumns
+                        | AccountError::NothingToDo => CliError::domain("invalid_request", err),
+                        AccountError::SystemError(_) => CliError::domain("internal_error", err),
                     })?;
             let body = Deleted::from(deleted);
             Ok(serde_json::to_value(body).expect("Deleted serializes"))
