@@ -464,6 +464,12 @@ impl AsRef<str> for Handle {
     }
 }
 
+impl std::fmt::Display for Handle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_membership_refuses_the_apex_and_look_alikes() {
+    fn namespace_membership_refuses_the_apex_and_lookalikes() {
         let zurfur = domain("zurfur.app");
         // The apex is not a member of its own namespace. `zurfur.app` is not a
         // constructible Handle (the reserved-label gate), so a differently-named

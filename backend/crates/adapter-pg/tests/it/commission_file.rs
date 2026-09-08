@@ -6,13 +6,14 @@
 //! `commission.rs` proves `commission_file` is classified NON-FACT). Requires a
 //! container runtime socket (DOCKER_HOST honored).
 
+use std::io::Cursor;
+
 use adapter_pg::{PgDatabase, PgFileStore, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileMetadata,
-            FileName,
+            Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileName,
         },
         did::Did,
         user::User,
@@ -44,7 +45,7 @@ async fn seed_commission(pool: &PgPool, owner: &User, title: &str) -> Commission
     let db = PgDatabase::new(pool.clone());
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -69,7 +70,7 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
     let file = CommissionFile {
         id: key,
         commission_id: mine,
-        uploaded_by: owner.id,
+        uploaded_by: owner.id.clone(),
         created_at: Utc::now(),
     };
 
@@ -82,7 +83,7 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
         // bears no facts (a file entry is bookkeeping, not a Product).
         assert!(
             !commissions
-                .commission_has_facts(mine)
+                .commission_has_facts(&mine)
                 .await
                 .expect("has_facts"),
             "a file entry must not trip fact-lock",
@@ -93,7 +94,7 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
     let store = adapter_pg::PgCommissionStore::new(pool.clone());
     use domain::ports::CommissionStore;
     let found = store
-        .find_file(mine, key)
+        .find_file(&mine, key)
         .await
         .expect("find_file")
         .expect("present");
@@ -104,7 +105,7 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
     // Scoped: the same key asked under a different commission is None.
     assert!(
         store
-            .find_file(other, key)
+            .find_file(&other, key)
             .await
             .expect("find_file other")
             .is_none(),
@@ -113,7 +114,7 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
     // An unknown key is None.
     assert!(
         store
-            .find_file(mine, FileKey::generate())
+            .find_file(&mine, FileKey::generate())
             .await
             .expect("find_file unknown")
             .is_none(),
@@ -123,22 +124,23 @@ async fn file_link_round_trips_scoped_and_is_not_a_fact() {
     let mut uow = db.begin().await.expect("begin later");
     assert!(
         !uow.commissions()
-            .commission_has_facts(mine)
+            .commission_has_facts(&mine)
             .await
             .expect("has_facts later"),
     );
     uow.rollback().await.expect("rollback read-only");
 }
 
-// The FileStore round-trips bytes + metadata, and delete removes them
-// idempotently. Pool-backed — the blob write is a step outside the unit of work.
+// The FileStore drains and counts a streamed `put`, streams the bytes back
+// out on `get`, and delete removes them idempotently. Pool-backed — the blob
+// write is a step outside the unit of work.
 #[tokio::test]
 async fn file_store_put_get_delete_round_trip() {
     let (pool, _c) = fresh_pool().await;
     let store = PgFileStore::new(pool.clone());
 
     let key = FileKey::generate();
-    let metadata = FileMetadata::new(FileName::try_new("art.svg").unwrap(), "image/svg+xml", 5);
+    let filename = FileName::try_new("art.svg").unwrap();
     let bytes = b"<svg>".to_vec();
 
     assert!(
@@ -146,21 +148,50 @@ async fn file_store_put_get_delete_round_trip() {
         "absent before put"
     );
 
-    store.put(key, &metadata, &bytes).await.expect("put");
+    let written = store
+        .put(
+            key,
+            &filename,
+            "image/svg+xml",
+            &mut Cursor::new(bytes.clone()),
+        )
+        .await
+        .expect("put");
+    assert_eq!(written, bytes.len() as u64, "put counts the bytes itself");
+
     let got = store.get(key).await.expect("get").expect("present");
-    assert_eq!(got.bytes, bytes);
     assert_eq!(got.metadata.filename.as_str(), "art.svg");
     assert_eq!(got.metadata.content_type, "image/svg+xml");
-    assert_eq!(got.metadata.byte_size, 5);
+    assert_eq!(got.metadata.byte_size, bytes.len() as i64);
+    assert_eq!(read_all(got.content).await, bytes);
 
     // put is an idempotent upsert.
     let bytes2 = b"<svg/>".to_vec();
-    let metadata2 = FileMetadata::new(FileName::try_new("art.svg").unwrap(), "image/svg+xml", 6);
-    store.put(key, &metadata2, &bytes2).await.expect("re-put");
-    assert_eq!(store.get(key).await.unwrap().unwrap().bytes, bytes2);
+    store
+        .put(
+            key,
+            &filename,
+            "image/svg+xml",
+            &mut Cursor::new(bytes2.clone()),
+        )
+        .await
+        .expect("re-put");
+    let got2 = store.get(key).await.unwrap().unwrap();
+    assert_eq!(read_all(got2.content).await, bytes2);
 
     store.delete(key).await.expect("delete");
     assert!(store.get(key).await.expect("get after delete").is_none());
     // Deleting an absent key is a no-op, not an error.
     store.delete(key).await.expect("idempotent delete");
+}
+
+/// Drains a downloaded reader into a `Vec<u8>` for a byte-equality assertion.
+async fn read_all(mut content: Box<dyn tokio::io::AsyncRead + Send + Unpin>) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut buf = Vec::new();
+    content
+        .read_to_end(&mut buf)
+        .await
+        .expect("read the downloaded content");
+    buf
 }

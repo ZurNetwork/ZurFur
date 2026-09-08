@@ -1,0 +1,47 @@
+{
+  "Application use case": {
+    "scope": "rust",
+    "prefix": "usecase",
+    "description": "Application-layer use case: Command + Output + run over the module's Ports struct (DD 55836674, amended 2026-09-04)",
+    "body": [
+      "#[derive(Debug, Clone, PartialEq, Eq)]",
+      "pub struct Command {",
+      "    $1",
+      "}",
+      "#[derive(Debug, Clone, PartialEq, Eq)]",
+      "pub struct Output;",
+      "",
+      "pub async fn run(",
+      "    command: Command,",
+      "    ports: &${2:Commission}Ports<'_>,",
+      "    now: DateTimeUtc,",
+      ") -> ${2}Result<Output> {",
+      "    $0",
+      "}"
+    ]
+  },
+  "Unit of work: begin": {
+    "scope": "rust",
+    "prefix": "tbegin",
+    "description": "Open a unit of work on the orchestrator's database port",
+    "body": [
+      "let mut uow = ${1:self.ports()}.database.begin().await?;"
+    ]
+  },
+  "Unit of work: commit": {
+    "scope": "rust",
+    "prefix": "tcommit",
+    "description": "Commit the unit of work (consumes it)",
+    "body": [
+      "uow.commit().await?;"
+    ]
+  },
+  "Unit of work: rollback": {
+    "scope": "rust",
+    "prefix": "trollback",
+    "description": "Roll the unit of work back explicitly (drop does the same)",
+    "body": [
+      "uow.rollback().await?;"
+    ]
+  }
+}

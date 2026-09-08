@@ -58,6 +58,27 @@ impl From<DateTimeUtc> for WireTimestamp {
     }
 }
 
+/// A [`WireTimestamp`] that names no instant `google.protobuf.Timestamp` can
+/// carry — negative or overflowing nanos, or a year outside [`WIRE_YEARS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutOfWireRange;
+
+impl std::fmt::Display for OutOfWireRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the timestamp is outside the representable range")
+    }
+}
+
+impl std::error::Error for OutOfWireRange {}
+
+impl TryFrom<WireTimestamp> for DateTimeUtc {
+    type Error = OutOfWireRange;
+
+    fn try_from(value: WireTimestamp) -> Result<Self, Self::Error> {
+        value.as_datetime().ok_or(OutOfWireRange)
+    }
+}
+
 impl Serialize for WireTimestamp {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let datetime = self.as_datetime().ok_or_else(|| {

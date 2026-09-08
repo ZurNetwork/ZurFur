@@ -37,6 +37,7 @@ pub use composition::{Config, Environment, Runtime as AppState};
 /// `contract/zurfur/api/v1/*.proto` fails the `contract_current` test.
 pub mod generated;
 
+mod extract;
 mod problem;
 mod routes;
 mod sweep;

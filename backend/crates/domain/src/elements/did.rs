@@ -9,6 +9,8 @@
 use std::ops::Deref;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 /// A decentralized identifier, held as the string the network gave us.
 ///
 /// Two ways in, by provenance (Engineer ruling 2026-08-24):
@@ -24,7 +26,7 @@ use std::str::FromStr;
 ///
 /// References: [`new`](Did::new), [`crate::elements::user::User`],
 /// [`crate::ports::DidMinter`], DESIGN/User; DID Core §3.1 (syntax).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Did(String);
 
 impl Did {
@@ -90,6 +92,13 @@ impl Deref for Did {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+/// Delegates to the wrapped string via [`Deref`].
+impl std::fmt::Display for Did {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self)
     }
 }
 

@@ -163,7 +163,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
         .expect("find me")
         .expect("sign-in provisioned me");
     assert_eq!(
-        backend.role_of(me.id, account.id).await.expect("role_of"),
+        backend.role_of(&me.id, &account.id).await.expect("role_of"),
         None,
         "a forbidden write seats no membership for the actor",
     );
@@ -204,8 +204,11 @@ async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
         .expect("the grant provisioned the grantee");
     let account = account_id_from(&account_id);
     assert_eq!(
-        backend.role_of(grantee.id, account).await.expect("role_of"),
-        Some(Role::Member(None)),
+        backend
+            .role_of(&grantee.id, &account)
+            .await
+            .expect("role_of"),
+        Some(Role::Member),
         "the grantee is seated as a Member",
     );
 }
@@ -242,8 +245,8 @@ async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
     let body: serde_json::Value = res.json().await.expect("json body");
     let account = account_id_from(body["id"].as_str().expect("account id"));
     assert_eq!(
-        backend.role_of(me.id, account).await.expect("role_of"),
-        Some(Role::Owner(None)),
+        backend.role_of(&me.id, &account).await.expect("role_of"),
+        Some(Role::Owner),
         "founding makes the zero-account User the Owner",
     );
 }
@@ -283,5 +286,5 @@ async fn anonymous_read_of_account_public_data_still_succeeds() {
 /// Parse an account-id string (as returned by the API) back into an `AccountId` for
 /// backend introspection.
 fn account_id_from(id: &str) -> domain::elements::account::AccountId {
-    domain::elements::account::AccountId::new(Uuid::parse_str(id).expect("id is a uuid"))
+    domain::elements::account::AccountId::new(Did::new(id.to_string()))
 }

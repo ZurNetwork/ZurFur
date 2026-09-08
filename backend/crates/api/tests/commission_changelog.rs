@@ -527,3 +527,80 @@ async fn no_route_edits_or_removes_changelog_entries() {
     let entries = read_changelog(&client, &base, id).await;
     assert_eq!(entries.len(), 1, "the stream is untouched by the probes");
 }
+
+/// Creates a commission over HTTP and returns its id, identified by diffing the
+/// backend's id set before and after. [`create_commission`]'s `last()` reads an
+/// unordered map, so it only names the newest while exactly one exists.
+async fn create_and_identify(
+    client: &reqwest::Client,
+    base: &str,
+    backend: &MemBackend,
+) -> uuid::Uuid {
+    let ids = async || -> std::collections::HashSet<uuid::Uuid> {
+        backend
+            .all_commissions()
+            .await
+            .expect("list commissions")
+            .iter()
+            .map(|commission| *commission.id)
+            .collect()
+    };
+
+    let before = ids().await;
+    let res = client
+        .post(format!("{base}/commissions"))
+        .json(&json!({ "title": "A ref sheet" }))
+        .send()
+        .await
+        .expect("POST /commissions");
+    assert_eq!(res.status(), 201, "creating a commission returns 201");
+
+    let fresh: Vec<uuid::Uuid> = ids().await.difference(&before).copied().collect();
+    assert_eq!(fresh.len(), 1, "exactly one commission was created");
+    fresh[0]
+}
+
+// AC5 (the ordering key itself) — the `seq` a stream reports is the STORE's
+// key, never a position in the page the read happened to return. The key is one
+// monotonic sequence across every commission (a `bigserial` in pg, mirrored in
+// the fake), so a second commission's entry lands strictly BETWEEN the first
+// commission's two — an ordering a 0-based renumbering of each stream cannot
+// produce. `seq` is not gapless per commission and the cursor semantics read
+// from it, so renumbering breaks both.
+#[tokio::test]
+async fn seq_is_the_stores_key_not_the_position_in_the_page() {
+    let (base, backend) = spawn_app("did:plc:artist").await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    // Interleave two streams: A's creation, B's creation, then a note on A.
+    // `create_commission`'s `all_commissions().last()` cannot be used twice —
+    // the fake's map is unordered — so each id is identified by diffing the set.
+    let first = create_and_identify(&client, &base, &backend).await;
+    let second = create_and_identify(&client, &base, &backend).await;
+    assert_ne!(first, second, "two distinct commissions");
+    let res = client
+        .post(format!("{base}/commissions/{first}/notes"))
+        .json(&json!({ "note": "after the second commission was created" }))
+        .send()
+        .await
+        .expect("POST note");
+    assert_eq!(res.status(), 201);
+
+    let seq_of = |entries: &[serde_json::Value]| -> Vec<i64> {
+        entries
+            .iter()
+            .map(|e| e["seq"].as_i64().expect("seq is an integer"))
+            .collect()
+    };
+    let first_seqs = seq_of(&read_changelog(&client, &base, first).await);
+    let second_seqs = seq_of(&read_changelog(&client, &base, second).await);
+    assert_eq!(first_seqs.len(), 2, "creation + the note");
+    assert_eq!(second_seqs.len(), 1, "creation only");
+
+    assert!(
+        first_seqs[0] < second_seqs[0] && second_seqs[0] < first_seqs[1],
+        "the second commission's entry sits between the first's two: \
+         {first_seqs:?} vs {second_seqs:?}",
+    );
+}

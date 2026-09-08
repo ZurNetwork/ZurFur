@@ -12,12 +12,28 @@
 //! unrepresentable, not just unoffered). Only the id type exists so far; the
 //! Character entity is not modelled here yet.
 
-/// The app-private identity of a Character.
+use std::str::FromStr;
+
+use crate::elements::{did::Did, id::IdError};
+
+/// The identity of a Character: its own [`Did`], wrapped for type safety.
 ///
-/// Stub: a UUIDv7 wrapped for type safety. Note the Character's *public*
-/// identity is a [`crate::elements::did::Did`] (per DESIGN/Character); this is
-/// the private handle. The entity itself is not modelled here yet; the
-/// commission [`Slot`](crate::elements::commission::Slot) it will occupy gains
-/// its occupant reference in the same change that models assignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CharacterId(uuid::Uuid);
+/// Stub. Every actor mints a DID and the DID *is* the key, Characters included
+/// — there is no separate private id (DD `57081857`). The entity itself is not
+/// modelled here yet; the commission
+/// [`Slot`](crate::elements::commission::Slot) it will occupy gains its
+/// occupant reference in the same change that models assignment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CharacterId(Did);
+
+impl FromStr for CharacterId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let id = s
+            .parse::<Did>()
+            .map(Self)
+            .map_err(|_| IdError::ParsingError)?;
+        Ok(id)
+    }
+}

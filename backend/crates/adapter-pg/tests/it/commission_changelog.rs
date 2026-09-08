@@ -75,7 +75,7 @@ async fn append_commits_and_rolls_back_with_the_unit() {
         .append(&NewChangelogEntry::event(
             commission.id,
             ChangelogEntryKind::Created,
-            commission.owner_id,
+            commission.owner_id.clone(),
             json!({ "title": "A ref sheet" }),
             Utc::now(),
         ))
@@ -83,7 +83,7 @@ async fn append_commits_and_rolls_back_with_the_unit() {
         .expect("append");
     uow.commit().await.expect("commit");
     assert_eq!(
-        store.entries(commission.id).await.expect("read").len(),
+        store.entries(&commission.id).await.expect("read").len(),
         1,
         "the committed entry is visible",
     );
@@ -101,7 +101,7 @@ async fn append_commits_and_rolls_back_with_the_unit() {
         .expect("append (to be rolled back)");
     uow.rollback().await.expect("rollback");
     assert_eq!(
-        store.entries(commission.id).await.expect("read").len(),
+        store.entries(&commission.id).await.expect("read").len(),
         1,
         "a rolled-back entry is invisible — atomic with the unit, no dual write",
     );
@@ -123,7 +123,7 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
         log.append(&NewChangelogEntry::event(
             commission.id,
             ChangelogEntryKind::Created,
-            commission.owner_id,
+            commission.owner_id.clone(),
             json!({ "title": "A ref sheet" }),
             Utc::now(),
         ))
@@ -131,7 +131,7 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
         .expect("append created");
         log.append(&NewChangelogEntry::note(
             commission.id,
-            commission.owner_id,
+            commission.owner_id.clone(),
             "traveling next week".to_string(),
             Utc::now(),
         ))
@@ -149,7 +149,7 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
     }
     uow.commit().await.expect("commit");
 
-    let entries = store.entries(commission.id).await.expect("read");
+    let entries = store.entries(&commission.id).await.expect("read");
     assert_eq!(entries.len(), 3);
     assert!(
         entries.windows(2).all(|w| w[0].seq < w[1].seq),
@@ -167,7 +167,7 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
     let other = seed_commission(&pool, "did:plc:other-owner").await;
     assert!(
         store
-            .entries(other.id)
+            .entries(&other.id)
             .await
             .expect("read other")
             .is_empty(),
@@ -236,7 +236,11 @@ async fn entries_cascade_away_with_the_commission() {
 
     let store = PgChangelogStore::new(pool.clone());
     assert!(
-        store.entries(commission.id).await.expect("read").is_empty(),
+        store
+            .entries(&commission.id)
+            .await
+            .expect("read")
+            .is_empty(),
         "the commission's entries cascade away with it",
     );
 }
@@ -253,21 +257,24 @@ async fn is_participant_answers_the_owner_arm_only() {
 
     assert!(
         store
-            .is_participant(commission.id, commission.owner_id)
+            .is_participant(&commission.id, &commission.owner_id)
             .await
             .expect("ask owner"),
         "the owner is a Participant without a Seat",
     );
     assert!(
         !store
-            .is_participant(commission.id, stranger.id)
+            .is_participant(&commission.id, &stranger.id)
             .await
             .expect("ask stranger"),
         "a non-owner is not (yet) a Participant",
     );
     assert!(
         !store
-            .is_participant(CommissionId::new(uuid::Uuid::now_v7()), commission.owner_id)
+            .is_participant(
+                &CommissionId::new(uuid::Uuid::now_v7()),
+                &commission.owner_id
+            )
             .await
             .expect("ask unknown commission"),
         "an unknown commission has no participants",
@@ -284,7 +291,7 @@ async fn find_roundtrips_the_linked_channel() {
     let store = PgCommissionStore::new(pool.clone());
 
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("the commission exists");
@@ -298,21 +305,21 @@ async fn find_roundtrips_the_linked_channel() {
     let mut uow = db.begin().await.expect("begin");
     assert!(
         uow.commissions()
-            .set_linked_channel(commission.id, Some(&pointer))
+            .set_linked_channel(&commission.id, Some(&pointer))
             .await
             .expect("set channel"),
         "the first link is a real change"
     );
     assert!(
         !uow.commissions()
-            .set_linked_channel(commission.id, Some(&pointer))
+            .set_linked_channel(&commission.id, Some(&pointer))
             .await
             .expect("re-set channel"),
         "re-linking the identical pointer answers false"
     );
     uow.commit().await.expect("commit");
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
@@ -324,21 +331,21 @@ async fn find_roundtrips_the_linked_channel() {
     let mut uow = db.begin().await.expect("begin");
     assert!(
         uow.commissions()
-            .set_linked_channel(commission.id, None)
+            .set_linked_channel(&commission.id, None)
             .await
             .expect("clear channel"),
         "the clear is a real change"
     );
     assert!(
         !uow.commissions()
-            .set_linked_channel(commission.id, None)
+            .set_linked_channel(&commission.id, None)
             .await
             .expect("re-clear channel"),
         "clearing an already-clear channel answers false"
     );
     uow.commit().await.expect("commit");
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
@@ -347,7 +354,7 @@ async fn find_roundtrips_the_linked_channel() {
     // An unknown commission finds nothing.
     assert!(
         store
-            .find(CommissionId::new(uuid::Uuid::now_v7()))
+            .find(&CommissionId::new(uuid::Uuid::now_v7()))
             .await
             .expect("find unknown")
             .is_none(),
@@ -367,7 +374,7 @@ async fn find_roundtrips_the_direction_status() {
     let store = PgCommissionStore::new(pool.clone());
 
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("the commission exists");
@@ -378,13 +385,13 @@ async fn find_roundtrips_the_direction_status() {
 
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_direction_status(commission.id, Some(DirectionStatus::WaitingForInput))
+        .set_direction_status(&commission.id, Some(DirectionStatus::WaitingForInput))
         .await
         .expect("set status");
     uow.commit().await.expect("commit");
     assert_eq!(
         store
-            .find(commission.id)
+            .find(&commission.id)
             .await
             .expect("find")
             .expect("exists")
@@ -395,13 +402,13 @@ async fn find_roundtrips_the_direction_status() {
     // A second set replaces the value whole — never accumulates.
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_direction_status(commission.id, Some(DirectionStatus::ChangesRequested))
+        .set_direction_status(&commission.id, Some(DirectionStatus::ChangesRequested))
         .await
         .expect("replace status");
     uow.commit().await.expect("commit");
     assert_eq!(
         store
-            .find(commission.id)
+            .find(&commission.id)
             .await
             .expect("find")
             .expect("exists")
@@ -413,12 +420,12 @@ async fn find_roundtrips_the_direction_status() {
     // untouched throughout (it was None at seed and stays None).
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_direction_status(commission.id, None)
+        .set_direction_status(&commission.id, None)
         .await
         .expect("clear status");
     uow.commit().await.expect("commit");
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
@@ -428,7 +435,7 @@ async fn find_roundtrips_the_direction_status() {
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
         .set_direction_status(
-            CommissionId::new(uuid::Uuid::now_v7()),
+            &CommissionId::new(uuid::Uuid::now_v7()),
             Some(DirectionStatus::WaitingForApproval),
         )
         .await

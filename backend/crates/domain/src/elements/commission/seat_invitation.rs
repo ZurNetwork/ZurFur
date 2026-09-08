@@ -22,11 +22,13 @@
 //! [`Accepted`]: InvitationState::Accepted
 
 use std::ops::Deref;
+use std::str::FromStr;
 
 use crate::{
     datetime::DateTimeUtc,
     elements::{
         commission::{CommissionId, ElementId},
+        id::{IdError, parse_uuid},
         invitation::{InvitationError, InvitationState},
         user::UserId,
     },
@@ -54,6 +56,14 @@ impl Deref for SeatInvitationId {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl FromStr for SeatInvitationId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
     }
 }
 
@@ -113,14 +123,15 @@ impl SeatInvitation {
     /// use chrono::Utc;
     /// use domain::elements::{
     ///     commission::{CommissionId, ElementId, SeatInvitation},
+    ///     did::Did,
     ///     invitation::InvitationState,
     ///     user::UserId,
     /// };
     ///
     /// let commission = CommissionId::new(uuid::Uuid::now_v7());
     /// let seat = ElementId::new(uuid::Uuid::now_v7());
-    /// let invited = UserId::new(uuid::Uuid::now_v7());
-    /// let inviter = UserId::new(uuid::Uuid::now_v7());
+    /// let invited = UserId::new(Did::new("did:plc:alice".to_string()));
+    /// let inviter = UserId::new(Did::new("did:plc:bob".to_string()));
     /// let invitation = SeatInvitation::issue(commission, seat, invited, inviter, Utc::now());
     ///
     /// assert_eq!(invitation.state, InvitationState::Pending); // issued pending
@@ -160,6 +171,7 @@ impl SeatInvitation {
     /// use chrono::Utc;
     /// use domain::elements::{
     ///     commission::{CommissionId, ElementId, SeatInvitation},
+    ///     did::Did,
     ///     invitation::{InvitationError, InvitationState},
     ///     user::UserId,
     /// };
@@ -167,8 +179,8 @@ impl SeatInvitation {
     /// let mut invitation = SeatInvitation::issue(
     ///     CommissionId::new(uuid::Uuid::now_v7()),
     ///     ElementId::new(uuid::Uuid::now_v7()),
-    ///     UserId::new(uuid::Uuid::now_v7()),
-    ///     UserId::new(uuid::Uuid::now_v7()),
+    ///     UserId::new(Did::new("did:plc:alice".to_string())),
+    ///     UserId::new(Did::new("did:plc:bob".to_string())),
     ///     Utc::now(),
     /// );
     /// assert!(invitation.revoke(Utc::now()).is_ok());
@@ -189,6 +201,7 @@ impl SeatInvitation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::elements::did::Did;
     use chrono::{Duration, Utc};
 
     fn commission() -> CommissionId {
@@ -200,7 +213,7 @@ mod tests {
     }
 
     fn user() -> UserId {
-        UserId::new(uuid::Uuid::now_v7())
+        UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())))
     }
 
     // Issuance captures all four facts — the invited User, the commission, the
@@ -210,7 +223,8 @@ mod tests {
         let (commission, seat, invited, inviter) = (commission(), seat(), user(), user());
         let now = Utc::now();
 
-        let invitation = SeatInvitation::issue(commission, seat, invited, inviter, now);
+        let invitation =
+            SeatInvitation::issue(commission, seat, invited.clone(), inviter.clone(), now);
 
         assert_eq!(invitation.commission, commission);
         assert_eq!(invitation.seat, seat);

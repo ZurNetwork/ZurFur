@@ -140,9 +140,10 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         .expect("found host account");
     backend
         .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: account.id,
-            role: Role::Member(None),
+            user_id: me.id.clone(),
+            account_id: account.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat me as a member");
@@ -158,6 +159,6 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         "a member leaves on their own action, no approval"
     );
 
-    let role = backend.role_of(me.id, account.id).await.expect("role_of");
+    let role = backend.role_of(&me.id, &account.id).await.expect("role_of");
     assert_eq!(role, None, "after leaving, the user holds no role");
 }

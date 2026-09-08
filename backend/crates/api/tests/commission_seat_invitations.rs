@@ -185,7 +185,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .expect("the invitee was provisioned");
     let found = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(id), &ElementId::new(seat), &invitee.id)
         .await
         .expect("query")
         .expect("a pending offer was recorded");
@@ -332,7 +332,11 @@ async fn owner_revokes_a_pending_invitation() {
     assert!(
         backend
             .commission_store()
-            .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
+            .find_pending_seat_invitation(
+                &CommissionId::new(id),
+                &ElementId::new(seat),
+                &invitee.id
+            )
             .await
             .expect("query")
             .is_none(),
@@ -460,7 +464,7 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
         .expect("invitee was provisioned by the invite");
     let still_pending = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(b), ElementId::new(b_seat), invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(b), &ElementId::new(b_seat), &invitee.id)
         .await
         .expect("query");
     assert!(

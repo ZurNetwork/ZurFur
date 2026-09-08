@@ -99,11 +99,11 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
 
     async fn cache_handle(
         &mut self,
-        id: ActorIdentityId,
+        id: &ActorIdentityId,
         handle: Option<&str>,
     ) -> anyhow::Result<()> {
-        let affected = sql::cache_handle(&mut *self.conn, *id, handle).await?;
-        anyhow::ensure!(affected == 1, "actor identity not found: {}", *id);
+        let affected = sql::cache_handle(&mut *self.conn, **id, handle).await?;
+        anyhow::ensure!(affected == 1, "actor identity not found: {}", **id);
         Ok(())
     }
 }
@@ -122,8 +122,8 @@ impl PgActorIdentityStore {
 
 #[async_trait]
 impl ActorIdentityStore for PgActorIdentityStore {
-    async fn find(&self, id: ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
-        let row = sql::find(&self.pool, *id).await?;
+    async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
+        let row = sql::find(&self.pool, **id).await?;
         row.map(rebuild).transpose()
     }
 

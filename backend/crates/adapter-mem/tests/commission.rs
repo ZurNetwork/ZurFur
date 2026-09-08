@@ -37,7 +37,7 @@ async fn every_commission_answers_false_with_no_fact_minters_wired() {
         let mut commissions = uow.commissions();
         commissions.create(&commission).await.expect("create");
         let has_facts = commissions
-            .commission_has_facts(id)
+            .commission_has_facts(&id)
             .await
             .expect("has_facts in the creating unit");
         assert!(
@@ -51,7 +51,7 @@ async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let mut uow = db.begin().await.expect("begin second unit");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(id)
+        .commission_has_facts(&id)
         .await
         .expect("has_facts in a later unit");
     assert!(!has_facts);
@@ -69,7 +69,7 @@ async fn an_unknown_commission_answers_false() {
     let mut uow = db.begin().await.expect("begin");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(CommissionId::new(uuid::Uuid::now_v7()))
+        .commission_has_facts(&CommissionId::new(uuid::Uuid::now_v7()))
         .await
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
@@ -117,7 +117,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = backend.database().begin().await.expect("begin");
     let changed = uow
         .commissions()
-        .set_archived(id, Some(stamp))
+        .set_archived(&id, Some(stamp))
         .await
         .expect("archive");
     assert!(changed, "active -> archived is a transition");
@@ -133,7 +133,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = backend.database().begin().await.expect("begin");
     let changed = uow
         .commissions()
-        .set_archived(id, Some(Utc::now()))
+        .set_archived(&id, Some(Utc::now()))
         .await
         .expect("repeat archive");
     assert!(!changed, "archived -> archived is not a transition");
@@ -153,7 +153,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = backend.database().begin().await.expect("begin");
     let changed = uow
         .commissions()
-        .set_archived(id, None)
+        .set_archived(&id, None)
         .await
         .expect("unarchive");
     assert!(changed, "archived -> active is a transition");
@@ -173,14 +173,14 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = backend.database().begin().await.expect("begin");
     assert!(
         !uow.commissions()
-            .set_archived(id, None)
+            .set_archived(&id, None)
             .await
             .expect("repeat unarchive"),
         "active -> active is not a transition",
     );
     assert!(
         !uow.commissions()
-            .set_archived(CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .set_archived(&CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
             .await
             .expect("archive an unknown id"),
         "an absent commission matches nothing (existence is the caller's check)",
@@ -216,7 +216,7 @@ async fn a_dropped_unit_of_work_discards_the_archive() {
         let mut uow = backend.database().begin().await.expect("begin");
         assert!(
             uow.commissions()
-                .set_archived(id, Some(Utc::now()))
+                .set_archived(&id, Some(Utc::now()))
                 .await
                 .expect("stage archive"),
         );

@@ -11,7 +11,7 @@
 //! with this signature structure:
 //!
 //! 1. **Input**: A `Query` or `Command` DTO carrying the operation's data
-//!    (e.g., [`account::CreateAccountCommand`], [`user::MeQuery`]), already
+//!    (e.g., [`account::create::Command`], [`user::me::MeQuery`]), already
 //!    validated by its newtypes at the driver's boundary.
 //! 2. **Ports**: a per-module struct of borrowed `&dyn` ports (e.g.
 //!    [`account::AccountPorts`]) — the module's own stores plus `database`;
@@ -25,7 +25,7 @@
 //! 4. **Output**: A `Result<OutputDTO, <Module>Error>` where the DTO holds
 //!    domain VALUES — newtypes (`AccountId`, `Did`, `Handle`) or plain
 //!    strings for facts the domain has no newtype for — never ENTITIES
-//!    (e.g. [`account::CreateAccountResult`], [`user::MeResult`]).
+//!    (e.g. [`account::create::Output`], [`user::me::Output`]).
 //!
 //! Error handling:
 //! * One error enum per module — mapped by drivers to their own surface (API to
@@ -52,8 +52,11 @@
 //! an injected `now`, its timer left to the driver.
 
 pub mod account;
+pub mod app;
 pub mod commission;
+pub(crate) mod ports;
 mod transaction;
 pub mod user;
 
+pub use app::{App, MissingPort, Ports};
 pub use transaction::transaction;

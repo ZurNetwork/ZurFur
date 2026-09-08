@@ -10,8 +10,9 @@ use crate::{
         account::AccountId,
         commission::{
             ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            DeadlineStatus, DirectionStatus, ElementId, FileKey, GrantLevel, LapsedDeadline,
-            NewElement, NewSeat, NewSlot, Placement, Seat, SeatInvitation, SeatInvitationId,
+            CommissionMarkup, DeadlineStatus, DirectionStatus, ElementId, FileKey, GrantLevel,
+            LapsedDeadline, NewElement, NewSeat, NewSlot, Placement, Seat, SeatInvitation,
+            SeatInvitationId, TabId, TabRow,
         },
         maturity::Maturity,
         user::UserId,
@@ -33,7 +34,7 @@ pub trait CommissionStore: Send + Sync {
     /// on [`Commission::archived_at`] (deferred to the S1 listing work) — never
     /// from its Participants' reach (the record and its facts survive and stay
     /// queryable, and the owner resolves it here to un-archive it).
-    async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>>;
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// The commission's **current placement** — the latest row of its append-only
     /// placement log (ZMVP-70; Ownership Separation DD `29130754`), read from the
@@ -43,14 +44,14 @@ pub trait CommissionStore: Send + Sync {
     /// in-commission authority (Decision 8).
     async fn current_placement(
         &self,
-        commission: CommissionId,
+        commission: &CommissionId,
     ) -> anyhow::Result<Option<Placement>>;
 
     /// The commission's whole **placement log** in append order (ascending `seq`),
     /// so the current placement is the last row and the origin the first (ZMVP-70).
     /// The log is append-only and never rewritten; an unplaced commission has an
     /// empty log. Used to prove the current-placement pointer equals the latest row.
-    async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>>;
+    async fn placement_log(&self, commission: &CommissionId) -> anyhow::Result<Vec<Placement>>;
 
     /// The [`GrantLevel`] an `account` currently holds on `commission`, or `None`
     /// if it holds no key (ZMVP-70; Ownership Separation DD `29130754` Decision 3).
@@ -61,8 +62,8 @@ pub trait CommissionStore: Send + Sync {
     /// [`is_participant`](Self::is_participant) is unaffected by any grant.
     async fn view_grant(
         &self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        account: &AccountId,
     ) -> anyhow::Result<Option<GrantLevel>>;
 
     /// Whether `user` is a **Participant** of `commission` — the authorization
@@ -85,7 +86,11 @@ pub trait CommissionStore: Send + Sync {
     /// An unknown commission has no participants, so it answers `false` — which
     /// is what lets a caller collapse "absent" and "hidden" into one uniform 404
     /// (the closed-door policy: existence is never leaked to outsiders).
-    async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool>;
+    async fn is_participant(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool>;
 
     /// The commission's declared [`Seat`]s (ZMVP-76) — the interpreted satellite
     /// rows, keyed by their carrying elements' ids, in declaration order. An
@@ -98,7 +103,7 @@ pub trait CommissionStore: Send + Sync {
     /// rows themselves are raw and Total-tier (they include `occupant`);
     /// authorization/projection is the caller's concern, settled before this
     /// is read.
-    async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>>;
+    async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>>;
 
     /// Load the commission's **whole composition** — every tab, every widened
     /// surface mode, and every element (ZMVP-166; Flat Composition DD
@@ -124,7 +129,7 @@ pub trait CommissionStore: Send + Sync {
     /// just its elements.
     async fn load_composition(
         &self,
-        id: CommissionId,
+        id: &CommissionId,
     ) -> anyhow::Result<Option<CommissionComposition>>;
 
     /// The [`CommissionFile`] entry `key` names **within `commission`**, or `None`
@@ -137,9 +142,25 @@ pub trait CommissionStore: Send + Sync {
     /// commission→file link the participant gate authorizes against.
     async fn find_file(
         &self,
-        commission: CommissionId,
+        commission: &CommissionId,
         key: FileKey,
     ) -> anyhow::Result<Option<CommissionFile>>;
+
+    /// Every [`CommissionMarkup`] drawn on the `file` entry **within
+    /// `commission`**, in the order they were drawn (ZMVP-90). Empty — never an
+    /// error — for a file with no annotations, and for a `file` that belongs to a
+    /// different commission: the same non-oracle rule
+    /// [`find_file`](Self::find_file) follows, so a participant of one commission
+    /// cannot probe another's files by their annotation count.
+    ///
+    /// This is the read the markup table exists for. Before it, rendering one
+    /// image's annotations meant loading the commission's entire changelog and
+    /// filtering `markup_added` entries client-side.
+    async fn markups_for_file(
+        &self,
+        commission: &CommissionId,
+        file: FileKey,
+    ) -> anyhow::Result<Vec<CommissionMarkup>>;
 
     /// The pending [`SeatInvitation`] for `(commission, seat, user)`, or `None`
     /// if there isn't one (ZMVP-78 — the Seat mirror of
@@ -154,9 +175,9 @@ pub trait CommissionStore: Send + Sync {
     /// [`CommissionStore::is_participant`] documents, enforced by construction).
     async fn find_pending_seat_invitation(
         &self,
-        commission: CommissionId,
-        seat: ElementId,
-        user: UserId,
+        commission: &CommissionId,
+        seat: &ElementId,
+        user: &UserId,
     ) -> anyhow::Result<Option<SeatInvitation>>;
 
     /// The commissions `owner` OWNS, owner-POV only (ZMVP-157) — the frontend's
@@ -175,7 +196,7 @@ pub trait CommissionStore: Send + Sync {
     /// Ordered by [`CommissionId`] — UUIDv7 sorts as creation order — so the
     /// listing is deterministic; no pagination (v1 volumes are small, the same
     /// stance as ZMVP-110).
-    async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>>;
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 }
 
 /// The error an element-writing call carries (as the source of its
@@ -317,7 +338,10 @@ pub trait CommissionWrites: Send {
     /// settled before this is reached. A private-side write, never a cross-store
     /// dual write. Deliberately **not** changelog-recorded (Engineer ruling
     /// 2026-07-16: no changelog entries in this ticket).
-    async fn create_seat_invitation(&mut self, invitation: &SeatInvitation) -> anyhow::Result<()>;
+    async fn create_seat_invitation(
+        &mut self,
+        invitation: &SeatInvitation,
+    ) -> anyhow::Result<SeatInvitation>;
 
     /// Transition a pending seat invitation to revoked, so it can no longer be
     /// accepted (ZMVP-78 — the Seat mirror of
@@ -326,7 +350,7 @@ pub trait CommissionWrites: Send {
     /// the caller decides whether absence/already-revoked is a 404/200. *Who* may
     /// revoke (the commission owner) is the caller's authority check. A
     /// private-side write, never a cross-store dual write.
-    async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()>;
+    async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()>;
 
     /// Contribute a [`NewElement`] into a declared surface (ZMVP-166; Flat
     /// Composition DD `45514754`). Order is assigned here, **on the open
@@ -378,8 +402,8 @@ pub trait CommissionWrites: Send {
     /// per-plugin bound and the write gate are ZMVP-167's.
     async fn remove_element(
         &mut self,
-        commission: CommissionId,
-        element: ElementId,
+        commission: &CommissionId,
+        element: &ElementId,
     ) -> anyhow::Result<()>;
 
     /// Record a file entry's [`CommissionFile`] link (ZMVP-88) — the Index-canonical
@@ -394,6 +418,25 @@ pub trait CommissionWrites: Send {
     /// [`Fact`](crate::elements::commission::Fact)**: it cascades away with the
     /// commission, so a commission with only file entries stays hard-deletable (AC2).
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()>;
+
+    /// Record a [`CommissionMarkup`] (ZMVP-90) — the canonical row for one
+    /// annotation's geometry. Written on the open transaction **together with** the
+    /// `markup_added` changelog entry the caller appends through
+    /// [`ChangelogWrites`](crate::ports::ChangelogWrites), so the annotation and its
+    /// timeline fact land atomically (Changelog DD D4, the file-entry precedent).
+    ///
+    /// **Append-only by omission.** There is no `update_markup` and no
+    /// `delete_markup`, and that is the enforcement: markup immutability used to
+    /// come free from the changelog's append-only shape, and a table would happily
+    /// accept an `UPDATE`. Whether it ever relaxes — resolution state, threading,
+    /// re-anchoring after a file replacement — is the deferred File Activity &
+    /// Markup DD's call, not a method anyone adds in passing.
+    ///
+    /// The row is commission-owned bookkeeping, **not a
+    /// [`Fact`](crate::elements::commission::Fact)**: it cascades away with the
+    /// commission (and with the file entry it annotates), so it never blocks a hard
+    /// delete.
+    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()>;
 
     /// Declare **Slots** on the commission — a batch, all in this one write
     /// (Engineer ruling, PR #108: a commission's Slots usually arrive several
@@ -444,7 +487,7 @@ pub trait CommissionWrites: Send {
     /// (AC3). Implementations carry the registry duty stated on
     /// [`Fact`](crate::elements::commission::Fact): every fact kind's storage must
     /// join this predicate in the same change that introduces it.
-    async fn commission_has_facts(&mut self, id: CommissionId) -> anyhow::Result<bool>;
+    async fn commission_has_facts(&mut self, id: &CommissionId) -> anyhow::Result<bool>;
 
     /// **Hard-delete** the commission: remove its row, taking every child row
     /// with it (ZMVP-66; Deletion DD `3014657` — "Delete = hard delete, possible
@@ -461,7 +504,7 @@ pub trait CommissionWrites: Send {
     /// before this is reached; deleting an absent commission matches no row and
     /// is a no-op, which keeps a lost race (a concurrent delete) idempotent
     /// rather than an error.
-    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()>;
+    async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()>;
 
     /// Archive (`Some(when)`) or un-archive (`None`) the commission — the soft
     /// path of the Deletion DD (`3014657`): the record and its facts survive
@@ -481,7 +524,7 @@ pub trait CommissionWrites: Send {
     /// [`Unarchived`]: crate::elements::commission::ChangelogEntryKind::Unarchived
     async fn set_archived(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
@@ -498,7 +541,7 @@ pub trait CommissionWrites: Send {
     /// and authority (owner-only in v1) are the caller's checks, settled
     /// before this is reached. Deliberately **not** changelog-recorded:
     /// maturity edits are not in the frozen entry taxonomy (ZMVP-87).
-    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()>;
+    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()>;
 
     /// Set (`Some`) or clear (`None`) the commission's external **linked
     /// channel** pointer (ZMVP-87 AC3; Changelog DD Decision 2). Returns whether
@@ -517,7 +560,7 @@ pub trait CommissionWrites: Send {
     /// reached.
     async fn set_linked_channel(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool>;
 
@@ -536,9 +579,9 @@ pub trait CommissionWrites: Send {
     /// cross-store dual write.
     async fn place(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
-        placed_by: UserId,
+        commission: &CommissionId,
+        account: &AccountId,
+        placed_by: &UserId,
         at: DateTimeUtc,
     ) -> anyhow::Result<()>;
 
@@ -558,8 +601,8 @@ pub trait CommissionWrites: Send {
     /// [`ViewGrantIssued`]: crate::elements::commission::ChangelogEntryKind::ViewGrantIssued
     async fn grant_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
         level: GrantLevel,
     ) -> anyhow::Result<()>;
 
@@ -577,8 +620,8 @@ pub trait CommissionWrites: Send {
     /// [`ViewGrantRevoked`]: crate::elements::commission::ChangelogEntryKind::ViewGrantRevoked
     async fn revoke_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
     ) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's **direction-axis
@@ -599,7 +642,7 @@ pub trait CommissionWrites: Send {
     /// write (the [`set_linked_channel`](Self::set_linked_channel) contract).
     async fn set_direction_status(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool>;
 
@@ -619,7 +662,7 @@ pub trait CommissionWrites: Send {
     /// under a concurrent racing write (mirrors [`set_direction_status`](Self::set_direction_status)).
     async fn set_deadline(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         deadline: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
@@ -638,7 +681,7 @@ pub trait CommissionWrites: Send {
     /// on a real change (mirrors [`set_direction_status`](Self::set_direction_status)).
     async fn set_deadline_status(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         status: Option<DeadlineStatus>,
     ) -> anyhow::Result<bool>;
 
@@ -656,3 +699,44 @@ pub trait CommissionWrites: Send {
     /// can slip between the scan and the mark — one sweep, one transaction.
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;
 }
+
+/// The **read** side of a commission unit of work — the same lookups as
+/// [`CommissionStore`], executed on the unit's own connection so they see the
+/// unit's uncommitted writes and can hold row locks until commit. Persistence
+/// decides nothing here: a scoped lookup answers, the orchestrator rules.
+/// Grows only when a migrating use case needs a read inside its unit.
+#[async_trait]
+pub trait CommissionReads: Send {
+    /// The commission `id` names, or `None`. Same closed-door contract as
+    /// [`CommissionStore::find`].
+    async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) for the
+    /// rest of the unit: concurrent writers of this commission wait for the
+    /// commit; child-row inserts by others are not blocked.
+    async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// Whether `user` holds a seat in `commission` — the closed-door predicate,
+    /// as [`CommissionStore::is_participant`].
+    async fn is_participant(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool>;
+
+    /// The tab `tab` names **within `commission`**, locked for the rest of the
+    /// unit, or `None` — an absent id and one belonging to another commission
+    /// are indistinguishable. The one serialization point of every composition
+    /// write; the skeleton check belongs to the caller.
+    async fn tab_for_update(
+        &mut self,
+        commission: &CommissionId,
+        tab: &TabId,
+    ) -> anyhow::Result<Option<TabRow>>;
+}
+
+/// A commission unit of work: [`CommissionReads`] + [`CommissionWrites`] on one
+/// connection. Vended by [`UnitOfWork::commissions`](crate::ports::UnitOfWork::commissions).
+pub trait CommissionRepo: CommissionReads + CommissionWrites {}
+
+impl<T: CommissionReads + CommissionWrites> CommissionRepo for T {}

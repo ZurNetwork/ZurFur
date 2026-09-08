@@ -3,12 +3,15 @@
 //! and Markup"; Engineer ruling E14 2026-07-05).
 //!
 //! Stored RAW and parsed by the frontend: core validates, stores, and serves the
-//! data; the drawing canvas UI is a future first-party Plugin. A markup rides the
-//! `markup_added` changelog entry's jsonb payload (no table of its own),
-//! referencing the [`FileKey`](super::file::FileKey) of a validated existing file
-//! entry — and is served back **untransformed**. Untransformed means *semantic*
-//! fidelity: no coordinate transformation, ever — but the payload lives in a
-//! Postgres `jsonb` column, which normalizes object key order (and the typed
+//! data; the drawing canvas UI is a future first-party Plugin. A markup has two
+//! homes, written on one Unit of Work: the [`CommissionMarkup`] row is canonical
+//! for the geometry and is what a per-file read returns, while the `markup_added`
+//! changelog entry stays the timeline fact, carrying enough payload to render a
+//! sentence without joins (the Changelog DD's core-renderable rule). Either way a
+//! markup references the [`FileKey`](super::file::FileKey) of a validated existing
+//! file entry, and is served back **untransformed**. Untransformed means
+//! *semantic* fidelity: no coordinate transformation, ever — but the shape lives
+//! in a Postgres `jsonb` column, which normalizes object key order (and the typed
 //! round-trip renders every number as a float), so byte-for-byte identity of the
 //! JSON text is not promised.
 //!
@@ -25,12 +28,20 @@
 //! overflow it (`cx + r > 1`); renderers clip. Only each stored value is bounded.
 //!
 //! Threading, persistence on file replacement, the annotate-matrix, and retention
-//! are explicitly deferred to the File Activity & Markup 1DD; markup immutability
-//! (no edit, no delete) is already settled by the changelog's append-only shape.
+//! are explicitly deferred to the File Activity & Markup DD — [`MarkupKey`] is the
+//! identity every one of them needs and a changelog payload could never provide.
+//! Markup immutability (no edit, no delete) used to come free from the changelog's
+//! append-only shape; a table can be `UPDATE`d, so it is now a policy the write
+//! port keeps, by exposing no update and no delete method.
 //!
 //! [`deny_unknown_fields`]: https://serde.rs/container-attrs.html#deny_unknown_fields
 
+use std::ops::Deref;
+
 use serde::{Deserialize, Serialize};
+
+use super::{CommissionId, file::FileKey};
+use crate::{datetime::DateTimeUtc, elements::user::UserId};
 
 /// One Markup: a [`shape`](Self::shape) anchored in normalized 0–1 image space,
 /// with an optional [`text`](Self::text) comment — exactly the wire body of
@@ -248,6 +259,69 @@ fn extent(field: &'static str, value: f64) -> Result<(), MarkupError> {
     } else {
         Err(MarkupError::ExtentOutOfRange(field, value))
     }
+}
+
+/// The app-private, **opaque** handle for one stored markup — a UUIDv7 wrapped for
+/// type safety, the `commission_markup` row's primary key.
+///
+/// A markup only gained an identity when it gained a table: riding a changelog
+/// payload, it had nothing to address. This key is what a reply, a resolution, or
+/// a re-anchor after file replacement would name (all deferred to the File
+/// Activity & Markup DD), and it is minted the same way a
+/// [`FileKey`](super::file::FileKey) is — by the app, because PG16 has no native
+/// `uuidv7()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MarkupKey(uuid::Uuid);
+
+impl MarkupKey {
+    /// Wrap an already-minted UUIDv7 — e.g. a row read back from the store.
+    pub fn new(id: uuid::Uuid) -> Self {
+        Self(id)
+    }
+
+    /// Mint a fresh key (`Uuid::now_v7()`) for a new markup — the one place a
+    /// markup's identity is born. Sorts as creation order, so a per-file read
+    /// needs no separate ordering column.
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+}
+
+impl Deref for MarkupKey {
+    type Target = uuid::Uuid;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// One stored markup: a validated [`Markup`] anchored to a file entry, with the
+/// Participant who drew it and when.
+///
+/// This is the canonical record of the geometry — the `markup_added` changelog
+/// entry that accompanies it is the timeline fact, not the source of truth. Both
+/// are written on the same [`UnitOfWork`](crate::ports::UnitOfWork), so a markup
+/// and its entry commit or vanish together.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommissionMarkup {
+    /// The markup's opaque key and this row's primary key.
+    pub id: MarkupKey,
+    /// The commission whose review loop the markup belongs to. Carried even though
+    /// [`file_id`](Self::file_id) implies it, because every read scopes by it — a
+    /// key from another commission stays invisible rather than answerable.
+    pub commission_id: CommissionId,
+    /// The annotated file entry. Validated to exist on this commission before the
+    /// markup is written, and enforced as a pair by the store.
+    pub file_id: FileKey,
+    /// The Participant who drew it. Deliberately carries no foreign key onto the
+    /// actor tables (the changelog and file-entry precedent): shared history
+    /// survives a tombstone.
+    pub added_by: UserId,
+    /// The annotation itself — shape plus optional anchored comment, already past
+    /// [`Markup::validate`]. Stored and served untransformed.
+    pub markup: Markup,
+    /// When the markup was drawn.
+    pub created_at: DateTimeUtc,
 }
 
 #[cfg(test)]

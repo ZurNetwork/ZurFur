@@ -14,6 +14,8 @@
 -- skeleton declares which surfaces live in which tab, and only the tab's
 -- DECLARED NAME (never its per-commission id) can answer that. The adapter
 -- re-validates the stored token into a TabName before consulting the skeleton.
+-- `mode` rides along so this one statement also answers the read port's
+-- `tab_for_update`, which hands back the whole TabRow rather than just its name.
 --
 -- FOR UPDATE locks the tab row, so every write that touches this tab's ordering
 -- groups SERIALIZES: concurrent appends cannot race to one (surface, band,
@@ -21,6 +23,6 @@
 -- hardening, carried over from the retired parent gate), and a concurrent
 -- removal's renumbering cannot interleave with an append into the same group.
 -- BOTH write paths take this lock, and take it before touching any element row.
-SELECT id, tab FROM commission_tab
+SELECT id, tab, mode FROM commission_tab
 WHERE id = $1 AND commission_id = $2
 FOR UPDATE

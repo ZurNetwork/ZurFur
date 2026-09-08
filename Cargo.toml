@@ -55,6 +55,14 @@ tower-sessions = { version = "0.15" }
 # no-store` on the authenticated cookie surface (CWE-525, ZMVP-151). Already in
 # the tree transitively (reqwest decompression) — this just turns on the module.
 tower-http = { version = "0.6", features = ["set-header"] }
+# `io` only: `StreamReader`/`ReaderStream`, the axum-multipart <-> AsyncRead
+# adapters the streaming FileStore seam needs (ZMVP-88/205). Already in the
+# tree transitively (tower-sessions-core et al.) at this same version.
+tokio-util = { version = "0.7", features = ["io"] }
+# `TryStreamExt::map_err`, converting a multipart `Field`'s `MultipartError`
+# into `std::io::Error` ahead of `StreamReader` (ZMVP-205). Already in the
+# tree transitively (axum/hyper) at this same version.
+futures-util = "0.3"
 tower-sessions-core = { version = "0.15", features = ["deletion-task"] }
 time = { version = "0.3" }
 rmp-serde = { version = "1" }

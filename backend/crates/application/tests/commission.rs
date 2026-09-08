@@ -52,7 +52,7 @@ async fn seed(
 async fn flag(database: &dyn Database, id: CommissionId, status: DeadlineStatus) {
     transaction(database, async move |uow: &mut dyn UnitOfWork| {
         uow.commissions()
-            .set_deadline_status(id, Some(status))
+            .set_deadline_status(&id, Some(status))
             .await
     })
     .await
@@ -66,7 +66,7 @@ async fn stored_deadline_status(
     id: CommissionId,
 ) -> Option<&'static str> {
     commissions
-        .find(id)
+        .find(&id)
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -76,7 +76,7 @@ async fn stored_deadline_status(
 
 /// The commission's changelog entries.
 async fn entries(changelog: &dyn ChangelogStore, id: CommissionId) -> Vec<ChangelogEntry> {
-    changelog.entries(id).await.expect("inspect entries")
+    changelog.entries(&id).await.expect("inspect entries")
 }
 
 /// Runs one deterministic sweep at the injected instant — exactly what the

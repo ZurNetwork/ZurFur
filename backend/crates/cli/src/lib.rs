@@ -18,14 +18,18 @@
 //!   `2` usage (clap's own) · `3` infrastructure (config, database, network).
 //! - problem `code`s reuse the API's vocabulary (`api/src/problem.rs`, DD
 //!   23592962) wherever the same refusal exists there — `not_authenticated`,
-//!   `invalid_request`, `handle_taken`, `service_unavailable`,
-//!   `internal_error` — and add CLI-only codes
-//!   (`config`, `identity_*`, `not_implemented`) where the API has none.
+//!   `invalid_request`, `handle_taken`, `forbidden`, `account_not_found`,
+//!   `service_unavailable`, `internal_error` — and add CLI-only codes
+//!   (`config`, `identity_*`, `not_implemented`) where the API has none —
+//!   including the two that guard an irreversible operation and exist only
+//!   here, because only a terminal can be asked: `cancelled` (the person said
+//!   no) and `confirmation_required` (nobody was there to ask, and `--yes`
+//!   was not passed).
 //!
 //! **Where commands go**: [`Command`] is the root; each domain namespace is a
 //! module under [`commands`] exposing its own `clap::Subcommand` enum and a
-//! `run` fn over the [`Runtime`]. `health`, `session` and `account` (opened
-//! with `create`, ZMVP-205) live here; the rest of the operation commands
+//! `run` fn over the [`Runtime`]. `health`, `session` and `account`
+//! (`create`, `delete`; ZMVP-205) live here; the rest of the operation commands
 //! (epic ZMVP-199) follow the same recipe — add a module, a variant on
 //! [`Command`], and an arm in [`dispatch`]. A command that acts as
 //! someone resolves its [`principal::Principal`] first — the one shared path
@@ -38,6 +42,7 @@ use clap::{CommandFactory as _, Parser, Subcommand};
 use composition::{Config, ConnectError, Runtime};
 
 pub mod commands;
+mod confirm;
 pub mod identity;
 mod output;
 pub mod principal;
@@ -90,7 +95,7 @@ pub enum BackendCommand {
         #[command(subcommand)]
         op: commands::session::SessionOp,
     },
-    /// Accounts: `create`.
+    /// Accounts: `create`, `delete`.
     Account {
         #[command(subcommand)]
         op: commands::account::AccountOp,

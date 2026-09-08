@@ -64,7 +64,7 @@ async fn every_commission_answers_false_with_no_fact_minters_wired() {
         let mut commissions = uow.commissions();
         commissions.create(&commission).await.expect("create");
         let has_facts = commissions
-            .commission_has_facts(id)
+            .commission_has_facts(&id)
             .await
             .expect("has_facts in the creating unit");
         assert!(
@@ -78,7 +78,7 @@ async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let mut uow = db.begin().await.expect("begin second unit");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(id)
+        .commission_has_facts(&id)
         .await
         .expect("has_facts in a later unit");
     assert!(!has_facts);
@@ -95,7 +95,7 @@ async fn an_unknown_commission_answers_false() {
     let mut uow = db.begin().await.expect("begin");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(CommissionId::new(uuid::Uuid::now_v7()))
+        .commission_has_facts(&CommissionId::new(uuid::Uuid::now_v7()))
         .await
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
@@ -113,7 +113,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:deleting-owner").await;
     let title = "Doomed".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
+    let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
     let id = commission.id;
 
     let db = PgDatabase::new(pool.clone());
@@ -150,7 +150,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
 
     // A rolled-back delete removes nothing (the delete rides the transaction).
     let mut uow = db.begin().await.expect("begin rollback unit");
-    uow.commissions().delete(id).await.expect("staged delete");
+    uow.commissions().delete(&id).await.expect("staged delete");
     uow.rollback().await.expect("rollback");
     assert_eq!(
         changelog_rows(pool.clone()).await,
@@ -163,11 +163,11 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     {
         let mut commissions = uow.commissions();
         let has_facts = commissions
-            .commission_has_facts(id)
+            .commission_has_facts(&id)
             .await
             .expect("gate in the deleting unit");
         assert!(!has_facts, "fact-free by construction");
-        commissions.delete(id).await.expect("delete");
+        commissions.delete(&id).await.expect("delete");
     }
     uow.commit().await.expect("commit delete");
 
@@ -213,7 +213,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     uow.commit().await.expect("commit");
     assert!(
         store
-            .find(id)
+            .find(&id)
             .await
             .expect("find")
             .expect("present")
@@ -227,13 +227,13 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = db.begin().await.expect("begin");
     let changed = uow
         .commissions()
-        .set_archived(id, Some(stamp))
+        .set_archived(&id, Some(stamp))
         .await
         .expect("archive");
     assert!(changed, "active -> archived is a transition");
     uow.commit().await.expect("commit");
     let stored = store
-        .find(id)
+        .find(&id)
         .await
         .expect("find")
         .expect("the record survives archiving");
@@ -253,14 +253,14 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = db.begin().await.expect("begin");
     let changed = uow
         .commissions()
-        .set_archived(id, Some(Utc::now()))
+        .set_archived(&id, Some(Utc::now()))
         .await
         .expect("repeat archive");
     assert!(!changed, "archived -> archived is not a transition");
     uow.commit().await.expect("commit");
     assert_eq!(
         store
-            .find(id)
+            .find(&id)
             .await
             .expect("find")
             .expect("present")
@@ -273,21 +273,21 @@ async fn set_archived_round_trips_and_reports_transitions() {
     let mut uow = db.begin().await.expect("begin");
     assert!(
         uow.commissions()
-            .set_archived(id, None)
+            .set_archived(&id, None)
             .await
             .expect("unarchive"),
         "archived -> active is a transition",
     );
     assert!(
         !uow.commissions()
-            .set_archived(id, None)
+            .set_archived(&id, None)
             .await
             .expect("repeat unarchive"),
         "active -> active is not a transition",
     );
     assert!(
         !uow.commissions()
-            .set_archived(CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .set_archived(&CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
             .await
             .expect("archive an unknown id"),
         "an absent commission matches nothing (existence is the caller's check)",
@@ -295,7 +295,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     uow.commit().await.expect("commit");
     assert!(
         store
-            .find(id)
+            .find(&id)
             .await
             .expect("find")
             .expect("present")
@@ -363,7 +363,7 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -394,12 +394,12 @@ async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order()
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_archived(archived.id, Some(Utc::now()))
+        .set_archived(&archived.id, Some(Utc::now()))
         .await
         .expect("archive");
     uow.commit().await.expect("commit");
 
-    let rows = store.list_owned_by(owner.id).await.expect("list_owned_by");
+    let rows = store.list_owned_by(&owner.id).await.expect("list_owned_by");
     let listed: Vec<CommissionId> = rows.iter().map(|commission| commission.id).collect();
 
     assert!(
@@ -445,7 +445,7 @@ async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
     let store = adapter_pg::PgCommissionStore::new(pool.clone());
 
     let rows = store
-        .list_owned_by(newcomer.id)
+        .list_owned_by(&newcomer.id)
         .await
         .expect("list_owned_by");
     assert!(rows.is_empty(), "a user with no commissions lists none");

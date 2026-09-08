@@ -71,12 +71,39 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     user
 }
 
+/// Seed a visitor the way the schema *before* the actor re-key (DD `57081857`)
+/// held one: an `actor_identity` parent plus its `users` projection, both under a
+/// surrogate UUID key. Hands back that key alongside the domain [`User`] whose id
+/// is the DID the re-key will collapse onto — so a migration test can seed the
+/// old shape and then assert against the new one.
+async fn seed_pre_rekey_user(pool: &PgPool, did: &str) -> (uuid::Uuid, User) {
+    let row_id = uuid::Uuid::now_v7();
+    let user = User::recognize(Did::new(did.to_string()), Utc::now());
+    sqlx::query(
+        "INSERT INTO actor_identity (id, kind, did, state, first_seen)
+         VALUES ($1, 'user', $2, 'active', $3)",
+    )
+    .bind(row_id)
+    .bind(did)
+    .bind(user.created_at)
+    .execute(pool)
+    .await
+    .expect("seed the identity parent");
+    sqlx::query("INSERT INTO users (id, created_at) VALUES ($1, $2)")
+        .bind(row_id)
+        .bind(user.created_at)
+        .execute(pool)
+        .await
+        .expect("seed the pre-re-key users projection");
+    (row_id, user)
+}
+
 /// Create a commission (which mints its skeleton tabs) in one committed unit of
 /// work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -101,7 +128,7 @@ fn only_surface() -> SurfaceName {
 /// exactly one tab holding exactly one surface, so this is unambiguous.
 async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission)
+        .load_composition(&commission)
         .await
         .expect("load")
         .expect("a created commission always has its tabs");
@@ -116,7 +143,7 @@ fn element_at(commission: CommissionId, address: SurfaceAddress, owner: &User) -
         address,
         "note".parse::<ElementType>().expect("valid type"),
         ElementPayload::default(),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     )
 }
@@ -143,7 +170,7 @@ async fn remove_element(
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await?;
     uow.commissions()
-        .remove_element(commission, element)
+        .remove_element(&commission, &element)
         .await?;
     uow.commit().await
 }
@@ -183,7 +210,7 @@ async fn creating_a_commission_mints_its_skeleton_tabs() {
 
     let store = PgCommissionStore::new(pool.clone());
     let composition = store
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("a created commission always has its tabs");
@@ -237,7 +264,7 @@ async fn add_element_appends_in_order_and_round_trips_its_payload() {
         address.clone(),
         "note".parse::<ElementType>().expect("valid"),
         ElementPayload::from(body.clone()),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let second = element_at(commission.id, address.clone(), &owner);
@@ -245,7 +272,7 @@ async fn add_element_appends_in_order_and_round_trips_its_payload() {
     add_elements(&pool, &[first, second]).await.expect("add");
 
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("composed");
@@ -304,7 +331,7 @@ async fn a_cross_commission_tab_cite_is_unrepresentable_at_the_database() {
     .bind(*mine.id)
     .bind(*their_address.tab)
     .bind(their_address.surface.as_str())
-    .bind(*owner.id)
+    .bind(owner.id.as_str())
     .execute(&pool)
     .await;
 
@@ -321,7 +348,7 @@ async fn a_cross_commission_tab_cite_is_unrepresentable_at_the_database() {
 
     assert!(
         PgCommissionStore::new(pool.clone())
-            .load_composition(mine.id)
+            .load_composition(&mine.id)
             .await
             .expect("load")
             .expect("composed")
@@ -370,7 +397,7 @@ async fn add_element_refuses_absent_and_foreign_tabs() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .load_composition(mine.id)
+            .load_composition(&mine.id)
             .await
             .expect("load")
             .expect("composed")
@@ -380,7 +407,7 @@ async fn add_element_refuses_absent_and_foreign_tabs() {
     );
     assert!(
         store
-            .load_composition(theirs.id)
+            .load_composition(&theirs.id)
             .await
             .expect("load")
             .expect("composed")
@@ -418,7 +445,7 @@ async fn add_element_refuses_an_undeclared_surface() {
 
     assert!(
         PgCommissionStore::new(pool.clone())
-            .load_composition(commission.id)
+            .load_composition(&commission.id)
             .await
             .expect("load")
             .expect("composed")
@@ -467,7 +494,7 @@ async fn add_element_refuses_a_real_surface_under_the_wrong_tab() {
 
     assert!(
         PgCommissionStore::new(pool.clone())
-            .load_composition(commission.id)
+            .load_composition(&commission.id)
             .await
             .expect("load")
             .expect("composed")
@@ -549,7 +576,7 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
     assert_satellite_desync_refused(slot, "commission_slot");
 
     let seats = PgCommissionStore::new(pool.clone())
-        .seats(theirs.id)
+        .seats(&theirs.id)
         .await
         .expect("read seats");
     assert!(
@@ -611,7 +638,7 @@ async fn positions_are_unique_within_the_group_and_renumber_on_removal() {
     .bind(*commission.id)
     .bind(*address.tab)
     .bind(address.surface.as_str())
-    .bind(*owner.id)
+    .bind(owner.id.as_str())
     .execute(&pool)
     .await;
     let err = collision.expect_err("a duplicate position must be refused");
@@ -734,7 +761,7 @@ async fn remove_refuses_absent_and_foreign_elements() {
 
     assert_eq!(
         PgCommissionStore::new(pool.clone())
-            .load_composition(theirs.id)
+            .load_composition(&theirs.id)
             .await
             .expect("load")
             .expect("composed")
@@ -754,7 +781,7 @@ async fn load_composition_distinguishes_absent_from_empty() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .load_composition(CommissionId::new(uuid::Uuid::now_v7()))
+            .load_composition(&CommissionId::new(uuid::Uuid::now_v7()))
             .await
             .expect("load")
             .is_none(),
@@ -764,7 +791,7 @@ async fn load_composition_distinguishes_absent_from_empty() {
     let owner = provision(&pool, "did:plc:empty-composer").await;
     let commission = create_commission(&pool, &owner, "Empty").await;
     let composition = store
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("an existing commission composes to Some, however empty");
@@ -806,11 +833,14 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
 
     // Seed a pre-composition world: an owner and one commission per visibility
     // value. The rows go in directly because the store's `create` would already
-    // want the `commission_tab` table this migration has not yet created.
-    let owner = provision(&pool, "did:plc:pre-flat-owner").await;
+    // want the `commission_tab` table this migration has not yet created — and
+    // the users are seeded through `seed_pre_rekey_user` because at this schema
+    // an actor is still keyed by a surrogate UUID (`provision` writes today's
+    // DID key, which the catch-up migrations below install).
+    let (owner_row, owner) = seed_pre_rekey_user(&pool, "did:plc:pre-flat-owner").await;
     // A User who was SEATED on the old model: membership justified by a Seat the
     // migration is about to drop.
-    let seated = provision(&pool, "did:plc:pre-flat-seated").await;
+    let (seated_row, seated) = seed_pre_rekey_user(&pool, "did:plc:pre-flat-seated").await;
     let mut seeded = Vec::new();
     for visibility in ["private", "listed", "public"] {
         let id = uuid::Uuid::now_v7();
@@ -820,7 +850,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
         )
         .bind(id)
         .bind(format!("Pre-flat {visibility}"))
-        .bind(*owner.id)
+        .bind(owner_row)
         .bind(visibility)
         .bind(Utc::now())
         .execute(&pool)
@@ -829,13 +859,13 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
 
         // Both memberships, as the old model would have held them: the owner's
         // permanent floor row and one seated non-owner.
-        for user in [owner.id, seated.id] {
+        for user in [owner_row, seated_row] {
             sqlx::query(
                 "INSERT INTO commission_participant (commission_id, user_id, created_at)
                  VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
             )
             .bind(id)
-            .bind(*user)
+            .bind(user)
             .bind(Utc::now())
             .execute(&pool)
             .await
@@ -850,7 +880,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
     let store = PgCommissionStore::new(pool.clone());
     for (id, visibility) in seeded {
         let composition = store
-            .load_composition(id)
+            .load_composition(&id)
             .await
             .expect("load")
             .expect("the backfill minted its tabs");
@@ -876,7 +906,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
 
         // The membership sweep: only the owner's floor row survives. The seated
         // User's row died with the Seat that justified it.
-        let members: Vec<uuid::Uuid> = sqlx::query_scalar(
+        let members: Vec<String> = sqlx::query_scalar(
             "SELECT user_id FROM commission_participant WHERE commission_id = $1",
         )
         .bind(*id)
@@ -885,13 +915,13 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
         .expect("read the surviving membership");
         assert_eq!(
             members,
-            vec![*owner.id],
+            vec![owner.id.to_string()],
             "only the owner's permanent floor row survives the migration — a seated \
              User whose Seat was dropped must not keep the key to the closed door"
         );
         assert!(
             !store
-                .is_participant(id, seated.id)
+                .is_participant(&id, &seated.id)
                 .await
                 .expect("is_participant"),
             "and the closed-door gate agrees: the ex-seated User is no longer a Participant"

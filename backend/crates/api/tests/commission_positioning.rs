@@ -7,11 +7,16 @@
 //!   log row, the log is never rewritten, current = latest, origin = first.
 //! - **AC3** — the cached current-placement pointer equals the latest log row
 //!   after every (re)placement.
-//! - **AC4** — the owner grants an account a view grant and revokes it; a revoked
+//! - **AC4** — the owner grants a User a view grant and revokes it; a revoked
 //!   key no longer lifts (its row is gone), effective immediately.
 //! - **AC5** — placement and view grants confer **no** in-commission authority: a
-//!   member of a granted account is still not a Participant and is turned away
-//!   from every commission door with the closed-door 404.
+//!   User holding a Total key on (and whose account is the placement of) the
+//!   commission is still not a Participant and is turned away from every
+//!   commission door with the closed-door 404.
+//!
+//! ⚠️ View grants are issued to **Users**, never Accounts (DD `29130754`,
+//! amended 2026-09-04), so AC4/AC5 name a grantee User where they used to name
+//! an account. Placement stays account-side and is untouched.
 //! - **AC6** — a commission with no placement and no grants is valid.
 //! - **Closed door** — a non-owner gets the byte-identical 404 a missing
 //!   commission gets (never a 403 oracle); an unauthenticated caller gets 401.
@@ -101,10 +106,10 @@ async fn create_commission(
     *all.last().expect("a commission was persisted").id
 }
 
-/// Seeds a committed account with a distinct handle, returning its id (as a raw
-/// `Uuid`, the URL/body boundary form). `member`, when given, is seated as a
-/// plain Member of the account.
-async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>) -> uuid::Uuid {
+/// Seeds a committed account with a distinct handle, returning its
+/// [`AccountId`] — which *is* its DID (DD 57081857). `member`, when given, is
+/// seated as a plain Member of the account.
+async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>) -> AccountId {
     let owner = backend
         .provision(&Did::new(format!("did:plc:acctowner-{handle}")))
         .await
@@ -124,13 +129,14 @@ async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>
         backend
             .grant_role(&UserAccount {
                 user_id: user,
-                account_id: account.id,
-                role: Role::Member(None),
+                account_id: account.id.clone(),
+                role: Role::Member,
+                alias: None,
             })
             .await
             .expect("seat the member");
     }
-    *account.id
+    account.id
 }
 
 /// Seeds a committed commission owned by a directly-provisioned foreign user.
@@ -140,7 +146,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
+    let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
     let id = *commission.id;
     backend
         .create_commission(&commission)
@@ -177,14 +183,15 @@ async fn placement_appends_and_the_current_pointer_tracks_the_latest_row() {
 
     // AC6 — before any placement the commission is valid with no current placement.
     assert!(
-        store.current_placement(cid).await.unwrap().is_none(),
+        store.current_placement(&cid).await.unwrap().is_none(),
         "an unplaced commission has no current placement (still valid)"
     );
 
     let account_a = seed_account(&backend, "a.zurfur.app", None).await;
     let account_b = seed_account(&backend, "b.zurfur.app", None).await;
 
-    for (n, account) in [account_a, account_b, account_a].into_iter().enumerate() {
+    let placements = [account_a.clone(), account_b.clone(), account_a.clone()];
+    for (n, account) in placements.into_iter().enumerate() {
         let res = client
             .post(format!("{base}/commissions/{id}/placements"))
             .json(&json!({ "account_id": account.to_string() }))
@@ -193,35 +200,34 @@ async fn placement_appends_and_the_current_pointer_tracks_the_latest_row() {
             .expect("POST placement");
         assert_eq!(res.status(), 204, "the owner places the commission");
 
-        let log = store.placement_log(cid).await.unwrap();
+        let log = store.placement_log(&cid).await.unwrap();
         assert_eq!(log.len(), n + 1, "each placement appends exactly one row");
         let current = store
-            .current_placement(cid)
+            .current_placement(&cid)
             .await
             .unwrap()
             .expect("a placed commission has a current placement");
         let latest = log.last().unwrap();
         assert_eq!(
-            (current.seq, current.account_id),
-            (latest.seq, latest.account_id),
+            (current.seq, &current.account_id),
+            (latest.seq, &latest.account_id),
             "the cached current pointer equals the latest log row (AC3)",
         );
         assert_eq!(
-            current.account_id,
-            AccountId::new(account),
+            current.account_id, account,
             "current = the just-placed account"
         );
     }
 
-    let log = store.placement_log(cid).await.unwrap();
+    let log = store.placement_log(&cid).await.unwrap();
     assert_eq!(
         log.first().unwrap().account_id,
-        AccountId::new(account_a),
+        account_a,
         "origin = first row"
     );
     assert_eq!(
         log.last().unwrap().account_id,
-        AccountId::new(account_a),
+        account_a,
         "current = latest row"
     );
     assert!(
@@ -237,7 +243,16 @@ async fn placement_appends_and_the_current_pointer_tracks_the_latest_row() {
     );
 }
 
-// AC4 — the owner grants an account a view grant (a 204, key stored, changelog
+/// The grantee, as the read port still spells it. ⚠️ GAP: `grant_view` /
+/// `revoke_view` were re-keyed to `&UserId` by the 2026-09-04 amendment to DD
+/// `29130754`, but the read half — `CommissionStore::view_grant` — still takes
+/// `&AccountId`. Both sides store the bare DID, so re-wrapping the grantee's
+/// DID reads the row back; the port signatures need reconciling.
+fn grantee_key(user: &UserId) -> AccountId {
+    AccountId::new((**user).clone())
+}
+
+// AC4 — the owner grants a User a view grant (a 204, key stored, changelog
 // records the issuance), re-grants at a different level (replaces), then revokes
 // (key gone immediately, changelog records the revoke). A repeat revoke is an
 // idempotent no-op that appends no duplicate entry.
@@ -248,14 +263,14 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
     let cid = CommissionId::new(id);
-    let account = seed_account(&backend, "studio.zurfur.app", None).await;
+    let grantee = UserId::new(Did::new("did:plc:grantee".to_string()));
     let store = backend.commission_store();
 
     // Grant Presentation, then re-grant Total — the key replaces, not stacks.
     for level in ["presentation", "total"] {
         let res = client
             .post(format!("{base}/commissions/{id}/grants"))
-            .json(&json!({ "account_id": account.to_string(), "level": level }))
+            .json(&json!({ "target_user_id": grantee.to_string(), "level": level }))
             .send()
             .await
             .expect("POST grant");
@@ -263,7 +278,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     }
     assert_eq!(
         store
-            .view_grant(cid, AccountId::new(account))
+            .view_grant(&cid, &grantee_key(&grantee))
             .await
             .unwrap(),
         Some(GrantLevel::Total),
@@ -271,15 +286,17 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     );
 
     // Revoke — the key is gone immediately (revocation effective by construction).
+    let revoke_body = json!({ "target_user_id": grantee.to_string() });
     let res = client
-        .delete(format!("{base}/commissions/{id}/grants/{account}"))
+        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .json(&revoke_body)
         .send()
         .await
         .expect("DELETE grant");
     assert_eq!(res.status(), 204, "the owner revokes the grant");
     assert!(
         store
-            .view_grant(cid, AccountId::new(account))
+            .view_grant(&cid, &grantee_key(&grantee))
             .await
             .unwrap()
             .is_none(),
@@ -288,7 +305,8 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
 
     // A repeat revoke is an idempotent no-op — no duplicate changelog entry.
     let res = client
-        .delete(format!("{base}/commissions/{id}/grants/{account}"))
+        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .json(&revoke_body)
         .send()
         .await
         .expect("DELETE grant repeat");
@@ -306,12 +324,12 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     );
 }
 
-// AC5 — placement and view grants confer NO in-commission authority. A member of
-// an account that holds a Total view grant on (and is the placement of) the
-// commission is still not a Participant: they get the closed-door 404 from every
-// commission door (owner-gated place/grant AND participant-gated changelog),
-// exactly as a total stranger would. The read-side VIEW lift is a separate,
-// later serializer (ZMVP-75); authority never follows a key.
+// AC5 — placement and view grants confer NO in-commission authority. A User who
+// holds a Total view grant on the commission — and whose account is its
+// placement — is still not a Participant: they get the closed-door 404 from
+// every commission door (owner-gated place/grant AND participant-gated
+// changelog), exactly as a total stranger would. The read-side VIEW lift is a
+// separate, later serializer (ZMVP-75); authority never follows a key.
 #[tokio::test]
 async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     // Sign in AS the account member.
@@ -328,36 +346,44 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     // Total grant + placement of the commission into that account.
     let (id, owner_id) = seed_foreign_commission(&backend).await;
     let cid = CommissionId::new(id);
-    let account_uuid = seed_account(&backend, "granted.zurfur.app", Some(member.id)).await;
-    let account = AccountId::new(account_uuid);
+    let account = seed_account(&backend, "granted.zurfur.app", Some(member.id.clone())).await;
     {
         let db = backend.database();
         let mut uow = db.begin().await.unwrap();
         uow.commissions()
-            .grant_view(cid, account, GrantLevel::Total)
+            .grant_view(&cid, &member.id, GrantLevel::Total)
             .await
             .unwrap();
         uow.commissions()
-            .place(cid, account, owner_id, Utc::now())
+            .place(&cid, &account, &owner_id, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
     }
 
-    // The member is a member of the granted account...
+    // The actor really holds the key, and is a member of the placed account...
     assert_eq!(
-        backend.role_of(member.id, account).await.unwrap(),
-        Some(Role::Member(None)),
-        "the actor really is a member of the granted account",
+        backend
+            .commission_store()
+            .view_grant(&cid, &grantee_key(&member.id))
+            .await
+            .unwrap(),
+        Some(GrantLevel::Total),
+        "the actor really holds a Total view grant",
+    );
+    assert_eq!(
+        backend.role_of(&member.id, &account).await.unwrap(),
+        Some(Role::Member),
+        "the actor really is a member of the placed account",
     );
     // ...yet the grant/placement made them no Participant of the commission.
     assert!(
         !backend
             .commission_store()
-            .is_participant(cid, member.id)
+            .is_participant(&cid, &member.id)
             .await
             .unwrap(),
-        "a view grant / placement never makes an account member a Participant (D8)",
+        "a view grant / placement never makes its holder a Participant (D8)",
     );
 
     // Every commission door is closed to them, byte-identical to a stranger's 404.
@@ -370,7 +396,7 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
 
     let place = client
         .post(format!("{base}/commissions/{id}/placements"))
-        .json(&json!({ "account_id": account_uuid.to_string() }))
+        .json(&json!({ "account_id": account.to_string() }))
         .send()
         .await
         .expect("POST placement");
@@ -378,7 +404,7 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
 
     let grant = client
         .post(format!("{base}/commissions/{id}/grants"))
-        .json(&json!({ "account_id": account_uuid.to_string(), "level": "total" }))
+        .json(&json!({ "target_user_id": member.id.to_string(), "level": "total" }))
         .send()
         .await
         .expect("POST grant");
@@ -418,44 +444,106 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
         "hidden and missing are indistinguishable (no existence oracle)",
     );
 
-    // Grant + revoke on a hidden commission are the same closed door.
+    // Grant + revoke on a hidden commission are the same closed door. Their
+    // bodies are kept: the actor-class check below compares against them.
+    let grantee = UserId::new(Did::new("did:plc:would-be-grantee".to_string()));
     let grant = client
         .post(format!("{base}/commissions/{foreign}/grants"))
-        .json(&json!({ "account_id": account.to_string(), "level": "total" }))
+        .json(&json!({ "target_user_id": grantee.to_string(), "level": "total" }))
         .send()
         .await
         .expect("POST grant hidden");
-    common::assert_problem(grant, 404, "commission_not_found").await;
+    assert_eq!(grant.status(), 404);
+    let grant_body = grant.text().await.expect("body");
+    let grant_problem: serde_json::Value = serde_json::from_str(&grant_body).expect("problem+json");
+    assert_eq!(grant_problem["code"], "commission_not_found");
 
     let revoke = client
-        .delete(format!("{base}/commissions/{foreign}/grants/{account}"))
+        .delete(format!("{base}/commissions/{foreign}/grants/{}", *grantee))
+        .json(&json!({ "target_user_id": grantee.to_string() }))
         .send()
         .await
         .expect("DELETE grant hidden");
-    common::assert_problem(revoke, 404, "commission_not_found").await;
+    assert_eq!(revoke.status(), 404);
+    let revoke_body = revoke.text().await.expect("body");
+    let revoke_problem: serde_json::Value =
+        serde_json::from_str(&revoke_body).expect("problem+json");
+    assert_eq!(revoke_problem["code"], "commission_not_found");
 
     // Nothing was written to the foreign commission.
     let store = backend.commission_store();
     assert!(
         store
-            .current_placement(CommissionId::new(foreign))
+            .current_placement(&CommissionId::new(foreign))
             .await
             .unwrap()
             .is_none(),
         "the outsider placed nothing",
     );
+
+    // The closed door must not leak the ACTOR CLASS of the DID the caller
+    // names. `provision` is a write keyed to that DID and it refuses a DID
+    // already interned as another kind of actor: while it ran before the
+    // ownership check, naming an Account's DID answered `409
+    // did_belongs_to_another_actor` where naming a free DID reached this `404`
+    // — telling a stranger apart "this DID is some other actor" from "it is
+    // not", on a commission id they invented. Both must be the same door.
+    let interned_elsewhere = account.to_string(); // an Account's DID, not a User's
+    let grant_interned = client
+        .post(format!("{base}/commissions/{foreign}/grants"))
+        .json(&json!({ "target_user_id": interned_elsewhere, "level": "total" }))
+        .send()
+        .await
+        .expect("POST grant naming a non-User actor");
+    assert_eq!(grant_interned.status(), 404);
+    let grant_interned_body = grant_interned.text().await.expect("body");
+
+    let revoke_interned = client
+        .delete(format!("{base}/commissions/{foreign}/grants/{}", *grantee))
+        .json(&json!({ "target_user_id": interned_elsewhere }))
+        .send()
+        .await
+        .expect("DELETE grant naming a non-User actor");
+    assert_eq!(revoke_interned.status(), 404);
+    let revoke_interned_body = revoke_interned.text().await.expect("body");
+
+    assert_eq!(
+        grant_interned_body, grant_body,
+        "an already-interned DID and a free one get the byte-identical closed door",
+    );
+    assert_eq!(
+        revoke_interned_body, revoke_body,
+        "an already-interned DID and a free one get the byte-identical closed door",
+    );
+
+    // And the refused grant/revoke left no User behind for the grantee — the
+    // commission-side twin of the account assertion in `account_scope_gate.rs`.
+    assert!(
+        backend
+            .find_by_did(&Did::new("did:plc:would-be-grantee".to_string()))
+            .await
+            .expect("find grantee")
+            .is_none(),
+        "a forbidden grant/revoke provisions no User for the grantee",
+    );
 }
 
-// Granting/placing into a non-existent account is a clean 404 account_not_found —
-// the owner (who passed the closed door) is told the *account* is unknown, not a
+// Placing into a non-existent account is a clean 404 account_not_found — the
+// owner (who passed the closed door) is told the *account* is unknown, not a
 // leaked FK 500.
+//
+// ⚠️ The grant half of this AC dissolved with the 2026-09-04 amendment to DD
+// `29130754`: a grant no longer names an account, and the grantee User is
+// provisioned on first grant rather than looked up — so there is no "unknown
+// account" for a grant to answer. Whether an unknown *grantee* should 404 or
+// provision silently is an open contract question for the Engineer.
 #[tokio::test]
-async fn placing_or_granting_into_an_unknown_account_is_account_not_found() {
+async fn placing_into_an_unknown_account_is_account_not_found() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let ghost = uuid::Uuid::now_v7();
+    let ghost = AccountId::new(Did::new("did:plc:no-such-account".to_string()));
 
     let place = client
         .post(format!("{base}/commissions/{id}/placements"))
@@ -464,14 +552,6 @@ async fn placing_or_granting_into_an_unknown_account_is_account_not_found() {
         .await
         .expect("POST placement");
     common::assert_problem(place, 404, "account_not_found").await;
-
-    let grant = client
-        .post(format!("{base}/commissions/{id}/grants"))
-        .json(&json!({ "account_id": ghost.to_string(), "level": "total" }))
-        .send()
-        .await
-        .expect("POST grant");
-    common::assert_problem(grant, 404, "account_not_found").await;
 }
 
 // A malformed grant level is a 422 invalid_request (the grant vocabulary is the
@@ -482,12 +562,12 @@ async fn an_unknown_grant_level_is_422() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let account = seed_account(&backend, "y.zurfur.app", None).await;
+    let grantee = UserId::new(Did::new("did:plc:level-probe".to_string()));
 
     for bad in ["private", "everything", ""] {
         let res = client
             .post(format!("{base}/commissions/{id}/grants"))
-            .json(&json!({ "account_id": account.to_string(), "level": bad }))
+            .json(&json!({ "target_user_id": grantee.to_string(), "level": bad }))
             .send()
             .await
             .expect("POST grant with a bad level");
@@ -514,16 +594,18 @@ async fn unauthenticated_positioning_is_401() {
         .expect("POST placement unauth");
     common::assert_problem(place, 401, "not_authenticated").await;
 
+    let grantee = UserId::new(Did::new("did:plc:anon-probe".to_string()));
     let grant = anon
         .post(format!("{base}/commissions/{id}/grants"))
-        .json(&json!({ "account_id": account.to_string(), "level": "total" }))
+        .json(&json!({ "target_user_id": grantee.to_string(), "level": "total" }))
         .send()
         .await
         .expect("POST grant unauth");
     common::assert_problem(grant, 401, "not_authenticated").await;
 
     let revoke = anon
-        .delete(format!("{base}/commissions/{id}/grants/{account}"))
+        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .json(&json!({ "target_user_id": grantee.to_string() }))
         .send()
         .await
         .expect("DELETE grant unauth");

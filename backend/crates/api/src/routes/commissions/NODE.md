@@ -1,0 +1,64 @@
+---
+path: backend/crates/api/src/routes/commissions
+charted: 2026-09-06
+fs:
+  - name: mod.rs
+    role: router assembly, body limits, the CommissionError→Problem mapping, and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts
+    node: false
+  - name: create.rs
+    role: POST /commissions → commission::create, then the created resource read back through commission::list (create::Output carries only the id — GAP)
+    node: false
+  - name: list.rs
+    role: GET /commissions (owner POV) → commission::list + wire_commission projection
+    node: false
+  - name: delete.rs
+    role: DELETE — fact-free hard delete → commission::delete
+    node: false
+  - name: archive.rs
+    role: POST archive / unarchive → commission::archive / unarchive
+    node: false
+  - name: changelog.rs
+    role: GET /{id}/changelog → commission::changelog::read
+    node: false
+  - name: notes.rs
+    role: POST /{id}/notes → commission::notes::attach
+    node: false
+  - name: channel.rs
+    role: PUT/DELETE /{id}/channel linked-channel pointer — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer)); link_channel keeps its #[deprecated]
+    node: false
+  - name: maturity.rs
+    role: PUT /{id}/maturity (replace-only) → commission::maturity::set
+    node: false
+  - name: elements.rs
+    role: POST/DELETE elements, the flat composition write surface — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer))
+    node: false
+  - name: slots.rs
+    role: POST /{id}/slots — all-or-nothing Slot batch → commission::slots::declare
+    node: false
+  - name: seats.rs
+    role: POST /{id}/seats — declare a vacant typed Seat → commission::seats::declare
+    node: false
+  - name: invitations.rs
+    role: POST/DELETE seat invitations → commission::invitations::issue / revoke
+    node: false
+  - name: status.rs
+    role: PUT/DELETE /{id}/status/direction → commission::status::direction::set / clear
+    node: false
+  - name: deadline.rs
+    role: PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::*
+    node: false
+  - name: files.rs
+    role: multipart upload / download → commission::files::upload / download; HTTP streaming glue stays here
+    node: false
+  - name: markup.rs
+    role: POST /{id}/files/{file_id}/markup → commission::markup
+    node: false
+  - name: positioning.rs
+    role: account-side placement + view grants → commission::place, view::grant / view::revoke; grants are per-User (DD 29130754 amended 2026-09-04), so the route's {account_id} segment is dead (TODO(engineer))
+    node: false
+---
+**Is:** The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.
+
+**Conventions:** commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto). Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403. A new act adds a file here rather than growing a hotspot. The handler shape (ZMVP-205): `CallingUser` in, then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction. `channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists.
+
+**Refs:** DESIGN "Commission" (3276807) · DD "Commission Composition" (45514754) · DD "The Changelog" (30408741) · DD "The Application Layer" (55836674).

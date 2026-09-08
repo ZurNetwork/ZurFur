@@ -39,5 +39,5 @@ pub trait ChangelogStore: Send + Sync {
     /// is carried on each entry for display, not for ordering). An unknown
     /// commission has an empty stream, not an error. Unpaginated by design at
     /// this ticket: consumer cursors/pagination are ZMVP-100's job.
-    async fn entries(&self, commission: CommissionId) -> anyhow::Result<Vec<ChangelogEntry>>;
+    async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>>;
 }
