@@ -552,7 +552,7 @@ async fn removing_a_column_that_does_not_exist_is_refused_as_not_found() {
 }
 
 // --- R1: `WorkflowError::IndexOutOfRange` surfaces as a typed client error,
-// never `Infrastructure` (the account-side catch-alls used to swallow it) ---
+// never `Infrastructure` (the account-side catch-all arms used to swallow it) ---
 
 #[tokio::test]
 async fn adding_a_column_past_the_end_of_the_board_is_refused_as_index_out_of_range() {
