@@ -17,6 +17,7 @@
 //! owner's own domain, never here — the `handle_domain` suffix gate makes that
 //! explicit (a request for any other authority is not ours to answer).
 
+use application::account::normalized_handle_domain;
 use axum::{
     Router,
     extract::State,
@@ -55,20 +56,19 @@ fn handle_from_host(host: &str, handle_domain: &str) -> Option<Handle> {
         Some(_) => return None,
     };
     // Drop a single FQDN-root trailing dot so `alice.zurfur.app.` resolves the same
-    // as `alice.zurfur.app` — consistent with `Handle::try_new`'s normalization.
+    // as `alice.zurfur.app` — consistent with `Handle`'s `FromStr`'s normalization.
     let host = host.strip_suffix('.').unwrap_or(host);
     // Only answer for a subdomain of our handle namespace — never the apex, never a
     // foreign authority (a BYO-domain handle resolves at its own domain, not here).
-    let suffix = format!(".{handle_domain}");
-    if !host
-        .to_ascii_lowercase()
-        .ends_with(&suffix.to_ascii_lowercase())
-    {
+    // The namespace goes through the one shared normalizer so this resolver and the
+    // claim checks in `application::account` can never disagree on what it is.
+    let suffix = format!(".{}", normalized_handle_domain(handle_domain));
+    if !host.to_ascii_lowercase().ends_with(&suffix) {
         return None;
     }
     // Normalize + validate the whole host as a handle; a bad one (punycode,
     // reserved label, malformed) is not a resolvable handle.
-    Handle::try_new(host).ok()
+    host.parse::<Handle>().ok()
 }
 
 /// `GET /.well-known/atproto-did` — resolve a Zurfur-issued handle (carried in the
@@ -135,6 +135,14 @@ mod tests {
     #[test]
     fn refuses_the_apex_itself() {
         assert!(handle_from_host("zurfur.app", "zurfur.app").is_none());
+    }
+
+    #[test]
+    fn a_trailing_dot_or_cased_handle_domain_still_resolves() {
+        // The same normalizer the claim checks use: a config value like
+        // `Zurfur.App.` must not silently kill resolution platform-wide.
+        let h = handle_from_host("alice.zurfur.app", "Zurfur.App.").expect("normalized domain");
+        assert_eq!(h.as_str(), "alice.zurfur.app");
     }
 
     #[test]

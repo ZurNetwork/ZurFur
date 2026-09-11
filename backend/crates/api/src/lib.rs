@@ -27,7 +27,7 @@ use axum::{
 };
 use tower_http::set_header::SetResponseHeaderLayer;
 
-pub(crate) use composition::transaction;
+pub(crate) use application::transaction;
 /// The composition root is shared with the CLI (ZMVP-200): the runtime
 /// [`Config`], the custody guard, and the live-port bag — re-exported so this
 /// crate's handlers and tests keep naming the bag `AppState`.

@@ -112,8 +112,8 @@ async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new(format!("did:plc:acct-{handle}")),
-        Handle::try_new(handle).expect("handle"),
-        AccountName::try_from("Acme Studio".to_string()).expect("account name"),
+        handle.parse::<Handle>().expect("handle"),
+        "Acme Studio".parse::<AccountName>().expect("account name"),
         Utc::now(),
     );
     backend

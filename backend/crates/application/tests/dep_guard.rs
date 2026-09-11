@@ -2,6 +2,11 @@
 //! `application`, and `application` links no adapter, no composition root,
 //! and no HTTP stack. `cargo tree` over the normal dependency graph is the
 //! witness.
+//!
+//! The **dev** graph is deliberately cyclic — `application` dev-depends on
+//! `test-support`, which links `composition`, which links `application` (for
+//! `Runtime::transaction`). Cargo allows it; the guard checks `--edges normal`
+//! on purpose, so the rule is about what ships, not what the tests boot.
 
 use std::process::Command;
 

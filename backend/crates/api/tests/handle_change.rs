@@ -100,7 +100,7 @@ async fn change(client: &reqwest::Client, base: &str, id: &str, new: &str) -> re
 }
 
 fn handle(h: &str) -> Handle {
-    Handle::try_new(h).expect("valid handle")
+    h.parse::<Handle>().expect("valid handle")
 }
 
 // AC (Done-when) — an Owner changes the handle and BOTH resolution halves follow: the

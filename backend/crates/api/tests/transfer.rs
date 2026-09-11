@@ -169,7 +169,7 @@ async fn only_the_owner_may_transfer() {
     let (account, owner_membership) = Account::open(
         host.id,
         Did::new("did:plc:hostacct".to_string()),
-        Handle::try_new("host.zurfur.app").unwrap(),
+        "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );

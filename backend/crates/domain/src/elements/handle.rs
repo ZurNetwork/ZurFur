@@ -15,9 +15,11 @@
 //! many: every consumer inherits the whole rule set by building a `Handle`.
 //!
 //! It mirrors the [`crate::elements::account::AccountName`] idiom exactly — a
-//! `String` newtype with a validating `try_new`, an `as_str()`, a typed error
+//! `String` newtype with a validating `FromStr`, an `as_str()`, a typed error
 //! enum, and `///` doctests. It is a plain struct + free function: no trait,
 //! because nothing consumes one polymorphically.
+
+use std::str::FromStr;
 
 /// The longest a whole handle may be, in `char`s (atproto handle spec; DD §6).
 pub const HANDLE_MAX_LEN: usize = 253;
@@ -110,19 +112,19 @@ const RESERVED_LABELS: &[&str] = &[
 /// use domain::elements::handle::Handle;
 ///
 /// // Normalized: trimmed, lowercased, trailing dot stripped.
-/// let h = Handle::try_new("  Alice.Zurfur.APP.  ").unwrap();
+/// let h = "  Alice.Zurfur.APP.  ".parse::<Handle>().unwrap();
 /// assert_eq!(h.as_str(), "alice.zurfur.app");
 ///
 /// // A brought (BYO) domain is fine.
-/// assert!(Handle::try_new("alice.example.com").is_ok());
+/// assert!("alice.example.com".parse::<Handle>().is_ok());
 ///
 /// // Punycode labels are rejected outright (ZMVP-48).
-/// assert!(Handle::try_new("xn--80ak6aa92e.zurfur.app").is_err());
+/// assert!("xn--80ak6aa92e.zurfur.app".parse::<Handle>().is_err());
 ///
 /// // Reserved labels in the *.zurfur.app namespace are rejected (ZMVP-45)...
-/// assert!(Handle::try_new("api.zurfur.app").is_err());
+/// assert!("api.zurfur.app".parse::<Handle>().is_err());
 /// // ...but the same word is claimable on a BYO domain.
-/// assert!(Handle::try_new("api.example.com").is_ok());
+/// assert!("api.example.com".parse::<Handle>().is_ok());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handle(String);
@@ -135,9 +137,9 @@ pub struct Handle(String);
 /// ```
 /// use domain::elements::handle::{Handle, HandleError};
 ///
-/// assert_eq!(Handle::try_new(""), Err(HandleError::Empty));
-/// assert_eq!(Handle::try_new("alice"), Err(HandleError::TooFewSegments));
-/// assert_eq!(Handle::try_new("foo.local"), Err(HandleError::ReservedTld("local".into())));
+/// assert_eq!("".parse::<Handle>(), Err(HandleError::Empty));
+/// assert_eq!("alice".parse::<Handle>(), Err(HandleError::TooFewSegments));
+/// assert_eq!("foo.local".parse::<Handle>(), Err(HandleError::ReservedTld("local".into())));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandleError {
@@ -217,7 +219,9 @@ impl std::fmt::Display for HandleError {
 
 impl std::error::Error for HandleError {}
 
-impl Handle {
+impl FromStr for Handle {
+    type Err = HandleError;
+
     /// Validate and wrap a handle, enforcing every rule in one pass.
     ///
     /// The input is first **normalized** (trim surrounding whitespace, lowercase,
@@ -239,15 +243,15 @@ impl Handle {
     /// ```
     /// use domain::elements::handle::{Handle, HandleError};
     ///
-    /// assert_eq!(Handle::try_new("alice.zurfur.app").unwrap().as_str(), "alice.zurfur.app");
-    /// assert_eq!(Handle::try_new("XN--abc.com"), Err(HandleError::PunycodeLabel)); // case-insensitive
-    /// assert_eq!(Handle::try_new("admin.zurfur.app"), Err(HandleError::ReservedLabel("admin".into())));
+    /// assert_eq!("alice.zurfur.app".parse::<Handle>().unwrap().as_str(), "alice.zurfur.app");
+    /// assert_eq!("XN--abc.com".parse::<Handle>(), Err(HandleError::PunycodeLabel)); // case-insensitive
+    /// assert_eq!("admin.zurfur.app".parse::<Handle>(), Err(HandleError::ReservedLabel("admin".into())));
     /// // The bare platform apex is reserved too — no one claims the Zurfur root handle.
-    /// assert_eq!(Handle::try_new("zurfur.app"), Err(HandleError::ReservedLabel("zurfur".into())));
+    /// assert_eq!("zurfur.app".parse::<Handle>(), Err(HandleError::ReservedLabel("zurfur".into())));
     /// ```
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, HandleError> {
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         // 1. NORMALIZE: trim, lowercase, strip a single trailing dot (FQDN root).
-        let lowered = raw.into().trim().to_lowercase();
+        let lowered = raw.trim().to_lowercase();
         let normalized = lowered.strip_suffix('.').unwrap_or(&lowered).to_owned();
 
         // 2. Overall length.
@@ -319,10 +323,18 @@ impl Handle {
 
         Ok(Self(normalized))
     }
+}
 
+impl Handle {
     /// The normalized handle string (lowercase, trimmed, no trailing dot).
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl AsRef<str> for Handle {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -335,7 +347,7 @@ mod tests {
     #[test]
     fn lowercases_the_handle() {
         assert_eq!(
-            Handle::try_new("Alice.Zurfur.APP").unwrap().as_str(),
+            "Alice.Zurfur.APP".parse::<Handle>().unwrap().as_str(),
             "alice.zurfur.app"
         );
     }
@@ -343,7 +355,7 @@ mod tests {
     #[test]
     fn strips_a_single_trailing_dot() {
         assert_eq!(
-            Handle::try_new("alice.zurfur.app.").unwrap().as_str(),
+            "alice.zurfur.app.".parse::<Handle>().unwrap().as_str(),
             "alice.zurfur.app"
         );
     }
@@ -351,7 +363,7 @@ mod tests {
     #[test]
     fn trims_surrounding_whitespace() {
         assert_eq!(
-            Handle::try_new("  alice.example.com  ").unwrap().as_str(),
+            "  alice.example.com  ".parse::<Handle>().unwrap().as_str(),
             "alice.example.com"
         );
     }
@@ -360,19 +372,19 @@ mod tests {
 
     #[test]
     fn rejects_a_single_segment() {
-        assert_eq!(Handle::try_new("alice"), Err(HandleError::TooFewSegments));
+        assert_eq!("alice".parse::<Handle>(), Err(HandleError::TooFewSegments));
     }
 
     #[test]
     fn rejects_an_empty_input() {
-        assert_eq!(Handle::try_new("   "), Err(HandleError::Empty));
-        assert_eq!(Handle::try_new("."), Err(HandleError::Empty));
+        assert_eq!("   ".parse::<Handle>(), Err(HandleError::Empty));
+        assert_eq!(".".parse::<Handle>(), Err(HandleError::Empty));
     }
 
     #[test]
     fn rejects_an_empty_segment() {
         assert_eq!(
-            Handle::try_new("alice..app"),
+            "alice..app".parse::<Handle>(),
             Err(HandleError::EmptySegment)
         );
     }
@@ -381,7 +393,7 @@ mod tests {
     fn rejects_a_segment_over_63_chars() {
         let long_label = "a".repeat(64);
         assert_eq!(
-            Handle::try_new(format!("{long_label}.app")),
+            format!("{long_label}.app").parse::<Handle>(),
             Err(HandleError::SegmentTooLong(64))
         );
     }
@@ -392,27 +404,27 @@ mod tests {
         let label = "a".repeat(63);
         let raw = format!("{label}.{label}.{label}.{label}.com"); // 4*63 + 3 + 4 = 259
         let len = raw.chars().count();
-        assert_eq!(Handle::try_new(raw), Err(HandleError::TooLong(len)));
+        assert_eq!(raw.parse::<Handle>(), Err(HandleError::TooLong(len)));
     }
 
     #[test]
     fn rejects_a_leading_or_trailing_hyphen() {
-        assert_eq!(Handle::try_new("-alice.app"), Err(HandleError::HyphenEdge));
-        assert_eq!(Handle::try_new("alice-.app"), Err(HandleError::HyphenEdge));
+        assert_eq!("-alice.app".parse::<Handle>(), Err(HandleError::HyphenEdge));
+        assert_eq!("alice-.app".parse::<Handle>(), Err(HandleError::HyphenEdge));
     }
 
     #[test]
     fn rejects_out_of_charset_bytes() {
         assert_eq!(
-            Handle::try_new("ali_ce.app"),
+            "ali_ce.app".parse::<Handle>(),
             Err(HandleError::InvalidChar('_'))
         );
         assert_eq!(
-            Handle::try_new("ali ce.app"),
+            "ali ce.app".parse::<Handle>(),
             Err(HandleError::InvalidChar(' '))
         );
         assert_eq!(
-            Handle::try_new("café.app"),
+            "café.app".parse::<Handle>(),
             Err(HandleError::InvalidChar('é'))
         );
     }
@@ -420,7 +432,7 @@ mod tests {
     #[test]
     fn rejects_a_digit_leading_tld() {
         assert_eq!(
-            Handle::try_new("alice.123"),
+            "alice.123".parse::<Handle>(),
             Err(HandleError::TldLeadingDigit)
         );
     }
@@ -430,15 +442,15 @@ mod tests {
     #[test]
     fn rejects_reserved_tlds() {
         assert_eq!(
-            Handle::try_new("foo.local"),
+            "foo.local".parse::<Handle>(),
             Err(HandleError::ReservedTld("local".into()))
         );
         assert_eq!(
-            Handle::try_new("foo.test"),
+            "foo.test".parse::<Handle>(),
             Err(HandleError::ReservedTld("test".into()))
         );
         assert_eq!(
-            Handle::try_new("foo.onion"),
+            "foo.onion".parse::<Handle>(),
             Err(HandleError::ReservedTld("onion".into()))
         );
     }
@@ -448,7 +460,7 @@ mod tests {
     #[test]
     fn rejects_punycode_zurfur_label() {
         assert_eq!(
-            Handle::try_new("xn--80ak6aa92e.zurfur.app"),
+            "xn--80ak6aa92e.zurfur.app".parse::<Handle>(),
             Err(HandleError::PunycodeLabel)
         );
     }
@@ -456,7 +468,7 @@ mod tests {
     #[test]
     fn rejects_punycode_byo_domain() {
         assert_eq!(
-            Handle::try_new("xn--e1awd7f.com"),
+            "xn--e1awd7f.com".parse::<Handle>(),
             Err(HandleError::PunycodeLabel)
         );
     }
@@ -465,12 +477,12 @@ mod tests {
     fn rejects_punycode_anywhere_and_mixed_case() {
         // Not just the leftmost label.
         assert_eq!(
-            Handle::try_new("good.xn--abc.com"),
+            "good.xn--abc.com".parse::<Handle>(),
             Err(HandleError::PunycodeLabel)
         );
         // Mixed-case `XN--` is normalized then caught.
         assert_eq!(
-            Handle::try_new("XN--abc.com"),
+            "XN--abc.com".parse::<Handle>(),
             Err(HandleError::PunycodeLabel)
         );
     }
@@ -481,7 +493,7 @@ mod tests {
     fn rejects_reserved_labels_in_zurfur_namespace() {
         for label in ["api", "admin", "www"] {
             assert_eq!(
-                Handle::try_new(format!("{label}.zurfur.app")),
+                format!("{label}.zurfur.app").parse::<Handle>(),
                 Err(HandleError::ReservedLabel(label.into())),
                 "{label}.zurfur.app should be reserved"
             );
@@ -494,7 +506,7 @@ mod tests {
     #[test]
     fn rejects_the_bare_platform_apex() {
         assert_eq!(
-            Handle::try_new("zurfur.app"),
+            "zurfur.app".parse::<Handle>(),
             Err(HandleError::ReservedLabel("zurfur".into()))
         );
     }
@@ -503,7 +515,7 @@ mod tests {
     fn accepts_a_normal_zurfur_subdomain() {
         // The apex rejection must not overreach into ordinary subdomains.
         assert_eq!(
-            Handle::try_new("alice.zurfur.app").unwrap().as_str(),
+            "alice.zurfur.app".parse::<Handle>().unwrap().as_str(),
             "alice.zurfur.app"
         );
     }
@@ -513,7 +525,7 @@ mod tests {
         // The reserved set guards only the *.zurfur.app namespace; a BYO domain
         // is the owner's to claim (Engineer disposition, 2026-06-30).
         assert_eq!(
-            Handle::try_new("api.example.com").unwrap().as_str(),
+            "api.example.com".parse::<Handle>().unwrap().as_str(),
             "api.example.com"
         );
     }
@@ -523,11 +535,11 @@ mod tests {
     #[test]
     fn accepts_well_formed_handles() {
         assert_eq!(
-            Handle::try_new("alice.zurfur.app").unwrap().as_str(),
+            "alice.zurfur.app".parse::<Handle>().unwrap().as_str(),
             "alice.zurfur.app"
         );
         assert_eq!(
-            Handle::try_new("alice.example.com").unwrap().as_str(),
+            "alice.example.com".parse::<Handle>().unwrap().as_str(),
             "alice.example.com"
         );
     }

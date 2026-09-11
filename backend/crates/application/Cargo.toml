@@ -9,6 +9,8 @@ publish = false
 # never HTTP or a terminal. Depends on `domain` only — never on an adapter,
 # never on `composition`.
 [dependencies]
+# The shared leaf crate (global build-time settings) — the one thing every layer may consume.
+shared = { path = "../shared" }
 domain = { path = "../domain" }
 anyhow = { workspace = true }
 
@@ -18,3 +20,6 @@ anyhow = { workspace = true }
 test-support = { path = "../test-support" }
 tokio = { workspace = true }
 uuid = { workspace = true }
+# The tests' `now` + a hand-rolled failing port double.
+chrono = { workspace = true }
+async-trait = { workspace = true }

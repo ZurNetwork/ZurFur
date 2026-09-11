@@ -2186,7 +2186,7 @@ mod tests {
         Account {
             id: AccountId::new(uuid::Uuid::now_v7()),
             did: did(did_s),
-            handle: Handle::try_new(format!("{label}.example.com")).unwrap(),
+            handle: format!("{label}.example.com").parse::<Handle>().unwrap(),
             name: "Test Studio".parse::<AccountName>().unwrap(),
             created_at: now,
             updated_at: now,
@@ -2354,7 +2354,7 @@ mod tests {
         };
         backend.create(&account, &owner).await.unwrap();
 
-        let new = Handle::try_new("memchg-new.example.com").unwrap();
+        let new = "memchg-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
             .change_handle(account_id, &old, &new, Utc::now())
@@ -2398,7 +2398,7 @@ mod tests {
         };
         backend.create(&account, &owner).await.unwrap();
 
-        let new = Handle::try_new("memquar-new.example.com").unwrap();
+        let new = "memquar-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
             .change_handle(account_id, &old, &new, Utc::now())
@@ -2428,7 +2428,7 @@ mod tests {
     #[tokio::test]
     async fn mint_returns_distinct_dids() {
         let minter = MemDidMinter::new();
-        let handle = Handle::try_new("alice.zurfur.app").unwrap();
+        let handle = "alice.zurfur.app".parse::<Handle>().unwrap();
 
         let first = minter.mint(&handle).await.unwrap();
         let second = minter.mint(&handle).await.unwrap();
@@ -2442,11 +2442,11 @@ mod tests {
     #[tokio::test]
     async fn mem_update_handle_is_a_noop() {
         let minter = MemDidMinter::new();
-        let handle = Handle::try_new("alice.zurfur.app").unwrap();
+        let handle = "alice.zurfur.app".parse::<Handle>().unwrap();
 
         let did = minter.mint(&handle).await.unwrap();
         minter
-            .update_handle(&did, &Handle::try_new("bob.zurfur.app").unwrap())
+            .update_handle(&did, &"bob.zurfur.app".parse::<Handle>().unwrap())
             .await
             .unwrap();
     }
@@ -2648,7 +2648,7 @@ mod tests {
         };
         backend.create(&account, &owner).await.unwrap();
 
-        let new = Handle::try_new("hdchangelog-new.example.com").unwrap();
+        let new = "hdchangelog-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
             .change_handle(account_id, &old, &new, Utc::now())
@@ -2757,7 +2757,7 @@ mod tests {
         let mut unit_a = database.begin().await.unwrap();
         let mut unit_b = database.begin().await.unwrap();
 
-        let new_handle = Handle::try_new("merge-update-new.example.com").unwrap();
+        let new_handle = "merge-update-new.example.com".parse::<Handle>().unwrap();
         unit_b
             .accounts()
             .change_handle(account_id, &old_handle, &new_handle, Utc::now())

@@ -16,7 +16,7 @@
 //!
 //! References: ZMVP-8 through ZMVP-11; ZMVP-151; DESIGN/Account.
 
-use application::user::{Me, MeError};
+use application::user::{MeError, MeQuery, MeResult};
 use axum::{
     Form, Json, Router,
     extract::{Query, State},
@@ -205,11 +205,14 @@ async fn me(
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Err(Problem::not_authenticated());
     };
+    let query = MeQuery {
+        user_id: UserId::new(id),
+    };
     let me = application::user::me(
+        query,
         &*state.users,
         &*state.profile_cache,
         &*state.profile_source,
-        UserId::new(id),
     )
     .await
     .map_err(|e| match e {
@@ -223,9 +226,9 @@ async fn me(
 /// The `GET /me` projection: a resolved profile contributes its handle and
 /// optionals; no profile degrades to the bare DID — absence is not an error,
 /// the keys are simply omitted (R4).
-impl From<Me> for GetMeResponse {
-    fn from(me: Me) -> Self {
-        let did = me.user.did.to_string();
+impl From<MeResult> for GetMeResponse {
+    fn from(me: MeResult) -> Self {
+        let did = me.did.to_string();
         match me.profile {
             Some(profile) => GetMeResponse {
                 did,
