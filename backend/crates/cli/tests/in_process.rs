@@ -5,56 +5,25 @@
 //! only pins the conventions.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use cli::{
     BackendCommand, ExitClass, commands::session::SessionOp, identity, principal::Principal,
 };
-use composition::{Config, Environment, Runtime};
+use composition::Runtime;
 use domain::elements::{did::Did, profile::Profile};
 use domain::ports::UnitOfWork;
 
-const DATABASE_URL: &str = "postgres://harness@127.0.0.1:5432/zurfur_harness";
 const DID: &str = "did:plc:cli-harness";
+use test_support::runtime::DATABASE_URL;
 
-/// A runtime over the in-memory fakes, mirroring `api`'s e2e fixtures.
+/// The shared in-memory runtime, acting as the harness DID.
 fn mem_runtime() -> Runtime {
-    let backend = MemBackend::new();
     let did = Did::new(DID.to_string());
-    let profile = Profile {
-        did: did.clone(),
-        handle: "harness.bsky.social".to_string(),
-        display_name: Some("The Harness".to_string()),
-        avatar_url: None,
-    };
-    let config = Config {
-        env: Environment::DEV,
-        http_addr: "127.0.0.1:0".parse().unwrap(),
-        public_url: "http://127.0.0.1:0".to_string(),
-        database_url: DATABASE_URL.to_string(),
-        log_level: "info".to_string(),
-        handle_domain: "zurfur.app".to_string(),
-        did_key_root_key: "unused-in-tests".to_string(),
-        plc_directory_endpoint: "https://plc.directory".to_string(),
-        plc_directory_submit: false,
-        deadline_sweep_interval_secs: 60,
-        max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-    };
-    Runtime {
-        config,
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(did)),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(profile)),
-        profile_cache: backend.profile_cache(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        database: backend.database(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    }
+    let profile = Profile::new(did.clone(), "harness.bsky.social").with_display_name("The Harness");
+    test_support::runtime::mem(&did)
+        .profile(profile)
+        .build()
+        .runtime
 }
 
 /// A fresh identity file location per test.

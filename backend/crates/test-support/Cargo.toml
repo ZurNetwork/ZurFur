@@ -26,6 +26,10 @@ testcontainers-modules = { version = "0.15", features = ["postgres"] }
 # pools; the consuming adapters dev-depend back on this crate (the standard
 # cargo dev-cycle).
 adapter-pg = { path = "../adapter-pg" }
+# The shared in-memory `Runtime` fixture (`runtime::mem`, Engineer ruling
+# 2026-08-25): every driver's in-process suite boots the same fakes.
+adapter-mem = { path = "../adapter-mem" }
+composition = { path = "../composition" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
 # Plain-HTTP XRPC against 127.0.0.1 — no TLS backend needed.

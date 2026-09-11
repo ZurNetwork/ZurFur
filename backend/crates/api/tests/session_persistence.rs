@@ -11,11 +11,9 @@
 //! the cookie minted before the "restart" must still resolve to the signed-in
 //! visitor (200), not bounce to the sign-in page (303). Requires a container
 //! runtime socket.
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend};
+use adapter_mem::MemBackend;
 use adapter_pg::{PgPool, PgSessionStore};
-use api::{AppState, Config, Environment};
+use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use tower_sessions::SessionManagerLayer;
@@ -23,44 +21,31 @@ use tower_sessions::SessionManagerLayer;
 /// Builds the app router wired to a fresh `PgSessionStore` over `pool`, serves it
 /// on an ephemeral port, and returns the base URL. The `backend` is shared so a
 /// "restarted" instance resolves the same User the cookie points at — what we are
-/// proving durable is the *session*, kept in Postgres, not the repo.
+/// proving durable is the *session*, kept in Postgres, not the repo. The fixture
+/// builds its own fresh `MemBackend`/lazy pool per `build()`, so this overrides
+/// the store fields (and `pool`) with the shared ones after building — the parts
+/// that must survive the simulated restart.
 async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
-    let state = AppState {
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: pool.clone(),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "persistalice.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-    };
+
+    let profile = Profile::new(Did::new(did.to_string()), "persistalice.bsky.social");
+    let test_support::runtime::MemRuntime { mut runtime, .. } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(profile)
+            .public_url(format!("http://{addr}"))
+            .build();
+    runtime.pool = pool.clone();
+    runtime.accounts = backend.account_store();
+    runtime.commissions = backend.commission_store();
+    runtime.changelog = backend.changelog_store();
+    runtime.files = backend.file_store();
+    runtime.users = backend.user_store();
+    runtime.profile_cache = backend.profile_cache();
+    runtime.database = backend.database();
+    let state: AppState = runtime;
     // The session layer backs the cookie with Postgres, so the row survives the
     // "restart" simulated below by tearing down this app and building another.
     let app = api::app(state).layer(SessionManagerLayer::new(PgSessionStore::new(pool)));
