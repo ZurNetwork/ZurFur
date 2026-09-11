@@ -1,19 +1,8 @@
-//! Workflows over PostgreSQL (DESIGN/Workflow `9895957`): board mutations via
-//! [`PgWorkflowWrites`] — reachable only on an open
-//! [`UnitOfWork`](domain::ports::UnitOfWork) (`uow.workflows()`), so a card and
-//! the neighbours its move displaces land together (DD `24150017`) — and the
-//! board read via the pool-backed [`PgWorkflowStore`].
-//!
-//! **Placement lives here, and only here.** A commission's presence on an
-//! account's board IS its placement (Ownership Separation DD `29130754`
-//! Decision 6, "placement = workflow membership rows, account-side"); there is
-//! no second account-level claim, which is why the same commission can sit on N
-//! boards with no conflict and why nothing in `queries/commission/` positions
-//! anything any more.
-//!
-//! The SQL lives in `queries/workflow/` and `queries/column/`; the typed
-//! functions and row shapes are generated against the migrated schema (see
-//! [`crate::queries`]).
+//! Workflows over PostgreSQL (DESIGN/Workflow 9895957): board writes via
+//! [`PgWorkflowWrites`] on an open [`UnitOfWork`](domain::ports::UnitOfWork)
+//! (`uow.workflows()`, DD 24150017); reads via the pool-backed
+//! [`PgWorkflowStore`]. Placement lives here only — a commission's presence
+//! on a board IS its placement (DD 29130754).
 
 use domain::{
     elements::{
@@ -28,26 +17,21 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::queries::{column as column_sql, workflow as workflow_sql};
 
-/// Re-validate a stored `visibility` token into its [`Visibility`] — the gate
-/// every board read passes through, so a tampered or unmigrated token surfaces
-/// as an `Err` rather than a silently-widened board.
+/// Re-validate a stored `visibility` token into its [`Visibility`]. An `Err`
+/// on a tampered or unmigrated token, never a silently-widened board.
 fn to_visibility(token: &str) -> anyhow::Result<Visibility> {
     Visibility::try_from(token).map_err(|_| anyhow::anyhow!("unknown visibility token {token:?}"))
 }
 
-/// Re-validate a stored column key into its [`Position`]. The domain mints these
-/// and compares them bytewise; a value outside the base-62 alphabet (or one
-/// ending in `0`) means row tampering, never a default.
+/// Re-validate a stored column key into its [`Position`]. An `Err` on a
+/// value outside the base-62 alphabet means row tampering.
 fn to_position(raw: &str) -> anyhow::Result<Position> {
     raw.parse::<Position>()
         .map_err(|err| anyhow::anyhow!("unusable column position {raw:?}: {err}"))
 }
 
 /// Load one column's cards, in board order, and rebuild the domain [`Column`].
-///
-/// Two reads rather than a join because a column legitimately holds no cards:
-/// the row is the column, the cards are a set over it, and `Column::loaded`
-/// wants them already ordered.
+/// Two reads, not a join: the column may legitimately hold no cards.
 async fn load_column(
     pool: &PgPool,
     id: ColumnId,
@@ -117,22 +101,17 @@ async fn load_workflow(pool: &PgPool, id: &WorkflowId) -> anyhow::Result<Option<
 }
 
 /// PostgreSQL board-write view over an open transaction (the [`WorkflowWrites`]
-/// surface). Holds **only** a borrowed `&mut PgConnection` — the transaction
-/// owned by the [`PgUnitOfWork`](crate::PgUnitOfWork) — so no pool is in scope
-/// here and a pool-backed board write is unrepresentable. Built by
-/// `uow.workflows()`.
+/// surface). Holds only a borrowed `&mut PgConnection`, so a pool-backed write
+/// is unrepresentable. Built by `uow.workflows()`.
 pub struct PgWorkflowWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
-    /// Writes execute on `&mut *self.conn`; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
 }
 
 #[async_trait::async_trait]
 impl WorkflowWrites for PgWorkflowWrites<'_> {
-    /// Mint one board for an account. The id and the **closed-door default**
-    /// visibility are the domain's (`Workflow::new`) — Zurfur is closed-door, so
-    /// a board is born `Private` and is widened deliberately, never by omission
-    /// (DESIGN/Workflow, "Default visibility").
+    /// Mints one board for an account, born `Private` (closed-door default,
+    /// never widened by omission).
     async fn create(
         &mut self,
         name: &WorkflowName,
@@ -152,22 +131,16 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
         Ok(workflow)
     }
 
-    /// Delete a board and, by cascade, its columns and their cards — never the
-    /// commissions those cards pointed at. Deleting an absent board matches no
-    /// row and is a no-op, which keeps a lost race idempotent rather than an
-    /// error.
+    /// Deletes a board and, by cascade, its columns and cards — never the
+    /// commissions they pointed at. No-op on an absent board.
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
         workflow_sql::delete(&mut *self.conn, **workflow_id).await?;
         Ok(())
     }
 
-    /// Persist the board's column order as the domain holds it.
-    ///
-    /// An upsert per column, not an update: `Columns::add` mints a column into
-    /// the in-memory board and hands the **whole board** over, so a new column
-    /// and the keys of the neighbours it displaced arrive through this one path.
-    /// All of them land on the open unit, so a half-reordered board is
-    /// unrepresentable.
+    /// Persists the board's column order as the domain holds it — an upsert per
+    /// column (not an update), so a new column and the neighbours its insert
+    /// displaced land on the same open unit.
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
         for column in workflow.iter() {
             workflow_sql::upsert_column(
@@ -199,19 +172,15 @@ impl PgWorkflowStore {
 
 #[async_trait::async_trait]
 impl WorkflowStore for PgWorkflowStore {
-    /// Rebuild the whole board — its columns in order, each with its cards — or
-    /// `None` if no such board exists. Rehydration goes through
-    /// `Workflow::loaded`, so stored rows that do not form a valid board (keys
-    /// out of order, a duplicated column name) surface as an `Err` instead of
-    /// rendering wrong.
+    /// Rebuilds the whole board — columns in order, each with its cards — or
+    /// `None`. Goes through `Workflow::loaded`, so a row set that isn't a valid
+    /// board (bad keys, duplicate names) surfaces as an `Err`.
     async fn find(&self, workflow_id: &WorkflowId) -> anyhow::Result<Option<Workflow>> {
         load_workflow(&self.pool, workflow_id).await
     }
 
-    /// The account a board belongs to — the authorization lookup a board
-    /// mutation makes before touching anything. An absent board is an `Err`,
-    /// not a `None`: the caller asked whose board this is about a board it
-    /// believes exists.
+    /// The account a board belongs to. An absent board is an `Err`, not `None`
+    /// — the caller believes this board exists.
     async fn owning_account_of(&self, workflow_id: &WorkflowId) -> anyhow::Result<AccountId> {
         let did = workflow_sql::owning_account(&self.pool, **workflow_id)
             .await?
@@ -227,8 +196,7 @@ impl WorkflowStore for PgWorkflowStore {
 }
 
 /// PostgreSQL column-write view over an open transaction (the [`ColumnWrites`]
-/// surface). Holds **only** a borrowed `&mut PgConnection`, so a pool-backed
-/// column write is unrepresentable. Built by `uow.columns()`.
+/// surface). Built by `uow.columns()`.
 pub struct PgColumnWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub(crate) conn: &'a mut PgConnection,
@@ -236,23 +204,15 @@ pub struct PgColumnWrites<'a> {
 
 #[async_trait::async_trait]
 impl ColumnWrites for PgColumnWrites<'_> {
-    /// Delete one column; its card edges cascade with it. The caller refuses a
-    /// column that still holds cards, so the cascade is a backstop rather than
-    /// the path. An absent column matches nothing and is a no-op.
+    /// Deletes one column; card edges cascade. No-op on an absent column.
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
         column_sql::delete(&mut *self.conn, **column_id).await?;
         Ok(())
     }
 
-    /// Persist the column's card list as the domain holds it — clear, then
-    /// re-place each card at its index.
-    ///
-    /// A **wholesale rewrite**, matching the domain: `Column.commissions` is an
-    /// ordered `Vec` with no per-card key, so there is no single-card edit to
-    /// express. Both halves run on the open unit, so the board is never observed
-    /// empty, and the `(column_id, position)` unique constraint is DEFERRABLE —
-    /// the rewrite may pass through duplicate indexes and is checked once at
-    /// COMMIT, when the list must be a clean `0..n` again.
+    /// Persists the column's card list wholesale: clear, then re-place each
+    /// card at its index. Both halves run on the open unit; the
+    /// `(column_id, position)` unique constraint is DEFERRABLE, checked at COMMIT.
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
         column_sql::clear_cards(&mut *self.conn, *column.id).await?;
 
@@ -265,9 +225,8 @@ impl ColumnWrites for PgColumnWrites<'_> {
         Ok(())
     }
 
-    /// Rename one column. The `(workflow_id, name)` unique constraint is the
-    /// store-level backstop for the board-level check `Workflow::rename_column`
-    /// already made.
+    /// Renames one column; `(workflow_id, name)` is the store-level backstop
+    /// for the board-level uniqueness check already made.
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
         column_sql::rename(&mut *self.conn, *column.id, &column.name).await?;
         Ok(())
@@ -308,8 +267,7 @@ impl ColumnStore for PgColumnStore {
         Ok(Some(column))
     }
 
-    /// Whether a column still holds any card — the gate on deleting one, so
-    /// removing a list never silently drops the cards on it.
+    /// Whether a column still holds any card — the gate on deleting one.
     async fn has_commissions(&self, column_id: &ColumnId) -> anyhow::Result<bool> {
         column_sql::has_commissions(&self.pool, **column_id)
             .await
@@ -317,20 +275,14 @@ impl ColumnStore for PgColumnStore {
     }
 
     /// Which column of `workflow_id` holds `commission_id`, or `None`.
-    ///
-    /// Deliberately scoped by board: a commission sits in at most one column
-    /// **per board**, and on as many boards as care to position it — the NxM the
-    /// Ownership Separation DD makes native — so there is no such thing as "the"
-    /// column of a commission.
+    /// Scoped by board: a commission sits in at most one column per board,
+    /// on as many boards as position it.
     async fn find_column(
         &self,
         workflow_id: &WorkflowId,
         commission_id: &CommissionId,
     ) -> anyhow::Result<Option<Column>> {
-        // The join cannot prove single-row to the query planner, though the
-        // (column_id, commission_id) primary key plus the board scope makes it
-        // one: take the first rather than a `LIMIT 1` that would hide a genuine
-        // duplicate behind a silent truncation.
+        // Takes the first row rather than LIMIT 1, to not hide a genuine duplicate.
         let rows =
             column_sql::find_by_commission(&self.pool, **workflow_id, **commission_id).await?;
         let Some(row) = rows.into_iter().next() else {
@@ -350,10 +302,8 @@ impl ColumnStore for PgColumnStore {
         Ok(Some(column))
     }
 
-    /// The account that owns the board this column sits on — the authorization
-    /// lookup a column mutation makes when it holds only the column's id. An
-    /// absent column is an `Err`, matching
-    /// [`WorkflowStore::owning_account_of`].
+    /// The account owning the board this column sits on. An absent column is
+    /// an `Err`, matching [`WorkflowStore::owning_account_of`].
     async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<AccountId> {
         let did = column_sql::owning_account(&self.pool, **column_id)
             .await?
@@ -364,9 +314,8 @@ impl ColumnStore for PgColumnStore {
         Ok(AccountId::new(Did::new(did)))
     }
 
-    /// The whole board a column sits on. An absent column — or a column whose
-    /// board has gone — is an `Err`, for the same reason as
-    /// [`owning_account_of`](Self::owning_account_of).
+    /// The whole board a column sits on. An absent column or board is an
+    /// `Err` (same reasoning as [`owning_account_of`](Self::owning_account_of)).
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow> {
         let row = column_sql::find(&self.pool, **column_id)
             .await?

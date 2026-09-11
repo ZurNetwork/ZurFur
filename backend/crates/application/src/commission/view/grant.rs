@@ -33,13 +33,8 @@ impl View<'_> {
             level,
         } = cmd;
 
-        // Authority is settled before the unit of work opens, because
-        // `provision` is a WRITE keyed to a DID the caller names: running it
-        // first let an unauthorized caller intern a User row for a third party
-        // and, worse, tell the outcomes apart — a DID already held by another
-        // kind of actor answered `409 did_belongs_to_another_actor` where a
-        // free DID reached the closed door's `404`, an actor-class oracle over
-        // a commission id anyone can invent.
+        // Authority before `provision`: it is a WRITE keyed to a caller-named
+        // DID, and its refusals are distinguishable (an actor-class oracle).
         let commission = ports
             .commissions
             .find(&commission_id)

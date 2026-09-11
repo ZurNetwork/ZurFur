@@ -1,51 +1,28 @@
-//! Commission **positioning** (ZMVP-70; Ownership Separation DD `29130754`):
-//! the two account-facing rails that replace the deleted managing-account
-//! concept. Users own commissions; accounts own positioning, and neither rail
-//! confers any in-commission authority (DD Decision 8 — the environmental rule).
+//! Commission positioning: the account-facing rails that replaced the deleted
+//! managing-account concept. Users own commissions; neither rail confers any
+//! in-commission authority. (DD 29130754)
 //!
-//! **Placement is not here** (Engineer ruling 2026-09-10). It never was a
-//! commission-side shape: a commission's placement IS its card on an account's
-//! board (Decision 6 — "placement = workflow membership rows, account-side"), so
-//! it lives in `domain::elements::workflow` with the column that holds it. The
-//! account-level placement log this module used to carry reconstructed the
-//! managing-account log the DD superseded, and is deleted.
-//!
-//! What remains is the commission-side half of the pair:
-//! - [`GrantLevel`] — the level of a **commission-side** *key to see*, issued to
-//!   an account at an explicitly chosen level (Decision 3). A key only lifts an
-//!   account's members to at least its level, never demotes (Decision 4); it
-//!   **hard-deletes on revoke**, effective on the next server-side serialization
-//!   (Decision 5 — no session to invalidate). The grant row is a *pure key* (just
-//!   the level per (commission, account)) — who issued it and when live only in
-//!   the changelog (Decision 5: "grant history lives only in the changelog").
-//!
-//! A grant is not a [`Fact`](super::Fact): it is commission-owned bookkeeping
-//! that cascades away with the commission (`commission_view_grant` is registered
-//! in `COMMISSION_NON_FACT_TABLES`).
+//! Placement is not here — a commission's placement IS its card on an account's
+//! board, so it lives in `domain::elements::workflow`. What remains is
+//! [`GrantLevel`], the level of a commission-side key to see.
 
 use std::str::FromStr;
 
-/// The level a **view grant** confers — one of the three **raw root modes**
-/// (Ownership Separation DD `29130754` Decision 3). A grant names a mode floor
-/// the account's members are lifted to; the level is **explicitly chosen at
-/// grant time**, with no default and no implicit escalation.
+/// The level a view grant confers — one of the three raw root modes, explicitly
+/// chosen at grant time with no default. A grant is issued to a **User**, never
+/// an account, and a user's effective view is the max of their own standing and
+/// their own key; membership confers no view. Hard-deleted on revoke.
+/// (DD 29130754, as amended 2026-09-04)
 ///
-/// Deliberately **not** the [`Visibility`](super::Visibility) aliases
-/// (Private/Listed/Public): those are the commission-level *root* vocabulary,
-/// while a grant speaks the underlying mode directly — `Presentation`,
-/// `Description`, or `Total`. A `Total` key is the serious one: it extends
-/// Participant-equivalent *view* (brief, client identity, price, file entries)
-/// to the account's entire present-and-future membership until revoked (DD
-/// "Accepted tradeoff").
+/// Not the [`Visibility`](super::Visibility) aliases: a grant speaks the
+/// underlying mode directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrantLevel {
-    /// The narrowest key: the account sees the commission's Presentation-mode
-    /// projection (existence, title, maturity — the status-card tier).
+    /// The narrowest key: the Presentation-mode projection.
     Presentation,
-    /// A middle key: the account sees whatever is composed under
-    /// Description-visible surfaces.
+    /// A middle key: whatever is composed under Description-visible surfaces.
     Description,
-    /// The widest key: Participant-equivalent view of the whole tree.
+    /// The widest key: Participant-equivalent view.
     Total,
 }
 
@@ -85,18 +62,15 @@ mod tests {
 
     use super::*;
 
-    // The closed grant-level vocabulary, in declaration order. `GrantLevel`
-    // deliberately dropped its public `ALL` with the move to `Display`/`FromStr`
-    // (only the wire tokens are public API); the round-trip test below still
-    // needs every variant, so it names its own local, test-only list.
+    // The closed grant-level vocabulary. `GrantLevel` exposes no public `ALL`,
+    // so the round-trip test names its own test-only list.
     const ALL_GRANT_LEVELS: &[GrantLevel] = &[
         GrantLevel::Presentation,
         GrantLevel::Description,
         GrantLevel::Total,
     ];
 
-    // The grant-level tokens are a closed, collision-free vocabulary that
-    // round-trips — the same contract the changelog kinds hold.
+    // The grant-level tokens round-trip and never collide.
     #[test]
     fn grant_level_tokens_round_trip_and_never_collide() {
         let mut seen = BTreeSet::new();
@@ -109,15 +83,10 @@ mod tests {
                 "token {token:?} must parse back to its level"
             );
         }
-        assert_eq!(
-            ALL_GRANT_LEVELS.len(),
-            3,
-            "exactly three modes exist (DD D3)"
-        );
+        assert_eq!(ALL_GRANT_LEVELS.len(), 3, "exactly three modes exist");
     }
 
-    // A token outside the vocabulary is refused, not guessed at — and the grant
-    // vocabulary is the raw modes, never the Visibility aliases.
+    // A token outside the vocabulary is refused; grants speak raw modes.
     #[test]
     fn unknown_and_alias_tokens_do_not_parse() {
         assert!("".parse::<GrantLevel>().is_err());

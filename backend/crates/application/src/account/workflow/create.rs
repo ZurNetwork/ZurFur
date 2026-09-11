@@ -1,6 +1,5 @@
 use domain::elements::{
     account::AccountId,
-    role::Role,
     user::UserId,
     workflow::{Workflow, WorkflowName},
 };
@@ -33,7 +32,7 @@ impl Workflows<'_> {
             .role_of(&actor_id, &account_id)
             .await?
             // Only administrative roles can do
-            .filter(|role| !matches!(role, Role::Owner | Role::Admin))
+            .filter(|role| role.is_administrative())
             .ok_or(AccountError::IncorrectRole)?;
 
         let mut uow = self.ports().database.begin().await?;

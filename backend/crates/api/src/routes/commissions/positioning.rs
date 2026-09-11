@@ -1,13 +1,7 @@
-//! Account positioning endpoints (Ownership Separation DD `29130754`): a
-//! commission is placed onto an account's board, and its view grants are
-//! managed (`/placements`, `/grants`).
-//!
-//! **Placement is a card on a board** (Decision 6, "placement = workflow
-//! membership rows, account-side"), so `/placements` addresses a **column** —
-//! the column names its board, and the board names its account, so there is
-//! nothing else to say. The account-level claim this endpoint used to make had
-//! no referent in the corpus: it reconstructed the managing-account log the DD
-//! superseded.
+//! Account positioning endpoints (DD 29130754): a commission is placed onto
+//! an account's board, and its view grants are managed (`/placements`,
+//! `/grants`). Placement addresses a column — the column names its board,
+//! the board its account — so `/placements` carries no `account_id`.
 
 use application::{account, commission::view};
 use axum::{
@@ -29,10 +23,6 @@ use crate::{AppState, extract::CallingUser, problem::Problem};
 
 /// The `POST /commissions/{id}/placements` body: the column to place the
 /// commission in, and where in it.
-///
-/// Deliberately **no** `account_id`: the column already determines its board and
-/// the board its account, so an account field would be either redundant or a
-/// second, contradictable source of truth.
 #[derive(Deserialize)]
 pub(super) struct PlaceBody {
     column_id: String,
@@ -40,8 +30,7 @@ pub(super) struct PlaceBody {
 }
 
 /// The `POST /commissions/{id}/grants` body: the target user and the key's
-/// level (`presentation` / `description` / `total`). Grants are issued to a
-/// User, never an Account (DD `29130754`, amended 2026-09-04).
+/// level (`presentation`/`description`/`total`). Grants are per-User. (DD 29130754)
 #[derive(Deserialize)]
 pub(super) struct GrantBody {
     target_user_id: String,
@@ -56,11 +45,8 @@ pub(super) struct RevokeBody {
 }
 
 /// Places the commission on an account's board — one card, in one column, at
-/// one index. The caller must be a member of the board's account and must be
-/// able to see the commission through either rail (publicly visible, or their
-/// own standing or own key). Appends no changelog entry: positioning is
-/// account-side view state the commission never learns about. Returns `204 No
-/// Content`.
+/// one index. Requires board membership and commission visibility. Appends no
+/// changelog entry: positioning is account-side view state. `204 No Content`.
 pub(super) async fn place_commission(
     State(state): State<AppState>,
     Path(commission_id): Path<CommissionId>,
@@ -129,10 +115,7 @@ pub(super) async fn grant_view(
 /// Content`.
 pub(super) async fn revoke_view(
     State(state): State<AppState>,
-    // TODO(engineer): the `{account_id}` path segment predates the 2026-09-04
-    // amendment to DD 29130754 (grants are per-User, never per-Account) and is
-    // now dead — the target rides in the body. Deciding whether the segment
-    // becomes the target user's DID, or the route drops it, is a contract call.
+    // TODO(engineer): `{account_id}` is dead since grants went per-User (DD 29130754).
     Path((commission_id, _account_id)): Path<(CommissionId, AccountId)>,
     CallingUser(actor_id): CallingUser,
     body: Result<Json<RevokeBody>, JsonRejection>,

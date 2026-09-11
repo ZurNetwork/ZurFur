@@ -19,15 +19,9 @@ pub mod clear;
 pub mod set;
 
 /// Move the deadline-axis status to `to` (`None` clears it) — the body
-/// [`set`](set) and [`clear`](clear) share, so the two directions cannot drift
-/// apart on the gates or on what they record.
-///
-/// The gates, in order: the caller must be a Participant (closed door for
-/// anyone else); a standing `Late` refuses **both** directions, because Late is
-/// the system's word and not a participant's to overrule; and a status may only
-/// be *set* on a commission that actually has a deadline. The entry is keyed on
-/// a real transition, so re-flagging what is already flagged — and clearing
-/// what is already clear — writes nothing and appends nothing.
+/// [`set`](set) and [`clear`](clear) share. Participant-gated; a standing
+/// `Late` refuses both directions; a status may only be set on a commission
+/// that has a deadline. Keyed on a real transition, so a no-op records nothing.
 async fn apply(
     ports: &crate::Ports,
     commission_id: &CommissionId,

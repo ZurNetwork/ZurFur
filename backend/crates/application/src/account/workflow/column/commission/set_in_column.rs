@@ -48,9 +48,8 @@ impl Commissions<'_> {
             index,
         } = cmd;
 
-        // The actor's right to touch THIS BOARD is settled first, before the
-        // commission is so much as looked up: a non-member must not be able to
-        // learn anything about a commission id they invented.
+        // Board authority is settled before the commission is looked up: a
+        // non-member must learn nothing about an id they invented.
         let mut column = ports
             .columns
             .find(&column_id)
@@ -75,26 +74,17 @@ impl Commissions<'_> {
             .await?
             .ok_or(AccountError::NotFound(AccountEntity::Commission))?;
 
-        // The two rails a commission may reach a board by (Ownership Separation
-        // DD `29130754` D2/D3; DESIGN/Workflow, "Data Structure"):
-        //
-        //  - the PULL rail — "free to see, free to workflow": anything publicly
-        //    visible may be bookmarked, consent-free, because it grants nothing;
-        //  - the PUSH rail — a commission the actor can already see through
-        //    THEIR OWN standing (owner, or a Participant seat) or THEIR OWN view
-        //    grant. Keys are per-User since 2026-09-04, so membership of this
-        //    account lifts nothing.
+        // Two rails onto a board: PULL (publicly visible) or PUSH (the actor's
+        // OWN standing or OWN view grant — keys are per-User, so membership of
+        // this account lifts nothing). (DD 29130754)
         let is_immediately_visible = matches!(
             commission.visibility,
             Visibility::Public | Visibility::Listed
         ) || commission.owner_id == actor_id;
 
         if !is_immediately_visible && !has_own_view(ports, &actor_id, &commission_id).await? {
-            // The same closed door an absent commission gets, deliberately.
-            // `IncorrectRole` would render `403`, and a 403 confirms there is
-            // something here to be forbidden from — an existence oracle over
-            // private work, on an id the caller chose (the uniform-not-found
-            // posture `require_participant` holds on every commission route).
+            // The same closed door an absent commission gets: `IncorrectRole`
+            // would render `403`, an existence oracle over private work.
             return Err(AccountError::NotFound(AccountEntity::Commission));
         }
 

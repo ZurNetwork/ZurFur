@@ -42,19 +42,12 @@ impl Invitations<'_> {
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
-        // Quick note: Before, users had their own ID. Since we changed it to DID, inviting a user
-        // Is the semantic equivalent of using their DID every time.
-        // An invited user MUST exist, therefore; always available.
         let mut uow = self.ports().database.begin().await?;
-        // FIXME: Is a DID only a user's? How do we differentiate between them and accounts?
         let target_user = uow.users().provision(&target_id).await?;
         let seats = ports.commissions.seats(&commission.id).await?;
 
-        // Two distinct answers, deliberately not folded into one: a seat this
-        // commission does not have is a `404`, while a seat that exists but is
-        // occupied is a `409`. Matching on vacancy *and* identity at once
-        // reported both as "no such seat", which told the caller nothing about
-        // the state they actually hit.
+        // Two distinct answers, deliberately not folded into one: an absent
+        // seat is `SeatNotFound`, an occupied one `SeatFilled`.
         let seat = seats
             .iter()
             .find(|seat| seat.id == seat_id)

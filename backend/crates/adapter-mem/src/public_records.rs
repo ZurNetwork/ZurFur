@@ -1,15 +1,9 @@
-//! In-memory fake of the [`PublicRecords`] port — the atproto (public-boundary)
-//! write side, faked in-process so core development and tests run without a PDS.
+//! In-memory fake of the [`PublicRecords`] port, so core development and tests
+//! run without a PDS.
 //!
-//! **Fidelity, not realism** (the module-level rule): [`MemPublicRecords`] keeps
-//! records in a `repo → collection → rkey → record` map and blobs in a
-//! `cid → bytes` map. It does **not** speak real DAG-CBOR or validate against a
-//! lexicon — the reference PDS does that behind the real adapter. What it *does*
-//! reproduce is the contract downstream code depends on: create mints a fresh
-//! rkey and a content-address CID, `upload_blob` content-addresses the bytes (so
-//! byte-identical uploads share a stable CID), and put/get/delete behave. The
-//! shared conformance suite (`test_support::contract`) runs against this fake and
-//! the real adapter alike, which is what makes the fake trustworthy.
+//! Records live in a `repo → collection → rkey → record` map and blobs in a
+//! `cid → bytes` map. No real DAG-CBOR and no lexicon validation — only the
+//! contract: minted rkeys, content-addressed CIDs, and put/get/delete behaviour.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,9 +23,8 @@ const RAW_CODEC: u64 = 0x55;
 /// The multihash code for SHA-256.
 const SHA2_256: u64 = 0x12;
 
-/// Compute a stable CIDv1 (raw codec, SHA-256 multihash) over `bytes` — the mem
-/// fake's content-address. Deterministic: identical bytes always yield the
-/// identical CID, and any byte change changes it.
+/// Compute a stable CIDv1 (raw codec, SHA-256 multihash) over `bytes` —
+/// deterministic, so identical bytes always yield the identical CID.
 fn content_cid(bytes: &[u8]) -> Cid {
     let digest = Sha256::digest(bytes);
     let mh = cid::multihash::Multihash::<64>::wrap(SHA2_256, &digest)
@@ -39,18 +32,15 @@ fn content_cid(bytes: &[u8]) -> Cid {
     Cid::new_v1(RAW_CODEC, mh)
 }
 
-/// The map key for a stored record: `(repo did, collection nsid, rkey)`, mirroring
-/// how the real repo addresses a record.
+/// The map key for a stored record: `(repo did, collection nsid, rkey)`.
 type RecordAddr = (String, String, String);
 
-/// In-process [`PublicRecords`] fake over shared maps. Cloning shares the maps
-/// (the `Arc`s are cloned, not the data), like the other mem stores.
+/// In-process [`PublicRecords`] fake over shared maps; cloning shares them.
 #[derive(Clone, Default)]
 pub struct MemPublicRecords {
     /// `(repo did, collection nsid, rkey) → record`.
     records: Arc<Mutex<HashMap<RecordAddr, PublicRecord>>>,
-    /// `content-address cid → blob bytes` (kept so a test could read bytes back;
-    /// the CID alone already witnesses byte-fidelity).
+    /// `content-address cid → blob bytes`.
     blobs: Arc<Mutex<HashMap<Cid, Vec<u8>>>>,
     /// Monotonic source of unique, sort-ordered synthetic rkeys.
     next_rkey: Arc<AtomicU64>,
@@ -63,15 +53,14 @@ impl MemPublicRecords {
     }
 
     /// Mint a fresh, unique, lexicographically-sortable synthetic rkey — the
-    /// fake's stand-in for a TID (the real repo mints a real TID on create).
+    /// fake's stand-in for a TID.
     fn mint_rkey(&self) -> RecordKey {
         let n = self.next_rkey.fetch_add(1, Ordering::SeqCst);
         RecordKey::new(format!("3mem{n:013}"))
     }
 
-    /// The record content-address the write paths return. Derived from a
-    /// deterministic representation of the record, so an identical record puts to
-    /// an identical CID (the mem mirror of content-addressed revisions).
+    /// The record content-address the write paths return; an identical record
+    /// puts to an identical CID.
     fn record_cid(record: &PublicRecord) -> Cid {
         content_cid(format!("{record:?}").as_bytes())
     }
@@ -156,8 +145,7 @@ impl PublicRecords for MemPublicRecords {
     }
 }
 
-/// The map key for an [`AtUri`]: `(repo did, collection, rkey)`, mirroring how the
-/// real repo addresses a record.
+/// The map key for an [`AtUri`]: `(repo did, collection, rkey)`.
 fn key_of(uri: &AtUri) -> RecordAddr {
     (
         uri.did.as_str().to_string(),

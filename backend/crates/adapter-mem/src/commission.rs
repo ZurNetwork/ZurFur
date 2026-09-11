@@ -1,10 +1,8 @@
-//! In-process fakes of the commission seam (ZMVP-65/87): the stored shapes, the
-//! [`CommissionWrites`]/[`ChangelogWrites`] write views (staged by the
-//! [`MemUnitOfWork`](crate::MemUnitOfWork), so they commit-or-discard with the
-//! unit), the pool-shaped [`MemCommissionStore`]/[`MemChangelogStore`] read
-//! stores, and the commission seed/inspect helpers on [`MemBackend`]. Split out
-//! of the backend file along the domain seam (the `public_records` precedent) so
-//! later commission tickets extend this module instead of one shared hotspot.
+//! In-process fakes of the commission seam: the stored shapes, the
+//! [`CommissionWrites`]/[`ChangelogWrites`] write views staged by the
+//! [`MemUnitOfWork`](crate::MemUnitOfWork), the
+//! [`MemCommissionStore`]/[`MemChangelogStore`] read stores, and the commission
+//! seed/inspect helpers on [`MemBackend`].
 
 use std::collections::HashMap;
 
@@ -33,23 +31,10 @@ use serde_json::Value;
 
 use crate::{MemBackend, workflow::MemColumnStore};
 
-/// Resolve a tab within `commission` — the mem mirror of
-/// `PgCommissionWrites::require_tab` (ZMVP-166), handing back the tab's
-/// **declared name** so the caller can consult the skeleton.
-///
-/// An absent id and a tab from another commission both refuse with
-/// [`UnknownTab`], indistinguishably, before anything about either is revealed.
-///
-/// pg's version also takes the tab's row lock (`SELECT … FOR UPDATE`), which is
-/// what serializes concurrent appends and removals into one tab. There is no
-/// lock to mirror here — every mem write already runs under the backend's
-/// mutexes — but the *call sites* mirror pg's exactly (both the add path and the
-/// removal path go through here, before touching any element), so the two
-/// adapters keep one discipline and one observable error order.
-///
-/// (There is no cross-commission *structural* backstop here the way pg has its
-/// composite foreign key; the fake's gate is the whole enforcement, which is why
-/// the mem parity tests exercise the foreign-tab case explicitly.)
+/// Resolve a tab within `commission`, handing back its declared name so the
+/// caller can consult the skeleton. An absent id and a foreign tab both refuse
+/// with [`UnknownTab`], indistinguishably. Every element write path goes through
+/// here first, where pg also takes the tab's row lock.
 fn require_tab(
     tabs: &HashMap<TabId, StoredTab>,
     commission: CommissionId,
@@ -61,19 +46,10 @@ fn require_tab(
     }
 }
 
-/// The shared **address gate** of every element write — the mem mirror of
-/// `PgCommissionWrites::require_address` (ZMVP-166): resolve the tab
-/// ([`require_tab`]), then require the code skeleton to declare this surface
-/// **inside that tab**, else [`UnknownSurface`]. One path, so the generic add
-/// and the two satellite declarations can't drift apart on either rule — and the
-/// surface half consults the very same const the pg adapter does, so the two
-/// adapters cannot disagree about which addresses are real.
-///
-/// **The order mirrors pg's, deliberately**: the pair check needs the tab's
-/// declared name, so the tab is resolved first and an address that is wrong in
-/// *both* ways refuses as [`UnknownTab`], not [`UnknownSurface`]. Mem is
-/// single-threaded behind a mutex and has no lock to take, but the observable
-/// error order is part of the contract — a parity test pins it.
+/// The shared address gate of every element write: resolve the tab
+/// ([`require_tab`]), then require the skeleton to declare this surface inside
+/// it, else [`UnknownSurface`]. The order is part of the contract — an address
+/// wrong in both ways refuses as [`UnknownTab`].
 fn require_address(
     tabs: &HashMap<TabId, StoredTab>,
     commission: CommissionId,
@@ -86,9 +62,8 @@ fn require_address(
     Ok(())
 }
 
-/// The next append `position` within an element's ordering group — the mem
-/// mirror of the pg `COALESCE(MAX(position) + 1, 0)` subquery, counted over the
-/// same `(commission, tab, surface, band)` tuple the pg statement filters on.
+/// The next append `position`, counted over the element's
+/// `(commission, tab, surface, band)` ordering group.
 fn next_position(
     elements: &HashMap<ElementId, StoredElement>,
     commission: CommissionId,
@@ -107,9 +82,8 @@ fn next_position(
         .unwrap_or(0)
 }
 
-/// Insert one element on the unit's staged snapshot, behind the shared address
-/// gate — the mem mirror of `PgCommissionWrites::insert_element`, and the single
-/// write path every element takes (the generic add, a Slot's carrier, a Seat's).
+/// Insert one element on the unit's staged snapshot behind the shared address
+/// gate — the single write path every element takes.
 fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<()> {
     let tabs = backend.tabs.lock().expect("MemBackend tabs mutex poisoned");
     let mut elements = backend
@@ -138,18 +112,14 @@ fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<
     Ok(())
 }
 
-/// The fields of a [`Commission`] we keep behind the lock. Like `Account`,
-/// `Commission` isn't `Clone` (an aggregate root, not a value), so we store its
-/// parts and rebuild a fresh `Commission` on read. `Clone` so a unit of work can
-/// deep-copy the commissions map into its staging snapshot (see
-/// [`MemBackend::stage`]). `PartialEq` lets [`crate::merge_map`] diff a unit's
-/// staged value against its pristine base snapshot to tell an untouched row
-/// (rode along in the snapshot) apart from one this unit actually wrote.
+/// The fields of a [`Commission`] we keep behind the lock; a read rebuilds the
+/// aggregate, which is not `Clone`. `Clone` lets a unit stage the map,
+/// `PartialEq` lets [`crate::merge_map`] tell an untouched row from a written one.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
-    /// The commission's fixed, always-present Title (ZMVP-65), validated non-empty.
+    /// The commission's fixed, always-present Title, validated non-empty.
     pub(crate) title: CommissionTitle,
-    /// The User who created it and owns it — the permanent owner (DESIGN/Commission).
+    /// The User who created it — the permanent owner.
     pub(crate) owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
     pub(crate) lifecycle_step: LifecycleStep,
@@ -157,34 +127,26 @@ pub(crate) struct StoredCommission {
     pub(crate) visibility: Visibility,
     /// The nullable-but-fixed deadline envelope field.
     pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
-    /// The maturity posture, or `None` while unrated (ZMVP-31) — the mem
-    /// mirror of the pg `maturity` + `graphic` column pair (one field here:
-    /// the both-or-neither CHECK is a struct by construction).
+    /// The maturity posture, or `None` while unrated; one field, so pg's
+    /// both-or-neither CHECK holds by construction.
     pub(crate) maturity: Option<Maturity>,
-    /// The direction-axis Status, or `None` while none is set (ZMVP-85) — the
-    /// mem mirror of the pg `direction_status` column: one nullable cell, so a
-    /// set replaces by construction.
+    /// The direction-axis Status, or `None`; one cell, so a set replaces.
     pub(crate) direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None` while none is held (ZMVP-86) — the
-    /// mem mirror of the pg `deadline_status` column: the same one-cell shape.
+    /// The deadline-axis Status, or `None`; the same one-cell shape.
     pub(crate) deadline_status: Option<DeadlineStatus>,
-    /// The external linked-channel pointer, or `None` while none is declared
-    /// (ZMVP-87 AC3) — the mem mirror of the pg `linked_channel` column.
+    /// The external linked-channel pointer, or `None` while none is declared.
     pub(crate) linked_channel: Option<ChannelPointer>,
-    /// When the commission was archived, or `None` while active (ZMVP-68) —
-    /// the mem mirror of the pg `archived_at` column.
+    /// When the commission was archived, or `None` while active.
     pub(crate) archived_at: Option<domain::datetime::DateTimeUtc>,
     /// When the commission was created.
     pub(crate) created_at: domain::datetime::DateTimeUtc,
 }
 
 impl StoredCommission {
-    /// Rebuild the aggregate from its stored parts (the commission analogue of
-    /// how `find` rebuilds an `Account`).
+    /// Rebuild the aggregate from its stored parts.
     fn rebuild(&self, id: CommissionId) -> Commission {
-        // Late is derived fresh at lookup, never persisted — the pg `find`
-        // mirror (Engineer ruling 2026-07-08). The stored `deadline_status` is
-        // the manual `Delayed` flag only.
+        // Late is derived fresh at lookup, never persisted; the stored
+        // `deadline_status` is the manual `Delayed` flag only.
         let deadline_status = derive_deadline_status(
             self.deadline,
             &self.lifecycle_step,
@@ -208,18 +170,14 @@ impl StoredCommission {
     }
 }
 
-/// One commission element as the mem backend keeps it — the in-memory mirror of
-/// a pg `commission_element` row (ZMVP-166). Keyed by [`ElementId`] in the
-/// backend map, so the row's own id lives in the key. `Clone` so a unit of work
-/// can deep-copy the element map into its staging snapshot. `PartialEq` lets
-/// [`crate::merge_map`] diff a unit's staged value against its pristine base
-/// snapshot to tell an untouched row apart from one this unit actually wrote.
+/// One commission element as the mem backend keeps it, keyed by [`ElementId`],
+/// so the row's own id lives in the key.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredElement {
     /// The commission this element belongs to.
     pub(crate) commission_id: CommissionId,
     /// Where it sits: the (tab, surface) pair — the whole addressing model.
-    /// There is no parent field, here or in pg.
+    /// There is no parent field, here or in pg. (DD 45514754)
     pub(crate) address: SurfaceAddress,
     /// What it is — the open type tag.
     pub(crate) element_type: ElementType,
@@ -233,20 +191,17 @@ pub(crate) struct StoredElement {
     pub(crate) created_by: UserId,
     /// When it was contributed.
     pub(crate) created_at: domain::datetime::DateTimeUtc,
-    /// The type-owned payload, opaque here exactly as in pg — and carried in
-    /// its non-serializable wrapper, so the fake cannot become the easy route
-    /// around the guard the real store keeps.
+    /// The type-owned payload, opaque here as in pg, carried in its
+    /// non-serializable wrapper.
     pub(crate) payload: ElementPayload,
 }
 
-/// One commission tab as the mem backend keeps it — the in-memory mirror of a pg
-/// `commission_tab` row (ZMVP-166), keyed by [`TabId`]. Minted with the
-/// commission (the withheld-at-birth discipline), never removed. `Clone` and
-/// `PartialEq` for the same staging/merge reasons as [`StoredElement`].
+/// One commission tab as the mem backend keeps it, keyed by [`TabId`]. Minted
+/// with the commission and never removed.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredTab {
-    /// The commission this tab belongs to — the mem stand-in for the composite
-    /// foreign key that binds an element's tab to its own commission in pg.
+    /// The commission this tab belongs to; pg binds this with a composite
+    /// foreign key.
     pub(crate) commission_id: CommissionId,
     /// The declared tab id this row realizes (a skeleton name).
     pub(crate) tab: TabName,
@@ -254,14 +209,9 @@ pub(crate) struct StoredTab {
     pub(crate) mode: VisibilityMode,
 }
 
-/// One declared Slot's **satellite** as the mem backend keeps it — the
-/// in-memory mirror of a pg `commission_slot` row (ZMVP-77). Keyed in the
-/// backend map by the [`ElementId`] of the element that carries the Slot (the
-/// satellite's own key), exactly like the pg table. Deliberately occupant-less: fill is unrepresentable until the
-/// Character epic adds it. `Clone` so a unit of work can deep-copy the map into
-/// its staging snapshot. `PartialEq` lets [`crate::merge_map`] diff a unit's
-/// staged value against its pristine base snapshot to tell an untouched row
-/// apart from one this unit actually wrote.
+/// One declared Slot's satellite, keyed by the [`ElementId`] of the element
+/// carrying it. Deliberately occupant-less: fill is unrepresentable until the
+/// Character epic adds it.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredSlot {
     /// The commission the Slot belongs to (the pg row's own commission FK).
@@ -285,17 +235,11 @@ impl StoredSlot {
     }
 }
 
-/// One declared Seat's interpreted half as the mem backend keeps it — the
-/// in-memory mirror of a pg `commission_seat` row (ZMVP-76), keyed by the
-/// seat's [`ElementId`] in the backend map (one identity: the element in
-/// [`StoredElement`], this satellite here). `Clone` so a unit of work can
-/// deep-copy the seat map into its staging snapshot. `PartialEq` lets
-/// [`crate::merge_map`] diff a unit's staged value against its pristine base
-/// snapshot to tell an untouched row apart from one this unit actually wrote.
+/// One declared Seat's interpreted half, keyed by the seat's [`ElementId`] —
+/// one identity, split between [`StoredElement`] and this satellite.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredSeat {
-    /// The owning commission — the mem mirror of the denormalized
-    /// `commission_seat.commission_id` column backing the seats() read.
+    /// The owning commission, denormalized to back the seats() read.
     pub(crate) commission_id: CommissionId,
     /// The seat's semantic kind (open vocabulary; kinds repeat freely).
     pub(crate) kind: SeatKind,
@@ -303,19 +247,12 @@ pub(crate) struct StoredSeat {
     pub(crate) prompt: Option<SeatPrompt>,
     /// The optional external requirements link riding the vacant seat.
     pub(crate) link: Option<SeatLink>,
-    /// The single occupant slot — `None` from declaration until ZMVP-79 fills
-    /// it; at most one occupant is unrepresentable to violate (AC3).
+    /// The single occupant slot; at most one is unrepresentable to violate.
     pub(crate) occupant: Option<UserId>,
 }
 
-/// One pending (or once-pending) seat invitation as the mem backend keeps it —
-/// the in-memory mirror of a pg `commission_invitation` row (ZMVP-78), keyed by
-/// the [`SeatInvitationId`] in the backend map. Stored as parts because
-/// [`SeatInvitation`] isn't `Clone` (an entity with a lifecycle, like
-/// `Invitation`); a read rebuilds a fresh one. `Clone` so a unit of work can
-/// deep-copy the map into its staging snapshot. `PartialEq` lets
-/// [`crate::merge_map`] diff a unit's staged value against its pristine base
-/// snapshot to tell an untouched row apart from one this unit actually wrote.
+/// One pending (or once-pending) seat invitation, keyed by
+/// [`SeatInvitationId`]; a read rebuilds the entity, which is not `Clone`.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredSeatInvitation {
     /// The commission whose Seat is offered.
@@ -326,7 +263,7 @@ pub(crate) struct StoredSeatInvitation {
     pub(crate) invited_user: UserId,
     /// The commission owner who issued the offer.
     pub(crate) inviter: UserId,
-    /// Where the offer sits in its lifecycle. [`InvitationState`] is `Copy`.
+    /// Where the offer sits in its lifecycle.
     pub(crate) state: InvitationState,
     /// When the invitation was issued.
     pub(crate) created_at: DateTimeUtc,
@@ -335,8 +272,7 @@ pub(crate) struct StoredSeatInvitation {
 }
 
 impl StoredSeatInvitation {
-    /// Rebuild the domain [`SeatInvitation`] from the stored parts (it isn't
-    /// `Clone`).
+    /// Rebuild the domain [`SeatInvitation`] from the stored parts.
     fn rebuild(&self, id: SeatInvitationId) -> SeatInvitation {
         SeatInvitation {
             id,
@@ -351,17 +287,13 @@ impl StoredSeatInvitation {
     }
 }
 
-/// One appended changelog entry as the mem backend keeps it — the in-memory
-/// mirror of a pg `commission_changelog` row (ZMVP-87). `Clone` so a unit of
-/// work can deep-copy the log into its staging snapshot. A push never rewrites
-/// an existing entry; the only way one disappears is `delete`'s whole-commission
-/// cascade. `PartialEq` lets the Unit-of-Work's commit-time merge diff a unit's
-/// staged log against its pristine base snapshot by value — an entry carries no
-/// id apart from its own data, so equality IS identity here.
+/// One appended changelog entry as the mem backend keeps it. A push never
+/// rewrites an entry; the only way one disappears is `delete`'s cascade.
+/// `PartialEq` lets the commit-time merge diff by value, there being no id.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredChangelogEntry {
-    /// The store-assigned ordering key — the mem mirror of the pg `bigserial`
-    /// (global, monotonic, not per-commission).
+    /// The store-assigned ordering key; global and monotonic, not
+    /// per-commission.
     pub(crate) seq: i64,
     /// The stream the entry belongs to.
     pub(crate) commission_id: CommissionId,
@@ -369,11 +301,11 @@ pub(crate) struct StoredChangelogEntry {
     pub(crate) kind: ChangelogEntryKind,
     /// Who did it — `None` for a system entry.
     pub(crate) actor_id: Option<UserId>,
-    /// Kind-specific parameters (JSON), self-sufficient to render a sentence.
+    /// Kind-specific parameters (JSON), enough to render a sentence.
     pub(crate) payload: Value,
     /// Free text riding the entry, if any.
     pub(crate) note: Option<String>,
-    /// When the act happened — carried for display; `seq` is the order.
+    /// When the act happened; carried for display, while `seq` is the order.
     pub(crate) created_at: domain::datetime::DateTimeUtc,
 }
 
@@ -392,32 +324,18 @@ impl StoredChangelogEntry {
     }
 }
 
-/// In-memory [`CommissionWrites`] view: commission writes land on the shared
-/// state. Vended by [`MemUnitOfWork::commissions`](crate::MemUnitOfWork), where
-/// the [`MemBackend`] it wraps is the unit's *staging* snapshot — so a write
-/// reaches the shared store only on commit (drop = rollback), exactly like
-/// `MemAccountWrites`.
+/// In-memory [`CommissionWrites`] view, vended by
+/// [`MemUnitOfWork::commissions`](crate::MemUnitOfWork) over the unit's staging
+/// snapshot, so a write reaches the shared store only on commit.
 pub struct MemCommissionWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl CommissionWrites for MemCommissionWrites {
-    /// Insert the freshly created commission, keyed by its id — **together with
-    /// one tab row per tab the code skeleton declares** ([`declared_tabs`],
-    /// ZMVP-166) **and its owner's participant row** (ZMVP-76: the owner is a
-    /// permanent Participant from birth, stamped with the commission's creation
-    /// instant), the mem mirror of the pg adapter's inserts in one transaction:
-    /// all three maps belong to this unit's staging snapshot, so commission,
-    /// tabs, and membership commit or vanish together — a tabless or owner-less
-    /// commission is unrepresentable. Every tab is born
-    /// [`VisibilityMode::Total`], and nothing here reads
-    /// `commission.visibility` (the commission is the formal root; its
-    /// visibility gates *over* the composition rather than seeding it). The pg
-    /// `id` is a
-    /// PRIMARY KEY, so a duplicate would raise a violation there; the fake does
-    /// not model that (a plain `insert`, the same as `MemAccountWrites::create`
-    /// does for its own account id), because commission ids are freshly-minted
-    /// UUIDv7 — a collision is unreachable by construction, never a case a test
-    /// can reach.
+    /// Insert the freshly created commission with one tab row per tab the code
+    /// skeleton declares and its owner's participant row, all on this unit's
+    /// staging snapshot — so a tabless or owner-less commission is
+    /// unrepresentable. Every tab is born [`VisibilityMode::Total`]; the
+    /// commission's own visibility gates over the composition, never seeds it.
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         {
             let mut commissions = self
@@ -458,51 +376,35 @@ impl CommissionWrites for MemCommissionWrites {
             .participants
             .lock()
             .expect("MemBackend participants mutex poisoned");
-        // A duplicate add is a no-op that preserves the ORIGINAL created_at —
-        // the mem mirror of the pg `ON CONFLICT (commission_id, user_id) DO
-        // NOTHING` (ZMVP-140): a fresh commission's owner row can't collide
-        // here, but ZMVP-79's seat acceptance re-adds whoever it seats, who
-        // may already be a participant through another seat.
+        // A duplicate add is a no-op preserving the ORIGINAL created_at —
+        // seat acceptance re-adds whoever it seats.
         participants
             .entry((commission.id, commission.owner_id.clone()))
             .or_insert(commission.created_at);
         Ok(())
     }
 
-    /// Contribute one element into a declared surface — the mem mirror of the pg
-    /// `INSERT … position = max + 1 within (tab, surface, band)` (ZMVP-166),
-    /// behind the same shared address gate ([`require_address`]), in the same
-    /// order: an absent/foreign tab refuses with [`UnknownTab`], and only then a
-    /// surface the skeleton does not declare **in that tab** with
-    /// [`UnknownSurface`]. The element is born [`VisibilityMode::Total`] and its
-    /// opaque payload is held verbatim, so it reads back exactly as written.
+    /// Contribute one element into a declared surface at `position = max + 1`
+    /// within its `(tab, surface, band)` group, behind the shared address gate.
+    /// The element is born [`VisibilityMode::Total`] and its opaque payload is
+    /// held verbatim.
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
         insert_element(&self.0, element)
     }
 
-    /// Remove one element — the mem mirror of the pg gate + tab lock + `DELETE`
-    /// + renumber (ZMVP-166): the target must exist in `commission` (an absent
-    /// id and a foreign element both refuse with [`ElementNotFound`],
-    /// indistinguishably, so removal probes reveal nothing), its tab must
-    /// resolve through the **same gate the add path uses** ([`require_tab`] —
-    /// where pg takes the row lock that serializes a removal against a
-    /// concurrent append), whatever shares its identity leaves with it (the pg
-    /// `ON DELETE CASCADE` on the Slot/Seat satellites and a seat's pending
-    /// invitations, walked here explicitly), and the remaining
-    /// `(tab, surface, band)` group renumbers to contiguous positions — all on
-    /// the unit's staging snapshot, so removal and renumber commit or vanish
-    /// together. There is no protected element: tabs and surfaces are skeleton,
-    /// not elements.
+    /// Remove one element, its identity-sharing satellites and a seat's pending
+    /// offers, then renumber the remaining `(tab, surface, band)` group to
+    /// contiguous positions — all on the staging snapshot, so they commit
+    /// together. An absent id and a foreign element both refuse with
+    /// [`ElementNotFound`], indistinguishably. No element is protected.
     async fn remove_element(
         &mut self,
         commission: &CommissionId,
         element: &ElementId,
     ) -> anyhow::Result<()> {
         let (commission, element) = (*commission, *element);
-        // `tabs` before `elements`, the SAME order `insert_element` takes — the
-        // mem mirror of pg's "lock the tab row before touching an element row",
-        // and the reason the two maps can never be acquired in opposite orders
-        // by two paths.
+        // `tabs` before `elements`, the SAME order `insert_element` takes, so
+        // the two maps are never acquired in opposite orders.
         let tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
         let mut elements = self
             .0
@@ -516,10 +418,8 @@ impl CommissionWrites for MemCommissionWrites {
         else {
             return Err(ElementNotFound.into());
         };
-        // The removal's tab, resolved through the same gate the add path uses —
-        // pg takes this as a row lock between its element gate and its DELETE.
-        // A miss is corruption (pg's composite foreign key makes it unwritable),
-        // and corruption answers with the same UnknownTab pg would.
+        // Resolved through the same gate the add path uses; a miss is
+        // corruption, answering with the same UnknownTab pg would.
         require_tab(&tabs, commission, removed.address.tab)?;
         drop(tabs);
         elements.remove(&element);
@@ -543,8 +443,7 @@ impl CommissionWrites for MemCommissionWrites {
         }
         drop(elements);
 
-        // The identity-sharing satellites, and a seat's pending offers: the mem
-        // mirror of the pg cascades off `commission_element (id)`.
+        // The identity-sharing satellites, and a seat's pending offers.
         self.0
             .slots
             .lock()
@@ -567,11 +466,9 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Record a file entry's link on the unit's staged snapshot (ZMVP-88) — the
-    /// in-memory mirror of the pg `INSERT INTO commission_file`, so the link commits
-    /// atomically with the `file_added` changelog entry the caller appends on the
-    /// same unit (drop = rollback). The bytes were stored separately, before this
-    /// unit, through [`FileStore`](domain::ports::FileStore).
+    /// Record a file entry's link on the unit's staged snapshot, so it commits
+    /// atomically with the caller's `file_added` changelog entry. The bytes were
+    /// stored separately, before this unit.
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
         let mut files = self
             .0
@@ -582,11 +479,9 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Record one annotation on the unit's staged snapshot (ZMVP-90) — the
-    /// in-memory mirror of the pg `INSERT INTO commission_markup`, so it commits
-    /// atomically with the `markup_added` changelog entry the caller appends on the
-    /// same unit (drop = rollback). No pg-side composite foreign key exists here, so
-    /// the file entry's existence stays the caller's check, exactly as it is today.
+    /// Record one annotation on the unit's staged snapshot, so it commits
+    /// atomically with the caller's `markup_added` changelog entry. The file
+    /// entry's existence stays the caller's check.
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
         let mut markups = self
             .0
@@ -597,16 +492,10 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
-    /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
-    /// Slot, the same shared address gate ([`require_address`]) and append
-    /// order as [`insert_element`] plant an ordinary [`ElementType::slot`]-typed
-    /// element with the empty payload, and the Slot itself lands as the
-    /// [`StoredSlot`] satellite keyed by that element's id. All maps belong to
-    /// this unit's staging snapshot, so the whole batch commits or vanishes
-    /// together — a refusal mid-batch errors the unit and nothing is applied.
-    /// No changelog entry (the frozen taxonomy has no Slot variant), and no
-    /// occupant exists to store.
+    /// Declare a batch of Slots: per Slot, the shared address gate plants an
+    /// [`ElementType::slot`]-typed element and the Slot lands as its
+    /// `StoredSlot` satellite. The batch commits or vanishes together, so a
+    /// refusal mid-batch applies nothing.
     async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in new_slots {
             let carrier = NewElement::carrying(
@@ -636,38 +525,19 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Whether the commission bears any fact (ZMVP-67) — the in-memory mirror of
-    /// the pg predicate, answered on the unit's staged snapshot so the fake keeps
-    /// the same-transaction semantics the delete gate (ZMVP-66) relies on.
-    ///
-    /// Constant `false` for the same reason the pg body is: no fact-minter exists,
-    /// so `MemBackend` holds no fact map any query could scan. The fact registry
-    /// and its tripwires live in the pg adapter (`COMMISSION_FACT_TABLES` in
-    /// `adapter-pg/src/commission.rs`, Deletion DD `3014657`); the change that
-    /// registers the first fact table there MUST also give this fake the matching
-    /// fact map and check it here, or mem-backed gate tests would pass against a
-    /// predicate blind to the facts they stage.
+    /// Whether the commission bears any fact, answered on the unit's staged
+    /// snapshot. Constant `false`: no fact-minter exists yet, so there is no fact
+    /// map to scan. Whoever registers the first fact table in the pg adapter MUST
+    /// add the matching map here too. (DD 3014657)
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
 
-    /// Remove the commission and, with it, its changelog entries **and its whole
-    /// composition** — the mem mirror of the pg `DELETE FROM commission` plus
-    /// every child table's `ON DELETE CASCADE` (ZMVP-66; ruling E35). Lands on
-    /// the unit's staged snapshot, so it commits or rolls back with the caller's
-    /// fact gate (ruling E17), like every write here. An absent commission is a
-    /// no-op, per the port contract.
-    ///
-    /// The composition arm (tabs, elements, surface modes, and the Slot/Seat
-    /// satellites with a seat's pending offers) is swept because without it
-    /// [`load_composition`](CommissionStore::load_composition) would answer `Some` for
-    /// a commission pg answers `None` for — the fake lying about "gone
-    /// entirely". Maps this ticket does **not** own (participants, files,
-    /// positioning) still don't cascade here; that divergence predates ZMVP-166
-    /// and belongs to whoever owns them.
-    ///
-    /// A future commission-child map added to [`MemBackend`] must cascade here
-    /// too, mirroring its pg table's cascade.
+    /// Remove the commission with its changelog entries and its whole
+    /// composition — tabs, elements, surface modes, and the Slot/Seat satellites
+    /// with a seat's pending offers. Lands on the unit's staged snapshot; an
+    /// absent commission is a no-op. Participants, files and positioning do NOT
+    /// cascade here, a known divergence; any future child map must.
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         let id = *id;
         {
@@ -687,9 +557,8 @@ impl CommissionWrites for MemCommissionWrites {
             changelog.retain(|entry| entry.commission_id != id);
         }
 
-        // The composition, in the order pg's cascade reaches it: a seat's
-        // offers, the satellites, the elements they rode, then the tabs and
-        // surface modes.
+        // In the order pg's cascade reaches it: a seat's offers, the
+        // satellites, their elements, then the tabs and surface modes.
         let doomed_seats: Vec<ElementId> = {
             let mut seats = self
                 .0
@@ -776,13 +645,9 @@ impl CommissionWrites for MemCommissionWrites {
         }
         Ok(())
     }
-    /// Declare a seat — the mem mirror of the pg adapter's element + satellite
-    /// pair (ZMVP-76): behind the same shared address gate
-    /// ([`require_address`]), one [`StoredElement`] (an ordinary
-    /// [`ElementType::seat`]-typed element) and one [`StoredSeat`] land under
-    /// the same [`ElementId`] in this unit's staging snapshot, so both halves
-    /// commit or vanish together. The occupant is never written here: every
-    /// seat is born vacant (AC3; ZMVP-79 fills it).
+    /// Declare a seat: behind the shared address gate, one `StoredElement`
+    /// and one `StoredSeat` land under the same [`ElementId`], so both halves
+    /// commit or vanish together. Every seat is born vacant.
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         let carrier = NewElement::carrying(
             seat.id,
@@ -812,18 +677,10 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Insert the pending seat invitation, unless one is already pending for the
-    /// same `(seat, invited_user)` — in which case this is a no-op, the in-memory
-    /// mirror of the pg partial unique index (`... WHERE state = 'pending'`,
-    /// ZMVP-78). The handler also checks
-    /// [`find_pending_seat_invitation`](CommissionStore::find_pending_seat_invitation)
-    /// first, so this is the belt-and-suspenders backstop. Several *different*
-    /// Users may hold pending invitations to one Seat — only a duplicate for the
-    /// same pair is dropped. Staged like every write here.
-    /// Returns the offer that now stands — the freshly inserted one, or the
-    /// pending one already on file when this issue was dropped — so the caller is
-    /// handed the live offer rather than the duplicate it proposed (the pg
-    /// adapter's contract, mirrored).
+    /// Insert the pending seat invitation unless one is already pending for the
+    /// same `(seat, invited_user)`, in which case this is a no-op — different
+    /// Users may each hold one to the same Seat. Returns the offer that now
+    /// stands: the fresh one, or the pending one already on file.
     async fn create_seat_invitation(
         &mut self,
         invitation: &SeatInvitation,
@@ -840,8 +697,7 @@ impl CommissionWrites for MemCommissionWrites {
                 .then(|| stored.rebuild(*id))
         });
         if let Some(standing) = already_pending {
-            // At most one pending offer per (seat, user): a second issue is a
-            // no-op, not a second row.
+            // At most one pending offer per (seat, user).
             return Ok(standing);
         }
         let issued = StoredSeatInvitation {
@@ -859,9 +715,7 @@ impl CommissionWrites for MemCommissionWrites {
     }
 
     /// Flip a pending seat invitation to revoked and stamp `updated_at`. A
-    /// non-pending or absent invitation is left untouched — a no-op, not an error
-    /// (the handler decides whether that's a 404/200), mirroring the pg guarded
-    /// `UPDATE` (ZMVP-78). Staged like every write here.
+    /// non-pending or absent invitation is a no-op, not an error.
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         let id = *id;
         let mut invitations = self
@@ -878,11 +732,9 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Repoint (or clear) the stored linked-channel pointer — the mem mirror of
-    /// the pg conditional `UPDATE`: the write applies only when the stored value
-    /// differs from the requested one, so a repeat answers `false` and the
-    /// caller's changelog append keys on the bool. An absent commission answers
-    /// `false`, per the port contract (existence is the caller's check).
+    /// Repoint (or clear) the linked-channel pointer, applying only when the
+    /// stored value differs — so a repeat, or an absent commission, answers
+    /// `false`, which the caller's changelog append keys on.
     async fn set_linked_channel(
         &mut self,
         id: &CommissionId,
@@ -904,10 +756,8 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
-    /// Upsert the grantee's key on the unit's staged snapshot — the mem mirror
-    /// of the pg `commission_view_grant` upsert: one key per (commission,
-    /// grantee), re-granting replaces the level. Keyed by the grantee's DID, the
-    /// same single column the pg table carries.
+    /// Upsert the grantee's key: one per (commission, grantee), keyed by the
+    /// grantee's DID, so re-granting replaces the level.
     async fn grant_view(
         &mut self,
         commission: &CommissionId,
@@ -922,11 +772,9 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Remove the grantee's key on the staged snapshot (hard-delete, DD
-    /// `29130754` D5) — the mem mirror of the pg `DELETE`. Returns whether a key
-    /// existed: a revoke of a non-existent key is an idempotent no-op answering
-    /// `false`, the bool the caller keys its `view_grant_revoked` changelog
-    /// append on.
+    /// Remove the grantee's key (a hard delete), returning whether one existed —
+    /// the bool the caller keys its `view_grant_revoked` append on.
+    /// (DD 29130754)
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -941,10 +789,8 @@ impl CommissionWrites for MemCommissionWrites {
             .is_some())
     }
 
-    /// Repoint (or clear) the stored direction-axis Status — the mem mirror of
-    /// the pg `UPDATE commission SET direction_status` (ZMVP-85): one nullable
-    /// slot, so a set replaces whole. An absent commission is a no-op, per the
-    /// port contract (existence is the caller's check).
+    /// Repoint (or clear) the direction-axis Status; one slot, so a set replaces
+    /// whole. An absent commission is a no-op.
     async fn set_direction_status(
         &mut self,
         id: &CommissionId,
@@ -966,9 +812,7 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
-    /// Repoint (or clear) the stored deadline — the mem mirror of the pg
-    /// `UPDATE commission SET deadline` (ZMVP-86). An absent commission is a
-    /// no-op, per the port contract (existence is the caller's check).
+    /// Repoint (or clear) the stored deadline; an absent commission is a no-op.
     async fn set_deadline(
         &mut self,
         id: &CommissionId,
@@ -990,10 +834,8 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
-    /// Repoint (or clear) the stored deadline-axis Status — the mem mirror of
-    /// the pg `UPDATE commission SET deadline_status` (ZMVP-86): one nullable
-    /// slot, so a set replaces whole. An absent commission is a no-op, per the
-    /// port contract.
+    /// Repoint (or clear) the deadline-axis Status; one slot, so a set replaces
+    /// whole. An absent commission is a no-op.
     async fn set_deadline_status(
         &mut self,
         id: &CommissionId,
@@ -1015,19 +857,13 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(true)
     }
 
-    /// The sweeper's candidate scan — the mem mirror of the pg query (ZMVP-86,
-    /// ruling E12), answered on the unit's staged snapshot so the scan already
-    /// sees this unit's writes (the same same-transaction semantics as
-    /// [`commission_has_facts`](CommissionWrites::commission_has_facts)):
-    /// deadline strictly before `now`, not already Late, lifecycle not
-    /// terminal; ordered by deadline (id tiebreak) like the pg `ORDER BY`.
+    /// The sweeper's candidate scan, answered on the unit's staged snapshot:
+    /// deadline strictly before `now`, not already Late, lifecycle not terminal;
+    /// ordered by deadline, id as tiebreak.
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        // Late is never persisted, so dedup the log on the changelog itself (the
-        // pg anti-join mirror). A commission is skipped only if its latest `late`
-        // entry is *after* its latest deadline change — a `deadline_set` /
-        // `deadline_extended` re-arms the log, so each fresh miss is its own
-        // event. Its Late *state* is derived on lookup; this pass only decides
-        // what still needs an entry.
+        // Late is never persisted, so dedup on the changelog itself: skip only
+        // if the latest `late` entry is AFTER the latest deadline change, since a
+        // deadline set or extension re-arms the log.
         let logged_since_change: std::collections::HashSet<CommissionId> = {
             let changelog = self
                 .0
@@ -1085,14 +921,13 @@ impl CommissionWrites for MemCommissionWrites {
 }
 
 /// In-memory [`ChangelogWrites`] view: appends land on the unit's staged
-/// snapshot and reach the shared store only on commit (drop = rollback) — the
-/// mem mirror of the DD's entries-commit-atomically-with-domain-writes rule.
+/// snapshot, so an entry commits atomically with the domain writes beside it.
+/// (DD 59310081)
 pub struct MemChangelogWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl ChangelogWrites for MemChangelogWrites {
-    /// Push one entry, assigning the next `seq` — the mem mirror of the pg
-    /// `bigserial` (monotonic over the whole log, like the single sequence).
+    /// Push one entry, assigning the next `seq`, monotonic over the whole log.
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
         let mut changelog = self
             .0
@@ -1113,12 +948,9 @@ impl ChangelogWrites for MemChangelogWrites {
     }
 }
 
-/// The read half of a commission unit of work over this unit's **staged**
-/// snapshot: the reads see the writes issued through the same handle, which is
-/// what the pg views get from reading through their open transaction. There is
-/// no lock to take in process, so `find_for_update`/`tab_for_update` are their
-/// unlocked twins — the fake models the visibility contract, not the
-/// concurrency mechanism (its single backend mutex is the coarser stand-in).
+/// The read half of a commission unit of work over the unit's staged snapshot,
+/// so reads see writes issued through the same handle. There is no lock to take
+/// in process, so `find_for_update`/`tab_for_update` are their unlocked twins.
 #[async_trait]
 impl CommissionReads for MemCommissionWrites {
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
@@ -1139,9 +971,8 @@ impl CommissionReads for MemCommissionWrites {
             .await
     }
 
-    /// The tab row, scoped to `commission` — an absent id and one belonging to
-    /// another commission both answer `None`, the same collapse
-    /// [`require_tab`] refuses with.
+    /// The tab row, scoped to `commission`; an absent id and a foreign tab both
+    /// answer `None`.
     async fn tab_for_update(
         &mut self,
         commission: &CommissionId,
@@ -1159,14 +990,12 @@ impl CommissionReads for MemCommissionWrites {
     }
 }
 
-/// In-memory [`CommissionStore`] read surface over the shared [`MemBackend`] —
-/// the canonical commission read port's fake (ZMVP-87).
+/// In-memory [`CommissionStore`] read surface over the shared [`MemBackend`].
 pub struct MemCommissionStore(pub(crate) MemBackend);
 
 #[async_trait]
 impl CommissionStore for MemCommissionStore {
-    /// Rebuilds a [`Commission`] from its stored parts (it isn't `Clone`), or
-    /// `None` if never created.
+    /// Rebuild a [`Commission`] from its stored parts, or `None`.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let id = *id;
         let commissions = self
@@ -1177,10 +1006,9 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
 
-    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (ZMVP-70) —
-    /// the mem mirror of a `commission_view_grant` lookup. A key is issued to a
-    /// **User**, never an Account (DD `29130754` D3, amended 2026-09-04), so
-    /// membership of an account confers nothing here.
+    /// The [`GrantLevel`] `user` holds on `commission`, or `None`. A key is
+    /// issued to a User, never an Account, so account membership confers nothing.
+    /// (DD 29130754)
     async fn view_grant(
         &self,
         commission: &CommissionId,
@@ -1195,10 +1023,8 @@ impl CommissionStore for MemCommissionStore {
             .copied())
     }
 
-    /// Which column of `workflow_id` currently holds this commission, or `None`
-    /// — the mem mirror of the pg board-edge read. Scoped by board: a commission
-    /// sits in at most one column per board and on as many boards as position it
-    /// (DD `29130754` D1/D6).
+    /// Which column of `workflow_id` holds this commission, or `None`. Scoped by
+    /// board: a commission sits in at most one column per board. (DD 29130754)
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -1229,13 +1055,10 @@ impl CommissionStore for MemCommissionStore {
             .map(Some)
     }
 
-    /// Load the whole composition — the mem mirror of the pg three-query read
-    /// (ZMVP-166): the tab, surface-mode, and element maps each filtered by
-    /// commission and ordered the way the pg statements order them, so a caller
-    /// observes the same shape from either adapter. `None` when the commission
-    /// has **no tabs** (tabs are minted with the commission, so that means no
-    /// such commission); an empty `elements` list is the ordinary state of a
-    /// fresh one and is not absence.
+    /// Load the whole composition: the tab, surface-mode and element maps
+    /// filtered by commission and ordered as pg orders them. `None` when the
+    /// commission has NO tabs, which means no such commission — an empty
+    /// `elements` list is the ordinary state of a fresh one.
     async fn load_composition(
         &self,
         id: &CommissionId,
@@ -1313,14 +1136,10 @@ impl CommissionStore for MemCommissionStore {
         Ok(Some(composition))
     }
 
-    /// Answers from the **persisted membership map** (ZMVP-76, Engineer
-    /// ruling: the mem mirror of `commission_participant`, never a computed
-    /// owner-∪-seated union): the owner's entry is inserted with the
-    /// commission; ZMVP-79's seated arm adds entries behind this same lookup.
-    /// An unknown commission has no entries, so it answers `false`.
-    /// **Unaffected by placement or view grants** (Ownership Separation DD
-    /// Decision 8): positioning is environmental and a key is only a view, so
-    /// neither makes an account's members Participants.
+    /// Answered from the persisted membership map, never a computed
+    /// owner-∪-seated union; an unknown commission answers `false`. Unaffected by
+    /// placement or view grants — neither makes an account's members
+    /// Participants. (DD 29130754)
     async fn is_participant(
         &self,
         commission: &CommissionId,
@@ -1334,9 +1153,8 @@ impl CommissionStore for MemCommissionStore {
         Ok(participants.contains_key(&(*commission, user.clone())))
     }
 
-    /// The commission's seat satellites in declaration order — the mem mirror
-    /// of the pg `ORDER BY id` read (seat ids are UUIDv7, so id order is
-    /// declaration order). No seats (or no commission) is the empty list.
+    /// The commission's seat satellites in declaration order (seat ids are
+    /// UUIDv7, so id order is declaration order). No seats is the empty list.
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
         let commission = *commission;
         let seats = self
@@ -1359,12 +1177,9 @@ impl CommissionStore for MemCommissionStore {
         Ok(found)
     }
 
-    /// The lone pending seat invitation for `(commission, seat, user)`, or `None`
-    /// (ZMVP-78) — the mem mirror of the pg query scoped to
-    /// `commission_id`/`seat_id`/`invited_user`/pending. Accepted/revoked
-    /// invitations are history, not live offers, so they never match; a
-    /// *different* seat's — or another commission's — offer never matches either
-    /// (the authorization binding lives in the lookup, not caller discipline).
+    /// The lone pending seat invitation for `(commission, seat, user)`, or
+    /// `None`. Accepted or revoked offers never match, and neither does another
+    /// seat's or commission's — the binding lives in the lookup.
     async fn find_pending_seat_invitation(
         &self,
         commission: &CommissionId,
@@ -1386,10 +1201,8 @@ impl CommissionStore for MemCommissionStore {
         }))
     }
 
-    /// The file-entry link `key` names **within `commission`** (ZMVP-88) — the mem
-    /// mirror of the pg query filtered by both id and commission_id: a key that
-    /// belongs to a *different* commission answers `None` (never a cross-commission
-    /// existence oracle).
+    /// The file-entry link `key` names within `commission`; a key belonging to a
+    /// different commission answers `None`, never an existence oracle.
     async fn find_file(
         &self,
         commission: &CommissionId,
@@ -1406,11 +1219,9 @@ impl CommissionStore for MemCommissionStore {
             .cloned())
     }
 
-    /// Scans `markups` for the annotations on one file entry and sorts them by
-    /// [`MarkupKey`] — UUIDv7 sorts as creation order, mirroring the pg `ORDER BY
-    /// id`; the `HashMap` scan itself has no natural order. Filtered on the
-    /// commission too, so a file key from another commission yields an empty vector
-    /// rather than a signal (the mem mirror of the scoped `WHERE`).
+    /// The annotations on one file entry, sorted by `MarkupKey` (UUIDv7, so
+    /// creation order). Filtered on the commission too, so a foreign file key
+    /// yields an empty vector rather than a signal.
     async fn markups_for_file(
         &self,
         commission: &CommissionId,
@@ -1433,12 +1244,9 @@ impl CommissionStore for MemCommissionStore {
         Ok(found)
     }
 
-    /// Scans `commissions` for `owner`'s rows, drops archived ones (ZMVP-157 —
-    /// the mem mirror of the pg `archived_at IS NULL` filter), and rebuilds
-    /// each via [`StoredCommission::rebuild`] — the same reconstruction
-    /// [`find`](Self::find) uses. Sorted by [`CommissionId`] afterward (UUIDv7
-    /// sorts as creation order); the `HashMap` scan itself has no natural
-    /// order, mirroring the pg `ORDER BY id`.
+    /// Scan `commissions` for `owner`'s rows, drop archived ones, and rebuild
+    /// each. Sorted by [`CommissionId`] (UUIDv7, so creation order), since the
+    /// `HashMap` scan has no natural order.
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         let commissions = self
             .0
@@ -1460,8 +1268,8 @@ pub struct MemChangelogStore(pub(crate) MemBackend);
 
 #[async_trait]
 impl ChangelogStore for MemChangelogStore {
-    /// The commission's stream in ascending `seq` — the entries are pushed in
-    /// seq order, so a filter preserves it (the mem mirror of `ORDER BY seq`).
+    /// The commission's stream in ascending `seq`; entries are pushed in seq
+    /// order, so a filter preserves it.
     async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
         let commission = *commission;
         let changelog = self
@@ -1477,26 +1285,21 @@ impl ChangelogStore for MemChangelogStore {
     }
 }
 
-/// Commission seed/inspect helpers on the shared backend — they operate directly
-/// on the shared state (reusing the read/write impls) so a test can arrange and
-/// assert without the `begin()`/accessor/`commit()` ceremony.
+/// Commission seed/inspect helpers: they write straight to the shared state,
+/// skipping the begin()/accessor/commit() ceremony.
 impl MemBackend {
-    /// Persist a commission directly onto the shared store (test seed of
-    /// [`CommissionWrites::create`]) — e.g. one owned by a user who is *not* the
-    /// app's signed-in identity, to exercise the closed door.
+    /// Persist a commission directly onto the shared store (test seed).
     pub async fn create_commission(&self, commission: &Commission) -> anyhow::Result<()> {
         MemCommissionWrites(self.clone()).create(commission).await
     }
 
-    /// Resolve a commission by id (inspect helper; the read-port fake is
-    /// [`MemCommissionStore`], reachable via [`MemBackend::commission_store`]).
+    /// Resolve a commission by id (inspect helper).
     pub async fn find_commission(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
         MemCommissionStore(self.clone()).find(&id).await
     }
 
     /// Every stored commission, rebuilt from its parts, in unspecified order
-    /// (inspect helper). Lets an api test that drives `POST /commissions` — which
-    /// returns a bare `201` with no id — introspect what was persisted.
+    /// (inspect helper), so a test can introspect what a bare `201` persisted.
     pub async fn all_commissions(&self) -> anyhow::Result<Vec<Commission>> {
         let commissions = self
             .commissions
@@ -1508,8 +1311,7 @@ impl MemBackend {
             .collect())
     }
 
-    /// A commission's changelog entries in stream order (inspect helper — the
-    /// read-port fake reached without wiring a store).
+    /// A commission's changelog entries in stream order (inspect helper).
     pub async fn changelog_entries(
         &self,
         commission: CommissionId,
@@ -1517,17 +1319,15 @@ impl MemBackend {
         MemChangelogStore(self.clone()).entries(&commission).await
     }
 
-    /// The declared Slot whose carrying element is `element`, or `None` (inspect
-    /// helper — the satellite read; ZMVP-77 exposes no read port yet, the
-    /// viewer-facing surface being ZMVP-170's projection).
+    /// The declared Slot whose carrying element is `element` (inspect helper);
+    /// there is no read port for the satellite yet.
     pub async fn find_slot(&self, element: ElementId) -> anyhow::Result<Option<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
         Ok(slots.get(&element).map(|stored| stored.rebuild(element)))
     }
 
-    /// Every Slot declared on `commission`, in declaration order (the carrying
-    /// elements' ids are UUIDv7, so sorting by element id is creation order) —
-    /// the "zero or more" count of ZMVP-77 AC2 (inspect helper).
+    /// Every Slot declared on `commission`, in declaration order (carrying
+    /// element ids are UUIDv7, so id order is creation order).
     pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
         let mut found: Vec<Slot> = slots
@@ -1539,10 +1339,8 @@ impl MemBackend {
         Ok(found)
     }
 
-    /// The commission's tabs, in declared order (inspect helper). ZMVP-166
-    /// exposes no *route* that hands a caller a tab id — reading the composition
-    /// is ZMVP-163's `GET` — so this is how a test learns the id its element
-    /// writes must address.
+    /// The commission's tabs, in declared order (inspect helper) — how a test
+    /// learns the tab id its element writes must address.
     pub async fn tabs_of(&self, commission: CommissionId) -> anyhow::Result<Vec<TabRow>> {
         let composition = MemCommissionStore(self.clone())
             .load_composition(&commission)
@@ -1551,7 +1349,7 @@ impl MemBackend {
     }
 
     /// The commission's elements, in `(tab, surface, band, position)` order
-    /// (inspect helper — the composition read reached without wiring a store).
+    /// (inspect helper).
     pub async fn elements_of(&self, commission: CommissionId) -> anyhow::Result<Vec<ElementRow>> {
         let composition = MemCommissionStore(self.clone())
             .load_composition(&commission)
@@ -1561,16 +1359,10 @@ impl MemBackend {
             .unwrap_or_default())
     }
 
-    /// Plant one extra tab row on the shared store under an arbitrary declared
-    /// name, returning its [`TabId`] (test-only seeder; the mem mirror of a raw
-    /// `INSERT INTO commission_tab`).
-    ///
-    /// Exists for **one** case: exercising an address whose tab is real and
-    /// belongs to this commission, but whose `(tab, surface)` pair the skeleton
-    /// does not declare. The placeholder skeleton has a single tab, so no
-    /// ordinary path can produce that shape — and it is precisely the shape the
-    /// pair check exists to refuse. ZMVP-171's real, multi-tab skeleton makes
-    /// this reachable without a seeder; until then, this stands in.
+    /// Plant one extra tab row under an arbitrary declared name (test-only
+    /// seeder), for the one case no ordinary path reaches while the skeleton has
+    /// a single tab: an address whose tab is real but whose `(tab, surface)` pair
+    /// the skeleton does not declare.
     pub fn seed_tab(&self, commission: CommissionId, tab: TabName) -> TabId {
         let id = TabId::mint();
         let stored = StoredTab {
@@ -1585,11 +1377,8 @@ impl MemBackend {
         id
     }
 
-    /// Widen (or narrow) a **tab's** mode directly on the shared store
-    /// (test-only seeder). There is no widening port yet — ZMVP-74 owns that act
-    /// — so this stands in for it, letting a test drive the three-term
-    /// projection against a composition that isn't uniformly closed. Panics if
-    /// `tab` is not a tab of this store (the test set it up wrong).
+    /// Widen (or narrow) a tab's mode directly (test-only seeder); there is no
+    /// widening port yet. Panics if `tab` is not a tab of this store.
     pub fn set_tab_mode(&self, tab: TabId, mode: VisibilityMode) {
         self.tabs
             .lock()
@@ -1599,10 +1388,8 @@ impl MemBackend {
             .mode = mode;
     }
 
-    /// Widen (or narrow) a **surface's** mode for one commission directly on the
-    /// shared store (test-only seeder; ZMVP-74 owns the real act, as for
-    /// [`set_tab_mode`](Self::set_tab_mode)). Writing the entry is what takes the
-    /// surface off the "absent row = Total" default.
+    /// Widen (or narrow) a surface's mode for one commission (test-only seeder);
+    /// writing the entry takes it off the absent-row-means-Total default.
     pub fn set_surface_mode(
         &self,
         commission: CommissionId,
@@ -1615,11 +1402,8 @@ impl MemBackend {
             .insert((commission, surface), mode);
     }
 
-    /// Fill a declared Seat's occupant slot directly on the shared store
-    /// (test-only seeder). There is no seat-fill port yet — accepting a seat
-    /// invitation is ZMVP-79 — so this stands in for it, letting an api test
-    /// exercise the "already occupied" refusal (ZMVP-78) against a truly filled
-    /// seat. Panics if `seat` is not a declared seat (the test set it up wrong).
+    /// Fill a declared Seat's occupant slot directly (test-only seeder); there
+    /// is no seat-fill port yet. Panics if `seat` is not a declared seat.
     pub fn occupy_seat(&self, seat: ElementId, occupant: UserId) {
         let mut seats = self.seats.lock().expect("MemBackend seats mutex poisoned");
         seats
@@ -1628,13 +1412,10 @@ impl MemBackend {
             .occupant = Some(occupant);
     }
 
-    /// Seed a (non-owner) participant membership row directly (test-only). There
-    /// is no seat-accept path yet (ZMVP-79), so this stands in for a seated
-    /// member — letting a test exercise the owner-vs-participant authority split
-    /// (the `403` arm of `require_owner`: a participant who is not the owner).
+    /// Seed a non-owner participant membership row (test-only), standing in for
+    /// a seated member until the seat-accept path exists.
     pub fn seed_participant(&self, commission: CommissionId, user: UserId) {
-        // Mirrors add_participant.sql's ON CONFLICT DO NOTHING (ZMVP-140): a
-        // re-seed of an already-seated pair is a no-op, preserving the
+        // A re-seed of an already-seated pair is a no-op, preserving the
         // original created_at.
         self.participants
             .lock()
@@ -1656,9 +1437,7 @@ mod tests {
 
     use super::*;
 
-    /// A fresh, unique synthetic actor DID — the only way to mint an id since
-    /// the actor re-key (DD `57081857`) made the DID the key. The UUID is only a
-    /// uniqueness source here; nothing reads it back.
+    /// A fresh, unique synthetic actor DID; the UUID is only a uniqueness source.
     fn mint_did() -> Did {
         Did::new(format!("did:plc:mem{}", uuid::Uuid::now_v7().simple()))
     }

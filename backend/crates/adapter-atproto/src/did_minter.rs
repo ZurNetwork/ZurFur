@@ -1,13 +1,9 @@
 //! The account `did:plc` minter — real ([`RealDidMinter`]) and stub
 //! ([`StubDidMinter`]).
 //!
-//! [`DidMinter`] mints a sovereign `did:plc` for a platform-custodied entity (an
-//! Account; see DESIGN/Account). [`RealDidMinter`] is the live implementation
-//! (ZMVP-49): it generates per-account secp256k1 rotation keys, builds and signs
-//! an **identity-only** genesis operation (no PDS — DD/26935298), derives the DID
-//! from its hash, persists the keys envelope-encrypted through a [`KeyStore`], and
-//! submits the operation to a PLC directory (a no-op/local one in v1 — C2).
-//! [`StubDidMinter`] is kept as a synthetic floor stub for tests/dev.
+//! The real minter generates per-account secp256k1 rotation keys, signs an
+//! identity-only genesis operation, custodies the keys through a [`KeyStore`],
+//! and submits to a [`PlcDirectory`]. The stub mints a synthetic DID only.
 
 use async_trait::async_trait;
 use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
@@ -27,12 +23,8 @@ use std::sync::Arc;
 use crate::plc::{PlcOperation, TombstoneOperation};
 use crate::plc_directory::PlcDirectory;
 
-/// The real [`DidMinter`]: mints a genuine, custody-backed `did:plc`.
-///
-/// Holds the private-store [`KeyStore`] (where the per-account keys land,
-/// envelope-encrypted) and a [`PlcDirectory`] (where the signed operation is
-/// submitted — a no-op directory in ZMVP-49). Both are injected so the minter is
-/// unit-testable against fakes.
+/// The real [`DidMinter`]: mints a genuine, custody-backed `did:plc` over an
+/// injected [`KeyStore`], [`PlcOperationLog`] and `PlcDirectory`.
 pub struct RealDidMinter {
     key_store: Arc<dyn KeyStore>,
     op_log: Arc<dyn PlcOperationLog>,
@@ -40,9 +32,8 @@ pub struct RealDidMinter {
 }
 
 impl RealDidMinter {
-    /// Build the real minter over a [`KeyStore`] (custody), a [`PlcOperationLog`]
-    /// (the chain of operations we've submitted, so the next op knows its `prev`), and
-    /// a [`PlcDirectory`] (submission).
+    /// Build the real minter over custody, the operation log (so the next op
+    /// knows its `prev`), and the submission directory.
     pub fn new(
         key_store: Arc<dyn KeyStore>,
         op_log: Arc<dyn PlcOperationLog>,
@@ -58,22 +49,10 @@ impl RealDidMinter {
 
 #[async_trait]
 impl DidMinter for RealDidMinter {
-    /// Mint an identity-only `did:plc` bound to `handle`.
-    ///
-    /// Steps, in order: (1) generate three secp256k1 keypairs — cold-recovery,
-    /// operational, and the `#atproto` signing key; (2) build the identity-only
-    /// genesis operation with `rotationKeys = [cold, operational]` (descending
-    /// authority) and `alsoKnownAs = [at://<handle>]`; (3) sign the operation's
-    /// no-`sig` DAG-CBOR with the **operational** key (any listed rotation key is a
-    /// valid genesis signer per the PLC spec; signing with the operational key
-    /// keeps the cold-recovery key off the signing path from birth), low-S,
-    /// base64url no-pad; (4) derive the DID from the signed operation's hash; (5)
-    /// **persist the keys** via the [`KeyStore`] (private, encrypted at rest); then
-    /// (6) **submit** the operation to the directory.
-    ///
-    /// Steps (5) and (6) are two independent writes across the private/public
-    /// boundary — never one transaction (DESIGN/no cross-store transaction). Keys
-    /// are stored before submission so a submission retry never orphans them.
+    /// Mint an identity-only `did:plc` bound to `handle`: generate the three
+    /// keypairs, sign the genesis operation with the operational key, derive the
+    /// DID, custody the keys and log the op, then submit to the directory.
+    /// Keys are stored before submission, so a submission retry never orphans them.
     async fn mint(&self, handle: &Handle) -> anyhow::Result<Did> {
         // Generate keys in a block so the non-`Send` `ThreadRng` is dropped before
         // any `.await` below (the keypairs themselves are `Send`).
@@ -86,36 +65,30 @@ impl DidMinter for RealDidMinter {
             )
         };
 
-        // rotationKeys in DESCENDING authority: cold-recovery first (index 0),
-        // operational second (index 1). Index 0 is reserved above operational for a
-        // future user recovery key (ZMVP-52) — DD/26804226 B2.
+        // rotationKeys in DESCENDING authority: cold-recovery, then operational.
         let rotation_keys = vec![cold.did(), operational.did()];
         let op = PlcOperation::identity_only(rotation_keys, signing.did(), handle.as_str());
 
-        // Sign the no-`sig` DAG-CBOR with the operational key. atrium-crypto's
-        // secp256k1 `sign` already emits atproto's canonical form (ECDSA-SHA256,
-        // low-S, 64-byte r‖s); we base64url no-pad encode it into the operation.
+        // Signing with the operational key keeps cold-recovery off the signing
+        // path; atrium-crypto already emits atproto's canonical low-S form.
         let signing_bytes = op.signing_bytes()?;
         let sig_bytes = operational.sign(&signing_bytes)?;
         let sig = URL_SAFE_NO_PAD.encode(&sig_bytes);
 
         let signed = op.into_signed(sig);
         let did = Did::new(signed.did()?);
-        // The genesis op's CID — the `prev` a future operation (e.g. the tombstone)
-        // will chain onto. Recorded in the operation log below.
+        // The genesis op's CID — the `prev` a future operation chains onto.
         let genesis_cid = signed.cid()?;
         let op_json = signed.to_json()?;
 
-        // Custody: keep every private half, in role order, for future operations.
         let keys = AccountKeys {
             cold_recovery: SecretKey::new(cold.export()),
             operational: SecretKey::new(operational.export()),
             signing: SecretKey::new(signing.export()),
         };
 
-        // (5) Private write — keys encrypted at rest by the KeyStore adapter.
+        // Private writes first: custody, then the genesis op.
         self.key_store.put(&did, &keys).await?;
-        // (5b) Private write — record the genesis op so the chain can be extended.
         self.op_log
             .append(&PlcOperationRecord {
                 did: did.clone(),
@@ -125,30 +98,16 @@ impl DidMinter for RealDidMinter {
                 operation_json: op_json.to_string(),
             })
             .await?;
-        // (6) Public dual-write — separate, retryable step (no shared transaction).
+        // Public dual-write — a separate retryable step, never a shared transaction.
         self.directory.submit(did.as_str(), &op_json).await?;
 
         Ok(did)
     }
 
-    /// Tombstone `did` (ZMVP-34 hard-delete): sign a `plc_tombstone` with the
-    /// account's **operational** rotation key, chaining onto the DID's most recent
-    /// operation.
-    ///
-    /// Steps: (1) load the custody keys (the operational key signs; the cold-recovery
-    /// key stays off the signing path but is retained so a higher-authority reversal is
-    /// possible within the ~72h window); (2) read the DID's latest op CID from the log
-    /// — the tombstone's mandatory `prev`; (3) build and sign the `plc_tombstone`'s
-    /// no-`sig` DAG-CBOR (ECDSA-SHA256, low-S, base64url no-pad — the same procedure as
-    /// the genesis op); (4) **submit** it to the directory (public); then (5) **record**
-    /// it in the log (private). Submit-before-record — the opposite of [`mint`], where
-    /// the genesis must be recorded before the DID is registered — so a failed submit
-    /// never advances our local chain: a retry re-reads the correct `prev` (the DID's
-    /// still-latest op) and re-signs the *same* tombstone, rather than chaining onto an
-    /// unsubmitted one (which the unique `cid` index would also reject). Steps (4) and
-    /// (5) are separate writes across the boundary — never one transaction — and this
-    /// whole method runs only after the private hard-delete has committed. Fails
-    /// (retryably) if the DID has no custody keys or no logged operation to chain onto.
+    /// Tombstone `did`: sign a `plc_tombstone` with the operational rotation
+    /// key, chaining onto the DID's latest logged operation, then submit before
+    /// recording — so a failed submit never advances the local chain. Fails
+    /// retryably if the DID has no custody keys or no op to chain onto.
     async fn tombstone(&self, did: &Did) -> anyhow::Result<()> {
         let keys = self
             .key_store
@@ -169,12 +128,8 @@ impl DidMinter for RealDidMinter {
         let cid = signed.cid()?;
         let op_json = signed.to_json()?;
 
-        // (4) Public submission FIRST — so a failed submit never advances our local
-        // chain. A retry then re-reads the correct `prev` and re-signs the same
-        // tombstone (deterministic) rather than chaining onto an unsubmitted op. A
-        // separate retryable step across the boundary, never a shared transaction.
+        // Submission first, so a failed submit never advances the local chain.
         self.directory.submit(did.as_str(), &op_json).await?;
-        // (5) Private write — record the now-submitted tombstone (chains onto `prev`).
         self.op_log
             .append(&PlcOperationRecord {
                 did: did.clone(),
@@ -188,55 +143,23 @@ impl DidMinter for RealDidMinter {
         Ok(())
     }
 
-    /// Re-point `did`'s `alsoKnownAs` to `handle` (ZMVP-50): sign a `plc_operation`
-    /// with the account's **operational** rotation key, chaining onto the DID's most
-    /// recent logged operation.
-    ///
-    /// Steps: (1) read the DID's latest logged op (our own log, never the directory)
-    /// — its `cid` is the update's `prev`, and its stored JSON supplies the DID
-    /// document's **public** fields (`rotationKeys`/`verificationMethods`) carried
-    /// forward verbatim, with only `alsoKnownAs` REPLACED (DD 27852802 §5). The prior
-    /// op must be an identity-only `plc_operation`; a tombstone or a richer future
-    /// shape (`services` / extra verification methods) is **rejected**, never silently
-    /// rewritten. (2) load
-    /// custody and import **only the operational key** — the sole key an update
-    /// needs, since the rest of the document is public and read from the prior op
-    /// (F2: the cold-recovery/signing private keys are never decrypted into a
-    /// keypair for a routine update, matching [`tombstone`](Self::tombstone)); (3)
-    /// sign the update's no-`sig` DAG-CBOR (ECDSA-SHA256, low-S, base64url no-pad —
-    /// the same procedure as genesis); (4) **submit** it to the directory (public);
-    /// then (5) **record** it in the log (private). Submit-before-record, exactly
-    /// like `tombstone`: a failed submit never advances the local chain, so a retry
-    /// re-reads the same `prev` and re-signs the *same* deterministic operation.
-    /// Steps (4) and (5) are separate writes across the boundary — never one
-    /// transaction.
-    ///
-    /// **Idempotent by content-address; the chain never forks.** An identical replay
-    /// produces the same CID (deterministic signing): if the append hits the log's
-    /// `UNIQUE(cid)` rejection *and* the log's latest op already **is** this exact
-    /// operation, the replay is benign — treated as success. A *different* concurrent
-    /// update chaining the same `prev` is rejected by `UNIQUE(did, prev)` (F1); the
-    /// log's tip is then not our op, so the error propagates and the caller's retry
-    /// re-reads the new tip and chains onto it — serializing concurrent writers into
-    /// one linear chain rather than forking it. Fails (retryably) if the DID has no
-    /// custody keys or no logged operation to chain onto.
+    /// Re-point `did`'s `alsoKnownAs` to `handle`: sign a `plc_operation` with
+    /// the operational rotation key, chaining onto the DID's latest logged op,
+    /// which also supplies the carried-forward public document fields; a
+    /// non-identity-only prior op is rejected, never rewritten. Submits before
+    /// recording; an identical replay is idempotent and a competing update on the
+    /// same `prev` errors rather than forking the chain. (DD 27852802)
     async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
-        // (1) The DID's latest op: its `cid` is our `prev`, and its stored JSON holds
-        // the public document fields we preserve unchanged (never re-derived from the
-        // custodied private keys — F2).
+        // The latest op's `cid` is our `prev`; its JSON holds the public document
+        // fields we preserve, never re-derived from the custodied private keys.
         let prior = self.op_log.latest_op(did).await?.ok_or_else(|| {
             anyhow::anyhow!(
                 "no prior PLC operation to chain an update onto for {}",
                 did.as_str()
             )
         })?;
-        // An update reconstructs an IDENTITY-ONLY `plc_operation` (v1: no PDS, exactly
-        // one `atproto` verification method — DD 26935298), REPLACING only
-        // `alsoKnownAs`. Guard that assumption so a prior op of any other shape fails
-        // LOUD here rather than silently dropping fields into a clobbering update: a
-        // `plc_tombstone` (nonsensical to chain an update onto), or a future op carrying
-        // `services` / extra verification methods (whose verbatim carry-forward is the
-        // extension point when such shapes exist).
+        // An update rebuilds an identity-only op, so a prior op of any other
+        // shape must fail loud rather than silently drop its fields.
         if prior.op_type != "plc_operation" {
             anyhow::bail!(
                 "cannot update {}: its latest op is `{}`, not a chainable plc_operation",
@@ -269,8 +192,7 @@ impl DidMinter for RealDidMinter {
             })?
             .to_string();
 
-        // (2) Only the operational key is decrypted into a keypair — it is the signer;
-        // the cold-recovery and signing keys stay sealed for a routine update.
+        // Only the operational key is decrypted; the others stay sealed.
         let keys = self
             .key_store
             .get(did)
@@ -278,8 +200,6 @@ impl DidMinter for RealDidMinter {
             .ok_or_else(|| anyhow::anyhow!("no custody keys to update {}", did.as_str()))?;
         let operational = Secp256k1Keypair::import(keys.operational.expose())?;
 
-        // (3) Build the update — same shape as the prior op, `alsoKnownAs` REPLACED —
-        // and sign it with the operational key.
         let op = PlcOperation::update_handle(
             rotation_keys,
             atproto_signing_did,
@@ -291,10 +211,8 @@ impl DidMinter for RealDidMinter {
         let cid = signed.cid()?;
         let op_json = signed.to_json()?;
 
-        // (4) Public submission FIRST — a failed submit never advances our local
-        // chain; the retry re-reads the same `prev` and re-signs the same op.
+        // Submission first, so a failed submit never advances the local chain.
         self.directory.submit(did.as_str(), &op_json).await?;
-        // (5) Private write — record the now-submitted update as the DID's latest op.
         let append = self
             .op_log
             .append(&PlcOperationRecord {
@@ -306,13 +224,9 @@ impl DidMinter for RealDidMinter {
             })
             .await;
         if let Err(err) = append {
-            // The append was rejected — either a benign identical replay
-            // (`UNIQUE(cid)`) or a fork attempt against an already-used `prev`
-            // (`UNIQUE(did, prev)`, F1). It is benign ONLY if the log's tip already
-            // IS our exact op (a concurrent identical writer landed it); then the
-            // work is done, so surface success and blind retries stay safe. Otherwise
-            // the tip advanced to a different op — propagate so the caller retries
-            // onto the new tip (linear serialization, no fork).
+            // Benign only if the log's tip already IS our exact op (an identical
+            // writer landed it); otherwise propagate so the caller retries onto
+            // the new tip rather than forking.
             if self.op_log.latest_cid(did).await?.as_deref() == Some(cid.as_str()) {
                 return Ok(());
             }
@@ -322,9 +236,8 @@ impl DidMinter for RealDidMinter {
     }
 }
 
-/// Extract a JSON string array as `Vec<String>`, erroring if the field is missing,
-/// not an array, or holds a non-string element. Used to carry a prior `did:plc`
-/// op's public `rotationKeys` forward into an update without touching custody keys.
+/// Extract a JSON string array as `Vec<String>`, erroring if the field is
+/// missing, not an array, or holds a non-string element.
 fn string_array(value: &serde_json::Value, field: &str) -> anyhow::Result<Vec<String>> {
     value[field]
         .as_array()
@@ -339,21 +252,17 @@ fn string_array(value: &serde_json::Value, field: &str) -> anyhow::Result<Vec<St
         .collect()
 }
 
-/// `did:plc` base32 alphabet (RFC 4648, lowercase, no padding). A real account DID
-/// is `did:plc:` followed by 24 of these characters.
+/// `did:plc` base32 alphabet (RFC 4648, lowercase, no padding).
 const PLC_BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
-/// A synthetic floor stub for [`DidMinter`]: returns a structurally valid-looking
-/// but entirely **synthetic** `did:plc` — `did:plc:` plus 24 random lowercase
-/// base32 characters — with no keypair, genesis operation, or directory write. It
-/// mints nothing real and registers nowhere; kept for dev and for tests that only
-/// need a DID-shaped value without the cost of real key generation.
+/// A synthetic floor stub for [`DidMinter`]: a well-formed but entirely
+/// synthetic `did:plc`, with no keypair, operation, or directory write. It
+/// registers nowhere, for dev and tests that only need a DID-shaped value.
 #[derive(Debug, Default, Clone)]
 pub struct StubDidMinter;
 
 impl StubDidMinter {
-    /// Construct the stub. It is stateless ([`Default`] does the same); `new`
-    /// exists for symmetry with the real adapters.
+    /// Construct the stub; it is stateless.
     pub fn new() -> Self {
         Self
     }
@@ -361,11 +270,8 @@ impl StubDidMinter {
 
 #[async_trait]
 impl DidMinter for StubDidMinter {
-    /// Returns `did:plc:` + 24 random lowercase base32 chars. `handle` is accepted
-    /// to match the port but ignored — the stub builds no operation, so there is
-    /// no `alsoKnownAs` to bind it into. Purely local: no network, no keypair, so
-    /// unlike the real minter it never fails. The value is well-formed but **not**
-    /// registered anywhere; resolving it will not work.
+    /// Return `did:plc:` + 24 random lowercase base32 chars. `handle` is ignored
+    /// and the DID resolves nowhere; purely local, so it never fails.
     async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
         let mut rng = rand::thread_rng();
         let suffix: String = (0..24)
@@ -374,14 +280,12 @@ impl DidMinter for StubDidMinter {
         Ok(Did::new(format!("did:plc:{suffix}")))
     }
 
-    /// No-op: the stub builds and registers no operation, so there is nothing to
-    /// tombstone. Present to satisfy the port.
+    /// No-op: the stub registers no operation, so there is nothing to tombstone.
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// No-op: the stub registered no operation and custodies no keys, so there is
-    /// no `alsoKnownAs` to re-point. Present to satisfy the port.
+    /// No-op: the stub custodies no keys and has no `alsoKnownAs` to re-point.
     async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
         Ok(())
     }
@@ -401,8 +305,7 @@ mod tests {
         "alice.zurfur.app".parse::<Handle>().unwrap()
     }
 
-    /// A directory that records the DID it was asked to submit, then fails — to
-    /// prove keys are persisted *before* submission (a retry never orphans them).
+    /// A directory that records the DID it was asked to submit, then fails.
     struct FailingPlcDirectory {
         seen_did: Arc<Mutex<Option<String>>>,
     }
@@ -716,10 +619,8 @@ mod tests {
         operation_json: String,
     }
 
-    /// An op log keeping FULL records — so tests can assert the `op_type`/`prev` the
-    /// minter appended and serve `latest_op`. Mirrors the pg adapter's two integrity
-    /// indexes: rejects a duplicate `cid` (`UNIQUE(cid)`) and a second non-genesis op
-    /// chaining an already-used `prev` (`UNIQUE(did, prev)`, F1).
+    /// An op log keeping full records, mirroring the pg adapter's two integrity
+    /// indexes: `UNIQUE(cid)` and `UNIQUE(did, prev)`.
     #[derive(Clone, Default)]
     struct RecordingOpLog {
         /// Appended records, in append order.
@@ -776,10 +677,8 @@ mod tests {
         }
     }
 
-    /// An op log that simulates losing the append race ONCE: while `race_pending`,
-    /// the next `append` first lands the IDENTICAL record — as a concurrent retry
-    /// of the same deterministic update would — so the minter's own append then
-    /// hits the duplicate-`cid` rejection (the mem mirror of pg's `UNIQUE(cid)`).
+    /// An op log that loses the append race ONCE: the next `append` first lands
+    /// the identical record, so the minter's own append hits `UNIQUE(cid)`.
     struct RacingOpLog {
         inner: RecordingOpLog,
         race_pending: AtomicBool,
@@ -800,11 +699,9 @@ mod tests {
         }
     }
 
-    /// An op log that simulates a DIFFERENT concurrent writer winning the append
-    /// race: on the first `append`, it first lands a pre-seeded `winner` op chaining
-    /// the SAME `prev`, so the minter's own append then hits the `UNIQUE(did, prev)`
-    /// fork guard (F1). Used to prove `update_handle` propagates the rejection (no
-    /// silent fork) and that a retry serializes onto the new tip.
+    /// An op log where a DIFFERENT writer wins the append race: the first
+    /// `append` lands a pre-seeded `winner` op chaining the same `prev`, so the
+    /// minter's own append hits the `UNIQUE(did, prev)` fork guard.
     struct ForkRaceOpLog {
         inner: RecordingOpLog,
         winner: Mutex<Option<PlcOperationRecord>>,

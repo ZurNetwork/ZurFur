@@ -1,11 +1,8 @@
-//! [`CommissionStore`] (reads) and [`CommissionWrites`] (writes) over PostgreSQL:
-//! commissions in the `commission` table (ZMVP-65/87). Reads are pool-backed;
-//! writes are reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
-//! (`uow.commissions()`), so no commission write can skip a transaction. See
-//! DESIGN/Commission and DD `24150017` (compile-enforced Unit of Work).
+//! [`CommissionStore`] (reads, pool-backed) and [`CommissionWrites`] (writes,
+//! reachable only via an open [`UnitOfWork`](domain::ports::UnitOfWork)) over
+//! the `commission` table (DD `24150017`).
 //!
-//! The SQL lives in `queries/commission/`; the typed functions and row shapes
-//! are generated against the migrated schema (see [`crate::queries`]).
+//! SQL lives in `queries/commission/`; row shapes are generated (see [`crate::queries`]).
 
 use domain::{
     datetime::DateTimeUtc,
@@ -34,78 +31,15 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::{PgColumnStore, queries::commission as sql};
 
-/// THE FACT REGISTRY (ZMVP-67; Deletion DD `3014657`): the tables whose rows are
-/// commission [`Fact`](domain::elements::commission::Fact)s — evidence that blocks
-/// hard deletion. [`commission_has_facts`](CommissionWrites::commission_has_facts)
-/// must query **every** table listed here; the DD's canonical trigger list names
-/// the kinds to expect (Products, ratings, EXP, achievements, payments), none of
-/// which exist yet.
-///
-/// Registering a table here is a **deliberate act with teeth**: the schema
-/// tripwire test (`adapter-pg/tests/commission.rs`) fails the moment a migration
-/// adds a commission-referencing table that is classified in neither this list nor
-/// [`COMMISSION_NON_FACT_TABLES`], and the compile-time guard below refuses to
-/// build while this list is non-empty but the predicate is still constant `false`.
-/// A fact-minter therefore wires its storage into the predicate in the same change
-/// that creates it — it cannot merge past either trip by accident.
+/// The commission [`Fact`](domain::elements::commission::Fact) tables (DD
+/// `3014657`) — [`commission_has_facts`](CommissionWrites::commission_has_facts)
+/// must query every table listed here. Currently empty; see the compile-time guard below.
 pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 
-/// Tables that hold a foreign key onto `commission(id)` but whose rows are
-/// **deliberately not facts** — commission-owned bookkeeping that cascades away
-/// with the commission instead of blocking its deletion. Every
+/// FK-to-`commission` tables whose rows are commission bookkeeping, not facts —
+/// they cascade away with the commission rather than blocking deletion. Every
 /// commission-referencing table must appear in exactly one of this list or
-/// [`COMMISSION_FACT_TABLES`]; the schema tripwire test enforces the
-/// classification.
-///
-/// - `commission_changelog` (ZMVP-87): the commission's own memory. The Changelog
-///   DD's retention rule — entries hard-delete **only** with the commission itself
-///   (or legal duty) — is exactly `ON DELETE CASCADE`, not a deletion block.
-/// - `commission_view_grant` (ZMVP-70): the view-grant keys — a key to see,
-///   commission-side. Commission-owned bookkeeping that cascades with the
-///   commission (Ownership Separation DD `29130754`), never a fact that blocks
-///   its deletion. (`commission_placement` / `commission_current_placement` left
-///   this list when the account-level placement rails were **deleted** — Engineer
-///   ruling 2026-09-10; placement is the board edge below, DD D6.)
-/// - `workflow_column_commission`: one card — a commission's placement on one
-///   account's board, in one list, at one spot. THIS is placement (DD `29130754`
-///   Decision 6, "placement = workflow membership rows"), and it is account-side
-///   view state the commission never knows about, so it cascades with the
-///   commission rather than blocking its deletion.
-/// - `commission_tab` / `commission_element` / `commission_surface_mode`
-///   (ZMVP-166): the flat composition — the commission's tabs, the elements
-///   contributed into its surfaces, and the surface modes it has widened. All
-///   three are the commission's own composition, not evidence that work
-///   happened, so all three cascade with it (the Flat Composition DD `45514754`
-///   inheriting the retired tree's stance) — which is what ZMVP-66's "gone
-///   entirely" relies on.
-/// - `commission_file` (ZMVP-88): the Index-canonical link for a file entry (an
-///   uploaded work-in-progress). A file entry is **not** a Product — no fact-lock —
-///   so it cascades away with the commission, keeping a commission with only file
-///   entries hard-deletable (AC2). Its bytes live in `file_blob`, which holds no
-///   commission foreign key (blobs know nothing of commissions) and so is not
-///   commission-referencing — the hard-delete cascade (ZMVP-66) severs them through
-///   [`FileStore::delete`](domain::ports::FileStore::delete), not the row cascade.
-/// - `commission_markup` (ZMVP-90): one annotation drawn over a file entry. It
-///   annotates bookkeeping, so it is bookkeeping — it cascades with the commission
-///   and, through its composite foreign key, with the file entry it points at. The
-///   `markup_added` changelog entry stays the timeline fact; this row is the
-///   geometry, and neither is a fact-lock.
-/// - `commission_slot` (ZMVP-77): the declared-Slot satellite (title/notes on a
-///   slot's carrying element). A declaration is composition like the element it
-///   decorates, not evidence that work happened; it cascades with the
-///   commission (ruling E35) and with its own element.
-/// - `commission_participant` (ZMVP-76): who is inside the closed door — living
-///   membership, not evidence of work; it cascades away (the owner-floor trigger
-///   deliberately lets cascaded deletes through).
-/// - `commission_seat` (ZMVP-76): the declared positions themselves. A Seat is
-///   structure a commission offers, not work performed on it; the Referenceable/
-///   Slot/Seat DD's "gone entirely — seats, applications" (ZMVP-66) relies on
-///   this cascade.
-/// - `commission_invitation` (ZMVP-78): a pending offer of a Seat to a User.
-///   An invitation is bookkeeping on the path to occupancy, not evidence that
-///   work happened; it cascades away with the commission (and with its seat),
-///   never a fact that blocks deletion — the Seat mirror of
-///   `account_invitations`.
+/// [`COMMISSION_FACT_TABLES`]; a schema tripwire test enforces it.
 pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "commission_changelog",
     "commission_element",
@@ -121,11 +55,8 @@ pub const COMMISSION_NON_FACT_TABLES: &[&str] = &[
     "workflow_column_commission",
 ];
 
-// Tripwire (conductor ruling E18): the constant-`false` body of
-// `commission_has_facts` below is sound ONLY while the fact registry is empty.
-// Registering the first fact table makes this fail to compile, forcing whoever
-// wires a fact-minter to replace the constant with a real EXISTS query over every
-// registered table — and to delete this guard in the same, deliberate edit.
+// Sound only while COMMISSION_FACT_TABLES is empty; fails to compile once a
+// table is registered, forcing a real query to replace the constant `false`.
 const _: () = assert!(
     COMMISSION_FACT_TABLES.is_empty(),
     "COMMISSION_FACT_TABLES gained an entry: replace the constant-`false` body of \
@@ -133,47 +64,18 @@ const _: () = assert!(
      registered fact table (and mirror it in adapter-mem), then remove this guard"
 );
 
-/// PostgreSQL write view over an open transaction (the [`CommissionWrites`] surface).
-/// Holds **only** a borrowed `&mut PgConnection` — the transaction owned by the
-/// [`PgUnitOfWork`](crate::PgUnitOfWork) — so no pool is in scope here and a
-/// bare-pool write is unrepresentable. Built by `uow.commissions()`; its borrow ties
-/// it to the shared transaction, so its write commits (or rolls back) with the rest
-/// of the unit. See DD `24150017`.
+/// The [`CommissionWrites`] surface: a borrowed transaction connection, so a
+/// bare-pool write is unrepresentable. Built by `uow.commissions()`. (DD `24150017`)
 pub struct PgCommissionWrites<'a> {
-    /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
-    /// The write executes on `&mut *self.conn`; there is deliberately no pool here.
+    /// The open transaction; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
 }
 
 impl PgCommissionWrites<'_> {
-    /// **THE serialization point of every composition write** (ZMVP-166), on the
-    /// open transaction: resolve the tab within `commission` and take its row
-    /// lock, handing back the tab's *declared name*.
-    ///
-    /// One statement, one discipline, both write paths:
-    ///
-    /// - the **add** side ([`require_address`](Self::require_address), and so
-    ///   every element/Slot/Seat insert) locks here before assigning a
-    ///   `position`;
-    /// - the **remove** side ([`remove_element`](CommissionWrites::remove_element))
-    ///   locks here — after learning *which* tab from its own gate — before the
-    ///   `DELETE` and the group renumbering.
-    ///
-    /// Because both take the same lock on the same row before touching any
-    /// element, an append and a removal aimed at one tab **cannot interleave**:
-    /// they run one after the other, so a renumbering `UPDATE` can never run
-    /// between an append's `max(position) + 1` subquery and its `INSERT` (which
-    /// would land two rows on one position and abort the whole unit on the
-    /// deferred `UNIQUE` at commit — the race reproduced in review). Adding a
-    /// third write path means routing it through here too.
-    ///
-    /// An absent tab id and one belonging to another commission both refuse with
-    /// [`UnknownTab`], indistinguishably, before anything about either is
-    /// revealed. (The composite foreign key makes the cross-commission case
-    /// unwritable regardless; this gate only buys an honest 404 instead of a
-    /// constraint violation.) The stored `tab` token is re-validated into a
-    /// [`TabName`] on the way out — a value outside the label rules means row
-    /// tampering and surfaces as an `Err`, never a silent pass.
+    /// Locks the tab row within `commission`, returning its declared name. Every
+    /// composition write takes this lock before touching an element, serializing
+    /// appends and removals aimed at the same tab. Refuses [`UnknownTab`] for an
+    /// absent or foreign tab.
     async fn require_tab(
         &mut self,
         commission: &CommissionId,
@@ -183,11 +85,9 @@ impl PgCommissionWrites<'_> {
         located.map(|row| row.tab).ok_or_else(|| UnknownTab.into())
     }
 
-    /// [`require_tab`](Self::require_tab)'s whole-row form: the same locking
-    /// statement, but answering `None` instead of [`UnknownTab`] and handing back
-    /// the tab's [`TabRow`]. Backs both the gate above and the read port's
-    /// [`tab_for_update`](CommissionReads::tab_for_update), so the two can never
-    /// take different locks.
+    /// [`require_tab`](Self::require_tab)'s whole-row form: answers `None` instead
+    /// of [`UnknownTab`] and returns the [`TabRow`]. Also backs
+    /// [`tab_for_update`](CommissionReads::tab_for_update).
     async fn locate_tab(
         &mut self,
         commission: &CommissionId,
@@ -204,27 +104,10 @@ impl PgCommissionWrites<'_> {
         Ok(Some(located))
     }
 
-    /// The shared **address gate** of every element write (ZMVP-166), on the
-    /// open transaction — one path, so the generic add and the two satellite
-    /// declarations cannot drift apart on either rule:
-    ///
-    /// 1. the **tab** must exist in `commission` (and its row is locked) —
-    ///    [`require_tab`](Self::require_tab);
-    /// 2. the **skeleton** must declare this surface *inside that tab*, else
-    ///    [`UnknownSurface`]. The pair is the unit: a surface that is real under
-    ///    some other tab is refused here exactly like an invented name, because
-    ///    an element may only land where the skeleton describes a place for it.
-    ///    Surfaces have no rows, so the const is the only authority — the same
-    ///    one adapter-mem checks, in the same order.
-    ///
-    /// **The order is load-bearing**: the surface check *needs* the tab's
-    /// declared name, so an address that is wrong in both ways refuses as
-    /// [`UnknownTab`]. adapter-mem mirrors this exactly, or the two adapters
-    /// would answer one request differently.
-    ///
-    /// Deliberately returns nothing: an element is born `Total` and inherits no
-    /// mode from anything (the tree's inheritance rule had no survivor in a
-    /// model where the min is computed at read).
+    /// The shared address gate for every element write: the tab must exist
+    /// ([`require_tab`](Self::require_tab)), then the skeleton must declare this
+    /// surface inside that tab, else [`UnknownSurface`]. Order matters — an address
+    /// wrong both ways refuses as [`UnknownTab`].
     async fn require_address(
         &mut self,
         commission: &CommissionId,
@@ -237,11 +120,9 @@ impl PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Insert one element behind the shared gate — the single write path every
-    /// element takes (the generic add, a Slot's carrier, a Seat's), differing
-    /// only in the `type` tag and payload bound. `position` is assigned by the
-    /// statement itself as max + 1 within `(tab, surface, band)`, under the tab
-    /// lock the gate took.
+    /// Inserts one element behind [`require_address`](Self::require_address); the
+    /// shared write path for a generic element, a Slot carrier, and a Seat carrier.
+    /// `position` is assigned as max + 1 within `(tab, surface, band)`.
     async fn insert_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
         self.require_address(&element.commission_id, &element.address)
             .await?;
@@ -257,10 +138,7 @@ impl PgCommissionWrites<'_> {
             element.band.as_str(),
             element.created_by.as_str(),
             element.created_at,
-            // The one place an element's payload is unwrapped on the write side:
-            // a `jsonb` bind. `ElementPayload` carries no `Serialize`, so this
-            // SQL boundary is the *only* door its content can leave through
-            // (ZMVP-170 owns the read-side projection).
+            // The only place an element's payload is unwrapped for the jsonb bind.
             element.payload.as_value(),
         )
         .await?;
@@ -270,28 +148,9 @@ impl PgCommissionWrites<'_> {
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
-    /// Insert a freshly created commission as one row (`INSERT INTO commission`)
-    /// **plus one `commission_tab` row per tab the code skeleton declares**
-    /// ([`declared_tabs`], ZMVP-166) **plus its owner's participant row** as one
-    /// `commission_participant` row (ZMVP-76: the owner is a permanent
-    /// Participant from birth, stamped with the commission's own creation
-    /// instant), all on this same open transaction — a commission can never
-    /// land without its tab state or its owner's membership. The
-    /// [`LifecycleStep`](domain::elements::commission::LifecycleStep)
-    /// and [`Visibility`](domain::elements::commission::Visibility) are each stored as
-    /// their stable `as_str()` token in the `lifecycle` / `visibility` text columns,
-    /// and the nullable deadline maps to a nullable `timestamptz`.
-    ///
-    /// Every tab is minted [`VisibilityMode::Total`] — the closed door, bound
-    /// explicitly rather than left to the column DEFAULT, so the code that mints
-    /// the row is the code that says what it means. **Nothing here reads
-    /// `commission.visibility`**: the commission's own visibility is the
-    /// outermost gate, applied over the composition rather than copied into it
-    /// (the retired tree had to seed its root's mode from that column; the flat
-    /// model gives every term its own).
-    ///
-    /// The ids are caller-/adapter-minted UUIDv7, so no conflict handling is
-    /// needed; any store failure surfaces as an opaque error.
+    /// Inserts the commission row, one `commission_tab` row per
+    /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
+    /// transaction. Every tab is minted [`VisibilityMode::Total`].
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         sql::create_commission(
             &mut *self.conn,
@@ -328,54 +187,16 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Contribute one element into a declared surface (ZMVP-166), on the open
-    /// transaction, behind the shared address gate
-    /// ([`require_address`](Self::require_address) — [`UnknownTab`] for an
-    /// absent/foreign tab, [`UnknownSurface`] for an undeclared (tab, surface)
-    /// pair), which
-    /// also locks the tab row. `position` is assigned as `max(position) + 1`
-    /// **within `(tab, surface, band)`** in a subquery on this same
-    /// transaction, so append order can't race. The row stores the element's
-    /// own `mode` as `total` (born closed — over-claiming has to be a separate,
-    /// explicit act) and the opaque payload as jsonb, semantically unmodified —
-    /// it round-trips as an equal JSON value (jsonb is not byte-preserving; a
-    /// top-level JSON `null` lands as jsonb `'null'`, never SQL `NULL`).
+    /// Contributes one element into a declared surface behind
+    /// `require_address`; position assigned by
+    /// `max(position) + 1` within `(tab, surface, band)`.
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
         self.insert_element(element).await
     }
 
-    /// Remove one element (ZMVP-166), on the open transaction — four statements
-    /// sharing it.
-    ///
-    /// 1. **The target gate**: one `SELECT` scoped to `commission_id`, so an
-    ///    absent element id and one in another commission refuse as one
-    ///    indistinguishable [`ElementNotFound`] before anything about the
-    ///    element is revealed. It hands back the ordering group to renumber —
-    ///    and the tab to lock.
-    /// 2. **The tab lock**, through the same
-    ///    [`require_tab`](Self::require_tab) statement every *add* takes, and
-    ///    taken before anything is written. This is what makes a removal and a
-    ///    concurrent append into one tab **serialize** instead of racing: the
-    ///    renumbering `UPDATE` below can no longer slip between an append's
-    ///    `max(position) + 1` subquery and its `INSERT`, which is exactly how
-    ///    two rows used to land on one `position` and abort the whole unit on
-    ///    the deferred `UNIQUE` at commit (reproduced in review). The gate above
-    ///    reads unlocked on purpose: `tab_id`/`surface`/`band` are immutable for
-    ///    a row's life, so there is nothing there to go stale.
-    /// 3. **The `DELETE`**, scoped by `(id, commission_id)` and asserted to
-    ///    affect exactly one row — an element that vanished between the gate and
-    ///    the lock re-refuses as [`ElementNotFound`] rather than silently
-    ///    proceeding. Satellites and a seat's pending invitations leave via `ON
-    ///    DELETE CASCADE`, whose rows the command count does not include.
-    /// 4. **The renumber**: the vacated `(commission, tab, surface, band)` group
-    ///    goes contiguous again (`ROW_NUMBER` over the surviving order); the
-    ///    group's `UNIQUE` is deferred, so intermediate states inside the
-    ///    transaction can't trip it.
-    ///
-    /// Every write is scoped by `commission_id`, not just the unique `id`, so
-    /// each statement is self-contained (PR #109 review). There is no
-    /// protected-element arm: tabs and surfaces are skeleton, not elements, so
-    /// no element id addresses one.
+    /// Removes one element scoped to `commission_id` ([`ElementNotFound`] if
+    /// absent/foreign), taking the same tab lock `require_tab`
+    /// uses on add before deleting and renumbering the vacated group.
     async fn remove_element(
         &mut self,
         commission: &CommissionId,
@@ -386,9 +207,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         else {
             return Err(ElementNotFound.into());
         };
-        // The element's own tab, locked on the same statement the add path uses
-        // — the two orderings into this group now serialize. The name it returns
-        // is the add path's business; here only the lock matters.
+        // Locks the same tab row the add path locks, serializing the two orderings.
         self.require_tab(commission, &TabId::new(group.tab_id))
             .await?;
 
@@ -408,11 +227,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Insert a file entry's link row (`INSERT INTO commission_file`) on the open
-    /// transaction, so it lands atomically with the caller's `file_added` changelog
-    /// entry (ZMVP-88; Changelog DD D4). The bytes were already stored through
-    /// [`FileStore`](domain::ports::FileStore) before this unit — never here. The id
-    /// is a caller-minted UUIDv7, so no conflict handling is needed.
+    /// Inserts a file entry's link row so it lands atomically with the caller's
+    /// `file_added` changelog entry. Bytes already live in [`FileStore`](domain::ports::FileStore).
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
         sql::add_file(
             &mut *self.conn,
@@ -425,12 +241,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Insert one annotation's row (`INSERT INTO commission_markup`) on the open
-    /// transaction (ZMVP-90), so it commits with the `markup_added` changelog entry
-    /// the caller appends on the same unit. The shape is re-serialized from the
-    /// already-validated [`MarkupShape`](domain::elements::commission::MarkupShape)
-    /// rather than passed through as raw text: what reaches `jsonb` is exactly what
-    /// the domain accepted, never the request body.
+    /// Inserts one annotation row so it commits with the `markup_added` changelog
+    /// entry. Re-serializes the already-validated
+    /// [`MarkupShape`](domain::elements::commission::MarkupShape), never raw text.
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
         let shape = serde_json::to_value(&markup.markup.shape)?;
         sql::add_markup(
@@ -447,19 +260,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declare a batch of Slots (ZMVP-77; array operation per the PR #108
-    /// ruling): per Slot, two inserts on the open transaction behind the
-    /// shared address gate — an ordinary element (typed
-    /// [`ElementType::slot`], the racing-proof append `position` subquery, the
-    /// empty payload, born `total`) through the one
-    /// [`insert_element`](Self::insert_element) path, and the Slot itself as
-    /// the `commission_slot` satellite (title, notes), keyed by that element's
-    /// id (the Slot mirror of the Seat satellite ruling, Gate A E20). One
-    /// transaction for the whole batch, so every element and satellite lands
-    /// or none does — the first refused Slot aborts and the caller's rollback
-    /// takes the earlier inserts with it. There is no occupant column to write
-    /// (fill is the Character epic's), and no changelog entry (the frozen
-    /// taxonomy has no Slot variant).
+    /// Declares a batch of Slots: per Slot, an ordinary element (typed
+    /// [`ElementType::slot`]) via `insert_element` plus its
+    /// `commission_slot` satellite, all in one transaction.
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in slots {
             let carrier = NewElement::carrying(
@@ -484,21 +287,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// `INSERT ... ON CONFLICT (seat_id, invited_user) WHERE state = 'pending'
-    /// DO NOTHING` (ZMVP-78): the partial unique index (see the migration)
-    /// enforces at most one pending offer per (seat, invited user), so a
-    /// duplicate issue is silently dropped rather than becoming a second row —
-    /// the store-level backstop for the idempotent re-invite the handler also
-    /// guards by checking
-    /// [`find_pending_seat_invitation`](CommissionStore::find_pending_seat_invitation)
-    /// first. The Seat mirror of
-    /// [`create_invitation`](crate::PgAccountWrites::create_invitation). No
-    /// changelog entry (Engineer ruling 2026-07-16).
-    ///
-    /// Returns the offer that now stands: the freshly inserted one, or — when the
-    /// partial index dropped this insert — the pending one already on file, re-read
-    /// on the same connection so the caller is handed the live row rather than the
-    /// duplicate it proposed.
+    /// Inserts a pending seat invitation; a duplicate pending offer is silently
+    /// dropped by the partial unique index. Returns the offer that now stands —
+    /// freshly inserted, or the pre-existing pending one.
     async fn create_seat_invitation(
         &mut self,
         invitation: &SeatInvitation,
@@ -534,12 +325,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         to_seat_invitation(standing)
     }
 
-    /// A guarded `UPDATE ... SET state = 'revoked' WHERE id = $1 AND state =
-    /// 'pending'` (ZMVP-78): only a pending offer flips, and an `UPDATE` matching
-    /// no row still succeeds — so revoking an absent or already-terminal
-    /// invitation is a harmless no-op, not an error (the handler decides whether
-    /// that's a 404/200). The Seat mirror of
-    /// [`revoke_invitation`](crate::PgAccountWrites::revoke_invitation).
+    /// Flips a pending offer to revoked; matching no row (absent or already
+    /// terminal) is a harmless no-op.
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         sql::revoke_seat_invitation(
             &mut *self.conn,
@@ -552,42 +339,21 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Whether the commission bears any fact — answered **on the open transaction**,
-    /// so a delete gate's check-then-delete has no TOCTOU window (ZMVP-67, ruling E17).
-    ///
-    /// Constant `false` today, and sound only by construction: the fact registry
-    /// ([`COMMISSION_FACT_TABLES`]) is empty because no fact-minter exists — no
-    /// table anywhere holds commission-anchored facts, so no query could find one.
-    /// This is **not** a stub to fill casually: the compile-time guard on the
-    /// registry refuses to build the moment a table is registered, and the schema
-    /// tripwire test refuses any commission-referencing table that skips
-    /// classification — so this body becomes a real `EXISTS` over every registered
-    /// table in the same change that mints the first fact (Deletion DD `3014657`).
+    /// Whether the commission bears any fact, checked on the open transaction (no
+    /// TOCTOU window). Constant `false` while [`COMMISSION_FACT_TABLES`] is empty. (DD `3014657`)
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
 
-    /// Remove the commission row — one `DELETE FROM commission` on the open
-    /// transaction, so the caller's fact gate
-    /// ([`commission_has_facts`](CommissionWrites::commission_has_facts)) and the
-    /// delete commit or roll back together (ZMVP-66, ruling E17). Child rows reap
-    /// via each commission-referencing table's `ON DELETE CASCADE` (ruling E35;
-    /// today `commission_changelog` — see [`COMMISSION_NON_FACT_TABLES`], whose
-    /// tripwire keeps every future child classified). An absent commission
-    /// matches no row: a no-op, per the port contract.
+    /// Deletes the commission row on the open transaction. Child rows cascade via
+    /// `ON DELETE CASCADE`; an absent commission is a no-op.
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         sql::delete(&mut *self.conn, **id).await?;
         Ok(())
     }
 
-    /// Flip the `commission.archived_at` column (ZMVP-68) — one **conditional**
-    /// `UPDATE` on the open transaction: the row matches only when the write is
-    /// a real transition (`archived_at IS NULL` differs between the row and the
-    /// requested state), so the returned rows-affected IS the transition answer
-    /// and a repeat in the same direction touches nothing (keeping the original
-    /// stamp). The caller keys its changelog append on the bool in this same
-    /// unit of work, so a duplicate `archived`/`unarchived` entry is
-    /// unrepresentable. An absent commission matches no row and answers `false`.
+    /// Flips `commission.archived_at` via a conditional `UPDATE`; matches a row
+    /// only on a real transition, so the return value IS the transition answer.
     async fn set_archived(
         &mut self,
         id: &CommissionId,
@@ -597,12 +363,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Write the posture's two column halves (`maturity`, `graphic`) — one
-    /// `UPDATE` on the open transaction (ZMVP-31). Always both together: the
-    /// signature has no clear arm and the schema's both-or-neither CHECK
-    /// refuses a half-set pair, so an unrated-with-graphic (or rated-without)
-    /// row is unrepresentable from any direction. An absent commission
-    /// matches no row: a no-op here, per the port contract.
+    /// Writes `maturity` and `graphic` together; the schema's both-or-neither
+    /// CHECK makes a half-set pair unrepresentable.
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         sql::set_maturity(
             &mut *self.conn,
@@ -614,15 +376,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declare a seat into a declared surface (ZMVP-76), on the open
-    /// transaction — one identity, two inserts that land or vanish together:
-    /// the composition gains an ordinary **element** (typed
-    /// [`ElementType::seat`], through the same shared address gate and the same
-    /// racing-proof append `position` subquery as every element write, born
-    /// `total`, empty payload), and the interpreted seat data lands in the
-    /// `commission_seat` satellite keyed by that element's id (Gate A ruling
-    /// E20). The satellite's `occupant` column is never written here: **every
-    /// seat is born vacant** (AC3; ZMVP-79 fills it).
+    /// Declares a seat: an ordinary element (typed [`ElementType::seat`]) via the
+    /// shared address gate plus its `commission_seat` satellite. Every seat is
+    /// born vacant.
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         let carrier = NewElement::carrying(
             seat.id,
@@ -646,15 +402,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Repoint (or clear) the `commission.linked_channel` column — one
-    /// **conditional** `UPDATE` on the open transaction: the row matches only
-    /// when the stored value differs from the requested one
-    /// (`IS DISTINCT FROM`, so NULLs compare honestly), making rows-affected THE
-    /// changed answer. The caller keys its changelog append on the bool in this
-    /// same unit of work (ZMVP-87 AC3; Changelog DD D4), so a duplicate
-    /// `channel_linked`/`channel_unlinked` entry is unrepresentable even under
-    /// concurrent writers. An absent commission matches no row and answers
-    /// `false`, per the port contract (existence is the caller's check).
+    /// Repoints or clears `commission.linked_channel` via a conditional `UPDATE`
+    /// (`IS DISTINCT FROM`), so the return value IS the changed answer.
     async fn set_linked_channel(
         &mut self,
         id: &CommissionId,
@@ -666,12 +415,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Upsert the grantee's key on the open transaction (ZMVP-70): one row per
-    /// (commission, grantee), so re-granting replaces the level ("issuing anew").
-    /// The level persists as its stable [`Display`](std::fmt::Display) token. A
-    /// bad `commission` fails the FK (the caller settled existence first); the
-    /// grantee column carries a DID and no reference of its own (see the re-key
-    /// migration's note on `commission_view_grant`).
+    /// Upserts the grantee's key; re-granting replaces the level. The `commission`
+    /// FK assumes existence was already checked by the caller.
     async fn grant_view(
         &mut self,
         commission: &CommissionId,
@@ -688,11 +433,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Hard-delete the grantee's key on the open transaction (ZMVP-70; DD D5) —
-    /// one `DELETE`, whose rows-affected IS the transition answer: `true` when a
-    /// key existed and is now gone, `false` when they held none (an idempotent
-    /// no-op). The caller keys its `view_grant_revoked` changelog append on this
-    /// bool in the same unit, so a duplicate entry is unrepresentable.
+    /// Hard-deletes the grantee's key; the return value is `true` only when a key
+    /// existed (an idempotent no-op otherwise). (DD `29130754`)
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -702,12 +444,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoint (or clear) the `commission.direction_status` column — one
-    /// `UPDATE` on the open transaction, so the caller's matching
-    /// `status_changed` changelog entry lands atomically with it (ZMVP-85;
-    /// Changelog DD D4). The value is stored as its stable `as_str()` token; an
-    /// absent commission matches no row: a no-op here, per the port contract
-    /// (existence is the caller's check).
+    /// Repoints or clears `commission.direction_status`; an absent commission is a
+    /// no-op.
     async fn set_direction_status(
         &mut self,
         id: &CommissionId,
@@ -718,12 +456,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoint (or clear) the `commission.deadline` column — one `UPDATE` on
-    /// the open transaction, so the caller's matching
-    /// `deadline_set`/`deadline_extended` changelog entry lands atomically
-    /// with it (ZMVP-86; Changelog DD D4). An absent commission matches no
-    /// row: a no-op here, per the port contract (existence is the caller's
-    /// check).
+    /// Repoints or clears `commission.deadline`; an absent commission is a no-op.
     async fn set_deadline(
         &mut self,
         id: &CommissionId,
@@ -733,12 +466,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoint (or clear) the `commission.deadline_status` column — one
-    /// `UPDATE` on the open transaction, so the caller's matching entry (the
-    /// manual `delayed` flag or the system `late` mark) lands atomically with
-    /// it (ZMVP-86; Changelog DD D4). The value is stored as its stable
-    /// `as_str()` token; an absent commission matches no row: a no-op here,
-    /// per the port contract.
+    /// Repoints or clears `commission.deadline_status` (the manual `Delayed` flag
+    /// only — `Late` is derived fresh at read, never persisted).
     async fn set_deadline_status(
         &mut self,
         id: &CommissionId,
@@ -749,28 +478,17 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// The sweeper's candidate scan (ZMVP-86, ruling E12), **on the open
-    /// transaction** so the scan and the marks it feeds land in one unit (the
-    /// [`commission_has_facts`](CommissionWrites::commission_has_facts)
-    /// posture — no TOCTOU window). One `SELECT` filtered to: a deadline
-    /// strictly before `now`, not already `late`, and a non-terminal
-    /// lifecycle — the terminal tokens are derived from
-    /// [`LifecycleStep::ALL`]/[`is_terminal`](LifecycleStep::is_terminal), so
-    /// the enum (not this query) owns that vocabulary. A stored
-    /// `deadline_status` outside the vocabulary means row tampering and
-    /// surfaces as an `Err`, matching [`PgCommissionStore::find`].
+    /// The sweeper's candidate scan, on the open transaction: deadline strictly
+    /// before `now`, not already `late`, non-terminal lifecycle
+    /// ([`LifecycleStep::is_terminal`]).
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
         let terminal: Vec<String> = LifecycleStep::ALL
             .iter()
             .filter(|step| step.is_terminal())
             .map(|step| step.as_str().to_owned())
             .collect();
-        // Late is never persisted, so dedup the log on the changelog itself
-        // (Engineer ruling 2026-07-08). A commission is skipped only if it has a
-        // `late` entry *since its latest deadline change* — a `deadline_set` /
-        // `deadline_extended` re-arms the log, so each fresh miss is its own
-        // event. Its Late *state* is derived on lookup ([`derive_deadline_status`]);
-        // this pass only appends the entry.
+        // Late is never persisted; dedup against the changelog's own last entry
+        // since the latest deadline change, so each fresh miss is its own event.
         let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
 
         rows.into_iter()
@@ -793,17 +511,15 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 }
 
-/// Re-validate a stored `mode` token into its [`VisibilityMode`] — the one gate
-/// every composition read passes through, so a tampered or unmigrated token can
-/// never become a silently-widened mode at any of the three terms.
+/// Re-validates a stored `mode` token into [`VisibilityMode`]; the one gate
+/// every composition read passes through.
 fn to_mode(token: &str) -> anyhow::Result<VisibilityMode> {
     VisibilityMode::parse(token)
         .ok_or_else(|| anyhow::anyhow!("unknown visibility mode token {token:?}"))
 }
 
-/// Rebuild a domain [`SeatInvitation`] from its generated row (ZMVP-78),
-/// re-validating the stored `state` discriminant — an `Err` on row tampering,
-/// never a panic. The Seat mirror of `to_invitation` in the account adapter.
+/// Rebuilds a [`SeatInvitation`] from its row, re-validating the stored
+/// `state` discriminant.
 fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatInvitation> {
     Ok(SeatInvitation {
         id: SeatInvitationId::new(row.id),
@@ -817,74 +533,51 @@ fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatI
     })
 }
 
-/// PostgreSQL read store for commissions (the [`CommissionStore`] surface) —
-/// the one canonical commission read port, born with the changelog (ZMVP-87).
-/// Holds the pool directly — reads pay no transaction tax; the writes live on
-/// [`PgCommissionWrites`], reached through the [`UnitOfWork`](domain::ports::UnitOfWork).
+/// The [`CommissionStore`] read surface: pool-backed, no transaction tax.
+/// Writes live on [`PgCommissionWrites`] via [`UnitOfWork`](domain::ports::UnitOfWork).
 pub struct PgCommissionStore {
     pool: PgPool,
 }
 
 impl PgCommissionStore {
-    /// Wraps a [`PgPool`] as a [`CommissionStore`]. Clones the pool handle (cheap —
-    /// it's an `Arc`), so the caller keeps its own.
+    /// Wraps a [`PgPool`] as a [`CommissionStore`].
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
 
-/// The persisted commission fields shared by the `find` row (which lacks its
-/// own `id` — the caller already has it) and the `list_owned_by` row (which
-/// carries one) — the codegen shapes for `queries/commission/find.sql` and
-/// `queries/commission/list_owned_by.sql` (ZMVP-157). Naming this lets
-/// [`to_commission`] converge both call sites on ONE re-validation body
-/// (ruling 3: multi-line constructions named first) instead of the read-store
-/// re-deriving [`Commission`] from raw columns twice.
-///
-/// Every field here is still a **raw column value** — the stored token, not the
-/// domain type. Nothing in this struct is trusted: [`to_commission`] is the one
-/// gate that re-validates each one back into its newtype/enum.
+/// Fields shared by the `find`, `find_for_update`, and `list_owned_by` rows, so
+/// [`to_commission`] re-validates them through one body. Every field is a raw
+/// column value — nothing here is trusted.
 struct CommissionFields {
-    /// The commission's fixed Title (ZMVP-65), re-validated into
-    /// [`CommissionTitle`].
+    /// Re-validated into [`CommissionTitle`].
     title: String,
-    /// The User who created it and owns it — the permanent owner
-    /// (DESIGN/Commission); the `owner_id` this listing filters on, carried as
-    /// the raw DID the column holds.
+    /// The owning User's DID.
     owner_id: String,
     /// The stored [`LifecycleStep`] token.
     lifecycle: String,
     /// The stored [`Visibility`] token.
     visibility: String,
-    /// The nullable deadline envelope field.
+    /// The nullable deadline.
     deadline: Option<DateTimeUtc>,
-    /// The stored [`MaturityRating`] token, or `None` while unrated (ZMVP-31).
-    /// Both-or-neither with `graphic` — the migration's CHECK enforces it, and
-    /// [`to_commission`] refuses a half-set pair rather than defaulting.
+    /// The stored [`MaturityRating`] token, or `None` while unrated (both-or-neither with `graphic`).
     maturity: Option<String>,
-    /// The orthogonal graphic flag of the maturity posture; see `maturity`.
+    /// The maturity posture's graphic flag; see `maturity`.
     graphic: Option<bool>,
-    /// The stored [`DirectionStatus`] token, or `None` while none is set
-    /// (ZMVP-85).
+    /// The stored [`DirectionStatus`] token, or `None`.
     direction_status: Option<String>,
-    /// The stored [`DeadlineStatus`] token (ZMVP-86) — the manual `Delayed`
-    /// flag only; `Late` is derived fresh at read, never persisted (Engineer
-    /// ruling 2026-07-08).
+    /// The stored [`DeadlineStatus`] token — the manual `Delayed` flag only.
     deadline_status: Option<String>,
-    /// The external [`ChannelPointer`], or `None` while none is declared
-    /// (ZMVP-87 AC3).
+    /// The stored [`ChannelPointer`], or `None`.
     linked_channel: Option<String>,
-    /// When the commission was archived, or `None` while active (ZMVP-68) —
-    /// what `list_owned_by` filters on to stay an active view.
+    /// When archived, or `None` while active.
     archived_at: Option<DateTimeUtc>,
-    /// When the commission was created.
+    /// When created.
     created_at: DateTimeUtc,
 }
 
 impl From<sql::FindRow> for CommissionFields {
-    /// The single-commission read's row (`queries/commission/find.sql`), which
-    /// selects no `id` — the caller passed one in to look it up, so
-    /// [`CommissionStore::find`] hands that same id to [`to_commission`].
+    /// From `queries/commission/find.sql`'s row (no `id` — the caller supplies it).
     fn from(row: sql::FindRow) -> Self {
         Self {
             title: row.title,
@@ -904,10 +597,8 @@ impl From<sql::FindRow> for CommissionFields {
 }
 
 impl From<sql::FindForUpdateRow> for CommissionFields {
-    /// The locking single-commission read's row
-    /// (`queries/commission/find_for_update.sql`) — the same columns as
-    /// [`FindRow`](sql::FindRow) under a different generated name, since the
-    /// caller passed the id in to look it up.
+    /// From `queries/commission/find_for_update.sql`'s row (same columns as
+    /// [`FindRow`](sql::FindRow) under a locking read).
     fn from(row: sql::FindForUpdateRow) -> Self {
         Self {
             title: row.title,
@@ -927,12 +618,8 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
 }
 
 impl From<sql::CommissionRow> for CommissionFields {
-    /// The listing read's row (`queries/commission/list_owned_by.sql`), which
-    /// *does* carry an `id` — one per result, so nothing outside the row knows
-    /// it. The conversion drops it deliberately: [`CommissionStore::list_owned_by`]
-    /// lifts it into a [`CommissionId`] first and passes it alongside these
-    /// fields, keeping the id typed rather than smuggling a bare UUID through
-    /// the shared shape.
+    /// From `queries/commission/list_owned_by.sql`'s row; the `id` column is
+    /// dropped here and lifted separately by the caller.
     fn from(row: sql::CommissionRow) -> Self {
         Self {
             title: row.title,
@@ -951,17 +638,9 @@ impl From<sql::CommissionRow> for CommissionFields {
     }
 }
 
-/// Rebuild the [`Commission`] from its persisted fields (shared by
-/// [`CommissionStore::find`] and [`CommissionStore::list_owned_by`] via
-/// [`CommissionFields`]). The stored `lifecycle`, `visibility`, `maturity`,
-/// `direction_status`, `deadline_status`, and `linked_channel` values are
-/// re-validated through their domain gates (`TryFrom<&str>` on
-/// [`LifecycleStep`] / [`Visibility`] / [`MaturityRating`] /
-/// [`DirectionStatus`] / [`DeadlineStatus`], with `ChannelPointer`'s and
-/// `CommissionTitle`'s `TryFrom<String>` for the title); a value outside its
-/// vocabulary means row tampering and surfaces as an `Err`, never a panic or a
-/// silent default — as does a half-set maturity posture, which the
-/// migration's CHECK already makes unrepresentable at the database.
+/// Rebuilds the [`Commission`] from its persisted fields, re-validating each
+/// stored token through its domain gate; a value outside its vocabulary
+/// surfaces as an `Err`, never a panic or silent default.
 fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
     let maturity = match (fields.maturity, fields.graphic) {
         (None, None) => None,
@@ -976,10 +655,8 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     };
     let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
         .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
-    // The stored `deadline_status` is the manual `Delayed` flag only — `Late`
-    // is never persisted (Engineer ruling 2026-07-08). Derive the effective
-    // status fresh at lookup from the deadline, the same math the sweep's log
-    // pass uses.
+    // The stored value is the manual `Delayed` flag only; derive the effective
+    // status fresh here from the deadline, matching the sweep's math.
     let stored_deadline_status = fields
         .deadline_status
         .as_deref()
@@ -1022,15 +699,11 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     Ok(commission)
 }
 
-/// The read half of a commission unit of work: the same lookups
-/// [`CommissionStore`] serves, executed on the unit's own connection so they see
-/// its uncommitted writes and can hold row locks until commit. Vended together
-/// with the writes as a [`CommissionRepo`](domain::ports::CommissionRepo) by
-/// `uow.commissions()`.
+/// The read half of a commission unit of work, executed on the unit's own
+/// connection so reads see its uncommitted writes. Vended by `uow.commissions()`.
 #[async_trait::async_trait]
 impl CommissionReads for PgCommissionWrites<'_> {
-    /// [`CommissionStore::find`] on the unit's connection — same re-validation
-    /// on the way out.
+    /// [`CommissionStore::find`] on the unit's connection.
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&mut *self.conn, **id).await? else {
             return Ok(None);
@@ -1038,9 +711,8 @@ impl CommissionReads for PgCommissionWrites<'_> {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// [`find`](Self::find) with `FOR NO KEY UPDATE`: concurrent writers of this
-    /// commission wait for the unit to commit, while inserts of its child rows
-    /// (elements, changelog entries) are left free.
+    /// [`find`](Self::find) with `FOR NO KEY UPDATE`; concurrent writers of this
+    /// commission wait, but inserts of child rows stay free.
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find_for_update(&mut *self.conn, **id).await? else {
             return Ok(None);
@@ -1048,8 +720,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// [`CommissionStore::is_participant`] on the unit's connection — the same
-    /// closed-door predicate over `commission_participant`.
+    /// [`CommissionStore::is_participant`] on the unit's connection.
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -1058,10 +729,8 @@ impl CommissionReads for PgCommissionWrites<'_> {
         Ok(sql::is_participant(&mut *self.conn, **commission, user.as_str()).await?)
     }
 
-    /// The tab's row, locked for the rest of the unit — the very statement every
-    /// composition write serializes on ([`require_tab`](PgCommissionWrites::require_tab)),
-    /// exposed to a caller that wants the lock without the gate's refusal. An
-    /// absent id and one belonging to another commission both answer `None`.
+    /// The tab's row, locked for the rest of the unit — the same statement
+    /// `require_tab` uses.
     async fn tab_for_update(
         &mut self,
         commission: &CommissionId,
@@ -1073,8 +742,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
-    /// Rebuild the [`Commission`] from its row via [`to_commission`]; `None`
-    /// if no such commission exists.
+    /// Rebuilds the [`Commission`] via `to_commission`; `None` if absent.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&self.pool, **id).await? else {
             return Ok(None);
@@ -1082,14 +750,9 @@ impl CommissionStore for PgCommissionStore {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// Which column of `workflow_id` currently holds this commission, or `None`
-    /// if that board does not position it.
-    ///
-    /// Scoped by board on purpose: a commission sits in at most one column **per
-    /// board** but on as many boards as care to position it (Ownership
-    /// Separation DD `29130754` D1/D6), so "the" column of a commission does not
-    /// exist. Delegates to [`PgColumnStore::find_column`] — one board edge, one
-    /// implementation.
+    /// Which column of `workflow_id` currently holds this commission, if any.
+    /// Scoped by board — a commission sits in at most one column per board but
+    /// on many boards (DD `29130754`). Delegates to [`PgColumnStore::find_column`].
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -1100,10 +763,8 @@ impl CommissionStore for PgCommissionStore {
             .await
     }
 
-    /// This commission's index within `column_id`, or `None` if that column does
-    /// not hold it. The card order is a plain integer index; a stored value that
-    /// cannot be a `u8` means row tampering and surfaces as an `Err`, never a
-    /// truncated position.
+    /// This commission's index within `column_id`, or `None` if absent. A stored
+    /// value that can't be a `u8` surfaces as an `Err`.
     async fn current_position_in_column(
         &self,
         commission: &CommissionId,
@@ -1121,12 +782,8 @@ impl CommissionStore for PgCommissionStore {
             .map(Some)
     }
 
-    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (ZMVP-70).
-    /// Addressed by DID, the one column
-    /// [`grant_view`](CommissionWrites::grant_view) writes. The stored token is
-    /// re-validated through [`GrantLevel`]'s [`FromStr`](std::str::FromStr); a
-    /// value outside the vocabulary means row tampering and surfaces as an
-    /// `Err`, never a silent default.
+    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (DD `29130754`).
+    /// The stored token is re-validated through [`GrantLevel`]'s `FromStr`.
     async fn view_grant(
         &self,
         commission: &CommissionId,
@@ -1141,21 +798,10 @@ impl CommissionStore for PgCommissionStore {
             .map(Some)
     }
 
-    /// Load the commission's whole composition (ZMVP-166): **three** indexed
-    /// queries, one per part — its tabs, its widened surface modes, and its
-    /// elements — each `WHERE commission_id = $1`, each ordered in SQL so the
-    /// caller inherits a deterministic order without a sort in Rust. Three
-    /// reads rather than a join because the three are independent sets, not one
-    /// shape: a commission has tabs it has no elements in, and surface modes for
-    /// surfaces nothing has been contributed to.
-    ///
-    /// Every stored token is re-validated through its domain gate
-    /// ([`VisibilityMode::parse`], the label newtypes' `TryFrom`) — a value
-    /// outside its vocabulary means row tampering or a missed migration and
-    /// surfaces as an `Err`, never a silent default. `None` when the commission
-    /// has **no tabs**, which (since tabs are minted with the commission and
-    /// backfilled for older ones) means no such commission; an empty `elements`
-    /// list is the ordinary state of a fresh one and is *not* absence.
+    /// Loads the commission's whole composition: three indexed queries (tabs,
+    /// widened surface modes, elements), each re-validated through its domain
+    /// gate. `None` only when the commission has no tabs at all; an empty
+    /// `elements` list is the ordinary state of a fresh one.
     async fn load_composition(
         &self,
         id: &CommissionId,
@@ -1215,15 +861,9 @@ impl CommissionStore for PgCommissionStore {
         Ok(Some(composition))
     }
 
-    /// One `EXISTS` over the **persisted membership record** (ZMVP-76,
-    /// Engineer ruling: `commission_participant`, never a computed
-    /// owner-∪-seated union): the owner's row is inserted with the commission
-    /// (and backfilled), ZMVP-79's accepted invitations add seated rows behind
-    /// this same query, and ZMVP-69's transfer leaves the prior owner's row in
-    /// place. An unknown commission matches nothing and answers `false`.
-    /// **Unaffected by placement or view grants** (Ownership Separation DD
-    /// Decision 8): a key is only a view, and positioning is environmental —
-    /// neither makes an account's members Participants.
+    /// One `EXISTS` over the persisted `commission_participant` membership record
+    /// — never a computed owner-∪-seated union. Unaffected by placement or view
+    /// grants (DD `29130754`).
     async fn is_participant(
         &self,
         commission: &CommissionId,
@@ -1232,12 +872,9 @@ impl CommissionStore for PgCommissionStore {
         Ok(sql::is_participant(&self.pool, **commission, user.as_str()).await?)
     }
 
-    /// The file-entry link `key` names **within `commission`** (ZMVP-88) — one
-    /// `SELECT` filtered by **both** id and commission_id, so a key belonging to a
-    /// different commission matches no row and answers `None` (never a
-    /// cross-commission existence oracle). The bytes live in `file_blob` behind the
-    /// [`FileStore`](domain::ports::FileStore); this settles only the link the
-    /// retrieval gate authorizes against.
+    /// The file-entry link `key` names within `commission` — scoped by both id and
+    /// commission_id, so a foreign key answers `None`. Bytes live behind
+    /// [`FileStore`](domain::ports::FileStore).
     async fn find_file(
         &self,
         commission: &CommissionId,
@@ -1253,12 +890,9 @@ impl CommissionStore for PgCommissionStore {
         }))
     }
 
-    /// Selects one file entry's annotations in draw order (ZMVP-90), scoped by
-    /// `commission` so a key from another commission answers with an empty vector
-    /// rather than a signal. Each row's stored `shape` is re-validated through
-    /// [`MarkupShape`](domain::elements::commission::MarkupShape)'s deserializer on
-    /// the way out — an `Err` on row tampering, never a panic — which is why this
-    /// collects into a `Result` instead of mapping infallibly.
+    /// One file entry's annotations in draw order, scoped by `commission`. Each
+    /// row's `shape` is re-validated through
+    /// [`MarkupShape`](domain::elements::commission::MarkupShape)'s deserializer.
     async fn markups_for_file(
         &self,
         commission: &CommissionId,
@@ -1285,12 +919,8 @@ impl CommissionStore for PgCommissionStore {
             .collect()
     }
 
-    /// Selects the lone `state = 'pending'` offer for `(seat, invited_user)`, or
-    /// `None` (ZMVP-78). Accepted and revoked invitations are history, not live
-    /// offers, so they never match. The stored `state` discriminant is
-    /// re-validated through `InvitationState::try_from` on the way out — an `Err`
-    /// on row tampering, never a panic. The Seat mirror of
-    /// [`find_pending_invitation`](crate::PgAccountStore::find_pending_invitation).
+    /// The lone `state = 'pending'` offer for `(seat, invited_user)`, or `None`.
+    /// Accepted/revoked invitations never match.
     async fn find_pending_seat_invitation(
         &self,
         commission: &CommissionId,
@@ -1309,12 +939,8 @@ impl CommissionStore for PgCommissionStore {
         .transpose()
     }
 
-    /// The commission's seat satellites (ZMVP-76) in declaration order (element
-    /// ids are UUIDv7, so id order is declaration order): one indexed query
-    /// over `commission_seat`, each row's `kind`/`prompt`/`link` re-validated
-    /// through its domain gate (`SeatKind`'s `TryFrom<String>` & co.) — a stored value
-    /// outside its rules means row tampering and surfaces as an `Err`, never a
-    /// silent default. No seats (or no commission) is simply the empty list.
+    /// The commission's seat satellites in declaration order (element ids are
+    /// UUIDv7). Each row re-validated through its domain gate.
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
         let rows = sql::seats(&self.pool, **commission).await?;
         rows.into_iter()
@@ -1330,10 +956,8 @@ impl CommissionStore for PgCommissionStore {
             .collect()
     }
 
-    /// One indexed query over `commission.owner_id`, filtered active
-    /// (`archived_at IS NULL`) and ordered by id (ZMVP-157); each row
-    /// re-validated through [`to_commission`] exactly as [`find`](PgCommissionStore::find)
-    /// re-validates its own row.
+    /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
+    /// id, each re-validated through `to_commission`.
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         sql::list_owned_by(&self.pool, owner.as_str())
             .await?

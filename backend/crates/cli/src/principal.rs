@@ -1,5 +1,5 @@
-//! The one way a command learns who it acts as (ZMVP-203): the identity file
-//! → [`UserStore::find_by_did`] → the [`User`]. Every operation command takes
+//! The one way a command learns who it acts as: the identity file →
+//! `UserStore::find_by_did` → the User. Every operation command takes
 //! a [`Principal`]; none re-implements this.
 
 use std::path::Path;
@@ -16,11 +16,9 @@ pub struct Principal {
 }
 
 impl Principal {
-    /// Resolve from the identity file at `path`. Domain problems, exit `1`:
-    /// `not_authenticated` (no file, or the DID is unknown to this database),
-    /// `identity_mismatch` (recorded against a different database),
-    /// `identity_corrupt` (not a valid record). Infrastructure, exit `3`:
-    /// `identity_unreadable` (the file cannot be read), `database`.
+    /// Resolve from the identity file at `path`. Domain problems (exit 1):
+    /// `not_authenticated`, `identity_mismatch`, `identity_corrupt`.
+    /// Infrastructure (exit 3): `identity_unreadable`.
     pub async fn resolve(runtime: &Runtime, path: &Path) -> Result<Self, CliError> {
         let Some(identity) = identity::load(path)? else {
             return Err(CliError::domain(
@@ -35,9 +33,7 @@ impl Principal {
                 "the recorded identity belongs to a different database; run `zurfur session logout` then `login` against this one",
             ));
         }
-        // `identity::load` already parsed it; re-parsing here keeps the
-        // trusted/untrusted split visible at the type level and never `new`s
-        // file-sourced text.
+        // Re-parsed here (not reused) to keep the trusted/untrusted split explicit.
         let did: Did = identity
             .did
             .parse()

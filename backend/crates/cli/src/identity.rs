@@ -1,16 +1,8 @@
-//! The identity file (ZMVP-203): *which* User the CLI acts as, recorded
-//! locally after `login` and read by every command through
-//! [`Principal`](crate::principal::Principal).
-//!
-//! One identity in v1 (Engineer ruling: overwritten on each login). The
-//! record is versioned JSON, written `0600` and atomically (tempfile + rename
-//! in the same directory), and bound to the database it was created against
-//! by a [`fingerprint`] so a stale identity never acts on a different stack.
-//! Corrupt or missing files are domain problems, never panics.
-//!
-//! Location: `$ZURFUR_CLI_HOME/identity.json` when that variable is set (the
-//! harnesses use it), else the platform config dir via `directories`
-//! (`$XDG_CONFIG_HOME/zurfur/identity.json` on Linux).
+//! The identity file: *which* User the CLI acts as, read by every command
+//! through [`Principal`](crate::principal::Principal). One identity in v1
+//! (overwritten on each login), versioned JSON written `0600` atomically and
+//! bound to its database by a [`fingerprint`]. Location:
+//! `$ZURFUR_CLI_HOME/identity.json`, else the platform config dir.
 
 use std::path::{Path, PathBuf};
 
@@ -124,8 +116,7 @@ pub fn load(path: &Path) -> Result<Option<Identity>, CliError> {
             ),
         ));
     }
-    // The file is untrusted text: it enters the domain through `Did`'s
-    // parsing door, never `Did::new`.
+    // Untrusted text: enters the domain through `Did`'s parsing door, never `Did::new`.
     identity.did.parse::<Did>().map_err(|e| {
         CliError::domain(
             "identity_corrupt",

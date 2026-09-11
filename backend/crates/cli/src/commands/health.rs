@@ -1,7 +1,7 @@
-//! `zurfur health` (ZMVP-202): the same probe `GET /health` runs —
-//! [`adapter_pg::is_reachable`], defined once in the adapter and consumed by
-//! both drivers — plus the round-trip latency. Booting the runtime already
-//! proved a connection could be opened; this asks the pool to answer.
+//! `zurfur health`: the same probe `GET /health` runs —
+//! [`adapter_pg::is_reachable`], consumed by both drivers — plus round-trip
+//! latency. Booting the runtime already proved a connection could open;
+//! this asks the pool to answer.
 
 use std::time::Instant;
 
@@ -11,12 +11,9 @@ use serde_json::json;
 use crate::CliError;
 
 /// Probe the pool. `{"status":"ok","database":"up","schema":"current"|
-/// "behind"|"ahead"|"unknown","latency_ms":N}` on success — `health` reports the
-/// schema state where every other command refuses it (ZMVP-206); otherwise a
-/// `service_unavailable` infrastructure problem (the
-/// API's own code for a down dependency — one vocabulary, Engineer ruling
-/// 2026-08-24) whose `detail` says the pool exists but the database did not
-/// answer in time, as opposed to the runtime's connect failure.
+/// "behind"|"ahead"|"unknown","latency_ms":N}` on success — `health` reports
+/// the schema state where every other command refuses it; otherwise a
+/// `service_unavailable` infrastructure problem.
 pub async fn run(runtime: &Runtime) -> Result<serde_json::Value, CliError> {
     let started = Instant::now();
     let reachable = adapter_pg::is_reachable(&runtime.pool).await;
@@ -33,8 +30,7 @@ pub async fn run(runtime: &Runtime) -> Result<serde_json::Value, CliError> {
         Ok(adapter_pg::SchemaStatus::Ahead { .. }) => "ahead",
         Ok(adapter_pg::SchemaStatus::Unknown) => "unknown",
         Err(error) => {
-            // Reported as `unknown` (health describes, it does not refuse),
-            // but never silently: the cause goes to stderr.
+            // health describes rather than refuses; the cause still goes to stderr.
             tracing::warn!(%error, "schema status could not be read");
             "unknown"
         }

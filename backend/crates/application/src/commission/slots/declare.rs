@@ -45,10 +45,8 @@ impl Slots<'_> {
         let slots: Vec<NewSlot> = slots
             .into_iter()
             .map(|s| {
-                // Notes are normalized here rather than in a driver so that
-                // every driver inherits it: surrounding whitespace goes, and
-                // notes that are blank once trimmed are stored as absent rather
-                // than as an empty string that renders as a real, empty note.
+                // Notes normalize here so every driver inherits it: trimmed,
+                // and blank-once-trimmed stored as absent, never "".
                 let notes = s
                     .notes
                     .as_deref()

@@ -1,11 +1,8 @@
-//! Commission file entries (ZMVP-88; moved down from `api`, ZMVP-205): a
-//! Participant uploads a work-in-progress file, and a Participant retrieves
-//! one. Neither ever mutates a commission's status.
+//! Commission file entries: a Participant uploads a work-in-progress file and
+//! a Participant retrieves one. Neither mutates a commission's status.
 //!
-//! **Streaming seam (Engineer ruling 2026-08-31).** The port speaks
-//! [`tokio::io::AsyncRead`], never a buffered `Vec<u8>` or an axum type —
-//! `api` adapts multipart to a reader on the way in and a byte stream on the
-//! way out; a CLI could hand this a `tokio::fs::File` just as well.
+//! Streaming seam: the port speaks [`tokio::io::AsyncRead`], never a buffered
+//! `Vec<u8>` or a driver type.
 
 use crate::{commission::Commissions, ports::WithPorts};
 

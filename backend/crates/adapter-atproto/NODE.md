@@ -25,3 +25,10 @@ fs:
 **Entry points:** `src/lib.rs`.
 
 **Refs:** `CLAUDE.md` here · DD "did:plc Identity Custody" (26804226) · DD "DID:PLC vs DID:Web" (4358151) · DESIGN "Platform Authority" (9207856).
+
+## Notes
+- Port → impl: `Authenticator` = `AtprotoAuthenticator` (lib.rs) · `ProfileSource` = `AtprotoProfileSource` · `DidMinter` = `RealDidMinter` / `StubDidMinter` · `PublicRecords` = `AtprotoPublicRecords`. `PlcDirectory` is adapter-local, selected by `plc_directory_from_config`.
+- `secret_vault::SecretVault` deliberately mirrors adapter-pg's `key_vault::RootKey` (same AEAD, blob format and root key `ZURFUR_DID_KEY_ROOT_KEY`) rather than sharing a type — one adapter may not depend on another. Hoisting the envelope into `domain` is the open follow-up. Root-key custody is DEV-ONLY (config/env) pending a KMS; `api`'s `ensure_custody_hardened` boot guard covers this store too.
+- Op ordering: `mint` writes custody + the genesis op BEFORE submitting; `tombstone` and `update_handle` submit BEFORE recording, so a failed submit never advances the local chain. Both are dual writes, never one transaction.
+- `plc.rs` is pinned to the published vector `did:plc:ewvi7nxzyoun6zhxrhs64oiz`; it is the tripwire for the whole DAG-CBOR → sha256 → base32/24 pipeline.
+- `queries.rs` is `@generated` — never hand-edited; the `codegen_current` staleness gate lives in adapter-pg's tests.

@@ -1,17 +1,7 @@
-//! The contract's wire instant: `google.protobuf.Timestamp` serialized as
-//! **canonical** ProtoJSON (`contract/VERSIONING.md` §7.3/§7.7) — RFC 3339,
-//! **Z-normalized**, 0/3/6/9 fractional digits — with the protobuf `Timestamp`
-//! value range (years 0001–9999) enforced on BOTH directions of the boundary.
-//!
-//! Exists because `pbjson_types::Timestamp`'s `Serialize` emits `+00:00`
-//! (chrono's `to_rfc3339`, `use_z = false`), which is valid RFC 3339 but not
-//! canonical ProtoJSON — the spec's "generated output will always be
-//! Z-normalized" — and because neither pbjson nor chrono rejects instants
-//! outside 0001–9999, which the reference ProtoJSON parsers (protobuf-es
-//! included) refuse: an out-of-range value accepted here would later produce a
-//! response no client generated from the contract can decode. `contract-gen`
-//! maps `.google.protobuf.Timestamp` to this type via `extern_path`, so every
-//! generated message carries it; the golden wire test pins the `Z` encoding.
+//! The contract's wire instant: `google.protobuf.Timestamp` as canonical
+//! ProtoJSON — RFC 3339, Z-normalized, 0/3/6/9 fractional digits — with the
+//! protobuf value range (years 0001–9999) enforced on both directions.
+//! `contract-gen` maps `.google.protobuf.Timestamp` to this type via `extern_path`.
 
 use std::ops::RangeInclusive;
 
@@ -19,15 +9,13 @@ use chrono::{Datelike, SecondsFormat};
 use domain::datetime::DateTimeUtc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// `google.protobuf.Timestamp`'s value range, by year: RFC 3339 instants from
-/// `0001-01-01T00:00:00Z` to `9999-12-31T23:59:59.999999999Z`. Narrower than
-/// chrono (±262143) and Postgres (4713 BC–294276 AD), so it is the binding
-/// constraint at the wire boundary.
+/// `google.protobuf.Timestamp`'s value range, by year — narrower than chrono
+/// and Postgres, so it's the binding constraint at the wire boundary.
 const WIRE_YEARS: RangeInclusive<i32> = 1..=9999;
 
-/// The wire form of an instant — field-compatible with
-/// `google.protobuf.Timestamp` (same tags, same prost shape), differing only
-/// in its serde: canonical-ProtoJSON output, range-validated input.
+/// The wire form of an instant, field-compatible with
+/// `google.protobuf.Timestamp`; differs only in serde (canonical-ProtoJSON
+/// output, range-validated input).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WireTimestamp {
     /// Seconds of UTC time since the Unix epoch.
@@ -41,7 +29,7 @@ pub struct WireTimestamp {
 impl WireTimestamp {
     /// The instant as domain time, or `None` when the pair does not name a
     /// representable in-range instant (negative/overflowing nanos, or a year
-    /// outside [`WIRE_YEARS`]).
+    /// outside `WIRE_YEARS`).
     pub fn as_datetime(&self) -> Option<DateTimeUtc> {
         let nanos = u32::try_from(self.nanos).ok()?;
         let datetime = chrono::DateTime::from_timestamp(self.seconds, nanos)?;
@@ -59,7 +47,7 @@ impl From<DateTimeUtc> for WireTimestamp {
 }
 
 /// A [`WireTimestamp`] that names no instant `google.protobuf.Timestamp` can
-/// carry — negative or overflowing nanos, or a year outside [`WIRE_YEARS`].
+/// carry — negative or overflowing nanos, or a year outside `WIRE_YEARS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutOfWireRange;
 
@@ -94,8 +82,7 @@ impl Serialize for WireTimestamp {
 
 impl<'de> Deserialize<'de> for WireTimestamp {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // The RFC 3339 grammar is pbjson's (the shared generated-parser rule);
-        // this adds only the protobuf value-range check on top.
+        // Grammar is pbjson's; this adds only the protobuf value-range check.
         let parsed = pbjson_types::Timestamp::deserialize(deserializer)?;
         let timestamp = WireTimestamp {
             seconds: parsed.seconds,

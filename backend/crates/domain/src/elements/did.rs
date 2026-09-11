@@ -1,45 +1,52 @@
-//! Decentralized identifiers — the AT Protocol identity primitive.
-//!
-//! A DID (`did:plc:…`, `did:web:…`) is the stable, self-sovereign id of an actor
-//! on the network. On Zurfur a *visitor's* DID precedes the platform and is only
-//! ever recognized, never minted (see DESIGN/User, DESIGN/"DID:PLC vs DID:Web");
-//! an *account's* DID is minted on its behalf by a `DidMinter`
-//! (see [`crate::ports::DidMinter`]).
+//! Decentralized identifiers — the AT Protocol identity primitive, and the
+//! identifier of every actor. A visitor's DID precedes the platform and is only
+//! recognized; an account's is minted on its behalf by a
+//! [`DidMinter`](crate::ports::DidMinter). (DD 4358151, DD 57081857)
 
 use std::ops::Deref;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// A decentralized identifier, held as the string the network gave us.
-///
-/// Two ways in, by provenance (Engineer ruling 2026-08-24):
-/// - [`Did::new`] wraps a DID from a **trusted** source unchecked — the PDS at
-///   sign-in, our own store, a `DidMinter`. The domain never originates a DID,
-///   so those sources are the norm and pay no parse.
-/// - [`FromStr`] (`text.parse::<Did>()`) is the **untrusted** door — a file on
-///   disk, a command-line argument, anything a person typed. It checks the
-///   DID Core syntax (`did:<method>:<id>`), nothing per-method: the domain
-///   must not reject a DID the network considers valid.
-///
-/// Treat the inner string as opaque; deref to read it.
-///
-/// References: [`new`](Did::new), [`crate::elements::user::User`],
-/// [`crate::ports::DidMinter`], DESIGN/User; DID Core §3.1 (syntax).
+/// A decentralized identifier, held as the string the network gave us. Two ways
+/// in, by provenance: [`Did::new`] wraps a DID from a trusted source unchecked,
+/// and [`FromStr`] is the untrusted door, checking DID Core syntax only. Treat
+/// the inner string as opaque.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Did(String);
 
 impl Did {
-    /// Wraps a DID the caller already trusts — sourced from the PDS at sign-in,
-    /// read back from our own store, or minted by a `DidMinter`. No validation:
-    /// for untrusted text use [`str::parse`] (the [`FromStr`] impl) instead.
+    /// Wraps a DID the caller already trusts. No validation — for untrusted
+    /// text use [`str::parse`] instead.
     pub fn new(did: String) -> Self {
         Self(did)
     }
 }
 
-/// Why a string is not a DID. Carries the offending input so a caller can
-/// name it; nothing else, so it is safe to print.
+/// The DID's public-boundary lifecycle operations — the only sanctioned callers
+/// of [`DidOperations`](crate::ports::DidOperations). Each is a separate
+/// retryable step, run after the owning private transaction commits.
+impl Did {
+    /// Tombstone this DID on the PLC directory.
+    pub async fn tombstone(
+        &self,
+        operations: &dyn crate::ports::DidOperations,
+    ) -> anyhow::Result<()> {
+        operations.tombstone(self).await
+    }
+
+    /// Re-point this DID's `alsoKnownAs` at `handle`.
+    pub async fn update_handle(
+        &self,
+        handle: &crate::elements::handle::Handle,
+        operations: &dyn crate::ports::DidOperations,
+    ) -> anyhow::Result<()> {
+        operations.update_handle(self, handle).await
+    }
+}
+
+/// Why a string is not a DID. Carries only the offending input, so it is safe
+/// to print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DidParseError {
     input: String,
@@ -60,9 +67,8 @@ impl std::error::Error for DidParseError {}
 impl FromStr for Did {
     type Err = DidParseError;
 
-    /// DID Core syntax only: `did:` + method (`[a-z0-9]+`) + method-specific
-    /// id (`[A-Za-z0-9._:%-]+`), all non-empty. Per-method shape (e.g. plc's
-    /// base32 length) is deliberately NOT checked here.
+    /// DID Core syntax only: `did:` + method (`[a-z0-9]+`) + method-specific id
+    /// (`[A-Za-z0-9._:%-]+`), all non-empty. Per-method shape is not checked.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let reject = || DidParseError {
             input: text.to_string(),
@@ -95,7 +101,6 @@ impl Deref for Did {
     }
 }
 
-/// Delegates to the wrapped string via [`Deref`].
 impl std::fmt::Display for Did {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self)

@@ -1,6 +1,6 @@
 //! `GET /commissions/{id}/changelog` — a Participant reads the commission's
-//! stream in order (ZMVP-87 AC5). Read-only by design: the changelog's HTTP
-//! surface has no other method (append happens as a side of domain acts; AC4).
+//! stream in order. Read-only: appends happen as a side of domain acts, so the
+//! changelog's HTTP surface has no other method.
 
 use application::commission::changelog::read;
 use axum::{
@@ -15,10 +15,7 @@ use crate::{AppState, extract::CallingUser, problem::Problem, wire_time::WireTim
 
 /// One changelog entry as the API serves it: the stored envelope, kind as its
 /// stable token, actor as a bare id (`null` = a system entry), `seq` as the
-/// ascending ordering key.
-///
-/// ⚠️ contract-decision-needed: `payload` is an unschematized
-/// `serde_json::Value` passthrough (tracks `VERSIONING.md` §8 Q9).
+/// ascending order key. ⚠️ `payload` schema undecided (VERSIONING.md §8 Q9).
 #[derive(Serialize)]
 struct ChangelogEntryBody {
     seq: i64,

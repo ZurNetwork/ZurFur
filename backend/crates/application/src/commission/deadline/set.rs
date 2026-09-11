@@ -20,10 +20,8 @@ pub struct Command {
 pub struct Output;
 
 impl Deadline<'_> {
-    /// Set — or move — the commission's deadline, as a Participant.
-    ///
-    /// Re-setting the deadline already held is an idempotent no-op: nothing is
-    /// written and nothing is appended. A later deadline than the one held
+    /// Set — or move — the commission's deadline, as a Participant. Re-setting
+    /// the deadline already held is a no-op. A later deadline than the one held
     /// records as `DeadlineExtended`, anything else as `DeadlineSet`.
     pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
         let ports = self.ports();
@@ -34,9 +32,8 @@ impl Deadline<'_> {
         } = cmd;
         let commission = require_participant(ports, &commission_id, &actor_id).await?;
 
-        // The no-op is "the stored deadline already IS the requested one".
-        // Comparing the stored deadline to `now` instead — as this did — is
-        // never true in practice, so every repeat set appended a fresh entry.
+        // The no-op is "the stored deadline already IS the requested one" —
+        // never a comparison against `now`.
         if commission.deadline == Some(deadline) {
             return Ok(Output);
         }

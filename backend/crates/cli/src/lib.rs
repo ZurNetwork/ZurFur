@@ -1,39 +1,8 @@
-//! `zurfur` — the terminal driving adapter (epic ZMVP-199).
-//!
-//! A second composition consumer beside `api`: it links `domain` and the live
-//! adapters **in-process** through the shared [`composition::Runtime`] — no
-//! HTTP, no contract, no bearer token — so every use case the CLI reaches is
-//! by construction reachable from any driver. Commands are one-shot `clap`
-//! subcommands (a REPL is later sugar over the same parser; Engineer ruling
-//! 2026-08-24).
-//!
-//! **Conventions** (ZMVP-201) — every command honors these, tested by the
-//! process-level harness in `tests/`:
-//! - stdout carries exactly one JSON value + newline on success (pretty by
-//!   default, compact under `--json`); nothing else ever goes to stdout.
-//! - stderr carries diagnostics — `tracing` under `RUST_LOG` — and, on
-//!   failure, one compact JSON [`Problem`] as its **last line** (regardless of
-//!   `--json`); scripts parse `stderr.lines().last()`.
-//! - exit codes are the four [`ExitClass`]es: `0` ok · `1` domain error ·
-//!   `2` usage (clap's own) · `3` infrastructure (config, database, network).
-//! - problem `code`s reuse the API's vocabulary (`api/src/problem.rs`, DD
-//!   23592962) wherever the same refusal exists there — `not_authenticated`,
-//!   `invalid_request`, `handle_taken`, `forbidden`, `account_not_found`,
-//!   `service_unavailable`, `internal_error` — and add CLI-only codes
-//!   (`config`, `identity_*`, `not_implemented`) where the API has none —
-//!   including the two that guard an irreversible operation and exist only
-//!   here, because only a terminal can be asked: `cancelled` (the person said
-//!   no) and `confirmation_required` (nobody was there to ask, and `--yes`
-//!   was not passed).
-//!
-//! **Where commands go**: [`Command`] is the root; each domain namespace is a
-//! module under [`commands`] exposing its own `clap::Subcommand` enum and a
-//! `run` fn over the [`Runtime`]. `health`, `session` and `account`
-//! (`create`, `delete`; ZMVP-205) live here; the rest of the operation commands
-//! (epic ZMVP-199) follow the same recipe — add a module, a variant on
-//! [`Command`], and an arm in [`dispatch`]. A command that acts as
-//! someone resolves its [`principal::Principal`] first — the one shared path
-//! from the identity file to a `User` (ZMVP-203).
+//! `zurfur`: the terminal driving adapter. Calls the same application-layer
+//! use cases as `api`, in-process via [`composition::Runtime`] — no HTTP, no
+//! bearer token. Commands are one-shot `clap` subcommands under [`commands`].
+//! See this crate's `NODE.md` for the stdout/stderr/exit-code conventions
+//! and the problem-code vocabulary.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -66,9 +35,8 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// The root command tree: the tool-level commands that never touch the
-/// backend, and the [`BackendCommand`]s that do — split so [`dispatch`] can
-/// only ever be handed the latter (no unreachable arm, by construction).
+/// The root command tree: [`Command`]s that never touch the backend, plus
+/// the [`BackendCommand`]s that do — the split keeps [`dispatch`] exhaustive.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Print a shell completion script to stdout.
@@ -80,9 +48,9 @@ pub enum Command {
     Backend(BackendCommand),
 }
 
-/// The commands that run over a booted [`Runtime`] — one variant per domain
-/// namespace. `session logout` is the one member `run` answers *without*
-/// booting anything (it must work when the stack is broken).
+/// The commands that run over a booted [`Runtime`], one variant per domain
+/// namespace. `session logout` is the one member that `run` answers without
+/// booting anything.
 #[derive(Debug, Subcommand)]
 pub enum BackendCommand {
     /// Probe the database the way `GET /health` does (reports the schema
@@ -114,12 +82,10 @@ pub fn init_tracing() {
         .try_init();
 }
 
-/// Run the parsed command line end to end: commands that need the backend
-/// boot the shared [`Runtime`] (config → live adapters) first; the rest —
-/// `completions`, `session logout` — never touch config or a database.
-///
-/// Returns the JSON value for stdout, or the [`CliError`] that becomes the
-/// stderr [`Problem`] + exit class.
+/// Run the parsed command line end to end: commands needing the backend boot
+/// the shared [`Runtime`] first; `completions` and `session logout` never
+/// touch config or a database. Returns the [`Output`] for stdout, or the
+/// [`CliError`] that becomes the stderr [`Problem`].
 pub async fn run(cli: Cli) -> Result<Output, CliError> {
     let format = output::Format::from_flag(cli.json);
     match cli.command {
@@ -128,8 +94,7 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
             clap_complete::generate(shell, &mut Cli::command(), "zurfur", &mut buffer);
             Ok(Output::raw(buffer))
         }
-        // Forgetting the identity must work when everything else is broken —
-        // no config, no database (security review, ZMVP-203 F3).
+        // Logout must work even when config/database are broken — checked first.
         Command::Backend(BackendCommand::Session {
             op: commands::session::SessionOp::Logout,
         }) => {
@@ -148,10 +113,8 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
 }
 
 /// Route a [`BackendCommand`] to its namespace module over the booted
-/// [`Runtime`], with the identity file at `identity_path` (see
-/// [`identity::default_path`]). The in-process harness calls this directly
-/// with a `Runtime` over the in-memory fakes and a temp dir — no database, no
-/// process spawn.
+/// [`Runtime`], with the identity file at `identity_path`. Tests call this
+/// directly over in-memory fakes — no database, no process spawn.
 pub async fn dispatch(
     runtime: &Runtime,
     identity_path: &Path,
@@ -165,11 +128,10 @@ pub async fn dispatch(
     }
 }
 
-/// The schema-drift gate (ZMVP-206, Engineer ruling: option B): a command
-/// that acts on data refuses a database whose applied migrations are behind
-/// the embedded set, ahead of it, or has no ledger at all — so the CLI never runs against
-/// a schema it wasn't built for and never migrates by accident. `migrate` is
-/// exempt (it is the fix); `health` is exempt (it reports the state instead).
+/// The schema-drift gate: refuses a database whose applied migrations are
+/// behind the embedded set, ahead of it, or absent, so the CLI never runs
+/// against a schema it wasn't built for. `migrate` and `health` are exempt
+/// (the fix, and the reporter).
 pub async fn require_current_schema(
     runtime: &Runtime,
     command: &BackendCommand,
@@ -204,19 +166,16 @@ pub async fn require_current_schema(
 async fn connect(config_dir: Option<PathBuf>) -> Result<Runtime, CliError> {
     let config = Config::load_from(config_dir).map_err(|e| config_problem(&e))?;
     Runtime::connect(config).await.map_err(|e| match e {
-        // The API's codes (DD 23592962), one vocabulary across both drivers:
-        // a down dependency is `service_unavailable`, a broken boot is
-        // `internal_error`. The `detail` keeps the two database cases apart.
+        // service_unavailable = down dependency; internal_error = broken boot.
         ConnectError::Database(_) => CliError::infra("service_unavailable", e),
         ConnectError::Setup(_) => CliError::infra("internal_error", e),
     })
 }
 
-/// Render a config-load failure without echoing any value. figment prints
-/// the parsed value on a type mismatch — which for an env var IS the secret
-/// (security review, ZMVP-203 F4) — so only the shape-safe kinds pass
-/// through; everything else is a generic detail with the parser's message
-/// behind `RUST_LOG=debug`.
+/// Render a config-load failure without echoing any value: figment prints
+/// the parsed value on a type mismatch, which for an env var can be the
+/// secret. Only shape-safe kinds pass through; everything else is a generic
+/// detail with the parser's message behind `RUST_LOG=debug`.
 fn config_problem(error: &figment::Error) -> CliError {
     use figment::error::Kind;
     let detail = match &error.kind {

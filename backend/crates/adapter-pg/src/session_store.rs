@@ -1,10 +1,7 @@
 //! Durable tower-sessions [`SessionStore`] over PostgreSQL, backing the session
-//! cookie with the `tower_sessions.session` table. Sessions are app-owned rows,
-//! so they live in the private boundary; persisting them is what lets a
-//! signed-in session survive a reload (ZMVP-8).
-//!
-//! The SQL lives in `queries/session/`; the typed functions are generated
-//! against the migrated schema (see [`crate::queries`]).
+//! cookie with the `tower_sessions.session` table. Sessions are app-owned rows
+//! in the private boundary; persisting them lets a signed-in session survive
+//! a reload.
 
 use async_trait::async_trait;
 use time::OffsetDateTime;
@@ -18,13 +15,9 @@ use crate::PgPool;
 use crate::queries::session as sql;
 
 /// Durable tower-sessions store backing the session cookie with the
-/// `tower_sessions.session` table from this crate's migration. It lives in the
-/// private data boundary because sessions are app-owned rows; persisting them
-/// here is what lets a signed-in session survive a reload (ZMVP-8).
-///
-/// The whole `Record` is serialized (MessagePack) into the `data` column, while
-/// `id` and `expiry_date` are stored as their own columns so lookups key on the
-/// id and filter expired rows in SQL.
+/// `tower_sessions.session` table. The whole `Record` is serialized
+/// (MessagePack) into the `data` column; `id` and `expiry_date` get their own
+/// columns so lookups key on id and filter expired rows in SQL.
 #[derive(Clone, Debug)]
 pub struct PgSessionStore {
     pool: PgPool,
@@ -58,14 +51,10 @@ fn backend(e: sqlx::Error) -> session_store::Error {
 
 #[async_trait]
 impl SessionStore for PgSessionStore {
-    /// Inserts under the record's id, retrying with a fresh [`Id`] on the
-    /// (vanishingly rare) primary-key collision rather than clobbering an
-    /// unrelated session: `ON CONFLICT (id) DO NOTHING` is treated as "id taken,
-    /// regenerate". Mutates `record.id` when it loops, so the caller's record
-    /// reflects the id actually stored.
+    /// Inserts under the record's id, retrying with a fresh [`Id`] on a
+    /// primary-key collision rather than clobbering an unrelated session.
+    /// Mutates `record.id` when it loops.
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
-        // Insert under a fresh id, regenerating on the (vanishingly rare) primary
-        // key collision rather than overwriting an unrelated session.
         loop {
             let data = encode(record)?;
             let inserted = sql::create(
@@ -84,10 +73,9 @@ impl SessionStore for PgSessionStore {
         }
     }
 
-    /// Upsert by id (`ON CONFLICT (id) DO UPDATE`): persists changes to an
-    /// existing session, or writes one whose id is already settled. Unlike
-    /// [`create`](#method.create) it does not reroll on collision — the id is the
-    /// key being saved.
+    /// Upserts by id: persists changes to an existing session, or writes one
+    /// whose id is already settled. Unlike [`create`](#method.create) it does
+    /// not reroll on collision — the id is the key being saved.
     async fn save(&self, record: &Record) -> session_store::Result<()> {
         let data = encode(record)?;
         sql::save(
@@ -101,9 +89,8 @@ impl SessionStore for PgSessionStore {
         Ok(())
     }
 
-    /// Loads a live session, filtering `expiry_date > now()` in SQL so an expired
-    /// row reads as `None` even before [`delete_expired`](#method.delete_expired)
-    /// sweeps it — enforcing the expiry policy on every read (ZMVP-12).
+    /// Loads a live session, filtering `expiry_date > now()` in SQL so an
+    /// expired row reads as `None` even before [`delete_expired`](#method.delete_expired) sweeps it.
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
         let data = sql::load(
             &self.pool,
@@ -116,8 +103,7 @@ impl SessionStore for PgSessionStore {
         data.map(|data| decode(&data)).transpose()
     }
 
-    /// Deletes the session by id (e.g. on sign-out, ZMVP-11). Deleting an absent
-    /// id matches no row and still succeeds — a harmless no-op.
+    /// Deletes the session by id. An absent id is a harmless no-op.
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
         sql::delete(&self.pool, &session_id.to_string())
             .await
@@ -128,9 +114,8 @@ impl SessionStore for PgSessionStore {
 
 #[async_trait]
 impl ExpiredDeletion for PgSessionStore {
-    /// Reaps every row whose `expiry_date` has passed — the housekeeping sweep a
-    /// tower-sessions deletion task runs periodically. Read-time expiry is already
-    /// enforced by [`load`](#method.load); this just reclaims the dead rows.
+    /// Reaps every row whose `expiry_date` has passed. Read-time expiry is
+    /// already enforced by [`load`](#method.load); this just reclaims dead rows.
     async fn delete_expired(&self) -> session_store::Result<()> {
         sql::delete_expired(&self.pool, OffsetDateTime::now_utc())
             .await

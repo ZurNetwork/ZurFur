@@ -14,9 +14,6 @@ fs:
   - name: list.rs
     role: list Commissions (owner point of view)
     node: false
-  - name: place.rs
-    role: owner places a Commission under one of their Accounts
-    node: false
   - name: markup.rs
     role: record a review-loop Markup on a file entry; authorize first, numeric bounds validated here
     node: false
@@ -48,11 +45,19 @@ fs:
     role: streaming upload (auth before read, capped, blob written pre-tx) and gated download
     node: false
   - name: changelog.rs + changelog/read.rs
-    role: cursor-paginated read of the changelog (DD 59310081)
+    role: whole-stream read of the changelog, ascending seq — NOT paginated yet (DD 59310081 asks for a cursor)
     node: false
 ---
-**Is:** Commission use cases — lifecycle (create/delete/archive/unarchive/place) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `run` file per action; the module root `../commission.rs` holds `CommissionError`, `CommissionPorts`, `CommissionResult` and the system-actor `sweep_deadlines`.
+**Is:** Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `run` file per action; the module root `../commission.rs` holds `CommissionError`, `CommissionPorts`, `CommissionResult` and the system-actor `sweep_deadlines`.
 
 **Entry points:** `../commission.rs`.
 
-**Refs:** DESIGN "Commission" (3276807) · DD 45514754 (composition) · DD 30408741 + 59310081 (changelog) · DD 29130754 (view grants) · ZMVP-88 (file entries streaming seam) · ZMVP-86 (deadline sweep).
+**Refs:** DESIGN "Commission" (3276807) · DD 45514754 (composition) · DD 30408741 + 59310081 (changelog) · DD 29130754 (view grants) · DD 24150017 (unit of work) · ZMVP-88 (file entries streaming seam) · ZMVP-86 (deadline sweep).
+
+## Notes
+- **The closed door.** `require_participant` (in `../commission.rs`) answers a non-participant `NotAMember`, which the drivers render byte-identically to an absent commission — never `403`, which would confirm private work exists on a caller-chosen id. `require_owner` splits three ways: owner passes, a non-owner Participant gets `InsufficientPermissions` (they already know it exists), everyone else gets the same `404`. Every gate in this tree follows it — including `files/download` and `markup`, where a key from another commission answers `FileNotFound`.
+- **Ordering rule.** Authorize before anything observable or written: before a byte of an upload is read, before a no-op is noticed (`status/direction/set`), and before `provision` (`view/grant`, `view/revoke`, `invitations/issue`).
+- **Atomicity.** A state write and the changelog entry recording it share one unit of work, and entries are keyed on a REAL transition — an idempotent no-op writes nothing and appends nothing. Blob bytes cannot ride a Postgres transaction, so `files/upload` writes the blob first and deletes the orphan before refusing.
+- `seq` on a changelog entry is the STORE's ordering key (a `bigserial` in pg): monotonic per stream but not gapless, and never renumbered off a page position.
+- `sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines` and append a system `Late` entry; it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted.
+- The streaming seam is `tokio::io::AsyncRead` in both directions — never a buffered `Vec<u8>` or a driver type.

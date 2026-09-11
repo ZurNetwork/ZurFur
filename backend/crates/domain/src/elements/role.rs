@@ -1,24 +1,16 @@
 //! [`Role`] — a member's rank inside an account, and the rule for who may grant
-//! what.
-//!
-//! DESIGN/Roles is the source of truth. There are four ranks (Owner is highest,
-//! Member lowest); only Owner and Admin may change roles; granting a role is how
-//! a user joins, revoking it is how they leave. The grant rule lives in
-//! [`Role::can_grant`] — the reusable authority seam ZMVP-15/16 are built on.
+//! what. Four ranks, Owner highest; only Owner and Admin may change roles, and
+//! the grant rule itself lives in [`Role::can_grant`]. (DESIGN 2162692)
 
 use std::str::FromStr;
 
-/// A member's rank inside one account.
-///
-/// Ordered Owner < Admin < Manager < Member by the derived [`Ord`], so a *lower*
-/// numeric position means *higher* authority — [`can_grant`](Role::can_grant)
-/// leans on this, so keep the variants in rank order, top to bottom.
-///
-/// References: [`UnknownRole`], [`crate::elements::user_account::UserAccount`],
-/// [`crate::ports::AccountWrites::grant_role`], DESIGN/Roles.
+/// A member's rank inside one account. The derived [`Ord`] runs Owner < Admin <
+/// Manager < Member, so a lower position means higher authority and
+/// [`can_grant`](Role::can_grant) leans on it — **keep the variants in rank
+/// order**.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
-    /// The account's founder/highest authority; never has a parent (DESIGN/Roles).
+    /// The account's founder and highest authority; never has a parent.
     Owner,
     /// May change roles below Admin; cannot mint a peer Admin or an Owner.
     Admin,
@@ -29,8 +21,7 @@ pub enum Role {
 }
 
 impl Role {
-    /// The stored/wire discriminant: `"owner" | "admin" | "manager" | "member"` —
-    /// the one vocabulary list [`FromStr`] parses back.
+    /// The stored discriminant [`FromStr`] parses back.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Owner => "owner",
@@ -51,11 +42,8 @@ impl std::fmt::Display for Role {
     }
 }
 
-/// A stored role discriminant that isn't one of the four known roles.
-///
-/// The error returned by [`Role::from_str`] when a persisted string doesn't map
-/// to a [`Role`] — a schema/data drift signal, not a user input error. Carries
-/// the offending value for diagnostics.
+/// A stored role discriminant outside the four known roles — a schema-drift
+/// signal, not user input; carries the offending value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownRole(pub String);
 
@@ -84,56 +72,26 @@ impl FromStr for Role {
 }
 
 impl Role {
-    /// Whether a member holding `self` (the actor) may grant `target` to another
-    /// member — the reusable role-check seam ZMVP-15 is built to be born at.
-    ///
-    /// The rule is DESIGN/Roles, source of truth:
-    /// - "Only `Owner` and `Admin` may change roles." → the actor must be one of them.
-    /// - The granted role sits *strictly below* the actor's own rank: an Owner grants
-    ///   Admin and below, an Admin grants Manager and below — never a peer Admin (that
-    ///   would let Admins mint Admins) and never Owner (granting Owner is *transfer*,
-    ///   its own seam — "an Owner never has a parent, even when transferred").
-    /// - "`Manager` and `Member` cannot change anyone's role."
-    ///
-    /// Truth table (actor → grantable targets):
-    ///   Owner   → Admin, Manager, Member   (never Owner)
-    ///   Admin   → Manager, Member          (never Admin, never Owner)
-    ///   Manager → nothing
-    ///   Member  → nothing
-    ///
-    /// Not yet enforced (deferred dressing, DESIGN/Roles): the parent/child hierarchy
-    /// tree and demotion limited to one's own subtree.
+    /// Whether a member holding `self` may grant `target` to another member —
+    /// the one authority seam. Only an Owner or Admin grants at all, and only a
+    /// role strictly below their own: granting Owner is transfer, its own seam.
+    /// (DESIGN 2162692)
     pub fn can_grant(&self, target: &Role) -> bool {
-        // Two parts, because the rule isn't pure rank. (1) Only Owner and Admin may
-        // grant at all: a Manager outranks a Member but still grants nothing, so
-        // `target > self` alone would wrongly let a Manager seat a Member. (2) The
-        // granted role must sit strictly below the actor's — with the derived Ord
-        // (Owner < Admin < Manager < Member) "below" is the greater value, hence
-        // `target > self`. Authority therefore rides on the variant order above:
-        // keep it Owner→Member, top to bottom.
+        // Two parts: only Owner/Admin grant at all (a Manager outranks a Member
+        // but grants nothing), and the target must sit strictly below the actor
+        // — with the derived Ord, "below" is the greater value.
         matches!(self, Role::Owner | Role::Admin) && target > self
     }
 }
 
-/// A member's alias for their own role on an account — a free-form label (e.g.
-/// an Owner aliased "Studio Head"), never a second authority axis: it lives on
-/// the *membership* ([`crate::elements::user_account::UserAccount::alias`],
-/// [`crate::elements::account::AccountMembership::alias`]), not on [`Role`]
-/// itself, so it can never influence [`Role`]'s derived [`Ord`] or
-/// [`can_grant`](Role::can_grant). Distinct from a member's *parent* — that is
-/// the inviting member, stored in a separate `account_members.parent` column,
-/// never here.
-///
-/// A custom constructor rather than bare `FromStr`/`TryFrom<String>`:
-/// `RoleAlias::new` trims before validating (`FromStr::from_str` gets that for
-/// free too, since it delegates), and there is no infallible `String` this
-/// could sensibly implement `From` for — every `String` must still clear the
-/// non-empty check.
+/// A member's alias for their own role on an account — a free-form label, never
+/// a second authority axis: it lives on the membership, not on [`Role`], so it
+/// can never influence the derived [`Ord`] or
+/// [`can_grant`](Role::can_grant).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoleAlias(String);
 
-/// A role alias that failed validation — empty (after trimming), the only
-/// rule a free-form label carries.
+/// A role alias that failed validation — empty after trimming.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidRoleAlias;
 
@@ -147,7 +105,7 @@ impl std::error::Error for InvalidRoleAlias {}
 
 impl RoleAlias {
     /// Trims `value` and rejects it if nothing is left. Free-form otherwise —
-    /// no charset or length rule, unlike [`crate::elements::handle::Handle`].
+    /// no charset or length rule.
     pub fn new(value: impl Into<String>) -> Result<Self, InvalidRoleAlias> {
         let trimmed = value.into().trim().to_string();
         if trimmed.is_empty() {
@@ -180,16 +138,13 @@ impl FromStr for RoleAlias {
 mod tests {
     use super::*;
 
-    // The full actor → target matrix for `can_grant`, straight off DESIGN/Roles.
-    // The e2e suite can only sign in the Owner, so the Admin/Manager/Member actor
-    // rows live here — this is where the rule is pinned.
+    // The full actor -> target matrix for `can_grant` — where the rule is
+    // pinned, since the e2e suite can only sign in the Owner.
     #[test]
     fn can_grant_matrix_matches_the_design() {
         let roles = || [Role::Owner, Role::Admin, Role::Manager, Role::Member];
         for actor in roles() {
             for target in roles() {
-                // An actor grants only roles strictly below its own rank, and only
-                // Owner and Admin may grant at all (Manager and Member grant nothing).
                 let expected = match (&actor, &target) {
                     (Role::Owner, Role::Owner) => false,
                     (Role::Owner, _) => true,
@@ -206,9 +161,8 @@ mod tests {
         }
     }
 
-    // The sharpest edges, stated outright: no one grants Owner through this seam
-    // (transfer is its own path), an Admin cannot mint a peer Admin, and the lower
-    // roles grant nothing at all.
+    // The sharpest edges: no one grants Owner through this seam, an Admin
+    // cannot mint a peer Admin, and the lower roles grant nothing.
     #[test]
     fn no_owner_no_peer_admin_no_lower_role_grants() {
         for actor in [Role::Owner, Role::Admin, Role::Manager, Role::Member] {

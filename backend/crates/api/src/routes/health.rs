@@ -1,49 +1,28 @@
-//! The health route group.
-//!
-//! `GET /health` is the one endpoint that intentionally fails when a dependency
-//! is down, so an orchestrator can gate traffic. It carries no auth, changes no
-//! state, and bears no cookie — so [`crate::app`] mounts it top-level, deliberately
-//! *outside* the cookie-surface CSRF layer rather than under it.
+//! The health route group: `GET /health`, the one endpoint that intentionally
+//! fails when a dependency is down. No auth, no cookie; mounted outside the
+//! CSRF layer.
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 
 use crate::AppState;
 
-/// The health route group: just `GET /health`. Kept as its own builder so the
-/// composition root can mount it top-level, alongside (not under) the
-/// cookie-surface CSRF layer — `/health` must answer even a probe that carries
-/// no `Origin` and no session.
+/// The health route group: just `GET /health`, mounted top-level alongside
+/// (not under) the cookie-surface CSRF layer.
 pub(crate) fn health_router() -> Router<AppState> {
     Router::new().route("/health", get(health))
 }
 
-/// `GET /health`'s body: liveness/readiness, `database` and `status` each one of
-/// a fixed pair of tokens (`"up"`/`"down"`, `"ok"`/`"degraded"`) — see [`health`].
-///
-/// Fields are declared alphabetically (`database` before `status`) to match the
-/// key order the retired `json!({ "status": …, "database": … })` literal emitted
-/// — `serde_json`'s `Map` is a `BTreeMap` here (no `preserve_order` feature), so
-/// `json!` always serialized alphabetically regardless of literal order.
+/// `GET /health`'s body — see [`health`]. Fields are declared alphabetically
+/// (`database` before `status`) to match `serde_json`'s `BTreeMap` key order.
 #[derive(Serialize)]
 struct HealthResponse {
     database: &'static str,
     status: &'static str,
 }
 
-/// Liveness/readiness probe (`GET /health`). Reports `200` with the database
-/// `up` when the pool can reach Postgres, `503 degraded` when it can't — the one
-/// endpoint that intentionally fails when a dependency is down, so an
-/// orchestrator can gate traffic. No auth.
-///
-/// Caveats: only the database is probed; a healthy `200` doesn't certify the PDS
-/// or any other adapter. References: CLAUDE.md "Database"; [`adapter_pg::is_reachable`].
-///
-/// ```text
-/// GET /health
-/// → 200 { "database": "up",   "status": "ok"       }
-/// → 503 { "database": "down", "status": "degraded" }
-/// ```
+/// `GET /health` — `200` when Postgres is reachable, `503 degraded` when not.
+/// Only the database is probed; a `200` doesn't certify the PDS or any other adapter.
 async fn health(state: State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     if adapter_pg::is_reachable(&state.pool).await {
         (

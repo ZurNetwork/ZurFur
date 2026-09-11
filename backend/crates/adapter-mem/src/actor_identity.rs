@@ -1,9 +1,7 @@
-//! In-memory fakes for the actor super-table (ZMVP-122, DD `34013187`).
+//! In-memory fakes for the actor super-table, mirroring the pg
+//! `actor_identity` table one field per column.
 //!
-//! The map mirrors the pg `actor_identity` table — a [`StoredActorIdentity`]
-//! parts struct per id, one field per column (kind, the optional did, state,
-//! handle, first_seen). No removal path exists anywhere in this module:
-//! identity rows are immortal.
+//! No removal path exists anywhere in this module: identity rows are immortal.
 
 use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
@@ -13,25 +11,20 @@ use domain::ports::{ActorIdentityStore, ActorIdentityWrites};
 
 use crate::MemBackend;
 
-/// The stored parts of one actor identity, keyed by its id in the backend map —
-/// growing a field per slice exactly as the pg table grows columns. `PartialEq`
-/// lets [`crate::merge_map`] diff a unit's staged value against its pristine
-/// base snapshot to tell an untouched row apart from one this unit actually
-/// wrote.
+/// The stored parts of one actor identity, keyed by its id in the backend map.
+/// `PartialEq` lets `crate::merge_map` tell an untouched row from one this
+/// unit wrote.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredActorIdentity {
-    /// What kind of actor the row is (slice 2).
+    /// What kind of actor the row is.
     pub kind: ActorKind,
-    /// The actor's DID, when it has one (slice 3) — `None` is the designed
-    /// DID-less state (Characters), and uniqueness binds only present DIDs.
+    /// The actor's DID, when it has one; uniqueness binds only present DIDs.
     pub did: Option<Did>,
-    /// Liveness (slice 4) — born Active; transitions are ZMVP-125.
+    /// Liveness; rows are born Active.
     pub state: ActorState,
-    /// The refreshable display-handle cache (slice 5) — foreign data, plain
-    /// string, born `None`.
+    /// The refreshable display-handle cache; foreign data, born `None`.
     pub handle: Option<String>,
-    /// When the Index first saw the actor (slice 7) — immutable; a re-intern
-    /// keeps the original stamp.
+    /// When the Index first saw the actor; immutable across a re-intern.
     pub first_seen: DateTimeUtc,
 }
 
@@ -74,9 +67,8 @@ impl ActorIdentityStore for MemActorIdentityStore {
     }
 }
 
-/// In-memory [`ActorIdentityWrites`] view — vended only by the mem
-/// [`UnitOfWork`](domain::ports::UnitOfWork) over its staged snapshot, so an
-/// uncommitted create is discarded exactly as pg rolls back.
+/// In-memory [`ActorIdentityWrites`] view, vended only by the mem
+/// [`UnitOfWork`](domain::ports::UnitOfWork) over its staged snapshot.
 pub struct MemActorIdentityWrites(pub(crate) MemBackend);
 
 #[async_trait]
@@ -87,14 +79,12 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             identity.did.is_none(),
             "create is the DID-less path; intern DID-bearing actors instead"
         );
-        // Born active by invariant (DD 34013187 decisions 3/5): transitions
-        // are ZMVP-125's machinery and never pass through creation.
+        // Born active by invariant: transitions never pass through creation.
         anyhow::ensure!(
             identity.state == ActorState::Active,
             "create only persists born-active identities"
         );
-        // Born uncached by invariant: the handle is a display cache filled
-        // via cache_handle, never supplied at creation.
+        // Born uncached: the handle is filled via cache_handle only.
         anyhow::ensure!(
             identity.handle.is_none(),
             "create only persists born-uncached identities; fill via cache_handle"
@@ -104,9 +94,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             .actor_identities
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
-        // Check-then-insert, NOT insert-then-check: the pg PK rejects a
-        // duplicate without touching the existing row, and the mem mirror must
-        // not clobber the stored value on the error path either.
+        // Check-then-insert, so the error path never clobbers the stored row.
         if identities.contains_key(&identity.id) {
             // Mirror the pg PK: creating the same id twice is a caller bug.
             anyhow::bail!("actor identity already exists: {}", *identity.id);
@@ -135,9 +123,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             .actor_identities
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
-        // The mem mirror of ON CONFLICT (did): an existing DID wins as-is —
-        // its stored kind is not rewritten (ZMVP-126 refines) and its
-        // first_seen keeps the original sighting.
+        // The mem mirror of ON CONFLICT (did): an existing DID wins as-is.
         if let Some((id, stored)) = identities
             .iter()
             .find(|(_, stored)| stored.did.as_deref() == Some(&**did))

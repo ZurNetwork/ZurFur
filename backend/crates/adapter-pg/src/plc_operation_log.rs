@@ -1,17 +1,9 @@
-//! [`PgPlcOperationLog`] — PostgreSQL append-only log of the `did:plc` operations
-//! Zurfur has submitted for each minted account identity.
-//!
-//! Implements the [`PlcOperationLog`] port over the `plc_operations` table. A DID is
-//! a chain of operations; every non-genesis operation references the CID of the DID's
-//! most recent operation as its `prev`. Because v1 does not fetch the chain back from
-//! the (gated) canonical directory, this log is Zurfur's own record — used to chain
-//! the next operation and to audit what it published (ZMVP-34, DD `23003138`; reused
-//! by ZMVP-50/51). Pool-backed and single-row like [`crate::PgKeyStore`]: it is
-//! written during minting (genesis) and hard-delete (tombstone), both outside the
-//! account [`UnitOfWork`](domain::ports::UnitOfWork).
-//!
-//! The SQL lives in `queries/plc/`; the typed functions are generated against
-//! the migrated schema (see [`crate::queries`]).
+//! [`PgPlcOperationLog`] — PostgreSQL append-only log of the `did:plc`
+//! operations submitted for each minted account identity, over
+//! `plc_operations`. Every non-genesis operation references the CID of the
+//! prior one as `prev`; this is Zurfur's own chain record (v1 doesn't fetch it
+//! back from the canonical directory). Pool-backed, outside the account
+//! [`UnitOfWork`](domain::ports::UnitOfWork), like [`crate::PgKeyStore`].
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -38,9 +30,8 @@ impl PgPlcOperationLog {
 
 #[async_trait]
 impl PlcOperationLog for PgPlcOperationLog {
-    /// Insert one operation row. `operation_json` (public material only) is stored as
-    /// `jsonb`; `seq` and `created_at` order the chain. The `cid` unique index makes a
-    /// duplicate append a constraint error, surfaced to the caller.
+    /// Inserts one operation row as `jsonb`; `seq`/`created_at` order the
+    /// chain. The `cid` unique index makes a duplicate append a constraint error.
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
         // The record carries the op as JSON text (`PlcOperationRecord.operation_json`
         // is a `String` by contract); parse it here so it lands as native `jsonb`.
@@ -63,10 +54,8 @@ impl PlcOperationLog for PgPlcOperationLog {
         Ok(sql::latest_cid(&self.pool, did.as_str()).await?)
     }
 
-    /// The DID's highest-`seq` (most recent) operation as a full record, or `None`.
-    /// `operation` is stored as `jsonb`; it is re-serialized to the JSON text the
-    /// record carries. Used by an update to carry the prior op's public fields
-    /// forward without touching custody's non-signing private keys (F2).
+    /// The DID's most recent operation as a full record, or `None`. `operation`
+    /// is re-serialized from `jsonb` to the JSON text the record carries.
     async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
         let row = sql::latest_op(&self.pool, did.as_str()).await?;
 

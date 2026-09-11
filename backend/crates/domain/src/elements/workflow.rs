@@ -1,11 +1,10 @@
-//! Workflows (a.k.a. Views) — ways to organize commissions. **Stub: empty.**
+//! Workflows — an account's boards: ordered columns of commission cards.
+//! (DESIGN 9895957)
 //!
-//! A Workflow organizes [`crate::elements::commission::Commission`]s by layout
-//! or algorithm (DESIGN/Workflow). Under the Plugin-First Architecture a Workflow
-//! knows about commissions, never the reverse; presentation lives in the
-//! frontend, composition in the backend. Underneath, every workflow is the same
-//! primitive: an ordered selection over commissions. Destined for the `workflow`
-//! per-domain crate once built out — nothing is modelled here yet.
+//! A Workflow knows about commissions, never the reverse. Columns and cards are
+//! ordered by [`Position`], a base-62 fractional key compared bytewise, so an
+//! insert mints a key between its neighbours and nothing is renumbered — a store
+//! must order it bytewise too (`text COLLATE "C"`).
 
 use std::{ops::Deref, str::FromStr};
 

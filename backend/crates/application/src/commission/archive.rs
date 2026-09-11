@@ -16,14 +16,10 @@ pub struct Command {
 pub struct Outcome;
 
 impl Commissions<'_> {
-    /// Archive the commission — it leaves the active views; the record survives.
-    ///
-    /// Owner-only through the shared [`require_owner`] gate, so a
-    /// non-participant gets the uniform not-found. Archiving an
-    /// already-archived commission is an idempotent no-op: the flag write and
-    /// the `archived` entry land in one unit of work, and the entry is keyed on
-    /// the store reporting a *real* transition — a record of nothing changing
-    /// would be noise, not audit.
+    /// Archive the commission — it leaves the active views, the record
+    /// survives. Owner-only through `require_owner`, so a non-participant
+    /// gets the uniform not-found. Archiving an already-archived commission is
+    /// a no-op; the flag write and its entry land in one unit of work.
     pub async fn archive(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Outcome> {
         let ports = self.ports();
         let Command {

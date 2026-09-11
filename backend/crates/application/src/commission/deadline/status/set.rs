@@ -20,11 +20,8 @@ pub struct Output;
 
 impl Status<'_> {
     /// Flag the commission as slipping — the manual Participant act.
-    ///
-    /// `Delayed` is the only value a hand may set: `Late` is the system's word,
-    /// written by the deadline sweep, and asking for it is a malformed request
-    /// rather than a permission problem. Re-flagging an already-Delayed
-    /// commission is an idempotent no-op.
+    /// `Delayed` is the only value a hand may set; asking for `Late` is a
+    /// malformed request, not a permission problem. Re-flagging is a no-op.
     pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
         let Command {
             actor_id,

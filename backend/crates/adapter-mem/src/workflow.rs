@@ -1,14 +1,8 @@
-//! In-memory workflow ports (DESIGN/Workflow `9895957`).
+//! In-memory workflow ports: the mem mirror of `adapter-pg`'s three board
+//! tables, with a column owning its ordered card list.
 //!
-//! The mem mirror of `adapter-pg`'s three board tables: [`StoredWorkflow`] for
-//! `workflow`, [`StoredColumn`] for `workflow_column` **and** its cards
-//! (`workflow_column_commission` — a column owns its ordered card list here,
-//! exactly as `ColumnWrites::set_commissions` hands it over).
-//!
-//! **Placement lives here, and only here.** A commission's presence on an
-//! account's board IS its placement (Ownership Separation DD `29130754`
-//! Decision 6); the commission side stores none of it and never learns it
-//! exists.
+//! Placement lives here and only here — a commission's presence on an account's
+//! board IS its placement; the commission side stores none of it. (DD 29130754)
 
 use async_trait::async_trait;
 use domain::{
@@ -24,9 +18,8 @@ use domain::{
 
 use crate::MemBackend;
 
-/// One board as the mem backend keeps it — the mirror of a pg `workflow` row.
-/// Stored as parts because [`Workflow`] owns its columns, which live in their
-/// own map (as they do in their own table).
+/// One board as the mem backend keeps it. Stored as parts because [`Workflow`]
+/// owns its columns, which live in their own map.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredWorkflow {
     pub(crate) account_id: AccountId,
@@ -34,9 +27,8 @@ pub(crate) struct StoredWorkflow {
     pub(crate) visibility: Visibility,
 }
 
-/// One column as the mem backend keeps it — the mirror of a pg
-/// `workflow_column` row **plus** its `workflow_column_commission` cards, which
-/// the domain's [`Column`] carries as one ordered `Vec`.
+/// One column as the mem backend keeps it — a `workflow_column` row plus its
+/// cards, which the domain's [`Column`] carries as one ordered `Vec`.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredColumn {
     pub(crate) workflow_id: WorkflowId,
@@ -47,10 +39,8 @@ pub(crate) struct StoredColumn {
 }
 
 impl StoredColumn {
-    /// Rebuild the domain [`Column`] from the stored parts, through
-    /// `Column::loaded` — so the mem adapter refuses the same malformed state
-    /// the pg one does (a card listed twice) rather than handing back a column
-    /// the domain would never have produced.
+    /// Rebuild the domain [`Column`] through `Column::loaded`, so malformed
+    /// state (a card listed twice) is refused here as it is in pg.
     fn rebuild(&self, id: ColumnId) -> anyhow::Result<Column> {
         Column::loaded(
             id,
@@ -64,8 +54,7 @@ impl StoredColumn {
     }
 }
 
-/// Every column of one board, in board order — the mem mirror of
-/// `queries/workflow/columns.sql`'s `ORDER BY position`.
+/// Every column of one board, in board order.
 fn columns_of(backend: &MemBackend, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
     let columns = backend
         .columns
@@ -108,15 +97,14 @@ fn workflow_of(backend: &MemBackend, id: &WorkflowId) -> anyhow::Result<Option<W
     Ok(Some(workflow))
 }
 
-/// In-memory [`WorkflowWrites`] surface over the unit's **staged** backend, so
-/// board mutations land only when the unit commits.
+/// In-memory [`WorkflowWrites`] over the unit's staged backend, so board
+/// mutations land only on commit.
 pub struct MemWorkflowWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl WorkflowWrites for MemWorkflowWrites {
-    /// Mint one board for an account. The id and the closed-door default
-    /// visibility are the domain's (`Workflow::new`), matching the pg adapter:
-    /// a board is born `Private` and widened deliberately.
+    /// Mint one board for an account; the id and the `Private` default come
+    /// from `Workflow::new`.
     async fn create(
         &mut self,
         name: &WorkflowName,
@@ -138,9 +126,8 @@ impl WorkflowWrites for MemWorkflowWrites {
         Ok(workflow)
     }
 
-    /// Delete a board and its columns — the mem mirror of the pg `ON DELETE
-    /// CASCADE`. Never the commissions those cards pointed at. Deleting an
-    /// absent board is a no-op.
+    /// Delete a board and its columns, never the commissions their cards
+    /// pointed at. Deleting an absent board is a no-op.
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
         self.0
             .workflows
@@ -157,10 +144,8 @@ impl WorkflowWrites for MemWorkflowWrites {
         Ok(())
     }
 
-    /// Persist the board's column order as the domain holds it — an upsert per
-    /// column, mirroring `queries/workflow/upsert_column.sql`, because
-    /// `Columns::add` mints a column into the in-memory board and hands the
-    /// whole board over.
+    /// Persist the board's column order as the domain holds it: one upsert per
+    /// column, since the caller hands the whole board over.
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -179,9 +164,8 @@ impl WorkflowWrites for MemWorkflowWrites {
                 name: column.name.clone(),
                 visibility: column.visibility.clone(),
                 position: column.position.clone(),
-                // The board write carries structure, never cards: a column's
-                // card list is `set_commissions`'s to move, so an upsert here
-                // must preserve whatever the column already holds.
+                // The board write carries structure, never cards — an upsert
+                // preserves whatever the column already holds.
                 commissions: cards,
             };
             columns.insert(column.id.clone(), stored);
@@ -190,7 +174,7 @@ impl WorkflowWrites for MemWorkflowWrites {
     }
 }
 
-/// In-memory [`WorkflowStore`] read surface over the **shared** [`MemBackend`].
+/// In-memory [`WorkflowStore`] read surface over the shared [`MemBackend`].
 pub struct MemWorkflowStore(pub(crate) MemBackend);
 
 #[async_trait]
@@ -200,9 +184,7 @@ impl WorkflowStore for MemWorkflowStore {
         workflow_of(&self.0, workflow_id)
     }
 
-    /// The account a board belongs to. An absent board is an `Err`, matching the
-    /// pg adapter: the caller asked whose board this is about a board it
-    /// believes exists.
+    /// The account a board belongs to; an absent board is an `Err`.
     async fn owning_account_of(&self, workflow_id: &WorkflowId) -> anyhow::Result<AccountId> {
         self.0
             .workflows
@@ -219,13 +201,13 @@ impl WorkflowStore for MemWorkflowStore {
     }
 }
 
-/// In-memory [`ColumnWrites`] surface over the unit's **staged** backend.
+/// In-memory [`ColumnWrites`] surface over the unit's staged backend.
 pub struct MemColumnWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl ColumnWrites for MemColumnWrites {
-    /// Delete one column and, with it, its cards — never the commissions. The
-    /// caller refuses a column that still holds cards, so this is a backstop.
+    /// Delete one column and its cards, never the commissions. A backstop —
+    /// the caller already refuses a column that still holds cards.
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
         self.0
             .columns
@@ -235,9 +217,8 @@ impl ColumnWrites for MemColumnWrites {
         Ok(())
     }
 
-    /// Persist the column's card list as the domain holds it — a wholesale
-    /// replacement, mirroring the pg clear-then-re-place, because
-    /// `Column.commissions` is an ordered `Vec` with no per-card key.
+    /// Persist the column's card list as the domain holds it: a wholesale
+    /// replacement, since the list has no per-card key.
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -253,8 +234,7 @@ impl ColumnWrites for MemColumnWrites {
         Ok(())
     }
 
-    /// Rename one column. The board-level duplicate-name check is
-    /// `Workflow::rename_column`'s, already made before this is reached.
+    /// Rename one column; the duplicate-name check happens before this.
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -271,7 +251,7 @@ impl ColumnWrites for MemColumnWrites {
     }
 }
 
-/// In-memory [`ColumnStore`] read surface over the **shared** [`MemBackend`].
+/// In-memory [`ColumnStore`] read surface over the shared [`MemBackend`].
 pub struct MemColumnStore(pub(crate) MemBackend);
 
 #[async_trait]
@@ -301,9 +281,8 @@ impl ColumnStore for MemColumnStore {
             .is_some_and(|stored| !stored.commissions.is_empty()))
     }
 
-    /// Which column of `workflow_id` holds `commission_id`, or `None`.
-    /// Deliberately scoped by board — a commission sits in at most one column
-    /// per board, and on as many boards as care to position it.
+    /// Which column of `workflow_id` holds `commission_id`, or `None`. Scoped
+    /// by board: a commission sits in at most one column per board.
     async fn find_column(
         &self,
         workflow_id: &WorkflowId,
@@ -324,8 +303,8 @@ impl ColumnStore for MemColumnStore {
             .transpose()
     }
 
-    /// The account that owns the board this column sits on. An absent column is
-    /// an `Err`, matching [`WorkflowStore::owning_account_of`].
+    /// The account that owns the board this column sits on; an absent column
+    /// is an `Err`.
     async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<AccountId> {
         let workflow_id = {
             let columns = self
@@ -344,8 +323,7 @@ impl ColumnStore for MemColumnStore {
             .await
     }
 
-    /// The whole board a column sits on. An absent column — or one whose board
-    /// has gone — is an `Err`.
+    /// The whole board a column sits on; an absent column or board is an `Err`.
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow> {
         let workflow_id = {
             let columns = self

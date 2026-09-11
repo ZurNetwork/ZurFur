@@ -1,10 +1,7 @@
-//! PostgreSQL adapter for the actor super-table (ZMVP-122, DD `34013187`).
-//!
-//! `create` for DID-less actors (Characters), the race-safe `intern` upsert
-//! for DID-bearing ones, reads by id and by DID, and the `cache_handle`
-//! display-cache fill. The module deliberately exposes **no delete**: identity
-//! rows are immortal — liveness is a state (whose transitions are ZMVP-125),
-//! never a removal.
+//! PostgreSQL adapter for the actor super-table (DD 34013187): `create` for
+//! DID-less actors, race-safe `intern` for DID-bearing ones, reads, and the
+//! `cache_handle` fill. No delete — identity rows are immortal; liveness is a
+//! state, never a removal.
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -50,14 +47,12 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             identity.did.is_none(),
             "create is the DID-less path; intern DID-bearing actors instead"
         );
-        // Born active by invariant (DD 34013187 decisions 3/5): transitions
-        // are ZMVP-125's machinery and never pass through creation.
+        // Born active by invariant; transitions never pass through creation.
         anyhow::ensure!(
             identity.state == ActorState::Active,
             "create only persists born-active identities"
         );
-        // Born uncached by invariant: the handle is a display cache filled
-        // via cache_handle, never supplied at creation.
+        // Born uncached; the handle is a display cache filled via cache_handle.
         anyhow::ensure!(
             identity.handle.is_none(),
             "create only persists born-uncached identities; fill via cache_handle"
@@ -79,16 +74,14 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         kind: ActorKind,
         now: DateTimeUtc,
     ) -> anyhow::Result<ActorIdentity> {
-        // A freshly minted candidate loses to an existing DID at the unique
-        // index; RETURNING yields whichever row survived (DD decision 6) —
-        // including its ORIGINAL first_seen (the upsert never restamps).
+        // A freshly minted candidate loses to an existing DID at the unique index;
+        // RETURNING yields whichever row survived, with its original first_seen.
         let candidate = uuid::Uuid::now_v7();
         let row = sql::intern(
             &mut *self.conn,
             candidate,
             kind.as_str(),
-            // The inferred contract widens to Option (the column is nullable);
-            // intern is the DID-bearing path, so the value is always present.
+            // Always present: intern is the DID-bearing path.
             Some(did.as_str()),
             ActorState::Active.as_str(),
             now,

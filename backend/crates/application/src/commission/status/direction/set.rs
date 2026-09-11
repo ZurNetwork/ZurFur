@@ -27,9 +27,8 @@ impl Direction<'_> {
             commission_id,
             direction,
         } = cmd;
-        // Authorize first, *then* notice the no-op: answering "already at that
-        // value" before the membership check would hand an outsider a different
-        // reply than the closed door gives, which is an existence oracle.
+        // Authorize first, then notice the no-op: answering early would hand an
+        // outsider a different reply than the closed door — an existence oracle.
         let commission = require_participant(ports, &commission_id, &user_id).await?;
 
         if commission.direction_status == direction {

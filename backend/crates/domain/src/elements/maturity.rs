@@ -1,33 +1,16 @@
-//! The platform-wide **maturity rating** primitive (ZMVP-31; Maturity
-//! Vocabulary DD `29982722`).
+//! The platform-wide maturity rating primitive: the atproto self-label
+//! vocabulary adopted as Zurfur's own — Safe / Suggestive / Nudity / Adult
+//! ([`MaturityRating`]) plus an orthogonal Graphic flag, together one
+//! [`Maturity`] value. (DD 29982722)
 //!
-//! Zurfur adopts the atproto self-label vocabulary as its own maturity system:
-//! the axis is **Safe / Suggestive / Nudity / Adult** ([`MaturityRating`]),
-//! plus an orthogonal **Graphic** flag — gore is not a sexual-maturity
-//! question (DD Decision 2). Together they form one [`Maturity`] value. The DD
-//! scopes this vocabulary to *everywhere* maturity lives — commissions,
-//! Products, Gallery Posts, any future rated surface (Decision 3) — which is
-//! why the primitive lives here as its own element rather than inside any one
-//! of them.
-//!
-//! There is **no mapping layer**: the network self-label each rating emits is
-//! *derived* from it — never chosen separately (DD Decisions 1 and 4;
-//! [`MaturityRating::self_label`]). For Class B surfaces like commissions the
-//! rating never leaves the Index at all; the label derivation exists for the
-//! publish paths (Gallery Posts and their
-//! [`SelfLabels`](crate::elements::public_record::SelfLabels) wire shape) to
-//! consume when their epics land.
+//! There is no mapping layer: the network self-label a rating emits is derived
+//! from it, never chosen separately.
 
 use std::str::FromStr;
 
-/// The four-tier maturity axis — the atproto self-label vocabulary adopted as
-/// Zurfur's own (Maturity Vocabulary DD `29982722`, Decision 1; supersedes the
-/// pre-DD Safe/Questionable/Explicit placeholder).
-///
-/// The rating is chosen per individual work and enforced **server-side**: a
-/// value reaches storage only through this enum (its `TryFrom<&str>` at the
-/// boundary), so out-of-vocabulary ratings are unrepresentable past it
-/// (ZMVP-31 "values from the enum only").
+/// The four-tier maturity axis. Chosen per individual work and enforced
+/// server-side: a value reaches storage only through this enum, so an
+/// out-of-vocabulary rating is unrepresentable past the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaturityRating {
     /// No maturity concern; emits no network label.
@@ -41,16 +24,12 @@ pub enum MaturityRating {
 }
 
 impl MaturityRating {
-    /// Every rating, in axis order — the closed vocabulary. Lets tests prove
-    /// the token mapping round-trips and stays collision-free, and gives UI
-    /// layers the dropdown order for free.
+    /// Every rating, in axis order — the closed vocabulary.
     pub const ALL: &[MaturityRating] = &[Self::Safe, Self::Suggestive, Self::Nudity, Self::Adult];
 
-    /// The stable, lowercase wire/storage token for this rating — the value
-    /// the pg adapter writes to the `commission.maturity` column and the API
-    /// accepts. Stable across releases (it is persisted), so renaming a token
-    /// is a migration, not a free edit. These are the **Zurfur rating names**;
-    /// the network label each one emits is [`self_label`](Self::self_label).
+    /// The stable, lowercase token written to `commission.maturity` — the
+    /// Zurfur rating name, not the network label. Persisted, so renaming one is
+    /// a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -60,11 +39,8 @@ impl MaturityRating {
         }
     }
 
-    /// The atproto self-label this rating emits when content carrying it is
-    /// published — the DD's Decision-1 axis table, verbatim: Safe emits *no*
-    /// label (the protocol norm: an empty label set means safe), the rest map
-    /// onto the global self-label values. Derived, never chosen separately
-    /// (Decision 4).
+    /// The atproto self-label this rating emits at publish time. Safe emits no
+    /// label — an empty label set means safe. Derived, never chosen separately.
     pub fn self_label(&self) -> Option<&'static str> {
         match self {
             Self::Safe => None,
@@ -78,9 +54,7 @@ impl MaturityRating {
 /// Why a token was rejected as a [`MaturityRating`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum MaturityRatingError {
-    /// The token is outside the four-value vocabulary. Example: `"explicit"`
-    /// (the superseded pre-DD name) or `"porn"` (a derived *label*, never a
-    /// rating).
+    /// The token is outside the four-value vocabulary.
     UnknownRating,
 }
 
@@ -99,14 +73,8 @@ impl std::error::Error for MaturityRatingError {}
 impl TryFrom<&str> for MaturityRating {
     type Error = MaturityRatingError;
 
-    /// Resolve a stored/submitted token back to its rating — an explicit `match`
-    /// on the closed vocabulary, the mirror of [`as_str`](Self::as_str) and the
-    /// same shape as [`LifecycleStep`] / [`Visibility`]. A token outside the four
-    /// values is [`UnknownRating`](MaturityRatingError::UnknownRating), never a
-    /// silent default.
-    ///
-    /// [`LifecycleStep`]: crate::elements::commission::LifecycleStep
-    /// [`Visibility`]: crate::elements::commission::Visibility
+    /// Resolve a stored or submitted token back to its rating. A token outside
+    /// the four values is an error, never a silent default.
     fn try_from(token: &str) -> Result<Self, Self::Error> {
         Ok(match token {
             "safe" => Self::Safe,
@@ -143,15 +111,10 @@ impl FromStr for MaturityRating {
     }
 }
 
-/// A work's complete maturity posture: the four-tier [`MaturityRating`] plus
-/// the orthogonal **Graphic** flag (Maturity Vocabulary DD `29982722`,
-/// Decision 2 — "gore is not a sexual-maturity question", so it rides
-/// alongside *any* rating rather than being a fifth tier).
-///
-/// The two halves are one value by design: a work is either unrated
-/// (`Option<Maturity>` = `None` — legal only while nothing outside its
-/// participants can see it) or carries both. A graphic flag without a rating
-/// is unrepresentable.
+/// A work's complete maturity posture: the [`MaturityRating`] plus the
+/// orthogonal Graphic flag, which rides alongside any rating rather than being a
+/// fifth tier. One value by design — a work is either unrated or carries both,
+/// so a graphic flag without a rating is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Maturity {
     /// The four-tier axis value.
@@ -161,16 +124,13 @@ pub struct Maturity {
 }
 
 impl Maturity {
-    /// The self-label the Graphic flag emits (DD Decision 2: Graphic →
-    /// `graphic-media`).
+    /// The self-label the Graphic flag emits.
     pub const GRAPHIC_LABEL: &'static str = "graphic-media";
 
-    /// Every atproto self-label this posture emits at publish time — the
-    /// rating's [`self_label`](MaturityRating::self_label) plus
-    /// [`GRAPHIC_LABEL`](Self::GRAPHIC_LABEL) when graphic. Empty = Safe and
-    /// not graphic (the protocol's empty-set norm). Publish paths wrap these
-    /// into the [`SelfLabels`](crate::elements::public_record::SelfLabels)
-    /// wire shape; commissions (Class B) never do.
+    /// Every atproto self-label this posture emits at publish time. Empty
+    /// means Safe and not graphic. Publish paths wrap these into
+    /// [`SelfLabels`](crate::elements::public_record::SelfLabels); commissions
+    /// never do.
     pub fn self_labels(&self) -> Vec<&'static str> {
         let mut labels: Vec<&'static str> = self.rating.self_label().into_iter().collect();
         if self.graphic {
@@ -186,8 +146,7 @@ mod tests {
 
     use super::*;
 
-    // The storage tokens are a closed, collision-free vocabulary that
-    // round-trips — the same contract every persisted enum here carries.
+    // The storage tokens round-trip and never collide.
     #[test]
     fn rating_tokens_round_trip_and_never_collide() {
         let mut seen = BTreeSet::new();
@@ -202,10 +161,8 @@ mod tests {
         }
     }
 
-    // Server-side enforcement: only the enum's own tokens parse. The
-    // superseded pre-DD vocabulary (questionable/explicit), case variants,
-    // and the *label* values are all refused — a rating is chosen as a
-    // rating, never smuggled in as its derived label.
+    // Only the enum's own tokens parse — case variants and the derived label
+    // values are all refused.
     #[test]
     fn out_of_vocabulary_tokens_do_not_parse() {
         for bad in [
@@ -225,9 +182,8 @@ mod tests {
         }
     }
 
-    // The DD's Decision-1 axis table, verbatim: Safe emits none, Suggestive →
-    // sexual, Nudity → nudity, Adult → porn; Graphic rides alongside any
-    // rating as graphic-media (Decision 2).
+    // The axis table: Safe emits none, Suggestive -> sexual, Nudity -> nudity,
+    // Adult -> porn; Graphic rides alongside any rating.
     #[test]
     fn self_labels_follow_the_dd_axis_table() {
         assert_eq!(MaturityRating::Safe.self_label(), None);

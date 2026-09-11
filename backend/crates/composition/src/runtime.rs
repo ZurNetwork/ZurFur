@@ -1,8 +1,5 @@
 //! The [`Runtime`]: every live port behind one `Clone`-able bag, plus a
 //! convenience over the application layer's transaction orchestrator.
-//!
-//! Moved from `api::AppState` (ZMVP-200). `api` re-exports it as `AppState`
-//! for its handlers; `cli` drives it directly.
 
 use std::sync::Arc;
 
@@ -17,116 +14,68 @@ use fluent_uri::Uri;
 use crate::{Config, ensure_custody_hardened};
 
 /// The composition root's bag of dependencies — every live port behind an
-/// `Arc<dyn Trait>`. `api` hands it to every handler via axum's `State`
-/// extractor (re-exported there as `AppState`); `cli` holds one per process. It is `Clone` (the
-/// pool and every port are cheaply cloneable, behind [`PgPool`]/[`Arc`]), so axum
-/// can hand each request its own copy.
-///
-/// Each port is an `Arc<dyn Trait>` precisely so the wiring picks the live
-/// adapter once, in `main`, and the handlers stay ignorant of it: pg/atproto in
-/// production, the in-process fakes (mem + a fake PDS) in the e2e tests. Adding a
-/// capability is adding a field here plus a line in `main` — never a handler
-/// rewrite.
-///
-/// References: DESIGN "Domains and Applications"; [`Runtime::connect`].
+/// `Arc<dyn Trait>`, so the live adapter is picked once here and drivers stay
+/// ignorant of it. `Clone` is cheap, so each request may hold its own copy.
 #[derive(Clone)]
 pub struct Runtime {
-    /// The resolved runtime [`Config`]. Kept whole so handlers and `main` read
-    /// the same values (e.g. cookie security keys off [`Config::env`]).
+    /// The resolved runtime [`Config`], kept whole.
     pub config: Config,
-    /// The Postgres connection pool. Shared directly (not behind a port) because
-    /// it backs both the adapters built over it and the `health` probe.
+    /// The Postgres connection pool, shared directly because the `health` probe
+    /// reads it as well as the adapters built over it.
     pub pool: PgPool,
-    /// The [`Authenticator`] port: drives the OAuth handshake with a visitor's
-    /// PDS — `start` yields the authorization URL, `complete` exchanges the
-    /// callback for a DID. A trait object so the composition root chooses the
-    /// live adapter (atproto's `AtprotoAuthenticator` in `main`, a fake PDS in
-    /// e2e tests). Used by the `signin` and `signin_callback` handlers.
+    /// The OAuth handshake with a visitor's PDS: `start` yields the
+    /// authorization URL, `complete` exchanges the callback for a DID.
     pub auth: Arc<dyn Authenticator>,
-    /// The [`UserStore`] read port: resolves a recognized visitor by id
-    /// (`find`, the session-resolution path) or DID (`find_by_did`), off the pool.
-    /// *Recognition* (`provision`) is a write and lives on the
-    /// [`UnitOfWork`](domain::ports::UnitOfWork) vended by [`database`](Runtime::database).
-    /// pg in `main`, mem in tests.
+    /// User reads by id or DID. `provision` is a write and lives on the
+    /// [`UnitOfWork`](domain::ports::UnitOfWork).
     pub users: Arc<dyn UserStore>,
-    /// The [`ProfileSource`] port: reads public profiles from the PDS. atproto
-    /// in `main`, a fake in tests. A failure here degrades the `me` page to the
+    /// Public profiles read from the PDS. A failure degrades `me` to the bare
     /// DID rather than erroring.
     pub profile_source: Arc<dyn ProfileSource>,
-    /// The [`ProfileCache`] port: private read-through cache fronting
-    /// [`profile_source`](Runtime::profile_source). Both `get` and the best-effort
-    /// `put` are pool-backed — the cache fill is a documented exception to the Unit
-    /// of Work (a read-path write with no transactional invariant; DD `24150017`).
-    /// pg in `main` (entries expire after an hour, set in `main`), mem in tests.
-    /// See `resolve_profile`.
+    /// Read-through cache fronting [`profile_source`](Runtime::profile_source).
+    /// Pool-backed both ways — a documented exception to the unit of work, the
+    /// fill carrying no transactional invariant. (DD 24150017)
     pub profile_cache: Arc<dyn ProfileCache>,
-    /// The [`AccountStore`] read port: account/membership/invitation reads
-    /// (`find`, `role_of`, `find_pending_invitation`, `find_invitation`) off the
-    /// pool. Every account *write* lives on the [`UnitOfWork`](domain::ports::UnitOfWork)
-    /// vended by [`database`](Runtime::database). pg in `main`, mem in tests.
+    /// Account, membership and invitation reads; every account write lives on
+    /// the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub accounts: Arc<dyn AccountStore>,
-    /// The [`CommissionStore`] read port (ZMVP-87): the canonical commission
-    /// reads — `find`, and the `is_participant` predicate every "a Participant
-    /// does X" endpoint authorizes through (owner-arm-only until ZMVP-79 adds
-    /// the seated arm). Commission *writes* live on the
-    /// [`UnitOfWork`](domain::ports::UnitOfWork) vended by
-    /// [`database`](Runtime::database). pg in `main`, mem in tests.
+    /// The canonical commission reads, including the `is_participant` predicate
+    /// every commission act authorizes through.
     pub commissions: Arc<dyn CommissionStore>,
-    /// The [`ChangelogStore`] read port (ZMVP-87): the ordered, participant-only
-    /// changelog read. The *append* is a [`UnitOfWork`](domain::ports::UnitOfWork)
-    /// view (`uow.changelog()`) — entries commit atomically with the domain
-    /// writes they record (Changelog DD D4). pg in `main`, mem in tests.
+    /// The ordered, participant-only changelog read. The append is a
+    /// [`UnitOfWork`](domain::ports::UnitOfWork) view, so entries commit
+    /// atomically with the writes they record.
     pub changelog: Arc<dyn ChangelogStore>,
-    /// The [`WorkflowStore`] read port (DESIGN/Workflow `9895957`): an account's
-    /// boards and where each card sits on them. The mutations are a
-    /// [`UnitOfWork`](domain::ports::UnitOfWork) view (`uow.workflows()`), since
-    /// moving a card rewrites the neighbours it displaces. pg in `main`, mem in
-    /// tests.
+    /// An account's boards and where each card sits on them. Mutations are a
+    /// [`UnitOfWork`](domain::ports::UnitOfWork) view, since moving a card
+    /// rewrites the neighbours it displaces.
     pub workflows: Arc<dyn WorkflowStore>,
-    /// The [`ColumnStore`] read port: a board's columns — the Lists of
-    /// DESIGN/Workflow. Separate from [`workflows`](Runtime::workflows) because
-    /// a column carries its own id and visibility; their *order* lives on the
-    /// workflow. pg in `main`, mem in tests.
+    /// A board's columns. Separate from [`workflows`](Runtime::workflows)
+    /// because a column carries its own id and visibility; their order lives on
+    /// the workflow.
     pub columns: Arc<dyn ColumnStore>,
-    /// The [`FileStore`] port (ZMVP-88): the private blob store behind a commission
-    /// file entry. Pool-backed and **outside** the Unit of Work — the blob write is
-    /// a step that precedes the unit recording the file entry (bytes cannot ride a
-    /// transaction; orphan-on-rollback accepted). v1 ships a mock/local
-    /// implementation (a pg `bytea` table in `main`, the in-memory fake in tests);
-    /// the real blob architecture is the future blob-architecture walkthrough.
+    /// The private blob store behind a commission file entry. Pool-backed and
+    /// outside the unit of work — bytes cannot ride a transaction, so an
+    /// orphan on rollback is accepted.
     pub files: Arc<dyn FileStore>,
-    /// The [`Database`] write factory: the **only** way to reach a private-store
-    /// domain write. A handler calls `begin()`, issues its writes through the
-    /// returned [`UnitOfWork`](domain::ports::UnitOfWork)'s view accessors
-    /// (`uow.accounts().create(...)`, `uow.users().provision(...)`), then
-    /// `commit()`s once (drop = rollback). Such writes cannot skip a transaction by
-    /// construction (DD `24150017`). The profile cache is a documented exception —
-    /// its best-effort fill is pool-backed (see [`profile_cache`](Runtime::profile_cache)).
-    /// pg in `main`, mem in tests.
+    /// The write factory: the only way to reach a private-store domain write.
+    /// A caller `begin()`s, writes through the returned
+    /// [`UnitOfWork`](domain::ports::UnitOfWork)'s views, then `commit()`s once
+    /// — drop rolls back. (DD 24150017)
     pub database: Arc<dyn Database>,
-    /// The [`DidMinter`] port: mints a sovereign `did:plc` for a newly founded
-    /// account. The live adapter is `RealDidMinter` (generates the account's
-    /// rotation keys, signs an identity-only genesis operation, custodies the keys
-    /// via `PgKeyStore`, and submits to a — no-op in v1 — directory); the mem/stub
-    /// minter is used in tests. Used by the `create_account` handler.
+    /// Mints a sovereign `did:plc` for a newly founded account.
     pub did_minter: Arc<dyn DidMinter>,
 }
 
 impl Runtime {
-    /// The orchestrator ([`application::App`]) over this runtime's adapters.
-    /// Drivers build it once at boot (`Arc::new(runtime.app())`) and call use
-    /// cases through it; they never touch a port directly.
+    /// The [`application::App`] orchestrator over this runtime's adapters.
+    /// Drivers build it once at boot and call use cases through it.
     pub fn app(&self) -> application::App {
         application::App::from(self)
     }
 
-    /// Run `f` inside one private-store transaction — the **only** way a route
-    /// reaches a private-store write. Delegates to the application layer's
-    /// [`transaction`](application::transaction) orchestrator over
-    /// [`self.database`](Runtime::database).
-    ///
-    /// The call site reads `state.transaction(async |uow: &mut dyn UnitOfWork| {
-    /// … }).await?` — an `async` closure, no `Box::pin`, no `&*state.database`.
+    /// Run `f` inside one private-store transaction. Delegates to
+    /// [`application::transaction`] over [`database`](Runtime::database).
     pub async fn transaction<T, F>(&self, f: F) -> anyhow::Result<T>
     where
         F: for<'a> UnitOfWorkFn<'a, T> + Send,
@@ -137,23 +86,14 @@ impl Runtime {
 }
 
 impl Runtime {
-    /// Wire the **live** adapters over `config` — the one production
-    /// composition, shared by every driver: a Postgres pool from
-    /// [`Config::database_url`] (connected here, **migrations not run** — the
-    /// caller decides, explicitly, via [`adapter_pg::migrate`]), the atproto
-    /// [`Authenticator`] with its redirect URI built from
-    /// [`Config::public_url`], the `did:plc` custody chain (root key decoded from
-    /// [`Config::did_key_root_key`], [`ensure_custody_hardened`] enforced,
-    /// `PgKeyStore` + operation log + directory → `RealDidMinter`), and every
+    /// Wire the live adapters over `config`: a Postgres pool (connected here —
+    /// migrations are NOT run, the caller calls [`adapter_pg::migrate`]), the
+    /// atproto [`Authenticator`], the `did:plc` custody chain, and every
     /// pg-backed store.
     ///
-    /// Caveats: fails — and the driver must not run — if the pool cannot
-    /// connect ([`ConnectError::Database`]), or `public_url` is not a
-    /// parseable URI, the root key is not base64, or the custody guard refuses
-    /// the configuration ([`ConnectError::Setup`]). The error messages never
-    /// echo the secrets themselves.
-    ///
-    /// References: DESIGN "Domains and Applications"; ZMVP-200.
+    /// Fails if the pool cannot connect, `public_url` or the root key will not
+    /// parse, or [`ensure_custody_hardened`] refuses the configuration; the
+    /// error messages never echo the secrets themselves.
     pub async fn connect(config: Config) -> Result<Self, ConnectError> {
         let pool = adapter_pg::connect(&config.database_url)
             .await
@@ -162,8 +102,8 @@ impl Runtime {
         Self::wire(config, pool).map_err(ConnectError::Setup)
     }
 
-    /// The adapter wiring over an already-connected pool — the part of
-    /// [`connect`](Runtime::connect) that is pure construction.
+    /// The pure-construction half of [`connect`](Runtime::connect), over an
+    /// already-connected pool.
     fn wire(config: Config, pool: PgPool) -> anyhow::Result<Self> {
         let redirect_uri =
             Uri::parse(format!("{}/signin-callback", config.public_url)).map_err(|(e, uri)| {
@@ -214,14 +154,13 @@ impl Runtime {
     }
 }
 
-/// Why [`Runtime::connect`] refused to boot. Split so a driver can tell "the
-/// database is unreachable" (a transient, operator-facing condition) from a
-/// misconfiguration.
+/// Why [`Runtime::connect`] refused to boot: split so a driver can tell an
+/// unreachable database from a misconfiguration.
 #[derive(Debug)]
 pub enum ConnectError {
     /// The Postgres pool could not connect to [`Config::database_url`].
     Database(adapter_pg::SqlxError),
-    /// The configuration is unusable: bad `public_url`, bad root key, or the
+    /// The configuration is unusable: bad `public_url` or root key, or the
     /// custody guard refused it.
     Setup(anyhow::Error),
 }

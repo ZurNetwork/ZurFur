@@ -1,24 +1,12 @@
-//! The commission **Seat** (ZMVP-76; Referenceable/Slot/Seat DD `28311564`
-//! Decisions 1, 3, 8): a 1:1 *structural* participant position — Creator,
-//! Client, … — that exists **before** it is filled. A commission holds N Seats
-//! with kinds repeating freely; requirements ("to apply, provide X") ride on
-//! the vacant Seat; the vacancy itself is what Ask-for-Art publishes.
+//! The commission Seat: a 1:1 structural participant position — Creator,
+//! Client, … — that exists before it is filled. A commission holds N Seats with
+//! kinds repeating freely, and requirements ride on the vacant Seat.
+//! (DD 28311564)
 //!
-//! Seat is structural **only**: Role keeps authority, aliases keep display
-//! (DD Decision 3) — so [`SeatKind`] is an *open* vocabulary of its own,
-//! deliberately **not** the administrative `Role` enum (or the commission-role
-//! set ZMVP-83 later grants). In the composition a Seat is an ordinary
-//! **element** contributed into a declared surface, typed
-//! [`ElementType::seat`](super::ElementType::seat): the element gives it its
-//! address, its order, and its own visibility mode, while the interpreted seat
-//! data — kind, requirements, the occupant — lives in a satellite store row
-//! **keyed by that element's id**
-//! ([`CommissionWrites::declare_seat`](crate::ports::CommissionWrites::declare_seat)).
-//!
-//! Alongside the Seat this ticket persists **participant-hood** itself (the
-//! `commission_participant` membership row; Engineer ruling on ZMVP-76): the
-//! owner is a permanent Participant holding no Seat, inserted at commission
-//! creation and irremovable — the floor ZMVP-79's seated arm builds on.
+//! Seat is structural only: authority stays with Role, so [`SeatKind`] is an
+//! open vocabulary. In the composition a Seat is an element typed
+//! [`ElementType::seat`](super::ElementType::seat) with its interpreted data in
+//! a satellite row keyed by the element's id.
 
 use crate::{
     datetime::DateTimeUtc,
@@ -32,15 +20,9 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// A Seat's **kind** — the semantic label of the position (Creator, Client, …),
-/// validated on the way in.
-///
-/// An **open** vocabulary by design (Engineer ruling E21): kinds are free text,
-/// not the administrative `Role` enum and not a closed platform list — the DD
-/// keeps Seat (structural) and Role (authority) as separate axes, and kinds
-/// repeat freely (two Creator seats are fine). Trimmed; must be non-empty, at
-/// most [`MAX_CHARS`](Self::MAX_CHARS) characters, and free of control
-/// characters (a kind is a label, not a message).
+/// A Seat's kind — the semantic label of the position (Creator, Client, …). An
+/// open vocabulary, never the `Role` enum; kinds repeat freely. Trimmed,
+/// non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS), no control characters.
 ///
 /// ```
 /// use domain::elements::commission::SeatKind;
@@ -56,11 +38,11 @@ pub struct SeatKind(String);
 /// Why a string was rejected as a Seat kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeatKindError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
-    /// Longer than [`SeatKind::MAX_CHARS`] characters after trimming.
+    /// Longer than [`SeatKind::MAX_CHARS`] after trimming.
     TooLong,
-    /// Contains a control character (newline, tab, NUL, …).
+    /// Contains a control character.
     ControlCharacter,
 }
 
@@ -83,8 +65,7 @@ impl std::fmt::Display for SeatKindError {
 impl std::error::Error for SeatKindError {}
 
 impl SeatKind {
-    /// The length cap, in characters — room for any position label, tight
-    /// enough that a kind stays a label.
+    /// The length cap, in characters.
     pub const MAX_CHARS: usize = 64;
 
     /// The validated, trimmed kind as a string slice.
@@ -96,9 +77,9 @@ impl SeatKind {
 impl TryFrom<String> for SeatKind {
     type Error = SeatKindError;
 
-    /// Validate and wrap a kind: trim surrounding whitespace, then reject an
-    /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
-    /// control character. No vocabulary check — the enumeration is open.
+    /// Validate and wrap a kind: trim, then reject empty, over
+    /// [`MAX_CHARS`](Self::MAX_CHARS), or any control character. No vocabulary
+    /// check — the enumeration is open.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         StringBuilder::new(raw)
             .trimmed()
@@ -115,8 +96,6 @@ impl TryFrom<String> for SeatKind {
     }
 }
 
-/// The std parsing door: `"…".parse::<SeatKind>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
 impl std::str::FromStr for SeatKind {
     type Err = SeatKindError;
 
@@ -125,22 +104,15 @@ impl std::str::FromStr for SeatKind {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for SeatKind {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-/// A vacant Seat's free-text requirement **prompt** — "to apply, provide X"
-/// (DD Decision 8; the v1 requirement vocabulary, no form builder), validated
-/// on the way in.
-///
-/// Multi-line free text: newlines and tabs are welcome, every *other* control
-/// character is rejected. Trimmed; must be non-empty (an absent prompt is
-/// `Option::None`, never an empty string) and at most
-/// [`MAX_CHARS`](Self::MAX_CHARS) characters.
+/// A vacant Seat's free-text requirement prompt — "to apply, provide X".
+/// Multi-line: newlines and tabs pass, every other control character is
+/// rejected. Trimmed, non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS).
 ///
 /// ```
 /// use domain::elements::commission::SeatPrompt;
@@ -157,11 +129,11 @@ pub struct SeatPrompt(String);
 /// Why a string was rejected as a Seat requirement prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeatPromptError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
-    /// Longer than [`SeatPrompt::MAX_CHARS`] characters after trimming.
+    /// Longer than [`SeatPrompt::MAX_CHARS`] after trimming.
     TooLong,
-    /// Contains a control character other than newline/tab (NUL, escape, …).
+    /// Contains a control character other than newline/tab.
     ControlCharacter,
 }
 
@@ -185,9 +157,7 @@ impl std::fmt::Display for SeatPromptError {
 impl std::error::Error for SeatPromptError {}
 
 impl SeatPrompt {
-    /// The length cap, in characters — generous for a real ask ("provide two
-    /// references and your rate"), tight enough that the prompt stays a prompt
-    /// rather than hosting the application form the DD defers to a Plugin.
+    /// The length cap, in characters.
     pub const MAX_CHARS: usize = 2000;
 
     /// The validated, trimmed prompt as a string slice.
@@ -199,10 +169,9 @@ impl SeatPrompt {
 impl TryFrom<String> for SeatPrompt {
     type Error = SeatPromptError;
 
-    /// Validate and wrap a prompt: trim surrounding whitespace, then reject an
-    /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or a
-    /// control character other than `\n`/`\r`/`\t` (free text keeps its line
-    /// structure; NUL and friends only serve injection).
+    /// Validate and wrap a prompt: trim, then reject empty, over
+    /// [`MAX_CHARS`](Self::MAX_CHARS), or a control character other than
+    /// `\n`/`\r`/`\t`.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         StringBuilder::new(raw)
             .trimmed()
@@ -219,8 +188,6 @@ impl TryFrom<String> for SeatPrompt {
     }
 }
 
-/// The std parsing door: `"…".parse::<SeatPrompt>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
 impl std::str::FromStr for SeatPrompt {
     type Err = SeatPromptError;
 
@@ -229,22 +196,16 @@ impl std::str::FromStr for SeatPrompt {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for SeatPrompt {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-/// A vacant Seat's **external requirements link** (DD Decision 8) — e.g. a
-/// Google Form whose responses live off-platform — validated on the way in.
-///
-/// The same opaque-pointer contract as the linked channel
-/// ([`ChannelPointer`](super::ChannelPointer)): rendered as a pointer, never
-/// auto-embedded, so deliberately **no scheme allowlist** — safe rendering is
-/// the frontend's job. Enforced at construction: trimmed, non-empty, at most
-/// [`MAX_CHARS`](Self::MAX_CHARS) characters, free of control characters.
+/// A vacant Seat's external requirements link — e.g. a form whose responses
+/// live off-platform. The same opaque-pointer contract as
+/// [`ChannelPointer`](super::ChannelPointer): no scheme allowlist; trimmed,
+/// non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS), no control characters.
 ///
 /// ```
 /// use domain::elements::commission::SeatLink;
@@ -260,11 +221,11 @@ pub struct SeatLink(String);
 /// Why a string was rejected as a Seat requirements link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeatLinkError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
-    /// Longer than [`SeatLink::MAX_CHARS`] characters after trimming.
+    /// Longer than [`SeatLink::MAX_CHARS`] after trimming.
     TooLong,
-    /// Contains a control character (newline, tab, NUL, …).
+    /// Contains a control character.
     ControlCharacter,
 }
 
@@ -287,8 +248,7 @@ impl std::fmt::Display for SeatLinkError {
 impl std::error::Error for SeatLinkError {}
 
 impl SeatLink {
-    /// The length cap, in characters — the same bound as the linked channel
-    /// pointer: generous for any URL, tight enough to stay a pointer.
+    /// The length cap, in characters.
     pub const MAX_CHARS: usize = 512;
 
     /// The validated, trimmed link as a string slice.
@@ -300,10 +260,9 @@ impl SeatLink {
 impl TryFrom<String> for SeatLink {
     type Error = SeatLinkError;
 
-    /// Validate and wrap a link: trim surrounding whitespace, then reject an
-    /// empty result, one over [`MAX_CHARS`](Self::MAX_CHARS) characters, or any
-    /// control character. Anything else — URL or not — is accepted: the value
-    /// renders as an opaque pointer, never auto-embeds.
+    /// Validate and wrap a link: trim, then reject empty, over
+    /// [`MAX_CHARS`](Self::MAX_CHARS), or any control character. Anything else
+    /// — URL or not — is accepted.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         StringBuilder::new(raw)
             .trimmed()
@@ -320,8 +279,6 @@ impl TryFrom<String> for SeatLink {
     }
 }
 
-/// The std parsing door: `"…".parse::<SeatLink>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
 impl std::str::FromStr for SeatLink {
     type Err = SeatLinkError;
 
@@ -330,63 +287,44 @@ impl std::str::FromStr for SeatLink {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for SeatLink {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-/// A freshly declared Seat, ready to persist into a declared **surface**
-/// ([`CommissionWrites::declare_seat`](crate::ports::CommissionWrites::declare_seat),
-/// ZMVP-76).
-///
-/// Built with [`NewSeat::contributed_at`]. One id, two rows: the store persists an
-/// **element** (its address, its order, its own mode — born `Total` — and the
-/// empty payload) *and* the interpreted seat satellite row keyed by that same
-/// element id, atomically. There is deliberately no occupant field: **every Seat
-/// is born vacant** (AC3's at-most-one occupant is a single slot by
-/// construction; filling it is ZMVP-79's invitation-mediated act, never part of
-/// declaration). `position` is absent as on
-/// [`NewElement`](super::NewElement): the store assigns append order
-/// in-transaction, within the band.
+/// A freshly declared Seat, ready to persist into a declared surface
+/// ([`CommissionWrites::declare_seat`](crate::ports::CommissionWrites::declare_seat)).
+/// One id, two rows: the store writes the carrying element and the seat
+/// satellite atomically. Every Seat is born vacant — there is no occupant field
+/// — and `position` is assigned by the store in-transaction.
 #[derive(Debug)]
 pub struct NewSeat {
-    /// The freshly minted element key (UUIDv7) — the seat's identity
-    /// everywhere: the element and the satellite row share it.
+    /// The element key (UUIDv7) — the seat's identity; the element and the
+    /// satellite row share it.
     pub id: ElementId,
-    /// The commission this Seat is declared on. The store verifies `tab`
-    /// belongs to this same commission (and the composite foreign key makes a
-    /// cross-commission tab unrepresentable regardless).
+    /// The commission this Seat is declared on.
     pub commission_id: CommissionId,
-    /// Where the carrying element sits: the (tab, surface) pair. The seat
-    /// projects under that surface's mode (a vacant Seat under a
-    /// Description-visible surface is the published ask — AC4). An absent or
-    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); a (tab,
-    /// surface) pair the [`SKELETON`](super::SKELETON) does not declare refuses with
-    /// [`UnknownSurface`](crate::ports::UnknownSurface).
+    /// Where the carrying element sits: the (tab, surface) pair. An absent or
+    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); an
+    /// undeclared pair with [`UnknownSurface`](crate::ports::UnknownSurface).
     pub address: SurfaceAddress,
-    /// The seat's semantic kind (Creator, Client, …) — open vocabulary, kinds
-    /// repeat freely across a commission's seats.
+    /// The seat's semantic kind — open vocabulary, kinds repeat freely.
     pub kind: SeatKind,
     /// The optional free-text requirement prompt riding the vacant seat.
     pub prompt: Option<SeatPrompt>,
     /// The optional external requirements link riding the vacant seat.
     pub link: Option<SeatLink>,
-    /// The acting User (the owner; the route's authority gate settles that
-    /// before this is built).
+    /// The acting User.
     pub created_by: UserId,
     /// When the seat was declared.
     pub created_at: DateTimeUtc,
 }
 
 impl NewSeat {
-    /// A new Seat contributed at `address`, born **vacant**, carrying its kind
-    /// and whatever requirements (prompt and/or link — both optional) ride it.
-    /// Mints the element id; authority (owner-only in v1), the tab's existence,
-    /// and the surface's declaration are the route's/store's concern, settled
-    /// when this is persisted.
+    /// A new Seat contributed at `address`, born vacant, carrying its kind and
+    /// whatever requirements ride it. Mints the element id; authority, the tab's
+    /// existence and the surface's declaration are settled on persist.
     ///
     /// ```
     /// use chrono::Utc;
@@ -431,34 +369,25 @@ impl NewSeat {
 
 /// One stored Seat as read back
 /// ([`CommissionStore::seats`](crate::ports::CommissionStore::seats)) — the
-/// interpreted satellite half; the element half (address, order, creator,
-/// instant, its own visibility mode) lives in the loaded composition under the
-/// same id.
-///
-/// This is the **projection hook** for ZMVP-76 AC4: the viewer projection
-/// (ZMVP-170, not in this lineage yet) joins these rows against the projected
-/// composition by element id to render a vacant Seat under a Description-visible
-/// surface as the published ask. `occupant` is the whole occupancy model: a single
-/// `Option` — at most one occupant is unrepresentable to violate (AC3) — and
-/// `None` from declaration until ZMVP-79 seats someone.
+/// interpreted satellite half; the element half lives in the loaded composition
+/// under the same id. `occupant` is the whole occupancy model: one `Option`, so
+/// more than one occupant is unrepresentable.
 #[derive(Debug)]
 pub struct Seat {
     /// The seat's identity: its carrying element's id (the satellite key).
     pub id: ElementId,
-    /// The seat's semantic kind (open vocabulary; kinds repeat freely).
+    /// The seat's semantic kind.
     pub kind: SeatKind,
     /// The free-text requirement prompt, if the vacant seat carries one.
     pub prompt: Option<SeatPrompt>,
     /// The external requirements link, if the vacant seat carries one.
     pub link: Option<SeatLink>,
-    /// The single occupant slot: `None` while vacant (every seat from
-    /// declaration), `Some` once ZMVP-79's accepted invitation fills it.
+    /// The single occupant slot: `None` while vacant.
     pub occupant: Option<UserId>,
 }
 
 impl Seat {
-    /// Whether the seat is unoccupied — the predicate the ask projection (AC4)
-    /// and the fill guards of ZMVP-78/79/80 share.
+    /// Whether the seat is unoccupied.
     pub fn is_vacant(&self) -> bool {
         self.occupant.is_none()
     }
@@ -471,9 +400,7 @@ mod tests {
     use super::*;
     use crate::elements::did::Did;
 
-    // AC1 — the kind vocabulary is OPEN (ruling E21): any reasonable label
-    // wraps, trimmed; it is deliberately not the Role enum, so nothing here
-    // checks a vocabulary.
+    // The kind vocabulary is open: any label wraps, trimmed.
     #[test]
     fn seat_kind_is_an_open_trimmed_vocabulary() {
         assert_eq!(
@@ -496,8 +423,8 @@ mod tests {
         );
     }
 
-    // AC2 — the prompt is multi-line free text: newlines/tabs pass, other
-    // control characters and blank/oversized input refuse.
+    // The prompt is multi-line free text: newlines/tabs pass, other control
+    // characters and blank/oversized input refuse.
     #[test]
     fn seat_prompt_allows_lines_but_not_injection() {
         let prompt = " Provide:\n\t- two refs\n\t- your rate "
@@ -521,8 +448,7 @@ mod tests {
         );
     }
 
-    // AC2 — the link is an opaque pointer with the ChannelPointer contract:
-    // no scheme allowlist, no control characters.
+    // The link is an opaque pointer: no scheme allowlist, no control chars.
     #[test]
     fn seat_link_validates_shape_but_not_scheme() {
         assert_eq!(
@@ -546,9 +472,7 @@ mod tests {
         );
     }
 
-    // AC1/AC3 — a declared seat's envelope: fresh id, the (tab, surface) it is
-    // contributed into, the acting user, its kind and requirements — and NO
-    // occupant field anywhere (born vacant by construction).
+    // A declared seat's envelope, with no occupant field anywhere.
     #[test]
     fn a_new_seat_is_born_vacant_with_its_requirements() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
@@ -585,6 +509,6 @@ mod tests {
             link: seat.link.clone(),
             occupant: None,
         };
-        assert!(read.is_vacant(), "a seat is born vacant (AC3)");
+        assert!(read.is_vacant(), "a seat is born vacant");
     }
 }

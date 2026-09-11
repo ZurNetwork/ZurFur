@@ -64,18 +64,13 @@ impl From<AccountError> for Problem {
             AccountError::CannotTransferToSelf => Problem::invalid_request(
                 "You already own this account; transfer ownership to another member.",
             ),
-            // A missing User answers `403`, never `404`: the caller named a DID,
-            // and distinguishing "no such user" from "not allowed" would make
-            // this endpoint an actor-existence oracle over arbitrary DIDs (the
-            // uniform-not-found posture of DD 57081857's finding F1).
+            // Never 404 here (actor-existence oracle over DIDs; DD 57081857 F1).
             AccountError::NotFound(AccountEntity::User) => Problem::forbidden(),
             // TODO(Engineer): status/code for this variant is unruled (409?); no use case produces it yet.
             AccountError::InvitationAlreadyPending => {
                 Problem::invalid_request("An invitation for that user is already pending.")
             }
-            // TODO(Engineer): the board-mutation vocabulary is unruled. These are
-            // the defensible defaults — a refusal the caller can act on is a 400,
-            // an internal inconsistency is a 500 — pending the error-code ruling.
+            // TODO(Engineer): board-mutation status codes are unruled; defaults below.
             AccountError::ContainsCommissions => Problem::invalid_request(
                 "That column still holds commissions; move them off it first.",
             ),
@@ -93,9 +88,8 @@ impl From<AccountError> for Problem {
     }
 }
 
-/// One account membership row. `id` and `did` carry the same value: an Account
-/// is addressed by its DID and nothing else (DD 57081857), and the contract —
-/// additive-only — still declares both.
+/// One account membership row. `id` and `did` carry the same value — an
+/// Account is addressed by its DID alone (DD 57081857).
 impl From<account::list::Listing> for AccountMembership {
     fn from(account: account::list::Listing) -> Self {
         let did = account.id.to_string();
@@ -234,9 +228,7 @@ async fn create_account(
     Ok(response)
 }
 
-// Must fail to compile once the first account-fact table is registered in
-// `adapter_pg::ACCOUNT_FACT_TABLES`, forcing `application::account::facts::exist`
-// to become a real query instead of its constant-`false` body.
+// Fails to compile once the first account-fact table registers (assert below).
 const _: () = assert!(
     adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
     "an account-anchored fact store was registered: replace the constant-`false` body \
@@ -281,8 +273,7 @@ async fn delete_account(
 }
 
 /// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle
-/// post-onboarding. Order matters: the DID document updates first, then the
-/// private store (no cross-store transaction; DD 27852802).
+/// post-onboarding. (DD 27852802)
 ///
 /// - `200 { "id", "did", "handle", "name" }`
 /// - `401` — not signed in · `403` — not this account's Owner
@@ -670,8 +661,7 @@ struct TransferOwnershipResponse {
 }
 
 /// `POST /accounts/{id}/transfer` — transfers ownership to another existing
-/// member, immediately and unilaterally (no recipient acceptance, no PLC
-/// write — the account's `did:plc` is stable).
+/// member, immediately and unilaterally (no recipient acceptance).
 ///
 /// - `200 { "account", "owner", "previous_owner" }`
 /// - `401` — not signed in · `403` — not the account's current Owner

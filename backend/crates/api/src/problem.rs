@@ -1,18 +1,6 @@
-//! The JSON API's one error shape: an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)
-//! problem document, served as `application/problem+json` (ZMVP-35; DESIGN "API
-//! Response Shape & Error Model").
-//!
-//! Success responses stay bare resources and the HTTP status line carries the
-//! outcome; this type standardizes the *error* half. Every [`Problem`] carries a
-//! stable [`type`](Problem::kind) URN (`urn:zurfur:error:<slug>` — an identifier,
-//! not a docs URL), our own terse [`code`](Problem::code) for machine branching, a
-//! stable [`title`], a specific [`detail`], and the [`status`]. Handlers return
-//! `Result<_, Problem>` and lean on `?`; [`Problem`]'s [`IntoResponse`] renders the
-//! body and sets the `application/problem+json` content type.
-//!
-//! [`title`]: Problem::title
-//! [`detail`]: Problem::detail
-//! [`status`]: Problem::status
+//! The RFC 9457 problem-document type served as `application/problem+json` for
+//! every JSON API error; success responses stay bare resources with the status
+//! line as outcome. Construct via the named registry below, never field-by-field.
 
 use axum::{
     Json,
@@ -20,24 +8,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// An RFC 9457 problem document — **the contract's generated type** (ZMVP-162,
-/// DD 40992770 decision 8). The shape was hand-declared three times — here, in
-/// `plugin-v1.yaml`, and in `problem.ts` — and the copies had already drifted
-/// on whether `detail` is required. Now `contract/zurfur/api/v1/problem.proto`
-/// is the ONLY declaration and both tiers generate from it; this module keeps
-/// what a schema cannot carry — the REGISTRY (the named constructors, one per
-/// error kind, e.g. [`Problem::forbidden`], [`Problem::already_member`]) and
-/// the axum integration. Problems are constructed through the registry, never
-/// field by field, so a kind's `type`/`code`/`title`/`status` stay consistent
-/// across every call site; `detail` is the only per-occurrence part, and it is
-/// ALWAYS non-empty — implicit presence omits an empty string from the JSON,
-/// which would violate the detail-required ruling (the golden wire test and
-/// the debug_assert in [`Problem::new`] both watch this).
+/// The generated RFC 9457 problem type (DD 40992770). Construct only via the
+/// named registry methods below — never field by field — so `type`/`code`/
+/// `title`/`status` stay fixed per kind; `detail` is the one per-call part and
+/// must be non-empty.
 pub use crate::generated::Problem;
 
 impl Problem {
-    /// The shared constructor — every registry entry funnels through here so the
-    /// shape stays uniform.
+    /// Shared constructor every registry entry funnels through.
     fn new(
         kind: &'static str,
         code: &'static str,
@@ -46,9 +24,7 @@ impl Problem {
         detail: impl Into<String>,
     ) -> Self {
         let detail = detail.into();
-        // Implicit presence omits an empty string — and `detail` is REQUIRED
-        // on the wire (Engineer ruling 2026-07-25). Every registry entry
-        // supplies one; an empty detail is a registry bug, caught here.
+        // detail must be non-empty — an empty one is a registry bug.
         debug_assert!(
             !detail.is_empty(),
             "a Problem's detail must be non-empty (detail-required ruling)"
@@ -73,11 +49,8 @@ impl Problem {
         )
     }
 
-    /// `403` — a recognized caller who lacks the authority for the action (the
-    /// shared role floor; DESIGN/Roles). Action- and resource-neutral: it serves
-    /// the account seams and the commission owner-only seams alike. **Never** the
-    /// answer for a caller who shouldn't learn the resource exists — that is the
-    /// uniform 404 (e.g. [`commission_not_found`](Problem::commission_not_found)).
+    /// `403` — an authenticated caller lacking authority for the action (shared
+    /// role floor). Never used to avoid revealing a resource exists — use the 404 for that.
     pub fn forbidden() -> Self {
         Self::new(
             "urn:zurfur:error:forbidden",
@@ -88,10 +61,9 @@ impl Problem {
         )
     }
 
-    /// `403` — a state-changing request arrived with an `Origin` that isn't our
-    /// first-party origin: defense-in-depth CSRF, layered on the session cookie's
-    /// `SameSite=Lax` (ZMVP-23; DESIGN "Auth Surfaces, the Plugin Trust Boundary &
-    /// CSRF"). A non-browser client (no `Origin`) is never rejected here.
+    /// `403` — a state-changing request arrived with a non-first-party `Origin`
+    /// (CSRF defense-in-depth on top of `SameSite=Lax`). Non-browser callers (no
+    /// `Origin` header) are never rejected here.
     pub fn cross_origin() -> Self {
         Self::new(
             "urn:zurfur:error:cross-origin",
@@ -113,15 +85,9 @@ impl Problem {
         )
     }
 
-    /// `404` — the addressed commission "doesn't exist" **as far as this caller
-    /// may know**: the shared existence-hiding answer of the closed-door policy
-    /// (DESIGN/Commission; ZMVP-75/87). Returned identically whether the
-    /// commission is truly absent **or** exists but is hidden from the caller
-    /// (a non-participant), so the response can never be used as an existence
-    /// oracle — which is also why a non-participant is **never** answered
-    /// [`forbidden`](Problem::forbidden) (a 403 would confirm there is something
-    /// to be forbidden from). `detail` is a fixed string by construction: any
-    /// per-occurrence wording could leak which case produced it.
+    /// `404` — closed-door answer for a hidden or absent commission: identical
+    /// either way, so it can never be used as an existence oracle. Fixed detail
+    /// text by construction.
     pub fn commission_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:commission-not-found",
@@ -132,10 +98,8 @@ impl Problem {
         )
     }
 
-    /// `404` — no such board. A board is account-side positioning state, so
-    /// this is an ordinary not-found rather than a closed door: a board is only
-    /// reachable past its own account's membership check, which has already
-    /// answered by the time this can be raised.
+    /// `404` — no such board (an ordinary not-found; the owning account's
+    /// membership has already been checked by this point).
     pub fn workflow_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:workflow-not-found",
@@ -146,10 +110,7 @@ impl Problem {
         )
     }
 
-    /// `404` — no such column. The board mirror of
-    /// [`workflow_not_found`](Problem::workflow_not_found): raised before the
-    /// membership check can run (a column is what names the account), so it
-    /// deliberately says only that the column is not there.
+    /// `404` — no such column, raised before the account membership check can run.
     pub fn column_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:column-not-found",
@@ -160,14 +121,9 @@ impl Problem {
         )
     }
 
-    /// `404` — the addressed element doesn't exist in this commission
-    /// (ZMVP-166). Reached only past the commission's own gate (the caller is
-    /// already its owner), so unlike
-    /// [`commission_not_found`](Problem::commission_not_found) it hides
-    /// nothing *about this commission* — but it deliberately answers an element
-    /// id that exists in **someone else's** commission identically to one that
-    /// exists nowhere (the store refuses both as one case), so element ids can't
-    /// be used to probe other commissions.
+    /// `404` — no such element in this commission. Answers identically whether
+    /// the id is absent or belongs to another commission, so it can't probe
+    /// other commissions.
     pub fn element_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:element-not-found",
@@ -178,13 +134,8 @@ impl Problem {
         )
     }
 
-    /// `404` — the addressed tab doesn't exist in this commission (ZMVP-166).
-    /// The element mirror of [`element_not_found`](Problem::element_not_found),
-    /// and the same closed-door collapse: a tab id belonging to another
-    /// commission answers identically to one that exists nowhere, so tab ids
-    /// can't be used to probe other commissions. (The composite foreign key
-    /// makes the cross-commission write unrepresentable anyway; this is the
-    /// honest answer rather than a leaked constraint violation.)
+    /// `404` — no such tab in this commission; same cross-commission collapse as
+    /// [`element_not_found`](Problem::element_not_found).
     pub fn tab_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:tab-not-found",
@@ -195,12 +146,8 @@ impl Problem {
         )
     }
 
-    /// `404` — no such file entry **within this commission** (ZMVP-88). Reached
-    /// only *after* the participant gate has admitted the caller, so it does not
-    /// leak the commission's existence; and because the lookup is scoped to the
-    /// commission, a file key belonging to a *different* commission answers this
-    /// same 404 rather than confirming it exists elsewhere (no cross-commission
-    /// oracle).
+    /// `404` — no such file entry in this commission; scoped to the commission
+    /// so it can't confirm a file exists elsewhere.
     pub fn file_not_found() -> Self {
         Self::new(
             "urn:zurfur:error:file-not-found",
@@ -212,8 +159,7 @@ impl Problem {
     }
 
     /// `413` — an uploaded file exceeds the configured size cap
-    /// ([`Config::max_upload_bytes`](crate::Config::max_upload_bytes), ZMVP-88).
-    /// The request was well-formed; the payload is simply too large.
+    /// ([`Config::max_upload_bytes`](crate::Config::max_upload_bytes)).
     pub fn payload_too_large(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:payload-too-large",
@@ -235,9 +181,8 @@ impl Problem {
         )
     }
 
-    /// `404` — the signed-in User has no pending invitation to act on (accept or
-    /// decline) for this account. Distinct from `account_not_found`: the account
-    /// exists, there's just no live offer for them.
+    /// `404` — the caller has no pending invitation to act on for this account
+    /// (the account itself may still exist).
     pub fn no_pending_invitation() -> Self {
         Self::new(
             "urn:zurfur:error:no-pending-invitation",
@@ -248,8 +193,7 @@ impl Problem {
         )
     }
 
-    /// `409` — inviting a user who is already a member (a state conflict, not an
-    /// authority failure). `detail` names the specific collision.
+    /// `409` — inviting a user who is already a member. `detail` names the collision.
     pub fn already_member(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:already-member",
@@ -260,11 +204,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the supplied DID is already interned as a different actor kind
-    /// (one DID = one actor, DD 34013187): e.g. an account's public DID handed
-    /// to a user-provisioning path (invite/grant). The conflict is with
-    /// existing state, so it is a 409 sibling of [`already_member`](Self::already_member)
-    /// (Engineer ruling 2026-07-18, ultrareview round).
+    /// `409` — the DID is already interned as a different actor kind (one DID =
+    /// one actor). (DD 34013187)
     pub fn did_belongs_to_another_actor() -> Self {
         Self::new(
             "urn:zurfur:error:did-belongs-to-another-actor",
@@ -275,11 +216,8 @@ impl Problem {
         )
     }
 
-    /// `409` — inviting a User to a Seat that is already occupied (ZMVP-78). A
-    /// Seat holds at most one occupant (ZMVP-76 AC3), so a filled Seat has no
-    /// vacancy to offer — a state conflict, not an authority failure (the caller
-    /// is the owner) or a malformed request. Fixed text by construction: naming
-    /// the occupant would leak the other party.
+    /// `409` — the seat already holds an occupant, so no invitation can target
+    /// it. Fixed text by construction: naming the occupant would leak the other party.
     pub fn seat_filled() -> Self {
         Self::new(
             "urn:zurfur:error:seat-filled",
@@ -290,13 +228,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the commission bears facts, so hard-deleting it is no longer
-    /// possible (ZMVP-66; Deletion DD `3014657`: "Delete = hard delete, possible
-    /// only while fact-free"). A state conflict, not an authority failure — the
-    /// caller is the owner, the commission just crossed the point of no return.
-    /// The detail points at **Archive** (ZMVP-68), the path that remains once
-    /// facts exist. Fixed text by construction: naming *which* facts would leak
-    /// the other party's activity to no benefit.
+    /// `409` — the commission bears facts, so hard delete is no longer
+    /// possible; points the caller at Archive instead. (DD 3014657)
     pub fn commission_has_facts() -> Self {
         Self::new(
             "urn:zurfur:error:commission-has-facts",
@@ -307,11 +240,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the chosen account handle is already taken. The handle index is
-    /// global — a soft-deleted (tombstoned) account still reserves its handle (DD
-    /// 23003138 "Account Deletion, Tombstoning & Handle Reuse"; DD "The Account
-    /// Handle" 24870914) — so founding with a claimed handle is a state conflict, not
-    /// an authority failure, whether the holder is live or tombstoned.
+    /// `409` — the handle is already claimed, including by a tombstoned
+    /// account (the handle index is global). (DD 23003138)
     pub fn handle_taken() -> Self {
         Self::new(
             "urn:zurfur:error:handle-taken",
@@ -322,18 +252,9 @@ impl Problem {
         )
     }
 
-    /// `422` — the addressed `(tab, surface)` pair is not one the composition
-    /// skeleton declares (ZMVP-166): either no such surface exists at all, or
-    /// it exists under a different tab than the one addressed.
-    ///
-    /// A `422` and **not** a 404, deliberately: the skeleton is code-declared,
-    /// global, and invariant, so "no tab declares a surface called `xyz`" is a
-    /// fact about the program, not about anyone's commission. Hiding it behind
-    /// a not-found would protect nothing and tell an honest caller nothing
-    /// about what they got wrong. (Its siblings
-    /// [`tab_not_found`](Problem::tab_not_found) and
-    /// [`element_not_found`](Problem::element_not_found) *are* 404s, because
-    /// those ids do name per-commission rows.)
+    /// `422` — the `(tab, surface)` pair isn't declared by the composition
+    /// skeleton. A 422, not a 404: the skeleton is code-declared and global, so
+    /// this is a fact about the program, not about any commission.
     pub fn unknown_surface() -> Self {
         Self::new(
             "urn:zurfur:error:unknown-surface",
@@ -344,10 +265,7 @@ impl Problem {
         )
     }
 
-    /// `409` — a deadline-axis act on a commission that has no deadline: a
-    /// commission with no deadline never receives deadline-axis statuses
-    /// (ZMVP-86 AC4), so flagging it Delayed is a state conflict, not a
-    /// malformed request — set a deadline first.
+    /// `409` — a deadline-axis action on a commission with no deadline; set one first.
     pub fn no_deadline() -> Self {
         Self::new(
             "urn:zurfur:error:no-deadline",
@@ -358,10 +276,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the commission is Late, and Late is the **system's word**
-    /// (Engineer ruling 2026-07-05): a Participant neither overwrites it with
-    /// the manual Delayed flag nor clears it by hand — it resolves through the
-    /// deadline itself (extend it into the future, or clear it).
+    /// `409` — the commission is Late, and Late is system-set: resolve it
+    /// through the deadline itself (extend or clear), never overwrite or clear by hand.
     pub fn commission_late() -> Self {
         Self::new(
             "urn:zurfur:error:commission-late",
@@ -372,9 +288,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the Owner tried to leave while still Owner. The sole-Owner root has
-    /// nowhere to re-home its members, so leaving is refused as a state conflict (not
-    /// an authority failure): transfer ownership (ZMVP-33) or delete the account first.
+    /// `409` — the sole Owner tried to leave; transfer ownership or delete the
+    /// account first.
     pub fn owner_cannot_leave() -> Self {
         Self::new(
             "urn:zurfur:error:owner-cannot-leave",
@@ -385,9 +300,7 @@ impl Problem {
         )
     }
 
-    /// `422` — the request is understood but its data won't do. `detail` says why.
-    /// Specific cases get their own `code` via [`name_required`](Problem::name_required)
-    /// / [`unknown_role`](Problem::unknown_role) under the same `type`.
+    /// `422` — the request is understood but its data won't do; `detail` says why.
     pub fn invalid_request(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:invalid-request",
@@ -409,12 +322,8 @@ impl Problem {
         )
     }
 
-    /// `422`, code `unknown_maturity_rating` — a maturity token outside the four-tier
-    /// vocabulary the Maturity Vocabulary DD (`29982722`) fixes (Safe / Suggestive /
-    /// Nudity / Adult). The server-side half of ZMVP-31's "values from the enum only":
-    /// the superseded Safe/Questionable/Explicit tokens, case variants, and the derived
-    /// *label* values all land here. Shares the invalid-request `type` but carries its
-    /// own `code`, like [`unknown_role`](Problem::unknown_role).
+    /// `422`, code `unknown_maturity_rating` — a maturity token outside the
+    /// fixed four-tier vocabulary (Safe/Suggestive/Nudity/Adult). (DD 29982722)
     pub fn unknown_maturity_rating(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:invalid-request",
@@ -425,12 +334,8 @@ impl Problem {
         )
     }
 
-    /// `422`, code `unsupported_handle` — a well-formed handle whose *namespace* isn't
-    /// supported for this operation yet: v1 ships the handle-*change* flow for the
-    /// Zurfur-issued `*.zurfur.app` namespace only, since changing to a brought (BYO)
-    /// domain needs bidirectional verify-before-commit that isn't built (DD "Account
-    /// Handle Change Flow" `27852802` §6; deferred to a follow-up). Shares the
-    /// invalid-request `type` but carries its own `code`, like [`unknown_role`](Problem::unknown_role).
+    /// `422`, code `unsupported_handle` — handle change isn't supported yet for
+    /// this namespace (v1: `*.zurfur.app` only). (DD 27852802)
     pub fn unsupported_handle(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:invalid-request",
@@ -441,9 +346,7 @@ impl Problem {
         )
     }
 
-    /// `429` — the caller has hit the light anti-abuse rate limit for an action (the
-    /// handle-change throttle; DD `27852802` §3). The request was valid; the caller may
-    /// retry once the window passes.
+    /// `429` — the caller hit the anti-abuse rate limit; retry after the window.
     pub fn rate_limited(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:rate-limited",
@@ -465,8 +368,7 @@ impl Problem {
         )
     }
 
-    /// `503` — a dependency is unavailable (e.g. the DID minter), so the request
-    /// can't be served right now; the caller may retry.
+    /// `503` — a dependency is unavailable; the caller may retry.
     pub fn service_unavailable(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:service-unavailable",
@@ -479,18 +381,14 @@ impl Problem {
 }
 
 impl From<anyhow::Error> for Problem {
-    /// Any failure bubbling up from a port (the store, the recognizer) is an
-    /// internal error: the request was well-formed, our side couldn't complete it.
-    /// This lets handlers lean on `?` instead of mapping every port call by hand.
+    /// Any port failure becomes a `500`; lets handlers use `?`.
     fn from(_: anyhow::Error) -> Self {
         Problem::internal_error("The request couldn't be completed. Please try again.")
     }
 }
 
 impl IntoResponse for Problem {
-    /// Renders the document as JSON and **overrides** the content type to
-    /// `application/problem+json` (axum's [`Json`] sets `application/json`, so the
-    /// header is replaced after the body is built), with the matching HTTP status.
+    /// Renders as JSON with the content type overridden to `application/problem+json`.
     fn into_response(self) -> Response {
         let status = u16::try_from(self.status)
             .ok()

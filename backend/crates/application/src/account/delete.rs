@@ -31,10 +31,8 @@ impl<'a> Accounts<'a> {
             actor_id,
         } = cmd;
 
-        // Existence before standing, as `change_handle` already does: without
-        // the first check a deletion aimed at an account that does not exist
-        // came back `403 forbidden` — a refusal implying there is something
-        // there to be refused.
+        // Existence before standing: otherwise a delete aimed at an account
+        // that is not there answers `403`.
         require_live_account(ports, &account_id).await?;
 
         ports

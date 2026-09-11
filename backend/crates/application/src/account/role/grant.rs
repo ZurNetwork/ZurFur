@@ -28,10 +28,7 @@ impl Roles<'_> {
             role,
         } = cmd;
         // Owner is the one role a grant may never mint: handing over ownership
-        // is a *transfer*, with its own use case and its own rules ("an Owner
-        // never has a parent, even when transferred"). The guard refused every
-        // role *except* Owner, which — since `can_grant` also never permits
-        // Owner — meant no grant of any kind could succeed.
+        // is a transfer, with its own use case.
         if matches!(role, Role::Owner) {
             return Err(AccountError::IncorrectTransferOfAccount);
         };
@@ -51,9 +48,8 @@ impl Roles<'_> {
             return Err(AccountError::IncorrectRole);
         }
 
-        // Provisioning is a write, so it happens only once the actor's standing
-        // is settled: an unauthorized grant must not leave a User row behind for
-        // the DID it named.
+        // Provisioning is a write: an unauthorized grant must not leave a User
+        // row behind for the DID it named.
         let mut uow = self.ports().database.begin().await?;
         let target = uow.users().provision(&target_id).await?;
 

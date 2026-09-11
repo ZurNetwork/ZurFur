@@ -27,13 +27,9 @@ impl Invitations<'_> {
             target_id,
         } = cmd;
 
-        // The actor's own standing is settled BEFORE the target is looked at,
-        // as `role::revoke` already does. The order is load-bearing: the three
-        // refusals below are told apart on the wire (`409 already_member` vs
-        // `404 no_pending_invitation` vs `404 member_not_found`), so probing
-        // the target first answered "is this DID a member of — or invited to —
-        // this account?" for any signed-in caller, member or not. A pending
-        // invitation is not public.
+        // The actor's own standing is settled BEFORE the target is looked at:
+        // the refusals below are distinguishable on the wire, so probing the
+        // target first leaks whether a DID is a member of this account.
         let actor_role = ports
             .accounts
             .role_of(&actor_id, &account_id)
@@ -56,9 +52,7 @@ impl Invitations<'_> {
             .ok_or(AccountError::NoPendingInvitation)?;
 
         // The rank half of the same gate, re-checked once the offer names its
-        // role — standing alone is not authority over an offer that outranks
-        // the actor. Same refusal as holding no standing at all, so the two are
-        // one answer on the wire.
+        // role. Same refusal as holding no standing at all.
         if !actor_role.can_grant(&invitation.role) {
             return Err(AccountError::NotAMember);
         }

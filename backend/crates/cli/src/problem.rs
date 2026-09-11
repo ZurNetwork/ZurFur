@@ -1,6 +1,6 @@
-//! Failure as a value: [`CliError`] carries an [`ExitClass`] and renders as one
-//! compact JSON [`Problem`] on stderr — never plain text, so `jq` pipelines on
-//! stderr stay parseable (board finding, ZMVP-201).
+//! Failure as a value: [`CliError`] carries an [`ExitClass`] and renders as
+//! one compact JSON [`Problem`] on stderr — never plain text, so `jq`
+//! pipelines on stderr stay parseable.
 
 use std::io::Write as _;
 use std::process::ExitCode;

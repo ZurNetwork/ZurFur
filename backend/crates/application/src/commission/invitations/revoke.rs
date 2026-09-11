@@ -35,11 +35,9 @@ impl Invitations<'_> {
 
         require_owner(ports, &commission_id, &actor_id).await?;
 
-        // No seat-existence gate on purpose. The pending-invitation lookup is
-        // already commission-scoped, so a seat id belonging to some *other*
-        // commission simply resolves to nothing and the revoke is a bare no-op
-        // — it must never become a `404` that confirms the id is real
-        // somewhere, nor reach an offer the caller has no business touching.
+        // No seat-existence gate on purpose: the lookup is already
+        // commission-scoped, so a foreign seat id is a bare no-op, never a
+        // `404` confirming the id is real somewhere.
         let Some(mut invitation) = ports
             .commissions
             .find_pending_seat_invitation(&commission_id, &seat_id, &target_id)

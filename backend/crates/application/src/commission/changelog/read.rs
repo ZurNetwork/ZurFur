@@ -42,10 +42,8 @@ impl Changelog<'_> {
             .is_participant(&commission_id, &actor_id)
             .await?
         {
-            // The closed door: a non-participant is told the commission does
-            // not exist, never that it exists but is forbidden — a 403 here
-            // would confirm a private commission to any signed-in stranger who
-            // guessed (or was handed) its id.
+            // The closed door: never a 403, which would confirm a private
+            // commission to a stranger who guessed its id.
             return Err(CommissionError::NotAMember);
         }
 
@@ -55,12 +53,8 @@ impl Changelog<'_> {
                 .entries(&commission_id)
                 .await?
                 .into_iter()
-                // `seq` is the STORE's ordering key (a `bigserial` in pg),
-                // carried through untouched: it is monotonic per stream but not
-                // gapless, and the cursor semantics read from it. Renumbering
-                // it off the page's position — as an `enumerate()` here did —
-                // makes every stream start at 0 and invents an order the store
-                // never assigned.
+                // `seq` is the STORE's ordering key, carried through untouched:
+                // monotonic per stream but not gapless, never renumbered here.
                 .map(|entry| ChangelogEntry {
                     seq: entry.seq,
                     actor_id: entry.actor_id,

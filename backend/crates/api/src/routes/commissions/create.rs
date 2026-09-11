@@ -1,7 +1,6 @@
-//! `POST /commissions` — any signed-in User creates a commission they own
-//! (ZMVP-65; no Account required, a user-scoped write — ZMVP-47, DD 26247170),
-//! and the act itself is the changelog's genesis entry (ZMVP-87; the Changelog
-//! DD's taxonomy includes "creation itself").
+//! `POST /commissions` — any signed-in User creates a commission they own; no
+//! Account required, a user-scoped write (DD 26247170). The act itself is the
+//! changelog's genesis entry.
 
 use application::commission::{create, list};
 use axum::{
@@ -22,7 +21,7 @@ use crate::{AppState, extract::CallingUser, problem::Problem};
 
 /// The created resource, in the create response's envelope. Both messages
 /// carry the same ten fields, so the create body is the listing row moved
-/// across — one projection ([`wire_commission`]), never two that can drift
+/// across — one projection `wire_commission`, never two that can drift
 /// (`golden_wire` asserts the two render identically).
 impl From<Commission> for CreateCommissionResponse {
     fn from(commission: Commission) -> Self {
@@ -104,13 +103,8 @@ pub(super) async fn create_commission(
         .create(command, Utc::now())
         .await?;
 
-    // ⚠️ GAP (ZMVP-205): the contract's `CreateCommissionResponse` is the whole
-    // resource — "create returns the created resource" (ruling 2026-07-25,
-    // pinned by `golden_wire`) — but `create::Output` carries only the id, and
-    // the birth lifecycle/visibility are the domain's to state, not this
-    // driver's to assume. Until `create::Output` carries the commission's
-    // values, the resource is read back through the one use case that projects
-    // commissions, so the response can never disagree with the stored row.
+    // ⚠️ GAP: create::Output carries only the id, so the resource is read
+    // back through list rather than assumed.
     let owned = list::Command { user_id: actor_id };
     let listed = state.app().commissions().list(owned).await?;
     let commission = listed

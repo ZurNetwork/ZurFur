@@ -1,12 +1,9 @@
 //! The [`Account`] — a platform-custodied entity that is its own sovereign
-//! identity (DESIGN/Account).
+//! identity. (DESIGN 1966081)
 //!
-//! An account holds a minted `did:plc` of its own (unlike a visitor's DID, which
-//! precedes us), a validated human name, and soft-delete timestamps. It is
-//! founded together with its founder's Owner membership in a single act,
-//! [`Account::open`] — the ZMVP-14 invariant "the creating User becomes Owner."
-//! Persisting the pair is one private-side transaction
-//! ([`crate::ports::AccountWrites::create`]).
+//! An account holds a minted `did:plc` of its own, a validated human name, a
+//! handle, and soft-delete timestamps. It is founded together with its founder's
+//! Owner membership in a single act, [`Account::open`].
 
 use std::{ops::Deref, str::FromStr};
 
@@ -25,18 +22,13 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// The app-private, stable handle for an [`Account`].
-///
-/// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::user::UserId`].
-/// The account's *public* identity is its [`Did`]; this id is the private key
-/// used for foreign keys and lookups. Deref exposes the inner UUID.
+/// An [`Account`]'s identifier: its [`Did`]. (DD 57081857)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct AccountId(Did);
 
 impl AccountId {
-    /// Wraps an already-minted UUIDv7. Mirrors [`crate::elements::user::UserId::new`]:
-    /// the app mints the key (PG16 has no native `uuidv7()`), the domain only names it.
+    /// Wraps an already-minted DID.
     pub fn new(id: Did) -> Self {
         Self(id)
     }
@@ -65,11 +57,8 @@ impl FromStr for AccountId {
 /// The longest an account name may be, in `char`s (counted after trimming).
 pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
 
-/// A human-readable account name, validated on the way in.
-///
-/// Surrounding whitespace is trimmed. The result must be non-empty and at most
-/// [`ACCOUNT_NAME_MAX_LEN`] chars — this is the anti-spam gate: opening an account
-/// demands real input, not a bare click.
+/// A human-readable account name: trimmed, non-empty, at most
+/// [`ACCOUNT_NAME_MAX_LEN`] chars.
 ///
 /// ```
 /// use domain::elements::account::AccountName;
@@ -92,9 +81,9 @@ pub struct AccountName(String);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountNameError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
-    /// Longer than [`ACCOUNT_NAME_MAX_LEN`] chars. Carries the offending length.
+    /// Longer than [`ACCOUNT_NAME_MAX_LEN`] chars; carries the length.
     TooLong(usize),
 }
 
@@ -118,9 +107,7 @@ impl AccountName {
     }
 }
 
-/// The std parsing door: `"…".parse::<AccountName>()?` — the one validating
-/// constructor (ruling R6: `FromStr` for string parsing): trim first, then
-/// check the bounds above.
+/// The one validating constructor: trim, then check the bounds above.
 impl std::str::FromStr for AccountName {
     type Err = AccountNameError;
 
@@ -135,9 +122,7 @@ impl std::str::FromStr for AccountName {
                 StringBuilderViolation::Empty => AccountNameError::Empty,
                 StringBuilderViolation::TooLong { len, .. } => AccountNameError::TooLong(len),
                 StringBuilderViolation::ControlCharacter => {
-                    // Unreachable by construction: this chain never calls
-                    // `no_control`/`no_control_except`. Fail safe onto the
-                    // most conservative existing variant rather than panic.
+                    // Unreachable: this chain never calls no_control.
                     debug_assert!(
                         false,
                         "AccountName's FromStr chain never calls no_control; ControlCharacter is unreachable"
@@ -148,8 +133,6 @@ impl std::str::FromStr for AccountName {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for AccountName {
     fn as_ref(&self) -> &str {
         self.as_str()
@@ -162,27 +145,18 @@ impl std::fmt::Display for AccountName {
     }
 }
 
-/// A founded account: its sovereign [`Did`], its app-private [`AccountId`], a
-/// validated [`AccountName`], and lifecycle timestamps.
-///
-/// Build one with [`Account::open`], which also mints the founder's Owner
-/// membership — the two are never created apart. `deleted_at` is the soft-delete
-/// marker: a deleted account keeps its row but
-/// [`crate::ports::AccountStore::find`] returns `None` for it. The struct holds no
-/// member list; membership is queried through the repo.
-///
-/// References: [`Account::open`], [`crate::ports::AccountStore`],
-/// [`crate::ports::DidMinter`] (which mints `did`), DESIGN/Account, ZMVP-14.
+/// A founded account: its [`AccountId`], a [`Handle`], a validated
+/// [`AccountName`], and lifecycle timestamps. Build one with [`Account::open`],
+/// which also mints the founder's Owner membership. `deleted_at` is the
+/// soft-delete marker — a deleted account keeps its row but
+/// [`crate::ports::AccountStore::find`] returns `None` for it.
 pub struct Account {
     pub id: AccountId,
-    /// The public handle the account is reached by — a validated, normalized
-    /// atproto handle chosen at founding (`POST /accounts`), unique across **all**
-    /// accounts (a soft-deleted account still reserves its handle; DD/23003138).
-    /// For a Zurfur-issued handle (`<label>.zurfur.app`) this is what the
-    /// `/.well-known/atproto-did` resolver looks the account up by (ZMVP-44,
-    /// DD/24870914 §6). See [`Handle`].
+    /// The public handle the account is reached by, chosen at founding and
+    /// unique across all accounts — a soft-deleted one still reserves its
+    /// handle. (DD 23003138)
     pub handle: Handle,
-    /// The name the founder gave the account. See [`AccountName`].
+    /// The name the founder gave the account.
     pub name: AccountName,
     /// When the account was founded; equals `updated_at` at creation.
     pub created_at: DateTimeUtc,
@@ -193,17 +167,9 @@ pub struct Account {
 }
 
 impl Account {
-    /// Open an account and seat its founder as Owner — the ZMVP-14 invariant
-    /// "the creating User becomes Owner".
-    ///
-    /// Mints the account (`AccountId::new(Uuid::now_v7())`, `created_at ==
-    /// updated_at == now`) and pairs it with `UserAccount { user_id: owner,
-    /// account_id: id, role: Role::Owner }` — the founder seated as Owner
-    /// with no role alias. The `name` and `handle` are already validated (see
-    /// [`AccountName`], [`Handle`]); the `did` is minted upstream by a `DidMinter`.
-    ///
-    /// Named `open` ("open an account"), not `found`, to dodge the past tense of
-    /// `find`.
+    /// Open an account and seat its founder as Owner — the two are never
+    /// created apart. Stamps `created_at == updated_at == now`; `name`, `handle`
+    /// and `did` all arrive already validated or minted.
     ///
     /// ```
     /// use chrono::Utc;
@@ -247,63 +213,35 @@ impl Account {
 }
 
 /// One row of [`crate::ports::AccountStore::list_for_user`]: a live [`Account`]
-/// paired with the caller's own [`Role`] on it (ZMVP-157) — the frontend's
-/// own-accounts list. The role is load-bearing, not cosmetic: `DELETE
-/// /accounts/{id}` is Owner-only, so the frontend needs the caller's own
-/// standing to render the delete affordance honestly rather than offering one
-/// that 403s. Distinct from [`UserAccount`], which addresses a membership by
-/// [`AccountId`]/[`UserId`] pair for **writes** — this carries the full
-/// account row a listing renders.
+/// paired with the caller's own [`Role`] on it. Distinct from [`UserAccount`],
+/// which addresses a membership for writes; this carries the full account row a
+/// listing renders.
 pub struct AccountMembership {
-    /// The live account itself — the full row, so a listing renders without a
-    /// second lookup per id. Never a soft-deleted one: `list_for_user` filters
-    /// those out exactly as [`crate::ports::AccountStore::find`] does.
+    /// The live account itself — never a soft-deleted one.
     pub account: Account,
-    /// The **caller's own** standing on that account, not the account's owner
-    /// or its whole member list — the role the querying user holds, carried
-    /// along by the membership join.
+    /// The caller's own standing on that account, not the account's owner.
     pub role: Role,
-    /// The caller's own [`RoleAlias`] for that role, if they set one — a
-    /// free-form label carrying no authority (see [`Role::can_grant`]); `None`
-    /// when unset.
+    /// The caller's own [`RoleAlias`] for that role, if they set one.
     pub alias: Option<RoleAlias>,
 }
 
-/// Who a membership listing is *for* — and therefore whether the
-/// `listed_on_profile` privacy valve applies (Engineer ruling 2026-07-25).
-///
-/// A member choosing not to list a membership on their profile (DD `21594113`
-/// decision 4: the public User-Profile "lists account memberships by default,
-/// each with a 'list on profile?' choice") is opting out of **publication**,
-/// not out of their own records. So the two lawful readings of "this user's
-/// accounts" differ, and the difference is a privacy boundary rather than a
-/// filter preference.
-///
-/// This is a **required** argument to
-/// [`list_for_user`](crate::ports::AccountStore::list_for_user) precisely so the
-/// valve cannot be bypassed by omission: there is no default, no `Option`, and
-/// no way to obtain a listing without stating which audience it is for. A
-/// public surface that forgot the valve would republish exactly the
-/// membership graph the cross-persona-unlinkability invariant (ZMVP-17) forbids
-/// — so the invariant is enforced by the signature, not by remembering.
+/// Who a membership listing is for — and therefore whether the
+/// `listed_on_profile` privacy valve applies. Required (no default, no
+/// `Option`) on
+/// [`list_for_user`](crate::ports::AccountStore::list_for_user), so the valve
+/// cannot be bypassed by omission. (DD 21594113)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingScope {
-    /// The user reading their **own** accounts — every live membership,
-    /// `listed_on_profile` deliberately ignored. Backs `GET /accounts`: a
-    /// member's own records are not hidden from them by their own publication
-    /// choice.
+    /// The user reading their own accounts — every live membership,
+    /// `listed_on_profile` ignored.
     SelfView,
-    /// A **public** projection of someone's memberships, as rendered to a
-    /// third party — honors `listed_on_profile`, so an unlisted membership is
-    /// absent. Backs the User-Profile surface of DD `21594113` decision 4.
+    /// A public projection of someone's memberships — honors
+    /// `listed_on_profile`, so an unlisted membership is absent.
     PublicProfile,
 }
 
-/// An account's public-facing profile: its [`Did`] and a display name.
-///
-/// The account analogue of a visitor's [`crate::elements::profile::Profile`] —
-/// the public projection of an [`Account`], distinct from the private [`Account`]
-/// row. See DESIGN/Account.
+/// An account's public-facing profile: its [`Did`] and a display name — the
+/// public projection of an [`Account`], distinct from the private row.
 pub struct AccountProfile {
     pub did: Did,
     pub display_name: String,

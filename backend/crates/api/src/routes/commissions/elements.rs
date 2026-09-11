@@ -1,9 +1,6 @@
 //! `POST /commissions/{id}/elements` and
 //! `DELETE /commissions/{id}/elements/{element}` — the owner composes the
-//! commission (Flat Composition DD `45514754`).
-//!
-//! ⚠️ The tab id has no read route yet; these routes are exercised through
-//! ids read from the store.
+//! commission (DD 45514754). ⚠️ The tab id has no read route yet.
 
 use axum::{
     Json,
@@ -27,10 +24,7 @@ use crate::{AppState, extract::CallingUser, problem::Problem};
 
 /// The `POST /commissions/{id}/elements` request body: where the element goes
 /// (`tab` by id, `surface` by declared name), what it is (`type`), and its
-/// opaque payload (defaults to the empty object if omitted).
-///
-/// ⚠️ contract-decision-needed: `payload` is an unschematized
-/// `serde_json::Value` passthrough (tracks `VERSIONING.md` §8 Q9).
+/// opaque payload (defaults to empty if omitted; schema undecided, VERSIONING.md §8 Q9).
 #[derive(Deserialize)]
 pub(super) struct AddElementBody {
     tab: Uuid,
@@ -62,10 +56,8 @@ pub(super) async fn add_element(
     CallingUser(actor_id): CallingUser,
     body: Result<Json<AddElementBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    // TODO(engineer): no `application::commission::elements` use case exists, so
-    // this act still authorizes and transacts in the driver — the two things DD
-    // 55836674 D6/D7 place in the application layer. Migrating it needs the use
-    // case first; this is wiring, not a design change.
+    // TODO(engineer): no use case exists yet, so this still authorizes and
+    // transacts in the driver (DD 55836674 D6/D7 place both in the application layer).
     require_owner(&state, &commission_id, &actor_id).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -104,8 +96,7 @@ pub(super) async fn remove_element(
     Path((commission_id, element)): Path<(CommissionId, ElementId)>,
     CallingUser(actor_id): CallingUser,
 ) -> Result<Response, Problem> {
-    // TODO(engineer): unmigrated for the same reason as `add_element` above —
-    // no use case covers the composition writes yet.
+    // TODO(engineer): unmigrated for the same reason as add_element (no use case yet).
     require_owner(&state, &commission_id, &actor_id).await?;
 
     state

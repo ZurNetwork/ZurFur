@@ -19,3 +19,7 @@ fs:
 **Entry points:** `src/main.rs` · `src/lib.rs::app`.
 
 **Refs:** DD "The API Contract" (40992770) · `contract/VERSIONING.md` · DD "Auth Surfaces, the Plugin Trust Boundary & CSRF" (24543244) · DD "API Response Shape & Error Model" (23592962) · DD "The Application Layer — Use Cases, DTOs and Ports" (55836674).
+
+## Notes
+- Cross-persona unlinkability: no route may join one person's separate handles/Users as the same human (holds by construction — separate handle → separate User → separate DID); guarded by `tests/cross_persona_unlinkability.rs`.
+- The cookie surface also carries `Cache-Control: no-store` (beyond CSRF) so authenticated identity/PII JSON is never cached (CWE-525).

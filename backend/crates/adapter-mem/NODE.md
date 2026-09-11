@@ -34,3 +34,10 @@ fs:
 **Entry points:** `src/lib.rs`.
 
 **Refs:** DD "Transactions as a capability — compile-enforced Unit of Work" (24150017) · memory `project_transaction_unit_of_work`.
+
+## Notes
+- Unit-of-Work exemptions — maps shared by `Arc` at `stage()`, never staged or merged: `profiles` (read-through cache fill) and `blobs` (the `FileStore` write sits outside the unit; a rolled-back unit accepts an orphaned blob). Every other map is deep-copied twice (`base` + `staged`).
+- Known divergences from pg: `merge` does not model a same-key write-write conflict (last-writer-wins, where pg serializes on a row lock); `commission_has_facts` is constant `false` until a fact-minter exists — whoever registers the first fact table in `adapter-pg/src/commission.rs` must add the matching map here (DD 3014657); `CommissionWrites::delete` cascades tabs/elements/surface modes/satellites but NOT participants, files or positioning.
+- Element addressing: every element write goes through `require_address` → `require_tab`, in that order, so an address wrong in both ways refuses as `UnknownTab`, not `UnknownSurface` — a parity test pins the order. Lock order is always `tabs` before `elements`.
+- Placement lives only in `workflow.rs`: a card on a column IS a commission's placement, and the commission side never learns of it (DD 29130754).
+- Rows that are never removed anywhere: `actor_identities`, `participants`, changelog entries (except a parent's cascade), `markups`.

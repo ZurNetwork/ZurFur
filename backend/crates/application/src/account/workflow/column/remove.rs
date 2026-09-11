@@ -36,6 +36,6 @@ impl Columns<'_> {
         let mut uow = ports.database.begin().await?;
         uow.columns().delete(&column_id).await?;
         uow.commit().await?;
-        todo!()
+        Ok(Output)
     }
 }

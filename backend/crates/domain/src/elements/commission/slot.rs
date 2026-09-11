@@ -1,25 +1,11 @@
-//! The commission's **Slots** (ZMVP-77; DESIGN/Slots `5931025`, Referenceable,
-//! Slot & Seat DD `28311564`): declared Character positions — a commission may
-//! define them, title them, count them — whose *filling* is deferred wholesale
-//! to the Character epic.
+//! The commission's Slots: declared Character positions — a commission may
+//! define them, title them, count them — whose filling is deferred to the
+//! Character epic. (DESIGN 5931025)
 //!
-//! A Slot is not a kind of element. Declaring one contributes an ordinary
-//! [`Element`](super::ElementRow) — typed [`ElementType::slot`] — into the
-//! chosen surface, while the Slot itself (the required title, optional freeform
-//! notes) lives in the satellite `commission_slot` table keyed by that
-//! element's id (mirroring the Seat satellite of Gate A ruling E20).
-//! "Deliberately not Participants" stands: a
-//! Slot holds a Character, never a User, so nothing here touches seats, roles,
-//! or the participant set.
-//!
-//! **Fill is unrepresentable, not just unoffered** (AC3): neither [`NewSlot`]
-//! nor the read-back [`Slot`] carries any occupant/character field, no port
-//! writes one, and the satellite table has no column for one — an empty Slot is
-//! a valid, *permanent* state (AC2; nothing expires or auto-fills it). The
-//! assignment surface (public-vs-private character gates, live reference)
-//! arrives with the Character epic.
-//!
-//! [`ElementType::slot`]: super::ElementType::slot
+//! Declaring one contributes an ordinary element typed
+//! [`ElementType::slot`](super::ElementType::slot), with the title and notes in
+//! a satellite row keyed by that element's id. Fill is unrepresentable: no shape
+//! here carries an occupant, and an empty Slot is a valid permanent state.
 
 use std::str::FromStr;
 
@@ -33,12 +19,8 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// A Slot's title, validated on the way in — the one **required** facet of a
-/// declared Slot (ZMVP-77 AC1).
-///
-/// Surrounding whitespace is trimmed; the result must be non-empty — the same
-/// construction-time gate [`CommissionTitle`](super::CommissionTitle) applies to
-/// commission titles (and like it, no length cap is imposed here yet).
+/// A Slot's title — the one required facet of a declared Slot: trimmed, and
+/// non-empty. No length cap yet.
 ///
 /// ```
 /// use domain::elements::commission::SlotTitle;
@@ -54,7 +36,7 @@ pub struct SlotTitle(String);
 /// Why a string was rejected as a Slot title.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlotTitleError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
 }
 
@@ -69,9 +51,6 @@ impl std::fmt::Display for SlotTitleError {
 impl std::error::Error for SlotTitleError {}
 
 /// Parses a Slot title: trimmed, then non-empty or [`SlotTitleError::Empty`].
-/// `FromStr` rather than `TryFrom<String>` so `"…".parse()` reads naturally;
-/// the trade is one allocation an owned-input impl could have reused, which
-/// only matters if titles are ever parsed in bulk.
 impl FromStr for SlotTitle {
     type Err = SlotTitleError;
 
@@ -85,10 +64,7 @@ impl FromStr for SlotTitle {
                 StringBuilderViolation::Empty => SlotTitleError::Empty,
                 StringBuilderViolation::TooLong { .. }
                 | StringBuilderViolation::ControlCharacter => {
-                    // Unreachable by construction: this chain never calls
-                    // `max_chars`/`no_control`/`no_control_except`, and
-                    // `SlotTitleError` has no variant for either. Fail safe
-                    // onto the only existing variant rather than panic.
+                    // Unreachable: this chain only applies trimmed().non_empty().
                     debug_assert!(
                         false,
                         "SlotTitle's FromStr chain only applies trimmed().non_empty()"
@@ -99,8 +75,6 @@ impl FromStr for SlotTitle {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for SlotTitle {
     fn as_ref(&self) -> &str {
         self.as_str()
@@ -114,38 +88,27 @@ impl SlotTitle {
     }
 }
 
-/// A freshly declared Slot, ready to persist into a declared **surface**
-/// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots),
-/// ZMVP-77).
-///
-/// Built with [`NewSlot::contributed_at`]. The store contributes an ordinary
-/// element — exactly a [`NewElement`](super::NewElement)'s envelope: born
-/// `Total`, append order within the band, the empty payload — and persists the
-/// Slot itself — the required [`SlotTitle`] and optional freeform notes — as the
-/// satellite beside it, keyed by that element's id.
-/// There is deliberately **no occupant field of any kind**: fill is the
-/// Character epic's, and an undeclarable field can't be filled by accident.
+/// A freshly declared Slot, ready to persist into a declared surface
+/// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots)).
+/// The store writes an ordinary element and the Slot satellite beside it, keyed
+/// by that element's id. No occupant field of any kind.
 #[derive(Debug)]
 pub struct NewSlot {
-    /// The freshly minted element key (UUIDv7) of the element that will carry
-    /// this Slot — it also keys the satellite row.
+    /// The element key (UUIDv7) of the element carrying this Slot; it also keys
+    /// the satellite row.
     pub id: ElementId,
-    /// The commission this Slot is declared on. The store verifies `tab`
-    /// belongs to this same commission (and the composite foreign key makes a
-    /// cross-commission tab unrepresentable regardless).
+    /// The commission this Slot is declared on.
     pub commission_id: CommissionId,
     /// Where the carrying element sits: the (tab, surface) pair. An absent or
-    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); a (tab,
-    /// surface) pair the [`SKELETON`](super::SKELETON) does not declare refuses with
-    /// [`UnknownSurface`](crate::ports::UnknownSurface).
+    /// foreign tab refuses with [`UnknownTab`](crate::ports::UnknownTab); an
+    /// undeclared pair with [`UnknownSurface`](crate::ports::UnknownSurface).
     pub address: SurfaceAddress,
-    /// The Slot's required title (AC1), validated at the boundary.
+    /// The Slot's required title, validated at the boundary.
     pub title: SlotTitle,
-    /// Optional freeform notes (AC1) — carried verbatim; the boundary trims and
-    /// normalizes blank to `None` before this is built.
+    /// Optional freeform notes, carried verbatim; the boundary trims and maps
+    /// blank to `None`.
     pub notes: Option<String>,
-    /// The acting User (the owner; the route's authority gate settles that
-    /// before this is built).
+    /// The acting User.
     pub created_by: UserId,
     /// When the Slot was declared.
     pub created_at: DateTimeUtc,
@@ -153,9 +116,8 @@ pub struct NewSlot {
 
 impl NewSlot {
     /// A new Slot contributed at `address`, titled `title`, with optional
-    /// `notes`. Mints the element id; authority (owner-only in v1), the tab's
-    /// existence, and the surface's declaration are the store's/route's concern,
-    /// settled when this is persisted.
+    /// `notes`. Mints the element id; authority, the tab's existence and the
+    /// surface's declaration are settled on persist.
     ///
     /// ```
     /// use chrono::Utc;
@@ -197,18 +159,12 @@ impl NewSlot {
     }
 }
 
-/// One **declared** Slot as read back — the satellite row rebuilt (title,
-/// notes) plus the element id that keys it. A commission holds zero or more of
-/// these (AC2).
-///
-/// Deliberately occupant-less: an empty Slot is not a Slot *waiting* on
-/// anything — it is the complete, permanent v1 state (AC2/AC3). When the
-/// Character epic lands the assignment surface, the occupant joins this shape
-/// (and its storage) in that change, not before.
+/// One declared Slot as read back — the satellite row (title, notes) plus the
+/// element id that keys it. Occupant-less: an empty Slot is the complete,
+/// permanent v1 state, not a Slot waiting on anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slot {
-    /// The id of the element that carries this Slot — also the satellite row's
-    /// key (one identity, two rows).
+    /// The id of the element carrying this Slot — also the satellite row's key.
     pub element_id: ElementId,
     /// The commission the Slot belongs to.
     pub commission_id: CommissionId,
@@ -225,8 +181,7 @@ mod tests {
     use super::*;
     use crate::elements::did::Did;
 
-    // AC1 — the title is required and validated: trimmed on the way in, a
-    // blank one refused rather than stored.
+    // The title is trimmed on the way in, and a blank one is refused.
     #[test]
     fn a_slot_title_trims_and_rejects_blank() {
         assert_eq!(
@@ -237,8 +192,7 @@ mod tests {
         assert_eq!("   \t ".parse::<SlotTitle>(), Err(SlotTitleError::Empty));
     }
 
-    // AC1 — a new Slot's envelope: fresh id, the (tab, surface) it is
-    // contributed into, the acting user, its title and optional notes as given.
+    // A new Slot's envelope: fresh id, address, acting user, title, notes.
     #[test]
     fn a_new_slot_carries_title_and_optional_notes() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());

@@ -31,9 +31,7 @@ impl View<'_> {
             commission_id,
         } = cmd;
 
-        // Authority is settled before the unit of work opens — `provision` is a
-        // WRITE keyed to a DID the caller names, and its refusals are
-        // distinguishable. See the twin note on `view::grant`.
+        // Authority before `provision` — see the twin note on `view::grant`.
         let commission = ports
             .commissions
             .find(&commission_id)
@@ -55,9 +53,8 @@ impl View<'_> {
             now,
         );
 
-        // Keyed on a real revocation: revoking a grant nobody holds changes
-        // nothing, so it records nothing. The changelog is evidence, not a log
-        // of attempts.
+        // Keyed on a real revocation: revoking a grant nobody holds records
+        // nothing.
         let mut commissions = uow.commissions();
         let revoked = commissions
             .revoke_view(&commission.id, &target_user.id)

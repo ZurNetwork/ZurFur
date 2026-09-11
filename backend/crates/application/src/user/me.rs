@@ -5,17 +5,16 @@ use domain::{
 
 use crate::user::Users;
 
-/// `me`'s input: the caller whose identity to report. How `user_id` was
-/// established — a session, an identity file — is the driver's.
+/// The caller whose identity to report; how `user_id` was established is the
+/// driver's business.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeQuery {
     pub user_id: UserId,
 }
 
-/// Who the caller is, flattened for rendering: the recognized user's DID,
-/// plus their public profile when it could be resolved. `profile` is
-/// `None` when neither the cache nor the PDS answered — absence is not an
-/// error (R4); the drivers render the bare DID.
+/// The recognized user's DID, plus their public profile when it resolved.
+/// `profile` is `None` when neither the cache nor the PDS answered — absence
+/// is not an error; the drivers render the bare DID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub id: UserId,
@@ -39,8 +38,8 @@ impl From<Profile> for MeProfile {
         }
     }
 }
-/// Why [`me`] could not answer. `Display` is terse and never interpolates
-/// the cause (a driver may print it); the cause stays on `source()`.
+/// Why `me` could not answer. `Display` stays terse; the cause rides
+/// `source()`.
 #[derive(Debug)]
 pub enum MeError {
     /// No user carries `id` — a stale session or identity file.
@@ -73,9 +72,8 @@ impl std::error::Error for MeError {
     }
 }
 
-/// `GET /me` and `zurfur session whoami`: load the user behind
-/// [`MeQuery::user_id`] and resolve their profile read-through
-/// ([`Profile::resolve_through`]).
+/// Load the user behind [`MeQuery::user_id`] and resolve their profile
+/// read-through ([`Profile::resolve_through`]).
 impl Users<'_> {
     pub async fn me(
         &self,
