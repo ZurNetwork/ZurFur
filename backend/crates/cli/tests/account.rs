@@ -60,12 +60,15 @@ async fn create_founds_an_account_and_projects_it_like_post_accounts() {
     assert_eq!(value["name"], "Acme Studio");
     assert!(value["did"].as_str().unwrap().starts_with("did:plc:"));
     assert!(value["id"].as_str().is_some());
-    let keys: Vec<&str> = value
+    // Sorted before comparing: serde_json's Map iteration order is
+    // feature-dependent (`preserve_order`), and this pins the key SET.
+    let mut keys: Vec<&str> = value
         .as_object()
         .unwrap()
         .keys()
         .map(String::as_str)
         .collect();
+    keys.sort_unstable();
     assert_eq!(keys, ["did", "handle", "id", "name"]);
 }
 
