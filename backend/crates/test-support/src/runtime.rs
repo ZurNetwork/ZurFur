@@ -28,8 +28,9 @@ pub struct MemRuntimeBuilder {
     max_upload_bytes: u64,
 }
 
-/// Start a runtime that authenticates as `did`, with a bare profile under
-/// `<did-id>.bsky.social`; override pieces before [`build`](MemRuntimeBuilder::build).
+/// Start a runtime that authenticates as `did`, with a bare profile under the
+/// fixed handle `fixture.bsky.social`; override pieces before
+/// [`build`](MemRuntimeBuilder::build).
 pub fn mem(did: &Did) -> MemRuntimeBuilder {
     MemRuntimeBuilder {
         did: did.clone(),

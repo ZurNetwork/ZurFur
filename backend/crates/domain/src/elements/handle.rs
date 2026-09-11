@@ -1,43 +1,25 @@
 //! The [`Handle`] — a validated, normalized atproto-style Account handle — and
-//! the [`HandleDomain`] it may live under.
+//! the [`HandleDomain`] it may live under. (DD 24870914)
 //!
-//! An Account's handle is the public, human-typeable name it is reached by. Per
-//! the DD *The Account Handle* (DESIGN/24870914 §6) it is user-chosen at
-//! `POST /accounts` and is one of two things: a Zurfur-issued `<label>.zurfur.app`
-//! subdomain, or a brought (BYO) domain the user already controls. Both verify
-//! through the same atproto handle mechanism; the difference is only who controls
-//! the DNS.
-//!
-//! This module is the **one shared validation gate** every future claim source
-//! (onboarding ZMVP-30, issuance/resolution ZMVP-44) funnels through. Constructing
-//! a [`Handle`] enforces — in a single pass — atproto normalization, the charset /
-//! segment / length rules, the `xn--` punycode reject (ZMVP-48,
-//! DD/26050561), and the Zurfur reserved-label reject (ZMVP-45). One gate, not
-//! many: every consumer inherits the whole rule set by building a `Handle`.
-//!
-//! The configured namespace itself is [`HandleDomain`], parsed once at `Config`
-//! load, and membership in it is [`Handle::is_in_namespace`] — one normalizer, so
-//! the claim checks and the `/.well-known/atproto-did` resolver can never
-//! disagree about what the Zurfur namespace is.
-//!
-//! It mirrors the [`crate::elements::account::AccountName`] idiom exactly — a
-//! `String` newtype with a validating `FromStr`, an `as_str()`, a typed error
-//! enum, and `///` doctests. It is a plain struct + free function: no trait,
-//! because nothing consumes one polymorphically.
+//! This module is the one shared validation gate every claim source funnels
+//! through: constructing a [`Handle`] enforces normalization, the
+//! charset/segment/length rules, the `xn--` punycode reject (DD 26050561), and
+//! the Zurfur reserved-label reject in a single pass. Namespace membership is
+//! [`Handle::is_in_namespace`], against a [`HandleDomain`] parsed once at config
+//! load, so the claim checks and the resolver cannot disagree.
 
 use std::str::FromStr;
 
-/// The longest a whole handle may be, in `char`s (atproto handle spec; DD §6).
+/// The longest a whole handle may be, in `char`s.
 pub const HANDLE_MAX_LEN: usize = 253;
 
-/// The longest a single handle label (dot-separated segment) may be (DD §6).
+/// The longest a single handle label (dot-separated segment) may be.
 pub const LABEL_MAX_LEN: usize = 63;
 
-/// The Zurfur-issued handle namespace. A handle ending in `.zurfur.app` is gated
-/// by [`RESERVED_LABELS`] on its leftmost label (ZMVP-45).
+/// The Zurfur-issued handle namespace, gated by [`RESERVED_LABELS`].
 const ZURFUR_NAMESPACE_SUFFIX: &str = ".zurfur.app";
 
-/// Top-level domains the atproto handle spec forbids as handles (DD §6).
+/// Top-level domains the atproto handle spec forbids as handles.
 const RESERVED_TLDS: &[&str] = &[
     "alt",
     "arpa",
@@ -50,11 +32,8 @@ const RESERVED_TLDS: &[&str] = &[
     "test",
 ];
 
-/// Labels Zurfur withholds from its own `*.zurfur.app` namespace (ZMVP-45).
-///
-/// Checked against the **leftmost** label of a `*.zurfur.app` handle only — a BYO
-/// domain such as `api.example.com` is the owner's to claim, so it is **not**
-/// gated by this set (DD/24870914; Engineer-approved starter set, 2026-06-30).
+/// Labels Zurfur withholds from its own `*.zurfur.app` namespace. Checked
+/// against the leftmost label only; a BYO domain is never gated by this set.
 const RESERVED_LABELS: &[&str] = &[
     // infra / service
     "api",
@@ -109,10 +88,8 @@ const RESERVED_LABELS: &[&str] = &[
     "ns",
 ];
 
-/// A validated, normalized atproto-style Account handle (DD/24870914 §6).
-///
-/// Validate on the way in, then expose the normalized form via [`Handle::as_str`].
-/// The stored value is always lowercase, trimmed, and has no trailing dot.
+/// A validated, normalized atproto-style Account handle. The stored value is
+/// always lowercase, trimmed, and has no trailing dot.
 ///
 /// ```
 /// use domain::elements::handle::Handle;
@@ -135,10 +112,8 @@ const RESERVED_LABELS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handle(String);
 
-/// Why a string was rejected as a [`Handle`]. One variant per failure class,
-/// mirroring [`crate::elements::account::AccountNameError`].
-///
-/// Each variant renders a clear human message via [`Display`](std::fmt::Display).
+/// Why a string was rejected as a [`Handle`] — one variant per failure class,
+/// each rendering a human message via [`Display`](std::fmt::Display).
 ///
 /// ```
 /// use domain::elements::handle::{Handle, HandleError};
@@ -149,29 +124,27 @@ pub struct Handle(String);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandleError {
-    /// Empty once normalized. Example: `""` or `"   "` or `"."`.
+    /// Empty once normalized.
     Empty,
-    /// Longer than [`HANDLE_MAX_LEN`] chars overall. Carries the offending length.
+    /// Longer than [`HANDLE_MAX_LEN`] chars overall; carries the length.
     TooLong(usize),
     /// Fewer than two dot-separated segments (e.g. bare `"alice"`).
     TooFewSegments,
     /// A dot-separated segment is empty (e.g. `"alice..app"`).
     EmptySegment,
-    /// A segment is longer than [`LABEL_MAX_LEN`] chars. Carries the offending length.
+    /// A segment is longer than [`LABEL_MAX_LEN`] chars; carries the length.
     SegmentTooLong(usize),
-    /// A character outside the `[a-z0-9-]` charset. Carries the offending char.
+    /// A character outside the `[a-z0-9-]` charset; carries the char.
     InvalidChar(char),
     /// A segment starts or ends with a hyphen.
     HyphenEdge,
     /// The rightmost (top-level) segment starts with a digit.
     TldLeadingDigit,
-    /// The rightmost segment is a reserved TLD (e.g. `.local`, `.test`). Carries it.
+    /// The rightmost segment is a reserved TLD (e.g. `.local`); carries it.
     ReservedTld(String),
-    /// Some label begins with `xn--` (punycode). Rejected in both namespaces
-    /// (ZMVP-48, DD/26050561) to kill the homoglyph-IDN impersonation vector.
+    /// Some label begins with `xn--`. Rejected in both namespaces. (DD 26050561)
     PunycodeLabel,
-    /// The leftmost label of a `*.zurfur.app` handle is reserved (ZMVP-45).
-    /// Carries the offending label.
+    /// The leftmost label of a `*.zurfur.app` handle is reserved; carries it.
     ReservedLabel(String),
 }
 
@@ -228,23 +201,10 @@ impl std::error::Error for HandleError {}
 impl FromStr for Handle {
     type Err = HandleError;
 
-    /// Validate and wrap a handle, enforcing every rule in one pass.
-    ///
-    /// The input is first **normalized** (trim surrounding whitespace, lowercase,
-    /// strip a single trailing dot), then checked, in order:
-    /// 1. non-empty and `≤` [`HANDLE_MAX_LEN`] chars;
-    /// 2. at least two dot-separated segments, none empty;
-    /// 3. each segment `≤` [`LABEL_MAX_LEN`] chars, no leading/trailing hyphen,
-    ///    every char in `[a-z0-9-]`;
-    /// 4. no label begins with `xn--` (punycode reject, ZMVP-48 — uniform across
-    ///    both namespaces);
-    /// 5. the rightmost segment does not start with a digit;
-    /// 6. the rightmost segment is not a [reserved TLD](RESERVED_TLDS);
-    /// 7. for a `*.zurfur.app` handle — or the bare apex `zurfur.app` itself — the
-    ///    leftmost label is not [reserved](RESERVED_LABELS) (ZMVP-45); `"zurfur"` is
-    ///    itself in that set, so the platform root handle is refused the same way a
-    ///    sub-label is. This gate applies to the Zurfur namespace only, never to a
-    ///    BYO domain.
+    /// Validate and wrap a handle, enforcing every rule in one pass: normalize
+    /// (trim, lowercase, strip one trailing dot), then check length, segment
+    /// count and shape, charset, the `xn--` reject, the TLD rules, and — in the
+    /// Zurfur namespace only, apex included — the reserved leftmost label.
     ///
     /// ```
     /// use domain::elements::handle::{Handle, HandleError};
@@ -337,16 +297,9 @@ impl Handle {
         &self.0
     }
 
-    /// Whether this handle lives **inside** `domain`'s issued namespace — i.e. it
-    /// is a strict subdomain of it (`alice.zurfur.app` is; the bare apex
-    /// `zurfur.app` is not; the look-alike `notzurfur.app` is not).
-    ///
-    /// This is the one namespace test the whole system shares. The claim checks
-    /// (quarantine reservation, the v1 Zurfur-only handle *change* flow — DD
-    /// `27852802` §4/§6) and the `/.well-known/atproto-did` resolver both ask it,
-    /// so they can never disagree about what the namespace is: both sides are
-    /// already normalized — the handle by [`Handle`]'s `FromStr`, the domain by
-    /// [`HandleDomain`]'s.
+    /// Whether this handle is a strict subdomain of `domain`'s namespace — the
+    /// bare apex is not, and neither is a look-alike without a label boundary.
+    /// The one namespace test the whole system shares.
     ///
     /// ```
     /// use domain::elements::handle::{Handle, HandleDomain};
@@ -359,24 +312,16 @@ impl Handle {
     /// assert!(!"notzurfur.app".parse::<Handle>().unwrap().is_in_namespace(&zurfur));
     /// ```
     pub fn is_in_namespace(&self, domain: &HandleDomain) -> bool {
-        let suffix = format!(".{}", domain.as_str());
-        self.0.ends_with(&suffix)
+        self.0
+            .strip_suffix(domain.as_str())
+            .is_some_and(|prefix| prefix.ends_with('.'))
     }
 }
 
-/// The DNS namespace Zurfur issues Account handles under (`zurfur.app`), as
-/// deployment configures it — normalized the same way a [`Handle`] is.
-///
-/// It exists so the namespace is **parsed once, at `Config` load**, instead of a
-/// raw `String` being re-normalized (or forgotten) at each call site: the claim
-/// checks and the well-known resolver then physically cannot disagree about what
-/// the namespace is. A stray `" Zurfur.App. "` from config or env would otherwise
-/// misclassify every Zurfur handle as brought (BYO) and silently disable both the
-/// quarantine reservation and the resolver.
-///
-/// Mirrors the [`Handle`] idiom exactly: a `String` newtype whose `FromStr` is the
-/// only constructor, plus [`as_str`](HandleDomain::as_str), [`AsRef<str>`] and
-/// [`Display`](std::fmt::Display).
+/// The DNS namespace Zurfur issues Account handles under, as deployment
+/// configures it — normalized (trimmed, lowercased, outer dots stripped) and
+/// parsed once at config load so no call site re-normalizes it. Only an empty
+/// result is rejected; stricter DNS-label validation is an open follow-up.
 ///
 /// ```
 /// use domain::elements::handle::HandleDomain;
@@ -388,8 +333,7 @@ impl Handle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandleDomain(String);
 
-/// Why a string was rejected as a [`HandleDomain`]. One variant per failure
-/// class, mirroring [`HandleError`].
+/// Why a string was rejected as a [`HandleDomain`].
 ///
 /// ```
 /// use domain::elements::handle::{HandleDomain, HandleDomainError};
@@ -398,7 +342,7 @@ pub struct HandleDomain(String);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandleDomainError {
-    /// Empty once normalized. Example: `""`, `"   "`, or `"."`.
+    /// Empty once normalized.
     Empty,
 }
 
@@ -415,13 +359,10 @@ impl std::error::Error for HandleDomainError {}
 impl FromStr for HandleDomain {
     type Err = HandleDomainError;
 
-    /// Validate and wrap a configured handle namespace.
-    ///
-    /// The input is **normalized** the way [`Handle`]'s `FromStr` normalizes a
-    /// handle — trim surrounding whitespace, lowercase — plus stripping any
-    /// leading *and* trailing dots, so `".zurfur.app"`, `"zurfur.app."` and
-    /// `"zurfur.app"` are the same namespace. An empty result is rejected: an
-    /// empty namespace would make every handle look like a member.
+    /// Normalize and wrap a configured handle namespace: trim, lowercase, and
+    /// strip leading and trailing dots. Only an empty result is rejected — an
+    /// empty namespace would make every handle look like a member. Stricter
+    /// DNS-label validation is an open follow-up.
     ///
     /// ```
     /// use domain::elements::handle::{HandleDomain, HandleDomainError};
@@ -439,8 +380,7 @@ impl FromStr for HandleDomain {
 }
 
 impl HandleDomain {
-    /// The normalized namespace string (lowercase, trimmed, no leading or
-    /// trailing dot).
+    /// The normalized namespace string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -632,9 +572,8 @@ mod tests {
         }
     }
 
-    // Bug guard — the suffix check keyed on the leading-dot `.zurfur.app`, so the
-    // bare apex (no label in front of it) slipped past every other sub-label
-    // rejection. The platform root handle must be reserved too.
+    // The platform root handle is reserved too — the leading-dot suffix check
+    // alone would let the bare apex slip past.
     #[test]
     fn rejects_the_bare_platform_apex() {
         assert_eq!(
@@ -645,7 +584,6 @@ mod tests {
 
     #[test]
     fn accepts_a_normal_zurfur_subdomain() {
-        // The apex rejection must not overreach into ordinary subdomains.
         assert_eq!(
             "alice.zurfur.app".parse::<Handle>().unwrap().as_str(),
             "alice.zurfur.app"
@@ -654,8 +592,7 @@ mod tests {
 
     #[test]
     fn accepts_reserved_word_on_byo_domain() {
-        // The reserved set guards only the *.zurfur.app namespace; a BYO domain
-        // is the owner's to claim (Engineer disposition, 2026-06-30).
+        // The reserved set guards only the *.zurfur.app namespace.
         assert_eq!(
             "api.example.com".parse::<Handle>().unwrap().as_str(),
             "api.example.com"
@@ -699,10 +636,6 @@ mod tests {
     }
 
     // ---- The configured namespace (HandleDomain) -------------------------
-    //
-    // Moved down from `application::account` (DD 55836674 follow-up): the
-    // namespace normalizer and the membership test are Handle policy, so they
-    // live with the Handle.
 
     fn domain(raw: &str) -> HandleDomain {
         raw.parse().expect("a valid handle domain")
@@ -748,8 +681,7 @@ mod tests {
     fn namespace_membership_refuses_the_apex_and_lookalikes() {
         let zurfur = domain("zurfur.app");
         // The apex is not a member of its own namespace. `zurfur.app` is not a
-        // constructible Handle (the reserved-label gate), so a differently-named
-        // deployment domain stands in for the shape.
+        // constructible Handle, so another domain stands in for the shape.
         let apex_domain = domain("example.com");
         let apex = "example.com".parse::<Handle>().expect("a valid handle");
         assert!(!apex.is_in_namespace(&apex_domain));
@@ -768,15 +700,4 @@ mod tests {
             .expect("a valid handle");
         assert!(!embedded.is_in_namespace(&zurfur));
     }
-
-    // ---- RFC-9457 claim-site mapping — FULFILLED (ZMVP-44) ----
-    //
-    // The claim surface now exists: `POST /accounts` accepts a `handle`, validates
-    // it through this newtype, and maps a [`HandleError`] to a 422
-    // `urn:zurfur:error:invalid-request` problem+json (DD/23592962). Duplicate
-    // handles map to a 409 `handle_taken`. That mapping is an api-layer concern
-    // (the `domain` crate has no HTTP types), so its integration coverage lives in
-    // `api/tests/accounts.rs` (`founding_rejects_a_punycode_handle`,
-    // `founding_rejects_a_reserved_handle`, `founding_rejects_a_duplicate_handle`),
-    // not here. This note records that the earlier handoff is closed.
 }

@@ -23,6 +23,12 @@ fn after_past() -> DateTime<Utc> {
     "2020-06-01T00:00:00Z".parse().expect("valid timestamp")
 }
 
+/// When every seeded commission was created — before [`past`], so a seeded
+/// deadline never precedes its own `created_at`.
+fn seeded_at() -> DateTime<Utc> {
+    "2019-12-01T00:00:00Z".parse().expect("valid timestamp")
+}
+
 /// Seeds a committed commission in `step` with `deadline`, owned by a
 /// directly-provisioned user — the arrangement the sweep's scope tests need
 /// (the struct fields are public by design; there is no lifecycle-transition
@@ -38,7 +44,7 @@ async fn seed(
     let title: CommissionTitle = title.parse().expect("valid title");
     transaction(database, async move |uow: &mut dyn UnitOfWork| {
         let owner = uow.users().provision(&owner_did).await?;
-        let mut commission = Commission::create(title, owner.id, Utc::now(), deadline);
+        let mut commission = Commission::create(title, owner.id, seeded_at(), deadline);
         commission.lifecycle_step = step;
         let id = commission.id;
         uow.commissions().create(&commission).await?;
