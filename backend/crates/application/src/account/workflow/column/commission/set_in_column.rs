@@ -59,7 +59,8 @@ impl Commissions<'_> {
         let account_id = ports
             .workflows
             .owning_account_of(&column.workflow_id)
-            .await?;
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
 
         require_live_account(ports, &account_id).await?;
 
@@ -94,6 +95,7 @@ impl Commissions<'_> {
             WorkflowError::DuplicateCommission | WorkflowError::DuplicateColumnName => {
                 AccountError::DuplicateName
             }
+            WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
             other => {
                 AccountError::Infrastructure(anyhow::anyhow!("the board refused the card: {other}"))
             }

@@ -1,7 +1,9 @@
 use domain::elements::{role::Role, user::UserId, workflow::ColumnId};
 
 use crate::{
-    account::{AccountError, AccountResult, require_live_account, workflow::column::Columns},
+    account::{
+        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+    },
     ports::WithPorts,
 };
 
@@ -21,7 +23,11 @@ impl Columns<'_> {
             column_id,
         } = cmd;
 
-        let account_id = ports.columns.owning_account_of(&column_id).await?;
+        let account_id = ports
+            .columns
+            .owning_account_of(&column_id)
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Column))?;
         require_live_account(ports, &account_id).await?;
 
         ports

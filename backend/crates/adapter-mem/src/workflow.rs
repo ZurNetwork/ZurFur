@@ -184,15 +184,18 @@ impl WorkflowStore for MemWorkflowStore {
         workflow_of(&self.0, workflow_id)
     }
 
-    /// The account a board belongs to; an absent board is an `Err`.
-    async fn owning_account_of(&self, workflow_id: &WorkflowId) -> anyhow::Result<AccountId> {
-        self.0
+    /// The account a board belongs to, or `None` if no such board exists.
+    async fn owning_account_of(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<AccountId>> {
+        Ok(self
+            .0
             .workflows
             .lock()
             .expect("MemBackend workflows mutex poisoned")
             .get(workflow_id)
-            .map(|stored| stored.account_id.clone())
-            .ok_or_else(|| anyhow::anyhow!("no such workflow"))
+            .map(|stored| stored.account_id.clone()))
     }
 
     /// A board's columns in board order, each with its cards.
@@ -303,19 +306,19 @@ impl ColumnStore for MemColumnStore {
             .transpose()
     }
 
-    /// The account that owns the board this column sits on; an absent column
-    /// is an `Err`.
-    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<AccountId> {
-        let workflow_id = {
-            let columns = self
-                .0
-                .columns
-                .lock()
-                .expect("MemBackend columns mutex poisoned");
-            columns
-                .get(column_id)
-                .map(|stored| stored.workflow_id.clone())
-                .ok_or_else(|| anyhow::anyhow!("no such column"))?
+    /// The account that owns the board this column sits on, or `None` if no
+    /// such column exists.
+    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>> {
+        let stored_workflow_id = self
+            .0
+            .columns
+            .lock()
+            .expect("MemBackend columns mutex poisoned")
+            .get(column_id)
+            .map(|stored| stored.workflow_id.clone());
+
+        let Some(workflow_id) = stored_workflow_id else {
+            return Ok(None);
         };
 
         MemWorkflowStore(self.0.clone())

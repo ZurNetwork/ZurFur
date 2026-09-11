@@ -1,7 +1,9 @@
 use domain::elements::{user::UserId, workflow::WorkflowId};
 
 use crate::{
-    account::{AccountError, AccountResult, require_live_account, workflow::Workflows},
+    account::{
+        AccountEntity, AccountError, AccountResult, require_live_account, workflow::Workflows,
+    },
     ports::WithPorts,
 };
 
@@ -19,7 +21,11 @@ impl Workflows<'_> {
             workflow_id,
         } = cmd;
 
-        let account_id = ports.workflows.owning_account_of(&workflow_id).await?;
+        let account_id = ports
+            .workflows
+            .owning_account_of(&workflow_id)
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
 
         require_live_account(ports, &account_id).await?;
 

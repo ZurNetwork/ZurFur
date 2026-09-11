@@ -112,6 +112,9 @@ pub enum AccountError {
     SystemError(SystemError),
     IncorrectNumberOfColumns,
     NothingToDo,
+    /// The requested position is past the end of the list; carries the
+    /// offending index.
+    IndexOutOfRange(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +147,7 @@ impl From<WorkflowError> for AccountError {
     fn from(value: WorkflowError) -> Self {
         match value {
             WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
+            WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
             v => AccountError::Infrastructure(v.into()),
         }
     }
@@ -203,6 +207,9 @@ impl std::fmt::Display for AccountError {
                 write!(f, "The number of columns provided is erroneous")
             }
             Self::NothingToDo => write!(f, "nothing to do"),
+            Self::IndexOutOfRange(index) => {
+                write!(f, "position {index} is past the end of the list")
+            }
         }
     }
 }
@@ -226,6 +233,7 @@ impl std::error::Error for AccountError {
             | Self::InvitationAlreadyPending
             | Self::IncorrectNumberOfColumns
             | Self::NothingToDo
+            | Self::IndexOutOfRange(_)
             | Self::DuplicateName => None,
             Self::NotFound(entity) => Some(entity),
             Self::SystemError(e) => Some(e),

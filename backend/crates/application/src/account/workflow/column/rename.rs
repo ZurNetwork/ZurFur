@@ -52,6 +52,7 @@ impl Columns<'_> {
             .rename_column(&column_id, name.clone())
             .map_err(|c| match c {
                 WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
+                WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
                 other => AccountError::Infrastructure(anyhow::anyhow!(
                     "the board refused the rename: {other}"
                 )),

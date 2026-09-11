@@ -179,14 +179,14 @@ impl WorkflowStore for PgWorkflowStore {
         load_workflow(&self.pool, workflow_id).await
     }
 
-    /// The account a board belongs to. An absent board is an `Err`, not `None`
-    /// — the caller believes this board exists.
-    async fn owning_account_of(&self, workflow_id: &WorkflowId) -> anyhow::Result<AccountId> {
-        let did = workflow_sql::owning_account(&self.pool, **workflow_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("no such workflow"))?;
+    /// The account a board belongs to, or `None` if no such board exists.
+    async fn owning_account_of(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<AccountId>> {
+        let did = workflow_sql::owning_account(&self.pool, **workflow_id).await?;
 
-        Ok(AccountId::new(Did::new(did)))
+        Ok(did.map(|did| AccountId::new(Did::new(did))))
     }
 
     /// A board's columns in board order, each with its cards.
@@ -302,16 +302,15 @@ impl ColumnStore for PgColumnStore {
         Ok(Some(column))
     }
 
-    /// The account owning the board this column sits on. An absent column is
-    /// an `Err`, matching [`WorkflowStore::owning_account_of`].
-    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<AccountId> {
+    /// The account owning the board this column sits on, or `None` if no such
+    /// column exists.
+    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>> {
         let did = column_sql::owning_account(&self.pool, **column_id)
             .await?
             .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("no such column"))?;
+            .next();
 
-        Ok(AccountId::new(Did::new(did)))
+        Ok(did.map(|did| AccountId::new(Did::new(did))))
     }
 
     /// The whole board a column sits on. An absent column or board is an

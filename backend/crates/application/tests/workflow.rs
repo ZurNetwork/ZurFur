@@ -7,10 +7,12 @@
 //! non-member from reading board state off an error.
 
 use application::account::{self, AccountEntity, AccountError, workflow};
+use application::transaction;
 use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
+    commission::{Commission, CommissionId, CommissionTitle},
     did::Did,
     handle::HandleDomain,
     role::Role,
@@ -214,6 +216,38 @@ async fn tombstone(runtime: &Runtime, account_id: &AccountId) {
     })
     .await
     .expect("soft-deletes the account");
+}
+
+/// Remove `column_id` as `actor`.
+async fn remove_column(
+    runtime: &Runtime,
+    actor: &UserId,
+    column_id: &ColumnId,
+) -> Result<workflow::column::remove::Output, AccountError> {
+    let command = workflow::column::remove::Command {
+        column_id: column_id.clone(),
+        actor_id: actor.clone(),
+    };
+    let app = runtime.app();
+    let accounts = app.accounts();
+    accounts.workflows().columns().remove(command).await
+}
+
+/// Seed a commission owned by `owner`, directly (test seed, no use case
+/// involved) — owning it is enough to make it immediately visible to
+/// `insert_in_column`'s PUSH rail (DD 29130754), without standing up a
+/// separate view grant.
+async fn seed_commission(runtime: &Runtime, owner: &UserId, title: &str) -> CommissionId {
+    let title: CommissionTitle = title.parse().expect("a valid commission title");
+    let owner = owner.clone();
+    transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
+        let commission = Commission::create(title, owner, Utc::now(), None);
+        let id = commission.id;
+        uow.commissions().create(&commission).await?;
+        Ok(id)
+    })
+    .await
+    .expect("seeds a commission")
 }
 
 // --- delete: the role gate (F1 — the predicate was inverted, so the two
@@ -478,4 +512,91 @@ async fn an_owner_adding_a_duplicate_column_name_still_gets_the_duplicate_refusa
 
     // The reorder must not have cost an authorized caller their real answer.
     assert!(matches!(error, AccountError::DuplicateName));
+}
+
+// --- R2: `owning_account_of` answers absence with `None`, never `Err` — a
+// bogus id a client invented is a `NotFound`, not an infrastructure failure ---
+
+#[tokio::test]
+async fn deleting_a_board_that_does_not_exist_is_refused_as_not_found() {
+    let fixture = fixture("did:plc:board-delete-missing");
+    let runtime = &fixture.runtime;
+    let owner = recognized(&fixture, "did:plc:board-delete-missing").await;
+    let workflow_id = WorkflowId::from(uuid::Uuid::now_v7());
+
+    let Err(error) = delete_board(runtime, &owner, &workflow_id).await else {
+        panic!("a board that was never created must not be deletable");
+    };
+
+    assert!(matches!(
+        error,
+        AccountError::NotFound(AccountEntity::Workflow)
+    ));
+}
+
+#[tokio::test]
+async fn removing_a_column_that_does_not_exist_is_refused_as_not_found() {
+    let fixture = fixture("did:plc:column-remove-missing");
+    let runtime = &fixture.runtime;
+    let owner = recognized(&fixture, "did:plc:column-remove-missing").await;
+    let column_id = ColumnId::from(uuid::Uuid::now_v7());
+
+    let Err(error) = remove_column(runtime, &owner, &column_id).await else {
+        panic!("a column that was never created must not be removable");
+    };
+
+    assert!(matches!(
+        error,
+        AccountError::NotFound(AccountEntity::Column)
+    ));
+}
+
+// --- R1: `WorkflowError::IndexOutOfRange` surfaces as a typed client error,
+// never `Infrastructure` (the account-side catch-alls used to swallow it) ---
+
+#[tokio::test]
+async fn adding_a_column_past_the_end_of_the_board_is_refused_as_index_out_of_range() {
+    let fixture = fixture("did:plc:board-add-out-of-range");
+    let runtime = &fixture.runtime;
+    let owner = recognized(&fixture, "did:plc:board-add-out-of-range").await;
+    let account_id = found(runtime, &owner, "add-out-of-range.zurfur.app").await;
+    let workflow_id = board(runtime, &owner, &account_id, "Queue").await;
+
+    // The board is empty: index 1 is past its only valid insertion point, 0.
+    let Err(error) = add_column(runtime, &owner, &workflow_id, "Sketching", 1).await else {
+        panic!("an empty board has no first column to insert in front of");
+    };
+
+    assert!(
+        matches!(error, AccountError::IndexOutOfRange(_)),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn inserting_a_commission_past_the_end_of_a_column_is_refused_as_index_out_of_range() {
+    let fixture = fixture("did:plc:card-add-out-of-range");
+    let runtime = &fixture.runtime;
+    let owner = recognized(&fixture, "did:plc:card-add-out-of-range").await;
+    let account_id = found(runtime, &owner, "card-out-of-range.zurfur.app").await;
+    let workflow_id = board(runtime, &owner, &account_id, "Queue").await;
+    let sketching_column_id = column_id(runtime, &owner, &workflow_id, "Sketching", 0).await;
+    // Owning the commission is enough to make it immediately visible to the
+    // PUSH rail (DD 29130754), without standing up a separate view grant.
+    let commission_id = seed_commission(runtime, &owner, "A Wolf in Moonlight").await;
+
+    let command = workflow::column::commission::set_in_column::Command {
+        commission_id,
+        column_id: sketching_column_id,
+        index: 1,
+        actor_id: owner.clone(),
+    };
+    let Err(error) = runtime.app().commissions().insert_in_column(command).await else {
+        panic!("an empty column has no first card to insert in front of");
+    };
+
+    assert!(
+        matches!(error, AccountError::IndexOutOfRange(_)),
+        "{error:?}"
+    );
 }

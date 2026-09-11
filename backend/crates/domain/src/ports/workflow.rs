@@ -38,7 +38,11 @@ pub trait WorkflowWrites: Send {
 #[async_trait]
 pub trait WorkflowStore: Send + Sync {
     async fn find(&self, workflow_id: &WorkflowId) -> anyhow::Result<Option<Workflow>>;
-    async fn owning_account_of(&self, workflow_id: &WorkflowId) -> anyhow::Result<AccountId>;
+    /// The account a board belongs to, or `None` if no such board exists.
+    async fn owning_account_of(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<AccountId>>;
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>>;
 }
 
@@ -69,6 +73,8 @@ pub trait ColumnStore: Send + Sync {
         workflow_id: &WorkflowId,
         commission_id: &CommissionId,
     ) -> anyhow::Result<Option<Column>>;
-    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<AccountId>;
+    /// The account owning the board this column sits on, or `None` if no such
+    /// column exists.
+    async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>>;
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow>;
 }

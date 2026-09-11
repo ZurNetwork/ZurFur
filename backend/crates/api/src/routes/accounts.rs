@@ -70,7 +70,6 @@ impl From<AccountError> for Problem {
             AccountError::InvitationAlreadyPending => {
                 Problem::invalid_request("An invitation for that user is already pending.")
             }
-            // TODO(Engineer): board-mutation status codes are unruled; defaults below.
             AccountError::ContainsCommissions => Problem::invalid_request(
                 "That column still holds commissions; move them off it first.",
             ),
@@ -79,6 +78,9 @@ impl From<AccountError> for Problem {
             }
             AccountError::IncorrectNumberOfColumns => {
                 Problem::invalid_request("That board cannot hold any more columns.")
+            }
+            AccountError::IndexOutOfRange(_) => {
+                Problem::invalid_request("That position is past the end of the list.")
             }
             AccountError::NothingToDo => {
                 Problem::invalid_request("That change would leave everything as it is.")

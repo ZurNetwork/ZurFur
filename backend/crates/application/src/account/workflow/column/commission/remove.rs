@@ -34,7 +34,11 @@ impl Workflows<'_> {
             workflow_id,
         } = cmd;
 
-        let account_id = ports.workflows.owning_account_of(&workflow_id).await?;
+        let account_id = ports
+            .workflows
+            .owning_account_of(&workflow_id)
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
         require_live_account(ports, &account_id).await?;
 
         // Any member may reposition

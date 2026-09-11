@@ -67,6 +67,7 @@ impl Columns<'_> {
             .insert(usize::from(position), new_column)
             .map_err(|e| match e {
                 WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
+                WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
                 other => AccountError::Infrastructure(anyhow::anyhow!(
                     "the board refused the column: {other}"
                 )),
