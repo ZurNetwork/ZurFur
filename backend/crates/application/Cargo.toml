@@ -1,0 +1,20 @@
+[package]
+name = "application"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The use-case layer (ZMVP-205, Engineer ruling 2026-08-24): every driver
+# (`api`, `cli`) calls these functions; they know the domain and its ports,
+# never HTTP or a terminal. Depends on `domain` only — never on an adapter,
+# never on `composition`.
+[dependencies]
+domain = { path = "../domain" }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+# The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks
+# normal edges, so the adapters stay out of the crate proper.
+test-support = { path = "../test-support" }
+tokio = { workspace = true }
+uuid = { workspace = true }

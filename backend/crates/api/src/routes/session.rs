@@ -16,16 +16,14 @@
 //!
 //! References: ZMVP-8 through ZMVP-11; ZMVP-151; DESIGN/Account.
 
+use application::user::{Me, MeError};
 use axum::{
     Form, Json, Router,
     extract::{Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use domain::{
-    elements::{profile::Profile, user::UserId},
-    ports::UnitOfWork,
-};
+use domain::{elements::user::UserId, ports::UnitOfWork};
 use serde::Deserialize;
 use tower_sessions::Session;
 use uuid::Uuid;
@@ -191,7 +189,7 @@ async fn signin_callback(
 /// PDS with nothing cached still returns `200`, with the profile KEYS OMITTED and
 /// the DID present (absence is not an error).
 ///
-/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`Profile::resolve_through`].
+/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`application::user::me`].
 ///
 /// ```text
 /// GET /me   (Cookie: zurfur.sid=...)
@@ -207,31 +205,42 @@ async fn me(
     let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
         return Err(Problem::not_authenticated());
     };
-    let Ok(Some(user)) = state.users.find(UserId::new(id)).await else {
-        return Err(Problem::not_authenticated());
-    };
-    let profile =
-        Profile::resolve_through(&*state.profile_cache, &*state.profile_source, &user.did).await;
-    let did = user.did.to_string();
-    let body = match profile {
-        // A resolved profile: the handle is always present, display name and avatar
-        // are the source's own optionals.
-        Some(profile) => GetMeResponse {
-            did,
-            handle: Some(profile.handle),
-            display_name: profile.display_name,
-            avatar_url: profile.avatar_url,
-        },
-        // No profile (unreachable PDS, nothing cached): degrade to the bare DID —
-        // absence is not an error, so the profile keys are simply omitted (R4).
-        None => GetMeResponse {
-            did,
-            handle: None,
-            display_name: None,
-            avatar_url: None,
-        },
-    };
+    let me = application::user::me(
+        &*state.users,
+        &*state.profile_cache,
+        &*state.profile_source,
+        UserId::new(id),
+    )
+    .await
+    .map_err(|e| match e {
+        MeError::UnknownUser(_) => Problem::not_authenticated(),
+        MeError::Store(e) => Problem::from(e),
+    })?;
+    let body = GetMeResponse::from(me);
     Ok(Json(body))
+}
+
+/// The `GET /me` projection: a resolved profile contributes its handle and
+/// optionals; no profile degrades to the bare DID — absence is not an error,
+/// the keys are simply omitted (R4).
+impl From<Me> for GetMeResponse {
+    fn from(me: Me) -> Self {
+        let did = me.user.did.to_string();
+        match me.profile {
+            Some(profile) => GetMeResponse {
+                did,
+                handle: Some(profile.handle),
+                display_name: profile.display_name,
+                avatar_url: profile.avatar_url,
+            },
+            None => GetMeResponse {
+                did,
+                handle: None,
+                display_name: None,
+                avatar_url: None,
+            },
+        }
+    }
 }
 
 /// The exit door (ZMVP-11). Destroys the session server-side: `flush` removes the
