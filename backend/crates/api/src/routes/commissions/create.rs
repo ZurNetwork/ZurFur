@@ -3,6 +3,7 @@
 //! and the act itself is the changelog's genesis entry (ZMVP-87; the Changelog
 //! DD's taxonomy includes "creation itself").
 
+use application::commission::{create, list};
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
@@ -10,63 +11,62 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::{
-    elements::{
-        commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
-        maturity::{Maturity, MaturityRating},
-    },
-    ports::UnitOfWork,
+use domain::elements::{
+    commission::CommissionTitle,
+    maturity::{Maturity, MaturityRating},
 };
-use serde_json::json;
-use tower_sessions::Session;
 
 use super::{from_wire_timestamp, list::wire_commission};
-use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
-use crate::{AppState, problem::Problem};
+use crate::generated::{Commission, CreateCommissionRequest, CreateCommissionResponse};
+use crate::{AppState, extract::CallingUser, problem::Problem};
 
-/// The request shape is the contract's GENERATED `CreateCommissionRequest`
-/// (ZMVP-160): `title` required; `deadline` and `maturity` optional. Owner and
-/// lifecycle are never accepted from the client — the owner is the caller, the
-/// lifecycle is always Draft. The generated deserializer REJECTS unknown
-/// request fields (canonical ProtoJSON; the contract's tolerant-reader duty is
-/// response-side and client-only — the server stays conservative, VERSIONING
-/// §6), and parses `deadline` under the STRICT Timestamp grammar, closing the
-/// chrono-laxness input gap (§7.3).
-/// Create a commission owned by the signed-in caller (ZMVP-65), recording the
-/// creation in its changelog (ZMVP-87).
+/// The created resource, in the create response's envelope. Both messages
+/// carry the same ten fields, so the create body is the listing row moved
+/// across — one projection ([`wire_commission`]), never two that can drift
+/// (`golden_wire` asserts the two render identically).
+impl From<Commission> for CreateCommissionResponse {
+    fn from(commission: Commission) -> Self {
+        let Commission {
+            id,
+            title,
+            lifecycle,
+            visibility,
+            deadline,
+            maturity,
+            direction_status,
+            deadline_status,
+            linked_channel,
+            created_at,
+        } = commission;
+        CreateCommissionResponse {
+            id,
+            title,
+            lifecycle,
+            visibility,
+            deadline,
+            maturity,
+            direction_status,
+            deadline_status,
+            linked_channel,
+            created_at,
+        }
+    }
+}
+
+/// Creates a commission owned by the signed-in caller (Draft lifecycle), and
+/// records its `created` changelog entry atomically with the row.
 ///
-/// Resolves the session to the acting [`User`](domain::elements::user::User) via
-/// [`current_user`](super::current_user) — an absent session or vanished User is
-/// a `401`, never a redirect, because the frontend *calls* this endpoint.
-/// Requires only authentication, no Account (ZMVP-47). Builds the commission
-/// with the caller as owner and `Draft` lifecycle, then persists it **and its
-/// `created` changelog entry in one unit of work** — the entry commits
-/// atomically with the row it records (Changelog DD D4), so a commission can
-/// never exist without its genesis entry from this ticket on (commissions
-/// created before ZMVP-87 landed are deliberately not backfilled). The root
-/// surface of the content tree is minted **inside** the store write itself
-/// ([`CommissionWrites::create`](domain::ports::CommissionWrites::create),
-/// ZMVP-71), not here — no handler can create a treeless commission. Returns
-/// `201 Created` on success. A missing/malformed JSON body — or a blank
-/// (empty/whitespace) title, rejected by
-/// [`CommissionTitle`](domain::elements::commission::CommissionTitle)'s
-/// `TryFrom<String>` —
-/// is a `422` (`invalid_request`). An optional `maturity` posture may rate the
-/// commission at birth; its `rating` is validated server-side, and an
-/// out-of-vocabulary token is a `422` (`unknown_maturity_rating`) before any write.
+/// `201 Created` carrying the created resource on success; `422
+/// invalid_request` for a missing/malformed body or blank title; `422
+/// unknown_maturity_rating` for an out-of-vocabulary `maturity.rating`.
 pub(super) async fn create_commission(
     State(state): State<AppState>,
-    session: Session,
+    CallingUser(actor_id): CallingUser,
     body: Result<Json<CreateCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    let user = super::current_user(&state, &session).await?;
-
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     let title = CommissionTitle::try_from(body.title)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
-    // The optional at-creation rating passes the same server-side enum gate as the
-    // PUT route — an out-of-vocabulary token is a 422 here, before anything is
-    // written, never a silently-dropped or defaulted value.
     let maturity = body
         .maturity
         .map(|input| {
@@ -91,45 +91,37 @@ pub(super) async fn create_commission(
         })
         .transpose()?;
 
-    let now = Utc::now();
-    let mut commission = Commission::create(title, user.id, now, deadline);
-    commission.maturity = maturity;
-    // The genesis entry: the payload carries the title so the sentence renders
-    // without joins (the DD's core-renderable rule).
-    let entry = NewChangelogEntry::event(
-        commission.id,
-        ChangelogEntryKind::Created,
-        user.id,
-        json!({ "title": commission.title.as_str() }),
-        now,
-    );
+    let command = create::Command {
+        maturity,
+        deadline,
+        actor_id: actor_id.clone(),
+        title,
+    };
 
-    // The closure owns what it writes and hands the committed commission back
-    // out — the create_account pattern — because the response now CARRIES it
-    // (contract, Engineer ruling 2026-07-25): the interface renders what the
-    // program tells it, and create-then-navigate needs the id. Minted at
-    // /api/v1; the pre-GA surface answered an empty 201.
-    let commission = state
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().create(&commission).await?;
-            uow.changelog().append(&entry).await?;
-            Ok(commission)
-        })
+    let created = state
+        .app()
+        .commissions()
+        .create(command, Utc::now())
         .await?;
 
-    let row = wire_commission(commission);
-    let body = CreateCommissionResponse {
-        id: row.id,
-        title: row.title,
-        lifecycle: row.lifecycle,
-        visibility: row.visibility,
-        deadline: row.deadline,
-        maturity: row.maturity,
-        direction_status: row.direction_status,
-        deadline_status: row.deadline_status,
-        linked_channel: row.linked_channel,
-        created_at: row.created_at,
-    };
+    // ⚠️ GAP (ZMVP-205): the contract's `CreateCommissionResponse` is the whole
+    // resource — "create returns the created resource" (ruling 2026-07-25,
+    // pinned by `golden_wire`) — but `create::Output` carries only the id, and
+    // the birth lifecycle/visibility are the domain's to state, not this
+    // driver's to assume. Until `create::Output` carries the commission's
+    // values, the resource is read back through the one use case that projects
+    // commissions, so the response can never disagree with the stored row.
+    let owned = list::Command { user_id: actor_id };
+    let listed = state.app().commissions().list(owned).await?;
+    let commission = listed
+        .commissions
+        .into_iter()
+        .find(|commission| commission.id == created.id)
+        .ok_or_else(|| {
+            Problem::internal_error("The commission was created but could not be read back.")
+        })?;
+
+    let body = CreateCommissionResponse::from(wire_commission(commission));
     let response = (StatusCode::CREATED, Json(body)).into_response();
     Ok(response)
 }

@@ -66,7 +66,7 @@ impl MemRuntimeBuilder {
             public_url: self.public_url,
             database_url: DATABASE_URL.to_string(),
             log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
+            handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,

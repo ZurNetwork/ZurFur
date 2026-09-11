@@ -204,6 +204,7 @@ dependencies = [
  "contract-gen",
  "domain",
  "dotenvy",
+ "futures-util",
  "pbjson",
  "pbjson-types",
  "prost 0.14.4",
@@ -215,6 +216,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "tokio",
+ "tokio-util",
  "tower-http",
  "tower-sessions",
  "tracing",
@@ -229,11 +231,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "composition",
  "domain",
  "serde_json",
  "shared",
  "test-support",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -916,6 +920,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1450,6 +1455,7 @@ dependencies = [
  "cid",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
  "zeroize",
 ]

@@ -17,11 +17,11 @@ use chrono::{Duration, Utc};
 use domain::{
     elements::{
         account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
-        commission::{Commission, CommissionTitle, GrantLevel},
+        commission::{Commission, CommissionTitle},
         did::Did,
         handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
-        role::Role,
+        role::{Role, RoleAlias},
         user::{User, UserId},
         user_account::UserAccount,
     },
@@ -62,7 +62,7 @@ async fn create(pool: &PgPool, account: &Account, owner: &UserAccount) {
 
 /// Soft-delete an account in one unit of work (the real [`AccountWrites::soft_delete`]
 /// write path — no more raw-SQL tombstoning).
-async fn soft_delete(pool: &PgPool, account: AccountId) {
+async fn soft_delete(pool: &PgPool, account: &AccountId) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts()
@@ -74,7 +74,7 @@ async fn soft_delete(pool: &PgPool, account: AccountId) {
 
 /// Hard-delete an account in one unit of work (the real
 /// [`AccountWrites::hard_delete`] write path).
-async fn hard_delete(pool: &PgPool, account: AccountId) {
+async fn hard_delete(pool: &PgPool, account: &AccountId) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts()
@@ -106,14 +106,16 @@ async fn find_did_by_handle(pool: &PgPool, handle: &Handle) -> Option<Did> {
 }
 
 /// Persist a pending invitation in one unit of work.
-async fn create_invitation(pool: &PgPool, invitation: &Invitation) {
+async fn create_invitation(pool: &PgPool, invitation: &Invitation) -> Invitation {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.accounts()
+    let standing = uow
+        .accounts()
         .create_invitation(invitation)
         .await
         .expect("create_invitation");
     uow.commit().await.expect("commit");
+    standing
 }
 
 /// Revoke an invitation in one unit of work.
@@ -121,7 +123,7 @@ async fn revoke_invitation(pool: &PgPool, id: InvitationId) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts()
-        .revoke_invitation(id)
+        .revoke_invitation(&id)
         .await
         .expect("revoke_invitation");
     uow.commit().await.expect("commit");
@@ -141,7 +143,7 @@ async fn accept_invitation(pool: &PgPool, invitation: Invitation, listed: bool) 
 }
 
 /// A member leaves the account in one unit of work.
-async fn leave(pool: &PgPool, user: UserId, account: AccountId) {
+async fn leave(pool: &PgPool, user: &UserId, account: &AccountId) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts().leave(user, account).await.expect("leave");
@@ -149,7 +151,7 @@ async fn leave(pool: &PgPool, user: UserId, account: AccountId) {
 }
 
 /// An Owner/Admin revokes a member's role in one unit of work.
-async fn revoke_role(pool: &PgPool, user: UserId, account: AccountId) {
+async fn revoke_role(pool: &PgPool, user: &UserId, account: &AccountId) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts()
@@ -168,7 +170,7 @@ async fn grant_role(pool: &PgPool, member: &UserAccount) {
 }
 
 /// Read an account by id off the pool-backed store.
-async fn find_account(pool: &PgPool, id: AccountId) -> Option<Account> {
+async fn find_account(pool: &PgPool, id: &AccountId) -> Option<Account> {
     PgAccountStore::new(pool.clone())
         .find(id)
         .await
@@ -176,7 +178,7 @@ async fn find_account(pool: &PgPool, id: AccountId) -> Option<Account> {
 }
 
 /// Read a member's role off the pool-backed store.
-async fn role_of(pool: &PgPool, user: UserId, account: AccountId) -> Option<Role> {
+async fn role_of(pool: &PgPool, user: &UserId, account: &AccountId) -> Option<Role> {
     PgAccountStore::new(pool.clone())
         .role_of(user, account)
         .await
@@ -184,7 +186,7 @@ async fn role_of(pool: &PgPool, user: UserId, account: AccountId) -> Option<Role
 }
 
 /// Read the lone pending offer for `(account, invited)` off the pool-backed store.
-async fn find_pending(pool: &PgPool, account: AccountId, invited: UserId) -> Option<Invitation> {
+async fn find_pending(pool: &PgPool, account: &AccountId, invited: &UserId) -> Option<Invitation> {
     PgAccountStore::new(pool.clone())
         .find_pending_invitation(account, invited)
         .await
@@ -194,7 +196,7 @@ async fn find_pending(pool: &PgPool, account: AccountId, invited: UserId) -> Opt
 /// Read an invitation by id off the pool-backed store.
 async fn find_invitation(pool: &PgPool, id: InvitationId) -> Option<Invitation> {
     PgAccountStore::new(pool.clone())
-        .find_invitation(id)
+        .find_invitation(&id)
         .await
         .expect("find_invitation")
 }
@@ -210,21 +212,21 @@ async fn create_persists_the_account_and_its_owner_membership() {
     let account_handle = "pgacct.example.com".parse::<Handle>().unwrap();
     let account_name = "PG Studio".parse::<AccountName>().unwrap();
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         account_did.clone(),
         account_handle.clone(),
         account_name.clone(),
         Utc::now(),
     );
-    let account_id = account.id;
+    let account_id = account.id.clone();
     create(&pool, &account, &membership).await;
 
-    let found = find_account(&pool, account_id)
+    let found = find_account(&pool, &account_id)
         .await
         .expect("the founded account is present");
     assert_eq!(found.id, account_id);
     assert_eq!(
-        found.did, account_did,
+        *found.id, account_did,
         "the account's minted did round-trips"
     );
     assert_eq!(
@@ -234,10 +236,10 @@ async fn create_persists_the_account_and_its_owner_membership() {
     assert_eq!(found.name, account_name, "the account's name round-trips");
     assert_eq!(found.deleted_at, None, "a freshly founded account is live");
 
-    let role = role_of(&pool, owner.id, account_id).await;
+    let role = role_of(&pool, &owner.id, &account_id).await;
     assert_eq!(
         role,
-        Some(Role::Owner(None)),
+        Some(Role::Owner),
         "the creating User is the account's Owner"
     );
 }
@@ -252,16 +254,16 @@ async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
     let invitee = provision(&pool, "did:plc:multi-invitee").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:multi-acct".to_string()),
         "multi-acct.example.com".parse::<Handle>().unwrap(),
         "Multi Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     let invitation = Invitation::issue(
-        account.id,
-        invitee.id,
-        Role::Member(None),
+        account.id.clone(),
+        invitee.id.clone(),
+        Role::Member,
         owner.id,
         Utc::now(),
     );
@@ -280,11 +282,13 @@ async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
     uow.commit().await.expect("commit lands both writes");
 
     assert!(
-        find_account(&pool, account.id).await.is_some(),
+        find_account(&pool, &account.id).await.is_some(),
         "the account committed"
     );
     assert!(
-        find_pending(&pool, account.id, invitee.id).await.is_some(),
+        find_pending(&pool, &account.id, &invitee.id)
+            .await
+            .is_some(),
         "the invitation committed in the same unit of work"
     );
 }
@@ -298,13 +302,13 @@ async fn a_dropped_unit_of_work_rolls_back_every_write() {
     let owner = provision(&pool, "did:plc:rollback-o").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:rollback-acct".to_string()),
         "rollback-acct.example.com".parse::<Handle>().unwrap(),
         "Rollback".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
-    let account_id = account.id;
+    let account_id = account.id.clone();
 
     // Open the unit, issue the (two-row) write, then drop without committing.
     {
@@ -318,11 +322,11 @@ async fn a_dropped_unit_of_work_rolls_back_every_write() {
     }
 
     assert!(
-        find_account(&pool, account_id).await.is_none(),
+        find_account(&pool, &account_id.clone()).await.is_none(),
         "a dropped unit of work persists no account row"
     );
     assert_eq!(
-        role_of(&pool, owner.id, account_id).await,
+        role_of(&pool, &owner.id, &account_id).await,
         None,
         "...and no membership row either — both writes rolled back together"
     );
@@ -342,7 +346,7 @@ async fn find_unknown_account_is_none() {
         Utc::now(),
     );
 
-    let found = find_account(&pool, unfounded.id).await;
+    let found = find_account(&pool, &unfounded.id).await;
     assert!(
         found.is_none(),
         "an account we never founded resolves to nothing"
@@ -365,7 +369,7 @@ async fn role_of_non_member_is_none() {
     );
     create(&pool, &account, &membership).await;
 
-    let role = role_of(&pool, stranger.id, account.id).await;
+    let role = role_of(&pool, &stranger.id, &account.id).await;
     assert_eq!(role, None, "a user who is not a member holds no role");
 }
 
@@ -381,7 +385,7 @@ async fn invitation_fixture(pool: &PgPool, tag: &str) -> (Account, UserId, UserI
     let owner = provision(pool, &format!("did:plc:pginviter-{tag}")).await;
     let invitee = provision(pool, &format!("did:plc:pginvitee-{tag}")).await;
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new(format!("did:plc:pgacct-{tag}")),
         format!("pgacct-{tag}.example.com")
             .parse::<Handle>()
@@ -401,21 +405,23 @@ async fn create_then_find_pending_returns_the_invitation() {
     let (pool, _container) = fresh_pool().await;
     let (account, inviter, invitee) = invitation_fixture(&pool, "rt").await;
 
-    let invitation = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
+    let invitation = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Admin,
+        inviter.clone(),
+        Utc::now(),
+    );
     let id = invitation.id;
     create_invitation(&pool, &invitation).await;
 
-    let found = find_pending(&pool, account.id, invitee)
+    let found = find_pending(&pool, &account.id, &invitee.clone())
         .await
         .expect("the pending invitation is found");
     assert_eq!(found.id, id);
     assert_eq!(found.account, account.id);
     assert_eq!(found.invited_user, invitee);
-    assert_eq!(
-        found.role,
-        Role::Admin(None),
-        "the offered role round-trips"
-    );
+    assert_eq!(found.role, Role::Admin, "the offered role round-trips");
     assert_eq!(found.inviter, inviter, "the inviter round-trips (Roles 4a)");
     assert_eq!(found.state, InvitationState::Pending);
 }
@@ -427,12 +433,33 @@ async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
     let (pool, _container) = fresh_pool().await;
     let (account, inviter, invitee) = invitation_fixture(&pool, "dup").await;
 
-    let first = Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
-    let second = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
+    let first = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Member,
+        inviter.clone(),
+        Utc::now(),
+    );
+    let second = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Admin,
+        inviter,
+        Utc::now(),
+    );
     create_invitation(&pool, &first).await;
-    create_invitation(&pool, &second).await; // a no-op, not an error
+    let standing = create_invitation(&pool, &second).await; // a no-op, not an error
 
-    let found = find_pending(&pool, account.id, invitee)
+    // The dropped duplicate hands back the offer that actually stands, not the one
+    // it proposed — the caller is never told its no-op took effect (the mem twin
+    // asserts the same).
+    assert_eq!(
+        (standing.id, standing.role.clone()),
+        (first.id, Role::Member),
+        "the dropped duplicate returns the pending offer already on file"
+    );
+
+    let found = find_pending(&pool, &account.id, &invitee)
         .await
         .expect("a pending invitation remains");
     assert_eq!(
@@ -452,8 +479,13 @@ async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
     let (pool, _container) = fresh_pool().await;
     let (account, inviter, invitee) = invitation_fixture(&pool, "rev").await;
 
-    let invitation =
-        Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
+    let invitation = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Member,
+        inviter.clone(),
+        Utc::now(),
+    );
     let id = invitation.id;
     create_invitation(&pool, &invitation).await;
 
@@ -465,16 +497,26 @@ async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
         "the invitation reads back revoked"
     );
     assert!(
-        find_pending(&pool, account.id, invitee).await.is_none(),
+        find_pending(&pool, &account.id, &invitee.clone())
+            .await
+            .is_none(),
         "a revoked invitation is no longer a live pending offer"
     );
 
     // With the prior offer revoked (and out of the partial index), a fresh invitation
     // to the same pair is seated.
-    let reissued = Invitation::issue(account.id, invitee, Role::Admin(None), inviter, Utc::now());
+    let reissued = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Admin,
+        inviter,
+        Utc::now(),
+    );
     create_invitation(&pool, &reissued).await;
     assert_eq!(
-        find_pending(&pool, account.id, invitee).await.map(|i| i.id),
+        find_pending(&pool, &account.id, &invitee)
+            .await
+            .map(|i| i.id),
         Some(reissued.id),
         "re-inviting after a revoke seats a new pending offer"
     );
@@ -487,7 +529,7 @@ async fn find_unknown_invitation_is_none() {
     let (account, inviter, invitee) = invitation_fixture(&pool, "ghost").await;
 
     // Issued in the domain but never persisted, so its id is genuinely unknown.
-    let unstored = Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
+    let unstored = Invitation::issue(account.id, invitee, Role::Member, inviter, Utc::now());
 
     let found = find_invitation(&pool, unstored.id).await;
     assert!(
@@ -511,32 +553,38 @@ async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
     grant_role(
         &pool,
         &UserAccount {
-            account_id: account.id,
-            user_id: invitee,
-            role: Role::Admin(None),
+            account_id: account.id.clone(),
+            user_id: invitee.clone(),
+            role: Role::Admin,
+            alias: None,
         },
     )
     .await;
 
     // A stale pending invitation (issued before the grant) offers only Member.
-    let invitation =
-        Invitation::issue(account.id, invitee, Role::Member(None), inviter, Utc::now());
+    let invitation = Invitation::issue(
+        account.id.clone(),
+        invitee.clone(),
+        Role::Member,
+        inviter,
+        Utc::now(),
+    );
     create_invitation(&pool, &invitation).await;
 
     // Accepting it must not error, and must not downgrade the already-granted role.
     let seated = accept_invitation(&pool, invitation, false).await;
     assert_eq!(
         seated.role,
-        Role::Admin(None),
+        Role::Admin,
         "the returned membership reflects the original grant, not the invitation's role"
     );
     assert_eq!(
-        role_of(&pool, invitee, account.id).await,
-        Some(Role::Admin(None)),
+        role_of(&pool, &invitee.clone(), &account.id).await,
+        Some(Role::Admin),
         "the persisted membership still holds the original grant"
     );
     assert_eq!(
-        parent_of(&pool, account.id, invitee).await,
+        parent_of(&pool, &account.id, &invitee).await,
         None,
         "the row is untouched entirely — parent stays NULL from the direct \
          grant, not overwritten to this invitation's inviter"
@@ -548,21 +596,28 @@ async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
 /// Reads `account_members.parent` directly — no port exposes it, and the re-homing
 /// tests need to assert the role-tree edge. Unchecked (runtime) query, so it needs
 /// no offline cache entry.
-async fn parent_of(pool: &PgPool, account: AccountId, user: UserId) -> Option<uuid::Uuid> {
-    sqlx::query_scalar::<_, Option<uuid::Uuid>>(
+async fn parent_of(pool: &PgPool, account: &AccountId, user: &UserId) -> Option<UserId> {
+    let parent = sqlx::query_scalar::<_, Option<String>>(
         "SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2",
     )
-    .bind(*account)
-    .bind(*user)
+    .bind(account.as_str())
+    .bind(user.as_str())
     .fetch_one(pool)
     .await
-    .expect("read parent")
+    .expect("read parent");
+    parent.map(|did| UserId::new(Did::new(did)))
 }
 
 /// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
 /// accepting an invitation — the only path that writes `account_members.parent`.
-async fn seat_under(pool: &PgPool, account: AccountId, invited: UserId, inviter: UserId) {
-    let invitation = Invitation::issue(account, invited, Role::Member(None), inviter, Utc::now());
+async fn seat_under(pool: &PgPool, account: &AccountId, invited: &UserId, inviter: &UserId) {
+    let invitation = Invitation::issue(
+        account.clone(),
+        invited.clone(),
+        Role::Member,
+        inviter.clone(),
+        Utc::now(),
+    );
     create_invitation(pool, &invitation).await;
     accept_invitation(pool, invitation, true).await;
 }
@@ -579,31 +634,31 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
     let c = provision(&pool, "did:plc:rehome-c").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:rehome-acct".to_string()),
         "rehome-acct.example.com".parse::<Handle>().unwrap(),
         "Tree".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, account.id, a.id, owner.id).await; // A's parent is the Owner
-    seat_under(&pool, account.id, b.id, a.id).await; // B's parent is A
-    seat_under(&pool, account.id, c.id, a.id).await; // C's parent is A
+    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A's parent is the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id).await; // B's parent is A
+    seat_under(&pool, &account.id, &c.id, &a.id).await; // C's parent is A
 
-    leave(&pool, a.id, account.id).await; // A leaves
+    leave(&pool, &a.id, &account.id).await; // A leaves
 
     assert_eq!(
-        parent_of(&pool, account.id, b.id).await,
-        Some(*owner.id),
+        parent_of(&pool, &account.id, &b.id).await,
+        Some(owner.id.clone()),
         "B re-homes to A's parent (the Owner)"
     );
     assert_eq!(
-        parent_of(&pool, account.id, c.id).await,
-        Some(*owner.id),
+        parent_of(&pool, &account.id, &c.id).await,
+        Some(owner.id.clone()),
         "C re-homes to A's parent (the Owner)"
     );
     assert_eq!(
-        role_of(&pool, a.id, account.id).await,
+        role_of(&pool, &a.id, &account.id).await,
         None,
         "after leaving, the member holds no role"
     );
@@ -623,7 +678,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     let d = provision(&pool, "did:plc:scope-d").await;
 
     let (acct1, m1) = Account::open(
-        o1.id,
+        o1.id.clone(),
         Did::new("did:plc:scope-acct1".to_string()),
         "scope-acct1.example.com".parse::<Handle>().unwrap(),
         "One".parse::<AccountName>().unwrap(),
@@ -631,7 +686,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     );
     create(&pool, &acct1, &m1).await;
     let (acct2, m2) = Account::open(
-        o2.id,
+        o2.id.clone(),
         Did::new("did:plc:scope-acct2".to_string()),
         "scope-acct2.example.com".parse::<Handle>().unwrap(),
         "Two".parse::<AccountName>().unwrap(),
@@ -640,25 +695,25 @@ async fn leave_is_scoped_to_the_account_being_left() {
     create(&pool, &acct2, &m2).await;
 
     // A parents B in acct1 and D in acct2.
-    seat_under(&pool, acct1.id, a.id, o1.id).await;
-    seat_under(&pool, acct1.id, b.id, a.id).await;
-    seat_under(&pool, acct2.id, a.id, o2.id).await;
-    seat_under(&pool, acct2.id, d.id, a.id).await;
+    seat_under(&pool, &acct1.id, &a.id, &o1.id).await;
+    seat_under(&pool, &acct1.id, &b.id, &a.id).await;
+    seat_under(&pool, &acct2.id, &a.id, &o2.id).await;
+    seat_under(&pool, &acct2.id, &d.id, &a.id).await;
 
-    leave(&pool, a.id, acct1.id).await; // A leaves acct1
+    leave(&pool, &a.id, &acct1.id).await; // A leaves acct1
 
     assert_eq!(
-        parent_of(&pool, acct1.id, b.id).await,
-        Some(*o1.id),
+        parent_of(&pool, &acct1.id, &b.id).await,
+        Some(o1.id.clone()),
         "B re-homes in the left account"
     );
     assert_eq!(
-        parent_of(&pool, acct2.id, d.id).await,
-        Some(*a.id),
+        parent_of(&pool, &acct2.id, &d.id).await,
+        Some(a.id.clone()),
         "D in the other account is untouched — leaving is account-scoped"
     );
     assert!(
-        role_of(&pool, a.id, acct2.id).await.is_some(),
+        role_of(&pool, &a.id, &acct2.id).await.is_some(),
         "A is still a member of the account they didn't leave"
     );
 }
@@ -675,23 +730,34 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
     let y = provision(&pool, "did:plc:rev-y").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:rev-acct".to_string()),
         "rev-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, account.id, a.id, owner.id).await;
+    seat_under(&pool, &account.id, &a.id, &owner.id).await;
 
     // A (leaving) has a pending offer out to X; the Owner (staying) has one out to Y.
-    let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
+    let a_invites_x = Invitation::issue(
+        account.id.clone(),
+        x.id,
+        Role::Member,
+        a.id.clone(),
+        Utc::now(),
+    );
     create_invitation(&pool, &a_invites_x).await;
-    let owner_invites_y =
-        Invitation::issue(account.id, y.id, Role::Member(None), owner.id, Utc::now());
+    let owner_invites_y = Invitation::issue(
+        account.id.clone(),
+        y.id.clone(),
+        Role::Member,
+        owner.id,
+        Utc::now(),
+    );
     create_invitation(&pool, &owner_invites_y).await;
 
-    leave(&pool, a.id, account.id).await; // A leaves
+    leave(&pool, &a.id, &account.id).await; // A leaves
 
     let a_offer = find_invitation(&pool, a_invites_x.id)
         .await
@@ -702,7 +768,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         "the leaver's issued offer is revoked, not deleted"
     );
     assert!(
-        find_pending(&pool, account.id, y.id).await.is_some(),
+        find_pending(&pool, &account.id, &y.id).await.is_some(),
         "an offer issued by someone still present stays pending"
     );
 }
@@ -721,30 +787,36 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
     let x = provision(&pool, "did:plc:rv-x").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:rv-acct".to_string()),
         "rv-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, account.id, a.id, owner.id).await; // A under the Owner
-    seat_under(&pool, account.id, b.id, a.id).await; // B under A
+    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A under the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id).await; // B under A
 
     // A has a pending offer out to X.
-    let a_invites_x = Invitation::issue(account.id, x.id, Role::Member(None), a.id, Utc::now());
+    let a_invites_x = Invitation::issue(
+        account.id.clone(),
+        x.id,
+        Role::Member,
+        a.id.clone(),
+        Utc::now(),
+    );
     create_invitation(&pool, &a_invites_x).await;
 
     // An Owner/Admin revokes A's role (authority is the handler's; the store settles).
-    revoke_role(&pool, a.id, account.id).await;
+    revoke_role(&pool, &a.id, &account.id).await;
 
     assert_eq!(
-        parent_of(&pool, account.id, b.id).await,
-        Some(*owner.id),
+        parent_of(&pool, &account.id, &b.id).await,
+        Some(owner.id.clone()),
         "B re-homes to A's parent (rule 3)"
     );
     assert_eq!(
-        role_of(&pool, a.id, account.id).await,
+        role_of(&pool, &a.id, &account.id).await,
         None,
         "the revoked member holds no role"
     );
@@ -818,7 +890,7 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
     create(&pool, &a1, &m1).await;
 
     // Soft-delete through the real write path (ZMVP-34's `AccountWrites::soft_delete`).
-    soft_delete(&pool, a1.id).await;
+    soft_delete(&pool, &a1.id).await;
 
     // Invisible to resolution — the resolver would 404.
     assert!(
@@ -856,7 +928,7 @@ async fn transfer_ownership(
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.accounts()
-        .transfer_ownership(old_owner, new_owner, account)
+        .transfer_ownership(&old_owner, &new_owner, &account)
         .await
         .expect("transfer_ownership");
     uow.commit().await.expect("commit");
@@ -874,7 +946,7 @@ async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
     let heir = provision(&pool, "did:plc:xfer-h").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:xfer-acct".to_string()),
         "xfer-acct.example.com".parse::<Handle>().unwrap(),
         "Hand-Off".parse::<AccountName>().unwrap(),
@@ -882,28 +954,28 @@ async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
     );
     create(&pool, &account, &membership).await;
     // Seat the heir as a Member under the Owner (parent = Owner) before the transfer.
-    seat_under(&pool, account.id, heir.id, owner.id).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
 
-    transfer_ownership(&pool, owner.id, heir.id, account.id).await;
+    transfer_ownership(&pool, owner.id.clone(), heir.id.clone(), account.id.clone()).await;
 
     assert_eq!(
-        role_of(&pool, heir.id, account.id).await,
-        Some(Role::Owner(None)),
+        role_of(&pool, &heir.id, &account.id).await,
+        Some(Role::Owner),
         "the heir is the new Owner",
     );
     assert_eq!(
-        parent_of(&pool, account.id, heir.id).await,
+        parent_of(&pool, &account.id, &heir.id).await,
         None,
         "an Owner never has a parent (Roles rule 5)",
     );
     assert_eq!(
-        role_of(&pool, owner.id, account.id).await,
-        Some(Role::Admin(None)),
+        role_of(&pool, &owner.id, &account.id).await,
+        Some(Role::Admin),
         "the prior Owner is demoted to Admin",
     );
     assert_eq!(
-        parent_of(&pool, account.id, owner.id).await,
-        Some(*heir.id),
+        parent_of(&pool, &account.id, &owner.id).await,
+        Some(heir.id.clone()),
         "the outgoing Owner is re-homed under the new Owner (Roles rule 8)",
     );
 }
@@ -919,34 +991,34 @@ async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
     let heir = provision(&pool, "did:plc:nonowner-h").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:nonowner-acct".to_string()),
         "nonowner-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, account.id, admin.id, owner.id).await;
-    seat_under(&pool, account.id, heir.id, owner.id).await;
+    seat_under(&pool, &account.id, &admin.id, &owner.id).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
 
     // `admin` is not the Owner, so the store guard rejects the transfer.
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     let result = uow
         .accounts()
-        .transfer_ownership(admin.id, heir.id, account.id)
+        .transfer_ownership(&admin.id, &heir.id, &account.id)
         .await;
     assert!(result.is_err(), "a non-Owner cannot transfer ownership");
     drop(uow); // roll the unit back
 
     assert_eq!(
-        role_of(&pool, owner.id, account.id).await,
-        Some(Role::Owner(None)),
+        role_of(&pool, &owner.id, &account.id).await,
+        Some(Role::Owner),
         "the real Owner still owns the account",
     );
     assert_eq!(
-        role_of(&pool, heir.id, account.id).await,
-        Some(Role::Member(None)),
+        role_of(&pool, &heir.id, &account.id).await,
+        Some(Role::Member),
         "the would-be heir's role is unchanged",
     );
 }
@@ -962,7 +1034,7 @@ async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
     let stranger = provision(&pool, "did:plc:nonmember-s").await; // provisioned, never seated
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:nonmember-acct".to_string()),
         "nonmember-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
@@ -974,18 +1046,18 @@ async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
     let mut uow = db.begin().await.expect("begin");
     let result = uow
         .accounts()
-        .transfer_ownership(owner.id, stranger.id, account.id)
+        .transfer_ownership(&owner.id, &stranger.id, &account.id)
         .await;
     assert!(result.is_err(), "cannot transfer ownership to a non-member");
     drop(uow); // roll the unit back
 
     assert_eq!(
-        role_of(&pool, owner.id, account.id).await,
-        Some(Role::Owner(None)),
+        role_of(&pool, &owner.id, &account.id).await,
+        Some(Role::Owner),
         "the demotion rolled back with the failed promotion — the Owner is intact",
     );
     assert_eq!(
-        role_of(&pool, stranger.id, account.id).await,
+        role_of(&pool, &stranger.id, &account.id).await,
         None,
         "the non-member gained no role",
     );
@@ -1004,7 +1076,7 @@ async fn hard_delete_frees_the_handle_for_reuse() {
 
     let handle = "freed.zurfur.app".parse::<Handle>().unwrap();
     let (a1, m1) = Account::open(
-        o1.id,
+        o1.id.clone(),
         Did::new("did:plc:hd-a1".to_string()),
         handle.clone(),
         "Empty".parse::<AccountName>().unwrap(),
@@ -1012,16 +1084,16 @@ async fn hard_delete_frees_the_handle_for_reuse() {
     );
     create(&pool, &a1, &m1).await;
 
-    hard_delete(&pool, a1.id).await;
+    hard_delete(&pool, &a1.id).await;
 
     // The account and its Owner membership are gone.
     assert!(
-        store.find(a1.id).await.expect("find").is_none(),
+        store.find(&a1.id).await.expect("find").is_none(),
         "a hard-deleted account is gone"
     );
     assert!(
         store
-            .role_of(o1.id, a1.id)
+            .role_of(&o1.id, &a1.id)
             .await
             .expect("role_of")
             .is_none(),
@@ -1042,7 +1114,7 @@ async fn hard_delete_frees_the_handle_for_reuse() {
         .expect("the freed handle may be reclaimed by a new account");
     assert_eq!(
         find_did_by_handle(&pool, &handle).await,
-        Some(a2.did.clone()),
+        Some((*a2.id).clone()),
         "the handle now resolves to the new account"
     );
 }
@@ -1057,7 +1129,7 @@ async fn hard_delete_removes_pending_invitations() {
     let invitee = provision(&pool, "did:plc:hi-i").await;
 
     let (account, membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:hi-a".to_string()),
         "invited.zurfur.app".parse::<Handle>().unwrap(),
         "Has Invite".parse::<AccountName>().unwrap(),
@@ -1066,27 +1138,27 @@ async fn hard_delete_removes_pending_invitations() {
     create(&pool, &account, &membership).await;
 
     let invitation = Invitation::issue(
-        account.id,
-        invitee.id,
-        Role::Member(None),
+        account.id.clone(),
+        invitee.id.clone(),
+        Role::Member,
         owner.id,
         Utc::now(),
     );
     create_invitation(&pool, &invitation).await;
     assert!(
         store
-            .find_pending_invitation(account.id, invitee.id)
+            .find_pending_invitation(&account.id, &invitee.id)
             .await
             .expect("find_pending_invitation")
             .is_some(),
         "the invitation is pending before the delete"
     );
 
-    hard_delete(&pool, account.id).await;
+    hard_delete(&pool, &account.id).await;
 
     assert!(
         store
-            .find_invitation(invitation.id)
+            .find_invitation(&invitation.id)
             .await
             .expect("find_invitation")
             .is_none(),
@@ -1110,7 +1182,7 @@ async fn try_change_handle(
 ) -> anyhow::Result<()> {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    let result = uow.accounts().change_handle(account, old, new, at).await;
+    let result = uow.accounts().change_handle(&account, old, new, at).await;
     if result.is_ok() {
         uow.commit().await.expect("commit");
     }
@@ -1118,7 +1190,7 @@ async fn try_change_handle(
 }
 
 /// Count an account's recorded handle changes since `since`, off the pool-backed store.
-async fn count_changes(pool: &PgPool, account: AccountId, since: chrono::DateTime<Utc>) -> i64 {
+async fn count_changes(pool: &PgPool, account: &AccountId, since: chrono::DateTime<Utc>) -> i64 {
     PgAccountStore::new(pool.clone())
         .count_handle_changes_since(account, since)
         .await
@@ -1129,7 +1201,7 @@ async fn count_changes(pool: &PgPool, account: AccountId, since: chrono::DateTim
 async fn reserved_for_other(
     pool: &PgPool,
     handle: &Handle,
-    excluding: Option<AccountId>,
+    excluding: Option<&AccountId>,
     since: chrono::DateTime<Utc>,
 ) -> bool {
     PgAccountStore::new(pool.clone())
@@ -1157,14 +1229,14 @@ async fn change_handle_repoints_resolution_and_records_the_change() {
     create(&pool, &account, &membership).await;
 
     let before = Utc::now();
-    try_change_handle(&pool, account.id, &old, &new, Utc::now())
+    try_change_handle(&pool, account.id.clone(), &old, &new, Utc::now())
         .await
         .expect("the change commits");
 
     // handle→DID resolution followed: the new handle resolves, the old does not.
     assert_eq!(
         find_did_by_handle(&pool, &new).await,
-        Some(account.did.clone()),
+        Some((*account.id).clone()),
         "the new handle resolves to the account's DID"
     );
     assert!(
@@ -1173,13 +1245,13 @@ async fn change_handle_repoints_resolution_and_records_the_change() {
     );
     // The account row carries the new handle.
     assert_eq!(
-        find_account(&pool, account.id).await.expect("live").handle,
+        find_account(&pool, &account.id).await.expect("live").handle,
         new,
         "the account's stored handle is the new one"
     );
     // The change was recorded (backs the rate limit).
     assert_eq!(
-        count_changes(&pool, account.id, before).await,
+        count_changes(&pool, &account.id, before).await,
         1,
         "the change is recorded exactly once"
     );
@@ -1213,7 +1285,7 @@ async fn change_handle_rejects_a_taken_handle() {
     );
     create(&pool, &a2, &m2).await;
 
-    let err = try_change_handle(&pool, a1.id, &mine, &theirs, Utc::now())
+    let err = try_change_handle(&pool, a1.id.clone(), &mine, &theirs, Utc::now())
         .await
         .expect_err("changing to a taken handle is rejected");
     assert!(
@@ -1222,7 +1294,7 @@ async fn change_handle_rejects_a_taken_handle() {
     );
     // Rolled back: a1 still holds its original handle.
     assert_eq!(
-        find_account(&pool, a1.id).await.expect("live").handle,
+        find_account(&pool, &a1.id).await.expect("live").handle,
         mine,
         "a rejected change leaves the account's handle untouched"
     );
@@ -1252,7 +1324,7 @@ async fn change_handle_rejects_a_stale_old_handle() {
     let stale = "stale-wrong.zurfur.app".parse::<Handle>().unwrap();
     let new = "stale-new.zurfur.app".parse::<Handle>().unwrap();
     let before = Utc::now();
-    let err = try_change_handle(&pool, account.id, &stale, &new, Utc::now())
+    let err = try_change_handle(&pool, account.id.clone(), &stale, &new, Utc::now())
         .await
         .expect_err("a change against a stale old handle is rejected");
     assert!(
@@ -1261,12 +1333,12 @@ async fn change_handle_rejects_a_stale_old_handle() {
     );
     // Nothing changed: the account keeps its real handle and no audit row was written.
     assert_eq!(
-        find_account(&pool, account.id).await.expect("live").handle,
+        find_account(&pool, &account.id).await.expect("live").handle,
         current,
         "the account keeps its actual handle after a rejected stale change"
     );
     assert_eq!(
-        count_changes(&pool, account.id, before).await,
+        count_changes(&pool, &account.id, before).await,
         0,
         "no audit row is recorded for a rejected stale change"
     );
@@ -1331,14 +1403,19 @@ async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
     );
 }
 
-/// AC1 — account hard-delete **severs** the account's positioning rails (its
-/// placements and view grants) while the placed **commission survives untouched**.
-/// Commissions are User-owned, not account facts (Ownership Separation DD 29130754),
-/// so a placed commission never forces a soft-delete; severance rides the ZMVP-70
-/// `ON DELETE CASCADE` on each positioning FK onto `accounts`, exercised through the
-/// real [`AccountWrites::hard_delete`](domain::ports::AccountWrites::hard_delete) path.
+/// AC1 — account hard-delete **severs** the account's placement rails while the
+/// placed **commission survives untouched**. Commissions are User-owned, not
+/// account facts (Ownership Separation DD 29130754), so a placed commission never
+/// forces a soft-delete; severance rides the ZMVP-70 `ON DELETE CASCADE` on each
+/// placement FK onto `accounts`, exercised through the real
+/// [`AccountWrites::hard_delete`](domain::ports::AccountWrites::hard_delete) path.
+///
+/// The **view grant** used to be asserted here as a third rail. It no longer is: a
+/// grant is issued to a User (Engineer ruling 2026-09-04), so `commission_view_grant`
+/// holds no reference to an account to cascade from — see the actor re-key
+/// migration's note on that table.
 #[tokio::test]
-async fn hard_delete_severs_placements_and_grants_while_the_commission_survives() {
+async fn hard_delete_severs_placements_while_the_commission_survives() {
     let (pool, _container) = fresh_pool().await;
     let commissions = PgCommissionStore::new(pool.clone());
     let accounts = PgAccountStore::new(pool.clone());
@@ -1347,7 +1424,7 @@ async fn hard_delete_severs_placements_and_grants_while_the_commission_survives(
     let owner = provision(&pool, "did:plc:sever-owner").await;
     let commission = Commission::create(
         "A ref sheet".parse::<CommissionTitle>().expect("title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -1370,7 +1447,7 @@ async fn hard_delete_severs_placements_and_grants_while_the_commission_survives(
         "Holder".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
-    let account_id = account.id;
+    let account_id = account.id.clone();
     create(&pool, &account, &membership).await;
 
     // Place the commission in the account's position and grant it a Total view key.
@@ -1378,19 +1455,15 @@ async fn hard_delete_severs_placements_and_grants_while_the_commission_survives(
         let db = PgDatabase::new(pool.clone());
         let mut uow = db.begin().await.expect("begin");
         uow.commissions()
-            .place(commission_id, account_id, owner.id, Utc::now())
+            .place(&commission_id, &account_id, &owner.id, Utc::now())
             .await
             .expect("place");
-        uow.commissions()
-            .grant_view(commission_id, account_id, GrantLevel::Total)
-            .await
-            .expect("grant");
         uow.commit().await.expect("commit");
     }
     // Precondition: the positioning rails exist before the delete.
     assert!(
         commissions
-            .current_placement(commission_id)
+            .current_placement(&commission_id)
             .await
             .unwrap()
             .is_some(),
@@ -1398,34 +1471,26 @@ async fn hard_delete_severs_placements_and_grants_while_the_commission_survives(
     );
     assert!(
         !commissions
-            .placement_log(commission_id)
+            .placement_log(&commission_id)
             .await
             .unwrap()
             .is_empty(),
         "the placement log has a row before the delete"
     );
-    assert!(
-        commissions
-            .view_grant(commission_id, account_id)
-            .await
-            .unwrap()
-            .is_some(),
-        "the view grant exists before the delete"
-    );
 
     // Hard-delete the account: it holds no account-anchored fact (a placed commission
     // is not one), so it takes the hard path.
-    hard_delete(&pool, account_id).await;
+    hard_delete(&pool, &account_id).await;
 
     // The account is gone...
     assert!(
-        accounts.find(account_id).await.expect("find").is_none(),
+        accounts.find(&account_id).await.expect("find").is_none(),
         "the account is hard-deleted"
     );
     // ...its positioning rails are severed...
     assert!(
         commissions
-            .current_placement(commission_id)
+            .current_placement(&commission_id)
             .await
             .unwrap()
             .is_none(),
@@ -1433,23 +1498,15 @@ async fn hard_delete_severs_placements_and_grants_while_the_commission_survives(
     );
     assert!(
         commissions
-            .placement_log(commission_id)
+            .placement_log(&commission_id)
             .await
             .unwrap()
             .is_empty(),
         "the placement log is severed with the account"
     );
-    assert!(
-        commissions
-            .view_grant(commission_id, account_id)
-            .await
-            .unwrap()
-            .is_none(),
-        "the view grant is severed with the account"
-    );
     // ...but the commission itself survives untouched.
     let survivor = commissions
-        .find(commission_id)
+        .find(&commission_id)
         .await
         .expect("find")
         .expect("the User-owned commission survives account deletion");
@@ -1481,20 +1538,20 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    try_change_handle(&pool, account.id, &vacated, &moved_to, Utc::now())
+    try_change_handle(&pool, account.id.clone(), &vacated, &moved_to, Utc::now())
         .await
         .expect("change commits");
 
     let window = Utc::now() - Duration::days(30);
     // Some OTHER account is barred from the vacated handle.
-    let stranger = AccountId::new(uuid::Uuid::now_v7());
+    let stranger = AccountId::new(Did::new("did:plc:pgquar-stranger".to_string()));
     assert!(
-        reserved_for_other(&pool, &vacated, Some(stranger), window).await,
+        reserved_for_other(&pool, &vacated, Some(&stranger), window).await,
         "the vacated handle is quarantined to its former holder — barred to others"
     );
     // The account that vacated it may reclaim it (excluded from its own quarantine).
     assert!(
-        !reserved_for_other(&pool, &vacated, Some(account.id), window).await,
+        !reserved_for_other(&pool, &vacated, Some(&account.id), window).await,
         "the leaving account may reclaim its own quarantined handle"
     );
     // Once the window has passed (a floor in the future), the reservation lifts.
@@ -1502,7 +1559,7 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
         !reserved_for_other(
             &pool,
             &vacated,
-            Some(stranger),
+            Some(&stranger),
             Utc::now() + Duration::days(1)
         )
         .await,
@@ -1520,7 +1577,11 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
 // scoping predicate is exactly the regression those tests cannot catch.
 
 /// Read a user's own accounts off the pool-backed store.
-async fn list_for_user(pool: &PgPool, user: UserId, scope: ListingScope) -> Vec<AccountMembership> {
+async fn list_for_user(
+    pool: &PgPool,
+    user: &UserId,
+    scope: ListingScope,
+) -> Vec<AccountMembership> {
     PgAccountStore::new(pool.clone())
         .list_for_user(user, scope)
         .await
@@ -1529,9 +1590,9 @@ async fn list_for_user(pool: &PgPool, user: UserId, scope: ListingScope) -> Vec<
 
 /// Found an account owned by `owner_did`, returning it. Each call mints its own
 /// DID/handle from `tag`, so a test can seed several without collisions.
-async fn found_account(pool: &PgPool, owner: UserId, tag: &str) -> Account {
+async fn found_account(pool: &PgPool, owner: &UserId, tag: &str) -> Account {
     let (account, membership) = Account::open(
-        owner,
+        owner.clone(),
         Did::new(format!("did:plc:pglist-{tag}")),
         format!("pglist-{tag}.example.com")
             .parse::<Handle>()
@@ -1555,24 +1616,25 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     let caller = provision(&pool, "did:plc:pglist-caller").await;
     let stranger = provision(&pool, "did:plc:pglist-stranger").await;
 
-    let owned = found_account(&pool, caller.id, "owned").await;
+    let owned = found_account(&pool, &caller.id, "owned").await;
 
     // A second account someone else founded, on which the caller holds a
     // non-Owner role — the accepted-invitation shape (ZMVP-20).
-    let joined = found_account(&pool, stranger.id, "joined").await;
+    let joined = found_account(&pool, &stranger.id, "joined").await;
     let seat = UserAccount {
-        user_id: caller.id,
-        account_id: joined.id,
-        role: Role::Member(None),
+        user_id: caller.id.clone(),
+        account_id: joined.id.clone(),
+        role: Role::Member,
+        alias: None,
     };
     grant_role(&pool, &seat).await;
 
     // A third the caller has nothing to do with: must never appear.
-    let theirs = found_account(&pool, stranger.id, "theirs").await;
+    let theirs = found_account(&pool, &stranger.id, "theirs").await;
 
-    let rows = list_for_user(&pool, caller.id, ListingScope::SelfView).await;
+    let rows = list_for_user(&pool, &caller.id, ListingScope::SelfView).await;
 
-    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id).collect();
+    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id.clone()).collect();
     assert!(
         !listed.contains(&theirs.id),
         "an account the caller holds no role in is never listed, got {listed:?}"
@@ -1589,14 +1651,17 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
         .expect("the founded account is listed");
     assert_eq!(
         owned_row.role,
-        Role::Owner(None),
+        Role::Owner,
         "the founder's own role rides along"
     );
     assert_eq!(
         owned_row.account.handle, owned.handle,
         "the row is hydrated"
     );
-    assert_eq!(owned_row.account.did, owned.did, "the DID join resolves");
+    assert_eq!(
+        owned_row.account.id, owned.id,
+        "the row carries its DID key"
+    );
 
     let joined_row = rows
         .iter()
@@ -1604,15 +1669,60 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
         .expect("the granted-only account is listed too — not owned-only");
     assert_eq!(
         joined_row.role,
-        Role::Member(None),
+        Role::Member,
         "the CALLER's role, not the account owner's"
     );
 
-    // Ordering is `ORDER BY a.id`, and account ids are UUIDv7 — creation order.
-    let order: Vec<uuid::Uuid> = listed.iter().map(|id| **id).collect();
+    // Ordering is `ORDER BY a.id COLLATE "C"` — byte order over the account DIDs
+    // (a DID carries no creation timestamp, where the retired UUIDv7 key did).
+    let order: Vec<String> = listed.iter().map(|id| id.to_string()).collect();
     let mut expected = order.clone();
     expected.sort();
     assert_eq!(order, expected, "rows come back ascending by account id");
+}
+
+// A member's own [`RoleAlias`] round-trips through `grant_role` → `list_for_user`
+// once persisted: `grant_role` itself never sets it (there is no set-alias write
+// path yet, mirroring `grant_role.sql`, which only ever touches the `role`
+// column), so this reaches straight into the `account_members.alias` column with
+// a raw `UPDATE` — the pg-side mirror of `MemBackend::seed_role_alias`. Also
+// proves the unset case reads back `None`, not an empty string.
+#[tokio::test]
+async fn list_for_user_round_trips_a_role_alias() {
+    let (pool, _container) = fresh_pool().await;
+
+    let caller = provision(&pool, "did:plc:pgalias-caller").await;
+    let aliased = found_account(&pool, &caller.id, "aliased").await;
+    let unaliased = found_account(&pool, &caller.id, "unaliased").await;
+
+    sqlx::query("UPDATE account_members SET alias = $1 WHERE account_id = $2 AND user_id = $3")
+        .bind("Studio Head")
+        .bind(aliased.id.as_str())
+        .bind(caller.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("seed the alias column directly");
+
+    let rows = list_for_user(&pool, &caller.id, ListingScope::SelfView).await;
+
+    let aliased_row = rows
+        .iter()
+        .find(|row| row.account.id == aliased.id)
+        .expect("the aliased account is listed");
+    assert_eq!(
+        aliased_row.alias,
+        Some(RoleAlias::new("Studio Head").expect("non-empty")),
+        "the persisted alias round-trips"
+    );
+
+    let unaliased_row = rows
+        .iter()
+        .find(|row| row.account.id == unaliased.id)
+        .expect("the unaliased account is listed too");
+    assert_eq!(
+        unaliased_row.alias, None,
+        "no alias was ever written, so it reads back as None"
+    );
 }
 
 // Soft-deleted accounts are absent, mirroring `find`'s `deleted_at IS NULL`
@@ -1623,20 +1733,20 @@ async fn list_for_user_excludes_a_soft_deleted_account() {
     let (pool, _container) = fresh_pool().await;
 
     let caller = provision(&pool, "did:plc:pglist-live-caller").await;
-    let live = found_account(&pool, caller.id, "live").await;
-    let doomed = found_account(&pool, caller.id, "doomed").await;
+    let live = found_account(&pool, &caller.id, "live").await;
+    let doomed = found_account(&pool, &caller.id, "doomed").await;
 
-    soft_delete(&pool, doomed.id).await;
+    soft_delete(&pool, &doomed.id).await;
 
-    let rows = list_for_user(&pool, caller.id, ListingScope::SelfView).await;
-    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id).collect();
+    let rows = list_for_user(&pool, &caller.id, ListingScope::SelfView).await;
+    let listed: Vec<AccountId> = rows.iter().map(|row| row.account.id.clone()).collect();
     assert_eq!(
         listed,
         vec![live.id],
         "only the live account is listed; the tombstoned one is filtered out"
     );
     assert!(
-        role_of(&pool, caller.id, doomed.id).await.is_some(),
+        role_of(&pool, &caller.id, &doomed.id).await.is_some(),
         "the membership row itself survives the soft delete — only the join filters it"
     );
 }
@@ -1653,27 +1763,38 @@ async fn list_for_user_honors_the_privacy_valve_only_for_a_public_projection() {
     let member = provision(&pool, "did:plc:pgvalve-member").await.id;
 
     // Two accounts the member joins by invitation — one published, one not.
-    let published = found_account(&pool, owner.id, "published").await;
-    let unlisted = found_account(&pool, owner.id, "unlisted").await;
+    let published = found_account(&pool, &owner.id, "published").await;
+    let unlisted = found_account(&pool, &owner.id, "unlisted").await;
 
     for (account, listed) in [(&published, true), (&unlisted, false)] {
-        let invitation =
-            Invitation::issue(account.id, member, Role::Member(None), owner.id, Utc::now());
+        let invitation = Invitation::issue(
+            account.id.clone(),
+            member.clone(),
+            Role::Member,
+            owner.id.clone(),
+            Utc::now(),
+        );
         create_invitation(&pool, &invitation).await;
         accept_invitation(&pool, invitation, listed).await;
     }
 
-    let own_view = list_for_user(&pool, member, ListingScope::SelfView).await;
-    let own_ids: BTreeSet<uuid::Uuid> = own_view.iter().map(|row| *row.account.id).collect();
+    let own_view = list_for_user(&pool, &member, ListingScope::SelfView).await;
+    let own_ids: BTreeSet<String> = own_view
+        .iter()
+        .map(|row| row.account.id.to_string())
+        .collect();
     assert_eq!(
         own_ids,
-        BTreeSet::from([*published.id, *unlisted.id]),
+        BTreeSet::from([published.id.to_string(), unlisted.id.to_string()]),
         "a member's OWN view shows every live membership — their publication \
          choice does not hide their records from themselves"
     );
 
-    let public_view = list_for_user(&pool, member, ListingScope::PublicProfile).await;
-    let public_ids: Vec<AccountId> = public_view.iter().map(|row| row.account.id).collect();
+    let public_view = list_for_user(&pool, &member, ListingScope::PublicProfile).await;
+    let public_ids: Vec<AccountId> = public_view
+        .iter()
+        .map(|row| row.account.id.clone())
+        .collect();
     assert_eq!(
         public_ids,
         vec![published.id],

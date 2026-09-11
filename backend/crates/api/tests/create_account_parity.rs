@@ -8,15 +8,13 @@
 //! guard `whoami_parity.rs` gives `GET /me`.
 
 use api::generated::CreateAccountResponse;
-use application::account::CreateAccountResult;
+use application::account::create;
 use cli::commands::account::Founded;
 use domain::elements::{account::AccountId, did::Did};
-use uuid::Uuid;
 
-fn founded() -> CreateAccountResult {
-    CreateAccountResult {
-        account_id: AccountId::new(Uuid::now_v7()),
-        did: Did::new("did:plc:parity".to_string()),
+fn founded() -> create::Output {
+    create::Output {
+        account_id: AccountId::new(Did::new("did:plc:parity".to_string())),
         handle: "parity.zurfur.app".parse().expect("a valid handle"),
         name: "Parity Studio".parse().expect("a valid name"),
     }
@@ -24,8 +22,10 @@ fn founded() -> CreateAccountResult {
 
 #[test]
 fn account_create_renders_exactly_like_post_accounts() {
-    let result = founded();
-    let http = serde_json::to_value(CreateAccountResponse::from(result.clone())).unwrap();
-    let terminal = serde_json::to_value(Founded::from(result)).unwrap();
+    // Built twice rather than cloned: `create::Output` derives none of DD
+    // 55836674 D2's `Debug, Clone, PartialEq, Eq`, and the constructor is
+    // deterministic, so the two calls carry identical values.
+    let http = serde_json::to_value(CreateAccountResponse::from(founded())).unwrap();
+    let terminal = serde_json::to_value(Founded::from(founded())).unwrap();
     assert_eq!(terminal, http);
 }

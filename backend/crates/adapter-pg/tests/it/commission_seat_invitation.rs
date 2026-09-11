@@ -47,7 +47,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -65,7 +65,7 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commissi
 /// exactly one tab holding exactly one surface, so this is unambiguous.
 async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission)
+        .load_composition(&commission)
         .await
         .expect("load composition")
         .expect("every commission has its tabs");
@@ -89,7 +89,7 @@ async fn declare_seat(
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let seat_id = seat.id;
@@ -104,14 +104,16 @@ async fn declare_seat(
 }
 
 /// Issue a pending seat invitation in one committed unit of work.
-async fn issue(pool: &PgPool, invitation: &SeatInvitation) {
+async fn issue(pool: &PgPool, invitation: &SeatInvitation) -> SeatInvitation {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
+    let standing = uow
+        .commissions()
         .create_seat_invitation(invitation)
         .await
         .expect("create seat invitation");
     uow.commit().await.expect("commit");
+    standing
 }
 
 /// How many `commission_invitation` rows exist for `(seat, user)` in any state —
@@ -121,7 +123,7 @@ async fn rows_for(pool: &PgPool, seat: ElementId, user: UserId) -> i64 {
         "SELECT count(*) FROM commission_invitation WHERE seat_id = $1 AND invited_user = $2",
     )
     .bind(*seat)
-    .bind(*user)
+    .bind(user.as_str())
     .fetch_one(pool)
     .await
     .expect("count commission_invitation")
@@ -138,13 +140,19 @@ async fn create_then_find_pending_returns_the_invitation() {
     let address = address_of(&pool, commission.id).await;
     let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
-    let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
+    let invitation = SeatInvitation::issue(
+        commission.id,
+        seat,
+        invitee.id.clone(),
+        owner.id.clone(),
+        Utc::now(),
+    );
     let invitation_id = invitation.id;
     issue(&pool, &invitation).await;
 
     let store = PgCommissionStore::new(pool.clone());
     let found = store
-        .find_pending_seat_invitation(commission.id, seat, invitee.id)
+        .find_pending_seat_invitation(&commission.id, &seat, &invitee.id)
         .await
         .expect("query")
         .expect("the pending offer is found");
@@ -159,7 +167,7 @@ async fn create_then_find_pending_returns_the_invitation() {
     let stranger = provision(&pool, "did:plc:seat-inv-stranger").await;
     assert!(
         store
-            .find_pending_seat_invitation(commission.id, seat, stranger.id)
+            .find_pending_seat_invitation(&commission.id, &seat, &stranger.id)
             .await
             .expect("query")
             .is_none(),
@@ -178,21 +186,40 @@ async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
     let address = address_of(&pool, commission.id).await;
     let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
-    let first = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
+    let first = SeatInvitation::issue(
+        commission.id,
+        seat,
+        invitee.id.clone(),
+        owner.id.clone(),
+        Utc::now(),
+    );
     let first_id = first.id;
     issue(&pool, &first).await;
     // A fresh SeatInvitation (distinct id) for the same pair — the store drops it.
-    let second = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
+    let second = SeatInvitation::issue(
+        commission.id,
+        seat,
+        invitee.id.clone(),
+        owner.id,
+        Utc::now(),
+    );
     assert_ne!(first_id, second.id, "a distinct offer object");
-    issue(&pool, &second).await;
+    let standing = issue(&pool, &second).await;
+
+    // The dropped duplicate hands back the offer that actually stands, not the one
+    // it proposed — the caller is never told its no-op took effect.
+    assert_eq!(
+        standing.id, first_id,
+        "the dropped duplicate returns the pending offer already on file"
+    );
 
     assert_eq!(
-        rows_for(&pool, seat, invitee.id).await,
+        rows_for(&pool, seat, invitee.id.clone()).await,
         1,
         "the duplicate pending issue is a no-op, not a second row"
     );
     let found = PgCommissionStore::new(pool.clone())
-        .find_pending_seat_invitation(commission.id, seat, invitee.id)
+        .find_pending_seat_invitation(&commission.id, &seat, &invitee.id)
         .await
         .expect("query")
         .expect("the original offer stands");
@@ -214,7 +241,13 @@ async fn two_users_may_hold_pending_invitations_to_one_seat() {
     for invitee in [&alice, &bob] {
         issue(
             &pool,
-            &SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now()),
+            &SeatInvitation::issue(
+                commission.id,
+                seat,
+                invitee.id.clone(),
+                owner.id.clone(),
+                Utc::now(),
+            ),
         )
         .await;
     }
@@ -222,7 +255,7 @@ async fn two_users_may_hold_pending_invitations_to_one_seat() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .find_pending_seat_invitation(commission.id, seat, alice.id)
+            .find_pending_seat_invitation(&commission.id, &seat, &alice.id)
             .await
             .expect("query")
             .is_some(),
@@ -230,7 +263,7 @@ async fn two_users_may_hold_pending_invitations_to_one_seat() {
     );
     assert!(
         store
-            .find_pending_seat_invitation(commission.id, seat, bob.id)
+            .find_pending_seat_invitation(&commission.id, &seat, &bob.id)
             .await
             .expect("query")
             .is_some(),
@@ -257,14 +290,20 @@ async fn revoke_flips_state_and_clears_the_pending_offer() {
     let address = address_of(&pool, commission.id).await;
     let seat = declare_seat(&pool, commission.id, address, &owner).await;
 
-    let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
+    let invitation = SeatInvitation::issue(
+        commission.id,
+        seat,
+        invitee.id.clone(),
+        owner.id,
+        Utc::now(),
+    );
     let invitation_id = invitation.id;
     issue(&pool, &invitation).await;
 
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .revoke_seat_invitation(invitation_id)
+        .revoke_seat_invitation(&invitation_id)
         .await
         .expect("revoke");
     uow.commit().await.expect("commit");
@@ -272,7 +311,7 @@ async fn revoke_flips_state_and_clears_the_pending_offer() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .find_pending_seat_invitation(commission.id, seat, invitee.id)
+            .find_pending_seat_invitation(&commission.id, &seat, &invitee.id)
             .await
             .expect("query")
             .is_none(),
@@ -289,7 +328,7 @@ async fn revoke_flips_state_and_clears_the_pending_offer() {
     // A second revoke is an idempotent no-op — nothing to flip.
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .revoke_seat_invitation(invitation_id)
+        .revoke_seat_invitation(&invitation_id)
         .await
         .expect("second revoke is a no-op");
     uow.commit().await.expect("commit");
@@ -310,13 +349,19 @@ async fn find_pending_is_scoped_to_its_commission() {
     let seat = declare_seat(&pool, commission.id, address, &owner).await;
     let other = create_commission(&pool, &owner, "Other").await;
 
-    let invitation = SeatInvitation::issue(commission.id, seat, invitee.id, owner.id, Utc::now());
+    let invitation = SeatInvitation::issue(
+        commission.id,
+        seat,
+        invitee.id.clone(),
+        owner.id,
+        Utc::now(),
+    );
     issue(&pool, &invitation).await;
 
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .find_pending_seat_invitation(other.id, seat, invitee.id)
+            .find_pending_seat_invitation(&other.id, &seat, &invitee.id)
             .await
             .expect("query")
             .is_none(),
@@ -324,7 +369,7 @@ async fn find_pending_is_scoped_to_its_commission() {
     );
     assert!(
         store
-            .find_pending_seat_invitation(commission.id, seat, invitee.id)
+            .find_pending_seat_invitation(&commission.id, &seat, &invitee.id)
             .await
             .expect("query")
             .is_some(),

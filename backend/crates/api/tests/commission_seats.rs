@@ -205,7 +205,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 
     let seats = backend
         .commission_store()
-        .seats(CommissionId::new(id))
+        .seats(&CommissionId::new(id))
         .await
         .expect("seats");
     assert_eq!(seats.len(), 2, "a commission holds several Seats (AC1)");
@@ -256,7 +256,11 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
         .expect("signed in");
     for entry in &entries[1..] {
         assert!(matches!(entry.kind, ChangelogEntryKind::SeatDeclared));
-        assert_eq!(entry.actor_id, Some(me.id), "the owner is the actor");
+        assert_eq!(
+            entry.actor_id,
+            Some(me.id.clone()),
+            "the owner is the actor"
+        );
         assert_eq!(
             entry.payload["kind"], "Creator",
             "the payload renders a sentence without joins"
@@ -284,7 +288,7 @@ async fn an_anonymous_caller_cannot_declare_a_seat() {
     assert!(
         backend
             .commission_store()
-            .seats(CommissionId::new(id))
+            .seats(&CommissionId::new(id))
             .await
             .expect("seats")
             .is_empty()
@@ -331,7 +335,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     assert!(
         backend
             .commission_store()
-            .seats(CommissionId::new(foreign))
+            .seats(&CommissionId::new(foreign))
             .await
             .expect("seats")
             .is_empty(),
@@ -383,7 +387,7 @@ async fn address_gates_hold_for_seats() {
     assert!(
         backend
             .commission_store()
-            .seats(CommissionId::new(id))
+            .seats(&CommissionId::new(id))
             .await
             .expect("seats")
             .is_empty(),
@@ -424,7 +428,7 @@ async fn malformed_and_invalid_bodies_are_rejected() {
     assert!(
         backend
             .commission_store()
-            .seats(CommissionId::new(id))
+            .seats(&CommissionId::new(id))
             .await
             .expect("seats")
             .is_empty(),

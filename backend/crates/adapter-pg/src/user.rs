@@ -4,12 +4,13 @@
 //! and so is reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
 //! (`uow.users()`). See ZMVP-9, DESIGN/User, and DD `24150017`.
 //!
-//! Since ZMVP-123 the `users` table is a **shared-PK projection** of the actor
-//! super-table (DD `34013187`): the visitor's DID lives in `actor_identity`, not
-//! here, and `users.id` is also a composite FK `(id, kind='user')` into it. So
-//! recognition is a two-step write hidden behind this one `provision` helper —
-//! `intern` the DID (the race-safe one-DID-one-actor upsert), then land the `users`
-//! projection keyed by that same id — and the reads join the DID back on the id.
+//! Since the actor re-key (DD `57081857`) `users.id` **is** the visitor's DID:
+//! there is no surrogate key and nothing to resolve, so the reads are plain
+//! lookups. The table stays a projection of the actor super-table (DD
+//! `34013187`) — `(id, kind='user')` is a composite FK into
+//! `actor_identity (did, kind)` — so recognition remains a two-step write hidden
+//! behind this one `provision` helper: `intern` the DID (the race-safe
+//! one-DID-one-actor upsert), then land the `users` projection under it.
 //!
 //! The SQL lives in `queries/user/` and `queries/actor_identity/`; the typed
 //! functions and row shapes are generated against the migrated schema (see
@@ -56,36 +57,23 @@ pub struct PgUserWrites<'a> {
 
 #[async_trait::async_trait]
 impl UserStore for PgUserStore {
-    async fn find(&self, id: UserId) -> anyhow::Result<Option<User>> {
-        let Some(row) = sql::find(&self.pool, *id).await? else {
-            return Ok(None);
-        };
-        // A User always has a DID (the actor_identity per-kind CHECK), so a NULL here
-        // is a corrupted projection — surfaced as an error, never a silent guess.
-        let did = row.did.ok_or_else(|| {
-            anyhow::anyhow!(
-                "user {} has no DID in actor_identity (corrupted projection)",
-                row.id
-            )
-        })?;
-        Ok(Some(User {
-            id: UserId::new(row.id),
-            did: Did::new(did),
+    async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
+        Ok(sql::find(&self.pool, id.as_str()).await?.map(|row| User {
+            id: UserId::new(Did::new(row.id)),
             created_at: row.created_at,
         }))
     }
 
-    /// Read-only lookup by the unique `did` — no INSERT, so an unknown DID resolves
-    /// to `None` rather than recognizing a new visitor (the no-mint counterpart to
-    /// [`UserWrites::provision`]). The DID lives in the super-table now, so this joins
-    /// through it; the caller already holds the DID it looked up, so the returned
-    /// `User` is paired with that exact `did`.
+    /// Read-only lookup by DID — no INSERT, so an unknown DID resolves to `None`
+    /// rather than recognizing a new visitor (the no-mint counterpart to
+    /// [`UserWrites::provision`]). Addresses the same column as
+    /// [`find`](UserStore::find) now that the DID is the key; the two stay apart
+    /// because they are two port methods with two argument types.
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         Ok(sql::find_by_did(&self.pool, did.as_str())
             .await?
             .map(|row| User {
-                id: UserId::new(row.id),
-                did: did.clone(),
+                id: UserId::new(Did::new(row.id)),
                 created_at: row.created_at,
             }))
     }
@@ -94,12 +82,12 @@ impl UserStore for PgUserStore {
 #[async_trait::async_trait]
 impl UserWrites for PgUserWrites<'_> {
     /// Recognize a DID as a two-step write in one unit (ZMVP-123): `intern` the DID
-    /// into the actor super-table, then land the `users` projection keyed by the
-    /// interned identity id. Both steps ride the open transaction, so a half-recognized
-    /// visitor can never be observed and the composite FK makes the reverse order
-    /// unrepresentable. Idempotent and race-safe: the `intern` upsert is the arbiter of
-    /// one-DID-one-actor (the candidate id is discarded on a repeat sign-in), and the
-    /// projection upsert on the shared PK hands back the *existing* row's `created_at`.
+    /// into the actor super-table, then land the `users` projection under that DID.
+    /// Both steps ride the open transaction, so a half-recognized visitor can never
+    /// be observed and the composite FK makes the reverse order unrepresentable.
+    /// Idempotent and race-safe: the `intern` upsert is the arbiter of
+    /// one-DID-one-actor, and the projection upsert on the DID key hands back the
+    /// *existing* row's `created_at`.
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
         let now = chrono::Utc::now();
 
@@ -131,14 +119,13 @@ impl UserWrites for PgUserWrites<'_> {
             return Err(anyhow::Error::new(conflict));
         }
 
-        // Step 2 — the `users` projection row, keyed by the interned identity id.
-        // Idempotent on the shared PK: a repeat sign-in reuses the same id, whose row
-        // already exists, so RETURNING yields its ORIGINAL created_at.
-        let row = sql::provision(&mut *self.conn, identity.id, now).await?;
+        // Step 2 — the `users` projection row, keyed by the DID itself. Idempotent:
+        // a repeat sign-in hits the row that already exists, so RETURNING yields its
+        // ORIGINAL created_at.
+        let row = sql::provision(&mut *self.conn, did.as_str(), now).await?;
 
         Ok(User {
-            id: UserId::new(row.id),
-            did: did.clone(),
+            id: UserId::new(Did::new(row.id)),
             created_at: row.created_at,
         })
     }

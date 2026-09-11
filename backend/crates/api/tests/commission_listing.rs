@@ -95,7 +95,7 @@ async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
     // Two commissions owned by the caller, created through the real write path.
     let mine_a = Commission::create(
         CommissionTitle::try_from("First".to_string()).expect("valid title"),
-        me.id,
+        me.id.clone(),
         Utc::now(),
         None,
     );
@@ -183,7 +183,7 @@ async fn excludes_archived_commissions() {
 
     let active = Commission::create(
         CommissionTitle::try_from("Active".to_string()).expect("valid title"),
-        me.id,
+        me.id.clone(),
         Utc::now(),
         None,
     );

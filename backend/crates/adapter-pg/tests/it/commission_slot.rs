@@ -52,7 +52,7 @@ async fn composed_commission(
 ) -> (Commission, SurfaceAddress) {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -71,7 +71,7 @@ async fn composed_commission(
 /// exactly one tab holding exactly one surface, so this is unambiguous.
 async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission)
+        .load_composition(&commission)
         .await
         .expect("load composition")
         .expect("every commission has its tabs");
@@ -111,7 +111,7 @@ async fn declare_slot_persists_the_element_and_its_satellite() {
         address.clone(),
         "The knight".parse::<SlotTitle>().expect("valid"),
         Some("full plate, no cape".to_string()),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let bare = NewSlot::contributed_at(
@@ -119,7 +119,7 @@ async fn declare_slot_persists_the_element_and_its_satellite() {
         address.clone(),
         "The mage".parse::<SlotTitle>().expect("valid"),
         None,
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let (noted_id, bare_id) = (noted.id, bare.id);
@@ -136,7 +136,7 @@ async fn declare_slot_persists_the_element_and_its_satellite() {
     uow.commit().await.expect("commit");
 
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("composed");
@@ -185,7 +185,14 @@ async fn declare_slot_refuses_bad_addresses_like_every_element_write() {
     let db = PgDatabase::new(pool.clone());
     let title = || "The knight".parse::<SlotTitle>().expect("valid");
     let slot_at = |address: SurfaceAddress| {
-        NewSlot::contributed_at(mine.id, address, title(), None, owner.id, Utc::now())
+        NewSlot::contributed_at(
+            mine.id,
+            address,
+            title(),
+            None,
+            owner.id.clone(),
+            Utc::now(),
+        )
     };
 
     // A tab that exists nowhere.
@@ -268,7 +275,7 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
 
     assert!(slot_row(&pool, slot_id).await.is_none(), "no satellite row");
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("composed");

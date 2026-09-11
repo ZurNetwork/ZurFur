@@ -1,8 +1,7 @@
-//! `me` over the in-memory fakes: the one implementation both drivers call
-//! (ZMVP-205 AC2).
+//! `Users::me` over the in-memory fakes: the one implementation both drivers
+//! call (ZMVP-205 AC2).
 
-use application::user::{MeError, MeProfile, MeQuery, me};
-use domain::elements::profile::Profile as DomainProfile;
+use application::user::me::{MeError, MeProfile, MeQuery};
 use domain::elements::{did::Did, profile::Profile, user::UserId};
 use domain::ports::UnitOfWork;
 use uuid::Uuid;
@@ -24,16 +23,16 @@ async fn a_recognized_user_gets_their_profile() {
         .unwrap();
 
     let query = MeQuery { user_id: user.id };
-    let answer = me(
-        query,
-        &*runtime.users,
-        &*runtime.profile_cache,
-        &*runtime.profile_source,
-    )
-    .await
-    .unwrap();
+    let answer = runtime
+        .app()
+        .users()
+        .me(query, &*runtime.profile_cache, &*runtime.profile_source)
+        .await
+        .unwrap();
 
-    assert_eq!(answer.did, did);
+    // Post DD 57081857 `me`'s reported id IS the caller's DID (no separate
+    // `did` field on the output) — the round-trip the old assertion checked.
+    assert_eq!(answer.id, UserId::new(did));
     let expected_profile = MeProfile {
         handle: "me.bsky.social".to_string(),
         display_name: Some("Me".to_string()),
@@ -46,17 +45,19 @@ async fn a_recognized_user_gets_their_profile() {
 async fn an_unknown_id_is_unknown_user() {
     let did = Did::new("did:plc:app-nobody".to_string());
     let runtime = test_support::runtime::mem(&did).build().runtime;
-    let id = UserId::new(Uuid::now_v7());
+    // A UserId is a Did now (DD 57081857) — mint a fresh, distinct one rather
+    // than wrapping a bare UUID.
+    let id = UserId::new(Did::new(format!("did:plc:{}", Uuid::now_v7())));
 
-    let query = MeQuery { user_id: id };
-    let error = me(
-        query,
-        &*runtime.users,
-        &*runtime.profile_cache,
-        &*runtime.profile_source,
-    )
-    .await
-    .unwrap_err();
+    let query = MeQuery {
+        user_id: id.clone(),
+    };
+    let error = runtime
+        .app()
+        .users()
+        .me(query, &*runtime.profile_cache, &*runtime.profile_source)
+        .await
+        .unwrap_err();
 
     assert!(matches!(error, MeError::UnknownUser(unknown) if unknown == id));
 }
@@ -64,7 +65,7 @@ async fn an_unknown_id_is_unknown_user() {
 #[test]
 fn a_profile_flattens_every_optional() {
     let did = Did::new("did:plc:app-flat".to_string());
-    let profile = DomainProfile::new(did, "flat.bsky.social")
+    let profile = Profile::new(did, "flat.bsky.social")
         .with_display_name("Flat")
         .with_avatar_url("https://cdn/avatar.png");
 

@@ -17,7 +17,7 @@ use domain::elements::{
     did::Did,
     handle::Handle,
     profile::Profile,
-    role::Role,
+    role::{Role, RoleAlias},
     user_account::UserAccount,
 };
 use reqwest::redirect::Policy;
@@ -133,8 +133,9 @@ async fn lists_every_live_account_the_caller_holds_a_role_in_with_that_role() {
     backend
         .grant_role(&UserAccount {
             user_id: me.id,
-            account_id: granted.id,
-            role: Role::Member(None),
+            account_id: granted.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("grant member role");
@@ -217,9 +218,10 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
     let live = seed_account(&backend, did, "live.zurfur.app").await;
     backend
         .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: live.id,
-            role: Role::Owner(None),
+            user_id: me.id.clone(),
+            account_id: live.id.clone(),
+            role: Role::Owner,
+            alias: None,
         })
         .await
         .expect("seed live membership");
@@ -230,14 +232,15 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
     backend
         .grant_role(&UserAccount {
             user_id: me.id,
-            account_id: tombstoned.id,
-            role: Role::Member(None),
+            account_id: tombstoned.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seed tombstoned membership");
     let mut uow = backend.database().begin().await.expect("begin");
     uow.accounts()
-        .soft_delete(tombstoned.id)
+        .soft_delete(&tombstoned.id)
         .await
         .expect("soft delete");
     uow.commit().await.expect("commit soft delete");
@@ -258,6 +261,79 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
         "the soft-deleted account is excluded: {body}"
     );
     assert_eq!(rows[0]["id"], live.id.to_string());
+}
+
+// A member's own role alias (a free-form label, e.g. an Owner aliased "Studio
+// Head") rides along on the listing row when they set one, and is absent —
+// never a literal `""` or `null`-shaped-but-present key — when they haven't.
+#[tokio::test]
+async fn a_members_role_alias_rides_along_when_set_and_is_absent_when_not() {
+    let did = "did:plc:aliaslister";
+    let (base, backend) = spawn_app(did).await;
+    let client = client();
+    sign_in(&client, &base).await;
+    let me = backend
+        .find_by_did(&Did::new(did.to_string()))
+        .await
+        .expect("find me")
+        .expect("signed in");
+
+    // One account where the caller's role carries an alias, one where it doesn't.
+    let aliased = seed_account(&backend, "did:plc:aliased-owner", "aliased.zurfur.app").await;
+    backend
+        .grant_role(&UserAccount {
+            user_id: me.id.clone(),
+            account_id: aliased.id.clone(),
+            role: Role::Manager,
+            alias: None,
+        })
+        .await
+        .expect("seat me as a manager");
+    backend.seed_role_alias(
+        me.id.clone(),
+        aliased.id.clone(),
+        RoleAlias::new("Studio Head").expect("non-empty alias"),
+    );
+
+    let unaliased = seed_account(&backend, "did:plc:unaliased-owner", "unaliased.zurfur.app").await;
+    backend
+        .grant_role(&UserAccount {
+            user_id: me.id,
+            account_id: unaliased.id.clone(),
+            role: Role::Member,
+            alias: None,
+        })
+        .await
+        .expect("seat me as a member");
+
+    let res = client
+        .get(format!("{base}/accounts"))
+        .send()
+        .await
+        .expect("GET /accounts");
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.expect("json body");
+    let rows = body["accounts"].as_array().expect("accounts array");
+
+    let aliased_row = rows
+        .iter()
+        .find(|row| row["id"] == aliased.id.to_string())
+        .expect("the aliased membership is listed");
+    assert_eq!(
+        aliased_row["alias"], "Studio Head",
+        "the caller's own alias for their role rides along: {body}"
+    );
+
+    let unaliased_row = rows
+        .iter()
+        .find(|row| row["id"] == unaliased.id.to_string())
+        .expect("the unaliased membership is listed");
+    assert!(
+        unaliased_row
+            .get("alias")
+            .is_none_or(|alias| alias.is_null()),
+        "no alias was set, so the field is absent (or null), never an empty string: {body}"
+    );
 }
 
 // An anonymous caller gets a 401 problem+json, exactly like `GET /me` — never a

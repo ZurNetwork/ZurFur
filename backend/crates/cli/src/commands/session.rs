@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use application::user::{MeError, MeQuery, MeResult};
+use application::user::me::{self, MeError, MeQuery};
 use clap::Subcommand;
 use composition::Runtime;
 use serde::Serialize;
@@ -41,11 +41,11 @@ pub struct Whoami {
     avatar_url: Option<String>,
 }
 
-impl From<MeResult> for Whoami {
+impl From<me::Output> for Whoami {
     /// The `GET /me` projection rule: a resolved profile contributes its
     /// handle + optionals; no profile degrades to the bare DID.
-    fn from(me: MeResult) -> Self {
-        let did = me.did.to_string();
+    fn from(me: me::Output) -> Self {
+        let did = me.id.to_string();
         match me.profile {
             Some(profile) => Whoami {
                 did,
@@ -88,17 +88,15 @@ pub async fn run(
             let query = MeQuery {
                 user_id: principal.user.id,
             };
-            let me = application::user::me(
-                query,
-                &*runtime.users,
-                &*runtime.profile_cache,
-                &*runtime.profile_source,
-            )
-            .await
-            .map_err(|e| match e {
-                MeError::UnknownUser(_) => CliError::domain("not_authenticated", e),
-                MeError::Store(_) => CliError::infra("internal_error", e),
-            })?;
+            let me = runtime
+                .app()
+                .users()
+                .me(query, &*runtime.profile_cache, &*runtime.profile_source)
+                .await
+                .map_err(|e| match e {
+                    MeError::UnknownUser(_) => CliError::domain("not_authenticated", e),
+                    MeError::Store(_) => CliError::infra("internal_error", e),
+                })?;
             let body = Whoami::from(me);
             Ok(serde_json::to_value(body).expect("Whoami serializes"))
         }

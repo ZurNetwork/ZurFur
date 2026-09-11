@@ -1,20 +1,9 @@
-//! `POST /commissions/{id}/slots` — the owner **declares Slots**: Character
-//! positions with a required title and optional freeform notes (ZMVP-77;
-//! DESIGN/Slots `5931025`, Referenceable/Slot/Seat DD `28311564`). The body is
-//! an **array** — a commission's Slots usually arrive several at a time
-//! (Engineer ruling, PR #108) — and the batch lands all-or-nothing.
-//!
-//! A Slot is not a kind of element: declaring one contributes an ordinary
-//! element into the chosen surface, while the Slot itself lives in a
-//! satellite (`commission_slot`, keyed by that element's id — the Slot
-//! mirror of the Seat satellite ruling, Gate A E20); the generic element add
-//! cannot populate the satellite, hence this dedicated declaration route. **No fill
-//! surface exists here or anywhere** (AC3): nothing in the request, the
-//! storage, or the domain shapes can name an occupant — an empty Slot is a
-//! valid, permanent state (AC2). The assignment surface arrives with the
-//! Character epic. Declaring Slots appends **no** changelog entry: the frozen
-//! ZMVP-87 taxonomy carries `seat_declared` for Seats but no Slot variant.
+//! `POST /commissions/{id}/slots` — the owner declares a batch of Character
+//! Slots: positions with a required title and optional notes (DESIGN/Slots
+//! `5931025`). The body is an array; the batch lands all-or-nothing. No fill
+//! surface exists here — an empty Slot is a valid, permanent state.
 
+use application::commission::slots::declare::{self, SlotBody};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -22,16 +11,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::{
-    elements::commission::{CommissionId, NewSlot, SlotTitle},
-    ports::UnitOfWork,
-};
+use domain::elements::commission::{CommissionId, SlotTitle, TabId};
 use serde::{Deserialize, Serialize};
-use tower_sessions::Session;
 use uuid::Uuid;
 
-use super::require_owner;
-use crate::{AppState, problem::Problem};
+use crate::{AppState, extract::CallingUser, problem::Problem};
 
 /// `POST /commissions/{id}/slots`'s `201` body: the id of each newly declared
 /// slot's carrying element, in request order — see [`declare_slots`].
@@ -41,11 +25,8 @@ struct DeclareSlotsResponse {
 }
 
 /// One Slot of the `POST /commissions/{id}/slots` request body (a JSON array
-/// of these): the address to contribute at (`tab` by id, `surface` by declared
-/// name), the Slot's required title, and optional freeform notes. There is
-/// deliberately no occupant/character field — fill is not offered (AC3) — and
-/// no payload: the carrying element's payload is the empty object, the Slot's
-/// substance being the satellite's.
+/// of these): the address (`tab` + `surface`), the required title, and
+/// optional notes. No occupant/character field.
 #[derive(Deserialize)]
 pub(super) struct DeclareSlotBody {
     tab: Uuid,
@@ -55,38 +36,16 @@ pub(super) struct DeclareSlotBody {
     notes: Option<String>,
 }
 
-/// Declare a batch of Slots (ZMVP-77 AC1), as the commission's owner. Each
-/// entry contributes an ordinary element at the address it names; the Slot
-/// itself (title, notes) lands in the satellite. The
-/// body is a JSON array of Slot objects — one request declares a commission's
-/// Slots together (Engineer ruling, PR #108) — and the batch is
-/// **all-or-nothing**: every element and satellite land in one unit of work
-/// for the whole array, so a refused Slot leaves nothing behind.
-///
-/// Owner-only via the shared [`require_owner`] gate: a non-participant — and a
-/// truly absent commission — gets the uniform
-/// [`commission_not_found`](Problem::commission_not_found) 404 (never a 403; no
-/// existence oracle). An empty array is a `422` (declaring nothing is a
-/// malformed request, not a no-op). Each title is validated through
-/// [`SlotTitle`] (trimmed, blank refused with a `422`); notes are trimmed with
-/// blank normalizing to absent. Each address walks the same gates as every
-/// element write, through the one shared mapping
-/// ([`elements::to_problem`](super::elements::to_problem)): an absent/foreign
-/// tab is the indistinguishable [`tab_not_found`](Problem::tab_not_found) 404,
-/// an undeclared (tab, surface) pair the honest `422`
-/// [`unknown_surface`](Problem::unknown_surface); a malformed body is a `422`.
-/// Returns `201 Created` with the id of each newly declared slot's carrying
-/// element, in request order — `{"ids": ["…", …]}`.
+/// Declares a batch of Slots, as the commission's owner. All-or-nothing.
+/// Owner-only; `422` for an empty array, an invalid title, or a bad address
+/// (`404 tab_not_found` / `422 unknown_surface`). Returns `201 Created` with
+/// `{"ids": ["…", …]}` in request order.
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    session: Session,
+    Path(commission_id): Path<CommissionId>,
+    CallingUser(user_id): CallingUser,
     body: Result<Json<Vec<DeclareSlotBody>>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    let user = super::current_user(&state, &session).await?;
-    let commission = CommissionId::new(id);
-    require_owner(&state, commission, &user).await?;
-
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     if body.is_empty() {
         return Err(Problem::invalid_request(
@@ -94,40 +53,44 @@ pub(super) async fn declare_slots(
         ));
     }
 
-    let now = Utc::now();
-    let mut slots = Vec::with_capacity(body.len());
-    for entry in body {
-        let title = SlotTitle::try_from(entry.title)
-            .map_err(|err| Problem::invalid_request(format!("Invalid slot title: {err}.")))?;
-        let notes = entry
-            .notes
-            .as_deref()
-            .map(str::trim)
-            .filter(|notes| !notes.is_empty())
-            .map(str::to_owned);
-        let address = super::elements::address(entry.tab, entry.surface)?;
-        slots.push(NewSlot::contributed_at(
-            commission, address, title, notes, user.id, now,
-        ));
-    }
-    let element_ids: Vec<Uuid> = slots.iter().map(|slot| *slot.id).collect();
+    let all_slots: Vec<SlotBody> =
+        body.into_iter()
+            .map(|entry| {
+                let title = entry.title.parse::<SlotTitle>().map_err(|err| {
+                    Problem::invalid_request(format!("Invalid slot title: {err}."))
+                })?;
+                let surface = super::elements::address(entry.tab, entry.surface)?;
+                let slot = SlotBody {
+                    tab: TabId::new(entry.tab),
+                    surface,
+                    title,
+                    notes: entry.notes,
+                };
+                Ok(slot)
+            })
+            .collect::<Result<_, Problem>>()?;
 
-    state
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().declare_slots(&slots).await
-        })
-        .await
-        .map_err(super::elements::to_problem)?;
+    let command = declare::Command {
+        commission_id,
+        slots: all_slots,
+        user_id,
+    };
 
-    let body = DeclareSlotsResponse { ids: element_ids };
+    let declared = state
+        .app()
+        .commissions()
+        .slots()
+        .declare(command, Utc::now())
+        .await?;
+    let ids: Vec<Uuid> = declared.slot_ids.into_iter().map(|slot| *slot).collect();
+
+    let body = DeclareSlotsResponse { ids };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 #[cfg(test)]
 mod tests {
-    //! Pins the `201` body's wire shape: `{"ids": ["<uuid>", …]}` — the exact
-    //! string form `json!({ "ids": element_ids })` (a `Vec<Uuid>`) used to emit
-    //! (ZMVP-158 AC1/AC3).
+    //! Pins the `201` body's wire shape: `{"ids": ["<uuid>", …]}`.
 
     use super::*;
 

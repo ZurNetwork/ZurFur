@@ -21,6 +21,8 @@
 //!
 //! [`ElementType::slot`]: super::ElementType::slot
 
+use std::str::FromStr;
+
 use super::{
     CommissionId,
     element::{ElementId, SurfaceAddress},
@@ -66,13 +68,15 @@ impl std::fmt::Display for SlotTitleError {
 
 impl std::error::Error for SlotTitleError {}
 
-impl TryFrom<String> for SlotTitle {
-    type Error = SlotTitleError;
+/// Parses a Slot title: trimmed, then non-empty or [`SlotTitleError::Empty`].
+/// `FromStr` rather than `TryFrom<String>` so `"…".parse()` reads naturally;
+/// the trade is one allocation an owned-input impl could have reused, which
+/// only matters if titles are ever parsed in bulk.
+impl FromStr for SlotTitle {
+    type Err = SlotTitleError;
 
-    /// Validate and wrap a title: trim surrounding whitespace, then reject an
-    /// empty result with [`SlotTitleError::Empty`].
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
-        StringBuilder::new(raw)
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        StringBuilder::new(s)
             .trimmed()
             .non_empty()
             .build()
@@ -87,21 +91,11 @@ impl TryFrom<String> for SlotTitle {
                     // onto the only existing variant rather than panic.
                     debug_assert!(
                         false,
-                        "SlotTitle's TryFrom chain only applies trimmed().non_empty()"
+                        "SlotTitle's FromStr chain only applies trimmed().non_empty()"
                     );
                     SlotTitleError::Empty
                 }
             })
-    }
-}
-
-/// The std parsing door: `"…".parse::<SlotTitle>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
-impl std::str::FromStr for SlotTitle {
-    type Err = SlotTitleError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::try_from(raw.to_owned())
     }
 }
 
@@ -167,6 +161,7 @@ impl NewSlot {
     /// use chrono::Utc;
     /// use domain::elements::{
     ///     commission::{CommissionId, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, TabId},
+    ///     did::Did,
     ///     user::UserId,
     /// };
     ///
@@ -175,7 +170,7 @@ impl NewSlot {
     ///     TabId::new(uuid::Uuid::now_v7()),
     ///     "content".parse::<SurfaceName>().unwrap(),
     /// );
-    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(Did::new("did:plc:alice".to_string()));
     /// let title = "The knight".parse::<SlotTitle>().unwrap();
     /// let slot = NewSlot::contributed_at(commission, address.clone(), title, None, owner, Utc::now());
     /// assert_eq!(slot.address, address);
@@ -228,6 +223,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+    use crate::elements::did::Did;
 
     // AC1 — the title is required and validated: trimmed on the way in, a
     // blank one refused rather than stored.
@@ -250,7 +246,7 @@ mod tests {
             super::super::element::TabId::new(uuid::Uuid::now_v7()),
             "content".parse().unwrap(),
         );
-        let owner = UserId::new(uuid::Uuid::now_v7());
+        let owner = UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())));
         let title = "The mage".parse::<SlotTitle>().unwrap();
 
         let slot = NewSlot::contributed_at(
@@ -258,7 +254,7 @@ mod tests {
             address.clone(),
             title.clone(),
             Some("robes, not armor".to_string()),
-            owner,
+            owner.clone(),
             Utc::now(),
         );
 

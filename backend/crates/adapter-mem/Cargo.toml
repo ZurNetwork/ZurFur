@@ -13,6 +13,12 @@ chrono = { workspace = true }
 serde_json = { workspace = true }
 # Minting AccountIds for the test seed helpers (e.g. seed_soft_deleted_account).
 uuid = { workspace = true }
+# `MemFileStore`'s streaming seam: `AsyncReadExt::read_to_end` to drain an
+# upload into the fake's `Vec<u8>` map, and `Cursor`'s `AsyncRead` impl to
+# stream a stored blob back out (ZMVP-88/205). Hand-pinned at the same version
+# as `workspace.dependencies.tokio` (see `domain/Cargo.toml`'s note —
+# `workspace = true` cannot itself drop `default-features` here).
+tokio = { version = "1.49.0", default-features = false, features = ["io-util"] }
 # Content-addressing blobs and records in the MemPublicRecords fake (ZMVP-105):
 # the same CIDv1/sha2-256 scheme the real boundary uses, so identical bytes yield
 # an identical, stable CID (fidelity, not realism).

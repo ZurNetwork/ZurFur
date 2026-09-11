@@ -102,6 +102,13 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// The orchestrator ([`application::App`]) over this runtime's adapters.
+    /// Drivers build it once at boot (`Arc::new(runtime.app())`) and call use
+    /// cases through it; they never touch a port directly.
+    pub fn app(&self) -> application::App {
+        application::App::from(self)
+    }
+
     /// Run `f` inside one private-store transaction — the **only** way a route
     /// reaches a private-store write. Delegates to the application layer's
     /// [`transaction`](application::transaction) orchestrator over

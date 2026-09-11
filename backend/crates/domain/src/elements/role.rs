@@ -6,13 +6,7 @@
 //! a user joins, revoking it is how they leave. The grant rule lives in
 //! [`Role::can_grant`] — the reusable authority seam ZMVP-15/16 are built on.
 
-/// The optional alias a member's role carries — the `Option<String>` slot on each
-/// [`Role`] variant, named so the four variants read uniformly. `None` on the floor
-/// (see [`Role`]). A `Some` is a free-form label for the rank (e.g. an Owner aliased
-/// "Studio Head"), not a second authority axis: [`can_grant`](Role::can_grant) ranks
-/// by variant, not by alias. Distinct from a member's *parent* — that is the
-/// inviting member, stored in a separate `account_members.parent` column, never here.
-pub type RoleAlias = Option<String>;
+use std::str::FromStr;
 
 /// A member's rank inside one account.
 ///
@@ -20,29 +14,42 @@ pub type RoleAlias = Option<String>;
 /// numeric position means *higher* authority — [`can_grant`](Role::can_grant)
 /// leans on this, so keep the variants in rank order, top to bottom.
 ///
-/// Each variant carries an optional [`RoleAlias`] — a free-form label for the rank,
-/// not the member's parent (that is a separate `account_members.parent` column). On
-/// the floor it is always `None`. Be aware the derived [`Ord`] also weighs that
-/// `Option<String>`; that is why aliased-role compares are deferred dressing (see
-/// the note on [`can_grant`](Role::can_grant)).
-///
 /// References: [`UnknownRole`], [`crate::elements::user_account::UserAccount`],
 /// [`crate::ports::AccountWrites::grant_role`], DESIGN/Roles.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     /// The account's founder/highest authority; never has a parent (DESIGN/Roles).
-    Owner(RoleAlias),
+    Owner,
     /// May change roles below Admin; cannot mint a peer Admin or an Owner.
-    Admin(RoleAlias),
+    Admin,
     /// A member with elevated standing but no authority to change roles.
-    Manager(RoleAlias),
+    Manager,
     /// The base membership rank; grants nothing.
-    Member(RoleAlias),
+    Member,
+}
+
+impl Role {
+    /// The stored/wire discriminant: `"owner" | "admin" | "manager" | "member"` —
+    /// the one vocabulary list [`FromStr`] parses back.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::Manager => "manager",
+            Self::Member => "member",
+        }
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A stored role discriminant that isn't one of the four known roles.
 ///
-/// The error returned by [`Role::try_from`] when a persisted string doesn't map
+/// The error returned by [`Role::from_str`] when a persisted string doesn't map
 /// to a [`Role`] — a schema/data drift signal, not a user input error. Carries
 /// the offending value for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,21 +63,19 @@ impl std::fmt::Display for UnknownRole {
 
 impl std::error::Error for UnknownRole {}
 
-impl TryFrom<String> for Role {
-    type Error = UnknownRole;
+impl FromStr for Role {
+    type Err = UnknownRole;
 
-    /// Parse a stored role discriminant (`owner` | `admin` | `manager` | `member`)
-    /// back into a `Role`. The [`RoleAlias`] is `None`: the discriminant alone can't
-    /// carry it, and it is always NULL on the floor. When aliases land, reconstruct
-    /// the alias alongside, e.g. via a `TryFrom<(String, Option<String>)>`.
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.to_lowercase().as_str() {
-            "owner" => Ok(Role::Owner(None)),
-            "admin" => Ok(Role::Admin(None)),
-            "manager" => Ok(Role::Manager(None)),
-            "member" => Ok(Role::Member(None)),
-            _ => Err(UnknownRole(value)),
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let role = match s.to_lowercase().as_str() {
+            "owner" => Role::Owner,
+            "admin" => Role::Admin,
+            "manager" => Role::Manager,
+            "member" => Role::Member,
+            _ => return Err(UnknownRole(s.into())),
+        };
+
+        Ok(role)
     }
 }
 
@@ -101,22 +106,69 @@ impl Role {
         // granted role must sit strictly below the actor's — with the derived Ord
         // (Owner < Admin < Manager < Member) "below" is the greater value, hence
         // `target > self`. Authority therefore rides on the variant order above:
-        // keep it Owner→Member, top to bottom. (When aliases start getting populated,
-        // switch to a discriminant-only compare — Ord also weighs that `Option<String>`
-        // alias, which would otherwise reopen the peer-Admin gap for aliased roles.)
-        matches!(self, Role::Owner(_) | Role::Admin(_)) && target > self
+        // keep it Owner→Member, top to bottom.
+        matches!(self, Role::Owner | Role::Admin) && target > self
+    }
+}
+
+/// A member's alias for their own role on an account — a free-form label (e.g.
+/// an Owner aliased "Studio Head"), never a second authority axis: it lives on
+/// the *membership* ([`crate::elements::user_account::UserAccount::alias`],
+/// [`crate::elements::account::AccountMembership::alias`]), not on [`Role`]
+/// itself, so it can never influence [`Role`]'s derived [`Ord`] or
+/// [`can_grant`](Role::can_grant). Distinct from a member's *parent* — that is
+/// the inviting member, stored in a separate `account_members.parent` column,
+/// never here.
+///
+/// A custom constructor rather than bare `FromStr`/`TryFrom<String>`:
+/// `RoleAlias::new` trims before validating (`FromStr::from_str` gets that for
+/// free too, since it delegates), and there is no infallible `String` this
+/// could sensibly implement `From` for — every `String` must still clear the
+/// non-empty check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleAlias(String);
+
+/// A role alias that failed validation — empty (after trimming), the only
+/// rule a free-form label carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidRoleAlias;
+
+impl std::fmt::Display for InvalidRoleAlias {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a role alias cannot be empty")
+    }
+}
+
+impl std::error::Error for InvalidRoleAlias {}
+
+impl RoleAlias {
+    /// Trims `value` and rejects it if nothing is left. Free-form otherwise —
+    /// no charset or length rule, unlike [`crate::elements::handle::Handle`].
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidRoleAlias> {
+        let trimmed = value.into().trim().to_string();
+        if trimmed.is_empty() {
+            return Err(InvalidRoleAlias);
+        }
+        Ok(Self(trimmed))
     }
 
-    /// The lowercase discriminant (`owner` | `admin` | `manager` | `member`),
-    /// the value persisted by the store and the inverse of [`Role::try_from`].
-    /// Drops the alias — only the rank is encoded here.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Owner(_) => "owner",
-            Role::Admin(_) => "admin",
-            Role::Manager(_) => "manager",
-            Role::Member(_) => "member",
-        }
+    /// The trimmed alias text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RoleAlias {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for RoleAlias {
+    type Err = InvalidRoleAlias;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
     }
 }
 
@@ -129,23 +181,16 @@ mod tests {
     // rows live here — this is where the rule is pinned.
     #[test]
     fn can_grant_matrix_matches_the_design() {
-        let roles = || {
-            [
-                Role::Owner(None),
-                Role::Admin(None),
-                Role::Manager(None),
-                Role::Member(None),
-            ]
-        };
+        let roles = || [Role::Owner, Role::Admin, Role::Manager, Role::Member];
         for actor in roles() {
             for target in roles() {
                 // An actor grants only roles strictly below its own rank, and only
                 // Owner and Admin may grant at all (Manager and Member grant nothing).
                 let expected = match (&actor, &target) {
-                    (Role::Owner(_), Role::Owner(_)) => false,
-                    (Role::Owner(_), _) => true,
-                    (Role::Admin(_), Role::Owner(_) | Role::Admin(_)) => false,
-                    (Role::Admin(_), _) => true,
+                    (Role::Owner, Role::Owner) => false,
+                    (Role::Owner, _) => true,
+                    (Role::Admin, Role::Owner | Role::Admin) => false,
+                    (Role::Admin, _) => true,
                     _ => false,
                 };
                 assert_eq!(
@@ -162,20 +207,42 @@ mod tests {
     // roles grant nothing at all.
     #[test]
     fn no_owner_no_peer_admin_no_lower_role_grants() {
-        for actor in [
-            Role::Owner(None),
-            Role::Admin(None),
-            Role::Manager(None),
-            Role::Member(None),
-        ] {
-            assert!(!actor.can_grant(&Role::Owner(None)), "{actor:?} → Owner");
+        for actor in [Role::Owner, Role::Admin, Role::Manager, Role::Member] {
+            assert!(!actor.can_grant(&Role::Owner), "{actor:?} → Owner");
         }
         assert!(
-            !Role::Admin(None).can_grant(&Role::Admin(None)),
+            !Role::Admin.can_grant(&Role::Admin),
             "an Admin cannot grant Admin"
         );
-        for actor in [Role::Manager(None), Role::Member(None)] {
-            assert!(!actor.can_grant(&Role::Member(None)), "{actor:?} grants");
+        for actor in [Role::Manager, Role::Member] {
+            assert!(!actor.can_grant(&Role::Member), "{actor:?} grants");
         }
+    }
+
+    #[test]
+    fn every_role_round_trips_through_as_str_and_parse() {
+        for role in [Role::Owner, Role::Admin, Role::Manager, Role::Member] {
+            let parsed: Role = role.as_str().parse().expect("as_str is always parseable");
+            assert_eq!(parsed, role);
+        }
+    }
+
+    #[test]
+    fn role_alias_trims_surrounding_whitespace() {
+        let alias = RoleAlias::new("  Studio Head  ").expect("non-empty after trimming");
+        assert_eq!(alias.as_str(), "Studio Head");
+    }
+
+    #[test]
+    fn role_alias_rejects_empty_and_whitespace_only() {
+        assert_eq!(RoleAlias::new(""), Err(InvalidRoleAlias));
+        assert_eq!(RoleAlias::new("   "), Err(InvalidRoleAlias));
+    }
+
+    #[test]
+    fn role_alias_round_trips_through_display_and_from_str() {
+        let alias = RoleAlias::new("Studio Head").expect("non-empty");
+        let round_tripped: RoleAlias = alias.to_string().parse().expect("re-parses");
+        assert_eq!(alias, round_tripped);
     }
 }

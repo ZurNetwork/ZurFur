@@ -32,9 +32,11 @@
 //!   Injected, never `now()`-defaulted, per house convention.
 
 use std::ops::Deref;
+use std::str::FromStr;
 
 use crate::datetime::DateTimeUtc;
 use crate::elements::did::Did;
+use crate::elements::id::{IdError, parse_uuid};
 
 /// The app-private, stable handle for an [`ActorIdentity`] row.
 ///
@@ -59,6 +61,14 @@ impl Deref for ActorIdentityId {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl FromStr for ActorIdentityId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
     }
 }
 

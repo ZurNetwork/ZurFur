@@ -161,18 +161,20 @@ async fn migration_backfills_one_identity_per_projection_row() {
         "accounts.handle stays — it is authoritative, not the actor_identity cache"
     );
 
-    // The reads join the DID back through the super-table: the backfilled account
-    // resolves by id and by handle, DID intact.
+    // The backfilled account resolves by id and by handle. Its id IS its DID since
+    // the actor re-key (DD `57081857`) — one of the catch-up migrations above — so
+    // the surrogate `account_id` this test seeded with no longer addresses it.
     let store = PgAccountStore::new(pool.clone());
+    let account_key = AccountId::new(Did::new(account_did.to_string()));
     let found = store
-        .find(AccountId::new(account_id))
+        .find(&account_key)
         .await
         .expect("find")
         .expect("the backfilled account is readable");
     assert_eq!(
-        found.did.as_str(),
+        found.id.as_str(),
         account_did,
-        "the DID joins back from the band"
+        "the re-keyed row is addressed by the DID it was backfilled with"
     );
     let resolved = store
         .find_did_by_handle(&"early.zurfur.app".parse::<Handle>().unwrap())
@@ -307,25 +309,28 @@ async fn provision_commits_both_rows_and_is_idempotent() {
     let first = uow.users().provision(&did).await.expect("provision");
     uow.commit().await.unwrap();
 
-    // The identity parent exists and shares the user's id.
-    let identity_id: uuid::Uuid =
-        sqlx::query_scalar("SELECT id FROM actor_identity WHERE did = $1 AND kind = 'user'")
+    // The identity parent exists, carrying the DID the projection is keyed by. The
+    // super-table keeps a surrogate `id` of its own — the actor re-key (DD
+    // `57081857`) collapsed the PROJECTIONS onto the DID, not `actor_identity` —
+    // so the shared key between the two is the DID, not that id.
+    let identity_did: String =
+        sqlx::query_scalar("SELECT did FROM actor_identity WHERE did = $1 AND kind = 'user'")
             .bind(did.as_str())
             .fetch_one(&pool)
             .await
             .expect("the user's identity was interned");
     assert_eq!(
-        identity_id, *first.id,
-        "the users row shares its identity's id"
+        identity_did,
+        first.id.as_str(),
+        "the users row and its identity are keyed by the same DID"
     );
 
-    // The read joins the DID back.
     let found = PgUserStore::new(pool.clone())
-        .find(first.id)
+        .find(&first.id)
         .await
         .expect("find")
         .expect("the provisioned user is readable");
-    assert_eq!(found.did, did);
+    assert_eq!(*found.id, did);
 
     // Idempotent: a repeat sign-in returns the same User and mints no second identity.
     let mut uow = db.begin().await.unwrap();
@@ -454,7 +459,7 @@ async fn handle_collision_discards_the_interned_identity() {
 
     let contested = "contested.zurfur.app".parse::<Handle>().unwrap();
     let (first, first_membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:first-claimant".to_string()),
         contested.clone(),
         "First Claimant".parse::<AccountName>().unwrap(),

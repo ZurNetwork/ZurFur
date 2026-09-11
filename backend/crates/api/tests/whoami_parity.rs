@@ -6,13 +6,13 @@
 //! identical until the contract moves to a leaf crate (DD 40992770 D11).
 
 use api::generated::GetMeResponse;
-use application::user::{MeProfile, MeResult};
+use application::user::me::{self, MeProfile};
 use cli::commands::session::Whoami;
-use domain::elements::did::Did;
+use domain::elements::{did::Did, user::UserId};
 
-fn me(profile: Option<MeProfile>) -> MeResult {
-    MeResult {
-        did: Did::new("did:plc:parity".to_string()),
+fn me(profile: Option<MeProfile>) -> me::Output {
+    me::Output {
+        id: UserId::new(Did::new("did:plc:parity".to_string())),
         profile,
     }
 }

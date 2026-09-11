@@ -7,4 +7,4 @@
 INSERT INTO account_members (account_id, user_id, parent, "role", listed_on_profile)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (account_id, user_id) DO NOTHING
-RETURNING account_id, user_id, "role"
+RETURNING account_id, user_id, "role", alias

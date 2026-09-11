@@ -10,19 +10,20 @@ pub mod account {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct AcceptInvitationSeatRow {
-        pub account_id: uuid::Uuid,
-        pub user_id: uuid::Uuid,
+        pub account_id: String,
+        pub user_id: String,
         pub role: String,
+        pub alias: Option<String>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct AccountInvitationsRow {
         pub id: uuid::Uuid,
-        pub account_id: uuid::Uuid,
-        pub invited_user: uuid::Uuid,
+        pub account_id: String,
+        pub invited_user: String,
         pub role: String,
-        pub inviter: uuid::Uuid,
+        pub inviter: String,
         pub state: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -30,9 +31,19 @@ pub mod account {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct FindForUpdateRow {
+        pub id: String,
+        pub handle: String,
+        pub name: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        pub updated_at: chrono::DateTime<chrono::Utc>,
+        pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct FindRow {
-        pub id: uuid::Uuid,
-        pub did: Option<String>,
+        pub id: String,
         pub handle: String,
         pub name: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
@@ -43,14 +54,14 @@ pub mod account {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct ListForUserRow {
-        pub id: uuid::Uuid,
-        pub did: Option<String>,
+        pub id: String,
         pub handle: String,
         pub name: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub updated_at: chrono::DateTime<chrono::Utc>,
         pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
         pub role: String,
+        pub alias: Option<String>,
     }
 
     /// `queries/account/accept_invitation_flip.sql`, contract inferred from the SQL against the migrated schema.
@@ -86,9 +97,9 @@ pub mod account {
     /// falls back to reading the already-persisted role.
     pub async fn accept_invitation_seat(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
+        account_id: &str,
+        user_id: &str,
+        parent: Option<&str>,
         role: &str,
         listed_on_profile: bool,
     ) -> sqlx::Result<Option<AcceptInvitationSeatRow>> {
@@ -108,7 +119,7 @@ pub mod account {
     pub async fn change_handle_audit(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        account_id: &str,
         old_handle: &str,
         new_handle: &str,
         changed_at: chrono::DateTime<chrono::Utc>,
@@ -132,7 +143,7 @@ pub mod account {
         conn: impl sqlx::PgExecutor<'_>,
         handle: &str,
         updated_at: chrono::DateTime<chrono::Utc>,
-        id: uuid::Uuid,
+        id: &str,
         acc_handle: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/change_handle_repoint.sql"))
@@ -150,7 +161,7 @@ pub mod account {
     /// changed_at receives the rate-limit window start (now - window).
     pub async fn count_handle_changes_since(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
+        account_id: &str,
         changed_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<i64> {
         sqlx::query_scalar(include_str!(
@@ -171,7 +182,7 @@ pub mod account {
     /// unique resolution claim, not the actor_identity display cache.
     pub async fn create_account(
         conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
+        id: &str,
         handle: &str,
         name: &str,
         created_at: chrono::DateTime<chrono::Utc>,
@@ -192,10 +203,10 @@ pub mod account {
     pub async fn create_invitation(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        account_id: uuid::Uuid,
-        invited_user: uuid::Uuid,
+        account_id: &str,
+        invited_user: &str,
         role: &str,
-        inviter: uuid::Uuid,
+        inviter: &str,
         state: &str,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
@@ -217,8 +228,8 @@ pub mod account {
     /// `queries/account/create_owner_membership.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn create_owner_membership(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        account_id: &str,
+        user_id: &str,
         role: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
@@ -235,8 +246,8 @@ pub mod account {
     /// `queries/account/departure_delete_membership.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn departure_delete_membership(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        account_id: &str,
+        user_id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/account/departure_delete_membership.sql"
@@ -251,9 +262,9 @@ pub mod account {
     /// `queries/account/departure_membership.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn departure_membership(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
-    ) -> sqlx::Result<Option<Option<uuid::Uuid>>> {
+        account_id: &str,
+        user_id: &str,
+    ) -> sqlx::Result<Option<Option<String>>> {
         sqlx::query_scalar(include_str!("../queries/account/departure_membership.sql"))
             .bind(account_id)
             .bind(user_id)
@@ -268,9 +279,9 @@ pub mod account {
     /// selects the departing member as the children's current parent.
     pub async fn departure_rehome_children(
         conn: impl sqlx::PgExecutor<'_>,
-        parent: Option<uuid::Uuid>,
-        account_id: uuid::Uuid,
-        m_parent: uuid::Uuid,
+        parent: Option<&str>,
+        account_id: &str,
+        m_parent: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/account/departure_rehome_children.sql"
@@ -291,8 +302,8 @@ pub mod account {
         conn: impl sqlx::PgExecutor<'_>,
         state: &str,
         updated_at: chrono::DateTime<chrono::Utc>,
-        account_id: uuid::Uuid,
-        inviter: uuid::Uuid,
+        account_id: &str,
+        inviter: &str,
         inv_state: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
@@ -310,16 +321,10 @@ pub mod account {
 
     /// `queries/account/find.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The account's DID now lives in the actor super-table (ZMVP-123): join it back on the
-    /// shared id. An account always has a DID (the per-kind CHECK on actor_identity), so a
-    /// NULL here would be a corrupted projection — the adapter surfaces it as an error.
-    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
-    /// sits behind the actor_identity join, which the pg_index cardinality proof
-    /// cannot cross — without it the generated contract degrades to Vec<T>.
-    pub async fn find(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-    ) -> sqlx::Result<Option<FindRow>> {
+    /// One live account by id. Since the actor re-key (DD 57081857) `accounts.id` IS the
+    /// account's DID, so the row carries no separate `did` column and needs no
+    /// actor_identity join to recover one.
+    pub async fn find(conn: impl sqlx::PgExecutor<'_>, id: &str) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/account/find.sql"))
             .bind(id)
             .fetch_optional(conn)
@@ -328,20 +333,33 @@ pub mod account {
 
     /// `queries/account/find_did_by_handle.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Resolve a live account's handle to its DID (ZMVP-123: the DID lives in the actor
-    /// super-table now, joined on the shared id). `handle` stays the authoritative,
-    /// globally unique claim on `accounts`; this backs the `/.well-known/atproto-did`
-    /// resolver and the founding duplicate-handle pre-check. An account always has a DID,
-    /// so `ai.did IS NOT NULL` is a true no-op that keeps the scalar result a plain DID.
-    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
-    /// sits behind the actor_identity join, which the pg_index cardinality proof
-    /// cannot cross — without it the generated contract degrades to Vec<T>.
+    /// Resolve a live account's handle to its DID. Since the actor re-key (DD 57081857)
+    /// the account's id IS its DID, so this is a plain lookup on `accounts` — the
+    /// actor_identity join it used to need is gone with the surrogate key. `handle` stays
+    /// the authoritative, globally unique claim; this backs the `/.well-known/atproto-did`
+    /// resolver and the founding duplicate-handle pre-check.
     pub async fn find_did_by_handle(
         conn: impl sqlx::PgExecutor<'_>,
         handle: &str,
     ) -> sqlx::Result<Option<String>> {
         sqlx::query_scalar(include_str!("../queries/account/find_did_by_handle.sql"))
             .bind(handle)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/account/find_for_update.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `find`, with the row locked until the unit of work commits. FOR NO KEY UPDATE is
+    /// the weaker of the two row locks: it blocks a concurrent writer of THIS account
+    /// while still letting other transactions insert children that reference it (a
+    /// membership, an invitation), which a plain FOR UPDATE would stall.
+    pub async fn find_for_update(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: &str,
+    ) -> sqlx::Result<Option<FindForUpdateRow>> {
+        sqlx::query_as(include_str!("../queries/account/find_for_update.sql"))
+            .bind(id)
             .fetch_optional(conn)
             .await
     }
@@ -360,8 +378,8 @@ pub mod account {
     /// `queries/account/find_pending_invitation.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn find_pending_invitation(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        invited_user: uuid::Uuid,
+        account_id: &str,
+        invited_user: &str,
         state: &str,
     ) -> sqlx::Result<Option<AccountInvitationsRow>> {
         sqlx::query_as(include_str!(
@@ -377,8 +395,8 @@ pub mod account {
     /// `queries/account/grant_role.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn grant_role(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        account_id: &str,
+        user_id: &str,
         role: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/grant_role.sql"))
@@ -393,12 +411,14 @@ pub mod account {
     /// `queries/account/handle_reserved_for_other.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// changed_at receives the reservation-window start (now - quarantine window);
-    /// account_id optionally excludes the renaming account itself.
+    /// account_id optionally excludes the renaming account itself. Since the actor
+    /// re-key (DD 57081857) an account is addressed by its DID, so the exclusion
+    /// parameter is text rather than uuid.
     pub async fn handle_reserved_for_other(
         conn: impl sqlx::PgExecutor<'_>,
         old_handle: &str,
         changed_at: chrono::DateTime<chrono::Utc>,
-        account_id: Option<uuid::Uuid>,
+        account_id: Option<&str>,
     ) -> sqlx::Result<bool> {
         sqlx::query_scalar(include_str!(
             "../queries/account/handle_reserved_for_other.sql"
@@ -413,7 +433,7 @@ pub mod account {
     /// `queries/account/hard_delete_account.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn hard_delete_account(
         conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
+        id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/hard_delete_account.sql"))
             .bind(id)
@@ -425,7 +445,7 @@ pub mod account {
     /// `queries/account/hard_delete_invitations.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn hard_delete_invitations(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
+        account_id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/account/hard_delete_invitations.sql"
@@ -439,7 +459,7 @@ pub mod account {
     /// `queries/account/hard_delete_memberships.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn hard_delete_memberships(
         conn: impl sqlx::PgExecutor<'_>,
-        account_id: uuid::Uuid,
+        account_id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/account/hard_delete_memberships.sql"
@@ -455,9 +475,15 @@ pub mod account {
     /// Every LIVE account `$1` holds a role in, together with that role (ZMVP-157) —
     /// not owned-only: gaining a role is how a user joins an account on this
     /// platform, so an accepted invitation belongs here exactly as a founded
-    /// account does. Mirrors `find`'s DID join (ZMVP-123) and its
-    /// `deleted_at IS NULL` liveness filter. Ordered by account id (UUIDv7 sorts
-    /// as creation order).
+    /// account does. Keeps `find`'s `deleted_at IS NULL` liveness filter; since the
+    /// actor re-key (DD 57081857) `accounts.id` IS the DID, so the actor_identity
+    /// join that used to recover one is gone.
+    ///
+    /// ORDER BY … COLLATE "C" sorts the DID by byte value, which is what Rust's
+    /// `str` ordering does — the adapter-mem twin sorts the same list in process, and
+    /// the two must not disagree because the server was initdb'd under a different
+    /// locale. (Creation order is no longer available from the key: a DID carries no
+    /// timestamp, where the retired UUIDv7 did.)
     ///
     /// `$2` gates the `listed_on_profile` privacy valve (DD 21594113 decision 4).
     /// TRUE for a PUBLIC projection of this user's memberships, which shows only
@@ -467,7 +493,7 @@ pub mod account {
     /// `ListingScope`, so the valve cannot be bypassed by omission.
     pub async fn list_for_user(
         conn: impl sqlx::PgExecutor<'_>,
-        user_id: uuid::Uuid,
+        user_id: &str,
         honor_privacy: bool,
     ) -> sqlx::Result<Vec<ListForUserRow>> {
         sqlx::query_as(include_str!("../queries/account/list_for_user.sql"))
@@ -501,8 +527,8 @@ pub mod account {
     /// `queries/account/role_of.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn role_of(
         conn: impl sqlx::PgExecutor<'_>,
-        user_id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        user_id: &str,
+        account_id: &str,
     ) -> sqlx::Result<Option<String>> {
         sqlx::query_scalar(include_str!("../queries/account/role_of.sql"))
             .bind(user_id)
@@ -518,7 +544,7 @@ pub mod account {
         conn: impl sqlx::PgExecutor<'_>,
         deleted_at: Option<chrono::DateTime<chrono::Utc>>,
         updated_at: chrono::DateTime<chrono::Utc>,
-        id: uuid::Uuid,
+        id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/soft_delete.sql"))
             .bind(deleted_at)
@@ -536,9 +562,9 @@ pub mod account {
     pub async fn transfer_demote_owner(
         conn: impl sqlx::PgExecutor<'_>,
         role: &str,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
-        parent: Option<uuid::Uuid>,
+        account_id: &str,
+        user_id: &str,
+        parent: Option<&str>,
         m_role: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/transfer_demote_owner.sql"))
@@ -556,8 +582,8 @@ pub mod account {
     pub async fn transfer_promote_heir(
         conn: impl sqlx::PgExecutor<'_>,
         role: &str,
-        account_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        account_id: &str,
+        user_id: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/transfer_promote_heir.sql"))
             .bind(role)
@@ -661,7 +687,7 @@ pub mod changelog {
     pub struct EntriesRow {
         pub seq: i64,
         pub kind: String,
-        pub actor_id: Option<uuid::Uuid>,
+        pub actor_id: Option<String>,
         pub payload: serde_json::Value,
         pub note: Option<String>,
         pub created_at: chrono::DateTime<chrono::Utc>,
@@ -672,7 +698,7 @@ pub mod changelog {
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
         kind: &str,
-        actor_id: Option<uuid::Uuid>,
+        actor_id: Option<&str>,
         payload: &serde_json::Value,
         note: Option<&str>,
         created_at: chrono::DateTime<chrono::Utc>,
@@ -707,7 +733,7 @@ pub mod commission {
     pub struct CommissionFileRow {
         pub id: uuid::Uuid,
         pub commission_id: uuid::Uuid,
-        pub uploaded_by: uuid::Uuid,
+        pub uploaded_by: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
@@ -717,8 +743,8 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub commission_id: uuid::Uuid,
         pub seat_id: uuid::Uuid,
-        pub invited_user: uuid::Uuid,
-        pub inviter: uuid::Uuid,
+        pub invited_user: String,
+        pub inviter: String,
         pub state: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -726,10 +752,22 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct CommissionMarkupRow {
+        pub id: uuid::Uuid,
+        pub commission_id: uuid::Uuid,
+        pub file_id: uuid::Uuid,
+        pub added_by: String,
+        pub shape: serde_json::Value,
+        pub text: Option<String>,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct CommissionRow {
         pub id: uuid::Uuid,
         pub title: String,
-        pub owner_id: uuid::Uuid,
+        pub owner_id: String,
         pub lifecycle: String,
         pub visibility: String,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
@@ -746,16 +784,33 @@ pub mod commission {
     #[derive(Debug, sqlx::FromRow)]
     pub struct CurrentPlacementRow {
         pub seq: i64,
-        pub account_id: uuid::Uuid,
-        pub placed_by: uuid::Uuid,
+        pub account_id: String,
+        pub placed_by: String,
         pub placed_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FindForUpdateRow {
+        pub title: String,
+        pub owner_id: String,
+        pub lifecycle: String,
+        pub visibility: String,
+        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
+        pub maturity: Option<String>,
+        pub graphic: Option<bool>,
+        pub direction_status: Option<String>,
+        pub deadline_status: Option<String>,
+        pub linked_channel: Option<String>,
+        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindRow {
         pub title: String,
-        pub owner_id: uuid::Uuid,
+        pub owner_id: String,
         pub lifecycle: String,
         pub visibility: String,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
@@ -786,7 +841,7 @@ pub mod commission {
         pub mode: String,
         pub band: String,
         pub position: i32,
-        pub created_by: uuid::Uuid,
+        pub created_by: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
         pub payload: serde_json::Value,
     }
@@ -810,8 +865,8 @@ pub mod commission {
     #[derive(Debug, sqlx::FromRow)]
     pub struct PlacementLogRow {
         pub seq: i64,
-        pub account_id: uuid::Uuid,
-        pub placed_by: uuid::Uuid,
+        pub account_id: String,
+        pub placed_by: String,
         pub placed_at: chrono::DateTime<chrono::Utc>,
     }
 
@@ -828,6 +883,7 @@ pub mod commission {
     pub struct RequireTabRow {
         pub id: uuid::Uuid,
         pub tab: String,
+        pub mode: String,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -837,7 +893,7 @@ pub mod commission {
         pub kind: String,
         pub prompt: Option<String>,
         pub link: Option<String>,
-        pub occupant: Option<uuid::Uuid>,
+        pub occupant: Option<String>,
     }
 
     /// `queries/commission/add_element.sql`, contract inferred from the SQL against the migrated schema.
@@ -859,7 +915,7 @@ pub mod commission {
         r#type: &str,
         mode: &str,
         band: &str,
-        created_by: uuid::Uuid,
+        created_by: &str,
         created_at: chrono::DateTime<chrono::Utc>,
         payload: &serde_json::Value,
     ) -> sqlx::Result<u64> {
@@ -884,13 +940,43 @@ pub mod commission {
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         commission_id: uuid::Uuid,
-        uploaded_by: uuid::Uuid,
+        uploaded_by: &str,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/add_file.sql"))
             .bind(id)
             .bind(commission_id)
             .bind(uploaded_by)
+            .bind(created_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/add_markup.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// One annotation's canonical row (ZMVP-90). Written on the open transaction
+    /// alongside the markup_added changelog entry it accompanies, so the geometry and
+    /// its timeline fact land together. The (file_id, commission_id) composite foreign
+    /// key makes a markup on another commission's file unrepresentable, so no guard is
+    /// needed here beyond the caller's existence check.
+    pub async fn add_markup(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        file_id: uuid::Uuid,
+        added_by: &str,
+        shape: &serde_json::Value,
+        text: Option<&str>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/add_markup.sql"))
+            .bind(id)
+            .bind(commission_id)
+            .bind(file_id)
+            .bind(added_by)
+            .bind(shape)
+            .bind(text)
             .bind(created_at)
             .execute(conn)
             .await
@@ -910,7 +996,7 @@ pub mod commission {
     pub async fn add_participant(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        user_id: &str,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/add_participant.sql"))
@@ -927,7 +1013,7 @@ pub mod commission {
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         title: &str,
-        owner_id: uuid::Uuid,
+        owner_id: &str,
         lifecycle: &str,
         visibility: &str,
         deadline: Option<chrono::DateTime<chrono::Utc>>,
@@ -963,8 +1049,8 @@ pub mod commission {
         id: uuid::Uuid,
         commission_id: uuid::Uuid,
         seat_id: uuid::Uuid,
-        invited_user: uuid::Uuid,
-        inviter: uuid::Uuid,
+        invited_user: &str,
+        inviter: &str,
         state: &str,
         created_at: chrono::DateTime<chrono::Utc>,
         updated_at: chrono::DateTime<chrono::Utc>,
@@ -1100,6 +1186,23 @@ pub mod commission {
             .await
     }
 
+    /// `queries/commission/find_for_update.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `find`, with the commission row locked until the unit of work commits. FOR NO
+    /// KEY UPDATE is the weaker of the two row locks: it blocks a concurrent writer of
+    /// THIS commission while still letting other transactions insert children that
+    /// reference it (an element, a changelog entry), which a plain FOR UPDATE would
+    /// stall.
+    pub async fn find_for_update(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<FindForUpdateRow>> {
+        sqlx::query_as(include_str!("../queries/commission/find_for_update.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
     /// `queries/commission/find_pending_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// The lone pending offer for (commission, seat, invited_user), or nothing
@@ -1113,7 +1216,7 @@ pub mod commission {
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
         seat_id: uuid::Uuid,
-        invited_user: uuid::Uuid,
+        invited_user: &str,
         state: &str,
     ) -> sqlx::Result<Option<CommissionInvitationRow>> {
         sqlx::query_as(include_str!(
@@ -1128,15 +1231,20 @@ pub mod commission {
     }
 
     /// `queries/commission/grant_view.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Issue (or re-issue) one view grant. At most one key per (commission, grantee):
+    /// re-granting REPLACES the level rather than adding a second row — "issuing anew"
+    /// (Ownership Separation DD 29130754 Decision 5). `grantee` is the holder's DID
+    /// since the actor re-key (DD 57081857).
     pub async fn grant_view(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        grantee: &str,
         level: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/grant_view.sql"))
             .bind(commission_id)
-            .bind(account_id)
+            .bind(grantee)
             .bind(level)
             .execute(conn)
             .await
@@ -1147,7 +1255,7 @@ pub mod commission {
     pub async fn is_participant(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        user_id: &str,
     ) -> sqlx::Result<bool> {
         sqlx::query_scalar(include_str!("../queries/commission/is_participant.sql"))
             .bind(commission_id)
@@ -1180,7 +1288,7 @@ pub mod commission {
     /// (UUIDv7 sorts as creation order).
     pub async fn list_owned_by(
         conn: impl sqlx::PgExecutor<'_>,
-        owner_id: uuid::Uuid,
+        owner_id: &str,
     ) -> sqlx::Result<Vec<CommissionRow>> {
         sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
             .bind(owner_id)
@@ -1234,12 +1342,30 @@ pub mod commission {
             .await
     }
 
+    /// `queries/commission/markups_for_file.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every markup on one file entry, in draw order — the UUIDv7 id sorts as creation
+    /// order, so no separate ordering column is carried. Scoped by commission_id: a
+    /// file key from a different commission matches nothing and answers with an empty
+    /// set rather than a signal (the non-oracle rule find_file follows).
+    pub async fn markups_for_file(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        file_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<CommissionMarkupRow>> {
+        sqlx::query_as(include_str!("../queries/commission/markups_for_file.sql"))
+            .bind(commission_id)
+            .bind(file_id)
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/commission/place_append.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn place_append(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        account_id: uuid::Uuid,
-        placed_by: uuid::Uuid,
+        account_id: &str,
+        placed_by: &str,
         placed_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<i64> {
         sqlx::query_scalar(include_str!("../queries/commission/place_append.sql"))
@@ -1255,9 +1381,9 @@ pub mod commission {
     pub async fn place_repoint_current(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        account_id: &str,
         seq: i64,
-        placed_by: uuid::Uuid,
+        placed_by: &str,
         placed_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
@@ -1382,6 +1508,8 @@ pub mod commission {
     /// skeleton declares which surfaces live in which tab, and only the tab's
     /// DECLARED NAME (never its per-commission id) can answer that. The adapter
     /// re-validates the stored token into a TabName before consulting the skeleton.
+    /// `mode` rides along so this one statement also answers the read port's
+    /// `tab_for_update`, which hands back the whole TabRow rather than just its name.
     ///
     /// FOR UPDATE locks the tab row, so every write that touches this tab's ordering
     /// groups SERIALIZES: concurrent appends cannot race to one (surface, band,
@@ -1428,14 +1556,18 @@ pub mod commission {
     }
 
     /// `queries/commission/revoke_view.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Revoke one view grant — a hard delete, so the key is gone on the next render
+    /// (Ownership Separation DD 29130754 Decision 5). Removing a key nobody holds
+    /// matches nothing, which is how the caller learns there was no transition.
     pub async fn revoke_view(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        grantee: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/revoke_view.sql"))
             .bind(commission_id)
-            .bind(account_id)
+            .bind(grantee)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -1543,14 +1675,18 @@ pub mod commission {
     }
 
     /// `queries/commission/view_grant.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The level one grantee holds on one commission, or nothing. Addressed by the
+    /// holder's DID (the actor re-key, DD 57081857), so the same statement answers for
+    /// whichever actor class the caller is asking about.
     pub async fn view_grant(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-        account_id: uuid::Uuid,
+        grantee: &str,
     ) -> sqlx::Result<Option<String>> {
         sqlx::query_scalar(include_str!("../queries/commission/view_grant.sql"))
             .bind(commission_id)
-            .bind(account_id)
+            .bind(grantee)
             .fetch_optional(conn)
             .await
     }
@@ -1821,37 +1957,30 @@ pub mod user {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindByDidRow {
-        pub id: uuid::Uuid,
+        pub id: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindRow {
-        pub id: uuid::Uuid,
-        pub did: Option<String>,
+        pub id: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct ProvisionRow {
-        pub id: uuid::Uuid,
+        pub id: String,
         pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// `queries/user/find.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The visitor's DID now lives in the actor super-table (ZMVP-123): join it back on
-    /// the shared id. A User always has a DID (the per-kind CHECK on actor_identity), so a
-    /// NULL here would be a corrupted projection — the adapter surfaces it as an error.
-    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
-    /// sits behind the actor_identity join, which the pg_index cardinality proof
-    /// cannot cross — without it the generated contract degrades to Vec<T>.
-    pub async fn find(
-        conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
-    ) -> sqlx::Result<Option<FindRow>> {
+    /// One User by id. Since the actor re-key (DD 57081857) `users.id` IS the visitor's
+    /// DID, so the projection carries everything the caller needs and the actor_identity
+    /// join that used to recover the DID is gone.
+    pub async fn find(conn: impl sqlx::PgExecutor<'_>, id: &str) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/user/find.sql"))
             .bind(id)
             .fetch_optional(conn)
@@ -1860,18 +1989,16 @@ pub mod user {
 
     /// `queries/user/find_by_did.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Resolve a DID to its User via the actor super-table (ZMVP-123: the DID lives there
-    /// now, not on `users`). The caller already holds the DID it looked up, so the row need
-    /// only carry the projection's own columns — the adapter pairs them with that DID.
-    /// LIMIT 1 is the codegen at-most-one signal: the unique cover (PK/UNIQUE)
-    /// sits behind the actor_identity join, which the pg_index cardinality proof
-    /// cannot cross — without it the generated contract degrades to Vec<T>.
+    /// Resolve a DID to its User without minting one. Since the actor re-key
+    /// (DD 57081857) a User's id IS its DID, so this and `find` address the same column —
+    /// they stay two statements because they are two port methods: `find` takes a
+    /// `UserId` a session already holds, this takes a `Did` handed over by the PDS.
     pub async fn find_by_did(
         conn: impl sqlx::PgExecutor<'_>,
-        did: &str,
+        id: &str,
     ) -> sqlx::Result<Option<FindByDidRow>> {
         sqlx::query_as(include_str!("../queries/user/find_by_did.sql"))
-            .bind(did)
+            .bind(id)
             .fetch_optional(conn)
             .await
     }
@@ -1887,7 +2014,7 @@ pub mod user {
     /// ('user') and never named here.
     pub async fn provision(
         conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
+        id: &str,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<ProvisionRow> {
         sqlx::query_as(include_str!("../queries/user/provision.sql"))
@@ -1925,6 +2052,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "changelog::append",
     "commission::add_element",
     "commission::add_file",
+    "commission::add_markup",
     "commission::add_participant",
     "commission::create_commission",
     "commission::create_seat_invitation",

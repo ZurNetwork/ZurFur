@@ -13,8 +13,17 @@ publish = false
 shared = { path = "../shared" }
 domain = { path = "../domain" }
 anyhow = { workspace = true }
+# Structured logging for the steps a use case deliberately swallows (e.g. the
+# retryable did:plc tombstone after a hard delete).
+tracing = { workspace = true }
 # Changelog entry payloads are `serde_json::Value` (the domain's own type).
 serde_json = { workspace = true }
+# `commission::files::upload`'s streaming seam: `AsyncRead`/`AsyncReadExt::take`
+# over the caller-supplied content (ZMVP-88/205) — the neutral vocabulary that
+# keeps this crate ignorant of axum's multipart types. Hand-pinned at the same
+# version as `workspace.dependencies.tokio` (see `domain/Cargo.toml`'s note —
+# `workspace = true` cannot itself drop `default-features` here).
+tokio = { version = "1.49.0", default-features = false, features = ["io-util"] }
 
 [dev-dependencies]
 # The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks
@@ -25,3 +34,7 @@ uuid = { workspace = true }
 # The tests' `now` + a hand-rolled failing port double.
 chrono = { workspace = true }
 async-trait = { workspace = true }
+# Names `composition::Runtime` so a commission test can build a `CommissionPorts`
+# straight off the in-memory fixture's port fields — already in the dev graph
+# transitively via `test-support` (see the dep-guard's cyclic-dev-graph note).
+composition = { path = "../composition" }

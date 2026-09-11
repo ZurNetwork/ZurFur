@@ -61,7 +61,7 @@ async fn set_maturity(pool: &PgPool, commission: &Commission, maturity: Maturity
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_maturity(commission.id, maturity)
+        .set_maturity(&commission.id, maturity)
         .await
         .expect("set maturity");
     uow.commit().await.expect("commit");
@@ -76,7 +76,7 @@ async fn a_created_commission_starts_unrated() {
     let store = PgCommissionStore::new(pool.clone());
 
     let found = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
@@ -100,7 +100,7 @@ async fn set_maturity_round_trips_and_replaces() {
             set_maturity(&pool, &commission, posture).await;
             assert_eq!(
                 store
-                    .find(commission.id)
+                    .find(&commission.id)
                     .await
                     .expect("find")
                     .expect("exists")
@@ -125,7 +125,7 @@ async fn set_maturity_rolls_back_with_its_unit() {
         let mut uow = db.begin().await.expect("begin");
         uow.commissions()
             .set_maturity(
-                commission.id,
+                &commission.id,
                 Maturity {
                     rating: MaturityRating::Adult,
                     graphic: true,
@@ -138,7 +138,7 @@ async fn set_maturity_rolls_back_with_its_unit() {
 
     assert_eq!(
         store
-            .find(commission.id)
+            .find(&commission.id)
             .await
             .expect("find")
             .expect("exists")
@@ -194,7 +194,7 @@ async fn a_tampered_maturity_token_surfaces_as_an_error() {
         .expect("tamper the row (the superseded vocabulary passes no CHECK — only the enum)");
 
     let err = store
-        .find(commission.id)
+        .find(&commission.id)
         .await
         .expect_err("an out-of-vocabulary token is an error, not a default");
     assert!(

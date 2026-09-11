@@ -1,19 +1,25 @@
-//! `create_account` over the in-memory fakes: the one implementation every
+//! `Accounts::create` over the in-memory fakes: the one implementation every
 //! driver calls (ZMVP-205 AC2), exercised branch by branch below the HTTP
 //! layer.
 
-use application::account::{AccountError, AccountPorts, CreateAccountCommand, create_account};
+use std::sync::Arc;
+
+use application::account::{self, AccountError};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::user::{User, UserId};
-use domain::elements::{did::Did, handle::Handle, role::Role};
+use domain::elements::{did::Did, handle::Handle, handle::HandleDomain, role::Role};
 use domain::ports::{Database, DidMinter, UnitOfWork};
 
-const HANDLE_DOMAIN: &str = "zurfur.app";
+/// The configured Zurfur handle namespace, the way `Config::handle_domain`
+/// hands it to the use case: already parsed at load.
+fn handle_domain() -> HandleDomain {
+    "zurfur.app".parse().expect("a valid handle domain")
+}
 
-fn command(actor: UserId, handle: &str) -> CreateAccountCommand {
-    CreateAccountCommand {
-        actor,
+fn command(actor_id: UserId, handle: &str) -> account::create::Command {
+    account::create::Command {
+        actor_id,
         name: "Acme Studio".parse().expect("a valid name"),
         handle: handle.parse().expect("a valid handle"),
     }
@@ -35,36 +41,37 @@ async fn founding_persists_the_account_and_seats_the_founder_as_owner() {
     let runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;
 
-    let ports = AccountPorts {
-        accounts: &*runtime.accounts,
-        did_minter: &*runtime.did_minter,
-        database: &*runtime.database,
-    };
-    let founded = create_account(
-        command(user.id, "acme.zurfur.app"),
-        ports,
-        HANDLE_DOMAIN,
-        Utc::now(),
-    )
-    .await
-    .expect("founds");
+    let app = runtime.app();
+    let founded = app
+        .accounts()
+        .create(
+            command(user.id.clone(), "acme.zurfur.app"),
+            &handle_domain(),
+            Utc::now(),
+        )
+        .await
+        .expect("founds");
 
     assert_eq!(founded.handle.as_str(), "acme.zurfur.app");
     assert_eq!(founded.name.as_str(), "Acme Studio");
     let stored = runtime
         .accounts
-        .find(founded.account_id)
+        .find(&founded.account_id)
         .await
         .expect("read")
         .expect("persisted");
-    assert_eq!(stored.did, founded.did);
+    // Post DD 57081857 the account's id IS its sovereign DID (no separate
+    // `did` field), so the identity round-trip the old assertion checked is
+    // now exactly this: the row `find` returns carries the id `create`
+    // reported.
+    assert_eq!(stored.id, founded.account_id);
     let owner = runtime
         .accounts
-        .role_of(user.id, founded.account_id)
+        .role_of(&user.id, &founded.account_id)
         .await
         .expect("read")
         .expect("seated");
-    assert!(matches!(owner, Role::Owner(_)));
+    assert!(matches!(owner, Role::Owner));
 }
 
 #[tokio::test]
@@ -73,28 +80,29 @@ async fn a_live_handle_is_taken() {
     let fixture = test_support::runtime::mem(&did).build();
     let runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;
-    let ports = || AccountPorts {
-        accounts: &*runtime.accounts,
-        did_minter: &*runtime.did_minter,
-        database: &*runtime.database,
-    };
+    let app = runtime.app();
 
-    create_account(
-        command(user.id, "acme.zurfur.app"),
-        ports(),
-        HANDLE_DOMAIN,
-        Utc::now(),
-    )
-    .await
-    .expect("first founds");
-    let error = create_account(
-        command(user.id, "acme.zurfur.app"),
-        ports(),
-        HANDLE_DOMAIN,
-        Utc::now(),
-    )
-    .await
-    .unwrap_err();
+    app.accounts()
+        .create(
+            command(user.id.clone(), "acme.zurfur.app"),
+            &handle_domain(),
+            Utc::now(),
+        )
+        .await
+        .expect("first founds");
+    // `account::create::Output` carries no `Debug` impl, so the error is
+    // pulled out by structural match rather than `unwrap_err`.
+    let Err(error) = app
+        .accounts()
+        .create(
+            command(user.id, "acme.zurfur.app"),
+            &handle_domain(),
+            Utc::now(),
+        )
+        .await
+    else {
+        panic!("a repeat handle must not found a second account");
+    };
 
     assert!(matches!(error, AccountError::HandleTaken));
 }
@@ -122,24 +130,28 @@ impl DidMinter for BrokenMinter {
 async fn a_mint_failure_persists_nothing() {
     let did = Did::new("did:plc:app-mintfail".to_string());
     let fixture = test_support::runtime::mem(&did).build();
-    let runtime = fixture.runtime;
+    let mut runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;
-    let ports = AccountPorts {
-        accounts: &*runtime.accounts,
-        did_minter: &BrokenMinter,
-        database: &*runtime.database,
+    // Swap in the broken minter — every other port stays the live in-memory
+    // fake, so this is otherwise the same runtime `create` runs against.
+    runtime.did_minter = Arc::new(BrokenMinter);
+
+    // `account::create::Output` carries no `Debug` impl, so the error is
+    // pulled out by structural match rather than `unwrap_err`.
+    let Err(error) = runtime
+        .app()
+        .accounts()
+        .create(
+            command(user.id, "acme.zurfur.app"),
+            &handle_domain(),
+            Utc::now(),
+        )
+        .await
+    else {
+        panic!("a broken minter must not persist a founded account");
     };
 
-    let error = create_account(
-        command(user.id, "acme.zurfur.app"),
-        ports,
-        HANDLE_DOMAIN,
-        Utc::now(),
-    )
-    .await
-    .unwrap_err();
-
-    assert!(matches!(error, AccountError::Minter(_)));
+    assert!(matches!(error, AccountError::Infrastructure(_)));
     let handle: Handle = "acme.zurfur.app".parse().expect("valid");
     let claimed = runtime
         .accounts

@@ -64,7 +64,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         None,
     );
@@ -82,7 +82,7 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commissi
 /// exactly one tab holding exactly one surface, so this is unambiguous.
 async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
     let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(commission)
+        .load_composition(&commission)
         .await
         .expect("load composition")
         .expect("every commission has its tabs");
@@ -93,14 +93,17 @@ async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
 }
 
 /// The participant rows for a commission, as raw `(user_id)` values.
-async fn participant_rows(pool: &PgPool, commission: CommissionId) -> Vec<uuid::Uuid> {
-    sqlx::query_scalar::<_, uuid::Uuid>(
+async fn participant_rows(pool: &PgPool, commission: CommissionId) -> Vec<UserId> {
+    let dids = sqlx::query_scalar::<_, String>(
         "SELECT user_id FROM commission_participant WHERE commission_id = $1",
     )
     .bind(*commission)
     .fetch_all(pool)
     .await
-    .expect("scan commission_participant")
+    .expect("scan commission_participant");
+    dids.into_iter()
+        .map(|did| UserId::new(Did::new(did)))
+        .collect()
 }
 
 // Ruling B2 (pg) — creating a commission persists its owner's participant row
@@ -114,14 +117,14 @@ async fn creating_a_commission_persists_its_owners_participant_row() {
 
     assert_eq!(
         participant_rows(&pool, commission.id).await,
-        vec![*owner.id],
+        vec![owner.id.clone()],
         "exactly the owner's membership row is born with the commission"
     );
 
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .is_participant(commission.id, owner.id)
+            .is_participant(&commission.id, &owner.id)
             .await
             .expect("predicate"),
         "the owner is a Participant"
@@ -129,7 +132,7 @@ async fn creating_a_commission_persists_its_owners_participant_row() {
     let stranger = provision(&pool, "did:plc:stranger").await;
     assert!(
         !store
-            .is_participant(commission.id, stranger.id)
+            .is_participant(&commission.id, &stranger.id)
             .await
             .expect("predicate"),
         "a stranger is not"
@@ -149,7 +152,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         !store
-            .is_participant(commission.id, seated.id)
+            .is_participant(&commission.id, &seated.id)
             .await
             .expect("predicate"),
         "no membership row yet"
@@ -160,7 +163,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
          VALUES ($1, $2, $3)",
     )
     .bind(*commission.id)
-    .bind(*seated.id)
+    .bind(seated.id.as_str())
     .bind(Utc::now())
     .execute(&pool)
     .await
@@ -168,7 +171,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
 
     assert!(
         store
-            .is_participant(commission.id, seated.id)
+            .is_participant(&commission.id, &seated.id)
             .await
             .expect("predicate"),
         "a membership row alone makes a Participant"
@@ -203,11 +206,14 @@ async fn the_migration_backfills_the_owners_participant_row() {
     // Seed a pre-membership world, exactly as earlier tickets wrote it. The owner is
     // inserted directly because at this OLD schema `users` still carries `did` and the
     // actor super-table does not exist yet, so today's `provision` — which interns into
-    // it — cannot run.
+    // it — cannot run. The row is keyed by a **surrogate UUID** here: the actor re-key
+    // (DD `57081857`) that makes `users.id` the DID is one of the catch-up migrations
+    // below, which is exactly what this test drives the owner's key through.
     let owner = User::recognize(Did::new("did:plc:early-adopter".to_string()), Utc::now());
+    let owner_row_id = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO users (id, did, created_at) VALUES ($1, $2, $3)")
-        .bind(*owner.id)
-        .bind(owner.did.as_str())
+        .bind(owner_row_id)
+        .bind(owner.id.as_str())
         .bind(owner.created_at)
         .execute(&pool)
         .await
@@ -219,7 +225,7 @@ async fn the_migration_backfills_the_owners_participant_row() {
          VALUES ($1, 'Pre-membership', $2, 'draft', 'private', $3)",
     )
     .bind(id)
-    .bind(*owner.id)
+    .bind(owner_row_id)
     .bind(created_at)
     .execute(&pool)
     .await
@@ -231,12 +237,12 @@ async fn the_migration_backfills_the_owners_participant_row() {
     let commission = CommissionId::new(id);
     assert_eq!(
         participant_rows(&pool, commission).await,
-        vec![*owner.id],
+        vec![owner.id.clone()],
         "the backfill seated the owner"
     );
     assert!(
         PgCommissionStore::new(pool.clone())
-            .is_participant(commission, owner.id)
+            .is_participant(&commission, &owner.id)
             .await
             .expect("predicate")
     );
@@ -260,18 +266,18 @@ async fn add_participant_is_idempotent_for_an_already_seated_pair() {
     adapter_pg::queries::commission::add_participant(
         &pool,
         *commission.id,
-        *seated.id,
+        &seated.id,
         first_created_at,
     )
     .await
     .expect("first add lands a row");
-    let stored_after_first = created_at_of(&pool, commission.id, seated.id).await;
+    let stored_after_first = created_at_of(&pool, commission.id, &seated.id).await;
 
     let second_created_at = first_created_at + chrono::Duration::hours(1);
     let rows_affected = adapter_pg::queries::commission::add_participant(
         &pool,
         *commission.id,
-        *seated.id,
+        &seated.id,
         second_created_at,
     )
     .await
@@ -281,11 +287,11 @@ async fn add_participant_is_idempotent_for_an_already_seated_pair() {
     let rows_for_seated = participant_rows(&pool, commission.id)
         .await
         .into_iter()
-        .filter(|id| *id == *seated.id)
+        .filter(|id| id == &seated.id)
         .count();
     assert_eq!(rows_for_seated, 1, "no duplicate row");
 
-    let stored_after_second = created_at_of(&pool, commission.id, seated.id).await;
+    let stored_after_second = created_at_of(&pool, commission.id, &seated.id).await;
     assert_eq!(
         stored_after_second, stored_after_first,
         "the original created_at survives the re-add"
@@ -296,13 +302,13 @@ async fn add_participant_is_idempotent_for_an_already_seated_pair() {
 async fn created_at_of(
     pool: &PgPool,
     commission: CommissionId,
-    user: UserId,
+    user: &UserId,
 ) -> chrono::DateTime<Utc> {
     sqlx::query_scalar(
         "SELECT created_at FROM commission_participant WHERE commission_id = $1 AND user_id = $2",
     )
     .bind(*commission)
-    .bind(*user)
+    .bind(user.as_str())
     .fetch_one(pool)
     .await
     .expect("fetch created_at")
@@ -324,7 +330,7 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
          VALUES ($1, $2, $3)",
     )
     .bind(*commission.id)
-    .bind(*seated.id)
+    .bind(seated.id.as_str())
     .bind(Utc::now())
     .execute(&pool)
     .await
@@ -332,7 +338,7 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
 
     // Deleting the owner's row raises.
     let refused = sqlx::query("DELETE FROM commission_participant WHERE user_id = $1")
-        .bind(*owner.id)
+        .bind(owner.id.as_str())
         .execute(&pool)
         .await;
     let err = refused.expect_err("the owner's row is the permanent floor");
@@ -343,14 +349,14 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
 
     // Deleting the seated (non-owner) row is fine.
     sqlx::query("DELETE FROM commission_participant WHERE user_id = $1")
-        .bind(*seated.id)
+        .bind(seated.id.as_str())
         .execute(&pool)
         .await
         .expect("a non-owner membership row deletes freely");
 
     assert_eq!(
         participant_rows(&pool, commission.id).await,
-        vec![*owner.id],
+        vec![owner.id.clone()],
         "the floor held; the seated row went"
     );
 }
@@ -431,7 +437,7 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
                 .parse::<SeatLink>()
                 .expect("valid link"),
         ),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let second = NewSeat::contributed_at(
@@ -440,7 +446,7 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
         "Creator".parse::<SeatKind>().expect("valid kind"),
         None,
         None,
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
     );
     let (first_id, second_id) = (first.id, second.id);
@@ -459,7 +465,7 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
 
     let store = PgCommissionStore::new(pool.clone());
     let composition = store
-        .load_composition(commission.id)
+        .load_composition(&commission.id)
         .await
         .expect("load")
         .expect("composed");
@@ -480,7 +486,7 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
         "and is born Total like any other element"
     );
 
-    let seats = store.seats(commission.id).await.expect("seats");
+    let seats = store.seats(&commission.id).await.expect("seats");
     assert_eq!(seats.len(), 2);
     let first_seat = seats.iter().find(|s| s.id == first_id).expect("first");
     assert_eq!(first_seat.kind.as_str(), "Creator");
@@ -518,13 +524,13 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
         .expect("declare third");
     uow.rollback().await.expect("rollback");
     assert_eq!(
-        store.seats(commission.id).await.expect("seats").len(),
+        store.seats(&commission.id).await.expect("seats").len(),
         2,
         "the rolled-back satellite never landed"
     );
     assert_eq!(
         store
-            .load_composition(commission.id)
+            .load_composition(&commission.id)
             .await
             .expect("load")
             .expect("composed")
@@ -570,7 +576,7 @@ async fn declare_seat_refuses_an_absent_tab() {
 
     assert!(
         PgCommissionStore::new(pool.clone())
-            .seats(commission.id)
+            .seats(&commission.id)
             .await
             .expect("seats")
             .is_empty()

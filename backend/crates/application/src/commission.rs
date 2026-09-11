@@ -18,12 +18,94 @@
 
 use domain::{
     datetime::DateTimeUtc,
-    elements::commission::{ChangelogEntryKind, NewChangelogEntry},
-    ports::{Database, UnitOfWork},
+    elements::{
+        commission::{
+            ChangelogEntryKind, Commission, CommissionId, FileNameError, MarkupError,
+            NewChangelogEntry,
+        },
+        user::UserId,
+    },
+    ports::{
+        AccountStore, ChangelogStore, CommissionStore, Database, DidBelongsToAnotherActor,
+        DidMinter, ElementNotFound, FileStore, UnitOfWork, UnknownSurface, UnknownTab, UserStore,
+    },
 };
 use serde_json::json;
 
-use crate::transaction;
+use crate::{ports::WithPorts, transaction};
+pub mod archive;
+pub mod changelog;
+pub mod create;
+pub mod deadline;
+pub mod delete;
+pub mod files;
+pub mod invitations;
+pub mod list;
+pub mod markup;
+pub mod maturity;
+pub mod notes;
+pub mod place;
+pub mod seats;
+pub mod slots;
+pub mod status;
+pub mod unarchive;
+pub mod view;
+
+/// Commission use cases, with the ports already bound. A namespace, not a
+/// mediator: every use-case file adds its own `impl Commissions<'_>` block
+/// holding exactly one use case; helpers stay free functions.
+#[derive(Clone, Copy)]
+pub struct Commissions<'a> {
+    ports: &'a crate::Ports,
+}
+
+impl<'a> Commissions<'a> {
+    /// Bind the namespace to resolved dependencies.
+    pub fn new(ports: &'a crate::Ports) -> Self {
+        Self { ports }
+    }
+
+    /// The bag this namespace was built over.
+    pub fn ports(&self) -> &'a crate::Ports {
+        self.ports
+    }
+}
+
+impl<'a> TryFrom<&'a crate::Ports> for Commissions<'a> {
+    type Error = crate::MissingPort;
+
+    /// Cannot fail: [`Ports`](crate::Ports) carries a file store unconditionally,
+    /// so [`MissingPort`](crate::MissingPort) is unreachable from here.
+    fn try_from(ports: &'a crate::Ports) -> Result<Self, Self::Error> {
+        Ok(Self::new(ports))
+    }
+}
+
+impl<'a> From<&'a crate::App> for Commissions<'a> {
+    /// Binds the namespace to the app's ports. The `expect` is unreachable while
+    /// [`try_from`](Commissions::try_from) is infallible.
+    fn from(app: &'a crate::App) -> Self {
+        Self::try_from(app.ports()).expect("composition root supplies the blob store")
+    }
+}
+
+impl<'a> WithPorts<'a> for Commissions<'a> {
+    fn ports(&self) -> &'a crate::Ports {
+        self.ports
+    }
+}
+
+pub struct CommissionPorts<'a> {
+    pub commissions: &'a dyn CommissionStore,
+    pub changelog: &'a dyn ChangelogStore,
+    pub users: &'a dyn UserStore,
+    pub accounts: &'a dyn AccountStore,
+    pub did_minter: &'a dyn DidMinter,
+    pub database: &'a dyn Database,
+    pub files: &'a dyn FileStore,
+}
+
+pub type CommissionResult<T> = Result<T, CommissionError>;
 
 /// Why a commission use case could not answer. One enum per module: a driver
 /// maps each variant to its own surface (problem+json, `{class, code}`).
@@ -36,21 +118,191 @@ use crate::transaction;
 pub enum CommissionError {
     /// The commission store failed. The unit of work rolled back whole, so
     /// nothing was marked halfway; the caller may retry.
-    Store(anyhow::Error),
+    Infrastructure(anyhow::Error),
+    UserNotFound,
+    CommissionNotFound,
+    CommissionAlreadyAtState,
+    InsufficientPermissions,
+    NotAMember,
+    InvalidStateRequested,
+    /// The uploaded filename failed [`FileName`](domain::elements::commission::FileName)'s
+    /// validation gate; the cause rides [`source`](std::error::Error::source).
+    InvalidFileName(FileNameError),
+    /// The uploaded content exceeded the caller's configured upload cap.
+    FileTooLarge,
+    /// The uploaded content was zero bytes.
+    FileEmpty,
+    /// No such file entry on this commission.
+    FileNotFound,
+    FileBlobMissing,
+    SeatNotFound,
+    /// The Seat named is already occupied, so it cannot be invited to — a state
+    /// conflict, not a missing thing (ZMVP-78).
+    SeatFilled,
+    /// The tab named is not one of *this* commission's tabs — fabricated, or
+    /// belonging to another commission. The two are deliberately
+    /// indistinguishable.
+    TabNotFound,
+    /// The `(tab, surface)` pair names no surface this commission declares.
+    UnknownSurface,
+    /// The element named is not one of this commission's elements.
+    ElementNotFound,
+    /// A deadline-axis act on a commission that carries no deadline: there is
+    /// nothing to be Delayed against.
+    NoDeadline,
+    /// The commission stands Late, and Late is the **system's** word — a
+    /// participant cannot set or clear the axis over it.
+    CommissionLate,
+    /// The DID offered is already interned as a *different* kind of actor, so it
+    /// cannot be provisioned as a User.
+    DidBelongsToAnotherActor,
+    /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
+    /// numeric gate — a coordinate outside normalized 0–1 space, a degenerate
+    /// extent, a blank or over-long comment. The cause rides
+    /// [`source`](std::error::Error::source), mirroring
+    /// [`InvalidFileName`](Self::InvalidFileName).
+    InvalidMarkup(MarkupError),
+    IncorrectContent,
+    AccountNotFound,
 }
 
 impl std::fmt::Display for CommissionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CommissionError::Store(_) => write!(f, "the commission store failed"),
+            Self::Infrastructure(_) => write!(f, "the commission store failed"),
+            Self::UserNotFound => write!(f, "The user could not be found"),
+            Self::CommissionNotFound => write!(f, "The commission could not be found"),
+            Self::CommissionAlreadyAtState => write!(f, "This commission is already in this state"),
+            Self::InsufficientPermissions => write!(f, "Insufficient permissions to do this"),
+            Self::NotAMember => write!(f, "Not a member of this commission"),
+            Self::InvalidStateRequested => write!(f, "The state couldn't get set"),
+            Self::InvalidFileName(_) => write!(f, "The filename is invalid"),
+            Self::FileTooLarge => write!(f, "The file exceeds the upload limit"),
+            Self::FileEmpty => write!(f, "The uploaded file is empty"),
+            Self::FileNotFound => write!(f, "The file could not be found"),
+            Self::FileBlobMissing => write!(f, "The blob seems to be missing"),
+            Self::SeatNotFound => write!(f, "Seat not found"),
+            Self::SeatFilled => write!(f, "That seat is already filled"),
+            Self::TabNotFound => write!(f, "Tab not found"),
+            Self::UnknownSurface => write!(f, "That surface is not declared here"),
+            Self::ElementNotFound => write!(f, "Element not found"),
+            Self::NoDeadline => write!(f, "This commission has no deadline"),
+            Self::CommissionLate => write!(f, "Late is set by the system"),
+            Self::DidBelongsToAnotherActor => write!(f, "That DID is already another actor"),
+            Self::InvalidMarkup(_) => write!(f, "This markup is not valid"),
+            Self::IncorrectContent => write!(f, "No content"),
+            Self::AccountNotFound => write!(f, "Account not found"),
         }
     }
+}
+
+/// The **one** place a store error becomes a use-case error.
+///
+/// The stores raise a small set of typed errors through `anyhow` — the
+/// composition-address gates ([`UnknownTab`], [`UnknownSurface`],
+/// [`ElementNotFound`]) and the actor-kind conflict
+/// ([`DidBelongsToAnotherActor`]) — each of which the wire already answers
+/// precisely. Recognizing them here rather than at each call site is
+/// deliberate: `?` is the only way a store error reaches a use case, so every
+/// use case inherits the translation and none can quietly let a `409`/`404`
+/// degrade into a `500`. Anything unrecognized stays
+/// [`Infrastructure`](CommissionError::Infrastructure).
+impl From<anyhow::Error> for CommissionError {
+    fn from(err: anyhow::Error) -> Self {
+        if err.downcast_ref::<UnknownTab>().is_some() {
+            Self::TabNotFound
+        } else if err.downcast_ref::<UnknownSurface>().is_some() {
+            Self::UnknownSurface
+        } else if err.downcast_ref::<ElementNotFound>().is_some() {
+            Self::ElementNotFound
+        } else if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
+            Self::DidBelongsToAnotherActor
+        } else {
+            Self::Infrastructure(err)
+        }
+    }
+}
+
+/// The **closed door**: resolve the commission for an actor who must be a
+/// Participant of it, or refuse in a way that reveals nothing.
+///
+/// A non-participant is answered [`NotAMember`](CommissionError::NotAMember),
+/// which the drivers render byte-identically to an absent commission's `404`.
+/// Never [`InsufficientPermissions`](CommissionError::InsufficientPermissions):
+/// a `403` confirms there is something here to be forbidden from, which is an
+/// existence oracle over private work.
+///
+/// Lives here, once, because every act on a commission owes the same answer and
+/// per-use-case copies drift (they already did — the api suite caught four).
+pub(crate) async fn require_participant(
+    ports: &crate::Ports,
+    commission_id: &CommissionId,
+    actor_id: &UserId,
+) -> CommissionResult<Commission> {
+    let commission = ports
+        .commissions
+        .find(commission_id)
+        .await?
+        .ok_or(CommissionError::CommissionNotFound)?;
+
+    if !ports
+        .commissions
+        .is_participant(&commission.id, actor_id)
+        .await?
+    {
+        return Err(CommissionError::NotAMember);
+    }
+    Ok(commission)
+}
+
+/// The **managing-authority** gate: resolve the commission for an act only its
+/// owner may perform.
+///
+/// Three answers, and the split matters. The owner passes. A Participant who is
+/// *not* the owner already knows the commission exists, so they get an honest
+/// [`InsufficientPermissions`](CommissionError::InsufficientPermissions) —
+/// `403`. Everyone else gets the same closed door as
+/// [`require_participant`]: `404`, indistinguishable from an absent commission.
+///
+/// This is the policy the driver-side `require_owner` held before the use cases
+/// moved down (DD `55836674` D7); it is restated here because that is now where
+/// authorization belongs.
+pub(crate) async fn require_owner(
+    ports: &crate::Ports,
+    commission_id: &CommissionId,
+    actor_id: &UserId,
+) -> CommissionResult<Commission> {
+    let commission = ports
+        .commissions
+        .find(commission_id)
+        .await?
+        .ok_or(CommissionError::CommissionNotFound)?;
+
+    if commission.is_owned_by(actor_id) {
+        return Ok(commission);
+    }
+
+    // Ownership is settled before membership is consulted, mirroring the gate
+    // this replaces: the owner's Participant row is a permanent floor, so
+    // asking is redundant for them — and were that row ever missing, the owner
+    // must not be locked out of their own commission.
+    if ports
+        .commissions
+        .is_participant(&commission.id, actor_id)
+        .await?
+    {
+        return Err(CommissionError::InsufficientPermissions);
+    }
+    Err(CommissionError::NotAMember)
 }
 
 impl std::error::Error for CommissionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            CommissionError::Store(e) => Some(e.as_ref()),
+            Self::Infrastructure(e) => Some(e.as_ref()),
+            Self::InvalidFileName(e) => Some(e),
+            Self::InvalidMarkup(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -104,7 +356,7 @@ pub async fn sweep_deadlines(
         Ok(lapsed.len())
     })
     .await
-    .map_err(CommissionError::Store)?;
+    .map_err(CommissionError::Infrastructure)?;
 
     Ok(SweepResult { marked_late })
 }

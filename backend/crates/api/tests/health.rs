@@ -32,7 +32,7 @@ async fn health_is_green_against_fresh_postgres() {
             public_url: format!("http://{addr}"),
             database_url,
             log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
+            handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
             // ZMVP-49 config (unused by the mem minter in these tests).
             did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),

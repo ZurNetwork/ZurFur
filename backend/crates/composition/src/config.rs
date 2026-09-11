@@ -8,11 +8,12 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use domain::elements::handle::HandleDomain;
 use figment::{
     Figment,
     providers::{Env, Format, Toml},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
 /// The environment variable naming the config profile (`dev`/`stg`/`prod`).
 pub const PROFILE_ENV: &str = "ZURFUR_ENV";
@@ -87,11 +88,18 @@ pub struct Config {
     /// Default tracing filter, applied when `RUST_LOG` is unset (see `main`).
     pub log_level: String,
     /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`
-    /// (default `default_handle_domain`). The `/.well-known/atproto-did` resolver
+    /// (default [`DEFAULT_HANDLE_DOMAIN`]). The `/.well-known/atproto-did` resolver
     /// only answers for a `Host` that is a subdomain of this domain — a request for
     /// any other authority is not ours to resolve (ZMVP-44, DD/26607618).
-    #[serde(default = "default_handle_domain")]
-    pub handle_domain: String,
+    ///
+    /// A [`HandleDomain`], **parsed once here at config load** (an invalid value
+    /// fails the boot), so the claim checks and the well-known resolver can never
+    /// disagree about what the namespace is.
+    #[serde(
+        default = "default_handle_domain",
+        deserialize_with = "deserialize_handle_domain"
+    )]
+    pub handle_domain: HandleDomain,
     /// **DEV-ONLY root key** (base64, 32 bytes) that envelope-encrypts every
     /// account's minted `did:plc` custody keys at rest (ZMVP-49). A config/env
     /// secret is *not* a hardware boundary: this is acceptable only pre-alpha.
@@ -153,10 +161,30 @@ fn default_deadline_sweep_interval_secs() -> u64 {
     300
 }
 
-/// Serde default for [`Config::handle_domain`]: `zurfur.app`, the production
-/// Zurfur-issued handle namespace.
-fn default_handle_domain() -> String {
-    "zurfur.app".to_string()
+/// The production Zurfur-issued handle namespace — the default for
+/// [`Config::handle_domain`] when neither the profile TOML nor `ZURFUR_*` env
+/// sets one. Already in normalized form.
+pub const DEFAULT_HANDLE_DOMAIN: &str = "zurfur.app";
+
+/// Serde default for [`Config::handle_domain`]: [`DEFAULT_HANDLE_DOMAIN`]. The
+/// literal is a known-valid namespace, so the parse can't fail (like
+/// [`default_http_addr`]).
+fn default_handle_domain() -> HandleDomain {
+    DEFAULT_HANDLE_DOMAIN
+        .parse()
+        .expect("the default handle domain is valid")
+}
+
+/// Deserialize [`Config::handle_domain`] through [`HandleDomain`]'s validating
+/// `FromStr`, so the namespace is normalized ONCE — here, at config load —
+/// rather than at each call site, and a value that isn't a namespace at all
+/// (e.g. `""` or `"."`) fails the load instead of silently matching nothing.
+fn deserialize_handle_domain<'de, D>(deserializer: D) -> Result<HandleDomain, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    raw.parse::<HandleDomain>().map_err(de::Error::custom)
 }
 
 /// Serde default for [`Config::plc_directory_endpoint`]: a **local placeholder**,
@@ -355,8 +383,52 @@ mod tests {
             assert_eq!(config.database_url, "postgres://from-env");
             assert_eq!(config.public_url, "http://from-env");
             assert_eq!(config.log_level, "info");
-            assert_eq!(config.handle_domain, "zurfur.app");
+            assert_eq!(config.handle_domain.as_str(), "zurfur.app");
             assert_eq!(config.max_upload_bytes, Config::DEFAULT_MAX_UPLOAD_BYTES);
+            Ok(())
+        });
+    }
+
+    // The handle namespace is parsed ONCE, here: a stray-cased or dotted value
+    // normalizes at load, so no call site has to re-normalize it.
+    #[test]
+    #[allow(clippy::result_large_err)] // figment::Jail's closure signature
+    fn the_handle_domain_is_normalized_at_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
+            jail.set_env("ZURFUR_ENV", "dev");
+            jail.set_env("DATABASE_URL", "postgres://x");
+            jail.set_env("ZURFUR_PUBLIC_URL", "http://x");
+            jail.set_env("ZURFUR_LOG_LEVEL", "info");
+            jail.set_env("ZURFUR_DID_KEY_ROOT_KEY", "ZmlsZQ==");
+            jail.set_env("ZURFUR_HANDLE_DOMAIN", " .Zurfur.App. ");
+
+            let config = Config::load().map_err(|e| *e)?;
+            assert_eq!(config.handle_domain.as_str(), "zurfur.app");
+            Ok(())
+        });
+    }
+
+    // ...and a value that is no namespace at all fails the LOAD, rather than
+    // booting a server whose namespace checks quietly match nothing.
+    #[test]
+    #[allow(clippy::result_large_err)] // figment::Jail's closure signature
+    fn an_empty_handle_domain_fails_the_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
+            jail.set_env("ZURFUR_ENV", "dev");
+            jail.set_env("DATABASE_URL", "postgres://x");
+            jail.set_env("ZURFUR_PUBLIC_URL", "http://x");
+            jail.set_env("ZURFUR_LOG_LEVEL", "info");
+            jail.set_env("ZURFUR_DID_KEY_ROOT_KEY", "ZmlsZQ==");
+            jail.set_env("ZURFUR_HANDLE_DOMAIN", " . ");
+
+            let Err(error) = Config::load() else {
+                panic!("an empty handle domain must not load");
+            };
+            assert!(error.to_string().contains("must not be empty"), "{error}");
             Ok(())
         });
     }

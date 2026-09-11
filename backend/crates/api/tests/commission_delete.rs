@@ -28,11 +28,13 @@ use adapter_mem::MemBackend;
 use api::AppState;
 use async_trait::async_trait;
 use chrono::Utc;
+use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::AccountId,
     commission::{
-        ChannelPointer, Commission, CommissionId, CommissionTitle, ElementId, GrantLevel,
-        NewElement,
+        ChannelPointer, Commission, CommissionFile, CommissionId, CommissionMarkup,
+        CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
+        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -40,8 +42,8 @@ use domain::elements::{
     user::UserId,
 };
 use domain::ports::{
-    AccountWrites, ActorIdentityWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork,
-    UserWrites,
+    AccountRepo, ActorIdentityWrites, ChangelogWrites, CommissionReads, CommissionRepo,
+    CommissionWrites, Database, UnitOfWork, UserWrites,
 };
 use reqwest::redirect::Policy;
 use serde_json::json;
@@ -149,7 +151,7 @@ async fn sign_in_and_create(
 async fn seed_foreign_commission(backend: &MemBackend, title: &str) -> CommissionId {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        UserId::new(uuid::Uuid::now_v7()),
+        UserId::new(Did::new("did:plc:offsession-owner".to_string())),
         Utc::now(),
         None,
     );
@@ -270,11 +272,11 @@ struct FactBearingUow(Box<dyn UnitOfWork>);
 
 #[async_trait]
 impl UnitOfWork for FactBearingUow {
-    fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
+    fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
         self.0.accounts()
     }
 
-    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
+    fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(FactBearingCommissions(self.0.commissions()))
     }
 
@@ -302,50 +304,61 @@ impl UnitOfWork for FactBearingUow {
 /// The commissions view of [`FactBearingUow`]: `commission_has_facts` is `true`,
 /// everything else delegates — so a gate that wrongly proceeded to `delete`
 /// would really delete, and the test would catch it by the row's disappearance.
-struct FactBearingCommissions<'a>(Box<dyn CommissionWrites + 'a>);
+/// [`CommissionRepo`] is a blanket marker over reads + writes, so both halves
+/// are implemented here.
+struct FactBearingCommissions<'a>(Box<dyn CommissionRepo + 'a>);
+
+#[async_trait]
+impl CommissionReads for FactBearingCommissions<'_> {
+    async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        self.0.find(id).await
+    }
+
+    async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        self.0.find_for_update(id).await
+    }
+
+    async fn is_participant(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool> {
+        self.0.is_participant(commission, user).await
+    }
+
+    async fn tab_for_update(
+        &mut self,
+        commission: &CommissionId,
+        tab: &TabId,
+    ) -> anyhow::Result<Option<TabRow>> {
+        self.0.tab_for_update(commission, tab).await
+    }
+}
 
 #[async_trait]
 impl CommissionWrites for FactBearingCommissions<'_> {
+    // The one interposition: the whole point of the double.
+    async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         self.0.create(commission).await
     }
 
+    async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
+        self.0.declare_seat(seat).await
+    }
+
     async fn create_seat_invitation(
         &mut self,
-        invitation: &domain::elements::commission::SeatInvitation,
-    ) -> anyhow::Result<()> {
+        invitation: &SeatInvitation,
+    ) -> anyhow::Result<SeatInvitation> {
         self.0.create_seat_invitation(invitation).await
     }
 
-    async fn revoke_seat_invitation(
-        &mut self,
-        id: domain::elements::commission::SeatInvitationId,
-    ) -> anyhow::Result<()> {
+    async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         self.0.revoke_seat_invitation(id).await
-    }
-
-    async fn commission_has_facts(&mut self, _id: CommissionId) -> anyhow::Result<bool> {
-        Ok(true)
-    }
-
-    async fn set_linked_channel(
-        &mut self,
-        id: CommissionId,
-        channel: Option<&ChannelPointer>,
-    ) -> anyhow::Result<bool> {
-        self.0.set_linked_channel(id, channel).await
-    }
-
-    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
-        self.0.delete(id).await
-    }
-
-    async fn set_archived(
-        &mut self,
-        id: CommissionId,
-        archived_at: Option<domain::datetime::DateTimeUtc>,
-    ) -> anyhow::Result<bool> {
-        self.0.set_archived(id, archived_at).await
     }
 
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
@@ -354,93 +367,101 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn remove_element(
         &mut self,
-        commission: CommissionId,
-        element: ElementId,
+        commission: &CommissionId,
+        element: &ElementId,
     ) -> anyhow::Result<()> {
         self.0.remove_element(commission, element).await
     }
 
-    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+    async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
+        self.0.add_file(file).await
+    }
+
+    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
+        self.0.add_markup(markup).await
+    }
+
+    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
+        self.0.declare_slots(slots).await
+    }
+
+    async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
+        self.0.delete(id).await
+    }
+
+    async fn set_archived(
+        &mut self,
+        id: &CommissionId,
+        archived_at: Option<DateTimeUtc>,
+    ) -> anyhow::Result<bool> {
+        self.0.set_archived(id, archived_at).await
+    }
+
+    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         self.0.set_maturity(id, maturity).await
     }
 
-    async fn add_file(
+    async fn set_linked_channel(
         &mut self,
-        file: &domain::elements::commission::CommissionFile,
-    ) -> anyhow::Result<()> {
-        self.0.add_file(file).await
+        id: &CommissionId,
+        channel: Option<&ChannelPointer>,
+    ) -> anyhow::Result<bool> {
+        self.0.set_linked_channel(id, channel).await
     }
 
     async fn place(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
-        actor: UserId,
-        at: domain::datetime::DateTimeUtc,
+        commission: &CommissionId,
+        account: &AccountId,
+        placed_by: &UserId,
+        at: DateTimeUtc,
     ) -> anyhow::Result<()> {
-        self.0.place(commission, account, actor, at).await
+        self.0.place(commission, account, placed_by, at).await
     }
 
     async fn grant_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
         level: GrantLevel,
     ) -> anyhow::Result<()> {
-        self.0.grant_view(commission, account, level).await
+        self.0.grant_view(commission, to_user, level).await
     }
 
     async fn revoke_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
     ) -> anyhow::Result<bool> {
-        self.0.revoke_view(commission, account).await
+        self.0.revoke_view(commission, to_user).await
     }
 
     async fn set_direction_status(
         &mut self,
-        id: CommissionId,
-        status: Option<domain::elements::commission::DirectionStatus>,
+        id: &CommissionId,
+        status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool> {
         self.0.set_direction_status(id, status).await
     }
 
     async fn set_deadline(
         &mut self,
-        id: CommissionId,
-        deadline: Option<domain::datetime::DateTimeUtc>,
+        id: &CommissionId,
+        deadline: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.0.set_deadline(id, deadline).await
     }
 
     async fn set_deadline_status(
         &mut self,
-        id: CommissionId,
-        status: Option<domain::elements::commission::DeadlineStatus>,
+        id: &CommissionId,
+        status: Option<DeadlineStatus>,
     ) -> anyhow::Result<bool> {
         self.0.set_deadline_status(id, status).await
     }
 
-    async fn lapsed_deadlines(
-        &mut self,
-        now: domain::datetime::DateTimeUtc,
-    ) -> anyhow::Result<Vec<domain::elements::commission::LapsedDeadline>> {
+    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
         self.0.lapsed_deadlines(now).await
-    }
-
-    async fn declare_slots(
-        &mut self,
-        slots: &[domain::elements::commission::NewSlot],
-    ) -> anyhow::Result<()> {
-        self.0.declare_slots(slots).await
-    }
-
-    async fn declare_seat(
-        &mut self,
-        seat: &domain::elements::commission::NewSeat,
-    ) -> anyhow::Result<()> {
-        self.0.declare_seat(seat).await
     }
 }
 

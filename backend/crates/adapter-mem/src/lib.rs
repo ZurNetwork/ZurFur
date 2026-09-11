@@ -54,6 +54,7 @@ pub(crate) use commission::{
     StoredChangelogEntry, StoredCommission, StoredElement, StoredPlacement, StoredSeat,
     StoredSeatInvitation, StoredSlot, StoredTab,
 };
+pub(crate) use file_store::StoredBlob;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -68,24 +69,24 @@ use domain::elements::{
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
     commission::{
-        CommissionFile, CommissionId, ElementId, FileKey, GrantLevel, SeatInvitationId, StoredFile,
-        SurfaceName, TabId, VisibilityMode,
+        CommissionFile, CommissionId, CommissionMarkup, ElementId, FileKey, GrantLevel, MarkupKey,
+        SeatInvitationId, SurfaceName, TabId, VisibilityMode,
     },
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId, InvitationState},
     plc_operation::PlcOperationRecord,
     profile::Profile,
-    role::Role,
+    role::{Role, RoleAlias},
     user::{User, UserId},
     user_account::UserAccount,
 };
 use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::{
-    AccountStore, AccountWrites, ActorIdentityStore, ActorIdentityWrites, Authenticator,
-    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, Database, DidMinter,
-    FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork,
-    UserStore, UserWrites,
+    AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
+    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, CommissionRepo,
+    CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
@@ -136,12 +137,16 @@ pub struct MemBackend {
     /// — the mem mirror of `commission_current_placement`, upserted in the same
     /// unit as each placement append so it always equals the latest log row.
     pub(crate) current_placements: Arc<Mutex<HashMap<CommissionId, StoredPlacement>>>,
-    /// The commission **view grants** keyed by `(commission, account)`, valued by
-    /// the key's [`GrantLevel`] (ZMVP-70) — the mem mirror of `commission_view_grant`.
-    /// The grant is a pure key (just the level; who/when live in the changelog, DD
-    /// `29130754` D5). At most one key per pair (upsert on grant); a revoke removes
-    /// the entry (hard-delete).
-    pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, AccountId), GrantLevel>>>,
+    /// The commission **view grants** keyed by `(commission, grantee DID)`, valued
+    /// by the key's [`GrantLevel`] (ZMVP-70) — the mem mirror of
+    /// `commission_view_grant`. The grantee is held as a bare [`Did`] because the
+    /// pg column is: the write port issues a key to a User and the read port asks
+    /// by an account, so persistence stores the actor's identifier and asserts
+    /// nothing about its class (see the re-key migration's note). The grant is a
+    /// pure key (just the level; who/when live in the changelog, DD `29130754`
+    /// D5). At most one key per pair (upsert on grant); a revoke removes the entry
+    /// (hard-delete).
+    pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, Did), GrantLevel>>>,
     /// [`StoredElement`] parts keyed by [`ElementId`] — the commission's flat
     /// composition (ZMVP-166), the in-memory mirror of the pg
     /// `commission_element` table. A domain map, staged and applied by the Unit
@@ -165,13 +170,21 @@ pub struct MemBackend {
     /// commits atomically with the `file_added` changelog entry it accompanies
     /// (Changelog DD D4).
     pub(crate) files: Arc<Mutex<HashMap<FileKey, CommissionFile>>>,
+    /// Commission **markups** keyed by [`MarkupKey`] (ZMVP-90) — the in-memory
+    /// mirror of the pg `commission_markup` table. A domain map, staged and applied
+    /// by the Unit of Work exactly like `files`: an annotation commits atomically
+    /// with the `markup_added` changelog entry it accompanies (Changelog DD D4).
+    /// Nothing here ever mutates or removes an inserted markup — the write port
+    /// exposes no update and no delete, which is the whole of markup immutability
+    /// now that it no longer rides the append-only changelog.
+    pub(crate) markups: Arc<Mutex<HashMap<MarkupKey, CommissionMarkup>>>,
     /// The file-entry **blob** store keyed by [`FileKey`] (ZMVP-88) — the
     /// in-memory mirror of the pg `file_blob` table and the [`MemFileStore`] backing
     /// map. **Shared, not staged** (its `Arc` is cloned like the profile cache): the
     /// [`FileStore`] blob write is a step *outside* the Unit of Work (bytes cannot
     /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
     /// nor clobber it.
-    pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredFile>>>,
+    pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredBlob>>>,
     /// [`StoredSlot`] satellites keyed by the carrying element's [`ElementId`]
     /// (ZMVP-77) — the in-memory mirror of the pg `commission_slot` table. A
     /// domain map, staged and applied by the Unit of Work exactly like
@@ -350,6 +363,12 @@ impl MemBackend {
                 self.files
                     .lock()
                     .expect("MemBackend files mutex poisoned")
+                    .clone(),
+            )),
+            markups: Arc::new(Mutex::new(
+                self.markups
+                    .lock()
+                    .expect("MemBackend markups mutex poisoned")
                     .clone(),
             )),
             // Shared, not copied: the blob store is a Unit-of-Work exemption (the
@@ -605,6 +624,20 @@ impl MemBackend {
                 .expect("MemBackend files mutex poisoned"),
         );
         merge_map(
+            &mut self
+                .markups
+                .lock()
+                .expect("MemBackend markups mutex poisoned"),
+            &base
+                .markups
+                .lock()
+                .expect("MemBackend markups mutex poisoned"),
+            &staged
+                .markups
+                .lock()
+                .expect("MemBackend markups mutex poisoned"),
+        );
+        merge_map(
             &mut self.slots.lock().expect("MemBackend slots mutex poisoned"),
             &base.slots.lock().expect("MemBackend slots mutex poisoned"),
             &staged
@@ -698,9 +731,8 @@ impl MemBackend {
             .lock()
             .expect("MemBackend accounts mutex poisoned")
             .insert(
-                AccountId::new(uuid::Uuid::now_v7()),
+                AccountId::new(did.clone()),
                 StoredAccount {
-                    did: did.clone(),
                     handle: handle.clone(),
                     name: "Tombstoned".parse::<AccountName>().expect("valid name"),
                     created_at: now,
@@ -715,32 +747,61 @@ impl MemBackend {
         MemAccountWrites(self.clone()).grant_role(member).await
     }
 
+    /// Seed a member's [`RoleAlias`] directly onto an already-seated membership
+    /// (test-only). There is no set-alias write path yet — `grant_role` deliberately
+    /// never touches it, mirroring the pg adapter's `grant_role` SQL, which only
+    /// writes `role` — so this reaches straight into the stored map, the mem mirror
+    /// of a direct `UPDATE account_members SET alias = …`. Panics if `(account,
+    /// user)` holds no membership: seeding an alias onto nobody is a test bug.
+    pub fn seed_role_alias(&self, user: UserId, account: AccountId, alias: RoleAlias) {
+        self.memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .get_mut(&(account, user))
+            .expect("seed_role_alias: no membership for (account, user)")
+            .alias = Some(alias);
+    }
+
     /// Issue a pending invitation (test seed of [`AccountWrites::create_invitation`]).
-    pub async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<()> {
+    pub async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         MemAccountWrites(self.clone())
             .create_invitation(invitation)
             .await
     }
 
     /// The role a user holds in an account, or `None` (inspect helper).
-    pub async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>> {
+    pub async fn role_of(
+        &self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
         MemAccountStore(self.clone()).role_of(user, account).await
     }
 
     /// Resolve an account by id, or `None` if absent/soft-deleted (inspect helper).
-    pub async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>> {
+    pub async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         MemAccountStore(self.clone()).find(id).await
     }
 
     /// The lone pending offer for `(account, invited)`, or `None` (inspect helper).
     pub async fn find_pending_invitation(
         &self,
-        account: AccountId,
-        invited: UserId,
+        account: &AccountId,
+        invited: &UserId,
     ) -> anyhow::Result<Option<Invitation>> {
         MemAccountStore(self.clone())
             .find_pending_invitation(account, invited)
             .await
+    }
+
+    /// How many blobs the file store currently holds (inspect helper, ZMVP-205)
+    /// — lets a test prove a rejected upload's blob was deleted, not merely
+    /// orphaned, without reaching for a specific (never-returned) `FileKey`.
+    pub fn blob_count(&self) -> usize {
+        self.blobs
+            .lock()
+            .expect("MemBackend blobs mutex poisoned")
+            .len()
     }
 
     // The commission seed/inspect helpers (`create_commission`, `find_commission`,
@@ -814,13 +875,16 @@ pub struct MemUserStore(MemBackend);
 
 #[async_trait]
 impl UserStore for MemUserStore {
-    async fn find(&self, id: UserId) -> anyhow::Result<Option<User>> {
+    /// The users map is keyed by DID, and since the actor re-key (DD `57081857`)
+    /// a [`UserId`] *is* that DID — so this is a direct lookup, not the value
+    /// scan it used to be.
+    async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
         let users = self
             .0
             .users
             .lock()
             .expect("MemBackend users mutex poisoned");
-        Ok(users.values().find(|u| u.id == id).cloned())
+        Ok(users.get(id).cloned())
     }
 
     /// Read-only counterpart to `provision`: a miss returns `None` rather than
@@ -850,7 +914,8 @@ impl UserWrites for MemUserWrites {
     /// vended by the unit of work) backend, so a dropped unit discards them together.
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
         let now = Utc::now();
-        // Intern first (idempotent by DID) — the identity id is what the user is keyed by.
+        // Intern first (idempotent by DID) — the identity row is the projection's
+        // parent, and since the actor re-key the DID is what both are keyed by.
         let identity = MemActorIdentityWrites(self.0.clone())
             .intern(did, ActorKind::User, now)
             .await?;
@@ -869,8 +934,7 @@ impl UserWrites for MemUserWrites {
             .lock()
             .expect("MemBackend users mutex poisoned");
         let user = users.entry(did.clone()).or_insert_with(|| User {
-            id: UserId::new(*identity.id),
-            did: did.clone(),
+            id: UserId::new(did.clone()),
             created_at: now,
         });
         Ok(user.clone())
@@ -1006,9 +1070,6 @@ impl ProfileCache for MemProfileCache {
 /// in the snapshot) apart from one this unit actually wrote.
 #[derive(Clone, PartialEq)]
 struct StoredAccount {
-    /// The account's sovereign `did:plc` (minted by [`MemDidMinter`] in the
-    /// real founding flow).
-    did: Did,
     /// The account's public handle — the validated, normalized name it is reached
     /// by, globally unique (a soft-deleted account still reserves it, DD/23003138;
     /// mirrors the pg `handle` column + its `accounts_handle_key` index).
@@ -1037,6 +1098,10 @@ struct StoredAccount {
 struct StoredMembership {
     /// The role the member holds in the account.
     role: Role,
+    /// The member's own alias for that role, if they set one. `None` on the
+    /// floor — no write path sets it yet, mirroring the pg column's nullable,
+    /// unset-by-default column.
+    alias: Option<RoleAlias>,
     /// Whether the member chose to publish this membership on their public
     /// profile. Mirrors the pg column's `DEFAULT true`: a membership is listed
     /// unless the member says otherwise.
@@ -1044,12 +1109,13 @@ struct StoredMembership {
 }
 
 impl StoredMembership {
-    /// A membership seated with the column default — listed. Founding and
-    /// `grant_role` both take this path; only invitation-acceptance carries an
-    /// explicit choice.
+    /// A membership seated with the column defaults — listed, no alias.
+    /// Founding and `grant_role` both take this path; only invitation-acceptance
+    /// carries an explicit `listed_on_profile` choice.
     fn listed(role: Role) -> Self {
         Self {
             role,
+            alias: None,
             listed_on_profile: true,
         }
     }
@@ -1108,37 +1174,25 @@ impl AccountStore for MemAccountStore {
     /// Rebuilds an [`Account`] from its stored parts (it isn't `Clone`). A
     /// soft-deleted account resolves to `None`, the same as one that never
     /// existed.
-    async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>> {
+    async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         let accounts = self
             .0
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
-        Ok(accounts.get(&id).and_then(|stored| {
-            // A soft-deleted account resolves to nothing, per the port contract.
-            if stored.deleted_at.is_some() {
-                return None;
-            }
-            Some(Account {
-                id,
-                did: stored.did.clone(),
-                handle: stored.handle.clone(),
-                name: stored.name.clone(),
-                created_at: stored.created_at,
-                updated_at: stored.updated_at,
-                deleted_at: stored.deleted_at,
-            })
-        }))
+        Ok(accounts
+            .get(id)
+            .and_then(|stored| rebuild_account(id.clone(), stored)))
     }
 
-    async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>> {
+    async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>> {
         let memberships = self
             .0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
         Ok(memberships
-            .get(&(account, user))
+            .get(&(account.clone(), user.clone()))
             .map(|membership| membership.role.clone()))
     }
 
@@ -1147,8 +1201,8 @@ impl AccountStore for MemAccountStore {
     /// invitations are history, not live offers, so they never match.
     async fn find_pending_invitation(
         &self,
-        account: AccountId,
-        invited_user: UserId,
+        account: &AccountId,
+        invited_user: &UserId,
     ) -> anyhow::Result<Option<Invitation>> {
         let invitations = self
             .0
@@ -1156,38 +1210,38 @@ impl AccountStore for MemAccountStore {
             .lock()
             .expect("MemBackend invitations mutex poisoned");
         Ok(invitations.iter().find_map(|(id, stored)| {
-            (stored.account == account
-                && stored.invited_user == invited_user
+            (&stored.account == account
+                && &stored.invited_user == invited_user
                 && stored.state == InvitationState::Pending)
                 .then(|| rebuild_invitation(*id, stored))
         }))
     }
 
     /// Rebuilds the [`Invitation`] for `id` in whatever state it holds, or `None`.
-    async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>> {
+    async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
         let invitations = self
             .0
             .invitations
             .lock()
             .expect("MemBackend invitations mutex poisoned");
         Ok(invitations
-            .get(&id)
-            .map(|stored| rebuild_invitation(id, stored)))
+            .get(id)
+            .map(|stored| rebuild_invitation(*id, stored)))
     }
 
-    /// Scans for the live account whose handle matches, returning its `did`. A
-    /// soft-deleted account resolves to `None`, mirroring `find` and the pg
-    /// adapter's `deleted_at IS NULL` filter. `Handle` equality is exact (both
-    /// sides are normalized), so this is the in-memory mirror of the unique-index
-    /// lookup.
+    /// Scans for the live account whose handle matches, returning its DID — which
+    /// since the actor re-key (DD `57081857`) is the map's own key. A soft-deleted
+    /// account resolves to `None`, mirroring `find` and the pg adapter's
+    /// `deleted_at IS NULL` filter. `Handle` equality is exact (both sides are
+    /// normalized), so this is the in-memory mirror of the unique-index lookup.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         let accounts = self
             .0
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
-        Ok(accounts.values().find_map(|stored| {
-            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| stored.did.clone())
+        Ok(accounts.iter().find_map(|(id, stored)| {
+            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| (**id).clone())
         }))
     }
 
@@ -1195,7 +1249,7 @@ impl AccountStore for MemAccountStore {
     /// mirror of the pg `count(*)` over `account_handle_changes` (ZMVP-46 rate limit).
     async fn count_handle_changes_since(
         &self,
-        account: AccountId,
+        account: &AccountId,
         since: DateTimeUtc,
     ) -> anyhow::Result<i64> {
         let changes = self
@@ -1205,7 +1259,7 @@ impl AccountStore for MemAccountStore {
             .expect("MemBackend handle_changes mutex poisoned");
         Ok(changes
             .iter()
-            .filter(|change| change.account_id == account && change.changed_at >= since)
+            .filter(|change| &change.account_id == account && change.changed_at >= since)
             .count() as i64)
     }
 
@@ -1215,7 +1269,7 @@ impl AccountStore for MemAccountStore {
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
-        excluding: Option<AccountId>,
+        excluding: Option<&AccountId>,
         since: DateTimeUtc,
     ) -> anyhow::Result<bool> {
         let changes = self
@@ -1226,20 +1280,20 @@ impl AccountStore for MemAccountStore {
         Ok(changes.iter().any(|change| {
             &change.old_handle == handle
                 && change.changed_at >= since
-                && excluding.is_none_or(|account| change.account_id != account)
+                && excluding.is_none_or(|account| &change.account_id != account)
         }))
     }
 
     /// Scans `memberships` for `user`'s rows, joins each back to its
     /// `accounts` entry, and drops any that is soft-deleted or has vanished
-    /// (ZMVP-157) — the mem mirror of the pg adapter's
-    /// `account_members ⋈ accounts ⋈ actor_identity` query. Sorted by
-    /// [`AccountId`] afterward (UUIDv7 sorts as creation order); the `HashMap`
-    /// scan itself has no natural order, so the sort is what makes the result
-    /// deterministic, mirroring the pg `ORDER BY a.id`.
+    /// (ZMVP-157) — the mem mirror of the pg adapter's `account_members ⋈
+    /// accounts` query. Sorted by the account's DID afterward, by byte value;
+    /// the `HashMap` scan itself has no natural order, so the sort is what makes
+    /// the result deterministic, mirroring the pg `ORDER BY a.id COLLATE "C"`
+    /// (which is that same byte order — see the query's note).
     async fn list_for_user(
         &self,
-        user: UserId,
+        user: &UserId,
         scope: ListingScope,
     ) -> anyhow::Result<Vec<AccountMembership>> {
         let accounts = self
@@ -1259,29 +1313,19 @@ impl AccountStore for MemAccountStore {
 
         let mut rows: Vec<AccountMembership> = memberships
             .iter()
-            .filter(|((_, member_user), _)| *member_user == user)
+            .filter(|((_, member_user), _)| member_user == user)
             .filter(|(_, membership)| !honors_valve || membership.listed_on_profile)
             .filter_map(|((account_id, _), membership)| {
                 let stored = accounts.get(account_id)?;
-                if stored.deleted_at.is_some() {
-                    return None;
-                }
-                let account = Account {
-                    id: *account_id,
-                    did: stored.did.clone(),
-                    handle: stored.handle.clone(),
-                    name: stored.name.clone(),
-                    created_at: stored.created_at,
-                    updated_at: stored.updated_at,
-                    deleted_at: stored.deleted_at,
-                };
+                let account = rebuild_account(account_id.clone(), stored)?;
                 Some(AccountMembership {
                     account,
                     role: membership.role.clone(),
+                    alias: membership.alias.clone(),
                 })
             })
             .collect();
-        rows.sort_by_key(|membership| *membership.account.id);
+        rows.sort_by(|left, right| left.account.id.as_str().cmp(right.account.id.as_str()));
         Ok(rows)
     }
 }
@@ -1298,12 +1342,12 @@ impl MemAccountWrites {
     /// the membership and revoke the member's still-pending issued invitations. The
     /// mem fake doesn't model the role tree's `parent` (see `grant_role`), so there
     /// are no children to re-home — the pg adapter carries rule-3 re-homing.
-    fn settle_member_departure(&self, user: UserId, account: AccountId) {
+    fn settle_member_departure(&self, user: &UserId, account: &AccountId) {
         self.0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned")
-            .remove(&(account, user));
+            .remove(&(account.clone(), user.clone()));
 
         let mut invitations = self
             .0
@@ -1311,8 +1355,8 @@ impl MemAccountWrites {
             .lock()
             .expect("MemBackend invitations mutex poisoned");
         for invitation in invitations.values_mut() {
-            if invitation.account == account
-                && invitation.inviter == user
+            if &invitation.account == account
+                && &invitation.inviter == user
                 && matches!(invitation.state, InvitationState::Pending)
             {
                 invitation.state = InvitationState::Revoked;
@@ -1363,33 +1407,33 @@ impl AccountWrites for MemAccountWrites {
                 .lock()
                 .expect("MemBackend actor_identities mutex poisoned");
             let existing = identities
-                .iter()
-                .find(|(_, stored)| stored.did.as_ref() == Some(&account.did))
-                .map(|(id, _)| *id);
-            if let Some(existing_id) = existing {
-                anyhow::ensure!(
-                    existing_id == ActorIdentityId::new(*account.id),
-                    "account {} DID {} already interned under a different identity {}",
-                    *account.id,
-                    account.did.as_str(),
-                    *existing_id
-                );
+                .values()
+                .find(|stored| stored.did.as_deref() == Some(&**account.id));
+            match existing {
+                Some(stored) => anyhow::ensure!(
+                    stored.kind == ActorKind::Account,
+                    "account DID {} is already interned as a different actor kind ({})",
+                    account.id.as_str(),
+                    stored.kind.as_str()
+                ),
+                None => {
+                    identities.insert(
+                        ActorIdentityId::new(uuid::Uuid::now_v7()),
+                        StoredActorIdentity {
+                            kind: ActorKind::Account,
+                            did: Some((*account.id).clone()),
+                            state: ActorState::Active,
+                            handle: None,
+                            first_seen: account.created_at,
+                        },
+                    );
+                }
             }
-            identities
-                .entry(ActorIdentityId::new(*account.id))
-                .or_insert_with(|| StoredActorIdentity {
-                    kind: ActorKind::Account,
-                    did: Some(account.did.clone()),
-                    state: ActorState::Active,
-                    handle: None,
-                    first_seen: account.created_at,
-                });
         }
 
         accounts.insert(
-            account.id,
+            account.id.clone(),
             StoredAccount {
-                did: account.did.clone(),
                 handle: account.handle.clone(),
                 name: account.name.clone(),
                 created_at: account.created_at,
@@ -1399,10 +1443,15 @@ impl AccountWrites for MemAccountWrites {
         );
         drop(accounts);
 
+        // `alias` is dropped here exactly as `role` alone survives into
+        // `StoredMembership::listed` — the founder is seated with no alias
+        // (`Account::open` always mints `UserAccount { alias: None, .. }`), and
+        // there is no write path yet that would seat one instead.
         let UserAccount {
             user_id,
             account_id,
             role,
+            alias: _,
         } = owner;
         let mut memberships = self
             .0
@@ -1410,7 +1459,7 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend memberships mutex poisoned");
         memberships.insert(
-            (*account_id, *user_id),
+            (account_id.clone(), user_id.clone()),
             StoredMembership::listed(role.clone()),
         );
         Ok(())
@@ -1429,7 +1478,7 @@ impl AccountWrites for MemAccountWrites {
     /// the account's own current handle is a caller-side no-op rejected before this.
     async fn change_handle(
         &mut self,
-        account: AccountId,
+        account: &AccountId,
         old: &Handle,
         new: &Handle,
         at: DateTimeUtc,
@@ -1444,13 +1493,13 @@ impl AccountWrites for MemAccountWrites {
         // row before the unique index is touched): the account must be live and still
         // hold `old`, else we roll back without auditing a stale change.
         if !accounts
-            .get(&account)
+            .get(account)
             .is_some_and(|stored| stored.deleted_at.is_none() && &stored.handle == old)
         {
             anyhow::bail!(
                 "change_handle: account {} is not a live account still holding the expected \
                  handle; nothing changed (concurrent change or removal)",
-                *account
+                account.as_str()
             );
         }
 
@@ -1459,13 +1508,13 @@ impl AccountWrites for MemAccountWrites {
         // (a no-op self-rename never reaches here).
         if accounts
             .iter()
-            .any(|(id, stored)| *id != account && &stored.handle == new)
+            .any(|(id, stored)| id != account && &stored.handle == new)
         {
             return Err(anyhow::Error::new(HandleTaken));
         }
 
         let stored = accounts
-            .get_mut(&account)
+            .get_mut(account)
             .expect("account presence checked by the precondition above");
         stored.handle = new.clone();
         stored.updated_at = at;
@@ -1476,7 +1525,7 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend handle_changes mutex poisoned")
             .push(StoredHandleChange {
-                account_id: account,
+                account_id: account.clone(),
                 old_handle: old.clone(),
                 changed_at: at,
             });
@@ -1488,21 +1537,29 @@ impl AccountWrites for MemAccountWrites {
         // existing one's role replaced — the in-memory mirror of the pg adapter's
         // `ON CONFLICT ... DO UPDATE`. Granting a role is how a user joins an
         // account (DESIGN/Roles); the role tree (`parent`) is deferred on the floor.
+        // `alias` is dropped here exactly as the pg adapter's `grant_role` SQL
+        // only ever touches the `role` column: a role grant never clobbers a
+        // member's already-set alias, and there is no write path yet that would
+        // seat a fresh one (`StoredMembership::listed` mints `alias: None`).
         let UserAccount {
             user_id: user,
             account_id,
             role,
+            alias: _,
         } = member;
         let mut memberships = self
             .0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert((*account_id, *user), StoredMembership::listed(role.clone()));
+        memberships.insert(
+            (account_id.clone(), user.clone()),
+            StoredMembership::listed(role.clone()),
+        );
         Ok(())
     }
 
-    async fn revoke_role(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+    async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // A revoke is a member-departure event, identical to `leave` at the store
         // level (the caller settles authority): remove the membership and revoke the
         // member's pending issued invitations.
@@ -1510,7 +1567,7 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
-    async fn leave(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()> {
+    async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // Self-removal (ZMVP-21); preconditions (membership exists, not Owner) are
         // the caller's. Same store effects as `revoke_role`.
         self.settle_member_departure(user, account);
@@ -1522,47 +1579,52 @@ impl AccountWrites for MemAccountWrites {
     /// mirror of the pg adapter's partial unique index (`... WHERE state =
     /// 'pending'`). The handler also checks `find_pending_invitation` first, so
     /// this is the belt-and-suspenders backstop, not the only guard.
-    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<()> {
+    ///
+    /// Returns the offer that now stands — the freshly inserted one, or the
+    /// pending one already on file when this issue was dropped — so the caller is
+    /// handed the live offer rather than the duplicate it proposed (the pg
+    /// adapter's contract, mirrored).
+    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         let mut invitations = self
             .0
             .invitations
             .lock()
             .expect("MemBackend invitations mutex poisoned");
-        let already_pending = invitations.values().any(|stored| {
-            stored.account == invitation.account
+        let already_pending = invitations.iter().find_map(|(id, stored)| {
+            (stored.account == invitation.account
                 && stored.invited_user == invitation.invited_user
-                && stored.state == InvitationState::Pending
+                && stored.state == InvitationState::Pending)
+                .then(|| rebuild_invitation(*id, stored))
         });
-        if already_pending {
+        if let Some(standing) = already_pending {
             // At most one pending offer per (account, user): a second issue is a
             // no-op, not a second row.
-            return Ok(());
+            return Ok(standing);
         }
-        invitations.insert(
-            invitation.id,
-            StoredInvitation {
-                account: invitation.account,
-                invited_user: invitation.invited_user,
-                role: invitation.role.clone(),
-                inviter: invitation.inviter,
-                state: invitation.state,
-                created_at: invitation.created_at,
-                updated_at: invitation.updated_at,
-            },
-        );
-        Ok(())
+        let issued = StoredInvitation {
+            account: invitation.account.clone(),
+            invited_user: invitation.invited_user.clone(),
+            role: invitation.role.clone(),
+            inviter: invitation.inviter.clone(),
+            state: invitation.state,
+            created_at: invitation.created_at,
+            updated_at: invitation.updated_at,
+        };
+        let standing = rebuild_invitation(invitation.id, &issued);
+        invitations.insert(invitation.id, issued);
+        Ok(standing)
     }
 
     /// Flips a pending invitation to revoked and stamps `updated_at`. A non-pending
     /// or absent invitation is left untouched — a no-op, not an error (the handler
     /// decides whether that's a 404/409), mirroring the pg adapter's guarded UPDATE.
-    async fn revoke_invitation(&mut self, id: InvitationId) -> anyhow::Result<()> {
+    async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         let mut invitations = self
             .0
             .invitations
             .lock()
             .expect("MemBackend invitations mutex poisoned");
-        if let Some(stored) = invitations.get_mut(&id)
+        if let Some(stored) = invitations.get_mut(id)
             && stored.state == InvitationState::Pending
         {
             stored.state = InvitationState::Revoked;
@@ -1630,18 +1692,18 @@ impl AccountWrites for MemAccountWrites {
         // is not overwritten on a re-seat.
         let seated = StoredMembership {
             role: invitation.role.clone(),
+            alias: None,
             listed_on_profile,
         };
-        let role = memberships
-            .entry((invitation.account, invitation.invited_user))
-            .or_insert(seated)
-            .role
-            .clone();
+        let stored = memberships
+            .entry((invitation.account.clone(), invitation.invited_user.clone()))
+            .or_insert(seated);
 
         Ok(UserAccount {
-            account_id: invitation.account,
-            user_id: invitation.invited_user,
-            role,
+            account_id: invitation.account.clone(),
+            user_id: invitation.invited_user.clone(),
+            role: stored.role.clone(),
+            alias: stored.alias.clone(),
         })
     }
 
@@ -1657,9 +1719,9 @@ impl AccountWrites for MemAccountWrites {
     /// `parent` back, so the in-memory map keeps only the role.
     async fn transfer_ownership(
         &mut self,
-        old_owner: UserId,
-        new_owner: UserId,
-        account: AccountId,
+        old_owner: &UserId,
+        new_owner: &UserId,
+        account: &AccountId,
     ) -> anyhow::Result<()> {
         let mut memberships = self
             .0
@@ -1668,33 +1730,36 @@ impl AccountWrites for MemAccountWrites {
             .expect("MemBackend memberships mutex poisoned");
 
         // Backstop: the outgoing Owner must still be the Owner of this account.
+        let outgoing_seat = (account.clone(), old_owner.clone());
+        let incoming_seat = (account.clone(), new_owner.clone());
+
         if !matches!(
-            memberships.get(&(account, old_owner)).map(|m| &m.role),
-            Some(Role::Owner(_))
+            memberships.get(&outgoing_seat).map(|m| &m.role),
+            Some(Role::Owner)
         ) {
             return Err(anyhow::anyhow!(
                 "user {} is not the Owner of account {}; ownership not transferred",
-                *old_owner,
-                *account
+                old_owner.as_str(),
+                account.as_str()
             ));
         }
 
         // Backstop: the incoming Owner must still be a member of this account.
-        if !memberships.contains_key(&(account, new_owner)) {
+        if !memberships.contains_key(&incoming_seat) {
             return Err(anyhow::anyhow!(
                 "user {} is not a member of account {}; ownership not transferred",
-                *new_owner,
-                *account
+                new_owner.as_str(),
+                account.as_str()
             ));
         }
 
         // Only the roles swap — each member keeps their own `listed_on_profile`
         // choice across the transfer; ownership is not a publication decision.
-        if let Some(outgoing) = memberships.get_mut(&(account, old_owner)) {
-            outgoing.role = Role::Admin(None);
+        if let Some(outgoing) = memberships.get_mut(&outgoing_seat) {
+            outgoing.role = Role::Admin;
         }
-        if let Some(incoming) = memberships.get_mut(&(account, new_owner)) {
-            incoming.role = Role::Owner(None);
+        if let Some(incoming) = memberships.get_mut(&incoming_seat) {
+            incoming.role = Role::Owner;
         }
         Ok(())
     }
@@ -1705,13 +1770,13 @@ impl AccountWrites for MemAccountWrites {
     /// treat it as absent. Memberships and invitations are left in place. Idempotent:
     /// an already-soft-deleted or absent account is a no-op. See the
     /// [`soft_delete`](AccountWrites::soft_delete) port doc.
-    async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+    async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let mut accounts = self
             .0
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
-        if let Some(stored) = accounts.get_mut(&account)
+        if let Some(stored) = accounts.get_mut(account)
             && stored.deleted_at.is_none()
         {
             let now = Utc::now();
@@ -1723,33 +1788,36 @@ impl AccountWrites for MemAccountWrites {
 
     /// Removes the account row (freeing its handle for reuse) along with every
     /// membership, invitation, and handle-change log row belonging to it, and
-    /// **severs the account's positioning rails** — the placements it held, the
-    /// current-placement pointers aimed at it, and its view grants (ZMVP-57 AC1).
-    /// This mirrors pg's delete: the membership/invitation/handle-change FKs are
-    /// removed children-first, while the positioning FKs onto `accounts` are `ON
-    /// DELETE CASCADE`. The **commissions themselves are untouched** — they are
-    /// User-owned and survive account deletion (Ownership Separation DD `29130754`);
-    /// only the account-side positioning goes. The custody keys are not modeled
-    /// here. Removing an absent account is a no-op. See the
-    /// [`hard_delete`](AccountWrites::hard_delete) port doc.
-    async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()> {
+    /// **severs the account's positioning rails** — the placements it held and the
+    /// current-placement pointers aimed at it (ZMVP-57 AC1). This mirrors pg's
+    /// delete: the membership/invitation/handle-change FKs are removed
+    /// children-first, while the positioning FKs onto `accounts` are `ON DELETE
+    /// CASCADE`. **View grants are no longer among the rails**: since the actor
+    /// re-key (DD `57081857`) a grant is issued to a User (Engineer ruling
+    /// 2026-09-04) and holds no reference to an account to sever — the pg table
+    /// dropped its foreign key for the same reason. The **commissions themselves
+    /// are untouched** — they are User-owned and survive account deletion
+    /// (Ownership Separation DD `29130754`); only the account-side positioning
+    /// goes. The custody keys are not modeled here. Removing an absent account is
+    /// a no-op. See the [`hard_delete`](AccountWrites::hard_delete) port doc.
+    async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         self.0
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned")
-            .remove(&account);
+            .remove(account);
 
         self.0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned")
-            .retain(|(member_account, _), _| *member_account != account);
+            .retain(|(member_account, _), _| member_account != account);
 
         self.0
             .invitations
             .lock()
             .expect("MemBackend invitations mutex poisoned")
-            .retain(|_, invitation| invitation.account != account);
+            .retain(|_, invitation| &invitation.account != account);
 
         // Drop this account's handle-change log rows too — the mem mirror of pg's
         // `account_handle_changes.account_id REFERENCES accounts(id) ON DELETE
@@ -1759,31 +1827,50 @@ impl AccountWrites for MemAccountWrites {
             .handle_changes
             .lock()
             .expect("MemBackend handle_changes mutex poisoned")
-            .retain(|change| change.account_id != account);
+            .retain(|change| &change.account_id != account);
 
         // Sever the account's positioning rails (the mem mirror of the ZMVP-70
         // `ON DELETE CASCADE` on each positioning FK onto `accounts`): drop every
-        // placement-log row and current-placement pointer aimed at this account, and
-        // every view grant it held. The commissions they referenced are left in place.
+        // placement-log row and current-placement pointer aimed at this account.
+        // The commissions they referenced are left in place, and so are view
+        // grants — no longer an account rail (see the doc above).
         self.0
             .placements
             .lock()
             .expect("MemBackend placements mutex poisoned")
-            .retain(|placement| placement.account_id != account);
+            .retain(|placement| &placement.account_id != account);
 
         self.0
             .current_placements
             .lock()
             .expect("MemBackend current_placements mutex poisoned")
-            .retain(|_, placement| placement.account_id != account);
-
-        self.0
-            .view_grants
-            .lock()
-            .expect("MemBackend view_grants mutex poisoned")
-            .retain(|(_, grant_account), _| *grant_account != account);
+            .retain(|_, placement| &placement.account_id != account);
 
         Ok(())
+    }
+}
+
+/// The read half of an account unit of work over this unit's **staged**
+/// snapshot: the reads see the writes issued through the same handle, which is
+/// what the pg views get from reading through their open transaction. There is
+/// no lock to take in process, so `find_for_update` is `find` — the fake models
+/// the visibility contract, not the concurrency mechanism.
+#[async_trait]
+impl AccountReads for MemAccountWrites {
+    async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
+        MemAccountStore(self.0.clone()).find(id).await
+    }
+
+    async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
+        MemAccountStore(self.0.clone()).find(id).await
+    }
+
+    async fn role_of(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        MemAccountStore(self.0.clone()).role_of(user, account).await
     }
 }
 
@@ -1835,11 +1922,16 @@ pub struct MemUnitOfWork {
 
 #[async_trait]
 impl UnitOfWork for MemUnitOfWork {
-    fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
+    /// The account repo over this unit's staged snapshot: reads see the unit's
+    /// own uncommitted writes, exactly as the pg views read through their open
+    /// transaction.
+    fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
         Box::new(MemAccountWrites(self.staged.clone()))
     }
 
-    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
+    /// The commission repo over this unit's staged snapshot — reads and writes on
+    /// the same staged state.
+    fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(MemCommissionWrites(self.staged.clone()))
     }
 
@@ -1879,15 +1971,35 @@ impl UnitOfWork for MemUnitOfWork {
     }
 }
 
+/// Rebuilds an [`Account`] from its stored parts (it isn't `Clone`) — `None`
+/// when the row is soft-deleted, which every read treats as absent (the mem
+/// mirror of the pg `deleted_at IS NULL` filter). The id is passed in because
+/// it is the map's key, and since the actor re-key (DD `57081857`) that key is
+/// the account's DID.
+fn rebuild_account(id: AccountId, stored: &StoredAccount) -> Option<Account> {
+    if stored.deleted_at.is_some() {
+        return None;
+    }
+    let account = Account {
+        id,
+        handle: stored.handle.clone(),
+        name: stored.name.clone(),
+        created_at: stored.created_at,
+        updated_at: stored.updated_at,
+        deleted_at: stored.deleted_at,
+    };
+    Some(account)
+}
+
 /// Rebuilds an [`Invitation`] from its stored parts (it isn't `Clone`), the
 /// invitation analogue of how `find` rebuilds an [`Account`].
 fn rebuild_invitation(id: InvitationId, stored: &StoredInvitation) -> Invitation {
     Invitation {
         id,
-        account: stored.account,
-        invited_user: stored.invited_user,
+        account: stored.account.clone(),
+        invited_user: stored.invited_user.clone(),
         role: stored.role.clone(),
-        inviter: stored.inviter,
+        inviter: stored.inviter.clone(),
         state: stored.state,
         created_at: stored.created_at,
         updated_at: stored.updated_at,
@@ -2090,7 +2202,7 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(first.created_at, second.created_at);
-        assert_eq!(second.did, d);
+        assert_eq!(*second.id, d);
     }
 
     // Distinct DIDs are distinct Users — recognition is keyed by DID, never shared.
@@ -2110,7 +2222,7 @@ mod tests {
         let backend = MemBackend::new();
         let provisioned = backend.provision(&did("did:plc:alice")).await.unwrap();
 
-        let found = backend.user_store().find(provisioned.id).await.unwrap();
+        let found = backend.user_store().find(&provisioned.id).await.unwrap();
 
         assert_eq!(found, Some(provisioned));
     }
@@ -2122,18 +2234,15 @@ mod tests {
         let backend = MemBackend::new();
         backend.provision(&did("did:plc:alice")).await.unwrap();
 
-        let found = backend
-            .user_store()
-            .find(UserId::new(uuid::Uuid::now_v7()))
-            .await
-            .unwrap();
+        let found = backend.user_store().find(&user_id()).await.unwrap();
 
         assert_eq!(found, None);
     }
 
     // ZMVP-123 — the mem two-step create: provisioning interns the actor_identity
-    // parent alongside the user (sharing its id, findable by DID), and a dropped unit
-    // discards BOTH, mirroring pg's shared-PK rollback.
+    // parent alongside the user (findable by the DID both are keyed by since the
+    // actor re-key, DD 57081857), and a dropped unit discards BOTH, mirroring pg's
+    // rollback of the projection and its parent together.
     #[tokio::test]
     async fn provision_interns_the_identity_and_rolls_back_together() {
         let backend = MemBackend::new();
@@ -2148,7 +2257,11 @@ mod tests {
             .await
             .unwrap()
             .expect("the identity was interned alongside the user");
-        assert_eq!(*identity.id, *user.id, "the user shares its identity's id");
+        assert_eq!(
+            identity.did.as_ref(),
+            Some(&*user.id),
+            "the user and its identity are keyed by the same DID"
+        );
         assert_eq!(identity.kind, ActorKind::User);
 
         // A dropped unit discards both the user projection and its interned identity.
@@ -2168,8 +2281,15 @@ mod tests {
         );
     }
 
+    /// A fresh, unique synthetic actor DID — the only way to mint an id since the
+    /// actor re-key (DD `57081857`) made the DID the key. The UUID is only a
+    /// uniqueness source here; nothing reads it back.
+    fn mint_did() -> Did {
+        Did::new(format!("did:plc:mem{}", uuid::Uuid::now_v7().simple()))
+    }
+
     fn user_id() -> UserId {
-        UserId::new(uuid::Uuid::now_v7())
+        UserId::new(mint_did())
     }
 
     // Builds a live account directly. Repo tests exercise storage, so they don't go
@@ -2184,8 +2304,7 @@ mod tests {
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
         Account {
-            id: AccountId::new(uuid::Uuid::now_v7()),
-            did: did(did_s),
+            id: AccountId::new(did(did_s)),
             handle: format!("{label}.example.com").parse::<Handle>().unwrap(),
             name: "Test Studio".parse::<AccountName>().unwrap(),
             created_at: now,
@@ -2205,21 +2324,20 @@ mod tests {
         let accounts = backend.account_store();
 
         let account = live_account("did:plc:acct");
-        let (id, account_did, account_name) =
-            (account.id, account.did.clone(), account.name.clone());
+        let (id, account_name) = (account.id.clone(), account.name.clone());
         let owner = UserAccount {
             user_id: user_id(),
-            account_id: account.id,
-            role: Role::Owner(None),
+            account_id: account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
 
         let mut uow = database.begin().await.unwrap();
         uow.accounts().create(&account, &owner).await.unwrap();
         uow.commit().await.unwrap();
 
-        let found = accounts.find(id).await.unwrap().expect("account present");
+        let found = accounts.find(&id).await.unwrap().expect("account present");
         assert_eq!(found.id, id);
-        assert_eq!(found.did, account_did);
         assert_eq!(found.name, account_name); // the name round-trips
         assert_eq!(found.deleted_at, None);
     }
@@ -2238,12 +2356,13 @@ mod tests {
         let accounts = backend.account_store();
 
         let account = live_account("did:plc:rollback");
-        let account_id = account.id;
+        let account_id = account.id.clone();
         let owner_id = user_id();
         let owner = UserAccount {
-            user_id: owner_id,
-            account_id: account.id,
-            role: Role::Owner(None),
+            user_id: owner_id.clone(),
+            account_id: account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
 
         // Open the unit, stage the (two-write) create, then drop WITHOUT committing.
@@ -2254,11 +2373,11 @@ mod tests {
         }
 
         assert!(
-            accounts.find(account_id).await.unwrap().is_none(),
+            accounts.find(&account_id).await.unwrap().is_none(),
             "a dropped unit of work persists no account row"
         );
         assert_eq!(
-            accounts.role_of(owner_id, account_id).await.unwrap(),
+            accounts.role_of(&owner_id, &account_id).await.unwrap(),
             None,
             "...and no membership either — both staged writes rolled back together"
         );
@@ -2275,24 +2394,25 @@ mod tests {
         let accounts = backend.account_store();
 
         let account = live_account("did:plc:isolated");
-        let account_id = account.id;
+        let account_id = account.id.clone();
         let owner = UserAccount {
             user_id: user_id(),
-            account_id: account.id,
-            role: Role::Owner(None),
+            account_id: account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
 
         let mut uow = database.begin().await.unwrap();
         uow.accounts().create(&account, &owner).await.unwrap();
         // Still open, not committed: the shared read store must not see it yet.
         assert!(
-            accounts.find(account_id).await.unwrap().is_none(),
+            accounts.find(&account_id).await.unwrap().is_none(),
             "an open unit's staged write is invisible to a shared read"
         );
 
         uow.commit().await.unwrap();
         assert!(
-            accounts.find(account_id).await.unwrap().is_some(),
+            accounts.find(&account_id).await.unwrap().is_some(),
             "the write becomes visible once the unit commits"
         );
     }
@@ -2305,16 +2425,17 @@ mod tests {
         let account = live_account("did:plc:acct");
         let owner_id = user_id();
         let owner = UserAccount {
-            user_id: owner_id,
-            account_id: account.id,
-            role: Role::Owner(None),
+            user_id: owner_id.clone(),
+            account_id: account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
-        let account_id = account.id;
+        let account_id = account.id.clone();
 
         backend.create(&account, &owner).await.unwrap();
 
-        let role = backend.role_of(owner_id, account_id).await.unwrap();
-        assert_eq!(role, Some(Role::Owner(None)));
+        let role = backend.role_of(&owner_id, &account_id).await.unwrap();
+        assert_eq!(role, Some(Role::Owner));
     }
 
     // An account we never founded resolves to nothing.
@@ -2324,13 +2445,14 @@ mod tests {
         let account = live_account("did:plc:acct");
         let owner = UserAccount {
             user_id: user_id(),
-            account_id: account.id,
-            role: Role::Owner(None),
+            account_id: account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
         let other = live_account("did:plc:other");
-        let found = backend.find(other.id).await.unwrap();
+        let found = backend.find(&other.id).await.unwrap();
 
         assert_eq!(found.map(|a| a.id), None);
     }
@@ -2345,19 +2467,20 @@ mod tests {
         let store = backend.account_store();
 
         let account = live_account("did:plc:memchg");
-        let (old, account_id, account_did) =
-            (account.handle.clone(), account.id, account.did.clone());
+        let (old, account_id) = (account.handle.clone(), account.id.clone());
+        let account_did = (*account_id).clone();
         let owner = UserAccount {
             user_id: user_id(),
-            account_id,
-            role: Role::Owner(None),
+            account_id: account_id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
         let new = "memchg-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
-            .change_handle(account_id, &old, &new, Utc::now())
+            .change_handle(&account_id, &old, &new, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
@@ -2373,7 +2496,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .count_handle_changes_since(account_id, Utc::now() - chrono::Duration::minutes(5))
+                .count_handle_changes_since(&account_id, Utc::now() - chrono::Duration::minutes(5))
                 .await
                 .unwrap(),
             1,
@@ -2390,34 +2513,35 @@ mod tests {
         let store = backend.account_store();
 
         let account = live_account("did:plc:memquar");
-        let (old, account_id) = (account.handle.clone(), account.id);
+        let (old, account_id) = (account.handle.clone(), account.id.clone());
         let owner = UserAccount {
             user_id: user_id(),
-            account_id,
-            role: Role::Owner(None),
+            account_id: account_id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
         let new = "memquar-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
-            .change_handle(account_id, &old, &new, Utc::now())
+            .change_handle(&account_id, &old, &new, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
 
         let window = Utc::now() - chrono::Duration::days(30);
-        let stranger = AccountId::new(uuid::Uuid::now_v7());
+        let stranger = live_account("did:plc:memquar-stranger").id;
         assert!(
             store
-                .handle_reserved_for_other(&old, Some(stranger), window)
+                .handle_reserved_for_other(&old, Some(&stranger), window)
                 .await
                 .unwrap(),
             "the vacated handle is reserved against another account"
         );
         assert!(
             !store
-                .handle_reserved_for_other(&old, Some(account_id), window)
+                .handle_reserved_for_other(&old, Some(&account_id), window)
                 .await
                 .unwrap(),
             "the leaving account may reclaim its own vacated handle"
@@ -2468,7 +2592,7 @@ mod tests {
     }
 
     fn account_id() -> AccountId {
-        AccountId::new(uuid::Uuid::now_v7())
+        AccountId::new(mint_did())
     }
 
     // AC3 (store layer) — a freshly issued pending invitation round-trips: it is the
@@ -2477,20 +2601,25 @@ mod tests {
     async fn create_then_find_pending_returns_the_invitation() {
         let backend = MemBackend::new();
         let (account, invited, inviter) = (account_id(), user_id(), user_id());
-        let invitation =
-            Invitation::issue(account, invited, Role::Admin(None), inviter, Utc::now());
+        let invitation = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Admin,
+            inviter.clone(),
+            Utc::now(),
+        );
         let id = invitation.id;
 
         backend.create_invitation(&invitation).await.unwrap();
 
         let found = backend
             .account_store()
-            .find_pending_invitation(account, invited)
+            .find_pending_invitation(&account, &invited)
             .await
             .unwrap()
             .expect("the pending invitation is found");
         assert_eq!(found.id, id);
-        assert_eq!(found.role, Role::Admin(None));
+        assert_eq!(found.role, Role::Admin);
         assert_eq!(found.inviter, inviter);
         assert_eq!(found.state, InvitationState::Pending);
     }
@@ -2501,16 +2630,36 @@ mod tests {
     async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
         let backend = MemBackend::new();
         let (account, invited) = (account_id(), user_id());
-        let first = Invitation::issue(account, invited, Role::Member(None), user_id(), Utc::now());
-        let second = Invitation::issue(account, invited, Role::Admin(None), user_id(), Utc::now());
+        let first = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Member,
+            user_id(),
+            Utc::now(),
+        );
+        let second = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Admin,
+            user_id(),
+            Utc::now(),
+        );
 
         backend.create_invitation(&first).await.unwrap();
-        backend.create_invitation(&second).await.unwrap();
+        let standing = backend.create_invitation(&second).await.unwrap();
+
+        // The dropped duplicate hands back the offer that actually stands, not the
+        // one it proposed — the caller is never told its no-op took effect.
+        assert_eq!(
+            (standing.id, standing.role.clone()),
+            (first.id, Role::Member),
+            "the dropped duplicate returns the pending offer already on file"
+        );
 
         // The original survives; the duplicate was a no-op (not a second row).
         let store = backend.account_store();
         let found = store
-            .find_pending_invitation(account, invited)
+            .find_pending_invitation(&account, &invited)
             .await
             .unwrap()
             .expect("a pending invitation remains");
@@ -2519,7 +2668,7 @@ mod tests {
             "the first pending offer is the one kept"
         );
         assert!(
-            store.find_invitation(second.id).await.unwrap().is_none(),
+            store.find_invitation(&second.id).await.unwrap().is_none(),
             "the duplicate issue stored nothing"
         );
     }
@@ -2533,23 +2682,28 @@ mod tests {
         let database = backend.database();
         let store = backend.account_store();
         let (account, invited) = (account_id(), user_id());
-        let invitation =
-            Invitation::issue(account, invited, Role::Member(None), user_id(), Utc::now());
+        let invitation = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Member,
+            user_id(),
+            Utc::now(),
+        );
         let id = invitation.id;
         backend.create_invitation(&invitation).await.unwrap();
 
         let mut uow = database.begin().await.unwrap();
-        uow.accounts().revoke_invitation(id).await.unwrap();
+        uow.accounts().revoke_invitation(&id).await.unwrap();
         uow.commit().await.unwrap();
 
         assert_eq!(
-            store.find_invitation(id).await.unwrap().map(|i| i.state),
+            store.find_invitation(&id).await.unwrap().map(|i| i.state),
             Some(InvitationState::Revoked),
             "the invitation reads back revoked"
         );
         assert!(
             store
-                .find_pending_invitation(account, invited)
+                .find_pending_invitation(&account, &invited)
                 .await
                 .unwrap()
                 .is_none(),
@@ -2557,12 +2711,17 @@ mod tests {
         );
 
         // With the prior offer revoked, a fresh invitation to the same pair is seated.
-        let reissued =
-            Invitation::issue(account, invited, Role::Admin(None), user_id(), Utc::now());
+        let reissued = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Admin,
+            user_id(),
+            Utc::now(),
+        );
         backend.create_invitation(&reissued).await.unwrap();
         assert_eq!(
             store
-                .find_pending_invitation(account, invited)
+                .find_pending_invitation(&account, &invited)
                 .await
                 .unwrap()
                 .map(|i| i.id),
@@ -2577,7 +2736,7 @@ mod tests {
         let backend = MemBackend::new();
         let found = backend
             .account_store()
-            .find_invitation(InvitationId::new(uuid::Uuid::now_v7()))
+            .find_invitation(&InvitationId::new(uuid::Uuid::now_v7()))
             .await
             .unwrap();
         assert!(found.is_none());
@@ -2596,16 +2755,22 @@ mod tests {
         // The invitee is granted Admin directly, bypassing any invitation.
         backend
             .grant_role(&UserAccount {
-                account_id: account,
-                user_id: invitee,
-                role: Role::Admin(None),
+                account_id: account.clone(),
+                user_id: invitee.clone(),
+                role: Role::Admin,
+                alias: None,
             })
             .await
             .unwrap();
 
         // A stale pending invitation (issued before the grant) offers only Member.
-        let invitation =
-            Invitation::issue(account, invitee, Role::Member(None), inviter, Utc::now());
+        let invitation = Invitation::issue(
+            account.clone(),
+            invitee.clone(),
+            Role::Member,
+            inviter,
+            Utc::now(),
+        );
         backend.create_invitation(&invitation).await.unwrap();
 
         let database = backend.database();
@@ -2619,12 +2784,12 @@ mod tests {
 
         assert_eq!(
             seated.role,
-            Role::Admin(None),
+            Role::Admin,
             "the returned membership reflects the original grant, not the invitation's role"
         );
         assert_eq!(
-            backend.role_of(invitee, account).await.unwrap(),
-            Some(Role::Admin(None)),
+            backend.role_of(&invitee, &account).await.unwrap(),
+            Some(Role::Admin),
             "the persisted membership still holds the original grant"
         );
     }
@@ -2640,18 +2805,19 @@ mod tests {
         let store = backend.account_store();
 
         let account = live_account("did:plc:hdchangelog");
-        let (old, account_id) = (account.handle.clone(), account.id);
+        let (old, account_id) = (account.handle.clone(), account.id.clone());
         let owner = UserAccount {
             user_id: user_id(),
-            account_id,
-            role: Role::Owner(None),
+            account_id: account_id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
         let new = "hdchangelog-new.example.com".parse::<Handle>().unwrap();
         let mut uow = database.begin().await.unwrap();
         uow.accounts()
-            .change_handle(account_id, &old, &new, Utc::now())
+            .change_handle(&account_id, &old, &new, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
@@ -2659,7 +2825,7 @@ mod tests {
         let since = Utc::now() - chrono::Duration::minutes(5);
         assert_eq!(
             store
-                .count_handle_changes_since(account_id, since)
+                .count_handle_changes_since(&account_id, since)
                 .await
                 .unwrap(),
             1,
@@ -2667,12 +2833,12 @@ mod tests {
         );
 
         let mut uow = database.begin().await.unwrap();
-        uow.accounts().hard_delete(account_id).await.unwrap();
+        uow.accounts().hard_delete(&account_id).await.unwrap();
         uow.commit().await.unwrap();
 
         assert_eq!(
             store
-                .count_handle_changes_since(account_id, since)
+                .count_handle_changes_since(&account_id, since)
                 .await
                 .unwrap(),
             0,
@@ -2743,12 +2909,13 @@ mod tests {
         let database = backend.database();
 
         let account = live_account("did:plc:merge-update");
-        let account_id = account.id;
+        let account_id = account.id.clone();
         let old_handle = account.handle.clone();
         let owner = UserAccount {
             user_id: user_id(),
-            account_id,
-            role: Role::Owner(None),
+            account_id: account_id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
@@ -2760,7 +2927,7 @@ mod tests {
         let new_handle = "merge-update-new.example.com".parse::<Handle>().unwrap();
         unit_b
             .accounts()
-            .change_handle(account_id, &old_handle, &new_handle, Utc::now())
+            .change_handle(&account_id, &old_handle, &new_handle, Utc::now())
             .await
             .unwrap();
         unit_b.commit().await.unwrap();
@@ -2768,8 +2935,9 @@ mod tests {
         let other_account = live_account("did:plc:merge-update-other");
         let other_owner = UserAccount {
             user_id: user_id(),
-            account_id: other_account.id,
-            role: Role::Owner(None),
+            account_id: other_account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         unit_a
             .accounts()
@@ -2779,7 +2947,7 @@ mod tests {
         unit_a.commit().await.unwrap();
 
         let found_account = backend
-            .find(account_id)
+            .find(&account_id)
             .await
             .unwrap()
             .expect("account still present");
@@ -2788,7 +2956,7 @@ mod tests {
             "unit_b's committed update survives unit_a's later, disjoint commit"
         );
         assert!(
-            backend.find(other_account.id).await.unwrap().is_some(),
+            backend.find(&other_account.id).await.unwrap().is_some(),
             "unit_a's own disjoint write is present too"
         );
     }
@@ -2803,11 +2971,12 @@ mod tests {
         let database = backend.database();
 
         let account = live_account("did:plc:merge-delete");
-        let account_id = account.id;
+        let account_id = account.id.clone();
         let owner = UserAccount {
             user_id: user_id(),
-            account_id,
-            role: Role::Owner(None),
+            account_id: account_id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         backend.create(&account, &owner).await.unwrap();
 
@@ -2816,14 +2985,15 @@ mod tests {
         let mut unit_a = database.begin().await.unwrap();
         let mut unit_b = database.begin().await.unwrap();
 
-        unit_b.accounts().hard_delete(account_id).await.unwrap();
+        unit_b.accounts().hard_delete(&account_id).await.unwrap();
         unit_b.commit().await.unwrap();
 
         let other_account = live_account("did:plc:merge-delete-other");
         let other_owner = UserAccount {
             user_id: user_id(),
-            account_id: other_account.id,
-            role: Role::Owner(None),
+            account_id: other_account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         unit_a
             .accounts()
@@ -2833,11 +3003,11 @@ mod tests {
         unit_a.commit().await.unwrap();
 
         assert!(
-            backend.find(account_id).await.unwrap().is_none(),
+            backend.find(&account_id).await.unwrap().is_none(),
             "unit_b's committed delete stays deleted after unit_a's later, disjoint commit"
         );
         assert!(
-            backend.find(other_account.id).await.unwrap().is_some(),
+            backend.find(&other_account.id).await.unwrap().is_some(),
             "unit_a's own disjoint write is present too"
         );
     }

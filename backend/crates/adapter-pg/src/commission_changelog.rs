@@ -13,6 +13,7 @@
 use domain::{
     elements::{
         commission::{ChangelogEntry, ChangelogEntryKind, CommissionId, NewChangelogEntry},
+        did::Did,
         user::UserId,
     },
     ports::{ChangelogStore, ChangelogWrites},
@@ -44,7 +45,7 @@ impl ChangelogWrites for PgChangelogWrites<'_> {
             &mut *self.conn,
             *entry.commission_id,
             entry.kind.as_str(),
-            entry.actor_id.as_deref().copied(),
+            entry.actor_id.as_ref().map(|actor| actor.as_str()),
             &entry.payload,
             entry.note.as_deref(),
             entry.created_at,
@@ -76,8 +77,8 @@ impl ChangelogStore for PgChangelogStore {
     /// validated back through [`ChangelogEntryKind::parse`]; an unknown token
     /// means row tampering or a missed migration and surfaces as an error, never
     /// a silent skip.
-    async fn entries(&self, commission: CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
-        let rows = sql::entries(&self.pool, *commission).await?;
+    async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
+        let rows = sql::entries(&self.pool, **commission).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -90,9 +91,9 @@ impl ChangelogStore for PgChangelogStore {
                 })?;
                 Ok(ChangelogEntry {
                     seq: row.seq,
-                    commission_id: commission,
+                    commission_id: *commission,
                     kind,
-                    actor_id: row.actor_id.map(UserId::new),
+                    actor_id: row.actor_id.map(|did| UserId::new(Did::new(did))),
                     payload: row.payload,
                     note: row.note,
                     created_at: row.created_at,

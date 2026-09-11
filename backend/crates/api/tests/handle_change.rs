@@ -113,12 +113,14 @@ async fn owner_changes_handle_and_resolution_follows() {
     let id = found_account(&client, &base, "Rename Studio", "before.zurfur.app").await;
 
     // The account's DID, captured before the change so we can assert resolution moves.
-    let did = backend
-        .find(AccountId::new(Uuid::parse_str(&id).unwrap()))
+    // `id` *is* the account's DID (AccountId wraps Did), so read it back through the
+    // found account rather than a second, separate field.
+    let account = backend
+        .find(&AccountId::new(Did::new(id.clone())))
         .await
         .expect("find")
-        .expect("account present")
-        .did;
+        .expect("account present");
+    let did = (*account.id).clone();
 
     let res = change(&client, &base, &id, "after.zurfur.app").await;
     assert_eq!(res.status(), 200, "the Owner's change succeeds");
@@ -225,8 +227,9 @@ async fn only_the_owner_may_change_the_handle() {
     backend
         .grant_role(&UserAccount {
             user_id: me.id,
-            account_id: account.id,
-            role: Role::Member(None),
+            account_id: account.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat me as a member");

@@ -294,7 +294,11 @@ async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
         .expect("find me")
         .expect("provisioned");
     let file_entry = &log[1];
-    assert_eq!(file_entry.actor_id, Some(me.id), "the uploader authored it");
+    assert_eq!(
+        file_entry.actor_id,
+        Some(me.id.clone()),
+        "the uploader authored it"
+    );
     assert_eq!(
         file_entry.payload["file_id"], file_id,
         "the file entry names its file"
