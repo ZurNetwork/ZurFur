@@ -230,6 +230,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "domain",
+ "serde_json",
  "shared",
  "test-support",
  "tokio",

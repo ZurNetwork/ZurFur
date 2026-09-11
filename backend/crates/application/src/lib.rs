@@ -46,10 +46,13 @@
 //! the drivers hand in; this crate never sees it. `domain` never depends on
 //! this crate (`tests/dep_guard.rs`).
 //!
-//! Modules follow the domain's entities (work by module): [`user`], [`account`]
-//! first; others follow as their handlers move.
+//! Modules follow the domain's entities (work by module): [`user`], [`account`],
+//! [`commission`] first; others follow as their handlers move. A use case need
+//! not have an actor — [`commission::sweep_deadlines`] is the system acting on
+//! an injected `now`, its timer left to the driver.
 
 pub mod account;
+pub mod commission;
 mod transaction;
 pub mod user;
 
