@@ -1,11 +1,12 @@
 use domain::elements::{
-    account::AccountId,
     user::UserId,
     workflow::{ColumnId, LexOrdering, WorkflowId},
 };
 
 use crate::{
-    account::{AccountEntity, AccountError, AccountResult, workflow::column::Columns},
+    account::{
+        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+    },
     ports::WithPorts,
 };
 
@@ -14,7 +15,6 @@ pub struct Command {
     pub actor_id: UserId,
     pub column_id: ColumnId,
     pub workflow_id: WorkflowId,
-    pub account_id: AccountId,
     pub to_index: usize,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,25 +24,29 @@ impl Columns<'_> {
     pub async fn reposition(&self, cmd: Command) -> AccountResult<Output> {
         let ports = self.ports();
         let Command {
-            account_id,
             actor_id,
             column_id,
             workflow_id,
             to_index,
         } = cmd;
 
-        ports
-            .accounts
-            .role_of(&actor_id, &account_id)
-            .await?
-            .filter(|role| role.is_administrative())
-            .ok_or(AccountError::IncorrectRole)?;
-
+        // The board names its own account — one read, no caller-supplied
+        // account to reconcile against it.
         let mut workflow = ports
             .workflows
             .find(&workflow_id)
             .await?
             .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
+
+        require_live_account(ports, &workflow.account_id).await?;
+
+        ports
+            .accounts
+            .role_of(&actor_id, &workflow.account_id)
+            .await?
+            // Only an administrative role may reshape a board.
+            .filter(|role| role.is_administrative())
+            .ok_or(AccountError::IncorrectRole)?;
 
         let from_index = workflow
             .iter()
@@ -56,6 +60,6 @@ impl Columns<'_> {
         let mut uow = ports.database.begin().await?;
         uow.workflows().set_indexes(&workflow).await?;
         uow.commit().await?;
-        todo!()
+        Ok(Output)
     }
 }

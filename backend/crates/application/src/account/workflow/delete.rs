@@ -1,7 +1,7 @@
-use domain::elements::{role::Role, user::UserId, workflow::WorkflowId};
+use domain::elements::{user::UserId, workflow::WorkflowId};
 
 use crate::{
-    account::{AccountError, AccountResult, workflow::Workflows},
+    account::{AccountError, AccountResult, require_live_account, workflow::Workflows},
     ports::WithPorts,
 };
 
@@ -21,12 +21,14 @@ impl Workflows<'_> {
 
         let account_id = ports.workflows.owning_account_of(&workflow_id).await?;
 
+        require_live_account(ports, &account_id).await?;
+
         ports
             .accounts
             .role_of(&actor_id, &account_id)
             .await?
-            // Only administrative roles can do
-            .filter(|role| !matches!(role, Role::Owner | Role::Admin))
+            // Only an administrative role may delete a board.
+            .filter(|role| role.is_administrative())
             .ok_or(AccountError::IncorrectRole)?;
 
         let mut uow = self.ports().database.begin().await?;

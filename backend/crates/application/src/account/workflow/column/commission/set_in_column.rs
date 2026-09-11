@@ -6,7 +6,7 @@ use domain::elements::{
 
 use crate::{
     Ports,
-    account::{AccountEntity, AccountError, AccountResult},
+    account::{AccountEntity, AccountError, AccountResult, require_live_account},
     commission::Commissions,
 };
 
@@ -61,6 +61,8 @@ impl Commissions<'_> {
             .owning_account_of(&column.workflow_id)
             .await?;
 
+        require_live_account(ports, &account_id).await?;
+
         // Any member may put a card on their account's board.
         ports
             .accounts
@@ -92,7 +94,9 @@ impl Commissions<'_> {
             WorkflowError::DuplicateCommission | WorkflowError::DuplicateColumnName => {
                 AccountError::DuplicateName
             }
-            _ => AccountError::Infrastructure(anyhow::anyhow!("Something went wrong")),
+            other => {
+                AccountError::Infrastructure(anyhow::anyhow!("the board refused the card: {other}"))
+            }
         })?;
         let mut uow = ports.database.begin().await?;
         uow.columns().set_commissions(&column).await?;

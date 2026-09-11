@@ -7,7 +7,9 @@ use domain::elements::{
 };
 
 use crate::{
-    account::{AccountEntity, AccountError, AccountResult, workflow::column::Columns},
+    account::{
+        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+    },
     ports::WithPorts,
 };
 
@@ -33,18 +35,17 @@ impl Columns<'_> {
             position,
         } = cmd;
 
+        // The board is fetched first because it is how the owning account is
+        // learned — but nothing about its CONTENTS may be inspected before the
+        // actor's standing is settled, or a non-member could tell an existing
+        // board (and a name already on it) from an absent one.
         let mut workflow = ports
             .workflows
             .find(&workflow_id)
             .await?
             .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
-        if workflow.iter().any(|column| column.name == column_name) {
-            return Err(AccountError::DuplicateName);
-        }
 
-        if workflow.len() + 1 > MAX_COLUMNS_PER_WORKFLOW {
-            return Err(AccountError::IncorrectNumberOfColumns);
-        }
+        require_live_account(ports, &workflow.account_id).await?;
 
         ports
             .accounts
@@ -53,12 +54,22 @@ impl Columns<'_> {
             .filter(|role| matches!(role, Role::Owner | Role::Admin))
             .ok_or(AccountError::IncorrectRole)?;
 
+        if workflow.iter().any(|column| column.name == column_name) {
+            return Err(AccountError::DuplicateName);
+        }
+
+        if workflow.len() + 1 > MAX_COLUMNS_PER_WORKFLOW {
+            return Err(AccountError::IncorrectNumberOfColumns);
+        }
+
         let new_column = workflow.new_column(column_name, workflow.visibility.clone());
         workflow
             .insert(usize::from(position), new_column)
             .map_err(|e| match e {
                 WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
-                _ => AccountError::Infrastructure(anyhow::anyhow!("Something went wrong")),
+                other => AccountError::Infrastructure(anyhow::anyhow!(
+                    "the board refused the column: {other}"
+                )),
             })?;
 
         let mut uow = ports.database.begin().await?;
