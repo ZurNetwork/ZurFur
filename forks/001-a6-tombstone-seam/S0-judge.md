@@ -1,0 +1,11 @@
+## S0 — Judge consolidation (Claude, fork 001 is odd → Claude judges; Claude did not debate)
+
+Seat verdicts agree on 1, 2, 4–9, 12–14 (CONFIRMED by both). Three claims needed resolution:
+
+- **Claim 3 (no outbox anywhere in `crates/`)** — both seats UNVERIFIABLE (repo-wide fact not in the context block). Resolved by the orchestrator's repo access: `grep -rni outbox crates/` at c6c7514a + working copy returns only the two doc comments this fork itself introduced. **CONFIRMED.**
+- **Claim 11 (`facts::exist` stubbed `has_facts: false`)** — both seats UNVERIFIABLE. Resolved by reading `application/src/account/facts/exist.rs:13-15`: `Ok(Output { has_facts: false })`. **CONFIRMED.**
+- **Claim 10 (adapter not idempotent after success; identical-CID replay "safe")** — Gemini CONFIRMED whole; GPT CONFIRMED the tombstone-of-a-tombstone half and marked the "identical-CID replay is safe" half UNVERIFIABLE. Resolved by fetching the PLC server's validation source (did-method-plc `packages/lib/src/data.ts`, `assureValidNextOp`): `if (check.is(lastOp.operation, t.def.tombstone)) throw new MisorderedOperationError()` — **any** operation submitted after an accepted tombstone is rejected, and no CID-dedupe exists before that check. So the orchestrator's correction was itself half wrong: **a byte-identical replay after the directory accepted the tombstone is also rejected.** Corrected claim 10 for all later phases: *`RealDidMinter::tombstone` is never safely re-callable once the directory has accepted a tombstone — neither a re-signed op (chains onto the tombstone) nor the identical op (Misordered) is accepted. Idempotency must be established locally: check the own op log for an existing `plc_tombstone`, and/or read the directory's log (`GET /{did}/log/last`) and treat "already tombstoned" as success.* GPT's caution stands; Gemini's S2 concession ("the PLC directory will reject the exact duplicate") is consistent with the corrected form.
+
+Struck / may not be argued from in original form: claim 10's "safe replay" sentence.
+
+Runner notes: the skill's Gemini id `gemini-3.1-pro` does not exist on the API; `gemini-3.1-pro-preview` was used. GPT ran on the Responses API with `web_search` (reasoning tokens exhausted the first 2,000-token cap; the API budget was raised, the 2,000-token *output* instruction kept). Grok and Sonar seats absent (no keys).
