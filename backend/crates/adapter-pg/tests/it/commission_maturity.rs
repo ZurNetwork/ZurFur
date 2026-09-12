@@ -1,5 +1,5 @@
-//! The commission maturity posture over PostgreSQL (ZMVP-31; Maturity
-//! Vocabulary DD `29982722`), against a throwaway container: the nullable
+//! The commission maturity posture over PostgreSQL, against a throwaway
+//! container: the nullable
 //! `maturity` + `graphic` envelope column pair starts NULL (a commission is
 //! born unrated), `set_maturity` writes both halves on the open unit of work,
 //! `find` re-validates them through the domain gates, and the schema's

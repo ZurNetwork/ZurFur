@@ -1,4 +1,4 @@
-//! ZMVP-12 criterion 1: a signed-in user is still signed in after a server
+//! A signed-in user is still signed in after a server
 //! restart. Persistence is the whole point, so this test wires the session layer
 //! to the durable `PgSessionStore` (not `MemoryStore`) over a real PostgreSQL
 //! container — the session row must outlive the process. The PDS and the user

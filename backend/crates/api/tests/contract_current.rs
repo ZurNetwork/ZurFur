@@ -1,4 +1,4 @@
-//! The contract-drift gate (DD 40992770 decision 11), mirroring
+//! The contract-drift gate, mirroring
 //! `adapter-pg`'s `codegen_current`: regenerate the contract module into a
 //! temp dir with the SAME generation body `just gen-contract` uses, and diff
 //! it against the committed `src/generated/`. A corpus edit without a

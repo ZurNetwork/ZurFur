@@ -1,7 +1,6 @@
 /**
  * Pins the `redirect: 'manual'` contract `liveStartSignin`/`liveSignout`
- * depend on (GitHub #154, follow-up from the ZMVP-151 ship-gates review):
- * undici (Node's `fetch`) answers a `redirect: 'manual'` request with the
+ * depend on: undici (Node's `fetch`) answers a `redirect: 'manual'` request with the
  * REAL 303 status and readable `Location` / `Set-Cookie` headers — a
  * browser `fetch` would instead see an opaque status-0 redirect with empty
  * headers, silently breaking signin (ContractViolation) and logout

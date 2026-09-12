@@ -1,12 +1,12 @@
 /**
- * The shared vocabulary of the backend seam. Since DD 39944194 the actual
+ * The shared vocabulary of the backend seam. The actual
  * calls live server-side behind the `ZurfurApi` port
  * ({@link import('../server/api/zurfur-api')}); what remains here is the
  * client-safe surface both sides of the split share.
  */
 
 /** The prefix the origin split routes to axum — now carrying the PATH-MAJOR
- * (`/api/v1`, DD 40992770: the major is bound to the proto package version).
+ * (`/api/v1`: the major is bound to the API contract's package version).
  * Kept in lockstep with the proxy seam and the Caddyfile. */
 export const API_PREFIX = '/api/v1';
 

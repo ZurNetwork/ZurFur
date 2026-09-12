@@ -1,4 +1,4 @@
-//! `MemPublicRecords` conformance + mem-specific fidelity (ZMVP-105).
+//! `MemPublicRecords` conformance + mem-specific fidelity.
 //!
 //! The shared suite ([`test_support::contract`]) is the same body the real
 //! atproto adapter runs; the extra tests here pin the mem fake's own fidelity

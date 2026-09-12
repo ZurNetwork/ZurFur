@@ -1,6 +1,7 @@
 //! `POST /commissions/{id}/elements` and
 //! `DELETE /commissions/{id}/elements/{element}` — the owner composes the
-//! commission (DD 45514754). ⚠️ The tab id has no read route yet.
+//! commission out of flat typed elements placed into declared surfaces and
+//! tabs. ⚠️ The tab id has no read route yet.
 
 use axum::{
     Json,

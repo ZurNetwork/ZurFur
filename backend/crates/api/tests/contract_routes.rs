@@ -1,4 +1,4 @@
-//! The router-vs-contract weld (DD 40992770 decision 12).
+//! The router-vs-contract weld.
 //!
 //! `google.api.http` annotations in `contract/zurfur/api/v1/*.proto` *declare*
 //! each endpoint's path and verb; nothing else connects that declaration to
@@ -7,9 +7,9 @@
 //! served, at the declared verb, under the declared path-major.
 //!
 //! **Text-level by design.** The `.proto` files are parsed textually for the
-//! HttpRule options. ZMVP-160's prost adoption deliberately did NOT upgrade
-//! this: the generated code carries no service machinery at all (`NoServices`,
-//! DD 40992770 decision 3), so there is no compiled descriptor at test time —
+//! HttpRule options. The prost adoption deliberately did NOT upgrade
+//! this: the generated code carries no service machinery at all (`NoServices`),
+//! so there is no compiled descriptor at test time —
 //! and compiling one here (protox) would add machinery for route metadata
 //! only. The assertion's shape (every declared route served, under the
 //! path-major) is the load-bearing part; the parse is the lightest tool that

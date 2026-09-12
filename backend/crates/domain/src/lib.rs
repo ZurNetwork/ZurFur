@@ -1,5 +1,5 @@
 //! Zurfur's pure domain core — the entities, value objects and ports of the
-//! art-commission platform, with no I/O of its own. (DESIGN 11763713)
+//! art-commission platform, with no I/O of its own.
 //!
 //! [`elements`] holds the nouns, [`ports`] the role-named traits the adapters
 //! implement, [`datetime`] the one clock type, and [`string_builder`] the shared

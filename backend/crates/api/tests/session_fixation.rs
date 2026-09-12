@@ -1,4 +1,4 @@
-//! ZMVP-24: signing in rotates the session id (session-fixation hardening).
+//! Signing in rotates the session id (session-fixation hardening).
 //!
 //! A session id that already exists before the privilege change must not survive
 //! it: `Session::cycle_id()` mints a fresh id on a successful sign-in while

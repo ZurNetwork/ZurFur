@@ -1,4 +1,4 @@
-//! ZMVP-21: a member leaves their own account (`DELETE /accounts/{id}/members/me`).
+//! A member leaves their own account (`DELETE /accounts/{id}/members/me`).
 //! Covers the handler-side preconditions (Owner can't leave → 409, a non-member →
 //! 404) and the happy path (a member leaves → 204, and is no longer a member). The
 //! role-tree re-homing and invitation revocation are the store's job and are proven

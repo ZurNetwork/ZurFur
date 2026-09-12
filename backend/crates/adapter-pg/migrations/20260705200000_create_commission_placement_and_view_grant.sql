@@ -1,23 +1,13 @@
--- Commission positioning (ZMVP-70; Ownership Separation DD DESIGN/29130754): the
--- two account-facing rails that replaced the deleted managing-account concept.
--- Users own commissions; accounts own positioning, and NEITHER rail confers any
--- in-commission authority (DD Decision 8, the environmental rule). Placement is
--- account-side, the view grant is a commission-side key — they NEVER share a
--- table (Decision 6). Both are commission-owned bookkeeping, NOT facts (Deletion
--- DD 3014657): they cascade away with the commission (registered in
--- COMMISSION_NON_FACT_TABLES), so a hard-delete (ZMVP-66) reaps them, never blocks
--- on them.
---
--- Every account FK is ON DELETE CASCADE as well: a placement/grant references a
--- LIVE account, so account hard-delete (ZMVP-34's explicit ordered child deletes)
--- would FK-violate on these new tables without it. Cascading keeps that path
--- sound AND pre-implements ZMVP-57's hard-delete severance (placements + grants
--- gone, commission untouched); ZMVP-57 still owns the SOFT-delete "a deactivated
--- account's key stops conferring" read-side behavior and the account_has_facts
--- tripwire.
+-- Commission positioning: two account-facing rails, kept in separate tables,
+-- that neither confer any in-commission authority. Both are commission-owned
+-- bookkeeping, not facts, so they cascade away with the commission or the
+-- account rather than blocking deletion. See NODE.md
+-- ("20260705200000_create_commission_placement_and_view_grant.sql") for the
+-- full rationale. (These two tables were later dropped and replaced by
+-- workflow/column placement — see `20260910193912_drop_superseded_placement_tables.sql`.)
 
--- The append-only placement log: one row per (re)placement (Decision 1/6). The
--- log is NEVER rewritten (ZMVP-70 AC2). seq is the monotonic ordering key (a
+-- The append-only placement log: one row per (re)placement. The
+-- log is NEVER rewritten. seq is the monotonic ordering key (a
 -- surrogate bigserial, matching the changelog/plc_operations Postgres-as-log
 -- precedent): the CURRENT placement is the greatest seq, the ORIGIN the least.
 --
@@ -36,7 +26,7 @@ CREATE TABLE commission_placement (
 -- The one read: a commission's placement log in append order.
 CREATE INDEX commission_placement_commission_seq ON commission_placement (commission_id, seq);
 
--- The denormalized CURRENT-placement pointer (ZMVP-70 AC3): exactly one row per
+-- The denormalized CURRENT-placement pointer: exactly one row per
 -- placed commission, upserted in the SAME unit of work as each log append, so it
 -- always equals the latest log row (never a second transaction). Kept apart from
 -- the log so "current" is an O(1) read and the invariant (pointer == latest row)
@@ -50,16 +40,16 @@ CREATE TABLE commission_current_placement (
 );
 
 -- The commission-side view grant: a pure KEY to see, at an explicitly chosen
--- level (Decision 3). At most one key per (commission, account) — the composite
+-- level. At most one key per (commission, account) — the composite
 -- primary key — so re-granting REPLACES the level (upsert, "issuing anew"). A key
--- HARD-DELETES on revoke (Decision 5): no soft-deleted rows. Deliberately just the
+-- HARD-DELETES on revoke: no soft-deleted rows. Deliberately just the
 -- level: the grant is a PURE KEY, and its history — who issued it, when, and who
--- revoked it — lives ONLY in the changelog (Decision 5), so a revoked key stops
+-- revoked it — lives ONLY in the changelog, so a revoked key stops
 -- lifting on the next server-side serialization by construction.
 --
 -- level         The GrantLevel token, validated by the domain enum (the closed
 --               vocabulary presentation/description/total; text, not a pg enum, so
---               adding a mode is not a migration — though the DD fixes it at three).
+--               adding a mode is not a migration — though the domain rule fixes it at three).
 CREATE TABLE commission_view_grant (
     commission_id uuid NOT NULL REFERENCES commission (id) ON DELETE CASCADE,
     account_id    uuid NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,

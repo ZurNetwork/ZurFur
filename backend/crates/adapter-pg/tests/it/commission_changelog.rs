@@ -1,6 +1,6 @@
-//! The commission changelog over PostgreSQL (ZMVP-87), against a throwaway
+//! The commission changelog over PostgreSQL, against a throwaway
 //! container: append is a [`UnitOfWork`] view (entries commit **atomically with
-//! domain writes** — Changelog DD `30408741` D4, never a dual write), the ordered
+//! domain writes**, never a dual write), the ordered
 //! read is the pool-backed [`ChangelogStore`], the table is append-only at the
 //! database (a `BEFORE UPDATE` trigger refuses edits; `DELETE` stays ungoverned so
 //! the commission hard-delete cascade works), and the owner-arm

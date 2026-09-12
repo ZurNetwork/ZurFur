@@ -1,8 +1,8 @@
-//! The fixture-account seam ZMVP-105 binds to: everything a test needs to act
-//! as a provisioned identity against a throwaway PDS.
+//! The fixture-account seam: everything a test needs to act as a
+//! provisioned identity against a throwaway PDS.
 
 /// A fixture account provisioned on a throwaway PDS — the contract downstream
-/// adapter tests (ZMVP-105) construct their authenticated atproto client from.
+/// adapter tests construct their authenticated atproto client from.
 ///
 /// `#[non_exhaustive]`: the seam may grow fields without breaking consumers;
 /// construct it only through [`crate::ThrowawayPds::provision_account`].
@@ -23,9 +23,9 @@ pub struct FixtureAccount {
 /// The credential a test acts with — deliberately an extensible enum, **not**
 /// a bare secret string.
 ///
-/// ZMVP-105 still holds an open fork on how the adapter authenticates
-/// (Jacquard OAuth vs the PDS's local credentials); this seam must not
-/// pre-commit it. `#[non_exhaustive]` forces downstream matches to carry a
+/// How the adapter authenticates (Jacquard OAuth vs the PDS's local
+/// credentials) is still an open fork; this seam must not pre-commit it.
+/// `#[non_exhaustive]` forces downstream matches to carry a
 /// wildcard arm, so adding an OAuth (or other) variant later is not a
 /// breaking change.
 ///

@@ -1,6 +1,6 @@
 /**
  * The stable `?error=<code>` contract the axum `signin_callback` redirects
- * carry on failure (ZMVP-151 slice 1; codes are exact strings). Mapped to
+ * carry on failure (codes are exact strings). Mapped to
  * human copy here, at the only screen that renders them.
  */
 // A Map (not a plain object) so a prototype name like `?error=constructor`

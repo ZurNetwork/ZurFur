@@ -1,7 +1,7 @@
 /**
  * The RFC 9457 problem-details shape the backend emits for every API error —
- * the COMPONENT-FACING type (plain data above the runes seam). Since ZMVP-162
- * the shape's one declaration is `contract/zurfur/api/v1/problem.proto`; the
+ * the COMPONENT-FACING type (plain data above the runes seam). The shape's
+ * one declaration is `contract/zurfur/api/v1/problem.proto`; the
  * server-side boundary decodes through the GENERATED `ProblemSchema` (which
  * cannot drift from the contract) and maps into this plain interface. The
  * hand-written `isProblem` narrowing this file used to carry is retired with
@@ -19,7 +19,7 @@ export interface Problem {
 	code: string;
 	title: string;
 	/**
-	 * Per-occurrence human detail — REQUIRED (Engineer ruling 2026-07-25; the
+	 * Per-occurrence human detail — REQUIRED (the
 	 * backend has always emitted it, and its registry now debug-asserts
 	 * non-emptiness). Locally-minted problems must supply one too.
 	 */
@@ -34,8 +34,7 @@ export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
  * The problem kinds the frontend mints locally, each entry the type/code PAIR
  * (the hyphenated URN and the snake_case code clients branch on) — one entry
  * per kind, spread at the mint site, so a mismatched pairing is unwritable
- * rather than doc-enforced (Engineer ruling 2026-07-28, revised from split
- * enums on the round-2 gate evidence). Not a mirror of the backend's full
+ * rather than doc-enforced. Not a mirror of the backend's full
  * registry — wire problems arrive already paired; an entry lands here when
  * the frontend mints that kind itself.
  */
@@ -70,7 +69,7 @@ export const FORBIDDEN_PROBLEM: Problem = {
  * (`backend/crates/api/src/problem.rs`) — reused verbatim rather than
  * invented, same convention as {@link FORBIDDEN_PROBLEM}: a local mint that
  * answers the backend's own "no session" condition must say the same thing.
- * The mock `ZurfurApi` Layer (ZMVP-198, `zurfur-api-mock.ts`) mints this
+ * The mock `ZurfurApi` Layer (`zurfur-api-mock.ts`) mints this
  * everywhere it needs an anonymous 401 — it never invents its own wording.
  */
 export const NOT_AUTHENTICATED_PROBLEM: Problem = {
@@ -87,7 +86,7 @@ export const NOT_AUTHENTICATED_PROBLEM: Problem = {
  * — reused verbatim rather than invented, because the two cases mean the same
  * thing: "not in your list" IS "you hold no role in it", the same
  * authorization answer a real detail endpoint would give. The mock `ZurfurApi`
- * Layer (ZMVP-198) reuses it too, for the same reason `deleteAccount`'s
+ * Layer reuses it too, for the same reason `deleteAccount`'s
  * unknown-id case answers with.
  */
 export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
@@ -108,7 +107,7 @@ export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
  * specific code for a bad handle at creation time — `handle_taken` (409) is
  * a different condition entirely — so this generic shape IS the correct
  * mirror, not a stand-in for a missing specific one. The mock `ZurfurApi`
- * Layer (ZMVP-198) mints this for `createAccount`'s local handle-shape
+ * Layer mints this for `createAccount`'s local handle-shape
  * check, same convention as {@link FORBIDDEN_PROBLEM}.
  */
 export function invalidRequestProblem(detail: string): Problem {

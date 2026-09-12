@@ -1,4 +1,4 @@
-//! The actor super-table over PostgreSQL (ZMVP-122, DD 34013187), against a
+//! The actor super-table over PostgreSQL, against a
 //! throwaway container: round-trips through the Unit of Work, rollback-on-drop,
 //! the duplicate-id PK, the kind and state CHECKs, the race-safe idempotent
 //! intern by DID (kind un-rewritten, first_seen never restamped), NULL-did
@@ -58,7 +58,7 @@ async fn create_commit_find_round_trips() {
     );
 }
 
-/// Dropping the unit uncommitted rolls the create back (DD 24150017).
+/// Dropping the unit uncommitted rolls the create back.
 #[tokio::test]
 async fn uncommitted_create_rolls_back() {
     let (pool, _container) = fresh_pool().await;

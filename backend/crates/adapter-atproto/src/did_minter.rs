@@ -148,7 +148,7 @@ impl DidMinter for RealDidMinter {
     /// which also supplies the carried-forward public document fields; a
     /// non-identity-only prior op is rejected, never rewritten. Submits before
     /// recording; an identical replay is idempotent and a competing update on the
-    /// same `prev` errors rather than forking the chain. (DD 27852802)
+    /// same `prev` errors rather than forking the chain.
     async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
         // The latest op's `cid` is our `prev`; its JSON holds the public document
         // fields we preserve, never re-derived from the custodied private keys.

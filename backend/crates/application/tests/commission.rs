@@ -1,8 +1,7 @@
-//! The deadline sweep as **pure policy** (ZMVP-86, conductor ruling E12;
-//! moved down from `api` in ZMVP-205): driven directly at a chosen `now` over
-//! the shared in-memory runtime — no wall clock, no HTTP, no leader lock. The
-//! timer and the advisory-lock leader election that wrap it stay in `api` and
-//! are tested there.
+//! The deadline sweep as **pure policy**: driven directly at a chosen `now`
+//! over the shared in-memory runtime — no wall clock, no HTTP, no leader
+//! lock. The timer and the advisory-lock leader election that wrap it stay
+//! in `api` and are tested there.
 
 use application::commission::{SweepResult, sweep_deadlines};
 use application::transaction;

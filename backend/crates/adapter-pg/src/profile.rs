@@ -1,7 +1,7 @@
 //! [`ProfileCache`] over PostgreSQL: a TTL'd read-through cache of public PDS
 //! profiles in `profile_cache`, so repeat views don't need the PDS awake. Both
 //! `get` and `put` are pool-backed; `put` is a documented exception to the
-//! compile-enforced Unit of Work (DD 24150017) — a cache fill on the GET path
+//! compile-enforced Unit of Work — a cache fill on the GET path
 //! carries no transactional invariant (see `no_bare_pool_writes`).
 
 use chrono::{Duration, Utc};
@@ -48,7 +48,7 @@ impl ProfileCache for PgProfileCache {
 
     /// Upserts: a refetch overwrites the prior copy and stamps `fetched_at =
     /// now()`, restarting the TTL window [`get`](PgProfileCache::get) reads.
-    /// Runs on the pool, not a `UnitOfWork` — a documented exception (DD 24150017):
+    /// Runs on the pool, not a `UnitOfWork` — a documented exception:
     /// a best-effort cache fill on the GET path has no transactional invariant.
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         sql::put(

@@ -1,4 +1,4 @@
-//! CI guard for the compile-enforced Unit of Work (DD `24150017`).
+//! CI guard for the compile-enforced Unit of Work.
 //!
 //! The type system already makes the *common* mistake unrepresentable: a write
 //! method is only reachable on the transaction-bound [`UnitOfWork`] handle, which
@@ -45,31 +45,30 @@ const TX_RECEIVER: &str = "(&mut*self.conn";
 /// - `adapter-pg/src/profile.rs` — the read-through profile **cache** fill
 ///   (`PgProfileCache::put`): a best-effort, single-statement upsert on the GET read
 ///   path whose failure the caller swallows. It is not a domain write, so routing it
-///   through a write transaction would make a read endpoint open one for nothing
-///   (Engineer's call).
+///   through a write transaction would make a read endpoint open one for nothing.
 /// - `adapter-pg/src/key_store.rs` — the `did:plc` custody-key persistence
-///   (`PgKeyStore::put`, ZMVP-49). Both this write and the account row it belongs to
+///   (`PgKeyStore::put`). Both this write and the account row it belongs to
 ///   are the *same* private Postgres store, so this is **not** a cross-store concern;
 ///   the exemption is **same-store temporal ordering**. The write happens *inside
 ///   minting*, **before** the account row exists — the account's DID is *derived
 ///   from* the very keys being stored — so there is no account transaction yet to
 ///   join. One row, no cross-aggregate invariant. (Ratified.)
 /// - `adapter-pg/src/plc_operation_log.rs` — the `did:plc` operation-log persistence
-///   (`PgPlcOperationLog::append`, ZMVP-34). Same rationale as `key_store`, at its two
+///   (`PgPlcOperationLog::append`). Same rationale as `key_store`, at its two
 ///   write points, **neither** of which has an account transaction to join: the
 ///   *genesis* op is logged during minting, before the account row exists (alongside
 ///   the keys); the *tombstone* op is logged during hard-delete as the private half of
 ///   the separate, retryable public submission step — by which point the account row is
 ///   already gone. Same-store, single-row, no cross-aggregate invariant.
 /// - `adapter-pg/src/file_store.rs` — the commission file-entry **blob** store
-///   (`PgFileStore::put`/`delete`, ZMVP-88, ruling E13). The blob write has **no
+///   (`PgFileStore::put`/`delete`). The blob write has **no
 ///   transactional home**: bytes cannot ride a Postgres unit of work, and the file
 ///   entry's atomicity lives in the *other* two writes — the `commission_file` link
 ///   and the `file_added` changelog entry — which commit together in the UnitOfWork.
 ///   The blob `put` runs **before** that unit as its own step (orphan-on-rollback is
 ///   accepted and recorded — nothing points at an orphan), the same "public write is
 ///   its own retryable step" posture the PDS mirror uses. Single-statement, no
-///   cross-aggregate invariant. (Ruling E13.)
+///   cross-aggregate invariant.
 ///
 /// If a *new* file needs to be exempted, that is a design question (does its write
 /// truly have no transactional home?), not a quiet edit to this list.
@@ -117,7 +116,7 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
 /// The bare function names of every generated write statement (the part after
 /// `namespace::`), across BOTH scanned crates — adapter-atproto's writes are
 /// classified too, so a future non-exempt module there can't slip a pool-backed
-/// write past the guard (PR #119 review).
+/// write past the guard.
 fn write_fn_names() -> Vec<&'static str> {
     adapter_pg::queries::WRITE_QUERY_FNS
         .iter()

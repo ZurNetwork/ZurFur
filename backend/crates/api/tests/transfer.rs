@@ -1,8 +1,8 @@
-//! ZMVP-33: an Owner transfers Account ownership to another member
+//! An Owner transfers Account ownership to another member
 //! (`POST /accounts/{id}/transfer`). Covers the four acceptance criteria — the
 //! transfer is immediate and effective, the named member becomes the sole Owner, the
 //! prior Owner becomes Admin, and only the current Owner may transfer and only to an
-//! existing member — plus the ZMVP-21 enablement (a former Owner, now Admin, can
+//! existing member — plus the follow-on enablement (a former Owner, now Admin, can
 //! leave). Authority and the "another member" rule are the handler's, so they're
 //! exercised here against the in-process fakes; the `parent` re-homing (rule 5) is the
 //! store's job and is proven against PostgreSQL in `adapter-pg`'s own tests (the mem

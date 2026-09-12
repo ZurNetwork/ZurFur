@@ -105,11 +105,10 @@ mod tests {
     use super::*;
 
     /// `WireTimestamp::from(DateTimeUtc)` — the bridge every response type
-    /// carrying an instant goes through (e.g. `ChangelogEntryBody.created_at`,
-    /// ZMVP-158 AC5) — emits the exact same string chrono's own
-    /// `DateTime<Utc>` serde produced for every in-range instant: whole-second
-    /// and fractional. This is the wire-compatibility claim those callers'
-    /// doc comments rest on.
+    /// carrying an instant goes through (e.g. `ChangelogEntryBody.created_at`)
+    /// — emits the exact same string chrono's own `DateTime<Utc>` serde
+    /// produced for every in-range instant: whole-second and fractional.
+    /// This is the wire-compatibility claim those callers' doc comments rest on.
     #[test]
     fn wire_timestamp_matches_chronos_prior_serialization() {
         let whole = chrono::Utc.with_ymd_and_hms(2025, 7, 25, 12, 0, 0).unwrap();

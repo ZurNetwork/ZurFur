@@ -1,5 +1,5 @@
 //! HTTP route groups, split along the domain/namespace seams (subdomain →
-//! namespace → router; DD "Domains and Applications" 11763713). Each exposes
+//! namespace → router). Each exposes
 //! a `*_router()`; a namespace boundary is also a policy boundary — the
 //! cookie surface is wrapped by [`require_first_party_origin`] (CSRF), while
 //! `health`/`wellknown` mount outside it.
@@ -29,7 +29,7 @@ pub(crate) use wellknown::wellknown_router;
 /// CSRF defense-in-depth on the cookie surface: rejects a state-changing
 /// request (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is present
 /// and isn't [`Config::public_url`](crate::Config::public_url). A missing
-/// `Origin` or a safe method passes. (DD 24543244)
+/// `Origin` or a safe method passes.
 pub(crate) async fn require_first_party_origin(
     State(state): State<AppState>,
     request: Request,

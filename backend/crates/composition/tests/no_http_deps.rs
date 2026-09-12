@@ -1,6 +1,6 @@
-//! The dependency guard (ZMVP-200, board finding): `composition` is the
-//! composition root for EVERY driving adapter, including the non-HTTP `cli`, so
-//! neither may link a web framework. Runs `cargo tree` over each crate's
+//! The dependency guard: `composition` is the composition root for EVERY
+//! driving adapter, including the non-HTTP `cli`, so neither may link a web
+//! framework. Runs `cargo tree` over each crate's
 //! normal (non-dev) dependency graph and refuses any HTTP-stack crate in it.
 //! A trip here means a driven adapter grew an HTTP dependency it must not have
 //! — fix the adapter, never this list.

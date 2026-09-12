@@ -4,8 +4,8 @@ import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 
 /**
- * Infrastructure pin for the Superforms + Effect Schema adapter (Engineer
- * ruling 2026-07-28): proves the adapter and our pinned `effect` agree before
+ * Infrastructure pin for the Superforms + Effect Schema adapter: proves the
+ * adapter and our pinned `effect` agree before
  * any real form schema builds on the pair. The schema here is a throwaway —
  * real form schemas live beside this file, one module per form.
  */

@@ -1,7 +1,7 @@
-//! PostgreSQL adapter for the actor super-table (DD 34013187): `create` for
-//! DID-less actors, race-safe `intern` for DID-bearing ones, reads, and the
-//! `cache_handle` fill. No delete — identity rows are immortal; liveness is a
-//! state, never a removal.
+//! PostgreSQL adapter for the actor super-table shared by every actor kind:
+//! `create` for DID-less actors, race-safe `intern` for DID-bearing ones,
+//! reads, and the `cache_handle` fill. No delete — identity rows are
+//! immortal; liveness is a state, never a removal.
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -34,7 +34,7 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
 
 /// The actor-super-table write view over one open transaction — vended only by
 /// [`PgUnitOfWork::actor_identities`](crate::PgUnitOfWork), so a write cannot
-/// skip the transaction (DD `24150017`).
+/// skip the transaction.
 pub struct PgActorIdentityWrites<'a> {
     pub(crate) conn: &'a mut PgConnection,
 }

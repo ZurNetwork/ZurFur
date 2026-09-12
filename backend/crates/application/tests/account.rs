@@ -1,6 +1,5 @@
 //! `Accounts::create` over the in-memory fakes: the one implementation every
-//! driver calls (ZMVP-205 AC2), exercised branch by branch below the HTTP
-//! layer.
+//! driver calls, exercised branch by branch below the HTTP layer.
 
 use std::sync::Arc;
 

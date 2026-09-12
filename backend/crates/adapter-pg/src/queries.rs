@@ -175,7 +175,7 @@ pub mod account {
 
     /// `queries/account/create_account.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The account's DID now lives in the actor super-table (ZMVP-123): the caller interns
+    /// The account's DID now lives in the actor super-table: the caller interns
     /// it (keyed by this same id) as the first step of the create unit, so the projection
     /// row carries no `did`. `kind` is filled by its constant column DEFAULT ('account')
     /// and never named here. `handle` STAYS on accounts — it is the authoritative, globally
@@ -321,9 +321,9 @@ pub mod account {
 
     /// `queries/account/find.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One live account by id. Since the actor re-key (DD 57081857) `accounts.id` IS the
-    /// account's DID, so the row carries no separate `did` column and needs no
-    /// actor_identity join to recover one.
+    /// One live account by id. `accounts.id` IS the account's DID, so the row
+    /// carries no separate `did` column and needs no actor_identity join to
+    /// recover one.
     pub async fn find(conn: impl sqlx::PgExecutor<'_>, id: &str) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/account/find.sql"))
             .bind(id)
@@ -333,8 +333,8 @@ pub mod account {
 
     /// `queries/account/find_did_by_handle.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Resolve a live account's handle to its DID. Since the actor re-key (DD 57081857)
-    /// the account's id IS its DID, so this is a plain lookup on `accounts` — the
+    /// Resolve a live account's handle to its DID. The account's id IS its DID,
+    /// so this is a plain lookup on `accounts` — the
     /// actor_identity join it used to need is gone with the surrogate key. `handle` stays
     /// the authoritative, globally unique claim; this backs the `/.well-known/atproto-did`
     /// resolver and the founding duplicate-handle pre-check.
@@ -411,9 +411,8 @@ pub mod account {
     /// `queries/account/handle_reserved_for_other.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// changed_at receives the reservation-window start (now - quarantine window);
-    /// account_id optionally excludes the renaming account itself. Since the actor
-    /// re-key (DD 57081857) an account is addressed by its DID, so the exclusion
-    /// parameter is text rather than uuid.
+    /// account_id optionally excludes the renaming account itself. An account is
+    /// addressed by its DID, so the exclusion parameter is text rather than uuid.
     pub async fn handle_reserved_for_other(
         conn: impl sqlx::PgExecutor<'_>,
         old_handle: &str,
@@ -472,12 +471,12 @@ pub mod account {
 
     /// `queries/account/list_for_user.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Every LIVE account `$1` holds a role in, together with that role (ZMVP-157) —
+    /// Every LIVE account `$1` holds a role in, together with that role —
     /// not owned-only: gaining a role is how a user joins an account on this
     /// platform, so an accepted invitation belongs here exactly as a founded
-    /// account does. Keeps `find`'s `deleted_at IS NULL` liveness filter; since the
-    /// actor re-key (DD 57081857) `accounts.id` IS the DID, so the actor_identity
-    /// join that used to recover one is gone.
+    /// account does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
+    /// `accounts.id` IS the DID, so the actor_identity join that used to
+    /// recover one is gone.
     ///
     /// ORDER BY … COLLATE "C" sorts the DID by byte value, which is what Rust's
     /// `str` ordering does — the adapter-mem twin sorts the same list in process, and
@@ -485,7 +484,7 @@ pub mod account {
     /// locale. (Creation order is no longer available from the key: a DID carries no
     /// timestamp, where the retired UUIDv7 did.)
     ///
-    /// `$2` gates the `listed_on_profile` privacy valve (DD 21594113 decision 4).
+    /// `$2` gates the `listed_on_profile` privacy valve.
     /// TRUE for a PUBLIC projection of this user's memberships, which shows only
     /// the ones they chose to publish; FALSE for the member's OWN view, which shows
     /// every live membership — a member's own records are not hidden from them by
@@ -1057,7 +1056,7 @@ pub mod commission {
 
     /// `queries/commission/add_element.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Contribute one element into a declared surface (ZMVP-166). The single insert
+    /// Contribute one element into a declared surface. The single insert
     /// path: the generic element add, a Slot's carrying element, and a Seat's all
     /// come through here, differing only in the `type` tag and payload they bind, so
     /// there is no second place an element can be born.
@@ -1114,7 +1113,7 @@ pub mod commission {
 
     /// `queries/commission/add_markup.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One annotation's canonical row (ZMVP-90). Written on the open transaction
+    /// One annotation's canonical row. Written on the open transaction
     /// alongside the markup_added changelog entry it accompanies, so the geometry and
     /// its timeline fact land together. The (file_id, commission_id) composite foreign
     /// key makes a markup on another commission's file unrepresentable, so no guard is
@@ -1144,12 +1143,12 @@ pub mod commission {
 
     /// `queries/commission/add_participant.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Insert a participant membership row (ZMVP-76). `(commission_id, user_id)`
+    /// Insert a participant membership row. `(commission_id, user_id)`
     /// is the table's PRIMARY KEY, so a re-add for an already-seated pair is a
     /// silent no-op rather than a constraint violation: the owner's row is born
-    /// here (CommissionWrites::create) and ZMVP-79's seat acceptance re-adds
+    /// here (CommissionWrites::create) and seat acceptance re-adds
     /// whoever it seats, who may already be a participant through another seat (a
-    /// User can hold multiple seats, Engineer ruling 2026-07-16) — the invariant
+    /// User can hold multiple seats) — the invariant
     /// of at most one membership row per pair is unreachable to violate rather
     /// than caller discipline. The original `created_at` is preserved.
     pub async fn add_participant(
@@ -1197,7 +1196,7 @@ pub mod commission {
 
     /// `queries/commission/create_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Persist a freshly issued, pending seat invitation (ZMVP-78). The partial
+    /// Persist a freshly issued, pending seat invitation. The partial
     /// unique index (`... WHERE state = 'pending'`, see the migration) enforces at
     /// most one pending offer per (seat, invited_user), so a duplicate issue is
     /// silently dropped rather than becoming a second row — the store-level backstop
@@ -1233,7 +1232,7 @@ pub mod commission {
     /// `queries/commission/create_tab.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Mint one of the commission's skeleton tabs, in the same unit of work as the
-    /// commission row itself (ZMVP-166; Flat Composition DD 45514754). Tab state
+    /// commission row itself. Tab state
     /// exists explicitly from birth — the withheld-at-birth discipline — so absence
     /// of a tab row never has to mean anything. `mode` is bound rather than left to
     /// the column DEFAULT so the closed door is stated by the code that mints it,
@@ -1279,8 +1278,8 @@ pub mod commission {
 
     /// `queries/commission/declare_slot_satellite.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The declared Slot's interpreted half (ZMVP-77), keyed by the carrying
-    /// element's id — one identity, two rows (Gate A ruling E20). Deliberately no
+    /// The declared Slot's interpreted half, keyed by the carrying
+    /// element's id — one identity, two rows. Deliberately no
     /// occupant column of any kind: fill is the Character epic's.
     pub async fn declare_slot_satellite(
         conn: impl sqlx::PgExecutor<'_>,
@@ -1353,8 +1352,8 @@ pub mod commission {
 
     /// `queries/commission/find_pending_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The lone pending offer for (commission, seat, invited_user), or nothing
-    /// (ZMVP-78). The `state` bind is the pending discriminant; accepted/revoked
+    /// The lone pending offer for (commission, seat, invited_user), or nothing.
+    /// The `state` bind is the pending discriminant; accepted/revoked
     /// invitations are history, not live offers, so they never match. Scoped to
     /// commission_id in the query itself so a seat id from another commission's
     /// tree can never reach that commission's offers — the authorization binding
@@ -1381,9 +1380,9 @@ pub mod commission {
     /// `queries/commission/grant_view.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Issue (or re-issue) one view grant. At most one key per (commission, grantee):
-    /// re-granting REPLACES the level rather than adding a second row — "issuing anew"
-    /// (Ownership Separation DD 29130754 Decision 5). `grantee` is the holder's DID
-    /// since the actor re-key (DD 57081857).
+    /// re-granting REPLACES the level rather than adding a second row — "issuing anew".
+    /// `grantee` is the holder's DID: actors are addressed by DID everywhere, so
+    /// this column stores a DID rather than a surrogate id.
     pub async fn grant_view(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
@@ -1430,7 +1429,7 @@ pub mod commission {
 
     /// `queries/commission/list_owned_by.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The signed-in user's OWNED commissions, owner-POV only (ZMVP-157). Archived
+    /// The signed-in user's OWNED commissions, owner-POV only. Archived
     /// commissions are excluded — an active-view listing, per the documented
     /// listing-projection contract on `commission.archived_at`. Ordered by id
     /// (UUIDv7 sorts as creation order).
@@ -1447,7 +1446,7 @@ pub mod commission {
     /// `queries/commission/load_elements.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Every element of one commission — the element third of the whole-composition
-    /// read (ZMVP-166), one indexed query on commission_id. Ordered by the addressing
+    /// read, one indexed query on commission_id. Ordered by the addressing
     /// tuple so the ordering the store assigns is the ordering a caller observes,
     /// without a sort in Rust.
     pub async fn load_elements(
@@ -1462,8 +1461,8 @@ pub mod commission {
 
     /// `queries/commission/load_surface_modes.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The commission's widened surface modes — the second term of the min
-    /// (ZMVP-166). SPARSE by design: a surface nobody widened has NO ROW, and an
+    /// The commission's widened surface modes — the second term of the min.
+    /// SPARSE by design: a surface nobody widened has NO ROW, and an
     /// absent row means Total (the closed door said by saying nothing), so this
     /// returning fewer rows than there are declared surfaces is the normal case.
     pub async fn load_surface_modes(
@@ -1478,8 +1477,8 @@ pub mod commission {
 
     /// `queries/commission/load_tabs.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Every tab of one commission — the first term of the effective-visibility min
-    /// (ZMVP-166). Ordered by the declared tab id for determinism.
+    /// Every tab of one commission — the first term of the effective-visibility min.
+    /// Ordered by the declared tab id for determinism.
     pub async fn load_tabs(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
@@ -1510,9 +1509,9 @@ pub mod commission {
 
     /// `queries/commission/remove_element_delete.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Remove one element (ZMVP-166). Scoped by commission_id as well as the unique
+    /// Remove one element. Scoped by commission_id as well as the unique
     /// id, so the statement is self-contained rather than leaning on id uniqueness
-    /// (PR #109 review). Elements are leaves — nothing is orphaned — but whatever
+    /// alone. Elements are leaves — nothing is orphaned — but whatever
     /// shares the element's identity (a Slot or Seat satellite, and a seat's pending
     /// invitations) leaves with it via ON DELETE CASCADE.
     pub async fn remove_element_delete(
@@ -1532,7 +1531,7 @@ pub mod commission {
 
     /// `queries/commission/remove_element_gate.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The removal gate (ZMVP-166): the target must exist in THIS commission — an
+    /// The removal gate: the target must exist in THIS commission — an
     /// absent element id and one belonging to another commission both match nothing,
     /// indistinguishably (ElementNotFound), so removal probes reveal nothing about
     /// other commissions. Returns the ordering group the removal will have to
@@ -1563,10 +1562,10 @@ pub mod commission {
     /// `queries/commission/remove_element_renumber.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Renumber a vacated ordering group to contiguous positions from 0, preserving
-    /// order (ZMVP-166). The group is (commission, tab, surface, band) — the same
+    /// order. The group is (commission, tab, surface, band) — the same
     /// tuple the append counts within and the deferred UNIQUE covers. Scoped by
     /// commission_id so the statement never leans on tab_id uniqueness alone as its
-    /// scoping mechanism (PR #109 review). The UNIQUE is DEFERRABLE, so the
+    /// scoping mechanism. The UNIQUE is DEFERRABLE, so the
     /// intermediate collisions this UPDATE passes through cannot trip it inside the
     /// transaction.
     pub async fn remove_element_renumber(
@@ -1591,7 +1590,7 @@ pub mod commission {
     /// `queries/commission/require_tab.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// The shared TAB GATE — and the one SERIALIZATION POINT — of every composition
-    /// write (ZMVP-166): the named tab must exist in this commission, and its row is
+    /// write: the named tab must exist in this commission, and its row is
     /// locked for the rest of the transaction.
     ///
     /// Existence: an absent id and a tab belonging to another commission both match
@@ -1611,8 +1610,7 @@ pub mod commission {
     ///
     /// FOR UPDATE locks the tab row, so every write that touches this tab's ordering
     /// groups SERIALIZES: concurrent appends cannot race to one (surface, band,
-    /// position) slot and abort on the deferred UNIQUE at commit (the PR #103
-    /// hardening, carried over from the retired parent gate), and a concurrent
+    /// position) slot and abort on the deferred UNIQUE at commit, and a concurrent
     /// removal's renumbering cannot interleave with an append into the same group.
     /// BOTH write paths take this lock, and take it before touching any element row.
     pub async fn require_tab(
@@ -1629,7 +1627,7 @@ pub mod commission {
 
     /// `queries/commission/revoke_seat_invitation.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Revoke a pending seat invitation (ZMVP-78). state receives the revoked state;
+    /// Revoke a pending seat invitation. state receives the revoked state;
     /// inv_state guards the expected current (pending) state, so a concurrent flip
     /// loses, and an UPDATE matching no row still succeeds — revoking an absent or
     /// already-terminal invitation is a harmless no-op. The Seat mirror of
@@ -1655,8 +1653,8 @@ pub mod commission {
 
     /// `queries/commission/revoke_view.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Revoke one view grant — a hard delete, so the key is gone on the next render
-    /// (Ownership Separation DD 29130754 Decision 5). Removing a key nobody holds
+    /// Revoke one view grant — a hard delete, so the key is gone on the next render.
+    /// Removing a key nobody holds
     /// matches nothing, which is how the caller learns there was no transition.
     pub async fn revoke_view(
         conn: impl sqlx::PgExecutor<'_>,
@@ -1775,7 +1773,7 @@ pub mod commission {
     /// `queries/commission/view_grant.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// The level one grantee holds on one commission, or nothing. Addressed by the
-    /// holder's DID (the actor re-key, DD 57081857), so the same statement answers for
+    /// holder's DID, so the same statement answers for
     /// whichever actor class the caller is asking about.
     pub async fn view_grant(
         conn: impl sqlx::PgExecutor<'_>,
@@ -2075,8 +2073,8 @@ pub mod user {
 
     /// `queries/user/find.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One User by id. Since the actor re-key (DD 57081857) `users.id` IS the visitor's
-    /// DID, so the projection carries everything the caller needs and the actor_identity
+    /// One User by id. `users.id` IS the visitor's DID, so the projection carries
+    /// everything the caller needs and the actor_identity
     /// join that used to recover the DID is gone.
     pub async fn find(conn: impl sqlx::PgExecutor<'_>, id: &str) -> sqlx::Result<Option<FindRow>> {
         sqlx::query_as(include_str!("../queries/user/find.sql"))
@@ -2087,8 +2085,8 @@ pub mod user {
 
     /// `queries/user/find_by_did.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Resolve a DID to its User without minting one. Since the actor re-key
-    /// (DD 57081857) a User's id IS its DID, so this and `find` address the same column —
+    /// Resolve a DID to its User without minting one. A User's id IS its DID,
+    /// so this and `find` address the same column —
     /// they stay two statements because they are two port methods: `find` takes a
     /// `UserId` a session already holds, this takes a `Did` handed over by the PDS.
     pub async fn find_by_did(
@@ -2104,7 +2102,7 @@ pub mod user {
     /// `queries/user/provision.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Insert (or resolve) the User projection row keyed by its shared actor_identity id —
-    /// the id the caller has just interned the visitor's DID under (ZMVP-123). The DID and
+    /// the id the caller has just interned the visitor's DID under. The DID and
     /// the one-DID-one-actor race are the intern step's job now; this only lands the
     /// projection. Idempotent on the shared PK: a repeat sign-in resolves to the same
     /// identity id, whose users row already exists, so the no-op DO UPDATE lets RETURNING
@@ -2182,7 +2180,7 @@ pub mod workflow {
     ///
     /// Delete a board. Its columns go with it (ON DELETE CASCADE), and the cards on
     /// them — but never the commissions themselves: a card is account-side
-    /// positioning, and the commission never knew it was there (DD 29130754 D1).
+    /// positioning, and the commission never knew it was there.
     pub async fn delete(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/workflow/delete.sql"))
             .bind(id)

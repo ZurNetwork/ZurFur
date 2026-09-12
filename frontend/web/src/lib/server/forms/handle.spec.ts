@@ -6,8 +6,8 @@ import { claimHandleField, handleField } from './handle';
  * Grammar coverage at the field's own altitude (the `delete-account.spec.ts`
  * precedent) — route specs exercise the wiring, THIS file owns the table:
  * the atproto reference shape and length caps (base tier, sign-in), and the
- * DD 26050561 punycode rejection in every label position (claim tier only —
- * Engineer ruling 2026-08-05: auth-time accepts what claim-time rejects).
+ * punycode (`xn--`) rejection in every label position (claim tier only —
+ * auth-time accepts what claim-time rejects).
  */
 const decode = Schema.decodeUnknownEither(handleField('Handle required'));
 const decodeClaim = Schema.decodeUnknownEither(claimHandleField('Handle required'));

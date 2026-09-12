@@ -1,7 +1,6 @@
 -- changed_at receives the reservation-window start (now - quarantine window);
--- account_id optionally excludes the renaming account itself. Since the actor
--- re-key (DD 57081857) an account is addressed by its DID, so the exclusion
--- parameter is text rather than uuid.
+-- account_id optionally excludes the renaming account itself. An account is
+-- addressed by its DID, so the exclusion parameter is text rather than uuid.
 SELECT EXISTS (
     SELECT 1
     FROM account_handle_changes

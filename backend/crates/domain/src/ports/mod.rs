@@ -40,7 +40,7 @@ use crate::elements::{
 /// The factory for a private-store [`UnitOfWork`] — the only way to reach a
 /// private-store write, which is therefore unrepresentable without first opening
 /// a transaction. Aggregate-neutral: one `begin()` opens one transaction for
-/// writes across any number of aggregates. (DD 24150017)
+/// writes across any number of aggregates.
 #[async_trait]
 pub trait Database: Send + Sync {
     /// Begin one private-store transaction; the returned handle owns it.
@@ -63,14 +63,14 @@ pub trait UnitOfWork: Send {
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_>;
 
     /// The commission-changelog append surface over this transaction, so an entry
-    /// commits atomically with the domain write it records. (DD 59310081)
+    /// commits atomically with the domain write it records.
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_>;
 
     /// The [`User`] write surface (recognition) over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_>;
 
     /// The actor-super-table write surface over this transaction. It carries no
-    /// delete — identity rows are immortal. (DD 34013187)
+    /// delete — identity rows are immortal.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_>;
 
     /// The workflow write surface over this transaction; a board mutation is
@@ -162,7 +162,7 @@ pub trait ProfileSource: Send + Sync {
 /// A private-side read-through cache of public profiles, so repeat views don't
 /// need the PDS awake. Pool-backed and `&self` — a documented exception to the
 /// Unit of Work, since a cache fill carries no transactional invariant
-/// (DD 24150017). Freshness policy lives in the implementation.
+///. Freshness policy lives in the implementation.
 #[async_trait]
 pub trait ProfileCache: Send + Sync {
     /// The cached profile for a DID, or `None` on a miss — absent and stale alike.
@@ -198,11 +198,11 @@ pub trait AccountStore: Send + Sync {
 
     /// The sovereign [`Did`] of the live account holding `handle`, or `None`.
     /// Exact-match; soft-deleted accounts never match. Backs atproto handle
-    /// resolution and the founding-time duplicate check. (DD 26607618)
+    /// resolution and the founding-time duplicate check.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>>;
 
     /// How many handle changes `account` has recorded on or after `since`. The
-    /// rate limit and its window are the caller's policy. (DD 27852802)
+    /// rate limit and its window are the caller's policy.
     async fn count_handle_changes_since(
         &self,
         account: &AccountId,
@@ -211,7 +211,7 @@ pub trait AccountStore: Send + Sync {
 
     /// Whether `handle` was vacated by some account other than `excluding` on or
     /// after `since`, and so is still quarantined to it. `excluding` lets an
-    /// account reclaim its own just-vacated handle. (DD 27852802)
+    /// account reclaim its own just-vacated handle.
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
@@ -235,7 +235,7 @@ pub trait AccountStore: Send + Sync {
 
 /// Error source of an account write whose handle collides with one already
 /// stored — live **or** soft-deleted, since the handle index spans both
-/// (DD 23003138). Adapters return it so routes can `downcast_ref` and answer
+///. Adapters return it so routes can `downcast_ref` and answer
 /// `409` rather than a generic `500`.
 #[derive(Debug)]
 pub struct HandleTaken;
@@ -249,7 +249,7 @@ impl std::fmt::Display for HandleTaken {
 impl std::error::Error for HandleTaken {}
 
 /// Marker error: the supplied DID is already interned as a different actor kind.
-/// One DID = one actor (DD 34013187); routes downcast this to a
+/// One DID = one actor; routes downcast this to a
 /// `409 did_belongs_to_another_actor`.
 #[derive(Debug)]
 pub struct DidBelongsToAnotherActor {
@@ -285,7 +285,7 @@ pub trait AccountWrites: Send {
     /// one whose handle moved under a concurrent rename, fails and writes no audit
     /// row. A collision fails with [`HandleTaken`]. The public half — the DID
     /// document's `alsoKnownAs` — is a separate retryable step the caller runs
-    /// first, never inside this transaction. (DD 27852802)
+    /// first, never inside this transaction.
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -300,7 +300,7 @@ pub trait AccountWrites: Send {
 
     /// Remove a user's membership: re-homes their role-tree children to their own
     /// parent, deletes the membership, and revokes the invitations they had issued,
-    /// in one transaction. Idempotent on a non-member. (DD 24182820)
+    /// in one transaction. Idempotent on a non-member.
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// A member leaves their own account: the same store effects as
@@ -341,14 +341,14 @@ pub trait AccountWrites: Send {
     /// Soft-delete an account: stamp `deleted_at`, removing nothing. The handle
     /// stays reserved and the `did:plc` stays live, but reads treat the account as
     /// absent; memberships and invitations are kept so reactivation restores it
-    /// intact. Idempotent. (DD 23003138)
+    /// intact. Idempotent.
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 
     /// Hard-delete an empty account: remove its invitation, membership and account
     /// rows in one unit of work, freeing the handle. Its boards cascade away; the
     /// commissions on them survive (User-owned) and the custody keys are left in
     /// place. Tombstoning the DID is a separate retryable step. Idempotent.
-    /// (DD 23003138)
+    ///
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 }
 
@@ -473,7 +473,7 @@ pub trait PublicRecords: Send + Sync {
 /// Mints a sovereign `did:plc` for a platform-custodied entity, server-side —
 /// unlike a visitor's DID, which precedes us and is only recognized. The live
 /// minter signs an identity-only PLC genesis operation and persists the keys via
-/// [`KeyStore`]; a stub floor is kept for tests. (DD 26935298)
+/// [`KeyStore`]; a stub floor is kept for tests.
 #[async_trait]
 pub trait DidMinter: Send + Sync {
     /// Mint a new account DID whose genesis `alsoKnownAs` is `at://<handle>`.
@@ -483,14 +483,14 @@ pub trait DidMinter: Send + Sync {
 
     /// Sign, log and submit `plc_tombstone` for `did`, chained on its latest
     /// logged operation. A public-boundary step run after the private delete has
-    /// committed, never inside that transaction; retryable. (DD 23003138)
+    /// committed, never inside that transaction; retryable.
     async fn tombstone(&self, did: &Did) -> anyhow::Result<()>;
 
     /// Re-point `did`'s `alsoKnownAs` to `handle`, replacing the old alias, chained
     /// on its latest logged operation. Its own retryable step, never inside a
     /// private-store transaction; idempotent by content-address, so a replay dedups
     /// on the log's unique `cid`. Fails if the DID has no custody keys or no
-    /// operation to chain onto. (DD 27852802)
+    /// operation to chain onto.
     async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()>;
 }
 

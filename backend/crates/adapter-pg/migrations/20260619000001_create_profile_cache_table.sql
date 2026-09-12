@@ -1,4 +1,4 @@
--- Read-through cache of public profiles (see ZMVP-10, DESIGN/User). Handle,
+-- Read-through cache of public profiles. Handle,
 -- display name, and avatar are user-owned data on the public boundary (the PDS);
 -- we cache them privately so repeat views don't need the PDS awake. We read and
 -- cache, we never own — this row is a copy, freely discardable and rebuildable.

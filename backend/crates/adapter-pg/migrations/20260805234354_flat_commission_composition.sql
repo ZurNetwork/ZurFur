@@ -1,7 +1,6 @@
--- The flat commission composition model (ZMVP-166; Flat Composition DD
--- DESIGN/45514754, amended 2026-08-04). This RETIRES the recursive
--- `commission_node` adjacency tree (ZMVP-71/72/73, Tree Storage DD 28409880)
--- and replaces it with three fixed-depth tables:
+-- The flat commission composition model. This RETIRES the recursive
+-- `commission_node` adjacency tree and replaces it with three fixed-depth
+-- tables:
 --
 --   commission_tab           one row per (commission, declared tab), carrying
 --                            the tab's visibility mode
@@ -25,30 +24,12 @@
 -- Only a surface's per-commission *mode* is data, and only once it has been
 -- widened past the default (hence: absent row = Total).
 --
--- **Drop-and-recreate, not a data migration** (Engineer ruling 2026-08-04:
--- pre-alpha, no real data). Existing dev databases keep their commissions and
--- every envelope fact; they lose, exhaustively:
---
---   * their tree content (every `commission_node` row);
---   * their declared Slots and Seats (carried BY nodes that no longer exist);
---   * every seat invitation, pending or historical;
---   * **every non-owner participant row** — see the membership sweep below.
---
--- What IS backfilled is the skeleton: every existing commission gets its tab
--- rows minted here, the same retroactive half the ZMVP-71 root backfill did, so
--- "a commission always has its tab state" holds for old rows too.
---
--- ⚠️ **Membership dies with the seats that justified it** (Engineer ruling
--- 2026-08-05, security finding F1). `commission_participant` is not dropped
--- here, but every seat that ever *granted* a non-owner their membership is —
--- and a participant row is what gets someone through the closed door
--- (`is_participant`, the uniform-404 gate on every commission route). Left
--- alone, those rows would outlive their justification: a User who was seated on
--- a pre-flat commission would keep full participant read access to a
--- composition they now have no seat in, with no row left anywhere explaining
--- why. So the residue is swept — the owner's permanent floor row survives, and
--- ZMVP-79's acceptance re-earns every other membership from a seat that
--- actually exists.
+-- **Drop-and-recreate, not a data migration** — pre-alpha, no real data.
+-- Existing dev databases keep their commissions and every envelope fact, but
+-- lose their tree content, declared Slots/Seats, and seat invitations; the
+-- skeleton (tab rows) is backfilled. See NODE.md
+-- ("20260805234354_flat_commission_composition.sql") for the full rationale,
+-- including why non-owner participant rows are also swept.
 
 -- ─── Retire the tree ───────────────────────────────────────────────────────
 --
@@ -70,27 +51,28 @@ DROP TABLE commission_node;
 
 -- ─── The membership residue ────────────────────────────────────────────────
 --
--- Engineer ruling 2026-08-05 (security finding F1): dropping every Seat drops
--- every *justification* for non-owner membership, so the membership goes with
--- it. A `commission_participant` row is the key to the closed door — it is what
--- `is_participant` answers `true` on, and every commission route answers a
--- `false` with the uniform 404. Keeping rows whose seats no longer exist would
--- leave stale participants reading a composition they hold no position in.
+-- Dropping every Seat drops every *justification* for non-owner membership,
+-- so the membership goes with it. A `commission_participant` row is the key
+-- to the closed door — it is what `is_participant` answers `true` on, and
+-- every commission route answers a `false` with the uniform 404. Keeping
+-- rows whose seats no longer exist would leave stale participants reading a
+-- composition they hold no position in.
 --
--- The owner's row is the exception and stays: it never came from a Seat. It is
--- the permanent floor (ZMVP-76) — inserted with the commission, irremovable, and
--- re-asserted by the owner-floor trigger — so `c.owner_id` is exactly the line
--- between "membership a Seat granted" and "membership ownership grants".
+-- The owner's row is the exception and stays: it never came from a Seat. It
+-- is the permanent floor — inserted with the commission, irremovable, and
+-- re-asserted by the owner-floor trigger — so `c.owner_id` is exactly the
+-- line between "membership a Seat granted" and "membership ownership
+-- grants".
 --
--- Everyone else re-earns membership through ZMVP-79's acceptance, from a seat
--- that actually exists.
+-- Everyone else re-earns membership through seat-invitation acceptance, from
+-- a seat that actually exists.
 DELETE FROM commission_participant p
 USING commission c
 WHERE c.id = p.commission_id AND p.user_id <> c.owner_id;
 
 -- ─── commission_tab ────────────────────────────────────────────────────────
 --
--- A Tab is a Surface of kind tab (DD: tabs are one level up, not a different
+-- A Tab is a Surface of kind tab (tabs are one level up, not a different
 -- species) — the only composition level carrying a row of its own, because its
 -- mode is per-commission data and elements must reference it by a real key.
 --
@@ -98,11 +80,11 @@ WHERE c.id = p.commission_id AND p.user_id <> c.owner_id;
 --                commission; the backfill below mints v4 (PG16 has no uuidv7();
 --                a backfilled skeleton row needs no time-sortability).
 -- commission_id  The commission this tab belongs to. ON DELETE CASCADE: tabs are
---                commission-owned composition, NOT facts (Deletion DD 3014657) —
---                ZMVP-66's "gone entirely" relies on the cascade.
+--                commission-owned composition, NOT facts —
+--                the commission's "gone entirely" hard-delete relies on the cascade.
 -- tab            The declared tab's stable id from the code skeleton ('main'
---                today). text, not a pg enum: the tab vocabulary is the type
---                catalog's (ZMVP-171) to grow without a migration.
+--                today). text, not a pg enum: the tab vocabulary is the future
+--                type catalog's to grow without a migration.
 -- mode           The tab's visibility mode ('presentation' | 'description' |
 --                'total'), NOT NULL and defaulting to the closed door. One of
 --                the three terms of the effective-visibility min; NOT nullable,
@@ -134,7 +116,7 @@ CREATE INDEX commission_tab_by_commission ON commission_tab (commission_id);
 --
 -- An Element is a typed contribution INTO a declared surface: a core-owned
 -- envelope Postgres can constrain and audit, plus a type-owned `payload` the
--- core never interprets (the type catalog interprets it later — ZMVP-171).
+-- core never interprets (a future type catalog interprets it later).
 -- Elements are leaves, always. Nothing is ever an element's parent but the
 -- (tab, surface) pair it names.
 --
@@ -146,7 +128,7 @@ CREATE INDEX commission_tab_by_commission ON commission_tab (commission_id);
 --                deliberately NOT a foreign key: surfaces have no rows (their
 --                structure is code). The skeleton is the authority, checked in
 --                the domain and enforced by BOTH adapters (`UnknownSurface`).
--- type           The element's type tag from the deferred catalog (ZMVP-171).
+-- type           The element's type tag from a deferred type catalog.
 --                Open text in v1 — the core stores and returns it, never
 --                interprets it.
 -- mode           The element's own visibility mode — the third term of the min.
@@ -154,14 +136,14 @@ CREATE INDEX commission_tab_by_commission ON commission_tab (commission_id);
 -- band           Ordering band within a surface: the reserved column that lets
 --                one surface hold several independently-ordered runs.
 --                ⚠️ PLACEHOLDER VOCABULARY: the band vocabulary is UNDECIDED,
---                pending the type-catalog DD (ZMVP-171) — Engineer ruling
---                2026-08-04. Everything is born in 'body' and nothing offers a
+--                pending a future type-catalog decision. Everything is born
+--                in 'body' and nothing offers a
 --                way to choose otherwise yet; the column is reserved so that
 --                decision needs no migration of existing rows.
 -- position       Integer order within (tab, surface, band). Append = max + 1,
 --                assigned in-transaction; a removal renumbers the group.
 -- created_by     The acting User — per-element FK teeth for authorization and
---                audit (the plugin-attribution hook ZMVP-167 will read).
+--                audit (a future plugin-attribution hook will read it).
 -- created_at     When the element was contributed. Application-supplied (no
 --                DEFAULT now()), matching the codebase convention.
 -- payload        The type-owned half, schemaless at the DB layer by design.
@@ -176,7 +158,7 @@ CREATE INDEX commission_tab_by_commission ON commission_tab (commission_id);
 -- UNIQUE (commission_id, tab_id, surface, band, position) DEFERRABLE:
 --   ordering is a total order within the band. DEFERRABLE INITIALLY DEFERRED so
 --   a renumbering UPDATE may pass through intermediate collisions inside one
---   transaction (the ZMVP-73 precedent).
+--   transaction.
 --
 -- UNIQUE (id, commission_id):
 --   redundant on its own (id is already the primary key) and deliberately so —
@@ -212,8 +194,8 @@ CREATE INDEX commission_element_by_commission ON commission_element (commission_
 -- the min. Surfaces have no rows of their own (their structure is code), so the
 -- only surface *data* is this override, and an ABSENT ROW MEANS TOTAL: a
 -- commission that has never widened a surface is fully closed by having said
--- nothing. Widening is an explicit later act (ZMVP-74 owns the write surface);
--- this migration lays the table down and nothing in ZMVP-166 writes to it.
+-- nothing. Widening is an explicit later act, built separately;
+-- this migration lays the table down and nothing here writes to it.
 --
 -- commission_id  The commission. ON DELETE CASCADE (non-fact, as above).
 -- surface        The code-declared surface id the mode applies to. text, no FK,
@@ -230,35 +212,16 @@ CREATE TABLE commission_surface_mode (
 
 -- ─── The satellites, recreated on element identity ─────────────────────────
 --
--- Slot and Seat are identity-sharing satellites (Gate A ruling E20): declaring
+-- Slot and Seat are identity-sharing satellites: declaring
 -- one plants an ordinary element and hangs the interpreted data off that
 -- element's id. Only the key they hang from moved — node → element; their
--- columns and cascade semantics are otherwise exactly as ZMVP-77/76 wrote them.
---
--- Their element key is COMPOSITE, and that is the change:
---
---   FOREIGN KEY (<element key>, commission_id)
---       REFERENCES commission_element (id, commission_id) ON DELETE CASCADE
---
--- replacing the plain `REFERENCES commission_element (id)`. Same doctrine as the
--- element→tab edge one level up: a satellite that claims a DIFFERENT commission
--- than the element it hangs off is now **unrepresentable**, not merely never
--- written. It matters because `commission_slot.commission_id` /
--- `commission_seat.commission_id` are what the by-commission reads filter on
--- (`seats()`, `slots_of`) — a desynced pair would list one commission's Seat
--- among another's, past every application check, and be projected under the
--- wrong commission's visibility. With the composite key the database refuses the
--- row (SQLSTATE 23503) even from raw SQL.
---
--- The plain `REFERENCES commission (id)` on `commission_id` STAYS, and is now
--- strictly redundant (the composite key reaches `commission` transitively
--- through the element). Kept deliberately: it states the satellite's own
--- ownership without making a reader chase a second table's constraints to learn
--- it, and it keeps the commission-delete cascade a direct edge rather than one
--- that only works via the element. Same reasoning as commission_tab's redundant
--- UNIQUE (id, commission_id).
+-- columns and cascade semantics are otherwise unchanged. Their element key is
+-- now COMPOSITE (element id, commission_id), so a satellite claiming a
+-- DIFFERENT commission than the element it hangs off is unrepresentable. See
+-- NODE.md ("20260805234354_flat_commission_composition.sql") for the full
+-- rationale.
 
--- Declared Slots (ZMVP-77; DESIGN/Slots 5931025, DD 28311564): the required
+-- Declared Slots: the required
 -- title and optional freeform notes of a Character position. Still deliberately
 -- occupant-less — filling a Slot is the Character epic's, and an empty Slot is a
 -- valid, PERMANENT state.
@@ -273,7 +236,7 @@ CREATE TABLE commission_slot (
 
 CREATE INDEX commission_slot_by_commission ON commission_slot (commission_id);
 
--- The Seat's interpreted half (ZMVP-76; DD 28311564): kind, requirements, and
+-- The Seat's interpreted half: kind, requirements, and
 -- THE occupancy model — one nullable column, so "a Seat holds at most one
 -- occupant" stays unrepresentable to violate. Every seat is born vacant.
 CREATE TABLE commission_seat (
@@ -290,7 +253,7 @@ CREATE TABLE commission_seat (
 CREATE INDEX commission_seat_by_commission ON commission_seat (commission_id);
 
 -- The invitation's seat key, re-established against the recreated satellite:
--- pruning a seat's element still sweeps its pending offers with it (ZMVP-78).
+-- pruning a seat's element still sweeps its pending offers with it.
 ALTER TABLE commission_invitation
     ADD CONSTRAINT commission_invitation_seat_id_fkey
     FOREIGN KEY (seat_id) REFERENCES commission_seat (id) ON DELETE CASCADE;
@@ -298,7 +261,7 @@ ALTER TABLE commission_invitation
 -- ─── Skeleton backfill ─────────────────────────────────────────────────────
 --
 -- gen_random_uuid() is core from PG13 but lives in pgcrypto on older servers;
--- harmless where it's already core (the ZMVP-71 migration's note).
+-- harmless where it's already core.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Every commission that predates this migration gets its skeleton tab rows —
@@ -310,9 +273,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- born wide would widen composition nobody ever chose to widen.
 --
 -- ⚠️ The tab list below MIRRORS the code skeleton at the time of writing (one
--- placeholder tab, 'main'). It is a snapshot, not a link: when ZMVP-171 replaces
--- the placeholder skeleton with the real catalog, that change owns minting
--- whatever tabs it adds for existing commissions.
+-- placeholder tab, 'main'). It is a snapshot, not a link: when a future
+-- migration replaces the placeholder skeleton with the real catalog, that
+-- change owns minting whatever tabs it adds for existing commissions.
 INSERT INTO commission_tab (id, commission_id, tab)
 SELECT gen_random_uuid(), c.id, 'main'
 FROM commission c;

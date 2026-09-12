@@ -1,21 +1,7 @@
-//! The shared-container Postgres harness (ZMVP-134): one container per test
-//! process, a fully migrated template database, and a byte-for-byte private
-//! clone per test via `CREATE DATABASE … TEMPLATE …`.
-//!
-//! Replaces the container-per-test pattern (a boot + full migration replay per
-//! test function) with a clone that costs tens of milliseconds, without
-//! weakening isolation: every test still gets its own pristine database.
-//!
-//! Lifecycle: the container is **refcounted**, not static. Each [`TestDb`]
-//! holds an `Arc` to the shared container; a `Weak` in a process-wide static
-//! lets later tests rejoin it. The last live handle reaps the container on
-//! drop (testcontainers has no ryuk-style reaper, so a never-dropped static
-//! would leak a running container past process exit). If the set of live
-//! tests briefly drains to zero mid-run, the next test simply boots a fresh
-//! container — correct, just slower for that one boot.
-//!
-//! Requires a container runtime socket (DOCKER_HOST honored), like the
-//! per-test pattern it replaces.
+//! The shared-container Postgres harness: one container per test process, a
+//! migrated template database, and a private clone per test via
+//! `CREATE DATABASE … TEMPLATE …`. See this directory's NODE.md for the
+//! lifecycle/refcounting details.
 
 use std::sync::{Arc, Mutex, Weak};
 

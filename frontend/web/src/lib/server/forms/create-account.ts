@@ -4,7 +4,7 @@ import { claimHandleField } from './handle';
 /**
  * The `POST /accounts` create form: name and handle, both trimmed and
  * required. The handle takes {@link claimHandleField} — this is the CLAIM
- * site DD 26050561's punycode rejection binds to (the backend's
+ * site where punycode (`xn--`) handles are rejected (the backend's
  * `Handle::try_new` is the authority; this is the same rule stated locally).
  * Field-level messages ride the superform's `errors`; a backend `Problem`
  * rides the same form's `message` — see the action in

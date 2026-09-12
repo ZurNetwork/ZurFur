@@ -1,5 +1,5 @@
-//! `DELETE /commissions/{id}` — the owner hard-deletes a fact-free commission
-//! (Deletion DD `3014657`). A fact-bearing commission is refused toward
+//! `DELETE /commissions/{id}` — the owner hard-deletes a fact-free commission.
+//! A fact-bearing commission is refused toward
 //! Archive instead.
 
 use application::commission::delete;

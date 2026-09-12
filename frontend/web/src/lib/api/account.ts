@@ -2,7 +2,7 @@
  * The component-facing Account shapes — plain data mapped down from the
  * generated `account_pb` messages at the `ZurfurApi` boundary
  * ({@link import('../server/api/zurfur-api')}), mirroring how {@link import('./session').Session}
- * is handled. Generated types never cross the runes seam (DD 39944194).
+ * is handled. Generated types never cross the runes seam.
  *
  * `id`/`handle`/`did` are branded ({@link import('../types/brand')}), not
  * bare `string` — the decode boundary casts through the trusted-decode
@@ -42,7 +42,7 @@ export interface CreatedAccount {
 }
 
 /**
- * Which deletion `DELETE /accounts/{id}` performed (DD 23003138): `'soft'`
+ * Which deletion `DELETE /accounts/{id}` performed: `'soft'`
  * (fact-bearing — row kept, handle reserved, DID live) or `'hard'`
  * (fact-free — row gone, handle freed, DID tombstoned separately/async).
  * `'unknown'` is the R8-required defined fallback for an outcome value this

@@ -9,11 +9,11 @@ import { effect } from 'sveltekit-superforms/adapters';
 import { deleteAccountForm } from '$lib/server/forms/delete-account';
 
 /**
- * The account detail, derived from the caller's own listing (ruling F1 — no
+ * The account detail, derived from the caller's own listing (there is no
  * GetAccount rpc in v1): an id the caller holds no role in produces the same
  * not-found problem the backend would mint, rendered in-page. Deliberately a
  * 200 + problem body, not `error(404)` — the problem seam stays uniform and
- * keeps the backend's detail copy (Engineer ruling 2026-07-28); an honest 404
+ * keeps the backend's detail copy; an honest 404
  * status waits for a machine consumer that reads one.
  */
 export const load: PageServerLoad = async ({ params, fetch }) => {
@@ -27,9 +27,9 @@ export const actions = {
 	 * schema, and only then the DELETE — enforced server-side; the page's
 	 * role gate is only an affordance. A problem re-renders in place; success
 	 * redirects to the list carrying `?deleted=<outcome>` so it can say WHICH
-	 * deletion happened (soft vs hard — DD 23003138 decision 6).
+	 * deletion happened (soft vs hard).
 	 *
-	 * NOTE (ZMVP-165): this action still returns `fail(…, { problem })` +
+	 * NOTE: this action still returns `fail(…, { problem })` +
 	 * ActionData — the pre-migration idiom, not an endorsed alternative. The
 	 * house pattern is now the one-channel superform (`problemMessage` from
 	 * `$lib/server/forms/problem-message`); migrate on next touch.

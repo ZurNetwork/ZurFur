@@ -13,9 +13,10 @@ use tower_http::set_header::SetResponseHeaderLayer;
 /// live-port bag, re-exported here as `AppState`.
 pub use composition::{Config, Environment, Runtime as AppState};
 
-/// The contract's generated message types (DD 40992770; `@generated` by
-/// `contract-gen`, regenerate with `just gen-contract`). Drift from
-/// `contract/zurfur/api/v1/*.proto` fails the `contract_current` test.
+/// The contract's generated message types: prost structs plus canonical
+/// ProtoJSON serde, `@generated` by `contract-gen` — regenerate with
+/// `just gen-contract`. Drift from `contract/zurfur/api/v1/*.proto` fails
+/// the `contract_current` test.
 pub mod generated;
 
 mod extract;

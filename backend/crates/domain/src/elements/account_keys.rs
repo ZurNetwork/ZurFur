@@ -1,5 +1,5 @@
 //! The private secp256k1 keys Zurfur custodies for a minted account `did:plc`,
-//! per-account and never a shared platform key. (DD 26804226)
+//! per-account and never a shared platform key.
 //!
 //! This module carries no crypto: it is the plaintext material in transit
 //! between the minter that generates it and the
@@ -40,7 +40,7 @@ impl std::fmt::Debug for SecretKey {
 /// `did:plc`, named by the role each plays in the genesis operation. The
 /// rotation-key order is **load-bearing**: rotation keys are listed in
 /// descending authority, and recovery works by a higher-authority key
-/// overriding a lower one within the PLC window. (DD 26804226)
+/// overriding a lower one within the PLC window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountKeys {
     /// `rotationKeys[0]` — the highest-authority recovery key, kept coldest.

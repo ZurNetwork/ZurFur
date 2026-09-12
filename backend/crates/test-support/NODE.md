@@ -1,6 +1,6 @@
 ---
 path: backend/crates/test-support
-charted: 2026-08-29
+charted: 2026-09-12
 fs:
   - name: Cargo.toml
     role: testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto
@@ -32,6 +32,45 @@ fs:
 ---
 **Is:** The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, and the cross-adapter PublicRecords conformance suite.
 
-**Conventions:** zero requests to the public atproto network — minting lands at the local stub only. Needs a container runtime socket (`DOCKER_HOST` honored) and Tokio. The default PDS image literal must equal `.env.example`'s `ZURFUR_PDS_IMAGE`. Container reuse is an escape hatch, not the default.
+**Conventions:** zero requests to the public atproto network — minting lands at the local stub only. `DOCKER_HOST` is honored for the container socket; every rig needs a Tokio runtime (`#[tokio::test]`). The default PDS image literal must equal `.env.example`'s `ZURFUR_PDS_IMAGE`. Container reuse is an escape hatch, not the default.
 
-**Refs:** ZMVP-103 / 105 / 134 · `.env.example`.
+**Entry points:** the two moved module docs below for the usage recipe; `tests/throwaway_pds.rs` for a worked example.
+
+**Refs:**
+- ZMVP-103 — throwaway-PDS rig scope (src/lib.rs: crate purpose/scope).
+- ZMVP-105 — PublicRecords conformance seam / open auth fork, Jacquard OAuth vs PDS local credentials (src/fixture.rs `ActingCredential`; src/contract.rs; tests/throwaway_pds.rs `bearer`, `boot_act_destroy`).
+- ZMVP-134 — shared-container Postgres harness (src/pg.rs).
+- ZMVP-102 — `.env.example`'s `ZURFUR_PDS_IMAGE` ownership; `test-support::DEFAULT_PDS_IMAGE` must match it (src/lib.rs `DEFAULT_PDS_IMAGE`, `default_image_matches_env_example`).
+- ZMVP-106 — determinism capstone that reuses `contract::fixed_created_at()` (src/contract.rs).
+- ZMVP-199 ruling 8 / Engineer ruling 2026-08-25 — one shared `MemRuntime` fixture instead of a copy per test file (src/runtime.rs).
+- uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs).
+
+### src/lib.rs — full usage recipe (moved from the module doc, 2026-09-12)
+
+Writing a PDS-backed integration test:
+
+```no_run
+# async fn demo() -> anyhow::Result<()> {
+use test_support::{ActingCredential, ThrowawayPds};
+
+let pds = ThrowawayPds::boot().await?;                    // fresh, empty, hermetic
+let account = pds.provision_account("alice.test").await?; // acting-identity seam
+let token = match &account.credential {
+    ActingCredential::PdsSession { access_jwt, .. } => access_jwt.clone(),
+    _ => unreachable!("new credential variants opt in explicitly"),
+};
+// ... send `Authorization: Bearer {token}` to `account.endpoint`, acting as `account.did` ...
+drop(pds);                                                // container + state gone
+# Ok(())
+# }
+```
+
+**Hermeticity.** The rig makes zero requests to the public atproto network. Each `ThrowawayPds` owns an in-process stub PLC directory on an ephemeral loopback port; the container reaches it through the Docker `host-gateway` alias, so identity minting (`did:plc` genesis operations) lands at the stub and nowhere else — `ThrowawayPds::published_plc_dids` exposes what arrived, letting tests assert the publication was local. No appview, crawler, or report-service endpoint is ever configured.
+
+**Container reuse (escape hatch, off by default).** One PDS boots per `ThrowawayPds::boot()`. If CI boot time ever hurts, share one instance per test binary instead of changing CI infrastructure: `ThrowawayPds` is `Send + Sync`, so a `tokio::sync::OnceCell<ThrowawayPds>` in a test's common module (with per-test unique handles) is the intended lever — the same reuse escape hatch the Postgres harness leaves available.
+
+### src/pg.rs — lifecycle (moved from the module doc, 2026-09-12)
+
+Replaces the container-per-test pattern (a boot + full migration replay per test function) with a clone that costs tens of milliseconds, without weakening isolation: every test still gets its own pristine database.
+
+The container is refcounted, not static. Each `TestDb` holds an `Arc` to the shared container; a `Weak` in a process-wide static lets later tests rejoin it. The last live handle reaps the container on drop (testcontainers has no ryuk-style reaper, so a never-dropped static would leak a running container past process exit). If the set of live tests briefly drains to zero mid-run, the next test simply boots a fresh container — correct, just slower for that one boot.

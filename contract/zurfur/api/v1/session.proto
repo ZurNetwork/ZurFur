@@ -1,14 +1,14 @@
 // The session surface: who is signed in, and the doors in and out.
 //
-// SERVICE BLOCKS DECLARE ROUTES, NOTHING MORE (DD 40992770 decision 3): the
-// `google.api.http` annotations are where paths and verbs live, and the
-// router-vs-descriptor test binds them to axum's real route table. ONLY
-// MESSAGES are generated — no gRPC stubs, no clients, no service impls; JSON
-// over HTTP is the transport and these annotations are declarative metadata.
+// SERVICE BLOCKS DECLARE ROUTES, NOTHING MORE: the `google.api.http`
+// annotations are where paths and verbs live, and the router-vs-descriptor
+// test binds them to axum's real route table. ONLY MESSAGES are generated —
+// no gRPC stubs, no clients, no service impls; JSON over HTTP is the
+// transport and these annotations are declarative metadata.
 //
-// Field names emit as lowerCamelCase on the wire (canonical ProtoJSON;
-// Engineer ruling R1 2026-07-25 — `display_name` becomes `displayName` at the
-// /api/v1 mint). No `json_name` anywhere, by ruling: it is a one-way door.
+// Field names emit as lowerCamelCase on the wire (canonical ProtoJSON —
+// `display_name` becomes `displayName` at the /api/v1 mint). No `json_name`
+// anywhere: pinning one would be a one-way door once clients depend on it.
 
 syntax = "proto3";
 
@@ -56,7 +56,7 @@ message LogoutResponse {}
 // URL>`; Logout answers `303` with `Set-Cookie` clears. They are declared here
 // so the route table is complete and the descriptor test covers their paths;
 // their bodies are NOT generated-decoded (the frontend's hand-written Layer
-// owns redirect-following and cookie harvesting — DD 39944194).
+// owns redirect-following and cookie harvesting).
 service SessionService {
   // Who is signed in. Anonymous/expired → 401 `not_authenticated` Problem.
   rpc GetMe(GetMeRequest) returns (GetMeResponse) {

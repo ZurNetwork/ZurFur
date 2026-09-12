@@ -1,6 +1,6 @@
 ---
 path: frontend/web/src/lib
-charted: 2026-08-29
+charted: 2026-09-12
 fs:
   - name: server/
     role: the Effect half — runtime, API port, programs, form schemas
@@ -28,3 +28,7 @@ fs:
 **Is:** The shared library, cut by the seam: `api`/`types`/`components`/`testing` are Effect-free and browser-safe; `server/` is the Effect half.
 
 **Conventions:** `$lib/api/*` is the vocabulary that crosses the seam — plain interfaces + `as const` maps. A rule stated once lives in the shared module both sides import (`handle-format.ts` backs both the Schema field and the brand validator). New shared UI goes in `components/`.
+
+**Entry points:** `api/` (the seam vocabulary) · `types/brand.ts` (the one blessed `as` site).
+
+**Refs:** none of its own — the branding/never-null rules these modules encode are pointed at from `frontend/web/NODE.md`.

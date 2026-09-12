@@ -1,6 +1,6 @@
 //! [`CommissionStore`] (reads, pool-backed) and [`CommissionWrites`] (writes,
 //! reachable only via an open [`UnitOfWork`](domain::ports::UnitOfWork)) over
-//! the `commission` table (DD `24150017`).
+//! the `commission` table.
 //!
 //! SQL lives in `queries/commission/`; row shapes are generated (see [`crate::queries`]).
 
@@ -31,8 +31,8 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::{PgColumnStore, queries::commission as sql};
 
-/// The commission [`Fact`](domain::elements::commission::Fact) tables (DD
-/// `3014657`) — [`commission_has_facts`](CommissionWrites::commission_has_facts)
+/// The commission [`Fact`](domain::elements::commission::Fact) tables —
+/// [`commission_has_facts`](CommissionWrites::commission_has_facts)
 /// must query every table listed here. Currently empty; see the compile-time guard below.
 pub const COMMISSION_FACT_TABLES: &[&str] = &[];
 
@@ -65,7 +65,7 @@ const _: () = assert!(
 );
 
 /// The [`CommissionWrites`] surface: a borrowed transaction connection, so a
-/// bare-pool write is unrepresentable. Built by `uow.commissions()`. (DD `24150017`)
+/// bare-pool write is unrepresentable. Built by `uow.commissions()`.
 pub struct PgCommissionWrites<'a> {
     /// The open transaction; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
@@ -340,7 +340,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Whether the commission bears any fact, checked on the open transaction (no
-    /// TOCTOU window). Constant `false` while [`COMMISSION_FACT_TABLES`] is empty. (DD `3014657`)
+    /// TOCTOU window). Constant `false` while [`COMMISSION_FACT_TABLES`] is empty.
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
@@ -434,7 +434,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Hard-deletes the grantee's key; the return value is `true` only when a key
-    /// existed (an idempotent no-op otherwise). (DD `29130754`)
+    /// existed (an idempotent no-op otherwise).
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -752,7 +752,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// Which column of `workflow_id` currently holds this commission, if any.
     /// Scoped by board — a commission sits in at most one column per board but
-    /// on many boards (DD `29130754`). Delegates to [`PgColumnStore::find_column`].
+    /// on many boards. Delegates to [`PgColumnStore::find_column`].
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -782,7 +782,7 @@ impl CommissionStore for PgCommissionStore {
             .map(Some)
     }
 
-    /// The [`GrantLevel`] `user` holds on `commission`, or `None` (DD `29130754`).
+    /// The [`GrantLevel`] `user` holds on `commission`, or `None`.
     /// The stored token is re-validated through [`GrantLevel`]'s `FromStr`.
     async fn view_grant(
         &self,
@@ -863,7 +863,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// One `EXISTS` over the persisted `commission_participant` membership record
     /// — never a computed owner-∪-seated union. Unaffected by placement or view
-    /// grants (DD `29130754`).
+    /// grants.
     async fn is_participant(
         &self,
         commission: &CommissionId,

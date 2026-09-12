@@ -1,4 +1,4 @@
--- The removal gate (ZMVP-166): the target must exist in THIS commission — an
+-- The removal gate: the target must exist in THIS commission — an
 -- absent element id and one belonging to another commission both match nothing,
 -- indistinguishably (ElementNotFound), so removal probes reveal nothing about
 -- other commissions. Returns the ordering group the removal will have to

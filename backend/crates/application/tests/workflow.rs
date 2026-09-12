@@ -208,7 +208,7 @@ async fn column_names(runtime: &Runtime, workflow_id: &WorkflowId) -> Vec<String
 }
 
 /// Tombstone the account, leaving its memberships in place — the state
-/// `role_of` cannot see, which is why the liveness gate exists. (DD 23003138)
+/// `role_of` cannot see, which is why the liveness gate exists.
 async fn tombstone(runtime: &Runtime, account_id: &AccountId) {
     let target = account_id.clone();
     application::transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
@@ -235,8 +235,8 @@ async fn remove_column(
 
 /// Seed a commission owned by `owner`, directly (test seed, no use case
 /// involved) — owning it is enough to make it immediately visible to
-/// `insert_in_column`'s PUSH rail (DD 29130754), without standing up a
-/// separate view grant.
+/// `insert_in_column`'s PUSH rail, without standing up a separate view
+/// grant.
 async fn seed_commission(runtime: &Runtime, owner: &UserId, title: &str) -> CommissionId {
     let title: CommissionTitle = title.parse().expect("a valid commission title");
     let owner = owner.clone();

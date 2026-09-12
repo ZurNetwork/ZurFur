@@ -1,11 +1,11 @@
-//! Participants and Seats over PostgreSQL (ZMVP-76), against a throwaway
+//! Participants and Seats over PostgreSQL, against a throwaway
 //! container: creating a commission persists its owner's participant row (and
 //! the migration backfills one for commissions that predate the table);
 //! `is_participant` reads the membership record, not the owner column; the
 //! owner's row is the irremovable permanent floor (while the commission-delete
 //! cascade still sweeps everything); a re-add for an already-seated pair is a
-//! silent no-op that preserves the original created_at (ZMVP-140, ahead of
-//! ZMVP-79's seat acceptance re-adding an existing participant); and a
+//! silent no-op that preserves the original created_at (ahead of
+//! seat acceptance re-adding an existing participant); and a
 //! declared Seat lands as one ordinary element plus its interpreted satellite
 //! sharing the id, read back through `seats()`. Requires a container runtime
 //! socket (DOCKER_HOST honored).
@@ -24,8 +24,8 @@ use domain::{
     ports::{CommissionStore, Database, UnknownTab},
 };
 
-/// The ZMVP-76 migration (create `commission_participant` + owner backfill +
-/// `commission_seat`), as sqlx numbers it. The backfill test runs everything
+/// The migration that creates `commission_participant` + owner backfill +
+/// `commission_seat`, as sqlx numbers it. The backfill test runs everything
 /// *before* this version, seeds pre-membership commissions, then lets the full
 /// migrator catch up.
 const PARTICIPANT_SEAT_MIGRATION: i64 = 20260706100000;

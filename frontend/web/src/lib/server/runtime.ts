@@ -1,5 +1,5 @@
 /**
- * The runes seam (DD 39944194): the ONE place Effect programs become promises.
+ * The runes seam: the ONE place Effect programs become promises.
  * A single `ManagedRuntime` is built once per server process (module scope —
  * first load/action to import it constructs it); loads, actions and hooks call
  * {@link runApi} and receive plain data. Nothing above this module sees a
@@ -22,7 +22,7 @@ import { mockModeEnabled, zurfurApiMock } from './api/zurfur-api-mock';
 const runtime = ManagedRuntime.make(Layer.empty);
 
 /**
- * The mock `ZurfurApi` Layer, built ONCE at module scope (ZMVP-198) — every
+ * The mock `ZurfurApi` Layer, built ONCE at module scope — every
  * entry `zurfurApiMock()` returns is already LAZY (`Effect.suspend`/
  * `Effect.sync` closures over the shared store, see `zurfur-api-mock.ts`),
  * so state is read at effect-RUN time regardless of how long ago the Layer

@@ -1,4 +1,4 @@
-//! ZMVP-65 — a User creates a commission and owns it, end to end over HTTP.
+//! A User creates a commission and owns it, end to end over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface (the mem store-layer tests in
 //! `adapter-mem` cover the persistence seam):
@@ -8,7 +8,7 @@
 //!   `Draft` with `Private` visibility (introspected off the backend, since the route
 //!   returns a bare `201`);
 //! - **AC4** — a User with **no Account** can create one (a user-scoped write; not
-//!   gated on account membership — ZMVP-47, DD 26247170 §5);
+//!   gated on account membership: Users are first-class actors that need no Account);
 //! - and the floors: an **anonymous** caller cannot create a commission (`401`), and
 //!   a **blank title** is rejected (`422`, the `CommissionTitle` gate).
 //!

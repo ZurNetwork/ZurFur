@@ -1,5 +1,4 @@
-//! ZMVP-23: defense-in-depth CSRF on the cookie surface (DD "Auth Surfaces, the
-//! Plugin Trust Boundary & CSRF"). A state-changing request whose `Origin` header
+//! Defense-in-depth CSRF on the cookie surface. A state-changing request whose `Origin` header
 //! is present and is **not** our first-party origin is rejected (403); a matching
 //! origin, a missing origin (a non-browser client, which carries no ambient cookie
 //! and so can't be CSRF'd), and safe methods all pass. Layers on top of the session

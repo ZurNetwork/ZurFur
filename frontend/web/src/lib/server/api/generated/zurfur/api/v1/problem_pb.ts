@@ -1,10 +1,10 @@
-// The RFC 9457 problem shape, declared ONCE for every surface (DD 40992770
-// decision 8; API error model DD 23592962). Before this file existed the shape
-// was hand-declared three times — problem.rs, plugin-v1.yaml, problem.ts — and
-// the copies had already drifted on whether `detail` is required. This is the
-// only declaration; both tiers generate from it.
+// The RFC 9457 problem shape, declared ONCE for every surface. Before this
+// file existed the shape was hand-declared three times — problem.rs,
+// plugin-v1.yaml, problem.ts — and the copies had already drifted on
+// whether `detail` is required. This is the only declaration; both tiers
+// generate from it.
 //
-// Semantics (unchanged from DD 23592962):
+// Semantics:
 // - served with `Content-Type: application/problem+json`, never on a 2xx;
 // - `type` is a stable, NON-dereferenceable URN (`urn:zurfur:error:<slug>`) —
 //   an identifier, not a documentation URL;
@@ -53,12 +53,10 @@ export type Problem = Message<"zurfur.api.v1.Problem"> & {
   title: string;
 
   /**
-   * Per-occurrence human detail. REQUIRED — always emitted with content
-   * (Engineer ruling 2026-07-25, resolving the three-way drift: the backend
-   * has always emitted it; `problem.ts`'s optionality was the outlier).
-   * Implicit presence means an empty string would be OMITTED from the JSON —
-   * so the emitting side must never construct an empty `detail`; the golden
-   * wire test pins this.
+   * Per-occurrence human detail. REQUIRED — always emitted with content;
+   * implicit presence means an empty string would be OMITTED from the
+   * JSON, so the emitting side must never construct an empty `detail` —
+   * the golden wire test pins this.
    *
    * @generated from field: string detail = 4;
    */

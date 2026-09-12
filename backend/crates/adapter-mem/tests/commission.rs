@@ -1,8 +1,8 @@
-//! The commission fact predicate over the in-memory fake (ZMVP-67):
+//! The commission fact predicate over the in-memory fake:
 //! `commission_has_facts` is reachable only on an open [`UnitOfWork`]'s
 //! commissions view — the same transaction a future delete/archive gate
-//! (ZMVP-66/68) runs in — and, with no fact-minter wired anywhere, every
-//! commission answers `false`. The archive flag (ZMVP-68) rides the same
+//! runs in — and, with no fact-minter wired anywhere, every
+//! commission answers `false`. The archive flag rides the same
 //! seam: `set_archived` is a transactional write reporting whether the state
 //! actually flipped.
 
@@ -76,7 +76,7 @@ async fn an_unknown_commission_answers_false() {
     uow.rollback().await.expect("rollback read-only unit");
 }
 
-/// ZMVP-68 (mem store layer): `set_archived` flips the archive flag through the
+/// Mem store layer: `set_archived` flips the archive flag through the
 /// unit of work and reports **whether the state actually transitioned** — the
 /// bool the route keys its changelog append on, so a repeated archive (or
 /// un-archive) can never mint a duplicate entry. The first stamp survives a
@@ -188,9 +188,9 @@ async fn set_archived_round_trips_and_reports_transitions() {
     uow.rollback().await.expect("rollback");
 }
 
-/// ZMVP-68 (mem store layer): an archive staged in a dropped unit of work is
+/// Mem store layer: an archive staged in a dropped unit of work is
 /// discarded — the flag write obeys the same commit-or-discard rule as every
-/// other commission write (DD 24150017).
+/// other commission write.
 #[tokio::test]
 async fn a_dropped_unit_of_work_discards_the_archive() {
     let backend = MemBackend::new();

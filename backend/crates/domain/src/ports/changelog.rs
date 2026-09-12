@@ -1,6 +1,6 @@
 //! Changelog ports: the transaction-bound append surface — an entry commits
 //! atomically with the domain write it records — and the pool-backed ordered
-//! read. (DD 59310081)
+//! read.
 
 use async_trait::async_trait;
 
@@ -10,7 +10,7 @@ use crate::elements::commission::{ChangelogEntry, CommissionId, NewChangelogEntr
 /// [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.changelog()`), so an entry
 /// commits atomically with the domain write it records. This is the whole write
 /// vocabulary: with no update or delete anywhere, editing history is
-/// unrepresentable at the port layer. (DD 59310081)
+/// unrepresentable at the port layer.
 #[async_trait]
 pub trait ChangelogWrites: Send {
     /// Append one entry to its commission's stream; the store assigns `seq` at

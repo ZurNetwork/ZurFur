@@ -1,38 +1,10 @@
--- The commission content tree (ZMVP-71; Surfaces DD DESIGN/28246028, Tree
--- Storage DD DESIGN/28409880): one adjacency row per node — envelope as real
--- columns Postgres can constrain and audit, payload as opaque jsonb the core
--- never interprets. Whole-tree read model: one indexed query per commission,
--- assembly and projection in Rust (no ltree, no closure table, no recursive
--- CTEs).
---
--- id             The node key. App-minted UUIDv7 for grown nodes; the backfill
---                below mints v4 (PG16 has no uuidv7(); a singleton root doesn't
---                need time-sortability — created_at carries the real time).
--- commission_id  The tree this node belongs to. ON DELETE CASCADE: nodes are
---                commission-owned bookkeeping, NOT facts (Deletion DD 3014657)
---                — the whole tree goes when the commission hard-deletes
---                (ZMVP-66 relies on this cascade).
--- parent         Adjacency: the parent node, NULL = the root surface. The
---                self-referential ON DELETE CASCADE is what makes subtree
---                removal (ZMVP-73) one row delete.
--- type           The envelope's type tag: 'surface' now; component type tags
---                arrive with ZMVP-72+ (text, not a pg enum — the catalog DD
---                types it later without migrations).
--- mode           A surface's visibility mode ('presentation' | 'description' |
---                'total'); NULL on components, which inherit their parent's
---                (Surfaces DD amendment). The CHECK gives that rule teeth: a
---                surface ALWAYS carries a mode, anything else NEVER does. The
---                root's mode is the commission-level visibility itself.
--- position       Sibling order within the parent, renumbered in-transaction on
---                insert-between (append = max + 1). DEFERRABLE so a renumbering
---                UPDATE may pass through intermediate collisions inside one
---                transaction.
--- created_by     The acting User — per-node FK teeth for authorization/audit
---                (Tree Storage DD: plugin subtree isolation reads this).
--- created_at     When the node was created. Application-supplied (no DEFAULT
---                now()), matching the codebase convention.
--- payload        The type-owned half of the node, schemaless at the DB layer by
---                design; validation lives with the future type catalog.
+-- The commission content tree (later retired — see
+-- `20260805234354_flat_commission_composition.sql`): one adjacency row per
+-- node — envelope as real columns Postgres can constrain and audit, payload
+-- as opaque jsonb the core never interprets. Whole-tree read model: one
+-- indexed query per commission, assembly and projection in Rust. See NODE.md
+-- ("20260705150000_create_commission_node.sql") for the column-by-column
+-- rationale.
 CREATE TABLE commission_node (
     id            uuid        PRIMARY KEY,
     commission_id uuid        NOT NULL REFERENCES commission (id) ON DELETE CASCADE,
@@ -58,9 +30,9 @@ CREATE INDEX commission_node_by_commission ON commission_node (commission_id);
 -- (the test containers run one); harmless where it's already core.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Root backfill (ZMVP-71 AC1, retroactive half): every commission created
+-- Root backfill: every commission created
 -- before the tree existed gets its root surface here, mode mapped from the flat
--- visibility column exactly as the Surfaces DD amendment aliases it —
+-- visibility column —
 -- private -> total, listed -> presentation, public -> description. The CASE is
 -- deliberately ELSE-less: a visibility token outside the vocabulary would map
 -- to NULL, violate the surface-has-a-mode CHECK, and abort the migration loudly

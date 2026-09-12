@@ -1,4 +1,4 @@
--- Server-side session store backing tower-sessions (see ZMVP-8). "Signed in"
+-- Server-side session store backing tower-sessions. "Signed in"
 -- means a row here holds the visitor's session; the cookie carries only the id,
 -- so the session survives a browser reload.
 --

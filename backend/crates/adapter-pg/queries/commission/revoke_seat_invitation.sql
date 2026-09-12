@@ -1,4 +1,4 @@
--- Revoke a pending seat invitation (ZMVP-78). state receives the revoked state;
+-- Revoke a pending seat invitation. state receives the revoked state;
 -- inv_state guards the expected current (pending) state, so a concurrent flip
 -- loses, and an UPDATE matching no row still succeeds — revoking an absent or
 -- already-terminal invitation is a harmless no-op. The Seat mirror of

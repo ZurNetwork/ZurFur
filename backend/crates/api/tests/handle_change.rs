@@ -1,12 +1,12 @@
-//! ZMVP-46: an Owner changes an Account's handle after onboarding
-//! (`PATCH /accounts/{id}/handle`), DD "Account Handle Change Flow" 27852802.
+//! An Owner changes an Account's handle after onboarding
+//! (`PATCH /accounts/{id}/handle`).
 //!
-//! Drives the whole handler against the in-process fakes: Owner-only authority (§2),
-//! re-validation to the founding gate (Done-when), the light rate limit (§3), the
-//! vacated-handle quarantine enforced at BOTH claim sites (§4), and the BYO-target
-//! deferral (§6). Resolution following the change — `find_did_by_handle(new)` resolves
+//! Drives the whole handler against the in-process fakes: Owner-only authority,
+//! re-validation to the founding gate, a light rate limit, the
+//! vacated-handle quarantine enforced at BOTH claim sites, and the BYO-target
+//! deferral. Resolution following the change — `find_did_by_handle(new)` resolves
 //! and `find_did_by_handle(old)` stops — is asserted through the shared store the
-//! handler wrote. The `did:plc` `alsoKnownAs` re-point (§5/§7) is the ZMVP-50 op,
+//! handler wrote. The `did:plc` `alsoKnownAs` re-point is a separate op,
 //! exercised in `adapter-atproto`'s own tests; here the mem minter stands in for it.
 use adapter_mem::MemBackend;
 use api::AppState;

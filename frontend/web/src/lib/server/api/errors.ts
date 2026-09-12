@@ -1,7 +1,7 @@
 /**
- * The tagged error union the Effect seam speaks (DD 39944194): every way a
+ * The tagged error union the Effect seam speaks: every way a
  * backend call fails, as a distinct tag the seam can `catchTags` on. The RFC
- * 9457 problem (DD 23592962) rides inside the tags that carry one — the wire
+ * 9457 problem rides inside the tags that carry one — the wire
  * contract is not re-modeled, just lifted into the error channel.
  */
 

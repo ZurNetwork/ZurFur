@@ -1,5 +1,5 @@
 //! The [`Account`] — a platform-custodied entity that is its own sovereign
-//! identity. (DESIGN 1966081)
+//! identity.
 //!
 //! An account holds a minted `did:plc` of its own, a validated human name, a
 //! handle, and soft-delete timestamps. It is founded together with its founder's
@@ -22,7 +22,8 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// An [`Account`]'s identifier: its [`Did`]. (DD 57081857)
+/// An [`Account`]'s identifier: its [`Did`] — the DID is the only identifier,
+/// with no separate surrogate id behind it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct AccountId(Did);
@@ -154,7 +155,7 @@ pub struct Account {
     pub id: AccountId,
     /// The public handle the account is reached by, chosen at founding and
     /// unique across all accounts — a soft-deleted one still reserves its
-    /// handle. (DD 23003138)
+    /// handle.
     pub handle: Handle,
     /// The name the founder gave the account.
     pub name: AccountName,
@@ -229,7 +230,7 @@ pub struct AccountMembership {
 /// `listed_on_profile` privacy valve applies. Required (no default, no
 /// `Option`) on
 /// [`list_for_user`](crate::ports::AccountStore::list_for_user), so the valve
-/// cannot be bypassed by omission. (DD 21594113)
+/// cannot be bypassed by omission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingScope {
     /// The user reading their own accounts — every live membership,

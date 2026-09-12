@@ -2,7 +2,7 @@
 //! tables, with a column owning its ordered card list.
 //!
 //! Placement lives here and only here — a commission's presence on an account's
-//! board IS its placement; the commission side stores none of it. (DD 29130754)
+//! board IS its placement; the commission side stores none of it.
 
 use async_trait::async_trait;
 use domain::{

@@ -1,6 +1,6 @@
 ---
 path: backend/crates/api/src/routes/commissions
-charted: 2026-09-06
+charted: 2026-09-12
 fs:
   - name: mod.rs
     role: router assembly, body limits, the CommissionError→Problem mapping, and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts
@@ -61,7 +61,9 @@ fs:
 
 **Conventions:** commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto). Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403. A new act adds a file here rather than growing a hotspot. The handler shape (ZMVP-205): `CallingUser` in, then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction. `channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists.
 
-**Refs:** DESIGN "Commission" (3276807) · DD "Commission Composition" (45514754) · DD "The Changelog" (30408741) · DD "The Application Layer" (55836674).
+**Entry points:** `mod.rs` (router assembly + the `CommissionError → Problem` mapping).
+
+**Refs:** DESIGN "Commission" (3276807) · DD 45514754 — Commission Composition (`elements.rs`) · DD 30408741 — The Changelog · DD 55836674 D6/D7 — The Application Layer (`elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet) · DD 3014657 — Deletion of Commissions (`delete.rs`/`archive.rs`) · DD 29982722 — Maturity Vocabulary (`maturity.rs`) · DD 29130754 — Commission Ownership Separation (`positioning.rs`: grants issued to Users, never Accounts) · DD 28311564 — Referenceable, Slot & Seat (`seats.rs`) · DD 26247170 — User as Actor & On-Demand Accounts (`create.rs`) · DD 6848513 — External Chat Tracking (`mod.rs::channel_methods`).
 
 ## Notes
 - `unknown_surface` is `422` not `404`: the `(tab, surface)` skeleton is code-declared and global, so an undeclared pair is a program fact, not a per-commission one — contrast `tab_not_found`/`element_not_found` (404, per-row, cross-commission collapse).

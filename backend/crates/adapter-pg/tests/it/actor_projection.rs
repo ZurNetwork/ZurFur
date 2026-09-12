@@ -1,5 +1,5 @@
-//! Actor tables as shared-PK projections of `actor_identity` (ZMVP-123, DD
-//! `34013187` decisions 1-2), against a throwaway container: the migration
+//! Actor tables as shared-PK projections of `actor_identity`, against a
+//! throwaway container: the migration
 //! backfills one identity row per pre-existing users/accounts row and stops
 //! loudly on an ambiguous DID; the composite FK makes a wrong-kind or orphaned
 //! projection row unrepresentable; and actor creation is a two-step write
@@ -20,7 +20,8 @@ use domain::{
 
 /// The backfill migration (slice 1: backfill + dedupe assertion), as sqlx numbers
 /// it. The backfill tests run everything *before* this version, seed old-shape
-/// rows, then let the full migrator catch up (the ZMVP-71/76 backfill pattern).
+/// rows, then let the full migrator catch up (the same backfill pattern used
+/// elsewhere in this schema).
 const BACKFILL_MIGRATION: i64 = 20260718193956;
 
 /// A fresh, fully migrated private database — a clone of the shared template

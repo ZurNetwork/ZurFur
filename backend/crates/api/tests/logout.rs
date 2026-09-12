@@ -1,4 +1,4 @@
-//! The exit door (ZMVP-11). Drives the real HTTP stack with every external
+//! The exit door. Drives the real HTTP stack with every external
 //! dependency faked in-process — the PDS (`MemAuthenticator`), the user store
 //! (`MemBackend`), and the session store (`MemoryStore`) — so the test is about
 //! the sign-out route, not the storage tech (`PgSessionStore` is exercised in

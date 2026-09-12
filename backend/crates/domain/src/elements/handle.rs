@@ -1,10 +1,10 @@
 //! The [`Handle`] — a validated, normalized atproto-style Account handle — and
-//! the [`HandleDomain`] it may live under. (DD 24870914)
+//! the [`HandleDomain`] it may live under.
 //!
 //! This module is the one shared validation gate every claim source funnels
 //! through: constructing a [`Handle`] enforces normalization, the
-//! charset/segment/length rules, the `xn--` punycode reject (DD 26050561), and
-//! the Zurfur reserved-label reject in a single pass. Namespace membership is
+//! charset/segment/length rules, an outright reject of any `xn--` punycode
+//! label, and the Zurfur reserved-label reject in a single pass. Namespace membership is
 //! [`Handle::is_in_namespace`], against a [`HandleDomain`] parsed once at config
 //! load, so the claim checks and the resolver cannot disagree.
 
@@ -101,10 +101,10 @@ const RESERVED_LABELS: &[&str] = &[
 /// // A brought (BYO) domain is fine.
 /// assert!("alice.example.com".parse::<Handle>().is_ok());
 ///
-/// // Punycode labels are rejected outright (ZMVP-48).
+/// // Punycode labels are rejected outright.
 /// assert!("xn--80ak6aa92e.zurfur.app".parse::<Handle>().is_err());
 ///
-/// // Reserved labels in the *.zurfur.app namespace are rejected (ZMVP-45)...
+/// // Reserved labels in the *.zurfur.app namespace are rejected...
 /// assert!("api.zurfur.app".parse::<Handle>().is_err());
 /// // ...but the same word is claimable on a BYO domain.
 /// assert!("api.example.com".parse::<Handle>().is_ok());
@@ -142,7 +142,7 @@ pub enum HandleError {
     TldLeadingDigit,
     /// The rightmost segment is a reserved TLD (e.g. `.local`); carries it.
     ReservedTld(String),
-    /// Some label begins with `xn--`. Rejected in both namespaces. (DD 26050561)
+    /// Some label begins with `xn--`. Rejected in both namespaces.
     PunycodeLabel,
     /// The leftmost label of a `*.zurfur.app` handle is reserved; carries it.
     ReservedLabel(String),

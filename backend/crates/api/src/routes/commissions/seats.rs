@@ -1,5 +1,5 @@
 //! `POST /commissions/{id}/seats` — the owner declares a Seat on the
-//! commission (Referenceable/Slot/Seat DD `28311564`): a structural
+//! commission: a structural
 //! participant position, born vacant, typed by an open kind.
 
 use application::commission::seats::declare;

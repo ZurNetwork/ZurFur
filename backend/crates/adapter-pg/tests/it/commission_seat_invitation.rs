@@ -1,4 +1,4 @@
-//! Seat invitations over PostgreSQL (ZMVP-78), against a throwaway container:
+//! Seat invitations over PostgreSQL, against a throwaway container:
 //! creating a pending invitation persists a row `find_pending_seat_invitation`
 //! reads back; the partial unique index bars a second pending offer for the same
 //! (seat, user) pair while letting several *different* Users hold pending offers

@@ -1,7 +1,7 @@
 //! PostgreSQL adapter — Zurfur's app-private data boundary. Implements the
 //! domain port traits (see [`domain::ports`]) against PostgreSQL; writes go
-//! through the compile-enforced Unit of Work ([`PgDatabase`]/[`PgUnitOfWork`],
-//! DD 24150017). SQL lives in per-statement files under `queries/`, generated
+//! through the compile-enforced Unit of Work ([`PgDatabase`]/[`PgUnitOfWork`]).
+//! SQL lives in per-statement files under `queries/`, generated
 //! into [`queries`] (see the crate `NODE.md`/`CLAUDE.md`).
 
 use std::borrow::Cow;

@@ -1,4 +1,4 @@
-//! `GET /commissions` (ZMVP-157) — the signed-in user's OWNED commissions,
+//! `GET /commissions` — the signed-in user's OWNED commissions,
 //! owner-POV only:
 //!
 //! - the listing is owner-scoped (a commission owned by someone else never

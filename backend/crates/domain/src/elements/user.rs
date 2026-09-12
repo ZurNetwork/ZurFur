@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The identity of a [`User`]: their [`Did`]. The DID IS the key — there is no
-/// separate private surrogate. (DD 57081857)
+/// separate private surrogate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(Did);
 

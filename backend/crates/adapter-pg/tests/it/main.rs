@@ -1,4 +1,4 @@
-//! The single adapter-pg integration binary (ZMVP-134).
+//! The single adapter-pg integration binary.
 //!
 //! One binary instead of one per file so every module here shares the same
 //! test process — and therefore the same refcounted Postgres container from

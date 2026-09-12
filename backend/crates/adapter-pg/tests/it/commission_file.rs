@@ -1,4 +1,4 @@
-//! Commission file entries over PostgreSQL (ZMVP-88), against a throwaway
+//! Commission file entries over PostgreSQL, against a throwaway
 //! container: the `commission_file` link (written on the Unit of Work, read scoped
 //! to its commission) and the `FileStore` blob store (`PgFileStore`, pool-backed).
 //! Also pins AC2 at the store layer — a commission with only file entries still

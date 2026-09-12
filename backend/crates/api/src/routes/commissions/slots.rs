@@ -1,6 +1,6 @@
 //! `POST /commissions/{id}/slots` — the owner declares a batch of Character
-//! Slots: positions with a required title and optional notes (DESIGN/Slots
-//! `5931025`). The body is an array; the batch lands all-or-nothing. No fill
+//! Slots: positions with a required title and optional notes.
+//! The body is an array; the batch lands all-or-nothing. No fill
 //! surface exists here — an empty Slot is a valid, permanent state.
 
 use application::commission::slots::declare::{self, SlotBody};

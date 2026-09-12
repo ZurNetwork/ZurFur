@@ -1,6 +1,6 @@
 ---
 path: backend/crates/cli
-charted: 2026-08-29
+charted: 2026-09-12
 fs:
   - name: Cargo.toml
     role: bin `zurfur`; deps on composition, application, domain, adapter-pg, clap; dev-deps assert_cmd/adapter-mem/test-support
@@ -54,13 +54,13 @@ fs:
     role: process-level harness variant (real binary via assert_cmd)
     node: false
 ---
-**Is:** The `zurfur` terminal driving adapter (epic ZMVP-199): one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.
+**Is:** The `zurfur` terminal driving adapter: one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.
 
-**Conventions:** stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`. Exit codes are the four ExitClasses: 0 ok, 1 domain error, 2 usage (clap), 3 infrastructure. Problem `code`s reuse the API's vocabulary (`api/src/problem.rs`, DD 23592962) where the same refusal exists, plus CLI-only codes (config, identity_*, not_implemented, cancelled, no_session). Commands are thin: each is the CLI face of the same application-layer use case the HTTP driver calls — no domain logic duplicated here. Irreversible operations go through `crate::confirm`: a person at a terminal is asked (only typed y/yes proceeds); anything without a terminal is refused, not defaulted — `--yes` is the explicit scripted opt-in. No `.env` loading in `main` — walking parent dirs for `.env` would leak `DATABASE_URL`/root key from an unrelated directory (security review, ZMVP-203 F1). The identity file (`$ZURFUR_CLI_HOME/identity.json` or platform config dir) is the one record of which User the CLI acts as; versioned JSON, written 0600 atomically, fingerprinted to its database.
+**Conventions:** stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`. Exit codes are the four ExitClasses: 0 ok, 1 domain error, 2 usage (clap), 3 infrastructure. Problem `code`s reuse the API's vocabulary (`api/src/problem.rs`) where the same refusal exists, plus CLI-only codes (config, identity_*, not_implemented, cancelled, no_session). Commands are thin: each is the CLI face of the same application-layer use case the HTTP driver calls — no domain logic duplicated here. Irreversible operations go through `crate::confirm`: a person at a terminal is asked (only typed y/yes proceeds); anything without a terminal is refused, not defaulted — `--yes` is the explicit scripted opt-in. No `.env` loading in `main` — walking parent dirs for `.env` would leak `DATABASE_URL`/root key from an unrelated directory. The identity file (`$ZURFUR_CLI_HOME/identity.json` or platform config dir) is the one record of which User the CLI acts as; versioned JSON, written 0600 atomically, fingerprinted to its database.
 
 **Entry points:** `src/main.rs` (bin: zurfur) · `src/lib.rs` (Cli, run(), dispatch, ExitClass) · `src/commands/mod.rs`.
 
-**Refs:** DD 55836674 — The Application Layer · DD 23592962 — API Response Shape & Error Model · ZMVP-199 epic, ZMVP-201/202/203/204/205/206.
+**Refs:** DD 55836674 — The Application Layer (governs the use-case/DTO/Ports shape `commands/*.rs` calls into) · DD 23592962 — API Response Shape & Error Model (Problem `code` vocabulary, `src/problem.rs`) · DD 40992770 — The API Contract (`commands/session.rs`: `Whoami` is a hand copy of the wire `GetMeResponse`, pinned by `api/tests/whoami_parity.rs`) · DD 57081857 — Actor Addressing (`commands/account.rs`: `AccountId` is a did:plc itself, no surrogate id) · epic ZMVP-199 (this crate) with slices ZMVP-201..206 (process/in-process harnesses, health, migrate, session, account) · security review finding ZMVP-203 F1 (no `.env` loading in `main`, `tests/process.rs`) · client-model decision pending (`commands/session.rs`: `login` answers `not_implemented`) · Engineer ruling 2026-08-28 (`tests/account_process.rs`: unconfirmed `delete` without a terminal is refused, exit 1, not defaulted).
 
 ## Notes
 

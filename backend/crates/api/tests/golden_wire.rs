@@ -1,5 +1,5 @@
-//! The golden wire-shape guard for the nine `/api/v1` contract endpoints
-//! (DD 40992770; `contract/VERSIONING.md` §7.7's golden test, first cut).
+//! The golden wire-shape guard for the nine `/api/v1` contract endpoints —
+//! `contract/VERSIONING.md`'s golden test, first cut.
 //!
 //! Pins the three mint rulings as assertions, so a serializer change that
 //! `buf breaking` structurally cannot see (it diffs schemas, not emitted
@@ -11,7 +11,7 @@
 //!
 //! Volatile values (ids, DIDs, timestamps) are normalized to a placeholder
 //! before comparison — the guard pins the SHAPE: exact key sets, wrapping,
-//! omission, and stable vocabulary values. ZMVP-160/161 upgrade this to
+//! omission, and stable vocabulary values. A future pass upgrades this to
 //! byte-exact golden files once both codecs are generated (the serializer
 //! option set is contract text; only byte comparison pins it fully).
 
@@ -74,7 +74,7 @@ async fn sign_in(client: &reqwest::Client, base: &str, handle: &str) {
 ///
 /// Timestamps are NOT fully erased: only the digits are replaced, so the
 /// ENCODING — canonical ProtoJSON, `Z`-normalized, never `+00:00` — stays
-/// pinned. The epic gate caught exactly this hole: the ZMVP-160 codec swap
+/// pinned. A prior codec swap once silently
 /// moved `createdAt`/`deadline` from `Z` to `+00:00` and the old
 /// all-`<VOLATILE>` normalization was blind to it.
 fn normalized(value: &Value) -> Value {
@@ -260,8 +260,8 @@ async fn account_wire_shapes() {
     );
 }
 
-/// The commission pair: create returns the created resource (ruling
-/// 2026-07-25), list wraps; absent optionals omit keys; nested maturity is
+/// The commission pair: create returns the created resource,
+/// list wraps; absent optionals omit keys; nested maturity is
 /// camelCase-clean.
 #[tokio::test]
 async fn commission_wire_shapes() {

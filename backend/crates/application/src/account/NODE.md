@@ -1,6 +1,6 @@
 ---
 path: backend/crates/application/src/account
-charted: 2026-09-06
+charted: 2026-09-12
 fs:
   - name: create.rs
     role: found an Account — handle uniqueness + quarantine checks, mints a DID, seats the founder as Owner

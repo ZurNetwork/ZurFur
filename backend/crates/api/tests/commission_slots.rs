@@ -1,11 +1,11 @@
-//! ZMVP-77 — the owner declares Slots (Character positions; fill deferred) over
+//! The owner declares Slots (Character positions; fill deferred) over
 //! HTTP.
 //!
 //! Pins the acceptance criteria at the API surface (the store-layer seams are
 //! covered in `adapter-mem`/`adapter-pg`):
 //!
 //! - **AC1** — the owner declares Slots with `POST /commissions/{id}/slots`,
-//!   whose body is an **array** of Slot objects (PR #108 ruling: Slots usually
+//!   whose body is an **array** of Slot objects (Slots usually
 //!   arrive several at a time; the batch lands all-or-nothing, an empty array
 //!   is a `422`): each with a required title (trimmed, blank refused with a
 //!   `422`) and optional freeform notes (trimmed; blank normalizes to absent).
@@ -20,7 +20,7 @@
 //!   and byte-identical bodies, so no existence oracle; a fabricated/foreign
 //!   tab is a `tab_not_found` 404; an undeclared surface is a `422`
 //!   `unknown_surface`; a malformed body is a `422`. Declaring a Slot
-//!   appends **no** changelog entry — the frozen ZMVP-87 taxonomy carries
+//!   appends **no** changelog entry — the frozen changelog-kind taxonomy carries
 //!   `seat_declared` for Seats but no Slot variant.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
@@ -113,7 +113,7 @@ async fn create_commission(
 
 /// The commission's only tab id, introspected off the backend. There is no
 /// ROUTE that hands a caller a tab id yet — reading the composition is
-/// ZMVP-163's `GET` — so tests read it from the store.
+/// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
         .tabs_of(CommissionId::new(commission))

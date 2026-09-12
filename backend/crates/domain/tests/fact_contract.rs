@@ -1,7 +1,7 @@
-//! The Fact contract (ZMVP-67): implementing [`Fact`] is what makes a type
+//! The Fact contract: implementing [`Fact`] is what makes a type
 //! fact-bearing, and every fact anchors to exactly one commission. No production
-//! implementor exists yet (Products, ratings, EXP, achievements, payments are all
-//! future tickets — Deletion DD `3014657`), so a stub implementor exercises the
+//! implementor exists yet (Products, ratings, EXP, achievements, and payments are all
+//! future work), so a stub implementor exercises the
 //! contract's shape here.
 
 use domain::elements::commission::{CommissionId, Fact};

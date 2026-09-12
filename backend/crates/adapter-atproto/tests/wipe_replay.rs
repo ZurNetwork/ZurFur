@@ -1,14 +1,14 @@
-//! ZMVP-106 capstone: an image-bearing `app.zurfur.feed.post` written through the
+//! An image-bearing `app.zurfur.feed.post` written through the
 //! [`PublicRecords`] port survives a **wipe and replay** — booted against one
 //! throwaway PDS, then against a second, provably-clean one — and lands
 //! byte-for-byte deterministic, with a mechanical guard that the stored record
-//! carries no field outside the final ZMVP-104 lexicon.
+//! carries no field outside the finalized feed-post lexicon.
 //!
 //! This adds **no** boundary-crossing machinery: it composes the already-shipped,
-//! already-security-reviewed helpers (ZMVP-102/103/104/105) into the epic's exit
-//! proof — "the full write path proven deterministic against a rig that holds no
-//! hidden state" (epic ZMVP-101). Needs a container runtime socket (podman/docker),
-//! like every other testcontainers suite in the workspace.
+//! already-security-reviewed record-writing helpers into one exit proof that the
+//! full write path is deterministic against a rig that holds no hidden state.
+//! Needs a container runtime socket (podman/docker), like every other
+//! testcontainers suite in the workspace.
 
 use std::collections::BTreeSet;
 
@@ -111,7 +111,7 @@ async fn post_with_blob_survives_wipe_and_replay() {
 }
 
 /// One capstone run against `pds`: provision an account, upload the image blob,
-/// build a valid ZMVP-104-shaped image-bearing post with a pinned `createdAt`,
+/// build a valid image-bearing post matching the feed-post lexicon, pinning `createdAt`,
 /// write it **through the domain port**, then verify — for this run — that it
 /// reads back field-identical, the blob downloads byte-identical, and the stored
 /// record carries no field outside the final lexicon. Returns the witness the
@@ -193,8 +193,7 @@ async fn run_capstone_flow(pds: &ThrowawayPds) -> FlowWitness {
 /// returning the adapter and the acting DID.
 ///
 /// The `access_jwt` is handed straight to the adapter constructor and never
-/// surfaces again — the credential stays quarantined behind the port, exactly as
-/// ZMVP-105 established.
+/// surfaces again — the credential stays quarantined behind the port.
 async fn bearer_adapter(pds: &ThrowawayPds, handle: &str) -> (AtprotoPublicRecords, Did) {
     let account = pds
         .provision_account(handle)
@@ -265,10 +264,10 @@ async fn raw_get_record_value(pds: &ThrowawayPds, uri: &AtUri) -> serde_json::Va
 
 // --- AC4 (F6): the final lexicon bounds the stored record shape ---
 
-/// The on-disk **final** `app.zurfur.feed.post` lexicon (ZMVP-104), reached from
-/// this crate at the workspace root. Loading it from disk pins AC4 to the real
-/// file: a record that grew a field the lexicon does not declare — or a lexicon
-/// edit that dropped a field the record still writes — fails the guard below.
+/// The on-disk **final** `app.zurfur.feed.post` lexicon, reached from this crate
+/// at the workspace root. Loading it from disk pins the check to the real file: a
+/// record that grew a field the lexicon does not declare — or a lexicon edit that
+/// dropped a field the record still writes — fails the guard below.
 const FEED_POST_LEXICON: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../lexicons/app.zurfur.feed.post.json"

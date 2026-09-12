@@ -1,4 +1,4 @@
-//! ZMVP-76 — the owner declares a Seat on the commission, over HTTP.
+//! The owner declares a Seat on the commission, over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface (the store-layer seams —
 //! the persisted participant row, the element+satellite atomicity, the address
@@ -6,17 +6,17 @@
 //!
 //! - **AC1** — the owner declares a Seat with a typed kind via
 //!   `POST /commissions/{id}/seats`; a commission holds several Seats, kinds
-//!   repeating freely (an open vocabulary — ruling E21: not the Role enum).
+//!   repeating freely (an open vocabulary — deliberately not the Role enum).
 //! - **AC2** — a vacant Seat carries requirements: a free-text prompt and/or
 //!   an external link (the v1 vocabulary; both optional, no form builder).
 //! - **AC3** — a Seat holds at most one occupant: every declared seat is born
-//!   vacant (occupancy is a single slot; filling it is ZMVP-79).
+//!   vacant (occupancy is a single slot; filling it is a future feature).
 //! - **AC4** — a vacant Seat under Description-visible surfaces appears in the
-//!   non-participant projection: **deferred** — the projection is ZMVP-75,
-//!   which is not in this stack's lineage yet; the `#[ignore]`d test at the
+//!   non-participant projection: **deferred** — the projection endpoint
+//!   is not in this stack's lineage yet; the `#[ignore]`d test at the
 //!   bottom documents the criterion for the post-rebase arm.
-//! - The declaration is changelog-recorded (`seat_declared`, ZMVP-87's frozen
-//!   taxonomy) atomically with the seat.
+//! - The declaration is changelog-recorded (`seat_declared`, the frozen
+//!   changelog-kind taxonomy) atomically with the seat.
 //! - The floors: anonymous is `401`; a non-participant (and a truly absent
 //!   commission) gets the one uniform `commission_not_found` 404 — never a
 //!   403; a fabricated/foreign tab is a `tab_not_found` 404; an undeclared
@@ -113,7 +113,7 @@ async fn create_commission(
 
 /// The commission's only tab id, introspected off the backend. There is no
 /// ROUTE that hands a caller a tab id yet — reading the composition is
-/// ZMVP-163's `GET` — so tests read it from the store.
+/// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
         .tabs_of(CommissionId::new(commission))

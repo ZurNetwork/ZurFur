@@ -1,7 +1,6 @@
-//! ZMVP-90 — a Participant adds Markup to a file entry, end to end over HTTP.
+//! A Participant adds Markup to a file entry, end to end over HTTP.
 //!
-//! Pins the acceptance criteria at the API surface (DESIGN/Commission — "File
-//! entries and Markup"; Engineer ruling E14 2026-07-05):
+//! Pins the acceptance criteria at the API surface:
 //!
 //! - **AC1** — a Participant attaches a Markup (shape + coordinates + optional
 //!   text) to a file entry; it lands as a `markup_added` changelog entry

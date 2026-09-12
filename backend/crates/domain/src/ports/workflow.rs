@@ -1,8 +1,8 @@
 //! Workflow ports: the account-side organization surface. Reads are pool-backed,
-//! writes transaction-bound. Columns — the Lists of DESIGN/Workflow — carry their
-//! own pair, since a column has its own id and visibility; column *order* lives
+//! writes transaction-bound. Columns carry their own read/write pair, since a
+//! column has its own id and visibility; column *order* lives
 //! on the [`Workflow`] itself, so reordering
-//! is a workflow write. (Workflow 9895957)
+//! is a workflow write.
 
 use async_trait::async_trait;
 

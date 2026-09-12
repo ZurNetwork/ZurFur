@@ -4,7 +4,7 @@ import { HttpStatus } from '$lib/api/http-status';
 import { mockModeEnabled, mockSignin } from '$lib/server/api/zurfur-api-mock';
 
 /**
- * The mock sign-in callback (ZMVP-198): completes the login form's redirect
+ * The mock sign-in callback: completes the login form's redirect
  * loop with no OAuth, no PDS, no backend. `/login`'s action
  * (`routes/login/+page.server.ts`) relays whatever URL `ZurfurApi.startSignin`
  * hands back as a REAL navigation, unconditionally — it knows nothing about

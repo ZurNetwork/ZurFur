@@ -1,6 +1,6 @@
 //! Envelope encryption of custody key material under a **root key**
 //! (XChaCha20-Poly1305), before [`AccountKeys`] touch disk via
-//! [`PgKeyStore`](crate::key_store::PgKeyStore) (DD 26804226). The root key is
+//! [`PgKeyStore`](crate::key_store::PgKeyStore). The root key is
 //! DEV-ONLY (config/env) in v1 — a KMS/HSM must back it before any real
 //! account is minted.
 

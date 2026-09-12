@@ -1,6 +1,6 @@
 ---
 path: backend/crates/domain/src/elements
-charted: 2026-09-06
+charted: 2026-09-12
 fs:
   - name: account.rs
     role: Account, AccountId, membership, ListingScope
@@ -59,11 +59,11 @@ fs:
 ---
 **Is:** The domain's nouns: identity (user, account, actor identity, did, handle, keys), the commission aggregate, and value objects for maturity/markdown/profile/public records.
 
-**Conventions:** each file owns its id type, value objects, and pure invariant logic; id newtypes may derive serde (`Did`, `UserId`, `AccountId` — the CLI identity file needs them) but loaded entities never do (projection is a separate concern). Closed-vocabulary enums (`GrantLevel`, `MaturityRating`) implement std `Display`/`FromStr`, never bespoke `as_str`/`parse` pairs. A UUID-backed id's `FromStr` returns `id::IdError`; `Display` impls pair with it.
+**Conventions:** each file owns its id type, value objects, and pure invariant logic. The serde-deriving id newtypes are `Did`, `UserId` and `AccountId` — the CLI identity file needs them. A UUID-backed id's `FromStr` returns `id::IdError`; its `Display` impl pairs with that.
 
 **Entry points:** `commission/mod.rs`.
 
-**Refs:** DESIGN "Commission" (3276807) · "The Changelog as the Only Record" (59310081, supersedes-in-part 30408741) · "Commission Ownership Separation" (29130754, amended 2026-09-04) · "Commission Composition" (45514754) · "Actor Addressing" (57081857).
+**Refs:** DESIGN "Commission" (3276807, commission/mod.rs) · "The Changelog as the Only Record" (59310081, supersedes-in-part 30408741; commission/changelog.rs, commission/mod.rs Archived variant) · "Commission Ownership Separation" (29130754, amended 2026-09-04; commission/positioning.rs) · "Commission Composition" (45514754; commission/element.rs) · "Actor Addressing" (57081857; did.rs, account.rs AccountId, user.rs UserId, character.rs CharacterId) · DD 3014657 "Deletion of Commissions" (commission/fact.rs, commission/file.rs, commission/mod.rs archived_at) · DD 29982722 "Maturity Vocabulary" (maturity.rs, commission/mod.rs maturity field) · DD 34013187 "Identities — the Actor Super-Table" (actor_identity.rs) · DD 28311564 "Referenceable, Slot & Seat" (commission/seat.rs) · DD 26804226 "did:plc Identity Custody, Minting & Credible Exit" (account_keys.rs, plc_operation.rs) · DD 24870914 "The Account Handle" (handle.rs module doc) · DD 26050561 "Confusable Handles & the Punycode Policy" (handle.rs PunycodeLabel variant) · DD 4358151 "DID:PLC vs DID:Web" (did.rs) · DD 23003138 "Account Deletion, Tombstoning & Handle Reuse" (account.rs handle field) · DD 21594113 "User-Profiles, the Handle Swap & Content Maturity" (account.rs ListingScope) · DD 29949954 "Gallery Posts, the Product Snapshot & Index-Side Tagging" (public_record.rs module doc) · DD 30572573 "Comments — The Replyable Trait" (public_record.rs ReplyRef) · DD 24150017 "Transactions as a capability" (profile.rs cache-fill exception) · DESIGN "Account" (1966081, account.rs) · DESIGN "Achievement" (1933322, achievement.rs) · DESIGN "Workflow" (9895957, workflow.rs) · DESIGN "Character" (5668866, character.rs) · DESIGN "Blob" (9994275, blob.rs) · DESIGN "Roles" (2162692, role.rs, user_account.rs) · DESIGN "Slots" (5931025, commission/slot.rs) · ZMVP-31 (commission/mod.rs doctest: maturity is unrated at birth, only the widening gate requires it) · ZMVP-48/ZMVP-45 (handle.rs, plain `//` body comments left in place — punycode reject / reserved-label reject test sections).
 
 ## Notes
 

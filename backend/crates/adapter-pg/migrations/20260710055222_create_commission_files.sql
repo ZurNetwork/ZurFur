@@ -1,5 +1,5 @@
--- Commission file entries (ZMVP-88; DESIGN/Commission — "File entries and Markup"):
--- intermediate work-in-progress a Participant uploads into the review loop. A file
+-- Commission file entries: intermediate work-in-progress a Participant
+-- uploads into the review loop. A file
 -- entry is NOT a Product — no fact-lock, no atproto: it is private, Index-side,
 -- Total-tier content. Two tables, kept deliberately apart:
 --
@@ -7,11 +7,11 @@
 --                    belongs to, and who uploaded it. The retrieval path reads this
 --                    to authorize a participant (scoped to commission_id, so a key
 --                    from another commission is invisible here — never an existence
---                    oracle) and it is what the hard-delete cascade (ZMVP-66) reads
+--                    oracle) and it is what the hard-delete cascade reads
 --                    to enumerate a commission's blobs. Classified NON-FACT in
 --                    adapter-pg/src/commission.rs (COMMISSION_NON_FACT_TABLES): it is
 --                    commission-owned bookkeeping that cascades away, so a commission
---                    with only file entries stays hard-deletable (AC2).
+--                    with only file entries stays hard-deletable.
 --
 --   file_blob        The FileStore's v1 local implementation (AC4): the bytes and
 --                    caller metadata, keyed by the SAME opaque UUIDv7 handle. It holds
@@ -24,8 +24,7 @@
 -- id           The file entry's opaque key — also the file_blob key and the
 --              FileStore handle. App-minted UUIDv7 (PG16 has no native uuidv7()).
 -- commission_id The stream the entry belongs to. ON DELETE CASCADE: a file entry is
---              bookkeeping, not a fact — it dies with the commission (Deletion DD
---              3014657; Changelog DD retention).
+--              bookkeeping, not a fact — it dies with the commission.
 -- uploaded_by  The acting Participant. Deliberately NO foreign key onto users(id):
 --              shared history survives a user tombstone, exactly like the changelog's
 --              actor_id, so a user row's removal must never be blocked by, nor cascade

@@ -24,8 +24,7 @@ pub enum SessionOp {
 
 /// `whoami`'s projection — the same keys as HTTP's `GetMeResponse`: the DID
 /// always, handle/displayName/avatarUrl only when the profile resolved. A
-/// hand copy pinned to the wire by `api/tests/whoami_parity.rs` (DD 40992770
-/// D11).
+/// hand copy pinned to the wire by `api/tests/whoami_parity.rs`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Whoami {

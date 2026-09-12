@@ -1,4 +1,4 @@
-//! ZMVP-10 end-to-end: a signed-in visitor sees their handle, display name, and
+//! End-to-end: a signed-in visitor sees their handle, display name, and
 //! avatar; repeat views are served from the cache without waking the PDS; and an
 //! unreachable PDS degrades gracefully. Every dependency is faked in-process
 //! (PDS, user store, profile source/cache, session store) so the whole `/me`

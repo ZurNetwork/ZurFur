@@ -1,4 +1,4 @@
-//! In-process harness (ZMVP-201/203): drive [`cli::dispatch`] over a
+//! In-process harness: drive [`cli::dispatch`] over a
 //! [`composition::Runtime`] wired to the in-memory fakes and an identity file
 //! in a temp dir — no database, no process spawn. This is where the
 //! Engineer's operation commands get their fast tests; the process harness

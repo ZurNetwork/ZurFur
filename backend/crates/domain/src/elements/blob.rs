@@ -2,7 +2,7 @@
 //!
 //! A Blob is the raw binary payload a Post points at. Blobs are
 //! content-addressed, so a Blob's identity IS the hash of its bytes. Only the id
-//! type exists so far. (DESIGN 9994275)
+//! type exists so far.
 
 use cid::Cid;
 

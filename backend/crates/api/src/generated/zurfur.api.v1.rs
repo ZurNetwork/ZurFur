@@ -11,12 +11,10 @@ pub struct Problem {
     /// Short human summary of the problem class.
     #[prost(string, tag = "3")]
     pub title: ::prost::alloc::string::String,
-    /// Per-occurrence human detail. REQUIRED — always emitted with content
-    /// (Engineer ruling 2026-07-25, resolving the three-way drift: the backend
-    /// has always emitted it; `problem.ts`'s optionality was the outlier).
-    /// Implicit presence means an empty string would be OMITTED from the JSON —
-    /// so the emitting side must never construct an empty `detail`; the golden
-    /// wire test pins this.
+    /// Per-occurrence human detail. REQUIRED — always emitted with content;
+    /// implicit presence means an empty string would be OMITTED from the
+    /// JSON, so the emitting side must never construct an empty `detail` —
+    /// the golden wire test pins this.
     #[prost(string, tag = "4")]
     pub detail: ::prost::alloc::string::String,
     /// The HTTP status code, duplicated in the body per RFC 9457.
@@ -141,10 +139,9 @@ pub struct ChangeHandleResponse {
     pub name: ::prost::alloc::string::String,
 }
 /// `DELETE /api/v1/accounts/{id}` succeeds `200` and SAYS WHICH deletion
-/// happened (Engineer ruling 2026-07-25: the frontend is an interface — it
-/// renders what the program tells it, and cannot infer an outcome it was
-/// never told; ZMVP-152's AC needs this). Minted at `/api/v1`; the pre-GA
-/// surface answered a bodiless `204`.
+/// happened — the frontend is an interface, so it can only render an
+/// outcome it was actually told. Minted at `/api/v1`; the pre-GA surface
+/// answered a bodiless `204`.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteAccountResponse {
     /// Extensible string vocabulary (R8), domain-enforced:
@@ -162,7 +159,7 @@ pub struct ListAccountsResponse {
     #[prost(message, repeated, tag = "1")]
     pub accounts: ::prost::alloc::vec::Vec<AccountMembership>,
 }
-/// `PATCH /api/v1/accounts/{id}/handle` — the Owner-only rename (DD 27852802).
+/// `PATCH /api/v1/accounts/{id}/handle` — the Owner-only handle-rename endpoint.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ChangeHandleRequest {
     /// Opaque account id, from the path.
@@ -184,12 +181,12 @@ pub struct DeleteAccountRequest {
 pub struct ListCommissionsRequest {}
 /// `POST /api/v1/commissions` succeeds `201` with the created commission —
 /// the bare resource, flat, exactly as CreateAccountResponse renders its
-/// account (DD 23592962: success bodies are bare resources). Minted at
+/// account (success bodies are bare resources, never wrapped). Minted at
 /// `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
-/// unable to navigate to what it just made (Engineer ruling 2026-07-25: the
-/// interface renders what the program tells it). Field semantics are
-/// documented on `Commission`; this is a dedicated message so the create
-/// response can evolve independently of the listing row.
+/// unable to navigate to what it just made — a client can only act on what
+/// it is actually given. Field semantics are documented on `Commission`;
+/// this is a dedicated message so the create response can evolve
+/// independently of the listing row.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateCommissionResponse {
     #[prost(string, tag = "1")]
@@ -213,8 +210,8 @@ pub struct CreateCommissionResponse {
     #[prost(message, optional, tag = "10")]
     pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
-/// A commission's maturity posture (DD 29982722): the atproto self-label axis
-/// plus the orthogonal graphic flag.
+/// A commission's maturity posture: the atproto self-label rating axis plus
+/// the orthogonal graphic flag.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Maturity {
     /// Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
@@ -258,7 +255,7 @@ pub struct Commission {
     /// Deadline axis of the two-dimensional status, if set (R8 vocabulary).
     #[prost(string, optional, tag = "8")]
     pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
-    /// The external chat channel pointer, if linked (DD 32112642).
+    /// The external chat channel pointer, if one is linked.
     #[prost(string, optional, tag = "9")]
     pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
     /// When the commission was created.

@@ -1,13 +1,12 @@
-//! ZMVP-31 — a commission carries a required maturity rating (commissions-only
+//! A commission carries a required maturity rating (commissions-only
 //! slice), end to end over HTTP.
 //!
-//! Pins the acceptance criteria at the API surface, per the Engineer ruling of
-//! 2026-07-05 (the Maturity Vocabulary DD `29982722` supersedes the ticket's
-//! pre-DD Safe/Questionable/Explicit text):
+//! Pins the acceptance criteria at the API surface, using the atproto
+//! self-label maturity vocabulary (Safe/Suggestive/Nudity/Adult):
 //!
 //! - **the invariant** — a fresh commission starts **unrated** (`maturity`
 //!   null): birth commissions are Private, so no rating is needed until the
-//!   widening gate (ZMVP-74's job, which consumes this field);
+//!   future widening gate, which will consume this field;
 //! - **the field** — the owner sets the posture via
 //!   `PUT /commissions/{id}/maturity`: one of Safe / Suggestive / Nudity /
 //!   Adult plus the orthogonal Graphic flag (omitted = not graphic);

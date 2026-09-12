@@ -1,4 +1,4 @@
-//! `GET /accounts` (ZMVP-157) — every live account the signed-in visitor holds
+//! `GET /accounts` — every live account the signed-in visitor holds
 //! a role in, each row carrying the caller's own role:
 //!
 //! - role-based listing includes a **non-Owner** membership, not just accounts

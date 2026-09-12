@@ -1,5 +1,5 @@
 //! `PUT /commissions/{id}/maturity` — the owner rates the commission (Safe /
-//! Suggestive / Nudity / Adult plus a Graphic flag, DD `29982722`).
+//! Suggestive / Nudity / Adult plus a Graphic flag).
 //! Replace-only: no `DELETE` sibling, so a rating can never clear.
 
 use application::commission::maturity::set;

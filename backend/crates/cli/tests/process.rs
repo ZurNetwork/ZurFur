@@ -1,4 +1,4 @@
-//! Process-level harness (ZMVP-201): spawn the real `zurfur` binary and pin
+//! Process-level harness: spawn the real `zurfur` binary and pin
 //! the conventions — stdout is data only, stderr is diagnostics with one JSON
 //! problem as its last line, exit codes are the four classes. Nothing here
 //! needs a database: every case stops before the runtime boots.

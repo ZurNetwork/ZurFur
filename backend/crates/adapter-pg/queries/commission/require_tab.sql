@@ -1,5 +1,5 @@
 -- The shared TAB GATE — and the one SERIALIZATION POINT — of every composition
--- write (ZMVP-166): the named tab must exist in this commission, and its row is
+-- write: the named tab must exist in this commission, and its row is
 -- locked for the rest of the transaction.
 --
 -- Existence: an absent id and a tab belonging to another commission both match
@@ -19,8 +19,7 @@
 --
 -- FOR UPDATE locks the tab row, so every write that touches this tab's ordering
 -- groups SERIALIZES: concurrent appends cannot race to one (surface, band,
--- position) slot and abort on the deferred UNIQUE at commit (the PR #103
--- hardening, carried over from the retired parent gate), and a concurrent
+-- position) slot and abort on the deferred UNIQUE at commit, and a concurrent
 -- removal's renumbering cannot interleave with an append into the same group.
 -- BOTH write paths take this lock, and take it before touching any element row.
 SELECT id, tab, mode FROM commission_tab

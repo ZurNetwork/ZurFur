@@ -91,7 +91,7 @@ impl From<AccountError> for Problem {
 }
 
 /// One account membership row. `id` and `did` carry the same value — an
-/// Account is addressed by its DID alone (DD 57081857).
+/// Account is addressed by its DID alone, with no separate surrogate id.
 impl From<account::list::Listing> for AccountMembership {
     fn from(account: account::list::Listing) -> Self {
         let did = account.id.to_string();
@@ -107,7 +107,8 @@ impl From<account::list::Listing> for AccountMembership {
 }
 
 /// The founded account, as `POST /accounts` renders it. Pinned against the
-/// CLI's hand copy by `tests/create_account_parity.rs` (DD 55836674 D10).
+/// CLI's hand copy by `tests/create_account_parity.rs`, so the two drivers'
+/// projections of the same use case never drift apart.
 impl From<account::create::Output> for CreateAccountResponse {
     fn from(founded: account::create::Output) -> Self {
         let did = founded.account_id.to_string();
@@ -275,7 +276,7 @@ async fn delete_account(
 }
 
 /// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle
-/// post-onboarding. (DD 27852802)
+/// post-onboarding.
 ///
 /// - `200 { "id", "did", "handle", "name" }`
 /// - `401` — not signed in · `403` — not this account's Owner

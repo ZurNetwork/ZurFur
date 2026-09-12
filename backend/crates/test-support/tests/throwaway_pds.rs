@@ -1,17 +1,17 @@
-//! ZMVP-103 acceptance tests: boot a throwaway PDS, act as a fixture account,
-//! destroy it — two instances provably isolated, nothing reaching the public
-//! atproto network. Requires a container runtime socket (DOCKER_HOST
-//! honored), exactly like the Postgres-based suites.
+//! Acceptance tests for the throwaway PDS: boot it, act as a fixture
+//! account, destroy it — two instances provably isolated, nothing reaching
+//! the public atproto network. Requires a container runtime socket
+//! (DOCKER_HOST honored), exactly like the Postgres-based suites.
 
 use serde_json::{Value, json};
 use test_support::{ActingCredential, FixtureAccount, ThrowawayPds};
 
 /// Builds the Authorization value for a fixture credential.
 ///
-/// This match is the forward-looking ZMVP-105 seam assertion: because
-/// `ActingCredential` is `#[non_exhaustive]`, this (external) crate is forced
-/// to keep a wildcard arm — adding an OAuth or other variant for 105's auth
-/// fork later compiles without breaking any consumer.
+/// This match asserts a forward-looking seam: because `ActingCredential` is
+/// `#[non_exhaustive]`, this (external) crate is forced to keep a wildcard
+/// arm — adding an OAuth or other credential variant later compiles without
+/// breaking any consumer.
 fn bearer(account: &FixtureAccount) -> String {
     match &account.credential {
         ActingCredential::PdsSession { access_jwt, .. } => format!("Bearer {access_jwt}"),
@@ -30,9 +30,8 @@ async fn xrpc_get(client: &reqwest::Client, url: String, auth: Option<&str>) -> 
     (status, body)
 }
 
-/// AC1 + AC2 + the 105 seam: boot a fresh empty PDS, provision a fixture
-/// account, act as it over authenticated XRPC, and verify the container is
-/// gone after drop.
+/// Boots a fresh empty PDS, provisions a fixture account, acts as it over
+/// authenticated XRPC, and verifies the container is gone after drop.
 #[tokio::test]
 async fn boot_act_destroy() {
     let client = reqwest::Client::new();

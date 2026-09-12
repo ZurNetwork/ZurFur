@@ -1,8 +1,8 @@
 //! [`UserStore`] (reads) and [`UserWrites`] (recognition) over PostgreSQL:
 //! recognized visitors in the `users` table, keyed by their sovereign `did`.
 //! Reads are pool-backed; recognition (`provision`) is a write, reachable only
-//! on an open [`UnitOfWork`](domain::ports::UnitOfWork) (`uow.users()`,
-//! DD 24150017). `users` is a projection of the actor super-table (DD 34013187):
+//! on an open [`UnitOfWork`](domain::ports::UnitOfWork) (`uow.users()`).
+//! `users` is a projection of the actor super-table shared by every actor kind:
 //! `provision` interns the DID, then lands the `users` row under it.
 
 use domain::ports::DidBelongsToAnotherActor;

@@ -5,8 +5,8 @@ import { ATPROTO_HANDLE, HANDLE_MAX_LEN, isPunycodeLabeled } from '$lib/types/ha
  * The base handle field every handle-taking form shares: trimmed, required,
  * length-capped, shape-checked against {@link ATPROTO_HANDLE}. Deliberately
  * NO punycode rule here — an `xn--` handle is a legitimate atproto identity
- * at sign-in (Engineer ruling 2026-08-05: auth-time accepts what claim-time
- * rejects). A factory because the empty-field copy differs per site.
+ * at sign-in (auth-time accepts what claim-time rejects). A factory because
+ * the empty-field copy differs per site.
  */
 export const handleField = (emptyMessage: string) =>
 	Schema.Trim.pipe(
@@ -17,8 +17,7 @@ export const handleField = (emptyMessage: string) =>
 
 /**
  * The claim-time handle field: {@link handleField} plus the `xn--` rejection —
- * v1 rejects punycode outright rather than allow-with-checks (DD 26050561,
- * the confusable-handles policy; its binding site is account creation, where
+ * v1 rejects punycode outright rather than allow-with-checks; its binding site is account creation, where
  * a Zurfur handle is MINTED — the backend's `Handle::try_new` is the
  * authority, this states the same rule locally).
  */

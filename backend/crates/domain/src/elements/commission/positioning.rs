@@ -1,6 +1,6 @@
 //! Commission positioning: the account-facing rails that replaced the deleted
 //! managing-account concept. Users own commissions; neither rail confers any
-//! in-commission authority. (DD 29130754)
+//! in-commission authority.
 //!
 //! Placement is not here — a commission's placement IS its card on an account's
 //! board, so it lives in `domain::elements::workflow`. What remains is
@@ -12,7 +12,6 @@ use std::str::FromStr;
 /// chosen at grant time with no default. A grant is issued to a **User**, never
 /// an account, and a user's effective view is the max of their own standing and
 /// their own key; membership confers no view. Hard-deleted on revoke.
-/// (DD 29130754, as amended 2026-09-04)
 ///
 /// Not the [`Visibility`](super::Visibility) aliases: a grant speaks the
 /// underlying mode directly.

@@ -4,7 +4,7 @@
 //! Each non-genesis operation cites the previous operation's CID as its `prev`,
 //! so the log is what lets the next operation be chained, and what an audit
 //! against `plc.directory` compares. Persisted through
-//! [`crate::ports::PlcOperationLog`]. (DD 26804226)
+//! [`crate::ports::PlcOperationLog`].
 
 use crate::elements::did::Did;
 

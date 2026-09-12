@@ -44,7 +44,7 @@ pub trait CommissionStore: Send + Sync {
     /// The [`GrantLevel`] `user_id` holds on `commission`, or `None` if they hold
     /// no key. A revoked key hard-deletes, so this answers `None` immediately
     /// after revocation. A key only lifts the view; it never makes anyone a
-    /// Participant. (DD 29130754)
+    /// Participant.
     async fn view_grant(
         &self,
         commission_id: &CommissionId,
@@ -71,7 +71,7 @@ pub trait CommissionStore: Send + Sync {
     /// The commission's whole composition — every tab, surface mode and element —
     /// or `None` if absent. All three travel together because effective visibility
     /// is `min(tab, surface, element)`. The result is raw and server-internal:
-    /// callers serialize only through the viewer projection. (DD 45514754)
+    /// callers serialize only through the viewer projection.
     async fn load_composition(
         &self,
         id: &CommissionId,
@@ -195,7 +195,7 @@ pub trait CommissionWrites: Send {
     /// serialize concurrent appends into one such group so they neither race to a
     /// position nor abort on its uniqueness at commit. The element is born
     /// `Total`, and the payload round-trips as an equal JSON value. Refuses with
-    /// [`UnknownTab`] or [`UnknownSurface`]. (DD 45514754)
+    /// [`UnknownTab`] or [`UnknownSurface`].
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()>;
 
     /// Remove `element` from the commission's composition — one row, plus the
@@ -232,21 +232,21 @@ pub trait CommissionWrites: Send {
     /// — the single predicate deciding hard-delete legality. A read on the write
     /// view deliberately: the gate runs in the same transaction as the delete it
     /// guards, so there is no TOCTOU window. An unknown commission answers `false`.
-    /// Every new fact kind's storage must join this predicate. (DD 3014657)
+    /// Every new fact kind's storage must join this predicate.
     async fn commission_has_facts(&mut self, id: &CommissionId) -> anyhow::Result<bool>;
 
     /// Hard-delete the commission, taking every child row with it by cascade. The
     /// caller gates this on
     /// [`commission_has_facts`](Self::commission_has_facts) in the same unit, so
     /// the cascade can never take a fact. Deleting an absent commission is a
-    /// no-op. (DD 3014657)
+    /// no-op.
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()>;
 
     /// Archive (`Some(when)`) or un-archive (`None`) the commission; the record
     /// and its facts survive, only active-view listings lose it. Returns whether
     /// the state actually transitioned — a repeat keeps the original stamp and
     /// answers `false` — so the caller keys its changelog append on a real change
-    /// in the same unit. (DD 3014657)
+    /// in the same unit.
     async fn set_archived(
         &mut self,
         id: &CommissionId,
@@ -256,7 +256,7 @@ pub trait CommissionWrites: Send {
     /// Set or replace the commission's maturity posture. Replace-only by
     /// signature: taking a [`Maturity`] rather than an `Option` means no call site
     /// can clear a rating back to unrated. A no-op write on an absent commission.
-    /// (DD 29982722)
+    ///
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()>;
 
     /// Set (`Some`) or clear (`None`) the commission's external linked-channel
@@ -272,7 +272,7 @@ pub trait CommissionWrites: Send {
     /// Issue `to_user` a key to see `commission` at `level`. At most one key per
     /// (commission, user): re-granting replaces the level. The row is a pure key —
     /// who issued it and when live only in the changelog entry the caller appends
-    /// in this same unit. (DD 29130754)
+    /// in this same unit.
     async fn grant_view(
         &mut self,
         commission: &CommissionId,
@@ -283,7 +283,7 @@ pub trait CommissionWrites: Send {
     /// Revoke `to_user`'s view grant by hard-deleting the key row; because
     /// visibility is enforced at serialization, it takes effect on the next
     /// render. Returns whether a key was actually removed, so the caller keys its
-    /// changelog append on a real transition. (DD 29130754)
+    /// changelog append on a real transition.
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,

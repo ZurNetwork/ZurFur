@@ -3,7 +3,7 @@
 //! under a [`RootKey`] (see [`crate::key_vault`]) before they're written. The
 //! write is pool-backed and runs during minting, *before* the account row
 //! exists, so it's deliberately outside the account
-//! [`UnitOfWork`](domain::ports::UnitOfWork) (DD 24150017).
+//! [`UnitOfWork`](domain::ports::UnitOfWork).
 
 use async_trait::async_trait;
 use chrono::Utc;

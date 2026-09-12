@@ -1,26 +1,9 @@
--- Workflow storage (DESIGN/Workflow `9895957`; Ownership Separation DD
--- DESIGN/29130754): the account-side positioning rail, and the FIRST tables to
+-- Workflow storage: the account-side positioning rail, and the FIRST tables to
 -- back it — `PgWorkflowStore`/`PgColumnStore` and their write twins were empty
--- stubs before this.
---
--- **Accounts own positioning** (DD 29130754 Decision 1). A workflow belongs to
--- exactly one account; a commission never knows where it sits, so nothing here
--- is reachable from the `commission` table's side. Three tables, fixed depth:
---
---   workflow                   one board, owned by one account
---   workflow_column            the board's Lists, ordered among themselves
---   workflow_column_commission the (column, commission) card edge
---
--- **Placement IS this edge** (DD 29130754 Decision 6: "Placement = workflow
--- membership rows, account-side"). There is no second account-level claim on a
--- commission — the superseded managing-account log had exactly that shape and
--- the DD deleted it. One commission may sit on N accounts' boards at once with
--- no conflict, which is what these tables make native: nothing here is unique
--- per commission.
---
--- Neither table is a `Fact` (Deletion DD 3014657): a board is account-side
--- bookkeeping, so a commission's hard-delete reaps its cards and never blocks on
--- them (registered in COMMISSION_NON_FACT_TABLES).
+-- stubs before this. **Accounts own positioning** — a workflow belongs to
+-- exactly one account, and placement IS board membership, so one commission
+-- may sit on N accounts' boards at once with no conflict. See NODE.md
+-- ("20260910185856_create_workflow_and_columns.sql") for the full rationale.
 
 -- One board. `visibility` is the board's own default posture; a column may set
 -- its own apart from it, and neither confers any privacy on the cards — what an
@@ -28,7 +11,7 @@
 -- "a list holds no privacy of its own").
 --
 -- account_id     text, because an Account is addressed by its DID and nothing
---                else since the actor re-key (DD 57081857). CASCADE: a board is
+--                else. CASCADE: a board is
 --                positioning state, so it dies with the account that owned it.
 -- visibility     The `private` | `listed` | `public` token, the same closed
 --                vocabulary `commission.visibility` stores.
@@ -76,7 +59,7 @@ CREATE INDEX workflow_column_ordered ON workflow_column (workflow_id, position);
 --                with no per-card key: `ColumnWrites::set_commissions` hands
 --                over the whole list and the adapter rewrites it wholesale, so
 --                there is no insert-between to keep cheap. (Integer position is
---                also what survives of the tree storage DD, 28409880 → 45514754.)
+--                also what survives from the earlier tree-storage design.)
 -- PRIMARY KEY    (column_id, commission_id) — a card enters a column at most
 --                once, matching `Column::loaded`'s refusal of a card listed
 --                twice.

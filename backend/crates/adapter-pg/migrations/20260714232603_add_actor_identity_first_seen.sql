@@ -1,4 +1,4 @@
--- actor_identity slice 7 (ZMVP-122, DD 34013187 decision 2): first_seen — when
+-- actor_identity: first_seen — when
 -- the Index first saw this actor. Application-supplied (no DEFAULT now()),
 -- matching the codebase convention; the ADD-time DEFAULT only backfills any
 -- pre-existing rows and is dropped immediately. Immutable by contract: set at

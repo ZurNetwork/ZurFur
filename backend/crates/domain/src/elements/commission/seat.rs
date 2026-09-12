@@ -1,7 +1,6 @@
 //! The commission Seat: a 1:1 structural participant position — Creator,
 //! Client, … — that exists before it is filled. A commission holds N Seats with
 //! kinds repeating freely, and requirements ride on the vacant Seat.
-//! (DD 28311564)
 //!
 //! Seat is structural only: authority stays with Role, so [`SeatKind`] is an
 //! open vocabulary. In the composition a Seat is an element typed

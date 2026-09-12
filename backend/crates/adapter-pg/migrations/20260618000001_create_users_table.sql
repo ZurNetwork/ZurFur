@@ -1,4 +1,4 @@
--- Zurfur's own record of a recognized visitor (see ZMVP-9, DESIGN/User). The
+-- Zurfur's own record of a recognized visitor. The
 -- "registration that isn't": a User comes to exist on first successful sign-in,
 -- keyed by the DID the visitor already owns. Identity precedes us, so we never
 -- mint a DID — we recognize one.

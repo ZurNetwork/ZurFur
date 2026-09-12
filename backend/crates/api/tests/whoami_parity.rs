@@ -1,9 +1,9 @@
-//! `zurfur session whoami` must render exactly like `GET /me` (ZMVP-203 AC).
-//! Both drivers call the one use case (`application::user::me`, ZMVP-205)
+//! `zurfur session whoami` must render exactly like `GET /me`.
+//! Both drivers call the one use case (`application::user::me`)
 //! and project its `MeResult` into their own response type — the CLI cannot
 //! name the generated `GetMeResponse` (it lives inside `api`, behind axum),
 //! so its `Whoami` is a hand copy. This test keeps the two projections
-//! identical until the contract moves to a leaf crate (DD 40992770 D11).
+//! identical until the contract moves to a leaf crate both drivers can share.
 
 use api::generated::GetMeResponse;
 use application::user::me::{self, MeProfile};

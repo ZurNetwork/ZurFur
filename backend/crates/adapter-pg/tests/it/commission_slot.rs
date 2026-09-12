@@ -1,10 +1,10 @@
-//! Declared Slots over PostgreSQL (ZMVP-77), against a throwaway container:
+//! Declared Slots over PostgreSQL, against a throwaway container:
 //! `declare_slots` contributes an ordinary element into `commission_element`
 //! **plus** the Slot itself as its `commission_slot` satellite (required title,
-//! optional notes, keyed by the carrying element's id — the Slot mirror of the
-//! Seat satellite ruling, Gate A E20) in one transaction; the address gates
-//! match every other element write (ZMVP-166); and the satellite cascades away
-//! with its commission (ruling E35 — what ZMVP-66's "gone entirely" relies on).
+//! optional notes, keyed by the carrying element's id — the same satellite
+//! pattern the Seat table uses) in one transaction; the address gates
+//! match every other element write; and the satellite cascades away
+//! with its commission (what the commission's "gone entirely" hard-delete relies on).
 //! Requires a container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};

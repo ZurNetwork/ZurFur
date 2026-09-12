@@ -3,7 +3,7 @@
  * Effect Schema ({@link import('../server/forms/handle')}) and the frontend
  * brand validator ({@link import('./brand').handle}) build on, so the shape
  * rule cannot drift between the two call sites. No `effect` import: this
- * module lives above AND below the runes seam (DD 39944194 confines Effect
+ * module lives above AND below the runes seam (Effect is confined
  * to `src/lib/server/**`).
  */
 
@@ -28,7 +28,7 @@ export const HANDLE_MAX_LEN = 253;
 
 /**
  * True when any dot-separated label of `handle` starts with the punycode ACE
- * prefix `xn--` (case-insensitive) — DD 26050561's claim-time rejection rule,
+ * prefix `xn--` (case-insensitive) — the claim-time rejection rule,
  * factored out so the server-side claim field and the frontend brand
  * validator apply exactly the same test rather than two hand-copies that can
  * drift.

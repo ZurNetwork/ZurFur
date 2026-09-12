@@ -2,7 +2,7 @@
 
 /// Assert that `res` is an RFC 9457 `application/problem+json` error carrying the
 /// given HTTP `status` and our terse `code` — and that none of the old
-/// `{ "error": string }` shape remains (ZMVP-35). The exact `type` URN per code is
+/// `{ "error": string }` shape remains. The exact `type` URN per code is
 /// pinned by the unit tests in `problem.rs`; here we assert the contract shape.
 pub async fn assert_problem(res: reqwest::Response, status: u16, code: &str) {
     assert_eq!(res.status().as_u16(), status, "unexpected HTTP status");

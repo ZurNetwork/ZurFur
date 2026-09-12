@@ -1,4 +1,4 @@
-//! ZMVP-66 — the owner hard-deletes a fact-free commission, end to end over HTTP.
+//! The owner hard-deletes a fact-free commission, end to end over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface:
 //!
@@ -10,8 +10,8 @@
 //!   commission gets the **uniform 404** (`commission_not_found`, the closed-door
 //!   policy) — identical for a hidden and a truly absent commission — and an
 //!   anonymous caller gets `401`. (The participant-but-not-owner `403` arm of the
-//!   shared `require_owner` seam is unreachable until ZMVP-79 seats non-owner
-//!   participants.)
+//!   shared `require_owner` seam is unreachable until non-owner
+//!   participants can be seated on a commission.)
 //! - **AC3** — deleting a fact-bearing commission is rejected with the `409`
 //!   `commission_has_facts` problem whose detail points at Archive, and nothing is
 //!   deleted. No fact-minter exists yet, so the fact-bearing state is staged with
