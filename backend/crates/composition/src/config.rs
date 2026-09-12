@@ -1,9 +1,4 @@
 //! The runtime [`Config`], its figment loader, and the boot-time custody guard.
-//!
-//! Moved from `api` (ZMVP-200) so the CLI boots from the same source, with
-//! two additions: [`Environment`] accepts the lowercase spellings (closing the
-//! `.env.example` catch-22) and [`Config::load_from`] takes the directory.
-//! References: CLAUDE.md "Configuration"; the repo memory `config-and-runtime`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -23,30 +18,20 @@ pub const CONFIG_DIR_ENV: &str = "ZURFUR_CONFIG_DIR";
 pub const DATABASE_URL_ENV: &str = "DATABASE_URL";
 /// The prefix every other `Config` field answers to (`ZURFUR_<FIELD>`).
 pub const ENV_PREFIX: &str = "ZURFUR_";
-/// `ENV_PREFIX` + [`Config::did_key_root_key`] — named because every harness
-/// that boots a runtime has to set it.
+/// `ENV_PREFIX` + [`Config::did_key_root_key`]; every harness that boots a
+/// runtime has to set it.
 pub const ROOT_KEY_ENV: &str = "ZURFUR_DID_KEY_ROOT_KEY";
 
-/// The deployment profile, selected by `ZURFUR_ENV` (`dev` → [`DEV`]). The only
-/// behavioral fork it drives today is cookie security: [`STG`] and [`PROD`] set
-/// the session cookie `Secure` (HTTPS-only) in `main`, while [`DEV`] leaves it
-/// off so loopback HTTP doesn't drop the cookie.
-///
-/// Caveats: deserialized from config/env as `DEV`/`STG`/`PROD`, with the
-/// lowercase spellings accepted as aliases — `ZURFUR_ENV=dev` both selects the
-/// `dev.toml` profile AND lands on this field through the `ZURFUR_` env layer,
-/// so the two spellings must agree (the `.env.example` catch-22 closed in
-/// ZMVP-200). New environments are an enum change, not config.
-///
-/// [`DEV`]: Environment::DEV
-/// [`STG`]: Environment::STG
-/// [`PROD`]: Environment::PROD
+/// The deployment profile, selected by `ZURFUR_ENV`. Spelled `DEV`/`STG`/`PROD`
+/// with the lowercase forms accepted as aliases, since `ZURFUR_ENV` both picks
+/// the profile TOML and lands on this field. A new environment is an enum
+/// change, not config.
 #[derive(Clone, Debug, Deserialize)]
 pub enum Environment {
     /// Local development: plain HTTP on loopback, non-`Secure` cookies.
     #[serde(alias = "dev")]
     DEV,
-    /// Staging: HTTPS, `Secure` cookies — a production-shaped environment.
+    /// Staging: HTTPS, `Secure` cookies.
     #[serde(alias = "stg")]
     STG,
     /// Production: HTTPS, `Secure` cookies.
@@ -55,120 +40,74 @@ pub enum Environment {
 }
 
 /// The fully-resolved runtime configuration, produced by [`Config::load`] and
-/// then handed to [`Runtime::connect`](crate::Runtime::connect). Every field is required at boot except
-/// [`http_addr`], which defaults to `127.0.0.1:3621`, and [`handle_domain`], which
-/// defaults to `zurfur.app`.
-///
-/// Caveats: figment layers config/{profile}.toml first, then `DATABASE_URL`,
-/// then `ZURFUR_*` env (env wins); a missing required key fails the load.
-/// [`database_url`] is read from the unprefixed `DATABASE_URL` on purpose — sqlx
-/// tooling reads that exact name. [`public_url`] is the externally-visible
-/// origin and must be a parseable URI: [`Runtime::connect`](crate::Runtime::connect) builds the OAuth
-/// redirect URI from it and aborts boot if it can't.
-///
-/// References: CLAUDE.md "Configuration"; [`Config::load`].
-///
-/// [`http_addr`]: Config::http_addr
-/// [`database_url`]: Config::database_url
-/// [`public_url`]: Config::public_url
-/// [`handle_domain`]: Config::handle_domain
+/// handed to [`Runtime::connect`](crate::Runtime::connect). Every field is
+/// required at boot except [`http_addr`](Config::http_addr) and
+/// [`handle_domain`](Config::handle_domain), which default.
 #[derive(Clone, Deserialize)]
 pub struct Config {
     /// The deployment profile; see [`Environment`].
     pub env: Environment,
-    /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`
-    /// (`default_http_addr`); dev.toml overrides to `127.0.0.1:8080`.
+    /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`.
     #[serde(default = "default_http_addr")]
     pub http_addr: SocketAddr,
-    /// Externally-visible origin (scheme + host + port) used to build OAuth redirect URIs.
+    /// Externally-visible origin (scheme + host + port). Must parse as a URI —
+    /// the OAuth redirect URI is built from it, and boot aborts if it can't be.
     pub public_url: String,
     /// Postgres connection string for the pool built at boot. Read from the
-    /// unprefixed `DATABASE_URL` (the name sqlx tooling expects), not `ZURFUR_*`.
+    /// unprefixed `DATABASE_URL`, the name sqlx tooling expects.
     pub database_url: String,
-    /// Default tracing filter, applied when `RUST_LOG` is unset (see `main`).
+    /// Default tracing filter, applied when `RUST_LOG` is unset.
     pub log_level: String,
-    /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`
-    /// (default [`DEFAULT_HANDLE_DOMAIN`]). The `/.well-known/atproto-did` resolver
-    /// only answers for a `Host` that is a subdomain of this domain — a request for
-    /// any other authority is not ours to resolve (ZMVP-44, DD/26607618).
-    ///
-    /// A [`HandleDomain`], **parsed once here at config load** (an invalid value
-    /// fails the boot), so the claim checks and the well-known resolver can never
-    /// disagree about what the namespace is.
+    /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`.
+    /// Parsed once here, so an invalid namespace fails the boot and the claim
+    /// checks and the well-known resolver cannot disagree. (DD 26607618)
     #[serde(
         default = "default_handle_domain",
         deserialize_with = "deserialize_handle_domain"
     )]
     pub handle_domain: HandleDomain,
     /// **DEV-ONLY root key** (base64, 32 bytes) that envelope-encrypts every
-    /// account's minted `did:plc` custody keys at rest (ZMVP-49). A config/env
-    /// secret is *not* a hardware boundary: this is acceptable only pre-alpha.
-    /// Hardening it into a cloud KMS/HSM is the URGENT follow-up **ZMVP-53**, which
-    /// must land before any real account is minted. Read from
-    /// `ZURFUR_DID_KEY_ROOT_KEY`; never committed to a profile TOML.
+    /// account's minted `did:plc` custody keys at rest. Read from
+    /// `ZURFUR_DID_KEY_ROOT_KEY`, never committed to a profile TOML; refused in
+    /// production-like environments by [`ensure_custody_hardened`].
     pub did_key_root_key: String,
-    /// PLC directory base URL used **only** when [`plc_directory_submit`] is on.
-    /// Defaults to a **local placeholder** (`http://localhost:2582`, the local
-    /// `@did-plc/server` port) — deliberately **not** the canonical
-    /// `https://plc.directory`. The canonical directory is a permanent, public,
-    /// append-only log; a stray `plc_directory_submit = true` must never register
-    /// against it by accident, so canonical must be set **explicitly** at launch.
-    ///
-    /// [`plc_directory_submit`]: Config::plc_directory_submit
+    /// PLC directory base URL, used only when
+    /// [`plc_directory_submit`](Config::plc_directory_submit) is on. Defaults
+    /// to a local placeholder — never the canonical public append-only log,
+    /// which must be set explicitly.
     #[serde(default = "default_plc_directory_endpoint")]
     pub plc_directory_endpoint: String,
-    /// Whether the minter actually submits genesis operations to the directory.
-    /// **Defaults to `false`** (ZMVP-49 C2): the minter uses a no-op directory and
-    /// registers nothing. Flip on at launch — and only alongside an explicit,
-    /// intentional [`plc_directory_endpoint`](Config::plc_directory_endpoint).
+    /// Whether the minter submits genesis operations to the directory.
+    /// Defaults to `false`; flip on only alongside an intentional
+    /// [`plc_directory_endpoint`](Config::plc_directory_endpoint).
     #[serde(default)]
     pub plc_directory_submit: bool,
-    /// How often the deadline sweep runs, in seconds (ZMVP-86, ruling E12).
-    /// Defaults to `300` (`default_deadline_sweep_interval_secs`); override via
-    /// `ZURFUR_DEADLINE_SWEEP_INTERVAL_SECS`. `main` spawns
-    /// [`run_deadline_sweeper`] on this cadence; the loop clamps the value to
-    /// at least one second. Late **state** is derived on every read, so
-    /// correctness never depends on this — the sweep only bounds how *promptly*
-    /// the system `late` **changelog entry** is appended (each sweep is one
-    /// atomic unit of work over whatever has lapsed by then).
+    /// How often the deadline sweep runs, in seconds (default 300). Late state
+    /// is derived on read, so this only paces the `late` changelog entry.
     #[serde(default = "default_deadline_sweep_interval_secs")]
     pub deadline_sweep_interval_secs: u64,
-    /// The maximum size, in bytes, of a single uploaded commission file entry
-    /// (ZMVP-88, ruling E13). Defaults to [`Config::DEFAULT_MAX_UPLOAD_BYTES`]
-    /// (50 MiB — Bluesky PDS blob-cap parity, Engineer ruling 2026-07-25);
-    /// override via `ZURFUR_MAX_UPLOAD_BYTES`. The
-    /// upload route enforces this two ways: a body-size limit on the request (a
-    /// hard framework backstop, set a margin above this for the multipart
-    /// envelope) and an exact check on the file bytes that answers `413`
-    /// problem+json. The real limit/format policy is the future blob-architecture
-    /// walkthrough's; v1 only needs a cap so nothing ships uncapped.
+    /// Maximum size in bytes of a single uploaded commission file entry.
+    /// Defaults to [`Config::DEFAULT_MAX_UPLOAD_BYTES`].
     #[serde(default = "default_max_upload_bytes")]
     pub max_upload_bytes: u64,
 }
 
-/// Serde default for [`Config::max_upload_bytes`]:
-/// [`Config::DEFAULT_MAX_UPLOAD_BYTES`].
+/// Serde default for [`Config::max_upload_bytes`].
 fn default_max_upload_bytes() -> u64 {
     Config::DEFAULT_MAX_UPLOAD_BYTES
 }
 
-/// Serde default for [`Config::deadline_sweep_interval_secs`]: every five
-/// minutes. The derived Late *state* is instant on read, so this only paces the
-/// changelog `late` entry, and the scan rides the partial `deadline` index.
-/// (Cadence vs. sweep cost at scale is a further-optimization axis — ZMVP-86
-/// review 2026-07-09.)
+/// Serde default for [`Config::deadline_sweep_interval_secs`]: five minutes.
 fn default_deadline_sweep_interval_secs() -> u64 {
     300
 }
 
-/// The production Zurfur-issued handle namespace — the default for
-/// [`Config::handle_domain`] when neither the profile TOML nor `ZURFUR_*` env
-/// sets one. Already in normalized form.
+/// The production Zurfur-issued handle namespace, already normalized — the
+/// default for [`Config::handle_domain`].
 pub const DEFAULT_HANDLE_DOMAIN: &str = "zurfur.app";
 
-/// Serde default for [`Config::handle_domain`]: [`DEFAULT_HANDLE_DOMAIN`]. The
-/// literal is a known-valid namespace, so the parse can't fail (like
-/// [`default_http_addr`]).
+/// Serde default for [`Config::handle_domain`]: [`DEFAULT_HANDLE_DOMAIN`],
+/// a known-valid namespace, so the parse can't fail.
 fn default_handle_domain() -> HandleDomain {
     DEFAULT_HANDLE_DOMAIN
         .parse()
@@ -176,9 +115,8 @@ fn default_handle_domain() -> HandleDomain {
 }
 
 /// Deserialize [`Config::handle_domain`] through [`HandleDomain`]'s validating
-/// `FromStr`, so the namespace is normalized ONCE — here, at config load —
-/// rather than at each call site, and a value that isn't a namespace at all
-/// (e.g. `""` or `"."`) fails the load instead of silently matching nothing.
+/// `FromStr`: normalized once here, and a value that is no namespace at all
+/// fails the load rather than silently matching nothing.
 fn deserialize_handle_domain<'de, D>(deserializer: D) -> Result<HandleDomain, D::Error>
 where
     D: Deserializer<'de>,
@@ -187,35 +125,21 @@ where
     raw.parse::<HandleDomain>().map_err(de::Error::custom)
 }
 
-/// Serde default for [`Config::plc_directory_endpoint`]: a **local placeholder**,
-/// never the canonical public log (see the field docs for why).
+/// Serde default for [`Config::plc_directory_endpoint`]: a local placeholder,
+/// never the canonical public log.
 fn default_plc_directory_endpoint() -> String {
     "http://localhost:2582".to_string()
 }
 
-/// The raw bytes of the example dev root key shipped in `.env.example`
-/// (`ZURFUR_DID_KEY_ROOT_KEY`, base64 of these 32 ASCII bytes). Its private value
-/// is public, so minting real identities under it would be catastrophic — the boot
-/// guard refuses it wherever real minting could happen.
+/// The raw bytes of the example dev root key shipped in `.env.example`. Its
+/// private value is public, so the boot guard refuses it wherever real minting
+/// could happen.
 pub const EXAMPLE_DEV_ROOT_KEY: &[u8] = b"dev-only-root-key-do-not-ship!!!";
 
-/// Boot-time custody guard (ZMVP-49): refuse to run any configuration that would
-/// mint **real** account identities under **dev-only** key custody, so the
-/// "harden before real accounts" rule is *enforced*, not documentation.
-///
-/// `root_key` is the decoded `did:plc` custody root key; `submit` is whether the
-/// minter registers operations to a PLC directory. Two refusals:
-///
-/// 1. **Production-like environment (`PROD`/`STG`).** v1 custody is always
-///    config/env-root-backed — there is no KMS-backed [`KeyStore`](domain::ports::KeyStore)
-///    adapter yet (that is the URGENT follow-up **ZMVP-53**). So a production-like
-///    boot with today's custody is refused outright: it must wait for KMS.
-/// 2. **Submitting under the shipped example key.** Registering an operation with
-///    the public example root key would publish a DID whose keys everyone knows —
-///    refused in any environment.
-///
-/// Returns `Ok(())` for the dev/test configurations that are actually safe (dev
-/// env, and — unless it is the example key — submission off).
+/// Refuse to boot a configuration that could mint real account identities under
+/// dev-only key custody. Errors in `PROD`/`STG` (v1 custody is always
+/// config/env-root-backed) and whenever `submit` is on under
+/// [`EXAMPLE_DEV_ROOT_KEY`]; `Ok(())` for the safe dev configurations.
 pub fn ensure_custody_hardened(
     env: &Environment,
     root_key: &[u8],
@@ -243,61 +167,35 @@ pub fn ensure_custody_hardened(
     Ok(())
 }
 
-/// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`. The literal is a
-/// known-valid socket, so the parse can't fail.
+/// Serde default for [`Config::http_addr`]: `127.0.0.1:3621`, a known-valid
+/// socket, so the parse can't fail.
 fn default_http_addr() -> SocketAddr {
     "127.0.0.1:3621".parse().unwrap()
 }
 
 impl Config {
-    /// Default for [`Config::max_upload_bytes`]: **50 MiB (52,428,800 bytes) —
-    /// Bluesky PDS blob-cap parity** (Engineer ruling 2026-07-25, MVP; "we can
-    /// increase eventually"). Bounded so no upload is uncapped (ZMVP-88). The
-    /// one home for the number; the serde default and every test fixture
-    /// reference it.
-    ///
-    /// Raising it later is fine **up to `i32::MAX` bytes** (2,147,483,647 —
-    /// one byte under 2 GiB): past that the
-    /// wire's `byte_size` field can no longer be an `int32` JSON number and
-    /// must become the canonical int64 decimal **string** (the minimum-range
-    /// ruling, `contract/VERSIONING.md` §7.2) — a breaking change to plan,
-    /// not stumble into.
+    /// Default for [`Config::max_upload_bytes`]: 50 MiB, the one home for the
+    /// number. Raising it past `i32::MAX` bytes is a wire break — the contract's
+    /// `byte_size` must then become an int64 decimal string
+    /// (`contract/VERSIONING.md` §7.2).
     pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
 
-    /// Loads and validates the runtime [`Config`] from the layered figment
-    /// sources, selecting the profile from `ZURFUR_ENV` (default `dev`).
-    ///
-    /// Layering, lowest precedence first: `config/{profile}.toml`, then the
-    /// unprefixed `DATABASE_URL`, then all `ZURFUR_*` env vars — so environment
-    /// always wins over the file. The config directory is anchored to
-    /// `CARGO_MANIFEST_DIR` (overridable via `ZURFUR_CONFIG_DIR`) because cargo,
-    /// cargo-watch, and `just` each run from a different CWD.
-    ///
-    /// Caveats: returns a boxed [`figment::Error`] if a required key is missing
-    /// or a value fails to deserialize (e.g. a malformed `http_addr`, or an
-    /// `env` that isn't one of [`Environment`]'s variants). The TOML file is
-    /// optional — env alone can satisfy every required key — but the keys
-    /// themselves are not.
-    ///
-    /// References: CLAUDE.md "Configuration".
+    /// Load and validate the runtime [`Config`], selecting the profile from
+    /// `ZURFUR_ENV` (default `dev`). Layered lowest-first:
+    /// `config/{profile}.toml`, the unprefixed `DATABASE_URL`, then `ZURFUR_*`
+    /// env. The TOML file is optional; a missing required key fails the load.
     pub fn load() -> Result<Self, Box<figment::Error>> {
         Self::load_from(None)
     }
 
-    /// [`load`](Config::load) with the config directory chosen by the caller
-    /// (the CLI's `--config-dir`). `None` falls back to `ZURFUR_CONFIG_DIR`,
-    /// then the repo's `backend/config`.
-    ///
-    /// Anchoring: the default is relative to this crate's `CARGO_MANIFEST_DIR`
-    /// (`backend/crates/composition` → `backend/config`) rather than the
-    /// current working directory, because cargo, cargo-watch, and `just` each
-    /// run from a different CWD. A deployed binary points elsewhere via
-    /// `ZURFUR_CONFIG_DIR` or the explicit argument.
+    /// [`load`](Config::load) with the config directory chosen by the caller.
+    /// `None` falls back to `ZURFUR_CONFIG_DIR`, then to this crate's
+    /// `CARGO_MANIFEST_DIR`-anchored `backend/config` — never the CWD, since
+    /// cargo, cargo-watch and `just` each run from a different one.
     pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, Box<figment::Error>> {
         let profile = std::env::var(PROFILE_ENV).unwrap_or_else(|_| "dev".into());
         // The profile names a file; keep it a bare name so `ZURFUR_ENV=../x`
-        // can never walk out of the config dir (today the `Environment` enum
-        // happens to reject it too — this guard is where the risk is).
+        // can never walk out of the config dir.
         if profile.is_empty()
             || !profile
                 .chars()
@@ -326,8 +224,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    // A production-like boot with today's config-root-backed custody is REFUSED —
-    // it must wait for KMS (ZMVP-53). True regardless of which root key is set.
+    // A production-like boot is refused whichever root key is set.
     #[test]
     fn prod_like_boot_is_refused_under_config_root_custody() {
         let real_key = [0xABu8; 32];
@@ -342,8 +239,7 @@ mod tests {
         assert!(ensure_custody_hardened(&Environment::DEV, EXAMPLE_DEV_ROOT_KEY, true).is_err());
     }
 
-    // The safe dev configurations pass: dev env, and dev submission only when the
-    // root key is a real (non-example) one.
+    // The safe dev configurations pass.
     #[test]
     fn dev_configurations_are_allowed() {
         let real_key = [0xABu8; 32];
@@ -354,8 +250,6 @@ mod tests {
     }
 
     // Precedence, lowest first: profile TOML < `DATABASE_URL` < `ZURFUR_*` env.
-    // Env always wins over the file; the bare `DATABASE_URL` name is honored;
-    // and `ZURFUR_ENV=dev` (the `.env.example` spelling) is a valid profile.
     #[test]
     #[allow(clippy::result_large_err)] // figment::Jail's closure signature
     fn env_wins_over_the_profile_file() {
@@ -389,8 +283,7 @@ mod tests {
         });
     }
 
-    // The handle namespace is parsed ONCE, here: a stray-cased or dotted value
-    // normalizes at load, so no call site has to re-normalize it.
+    // The handle namespace normalizes at load, so no call site re-normalizes it.
     #[test]
     #[allow(clippy::result_large_err)] // figment::Jail's closure signature
     fn the_handle_domain_is_normalized_at_load() {
@@ -410,8 +303,7 @@ mod tests {
         });
     }
 
-    // ...and a value that is no namespace at all fails the LOAD, rather than
-    // booting a server whose namespace checks quietly match nothing.
+    // ...and a value that is no namespace at all fails the LOAD.
     #[test]
     #[allow(clippy::result_large_err)] // figment::Jail's closure signature
     fn an_empty_handle_domain_fails_the_load() {
@@ -450,9 +342,7 @@ mod tests {
         });
     }
 
-    // A required key missing from every layer fails the load — never a
-    // default. A valid `dev` profile with an empty file, so the only thing
-    // wrong is the absent `public_url`/`log_level`/`did_key_root_key`.
+    // A required key missing from every layer fails the load — never a default.
     #[test]
     #[allow(clippy::result_large_err)] // figment::Jail's closure signature
     fn a_missing_required_key_fails_the_load() {

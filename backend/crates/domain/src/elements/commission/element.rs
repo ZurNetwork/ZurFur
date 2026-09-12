@@ -1,42 +1,10 @@
-//! The commission's **flat composition** (ZMVP-166; Flat Composition DD
-//! `45514754`, amended 2026-08-04): typed [`Element`](ElementRow)s contributed
-//! into **core-declared Surfaces**, grouped by **Tabs**, with no parent pointers
-//! anywhere.
+//! The commission's flat composition: typed elements contributed into
+//! code-declared surfaces, grouped by tabs, with no parent pointers. (DD 45514754)
 //!
-//! This replaces the recursive Surface/Component tree (ZMVP-71/72/73; Tree
-//! Storage DD `28409880`) wholesale. Depth is now fixed by the *model* rather
-//! than by data:
-//!
-//! ```text
-//! commission (visibility — the formal root)
-//! └─ tab            per-commission row, carries a mode
-//!    └─ surface     CODE-declared, global and invariant; its per-commission
-//!                   mode is data (absent = Total)
-//!       └─ element  a typed leaf: envelope + opaque payload
-//! ```
-//!
-//! Effective visibility is therefore three lookups of **fixed arity** —
-//! [`effective_visibility`] = `min(tab.mode, surface_mode, element.mode)`, under
-//! the commission's own [`Visibility`](super::Visibility) — instead of a
-//! min-of-ancestors walk up an unbounded chain. Orphans, cycles, depth caps and
-//! detached subtrees are not guarded against here; they are unrepresentable.
-//!
-//! **Structure is code, modes are data.** [`SKELETON`] declares which tabs exist
-//! and which surfaces live in each. It is global and invariant: no commission
-//! has a different set, no write creates or removes a surface, and an element
-//! naming a **(tab, surface) pair** the skeleton does not declare is refused
-//! ([`UnknownSurface`](crate::ports::UnknownSurface)). Only the *modes* — the
-//! tab's row, the surface's optional override — are per-commission data.
-//!
-//! **The raw composition never serializes.** [`CommissionComposition`],
-//! [`ElementRow`] and [`ElementPayload`] deliberately do **not** implement
-//! `serde::Serialize`, so "serialize what was loaded" is a compile error, not a
-//! review catch. The payload — the only *content* an element carries — is
-//! wrapped in [`ElementPayload`] the moment it enters the domain and is
-//! unwrapped only at a store's SQL boundary, so content leaves the server only
-//! through a viewer projection that has applied [`effective_visibility`]
-//! server-side (ZMVP-170). Err closed, by construction — and pinned by
-//! `serialization_is_unrepresentable_for_the_raw_composition` below.
+//! Structure is code ([`SKELETON`]), modes are data. Effective visibility is
+//! `min(tab, surface, element)` — [`effective_visibility`]. The raw composition
+//! and its payloads implement no `serde::Serialize`, so content can only leave
+//! through a projection that clamped it server-side.
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -54,27 +22,20 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// The app-private, stable handle for one **element** of a commission's
-/// composition.
-///
-/// A UUIDv7 wrapped for type safety, mirroring [`CommissionId`]: the app mints
-/// the key, the domain only names it. `Deref` exposes the inner UUID for foreign
-/// keys and lookups.
+/// The app-private key of one element of a commission's composition (UUIDv7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct ElementId(uuid::Uuid);
 pub type SeatId = ElementId;
 
 impl ElementId {
-    /// Wraps an already-minted UUID — e.g. a row read back from the store, or a
-    /// client-supplied id being resolved.
+    /// Wraps an already-minted UUID.
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
 
-    /// Mint a fresh UUIDv7 element key. Shared with the satellite shapes that
-    /// ride an element ([`NewSlot`](super::NewSlot), [`NewSeat`](super::NewSeat)),
-    /// which is why the seed lives here rather than in each constructor.
+    /// Mint a fresh UUIDv7 element key; also used by the satellite shapes that
+    /// ride an element.
     pub(super) fn mint() -> Self {
         Self(uuid::Uuid::now_v7())
     }
@@ -102,25 +63,19 @@ impl From<Uuid> for ElementId {
     }
 }
 
-/// The app-private, stable handle for one **tab** of a commission.
-///
-/// Tabs are the only composition level with a row of their own — their mode is
-/// per-commission data, and elements must be able to cite one by key. UUIDv7,
-/// minted with the commission (or by the ZMVP-166 backfill, which mints v4 for
-/// commissions that predate the model).
+/// The app-private key of one tab of a commission (UUIDv7). Tabs are the only
+/// composition level with a row of their own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TabId(uuid::Uuid);
 
 impl TabId {
-    /// Wraps an already-minted UUID (a row read back, or a client-supplied id
-    /// being resolved).
+    /// Wraps an already-minted UUID.
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
 
-    /// Mint a fresh UUIDv7 tab key — used when a commission's skeleton tabs are
-    /// minted alongside it
-    /// ([`CommissionWrites::create`](crate::ports::CommissionWrites::create)).
+    /// Mint a fresh UUIDv7 tab key, as done when a commission's skeleton tabs
+    /// are created alongside it.
     pub fn mint() -> Self {
         Self(uuid::Uuid::now_v7())
     }
@@ -150,23 +105,16 @@ impl TryFrom<Uuid> for TabId {
     }
 }
 
-/// Why a string was rejected as one of the composition's **labels** — a
-/// [`TabName`], [`SurfaceName`], [`ElementType`], or [`Band`].
-///
-/// Deliberately **one** error type across the four rather than four identical
-/// copies: they share a single validation contract (trimmed, non-empty, capped,
-/// no control characters) because they are all the same kind of value — a stable
-/// vocabulary token stored in a `text` column — and a divergence between them
-/// would be a bug, not a feature. Sibling value objects with genuinely different
-/// rules (`SeatKind`, `SeatPrompt`, …) keep their own errors.
+/// Why a string was rejected as a composition label — a [`TabName`],
+/// [`SurfaceName`], [`ElementType`], or [`Band`]. One error for all four: they
+/// share one validation contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompositionLabelError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
-    /// Longer than the label's cap ([`LABEL_MAX_CHARS`]) after trimming.
+    /// Longer than [`LABEL_MAX_CHARS`] after trimming.
     TooLong,
-    /// Contains a control character (newline, tab, NUL, …) — a label is a token,
-    /// not a message.
+    /// Contains a control character.
     ControlCharacter,
 }
 
@@ -187,14 +135,11 @@ impl std::fmt::Display for CompositionLabelError {
 
 impl std::error::Error for CompositionLabelError {}
 
-/// The shared length cap of every composition label, in characters. Generous for
-/// any vocabulary token the type catalog (ZMVP-171) might mint, tight enough that
-/// a label stays a label.
+/// The shared length cap of every composition label, in characters.
 pub const LABEL_MAX_CHARS: usize = 64;
 
-/// The one validation body every composition label shares: trim, refuse empty,
-/// cap the length, refuse control characters. Named once so the four newtypes
-/// cannot drift apart on what a label is.
+/// The validation every composition label shares: trim, refuse empty, cap the
+/// length, refuse control characters.
 fn validate_label(raw: String) -> Result<String, CompositionLabelError> {
     StringBuilder::new(raw)
         .trimmed()
@@ -209,11 +154,9 @@ fn validate_label(raw: String) -> Result<String, CompositionLabelError> {
         })
 }
 
-/// One declared **tab**'s stable id — the `commission_tab.tab` token, e.g.
-/// `"main"`.
-///
-/// A *name*, not a key: the row's key is [`TabId`]. Which names are legal is the
-/// [`SKELETON`]'s to say; this type only pins the shape a label must have.
+/// One declared tab's stable name — the `commission_tab.tab` token, e.g.
+/// `"main"`. A name, not a key: the row's key is [`TabId`], and which names are
+/// legal is the [`SKELETON`]'s to say.
 ///
 /// ```
 /// use domain::elements::commission::TabName;
@@ -236,8 +179,7 @@ impl TabName {
 impl TryFrom<String> for TabName {
     type Error = CompositionLabelError;
 
-    /// Validate and wrap a tab name under the shared label rules — trimmed,
-    /// non-empty, at most [`LABEL_MAX_CHARS`], no control characters.
+    /// Validate and wrap a tab name under the shared label rules.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         validate_label(raw).map(Self)
     }
@@ -246,7 +188,6 @@ impl TryFrom<String> for TabName {
 impl std::str::FromStr for TabName {
     type Err = CompositionLabelError;
 
-    /// The std parsing door: `"…".parse::<TabName>()?` (ruling R6).
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw.to_owned())
     }
@@ -264,16 +205,9 @@ impl std::fmt::Display for TabName {
     }
 }
 
-/// One declared **surface**'s stable id — the `commission_element.surface` token,
-/// e.g. `"content"`.
-///
-/// This is how an element addresses the surface it is contributed into: **by id,
-/// never by a parent pointer**. Surfaces have no rows, so there is nothing to
-/// point at — the [`SKELETON`] is the authority on which ids exist *and on which
-/// tab each lives in*, and a (tab, surface) pair outside it is refused at the
-/// store ([`UnknownSurface`](crate::ports::UnknownSurface)). Validating the
-/// *shape* here and the *vocabulary* there keeps a malformed label from ever
-/// reaching a query.
+/// One declared surface's stable name — the `commission_element.surface` token,
+/// e.g. `"content"`. Surfaces have no rows; this type validates the label's
+/// shape, while [`SKELETON`] owns the vocabulary.
 ///
 /// ```
 /// use domain::elements::commission::SurfaceName;
@@ -296,10 +230,9 @@ impl SurfaceName {
 impl TryFrom<String> for SurfaceName {
     type Error = CompositionLabelError;
 
-    /// Validate and wrap a surface name under the shared label rules — trimmed,
-    /// non-empty, at most [`LABEL_MAX_CHARS`], no control characters. Whether
-    /// the [`SKELETON`] declares this surface *in a given tab* is a **separate**
-    /// question, settled by [`declares_surface`].
+    /// Validate and wrap a surface name under the shared label rules. Whether
+    /// the [`SKELETON`] declares it in a given tab is [`declares_surface`]'s
+    /// separate question.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         validate_label(raw).map(Self)
     }
@@ -308,7 +241,6 @@ impl TryFrom<String> for SurfaceName {
 impl std::str::FromStr for SurfaceName {
     type Err = CompositionLabelError;
 
-    /// The std parsing door: `"…".parse::<SurfaceName>()?` (ruling R6).
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw.to_owned())
     }
@@ -326,13 +258,9 @@ impl std::fmt::Display for SurfaceName {
     }
 }
 
-/// An element's **type tag** — what the element *is*, from the type catalog.
-///
-/// The catalog itself is deliberately deferred (ZMVP-171), so v1 is an **open**
-/// vocabulary: the core stores and returns the tag and never interprets it, the
-/// way it never interprets the payload. Two tags are already spoken for by the
-/// satellites this ticket carries — [`slot`](Self::slot) and [`seat`](Self::seat)
-/// — because those elements have interpreted data hanging off their id.
+/// An element's type tag — what the element is. An open vocabulary in v1: the
+/// core stores and returns the tag and never interprets it. [`slot`](Self::slot)
+/// and [`seat`](Self::seat) are the two tags already spoken for.
 ///
 /// ```
 /// use domain::elements::commission::ElementType;
@@ -344,20 +272,19 @@ impl std::fmt::Display for SurfaceName {
 pub struct ElementType(String);
 
 impl ElementType {
-    /// The tag borne by the element that carries a declared **Slot** (ZMVP-77):
-    /// its `commission_slot` satellite shares the element's id.
+    /// The tag of an element carrying a declared Slot; the `commission_slot`
+    /// satellite shares the element's id.
     pub const SLOT_TAG: &'static str = "slot";
-    /// The tag borne by the element that carries a declared **Seat** (ZMVP-76):
-    /// its `commission_seat` satellite shares the element's id.
+    /// The tag of an element carrying a declared Seat; the `commission_seat`
+    /// satellite shares the element's id.
     pub const SEAT_TAG: &'static str = "seat";
 
-    /// The type tag of a Slot-carrying element — one place the token lives, so
-    /// the domain, both adapters, and the routes cannot spell it differently.
+    /// The type tag of a Slot-carrying element.
     pub fn slot() -> Self {
         Self(Self::SLOT_TAG.to_owned())
     }
 
-    /// The type tag of a Seat-carrying element — see [`slot`](Self::slot).
+    /// The type tag of a Seat-carrying element.
     pub fn seat() -> Self {
         Self(Self::SEAT_TAG.to_owned())
     }
@@ -371,9 +298,8 @@ impl ElementType {
 impl TryFrom<String> for ElementType {
     type Error = CompositionLabelError;
 
-    /// Validate and wrap a type tag under the shared label rules — trimmed,
-    /// non-empty, at most [`LABEL_MAX_CHARS`], no control characters. No
-    /// vocabulary check: the catalog is ZMVP-171's.
+    /// Validate and wrap a type tag under the shared label rules. No vocabulary
+    /// check — the tag is open.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         validate_label(raw).map(Self)
     }
@@ -382,7 +308,6 @@ impl TryFrom<String> for ElementType {
 impl std::str::FromStr for ElementType {
     type Err = CompositionLabelError;
 
-    /// The std parsing door: `"…".parse::<ElementType>()?` (ruling R6).
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw.to_owned())
     }
@@ -400,14 +325,11 @@ impl std::fmt::Display for ElementType {
     }
 }
 
-/// An element's **ordering band** within a surface: the run its `position` is
+/// An element's ordering band within a surface: the run its `position` is
 /// counted in, so one surface can hold several independently-ordered sequences.
 ///
-/// ⚠️ **PLACEHOLDER VOCABULARY.** The band vocabulary is *undecided*, pending the
-/// type-catalog DD (ZMVP-171) — Engineer ruling 2026-08-04. The column is
-/// reserved now so that decision costs no migration; until it lands, everything
-/// is born in [`Band::default`] (`"body"`) and no surface anywhere offers a way
-/// to choose another. Do not grow a vocabulary check here ahead of the DD.
+/// ⚠️ Placeholder vocabulary — everything is born [`Band::default`] (`"body"`).
+/// Do not add a vocabulary check here ahead of the type-catalog decision.
 ///
 /// ```
 /// use domain::elements::commission::Band;
@@ -418,8 +340,7 @@ impl std::fmt::Display for ElementType {
 pub struct Band(String);
 
 impl Band {
-    /// The one band that exists today — the placeholder every element is born
-    /// into. See the type's warning: this is scaffolding, not a decision.
+    /// The one band that exists today — the placeholder every element is born into.
     pub const BODY: &'static str = "body";
 
     /// The validated, trimmed band as a string slice.
@@ -429,9 +350,8 @@ impl Band {
 }
 
 impl Default for Band {
-    /// The placeholder band ([`BODY`](Self::BODY)) — matching the
-    /// `commission_element.band` column default, so the two cannot disagree
-    /// about what "unspecified" means.
+    /// The placeholder band ([`BODY`](Self::BODY)), matching the
+    /// `commission_element.band` column default.
     fn default() -> Self {
         Self(Self::BODY.to_owned())
     }
@@ -440,9 +360,8 @@ impl Default for Band {
 impl TryFrom<String> for Band {
     type Error = CompositionLabelError;
 
-    /// Validate and wrap a band under the shared label rules — trimmed,
-    /// non-empty, at most [`LABEL_MAX_CHARS`], no control characters.
-    /// Deliberately no vocabulary check — see the type's warning.
+    /// Validate and wrap a band under the shared label rules. No vocabulary
+    /// check — see the type's warning.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         validate_label(raw).map(Self)
     }
@@ -451,7 +370,6 @@ impl TryFrom<String> for Band {
 impl std::str::FromStr for Band {
     type Err = CompositionLabelError;
 
-    /// The std parsing door: `"…".parse::<Band>()?` (ruling R6).
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw.to_owned())
     }
@@ -469,21 +387,14 @@ impl std::fmt::Display for Band {
     }
 }
 
-/// How much of what sits behind it a viewer class may see — the successor of the
-/// tree's `SurfaceMode`, now borne by all three composition terms (a tab, a
-/// surface, an element) rather than by surfaces alone.
+/// How much of what sits behind it a viewer class may see; borne by all three
+/// composition terms (tab, surface, element).
 ///
-/// **Declaration order IS the openness ladder**, and the derived [`Ord`] is what
-/// makes that load-bearing: `Total` (nobody outside) < `Presentation` (a
-/// status-only card) < `Description` (composed content). So the min of the three
-/// terms — [`effective_visibility`] — is the closed-door clamp *by construction*:
-/// any `Total` anywhere in the chain closes the door, and an element written
-/// wider than its surface or tab is inert rather than a leak. **Do not reorder
-/// these variants**; the ordering is the invariant, not a formatting choice.
+/// Declaration order IS the openness ladder and the derived [`Ord`] is
+/// load-bearing for [`effective_visibility`] — **do not reorder the variants**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VisibilityMode {
-    /// Everything — participants only. **The default of every term** (DD:
-    /// closed-door), so a commission nobody has widened shows nothing outside.
+    /// Participants only; the default of every term.
     Total,
     /// Title + existence only — the status-only card tier.
     Presentation,
@@ -492,15 +403,11 @@ pub enum VisibilityMode {
 }
 
 impl VisibilityMode {
-    /// Every mode, from most closed to most open — the ladder the derived
-    /// [`Ord`] follows. Lets tests pin the round-trip and the ordering without
-    /// re-listing tokens.
+    /// Every mode, from most closed to most open.
     pub const ALL: &[VisibilityMode] = &[Self::Total, Self::Presentation, Self::Description];
 
-    /// The stable, lowercase storage token — what the adapters write to the
-    /// `mode` columns of `commission_tab`, `commission_element`, and
-    /// `commission_surface_mode`. Persisted, so renaming a token is a migration,
-    /// not a free edit.
+    /// The stable, lowercase storage token written to the `mode` columns.
+    /// Persisted — renaming a token is a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Presentation => "presentation",
@@ -510,9 +417,7 @@ impl VisibilityMode {
     }
 
     /// Resolve a stored token back to its mode, or `None` for one outside the
-    /// vocabulary — on a read path that means row tampering or a missed
-    /// migration and surfaces as an error, never a silent default (the contract
-    /// every persisted enum here keeps).
+    /// vocabulary. Callers surface `None` as an error, never a silent default.
     pub fn parse(token: &str) -> Option<Self> {
         Self::ALL
             .iter()
@@ -522,23 +427,16 @@ impl VisibilityMode {
 }
 
 impl Default for VisibilityMode {
-    /// [`Total`](Self::Total) — the closed door. Matches the `DEFAULT 'total'` on
-    /// every `mode` column *and* the "absent `commission_surface_mode` row means
-    /// Total" rule, so every way of saying nothing means the same thing.
+    /// [`Total`](Self::Total) — the closed door, matching every `mode` column's
+    /// `DEFAULT 'total'` and the absent-surface-mode rule.
     fn default() -> Self {
         Self::Total
     }
 }
 
-/// The **effective visibility** of an element: `min(tab, surface, element)` —
-/// three terms, fixed arity, no walk (Flat Composition DD).
-///
-/// Because [`VisibilityMode`]'s [`Ord`] is the openness ladder, this is the
-/// closed-door clamp by construction: an element that claims `Description` under
-/// a `Total` surface projects `Total`, so over-claiming is **inert**, not a leak,
-/// and there is no chain length at which the clamp can be skipped. It composes
-/// *under* the commission's own [`Visibility`](super::Visibility), which the
-/// caller gates on first — the commission is the formal root.
+/// The effective visibility of an element: `min(tab, surface, element)`.
+/// Over-claiming is inert, never a leak. Composes under the commission's own
+/// [`Visibility`](super::Visibility), which the caller gates on first.
 ///
 /// ```
 /// use domain::elements::commission::{VisibilityMode, effective_visibility};
@@ -559,11 +457,8 @@ pub fn effective_visibility(
     tab.min(surface).min(element)
 }
 
-/// One tab declared by the [`SKELETON`]: its stable id and the surfaces that
+/// One tab declared by the [`SKELETON`]: its stable name and the surfaces that
 /// live in it.
-///
-/// A `&'static` structure, not data: this is the *code* half of "structure is
-/// code, modes are data".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeclaredTab {
     /// The tab's stable id — the token minted into `commission_tab.tab`.
@@ -572,40 +467,23 @@ pub struct DeclaredTab {
     pub surfaces: &'static [&'static str],
 }
 
-/// The **code-declared composition skeleton**: which tabs exist, and which
-/// surfaces live in each. Global and invariant — every commission has exactly
-/// this shape, and no write anywhere creates, renames, or removes a surface.
+/// The code-declared composition skeleton: which tabs exist, and which surfaces
+/// live in each. Global and invariant — no write creates, renames, or removes a
+/// surface.
 ///
-/// ⚠️ **PLACEHOLDER — NON-BINDING SCAFFOLDING.** One tab holding one permissive
-/// surface is deliberately the *minimum* that makes the model real; it is **not**
-/// a claim about what a commission's composition should look like. The type
-/// catalog (ZMVP-171) owns the real skeleton — which tabs exist, which surfaces
-/// they hold, and which element types each surface admits (the composition rules
-/// ZMVP-167 will enforce). Nothing here should be read as a decision, and the
-/// names below carry no meaning worth preserving.
+/// ⚠️ Placeholder scaffolding, not a decision: the real skeleton is the type
+/// catalog's. The names below carry no meaning worth preserving.
 pub const SKELETON: &[DeclaredTab] = &[DeclaredTab {
     tab: "main",
     surfaces: &["content"],
 }];
 
-/// Whether the skeleton declares `surface` **inside `tab`** — the
-/// **fail-closed** vocabulary check both adapters run before writing an element
+/// Whether the skeleton declares `surface` inside `tab` — the fail-closed
+/// vocabulary check both adapters run before writing an element
 /// ([`UnknownSurface`](crate::ports::UnknownSurface)).
 ///
-/// **The pair is the unit, not the surface alone.** A surface belongs to exactly
-/// one tab in the skeleton, so answering "is this name declared *anywhere*"
-/// would let an element addressing tab A carry a surface that only tab B
-/// declares — a contribution into a place the skeleton never described, whose
-/// tab-term clamp would then be a tab that has nothing to do with it. Taking the
-/// tab's declared name (never its per-commission [`TabId`], which says nothing
-/// about vocabulary) makes the wrongly paired address refusable by the same const
-/// both adapters consult, so they cannot disagree about which addresses are
-/// real.
-///
-/// Fail-closed in the literal sense: an unrecognized pair is refused, never
-/// created. Because surfaces have no rows, "the surface does not exist here" and
-/// "it exists here but is empty" are answered by the same authority — this
-/// const.
+/// The (tab, surface) pair is the unit: a surface declared under another tab is
+/// refused exactly like an invented name.
 pub fn declares_surface(tab: &TabName, surface: &SurfaceName) -> bool {
     SKELETON
         .iter()
@@ -615,12 +493,10 @@ pub fn declares_surface(tab: &TabName, surface: &SurfaceName) -> bool {
 
 /// Every tab the skeleton declares, as validated [`TabName`]s — what
 /// [`CommissionWrites::create`](crate::ports::CommissionWrites::create) mints a
-/// row for, so a commission's tab state exists explicitly from birth (the
-/// withheld-at-birth discipline: absence never has to mean anything).
+/// row for, so a commission's tab state exists explicitly from birth.
 ///
-/// Panics if the skeleton holds a label that is not a valid [`TabName`], which is
-/// a programming error in the const above, not a runtime condition — and one the
-/// unit tests below catch before it can ship.
+/// Panics if the skeleton holds a malformed label (a programming error in the
+/// const above).
 pub fn declared_tabs() -> Vec<TabName> {
     SKELETON
         .iter()
@@ -633,24 +509,17 @@ pub fn declared_tabs() -> Vec<TabName> {
         .collect()
 }
 
-/// **Where** an element sits: the tab (by [`TabId`]) and the declared surface
-/// (by [`SurfaceName`]) it is contributed into.
-///
-/// The whole addressing model, named — because in the flat composition an
-/// address is exactly this pair and *nothing else*. There is no parent, no path,
-/// no chain to walk: an element that names a tab and a surface is fully placed.
-/// Naming it keeps the pair from being carried as two loose parameters through
-/// every constructor, port, and adapter, where they could be transposed or one
-/// forgotten.
+/// Where an element sits: the tab (by [`TabId`]) and the declared surface (by
+/// [`SurfaceName`]) it is contributed into. The whole addressing model — there
+/// is no parent, path or chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceAddress {
-    /// The tab the element sits in, **by id** — the row an element's composite
-    /// foreign key targets, which is what binds it to one commission.
+    /// The tab the element sits in, by id — the composite foreign key that
+    /// binds it to one commission.
     pub tab: TabId,
-    /// The declared surface within that tab, **by id**. Refused with
-    /// [`UnknownSurface`](crate::ports::UnknownSurface) if the [`SKELETON`] does
-    /// not declare it **in that tab** — the pair is checked together
-    /// ([`declares_surface`]), never the name alone.
+    /// The declared surface within that tab. Refused with
+    /// [`UnknownSurface`](crate::ports::UnknownSurface) unless
+    /// [`declares_surface`] admits the pair.
     pub surface: SurfaceName,
 }
 
@@ -661,57 +530,39 @@ impl SurfaceAddress {
     }
 }
 
-/// The **type-owned half** of an element: the opaque JSON the core stores and
-/// returns without ever interpreting it (the type catalog interprets it —
-/// ZMVP-171).
+/// The type-owned half of an element: opaque JSON the core stores and returns
+/// without interpreting it.
 ///
-/// **A newtype whose whole job is the derive it does not have.** The payload is
-/// the only *content* an element carries, so it is the only part of the
-/// composition whose escape would be a leak. As a bare `serde_json::Value` it
-/// was serializable everywhere: [`CommissionComposition`] and [`ElementRow`]
-/// could refuse `Serialize` all they liked while `element.payload` stayed one
-/// `Json(…)` away from the wire. Wrapping it narrows that guard to the thing
-/// that matters — `ElementPayload` implements **no** `serde::Serialize`, so
-/// putting element content on a response is a compile error wherever it is
-/// reached from, not only through the loaded aggregate.
-///
-/// Construction is `From<serde_json::Value>`: untrusted JSON crosses the
-/// boundary once, at the route, and travels wrapped from there. Unwrapping ([`as_value`](Self::as_value) /
-/// [`into_value`](Self::into_value)) exists for the **store adapters**, which
-/// must hand the value to a `jsonb` bind — a deliberate, greppable act at a SQL
-/// boundary, never on a response path.
+/// Implements no `serde::Serialize`, so putting element content on a response is
+/// a compile error. Unwrapping ([`as_value`](Self::as_value) /
+/// [`into_value`](Self::into_value)) exists for the adapters' `jsonb` binds,
+/// never for a response path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementPayload(serde_json::Value);
 
 impl ElementPayload {
-    /// The wrapped value, borrowed — the adapters' bind door (a `jsonb`
-    /// parameter). Not a serialization door: see the type's docs.
+    /// The wrapped value, borrowed — the adapters' `jsonb` bind door.
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
     }
 
-    /// The wrapped value, owned — the same door as [`as_value`](Self::as_value)
-    /// for a caller that owns the payload.
+    /// The wrapped value, owned.
     pub fn into_value(self) -> serde_json::Value {
         self.0
     }
 }
 
 impl Default for ElementPayload {
-    /// The **empty object**, `{}` — matching the `commission_element.payload`
-    /// column's `DEFAULT '{}'::jsonb` and the request body's omitted-payload
-    /// default, so every way of saying "no payload" means the same value. (Not
-    /// `serde_json::Value`'s own default, which is `null`.)
+    /// The empty object `{}`, matching the `commission_element.payload` column
+    /// default — not `serde_json::Value`'s own `null` default.
     fn default() -> Self {
         Self(serde_json::Value::Object(serde_json::Map::new()))
     }
 }
 
 impl From<serde_json::Value> for ElementPayload {
-    /// Wrap opaque JSON as an element payload — the one construction door
-    /// (ruling R6: std traits are the vocabulary). Nothing is validated: the
-    /// core does not interpret payloads, so there is no shape to check until
-    /// ZMVP-171's catalog gives the type tag meaning.
+    /// Wrap opaque JSON as an element payload — the one construction door.
+    /// Nothing is validated; the core does not interpret payloads.
     fn from(value: serde_json::Value) -> Self {
         Self(value)
     }
@@ -724,7 +575,6 @@ impl AsRef<serde_json::Value> for ElementPayload {
 }
 
 impl From<ElementPayload> for serde_json::Value {
-    /// The unwrap, as the std door — see [`into_value`](ElementPayload::into_value).
     fn from(payload: ElementPayload) -> Self {
         payload.into_value()
     }
@@ -733,33 +583,24 @@ impl From<ElementPayload> for serde_json::Value {
 /// A freshly contributed element, ready to persist
 /// ([`CommissionWrites::add_element`](crate::ports::CommissionWrites::add_element)).
 ///
-/// Built with [`NewElement::contributed`], or with [`NewElement::carrying`] for
-/// the element a Slot/Seat satellite hangs off. There is **no mode parameter**:
-/// every element is born [`VisibilityMode::Total`] (the closed door), so widening
-/// is always a separate, explicit act — the same posture the tree's `NewSurface`
-/// kept. `position` is absent for the same reason it always was: the store
-/// assigns append order in-transaction, inside the band.
+/// Every element is born [`VisibilityMode::Total`] — there is no mode parameter,
+/// so widening is always a separate act. `position` is assigned by the store
+/// in-transaction, inside the band.
 #[derive(Debug)]
 pub struct NewElement {
-    /// The element key (UUIDv7) — minted here, or handed in by the satellite
-    /// whose identity this element shares.
+    /// The element key (UUIDv7).
     pub id: ElementId,
-    /// The commission this element is contributed to. The store verifies the
-    /// address's tab belongs to this same commission — and the composite foreign
-    /// key makes a cross-commission tab unrepresentable regardless.
+    /// The commission this element is contributed to.
     pub commission_id: CommissionId,
     /// Where it sits: the (tab, surface) pair.
     pub address: SurfaceAddress,
-    /// What the element is — the open type tag (ZMVP-171 types it).
+    /// What the element is — the open type tag.
     pub element_type: ElementType,
-    /// The ordering band the element's position is counted in. Placeholder
-    /// vocabulary — see [`Band`].
+    /// The ordering band the element's position is counted in.
     pub band: Band,
-    /// The type-owned payload, opaque to the core; stored and returned
-    /// unmodified — and non-serializable by construction ([`ElementPayload`]).
+    /// The type-owned payload, opaque to the core.
     pub payload: ElementPayload,
-    /// The acting User (the owner; the route's authority gate settles that
-    /// before this is built).
+    /// The acting User.
     pub created_by: UserId,
     /// When the element was contributed.
     pub created_at: DateTimeUtc,
@@ -767,9 +608,8 @@ pub struct NewElement {
 
 impl NewElement {
     /// A new element contributed at `address`, carrying `payload` verbatim and
-    /// born in the placeholder [`Band`]. Mints the element id; authority
-    /// (owner-only in v1), the tab's existence, and the surface's declaration
-    /// are the route's/store's concerns, settled when this is persisted.
+    /// born in the placeholder [`Band`]. Mints the element id; authority, the
+    /// tab's existence and the surface's declaration are settled on persist.
     ///
     /// ```
     /// use chrono::Utc;
@@ -817,15 +657,9 @@ impl NewElement {
         }
     }
 
-    /// The element that **carries** an identity-sharing satellite — a declared
-    /// Slot (ZMVP-77) or Seat (ZMVP-76). Takes the satellite's already-minted
-    /// `id` (one identity, two rows) and gives it the empty payload: the
-    /// satellite's substance lives in its own table, which is why the generic
-    /// [`contributed`](Self::contributed) add cannot declare one.
-    ///
-    /// Both adapters build the carrier through *this* constructor, so a Slot's
-    /// element and a Seat's cannot drift from an ordinary element — or from each
-    /// other — in anything but their type tag.
+    /// The element that carries an identity-sharing satellite (a declared Slot
+    /// or Seat): takes the satellite's already-minted `id` — one identity, two
+    /// rows — and gives it the empty payload.
     pub fn carrying(
         id: ElementId,
         commission: CommissionId,
@@ -848,9 +682,7 @@ impl NewElement {
 }
 
 /// One stored element as read back — the adapter-neutral row shape of
-/// [`CommissionComposition::elements`].
-///
-/// **Deliberately not `Serialize`** — see [`CommissionComposition`].
+/// [`CommissionComposition::elements`]. Deliberately not `Serialize`.
 #[derive(Debug)]
 pub struct ElementRow {
     /// The element's key.
@@ -869,8 +701,7 @@ pub struct ElementRow {
     pub created_by: UserId,
     /// When it was contributed.
     pub created_at: DateTimeUtc,
-    /// The type-owned payload, opaque to the core — the element's only
-    /// *content*, and non-serializable by construction ([`ElementPayload`]).
+    /// The type-owned payload, opaque to the core.
     pub payload: ElementPayload,
 }
 
@@ -886,37 +717,21 @@ pub struct TabRow {
     pub mode: VisibilityMode,
 }
 
-/// A commission's **whole loaded composition** — every tab, every widened
-/// surface mode, and every element
+/// A commission's whole loaded composition — every tab, every widened surface
+/// mode, and every element
 /// ([`CommissionStore::load_composition`](crate::ports::CommissionStore::load_composition)).
+/// All three travel together because [`effective_visibility`] needs all three
+/// terms.
 ///
-/// All three parts travel together deliberately: [`effective_visibility`] needs
-/// all three terms, so a load that returned only elements would put every caller
-/// one forgotten join away from projecting content it never clamped.
-///
-/// **This type must never serialize.** It holds everything — `Total`-tier content
-/// included — so an impl of `serde::Serialize` here (or on [`ElementRow`]) would
-/// put "the whole composition leaves the server" one `Json(loaded)` away. Neither
-/// type implements it, so serializing the raw composition is a **compile error**
-/// today; serialization exists only on a viewer projection that has already
-/// applied [`effective_visibility_of`](Self::effective_visibility_of)
-/// server-side (ZMVP-170). Do not add a `Serialize` derive here — project first,
-/// always.
-///
-/// The guard does not stop at this aggregate. Refusing `Serialize` *here* only
-/// protects "serialize what was loaded"; the element **content** itself is
-/// protected one level down, by [`ElementPayload`] carrying no `Serialize`
-/// either — so a caller that reaches past the composition and picks up a single
-/// payload still cannot put it on the wire. Backed by construction, not by the
-/// paragraph above.
+/// **Never add a `Serialize` derive here.** It holds `Total`-tier content;
+/// serialization exists only on a viewer projection that has already applied
+/// [`effective_visibility_of`](Self::effective_visibility_of).
 #[derive(Debug)]
 pub struct CommissionComposition {
     /// The commission's tabs (its skeleton rows), ordered by declared name.
     pub tabs: Vec<TabRow>,
-    /// The per-commission surface-mode overrides. **An absent entry means
-    /// [`VisibilityMode::Total`]** — the closed door said by saying nothing —
-    /// which is why this is a sparse map rather than one entry per declared
-    /// surface.
+    /// The per-commission surface-mode overrides; sparse — an absent entry
+    /// means [`VisibilityMode::Total`].
     pub surface_modes: HashMap<SurfaceName, VisibilityMode>,
     /// Every element, ordered by `(tab, surface, band, position)`.
     pub elements: Vec<ElementRow>,
@@ -924,9 +739,7 @@ pub struct CommissionComposition {
 
 impl CommissionComposition {
     /// The mode of the tab `id` names, or `None` if this composition holds no
-    /// such tab. The composite foreign key makes a `None` here unreachable for an
-    /// element's own tab — an element cannot cite a tab that isn't its
-    /// commission's — so callers treat it as corruption, not as a case.
+    /// such tab (corruption, not a supported case).
     pub fn tab_mode(&self, id: TabId) -> Option<VisibilityMode> {
         self.tabs
             .iter()
@@ -935,8 +748,7 @@ impl CommissionComposition {
     }
 
     /// The mode of `surface` for this commission — the override if one was
-    /// written, else [`VisibilityMode::Total`]. **Absence is the closed door**,
-    /// so a surface nobody widened needs no row to be safe.
+    /// written, else [`VisibilityMode::Total`].
     pub fn surface_mode(&self, surface: &SurfaceName) -> VisibilityMode {
         self.surface_modes
             .get(surface)
@@ -945,13 +757,8 @@ impl CommissionComposition {
     }
 
     /// The effective visibility of one of this composition's elements —
-    /// [`effective_visibility`] with the three terms resolved from here.
-    ///
-    /// **Fail-closed on a missing tab**: an element whose tab is absent projects
-    /// [`VisibilityMode::Total`] rather than being treated as unconstrained. That
-    /// state is unreachable through the write ports (the composite FK), so this
-    /// is the answer to corruption, not a supported case — and the answer is the
-    /// closed door.
+    /// [`effective_visibility`] with the three terms resolved from here. An
+    /// element whose tab is absent projects [`VisibilityMode::Total`].
     pub fn effective_visibility_of(&self, element: &ElementRow) -> VisibilityMode {
         let tab = self
             .tab_mode(element.address.tab)
@@ -985,8 +792,7 @@ mod tests {
         }
     }
 
-    /// The skeleton's first declared tab name — the placeholder `"main"`,
-    /// reached through the const so these tests survive ZMVP-171 renaming it.
+    /// The skeleton's first declared tab name, read through the const.
     fn declared_tab() -> TabName {
         SKELETON[0]
             .tab
@@ -994,9 +800,8 @@ mod tests {
             .expect("the skeleton declares valid labels")
     }
 
-    // THE projection rule (DD D4): effective visibility is the min of the three
-    // terms, so an element claiming more than its surface or tab allows is
-    // INERT — never a leak, at any combination.
+    // Effective visibility is the min of the three terms, so over-claiming is
+    // inert at any combination.
     #[test]
     fn effective_visibility_clamps_an_over_claiming_element() {
         // The headline case: a wide-open element under a closed surface.
@@ -1051,9 +856,7 @@ mod tests {
         }
     }
 
-    // Everything defaults to the closed door: the mode default, the composition's
-    // absent-surface-mode rule, and the placeholder band all agree with the
-    // column defaults in the migration.
+    // Every default agrees with the migration's column defaults.
     #[test]
     fn every_default_is_the_closed_door() {
         assert_eq!(VisibilityMode::default(), VisibilityMode::Total);
@@ -1072,9 +875,7 @@ mod tests {
         );
     }
 
-    // Fail-closed corruption handling: an element whose tab is missing projects
-    // Total rather than being treated as unconstrained (the composite FK makes
-    // this unreachable through the write ports).
+    // An element whose tab is missing projects Total, not unconstrained.
     #[test]
     fn an_element_whose_tab_is_missing_projects_closed() {
         let orphan_tab = TabId::mint();
@@ -1093,8 +894,7 @@ mod tests {
         );
     }
 
-    // The three terms resolve from the composition itself: tab row, surface
-    // override, element column.
+    // The three terms resolve from the composition itself.
     #[test]
     fn effective_visibility_of_resolves_all_three_terms() {
         let tab_id = TabId::mint();
@@ -1121,8 +921,7 @@ mod tests {
         );
     }
 
-    // Fail-closed skeleton lookup: an undeclared surface is rejected, never
-    // created. Surfaces have no rows, so this const is the ONLY authority.
+    // An undeclared surface is rejected; the const is the only authority.
     #[test]
     fn the_skeleton_refuses_an_undeclared_surface() {
         let tab = declared_tab();
@@ -1146,11 +945,8 @@ mod tests {
         }
     }
 
-    // The check is on the PAIR, not the surface alone: a surface the skeleton
-    // declares, addressed under a tab that does not declare it, is refused
-    // exactly like an invented name. This is what keeps an element from landing
-    // in a place the skeleton never described — whose tab-term clamp would then
-    // be a tab with nothing to do with it.
+    // The check is on the pair: a real surface under the wrong tab is refused
+    // exactly like an invented name.
     #[test]
     fn a_surface_under_the_wrong_tab_is_refused() {
         let real_tab = declared_tab();
@@ -1162,8 +958,6 @@ mod tests {
             "the pair the skeleton actually declares"
         );
 
-        // A tab the skeleton knows nothing about declares NOTHING — not even a
-        // surface that is perfectly real under its own tab.
         let wrong_tab = "not-a-declared-tab"
             .parse::<TabName>()
             .expect("valid label");
@@ -1172,8 +966,7 @@ mod tests {
             "a real surface under a tab that does not declare it must be refused"
         );
 
-        // Cross-check every pair the skeleton does NOT declare, so this holds
-        // once ZMVP-171 grows the skeleton past one tab.
+        // Cross-check every pair, so this holds once the skeleton grows.
         for tab in SKELETON {
             let name = tab.tab.parse::<TabName>().expect("valid label");
             for other in SKELETON {
@@ -1192,14 +985,9 @@ mod tests {
         }
     }
 
-    // Surface NAMES are globally unique across tabs — and that is a storage
-    // invariant, not tidiness. `commission_surface_mode`'s primary key is
-    // (commission_id, surface) with NO tab column: one widening row per surface
-    // per commission. If two tabs ever declared the same surface name, widening
-    // it under one tab would widen it under the other as well — a silent
-    // cross-tab leak through the second term of the min, with nothing in the
-    // schema to catch it. Keep names unique, or that PK has to grow a tab
-    // column first (a migration, and a ZMVP-171 decision).
+    // Surface names must be globally unique across tabs:
+    // commission_surface_mode's PK is (commission_id, surface) with no tab
+    // column, so a duplicate name would make widening one widen both.
     #[test]
     fn the_skeleton_declares_globally_unique_surface_names() {
         let mut seen: BTreeSet<&str> = BTreeSet::new();
@@ -1220,8 +1008,7 @@ mod tests {
     }
 
     // The skeleton's own labels are well-formed and its tabs are the ones a
-    // commission is born with — a malformed const would otherwise only surface
-    // at commission creation.
+    // commission is born with.
     #[test]
     fn the_skeleton_declares_well_formed_labels() {
         let tabs = declared_tabs();
@@ -1253,8 +1040,7 @@ mod tests {
         }
     }
 
-    // The mode tokens are a closed, collision-free vocabulary that round-trips,
-    // and the ordering the projection depends on is the openness ladder.
+    // The mode tokens round-trip and order by openness.
     #[test]
     fn visibility_mode_tokens_round_trip_and_order_by_openness() {
         let mut seen = BTreeSet::new();
@@ -1273,9 +1059,8 @@ mod tests {
         );
     }
 
-    // A new element's envelope: fresh id, the (tab, surface) address it names,
-    // the acting user, its payload verbatim — and the placeholder band. There is
-    // no mode field to set: every element is born Total.
+    // A new element's envelope: fresh id, address, acting user, payload
+    // verbatim, placeholder band — and no mode field to set.
     #[test]
     fn a_new_element_carries_its_address_and_payload() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
@@ -1307,8 +1092,7 @@ mod tests {
         assert_eq!(contributed.band, Band::default());
         assert_eq!(contributed.created_by, owner);
 
-        // The satellite carrier shares an already-minted identity and is
-        // otherwise an ordinary element with the empty payload.
+        // The satellite carrier shares an already-minted identity.
         let seat_id = ElementId::mint();
         let carrier = NewElement::carrying(
             seat_id,
@@ -1327,9 +1111,7 @@ mod tests {
         assert_eq!(carrier.band, Band::default());
     }
 
-    // The payload's own doors round-trip, and the empty default is the SAME
-    // empty object the column DEFAULT and the omitted-body default mean — so
-    // "no payload" has exactly one value however it is said.
+    // The payload's doors round-trip and the empty default is `{}`.
     #[test]
     fn the_payload_wraps_opaque_json_and_defaults_to_the_empty_object() {
         let raw = json!({ "list": [1, 2, 3], "nothing": null, "flag": true });
@@ -1348,17 +1130,11 @@ mod tests {
         );
     }
 
-    /// Compile-time probe for "does `T` implement [`serde::Serialize`]?",
-    /// answered as a runtime `bool` so a test can assert the **negative** —
-    /// which no ordinary `assert!` can express, because the thing being pinned
-    /// is the *absence* of an impl.
-    ///
-    /// The trick is method-resolution priority: the inherent `probe` below
-    /// exists only for `T: Serialize` and wins whenever it applies; everything
-    /// else falls through one autoref step to the blanket trait impl, which
-    /// answers `false`. Adding a `Serialize` derive to a pinned type therefore
-    /// flips its probe and fails the test **at the derive**, instead of being
-    /// caught (or not) in a review of whatever route serializes it later.
+    /// Compile-time probe for "does `T` implement `serde::Serialize`?",
+    /// answered as a runtime `bool` so a test can assert the negative. Relies on
+    /// method-resolution priority: the inherent `probe` exists only for
+    /// `T: Serialize`; everything else falls through one autoref step to the
+    /// blanket trait impl, which answers `false`.
     struct SerializeProbe<T>(std::marker::PhantomData<T>);
 
     impl<T> SerializeProbe<T> {
@@ -1386,11 +1162,8 @@ mod tests {
         }
     }
 
-    // THE GUARD, pinned rather than documented: the raw composition, its rows,
-    // and — the one that actually holds content — the element payload carry no
-    // `Serialize`, so putting any of them on a response is a compile error.
-    // Serialization exists only on the ZMVP-170 viewer projection, downstream
-    // of `effective_visibility`.
+    // The raw composition, its rows, and the element payload carry no
+    // `Serialize`, so putting any on a response is a compile error.
     #[test]
     fn serialization_is_unrepresentable_for_the_raw_composition() {
         assert!(
@@ -1407,16 +1180,15 @@ mod tests {
             "CommissionComposition must NOT implement Serialize — project first, always"
         );
 
-        // The probe itself is honest: a type that DOES implement Serialize
-        // answers true, so a false above means "no impl", not "probe broken".
+        // The probe is honest: a type that does implement Serialize answers
+        // true, so a false above means "no impl", not "probe broken".
         assert!(
             SerializeProbe::<serde_json::Value>::new().probe(),
             "control: serde_json::Value does implement Serialize"
         );
     }
 
-    // The composition labels share one validation contract: trimmed, non-empty,
-    // capped, control-character-free.
+    // The composition labels share one validation contract.
     #[test]
     fn composition_labels_share_one_validation_contract() {
         assert_eq!(" main ".parse::<TabName>().unwrap().as_str(), "main");
@@ -1442,8 +1214,7 @@ mod tests {
         assert!(Band::try_from("x".repeat(LABEL_MAX_CHARS)).is_ok());
     }
 
-    // The satellite type tags live in one place, so the domain, both adapters,
-    // and the routes cannot spell them differently.
+    // The satellite type tags live in one place.
     #[test]
     fn the_satellite_type_tags_are_stable() {
         assert_eq!(ElementType::slot().as_str(), ElementType::SLOT_TAG);

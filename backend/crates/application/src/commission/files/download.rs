@@ -20,10 +20,8 @@ pub struct Output {
 
 impl Files<'_> {
     /// Retrieves a file entry's metadata and a live reader over its bytes.
-    /// Participant-gated; `FileNotFound` for a key that is absent, or belongs to
-    /// another commission — the same answer either way, so retrieval is never a
-    /// cross-commission existence oracle. A blob missing under an existing link
-    /// is an internal inconsistency, surfaced as `Infrastructure`.
+    /// Participant-gated; `FileNotFound` whether the key is absent or belongs
+    /// to another commission, so retrieval is never an existence oracle.
     pub async fn download(&self, query: Query) -> CommissionResult<Output> {
         let Query {
             actor_id,

@@ -1,18 +1,13 @@
 //! The private-store [`Database`] factory and its [`UnitOfWork`] handle over
-//! PostgreSQL — "transactions as a capability" made concrete (DD `24150017`).
-//!
-//! [`PgDatabase`] holds the pool and vends a [`PgUnitOfWork`]; the unit of work
-//! holds **only** the `sqlx::Transaction`, and the per-aggregate write views
-//! ([`PgAccountWrites`], [`PgUserWrites`]) borrow that one transaction. No pool is
-//! in scope at any write site, so a bare-pool write is unrepresentable; the read
-//! stores keep the pool and stay non-transactional. (The profile cache is a
-//! documented exception — its best-effort fill is pool-backed, not a domain write;
-//! see `PgProfileCache` and the `no_bare_pool_writes` guard.)
+//! PostgreSQL — "transactions as a capability" made concrete (DD 24150017).
+//! [`PgDatabase`] holds the pool and vends a [`PgUnitOfWork`], which holds
+//! only the `sqlx::Transaction`; per-aggregate write views borrow it, so a
+//! bare-pool write is unrepresentable.
 
 use async_trait::async_trait;
 use domain::ports::{
-    AccountRepo, ActorIdentityWrites, ChangelogWrites, CommissionRepo, Database, UnitOfWork,
-    UserWrites,
+    AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionRepo, Database,
+    UnitOfWork, UserWrites, WorkflowWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -21,11 +16,11 @@ use crate::account::PgAccountWrites;
 use crate::actor_identity::PgActorIdentityWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
+use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
 
-/// The PostgreSQL [`Database`] factory: holds the pool and opens one transaction
-/// per [`begin`](Database::begin). It serves no writes itself — those live solely
-/// on the [`PgUnitOfWork`] it vends — which is exactly what makes a transaction a
-/// capability you must hold to write (DD `24150017`).
+/// The PostgreSQL [`Database`] factory: holds the pool and opens one
+/// transaction per [`begin`](Database::begin). Serves no writes itself —
+/// those live only on the [`PgUnitOfWork`] it vends. (DD 24150017)
 pub struct PgDatabase {
     pool: PgPool,
 }
@@ -40,73 +35,70 @@ impl PgDatabase {
 
 #[async_trait]
 impl Database for PgDatabase {
-    /// Opens one transaction on the pool and hands back the owning handle. The
-    /// pool yields a `Transaction<'static>`, so the boxed [`UnitOfWork`] carries no
-    /// borrowed lifetime. Dropping the handle without [`commit`](UnitOfWork::commit)
-    /// rolls back (sqlx rolls a dropped, uncommitted transaction back).
+    /// Opens one transaction and hands back the owning handle. Dropping the
+    /// handle without [`commit`](UnitOfWork::commit) rolls back.
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
         let tx = self.pool.begin().await?;
         Ok(Box::new(PgUnitOfWork { tx }))
     }
 }
 
-/// One open PostgreSQL transaction, owned by the handler. Holds **only** the
-/// `Transaction` — no pool — so the write views reached through it (`accounts()`,
-/// `users()`) are the only path to a private-store write, and they all share this
-/// one transaction. (The profile cache is not a write view — its best-effort fill
-/// is a documented pool-backed exception; see the module note.)
-/// [`commit`](UnitOfWork::commit) consumes the handle; dropping it rolls back.
+/// One open PostgreSQL transaction, owned by the handler. Holds only the
+/// `Transaction` — the write views reached through it are the only path to
+/// a private-store write. [`commit`](UnitOfWork::commit) consumes the handle; dropping it rolls back.
 pub struct PgUnitOfWork {
-    /// The open transaction. `'static` because `PgPool::begin` borrows nothing from
-    /// the pool beyond a pooled connection it owns, so the handle is freely boxable.
+    /// The open transaction (boxable — borrows nothing from the pool beyond a pooled connection).
     tx: Transaction<'static, Postgres>,
 }
 
 #[async_trait]
 impl UnitOfWork for PgUnitOfWork {
-    /// The account repo over this transaction — reads and writes on one
-    /// connection. The reborrow `&mut *self.tx` hands the view a
-    /// `&mut PgConnection` into the shared tx; the returned box's lifetime ties it
-    /// to that borrow, so it must be dropped (end of statement) before the next
-    /// accessor or before `commit`.
+    /// The account repo over this transaction — reads and writes on one connection.
     fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
         Box::new(PgAccountWrites { conn: &mut self.tx })
     }
 
-    /// The commission repo over this transaction: reads (including the locking
-    /// `*_for_update` lookups) and writes on one connection.
+    /// The commission repo over this transaction: reads (incl. locking
+    /// `*_for_update`) and writes on one connection.
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(PgCommissionWrites { conn: &mut self.tx })
     }
 
-    /// A view of the changelog append surface over this transaction (ZMVP-87):
-    /// an entry commits atomically with the domain write it records (Changelog
-    /// DD D4 — a pool-backed append would be a dual write).
+    /// The changelog append surface over this transaction: an entry commits
+    /// atomically with the write it records.
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
         Box::new(PgChangelogWrites { conn: &mut self.tx })
     }
 
-    /// A view of the user (recognition) write surface over this transaction.
+    /// The user (recognition) write surface over this transaction.
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
         Box::new(PgUserWrites { conn: &mut self.tx })
     }
 
-    /// A view of the actor-super-table write surface over this transaction
-    /// (ZMVP-122). No delete exists on it — identity rows are immortal.
+    /// The actor-super-table write surface over this transaction. No delete —
+    /// identity rows are immortal.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         Box::new(PgActorIdentityWrites { conn: &mut self.tx })
     }
 
-    /// Commit the unit, consuming the handle so it can't be reused. Every write
-    /// issued through the view accessors lands atomically here.
+    /// The workflow write surface over this transaction: a card's move and
+    /// the neighbours it displaces land together.
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
+        Box::new(PgWorkflowWrites { conn: &mut self.tx })
+    }
+
+    /// The column write surface over this transaction.
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
+        Box::new(PgColumnWrites { conn: &mut self.tx })
+    }
+
+    /// Commits the unit, consuming the handle so it can't be reused.
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         self.tx.commit().await?;
         Ok(())
     }
 
-    /// Abort the transaction explicitly, consuming the handle. Awaiting the
-    /// `ROLLBACK` makes the abort deterministic rather than deferring it to drop
-    /// (which sqlx also rolls back, but on a background executor).
+    /// Aborts the transaction explicitly and deterministically, consuming the handle.
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         self.tx.rollback().await?;
         Ok(())

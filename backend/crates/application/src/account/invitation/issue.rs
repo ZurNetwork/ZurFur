@@ -39,9 +39,8 @@ pub struct Output {
 impl Invitations<'_> {
     /// Issues a pending invitation into the account at `role`; a live offer for
     /// the same user is returned as-is rather than duplicated. The actor must
-    /// hold a role that outranks the offered one. Answers `AccountNotFound` for
-    /// a dead account, `IncorrectRole` without the rank, `AlreadyMember` when
-    /// the invitee already holds one.
+    /// hold a role that outranks the offered one — anything less is
+    /// `IncorrectRole`, and an invitee who is already seated `AlreadyMember`.
     pub async fn issue(&self, cmd: Command, now: DateTimeUtc) -> AccountResult<Output> {
         let ports = self.ports();
         let Command {

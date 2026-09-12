@@ -26,3 +26,7 @@ fs:
 **Conventions:** each module exposes exactly one `*_router()`; adding a domain = a new module + one line in `app()`. This split is the intermediate step toward per-domain crates — extraction should be a move, not a redesign. `accounts.rs` handlers call `application::account::*` use cases and project the result to the generated wire type; no use-case logic lives in the handler.
 
 **Refs:** ZMVP-39 (router split) · DD "Handle Resolution for *.zurfur.app" (26607618) · DD "The Application Layer" (55836674, ZMVP-205).
+
+## Notes
+- `PATCH /accounts/{id}/handle`: DID-doc-first ordering — the did:plc UPDATE-op lands before the private-store write (no cross-store transaction; DD 27852802).
+- `wellknown.rs`'s namespace-membership check and `application::account`'s claim checks share one parsed `HandleDomain`, so they can never disagree on the namespace.

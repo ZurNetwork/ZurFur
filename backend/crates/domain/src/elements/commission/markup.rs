@@ -1,40 +1,11 @@
-//! Commission **Markup** (ZMVP-90): coordinate-anchored annotation a Participant
-//! attaches to a file entry in the review loop (DESIGN/Commission — "File entries
-//! and Markup"; Engineer ruling E14 2026-07-05).
+//! Commission Markup: coordinate-anchored annotation a Participant attaches to
+//! a file entry in the review loop.
 //!
-//! Stored RAW and parsed by the frontend: core validates, stores, and serves the
-//! data; the drawing canvas UI is a future first-party Plugin. A markup has two
-//! homes, written on one Unit of Work: the [`CommissionMarkup`] row is canonical
-//! for the geometry and is what a per-file read returns, while the `markup_added`
-//! changelog entry stays the timeline fact, carrying enough payload to render a
-//! sentence without joins (the Changelog DD's core-renderable rule). Either way a
-//! markup references the [`FileKey`](super::file::FileKey) of a validated existing
-//! file entry, and is served back **untransformed**. Untransformed means
-//! *semantic* fidelity: no coordinate transformation, ever — but the shape lives
-//! in a Postgres `jsonb` column, which normalizes object key order (and the typed
-//! round-trip renders every number as a float), so byte-for-byte identity of the
-//! JSON text is not promised.
-//!
-//! **Validation is strict, on the way in, and it is the only gate there will ever
-//! be**: the changelog is append-only (ZMVP-87 AC4), so malformed markup accepted
-//! today would be malformed forever. Unknown shapes and unknown fields are
-//! rejected by shape ([`deny_unknown_fields`]); [`Markup::validate`] then enforces
-//! the numeric and text rules serde cannot express.
-//!
-//! **Coordinates are normalized 0–1 floats** relative to the annotated image
-//! (ruling E14): markup survives client-side scaling and thumbnailing, and the
-//! server never needs the image's pixel dimensions (the blob is opaque to it).
-//! Containment is deliberately NOT enforced — a circle at the image's edge may
-//! overflow it (`cx + r > 1`); renderers clip. Only each stored value is bounded.
-//!
-//! Threading, persistence on file replacement, the annotate-matrix, and retention
-//! are explicitly deferred to the File Activity & Markup DD — [`MarkupKey`] is the
-//! identity every one of them needs and a changelog payload could never provide.
-//! Markup immutability (no edit, no delete) used to come free from the changelog's
-//! append-only shape; a table can be `UPDATE`d, so it is now a policy the write
-//! port keeps, by exposing no update and no delete method.
-//!
-//! [`deny_unknown_fields`]: https://serde.rs/container-attrs.html#deny_unknown_fields
+//! Stored raw and parsed by the frontend. Coordinates are normalized 0–1 floats
+//! relative to the image; containment is NOT enforced — renderers clip.
+//! Validation on the way in is the only gate there will be, because the record
+//! is append-only: unknown shapes and fields are refused by serde, and
+//! [`Markup::validate`] enforces what serde cannot.
 
 use std::ops::Deref;
 
@@ -44,39 +15,26 @@ use super::{CommissionId, file::FileKey};
 use crate::{datetime::DateTimeUtc, elements::user::UserId};
 
 /// One Markup: a [`shape`](Self::shape) anchored in normalized 0–1 image space,
-/// with an optional [`text`](Self::text) comment — exactly the wire body of
-/// `POST /commissions/{id}/files/{file_id}/markup`, and exactly what the
-/// `markup_added` entry's payload carries back out (ruling E14).
-///
-/// Deserialization is strict (`deny_unknown_fields`): nothing rides along with a
-/// markup — in particular nothing status-shaped (the always-explicit rule). After
-/// deserializing, call [`validate`](Self::validate); serde alone cannot bound the
+/// with an optional [`text`](Self::text) comment. Deserialization is strict;
+/// call [`validate`](Self::validate) afterwards — serde alone cannot bound the
 /// numbers or cap the text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Markup {
     /// The annotation's geometry, in normalized 0–1 image coordinates.
     pub shape: MarkupShape,
-    /// The optional comment anchored at the shape — part of the markup datum
-    /// itself (each shape "may carry an optional text comment",
-    /// DESIGN/Commission), distinct from a changelog entry's free-text note.
-    /// Absent stays absent on the way back out. Capped at
-    /// [`MAX_TEXT_CHARS`](Self::MAX_TEXT_CHARS) characters and must not be blank
-    /// when present; stored as submitted (untransformed — not even trimmed).
+    /// The optional comment anchored at the shape, distinct from a changelog
+    /// entry's note. Non-blank when present, at most
+    /// [`MAX_TEXT_CHARS`](Self::MAX_TEXT_CHARS); stored untransformed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 }
 
-/// The closed vocabulary of markup geometry (ruling E14): circle, rectangle, or
-/// freehand stroke, every number a normalized 0–1 float. Externally tagged on the
-/// wire — `{"circle": {"cx": …, "cy": …, "r": …}}` — with unknown variants *and*
-/// unknown fields inside a variant rejected (`deny_unknown_fields`): the strict
-/// write gate of an append-only record.
+/// The closed vocabulary of markup geometry: circle, rectangle, or freehand
+/// stroke. Externally tagged on the wire — `{"circle": {…}}` — with unknown
+/// variants and unknown fields both rejected.
 ///
-/// Positions (`cx`/`cy`/`x`/`y`, freehand points) live in `[0, 1]`; extents
-/// (`r`/`w`/`h`) in `(0, 1]` — a zero extent is an invisible, degenerate shape.
-/// JSON cannot carry `NaN`/`Infinity`, so every deserialized value is finite by
-/// construction.
+/// Positions live in `[0, 1]`, extents in `(0, 1]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum MarkupShape {
@@ -86,8 +44,7 @@ pub enum MarkupShape {
         cx: f64,
         /// The center's vertical position, `0..=1`.
         cy: f64,
-        /// The radius, `0 < r <= 1` (in the normalized space; may overflow the
-        /// image at the edges — renderers clip).
+        /// The radius, `0 < r <= 1`; may overflow the image at the edges.
         r: f64,
     },
     /// An axis-aligned rectangle: top-left corner (`x`, `y`) and size (`w`, `h`).
@@ -101,13 +58,9 @@ pub enum MarkupShape {
         /// The height, `0 < h <= 1`.
         h: f64,
     },
-    /// A freehand stroke: an ordered polyline of `[x, y]` points. At least
-    /// [`MIN_FREEHAND_POINTS`](Markup::MIN_FREEHAND_POINTS) (one point is a dot,
-    /// not a stroke — use a circle), at most
-    /// [`MAX_FREEHAND_POINTS`](Markup::MAX_FREEHAND_POINTS) (the record is
-    /// append-only; an unbounded stroke would bloat it forever). A point is
-    /// exactly two numbers — serde rejects `[x]`, `[x, y, z]`, and non-numbers
-    /// by shape.
+    /// A freehand stroke: an ordered polyline of `[x, y]` points, between
+    /// [`MIN_FREEHAND_POINTS`](Markup::MIN_FREEHAND_POINTS) and
+    /// [`MAX_FREEHAND_POINTS`](Markup::MAX_FREEHAND_POINTS) of them.
     Freehand {
         /// The stroke's points, each `[x, y]` with both in `0..=1`.
         points: Vec<[f64; 2]>,
@@ -121,8 +74,7 @@ pub enum MarkupError {
     /// A position coordinate lies outside the normalized `0..=1` space. Carries
     /// the field name and the offending value.
     CoordinateOutOfRange(&'static str, f64),
-    /// An extent (`r`/`w`/`h`) is not in `(0, 1]` — zero/negative is a
-    /// degenerate, invisible shape; over 1 exceeds the whole image.
+    /// An extent (`r`/`w`/`h`) is not in `(0, 1]`.
     ExtentOutOfRange(&'static str, f64),
     /// A freehand stroke with fewer than
     /// [`MIN_FREEHAND_POINTS`](Markup::MIN_FREEHAND_POINTS) points.
@@ -169,25 +121,18 @@ impl std::fmt::Display for MarkupError {
 impl std::error::Error for MarkupError {}
 
 impl Markup {
-    /// The text comment's length cap, in characters — an annotation is a remark
-    /// anchored at a shape, not a document.
+    /// The text comment's length cap, in characters.
     pub const MAX_TEXT_CHARS: usize = 2000;
 
-    /// The fewest points a freehand stroke may carry: two — a stroke is a line;
-    /// a single point is a dot (use a circle).
+    /// The fewest points a freehand stroke may carry: two.
     pub const MIN_FREEHAND_POINTS: usize = 2;
 
-    /// The most points a freehand stroke may carry. Generous for a hand-drawn
-    /// stroke (a minute of 60 Hz sampling), tight enough that one markup can't
-    /// bloat the append-only record forever.
+    /// The most points a freehand stroke may carry.
     pub const MAX_FREEHAND_POINTS: usize = 4096;
 
-    /// The strict write gate (ruling E14): enforce everything serde's shape
-    /// checking cannot — positions in `[0, 1]`, extents in `(0, 1]`, freehand
-    /// point-count bounds, and the text rules (non-blank when present, at most
-    /// [`MAX_TEXT_CHARS`](Self::MAX_TEXT_CHARS) characters). The first violation
-    /// is returned; a markup that passes is stored — and served — exactly as
-    /// submitted.
+    /// Enforce what serde cannot: positions in `[0, 1]`, extents in `(0, 1]`,
+    /// the freehand point-count bounds, and the text rules. Returns the first
+    /// violation; a markup that passes is stored exactly as submitted.
     ///
     /// ```
     /// use domain::elements::commission::{Markup, MarkupError, MarkupShape};
@@ -251,8 +196,7 @@ fn coordinate(field: &'static str, value: f64) -> Result<(), MarkupError> {
     }
 }
 
-/// An extent (radius/width/height): `(0, 1]` — visible, and no larger than the
-/// whole image.
+/// An extent (radius/width/height): `(0, 1]`.
 fn extent(field: &'static str, value: f64) -> Result<(), MarkupError> {
     if value > 0.0 && value <= 1.0 {
         Ok(())
@@ -261,27 +205,19 @@ fn extent(field: &'static str, value: f64) -> Result<(), MarkupError> {
     }
 }
 
-/// The app-private, **opaque** handle for one stored markup — a UUIDv7 wrapped for
-/// type safety, the `commission_markup` row's primary key.
-///
-/// A markup only gained an identity when it gained a table: riding a changelog
-/// payload, it had nothing to address. This key is what a reply, a resolution, or
-/// a re-anchor after file replacement would name (all deferred to the File
-/// Activity & Markup DD), and it is minted the same way a
-/// [`FileKey`](super::file::FileKey) is — by the app, because PG16 has no native
-/// `uuidv7()`.
+/// The app-private, opaque key of one stored markup (UUIDv7) — the
+/// `commission_markup` row's primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MarkupKey(uuid::Uuid);
 
 impl MarkupKey {
-    /// Wrap an already-minted UUIDv7 — e.g. a row read back from the store.
+    /// Wrap an already-minted UUIDv7.
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
 
-    /// Mint a fresh key (`Uuid::now_v7()`) for a new markup — the one place a
-    /// markup's identity is born. Sorts as creation order, so a per-file read
-    /// needs no separate ordering column.
+    /// Mint a fresh key for a new markup. Sorts as creation order, so a
+    /// per-file read needs no separate ordering column.
     pub fn generate() -> Self {
         Self(uuid::Uuid::now_v7())
     }
@@ -296,29 +232,22 @@ impl Deref for MarkupKey {
 }
 
 /// One stored markup: a validated [`Markup`] anchored to a file entry, with the
-/// Participant who drew it and when.
-///
-/// This is the canonical record of the geometry — the `markup_added` changelog
-/// entry that accompanies it is the timeline fact, not the source of truth. Both
-/// are written on the same [`UnitOfWork`](crate::ports::UnitOfWork), so a markup
-/// and its entry commit or vanish together.
+/// Participant who drew it and when. Canonical for the geometry; written on the
+/// same [`UnitOfWork`](crate::ports::UnitOfWork) as its `markup_added` entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommissionMarkup {
     /// The markup's opaque key and this row's primary key.
     pub id: MarkupKey,
-    /// The commission whose review loop the markup belongs to. Carried even though
-    /// [`file_id`](Self::file_id) implies it, because every read scopes by it — a
-    /// key from another commission stays invisible rather than answerable.
+    /// The commission whose review loop the markup belongs to; every read
+    /// scopes by it, so a key from another commission stays invisible.
     pub commission_id: CommissionId,
-    /// The annotated file entry. Validated to exist on this commission before the
-    /// markup is written, and enforced as a pair by the store.
+    /// The annotated file entry, enforced as a pair with the commission.
     pub file_id: FileKey,
-    /// The Participant who drew it. Deliberately carries no foreign key onto the
-    /// actor tables (the changelog and file-entry precedent): shared history
-    /// survives a tombstone.
+    /// The Participant who drew it. Carries no foreign key onto the actor
+    /// tables, so shared history survives a tombstone.
     pub added_by: UserId,
-    /// The annotation itself — shape plus optional anchored comment, already past
-    /// [`Markup::validate`]. Stored and served untransformed.
+    /// The annotation itself, already past [`Markup::validate`]. Stored and
+    /// served untransformed.
     pub markup: Markup,
     /// When the markup was drawn.
     pub created_at: DateTimeUtc,
@@ -359,8 +288,8 @@ mod tests {
         assert_eq!(markup.text, None);
     }
 
-    // Strict by shape: unknown variants, unknown fields (top-level and inside a
-    // variant), and malformed points are refused at deserialization.
+    // Unknown variants, unknown fields, and malformed points are refused at
+    // deserialization.
     #[test]
     fn unknown_shapes_and_fields_do_not_deserialize() {
         for bad in [
@@ -493,9 +422,7 @@ mod tests {
         );
     }
 
-    // Untransformed round-trip: a validated markup re-serializes to exactly the
-    // JSON it was parsed from — text stays absent when absent, nothing is
-    // renamed, reordered semantically, or rescaled.
+    // A validated markup re-serializes to exactly the JSON it was parsed from.
     #[test]
     fn a_markup_round_trips_to_the_same_json() {
         for value in [

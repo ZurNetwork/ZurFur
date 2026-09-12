@@ -1,10 +1,11 @@
 //! Commission positioning over PostgreSQL (ZMVP-70; Ownership Separation DD
-//! `29130754`), against a throwaway container: the append-only placement log and
-//! its cached current pointer, and the view-grant key's upsert/hard-delete. The
-//! writes go through the [`UnitOfWork`]'s commissions view; the reads through the
-//! pool-backed [`PgCommissionStore`]. Requires a container runtime socket.
+//! `29130754`), against a throwaway container: the board rail (**placement is a
+//! card on a board** — Decision 6, "placement = workflow membership rows,
+//! account-side") and the view-grant key's upsert/hard-delete. The writes go
+//! through the [`UnitOfWork`]'s views; the reads through the pool-backed stores.
+//! Requires a container runtime socket.
 
-use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
+use adapter_pg::{PgColumnStore, PgCommissionStore, PgDatabase, PgPool, PgWorkflowStore};
 use chrono::Utc;
 use domain::{
     elements::{
@@ -13,8 +14,9 @@ use domain::{
         did::Did,
         handle::Handle,
         user::User,
+        workflow::{ColumnId, ColumnName, LexOrdering, WorkflowId, WorkflowName},
     },
-    ports::{CommissionStore, Database},
+    ports::{ColumnStore, CommissionStore, Database, WorkflowStore},
 };
 
 /// A fresh, fully migrated private database — a clone of the shared template
@@ -78,66 +80,134 @@ async fn seed_account(pool: &PgPool, owner_did: &str, handle: &str) -> AccountId
     id
 }
 
-// AC1/AC2/AC3 (pg) — placement appends an ever-growing log the current-placement
-// pointer tracks: after every (re)placement the cache equals the latest log row,
-// current = greatest seq, origin = least.
+/// Seed a committed board with one column for `account`, returning both ids.
+async fn seed_board(pool: &PgPool, account: &AccountId, name: &str) -> (WorkflowId, ColumnId) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let board_name = name.parse::<WorkflowName>().expect("board name");
+    let mut workflow = uow
+        .workflows()
+        .create(&board_name, account)
+        .await
+        .expect("create the board");
+    let column_name = "Open".parse::<ColumnName>().expect("column name");
+    let column = workflow.new_column(column_name, workflow.visibility.clone());
+    let column_id = column.id.clone();
+    workflow.insert(0, column).expect("the board is empty");
+    uow.workflows()
+        .set_indexes(&workflow)
+        .await
+        .expect("persist the column");
+    uow.commit().await.expect("commit");
+    (workflow.id, column_id)
+}
+
+/// Put `commission` at the end of `column`, committed.
+async fn place_card(
+    pool: &PgPool,
+    column_id: &ColumnId,
+    commission: domain::elements::commission::CommissionId,
+) {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let mut column = PgColumnStore::new(pool.clone())
+        .find(column_id)
+        .await
+        .expect("read the column")
+        .expect("the column exists");
+    column.push(commission).expect("the column takes the card");
+    uow.columns()
+        .set_commissions(&column)
+        .await
+        .expect("place the card");
+    uow.commit().await.expect("commit");
+}
+
+// AC1/AC2 (pg) — **placement is a card on a board**. Positioning puts the
+// commission in a column; the same commission sits on N accounts' boards at
+// once with no conflict, because no account ever claims it (DD `29130754` D1:
+// users own commissions, accounts own positioning).
+//
+// The append-only placement log AC3 cached has no referent any more: it was
+// 1:1-current, which is exactly the managing-account model this DD superseded.
 #[tokio::test]
-async fn placement_log_appends_and_current_pointer_tracks_latest() {
+async fn a_commission_sits_on_many_accounts_boards_at_once() {
     let (pool, _c) = fresh_pool().await;
-    let (owner, id) = seed_commission(&pool, "did:plc:place-owner").await;
+    let (_owner, id) = seed_commission(&pool, "did:plc:place-owner").await;
     let a = seed_account(&pool, "did:plc:acc-a", "posa.example.com").await;
     let b = seed_account(&pool, "did:plc:acc-b", "posb.example.com").await;
+    let (board_a, column_a) = seed_board(&pool, &a, "Board A").await;
+    let (board_b, column_b) = seed_board(&pool, &b, "Board B").await;
 
-    let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
 
     assert!(
-        store.current_placement(&id).await.unwrap().is_none(),
-        "an unplaced commission has no current placement (still valid — AC6)"
-    );
-
-    for account in [a.clone(), b, a.clone()] {
-        let mut uow = db.begin().await.expect("begin");
-        uow.commissions()
-            .place(&id, &account, &owner.id, Utc::now())
-            .await
-            .expect("place");
-        uow.commit().await.expect("commit");
-
-        let log = store.placement_log(&id).await.unwrap();
-        let latest = log.last().unwrap();
-        let current = store
-            .current_placement(&id)
+        store
+            .current_column_of_workflow(&id, &board_a)
             .await
             .unwrap()
-            .expect("current");
+            .is_none(),
+        "an unpositioned commission sits on no board (still valid — AC6)"
+    );
+
+    for (column, board) in [(&column_a, &board_a), (&column_b, &board_b)] {
+        place_card(&pool, column, id).await;
+
         assert_eq!(
-            (current.seq, current.account_id.clone(), current.placed_by),
-            (
-                latest.seq,
-                latest.account_id.clone(),
-                latest.placed_by.clone()
-            ),
-            "the cached current pointer equals the latest log row",
+            store
+                .current_column_of_workflow(&id, board)
+                .await
+                .unwrap()
+                .map(|found| found.id),
+            Some(column.clone()),
+            "the board that positioned it holds the card",
         );
-        assert_eq!(current.account_id, account, "current = just-placed account");
+        assert_eq!(
+            store.current_position_in_column(&id, column).await.unwrap(),
+            Some(0),
+            "at the index the domain put it",
+        );
     }
 
-    let log = store.placement_log(&id).await.unwrap();
-    assert_eq!(
-        log.len(),
-        3,
-        "the log is append-only — three placements, three rows"
-    );
-    assert_eq!(log.first().unwrap().account_id, a, "origin = first row");
-    assert_eq!(log.last().unwrap().account_id, a, "current = latest row");
+    // Both boards hold it — the NxM intent, native.
     assert!(
-        log[0].seq < log[1].seq && log[1].seq < log[2].seq,
-        "seq orders the log"
+        store
+            .current_column_of_workflow(&id, &board_a)
+            .await
+            .unwrap()
+            .is_some(),
+        "the first board did not lose the card to the second",
     );
-    assert_eq!(
-        log[0].placed_by, owner.id,
-        "the placement records who placed it"
+
+    // The board is the account's: deleting it takes the card, not the commission.
+    {
+        let db = PgDatabase::new(pool.clone());
+        let mut uow = db.begin().await.expect("begin");
+        uow.workflows()
+            .delete(&board_a)
+            .await
+            .expect("delete the board");
+        uow.commit().await.expect("commit");
+    }
+    assert!(
+        PgWorkflowStore::new(pool.clone())
+            .find(&board_a)
+            .await
+            .unwrap()
+            .is_none(),
+        "the board is gone",
+    );
+    assert!(
+        store.find(&id).await.unwrap().is_some(),
+        "the User-owned commission survives its board",
+    );
+    assert!(
+        store
+            .current_column_of_workflow(&id, &board_b)
+            .await
+            .unwrap()
+            .is_some(),
+        "and the other account's board still positions it",
     );
 }
 
@@ -148,12 +218,9 @@ async fn placement_log_appends_and_current_pointer_tracks_latest() {
 async fn view_grant_upserts_and_revoke_hard_deletes() {
     let (pool, _c) = fresh_pool().await;
     let (_owner, id) = seed_commission(&pool, "did:plc:grant-owner").await;
-    // A view grant is issued to a **User** (Engineer ruling 2026-09-04), while the
-    // read port still asks by `AccountId`. Both address the one `grantee` DID
-    // column, so the read is addressed by the grantee's own DID — see the actor
-    // re-key migration's note on `commission_view_grant`.
+    // A view grant is issued to a **User**, never an Account (DD `29130754` D3,
+    // amended 2026-09-04) — both halves of the port now say so.
     let grantee = provision(&pool, "did:plc:grant-holder").await.id;
-    let grant_key = AccountId::new((*grantee).clone());
 
     let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
@@ -168,7 +235,7 @@ async fn view_grant_upserts_and_revoke_hard_deletes() {
         uow.commit().await.expect("commit");
     }
     assert_eq!(
-        store.view_grant(&id, &grant_key).await.unwrap(),
+        store.view_grant(&id, &grantee).await.unwrap(),
         Some(GrantLevel::Total),
         "re-granting replaces the level (one key per grantee, upsert)",
     );
@@ -186,7 +253,7 @@ async fn view_grant_upserts_and_revoke_hard_deletes() {
         "revoking an existing key reports a real transition"
     );
     assert!(
-        store.view_grant(&id, &grant_key).await.unwrap().is_none(),
+        store.view_grant(&id, &grantee).await.unwrap().is_none(),
         "a revoked key hard-deletes — its row is gone (DD D5)",
     );
 
@@ -204,25 +271,31 @@ async fn view_grant_upserts_and_revoke_hard_deletes() {
     );
 }
 
-// A dropped unit of work rolls back placement and grant writes together — the
-// pg drop = rollback guarantee (DD 24150017) holds for the new tables too.
+// A dropped unit of work rolls back a card and a grant together — the pg drop =
+// rollback guarantee (DD 24150017) holds for the board tables too.
 #[tokio::test]
-async fn a_dropped_unit_rolls_back_placement_and_grant() {
+async fn a_dropped_unit_rolls_back_the_card_and_the_grant() {
     let (pool, _c) = fresh_pool().await;
-    let (owner, id) = seed_commission(&pool, "did:plc:rollback-owner").await;
+    let (_owner, id) = seed_commission(&pool, "did:plc:rollback-owner").await;
     let account = seed_account(&pool, "did:plc:acc-r", "posr.example.com").await;
+    let (board, column_id) = seed_board(&pool, &account, "Rollback Board").await;
     let grantee = provision(&pool, "did:plc:rollback-holder").await.id;
-    let grant_key = AccountId::new((*grantee).clone());
 
     let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
 
     {
         let mut uow = db.begin().await.expect("begin");
-        uow.commissions()
-            .place(&id, &account, &owner.id, Utc::now())
+        let mut column = PgColumnStore::new(pool.clone())
+            .find(&column_id)
             .await
-            .expect("place");
+            .expect("read the column")
+            .expect("the column exists");
+        column.push(id).expect("the column takes the card");
+        uow.columns()
+            .set_commissions(&column)
+            .await
+            .expect("place the card");
         uow.commissions()
             .grant_view(&id, &grantee, GrantLevel::Total)
             .await
@@ -231,15 +304,15 @@ async fn a_dropped_unit_rolls_back_placement_and_grant() {
     }
 
     assert!(
-        store.current_placement(&id).await.unwrap().is_none(),
-        "a dropped unit persists no placement",
+        store
+            .current_column_of_workflow(&id, &board)
+            .await
+            .unwrap()
+            .is_none(),
+        "a dropped unit puts no card on the board",
     );
     assert!(
-        store.placement_log(&id).await.unwrap().is_empty(),
-        "a dropped unit appends no placement-log row",
-    );
-    assert!(
-        store.view_grant(&id, &grant_key).await.unwrap().is_none(),
+        store.view_grant(&id, &grantee).await.unwrap().is_none(),
         "a dropped unit persists no grant",
     );
 }

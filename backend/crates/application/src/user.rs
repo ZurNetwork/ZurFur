@@ -1,9 +1,8 @@
-//! Use cases about the acting [`User`].
+//! Use cases about the acting User.
 
 pub mod me;
 
-/// User use cases, with the ports already bound. Needs no optional port, so
-/// it converts from the bag infallibly.
+/// User use cases, with the ports already bound.
 #[derive(Clone, Copy)]
 pub struct Users<'a> {
     ports: &'a crate::Ports,

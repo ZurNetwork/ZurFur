@@ -28,9 +28,7 @@ impl<'a> From<&'a Runtime> for AccountPorts<'a> {
 }
 
 impl From<&Runtime> for Ports {
-    /// The orchestrator's bag over this runtime's live adapters. Every optional
-    /// port is present here — the live runtime wires all of them; a driver
-    /// profile that lacks one builds its own `Ports` and leaves it `None`.
+    /// The orchestrator's bag over this runtime's live adapters.
     fn from(state: &Runtime) -> Self {
         Ports {
             database: state.database.clone(),
@@ -42,13 +40,14 @@ impl From<&Runtime> for Ports {
             profile_cache: state.profile_cache.clone(),
             did_minter: state.did_minter.clone(),
             files: state.files.clone(),
+            workflows: state.workflows.clone(),
+            columns: state.columns.clone(),
         }
     }
 }
 
 impl From<&Runtime> for App {
-    /// The orchestrator over this runtime. Cheap (clones `Arc` handles); build
-    /// it once at boot and share it, rather than per request.
+    /// The orchestrator over this runtime. Cheap; build it once at boot.
     fn from(state: &Runtime) -> Self {
         App::new(Ports::from(state))
     }

@@ -6,17 +6,20 @@
     "body": [
       "#[derive(Debug, Clone, PartialEq, Eq)]",
       "pub struct Command {",
-      "    $1",
+      "    $2",
       "}",
       "#[derive(Debug, Clone, PartialEq, Eq)]",
       "pub struct Output;",
       "",
-      "pub async fn run(",
-      "    command: Command,",
-      "    ports: &${2:Commission}Ports<'_>,",
-      "    now: DateTimeUtc,",
-      ") -> ${2}Result<Output> {",
-      "    $0",
+      "impl $3<'_> {",
+      "    pub async fn $TM_FILENAME_BASE(",
+      "        &self,",
+      "        cmd: Command,",
+      "    ) -> $1<Output> {",
+      "        let ports = self.ports();",
+      "        let Command { } = cmd;",
+      "        $0",
+      "    }",
       "}"
     ]
   },
@@ -25,7 +28,7 @@
     "prefix": "tbegin",
     "description": "Open a unit of work on the orchestrator's database port",
     "body": [
-      "let mut uow = ${1:self.ports()}.database.begin().await?;"
+      "let mut uow = ${1:ports}.database.begin().await?;"
     ]
   },
   "Unit of work: commit": {
@@ -42,6 +45,15 @@
     "description": "Roll the unit of work back explicitly (drop does the same)",
     "body": [
       "uow.rollback().await?;"
+    ]
+  },
+  "Struct": {
+    "scope": "rust",
+    "prefix": "struct",
+    "description": "Create a full struct",
+    "body": [
+      "#[derive(Debug, Clone, PartialEq, Eq)]",
+      "pub struct $0"
     ]
   }
 }

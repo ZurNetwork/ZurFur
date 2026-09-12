@@ -8,7 +8,11 @@ use application::account::{self, AccountError};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::user::{User, UserId};
-use domain::elements::{did::Did, handle::Handle, handle::HandleDomain, role::Role};
+use domain::elements::{
+    did::Did,
+    handle::{Handle, HandleDomain},
+    role::Role,
+};
 use domain::ports::{Database, DidMinter, UnitOfWork};
 
 /// The configured Zurfur handle namespace, the way `Config::handle_domain`

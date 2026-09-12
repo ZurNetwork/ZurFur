@@ -1,13 +1,7 @@
-//! The Zurfur backend binary: the boot sequence and the live adapter wiring.
-//!
-//! This is the only place that names the production adapters. [`main`] loads
-//! [`Config`], stands up the Postgres pool, runs migrations, builds the session
-//! middleware, assembles the [`AppState`] from the pg/atproto adapters, mounts
-//! the [`api::app`] router under that layer, and serves. The rest of the crate
-//! is adapter-agnostic; swapping an implementation is a change here, nowhere
-//! else.
-//!
-//! References: CLAUDE.md "Architecture"/"Configuration"/"Database".
+//! The Zurfur backend binary: the boot sequence and the live adapter wiring
+//! (the only place that names production adapters). [`main`] loads
+//! [`Config`], stands up Postgres, runs migrations, assembles [`AppState`],
+//! mounts [`api::app`], and serves.
 
 use api::{AppState, Config, Environment};
 use tower_sessions::{
@@ -17,18 +11,9 @@ use tower_sessions::{
 };
 use tracing_subscriber::EnvFilter;
 
-/// Boots the server, in order: load `.env`, load [`Config`], init tracing
-/// (`RUST_LOG` overrides [`Config::log_level`]), connect the pool, run
-/// migrations, bind the listener, build the redirect URI and session layer,
-/// assemble [`AppState`] from the live adapters, then `axum::serve` forever.
-///
-/// Fails fast — returns `Err` and exits before serving — if the config won't
-/// load, the database is unreachable, a migration fails, the bind fails, or
-/// [`Config::public_url`] won't parse into a redirect URI. The redirect URI is
-/// fixed at client-construction time (jacquard sends it in the PAR request), so
-/// it is registered once here from the public origin, not per request. Cookie
-/// `Secure` is on only in [`Environment::STG`]/[`Environment::PROD`]; profiles
-/// are cached for one hour.
+/// Boots the server: load config, init tracing, connect the pool, run
+/// migrations, build the session layer, assemble [`AppState`], then
+/// `axum::serve` forever. Fails fast on any setup error.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -41,8 +26,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // The live composition is shared with the CLI (ZMVP-200); migrations are
-    // the driver's explicit call, so a driver can never run them by accident.
+    // Migrations are the driver's explicit call, so one never runs by accident.
     let app_state: AppState = composition::Runtime::connect(config).await?;
     adapter_pg::migrate(&app_state.pool).await?;
     tracing::info!("migrations applied");
@@ -61,17 +45,13 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),
-        // The sweeper takes a Postgres advisory lock for single-writer leader election
-        // across instances, so it needs the pool directly (not just the port).
+        // Needs the pool directly for the advisory lock (single-writer leader election).
         app_state.pool.clone(),
         std::time::Duration::from_secs(app_state.config.deadline_sweep_interval_secs),
     ));
 
-    // Reclaim expired `tower_sessions.session` rows on a schedule. Read-time expiry
-    // (`PgSessionStore::load` filters `expiry_date > now()`) already hides them from
-    // callers, so this is pure housekeeping — hence a relaxed hourly cadence. Mirrors
-    // the deadline sweeper: a failed pass is logged and retried on the next tick, so a
-    // transient DB blip never permanently stops the reaper.
+    // Read-time expiry already hides expired rows; this is pure housekeeping
+    // (hourly, failed passes logged and retried next tick).
     let session_reaper = adapter_pg::PgSessionStore::new(app_state.pool.clone());
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));

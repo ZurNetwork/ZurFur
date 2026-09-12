@@ -1,25 +1,10 @@
-//! Commission **file entries** (ZMVP-88): intermediate work-in-progress a
-//! Participant uploads into the review loop (DESIGN/Commission — "File entries and
-//! Markup"). A file entry is **not** a Product — no fact-lock, no atproto: it is
-//! private, Index-side, Total-tier content that lives entirely behind the platform
-//! (the public-node test never lets it cross to a PDS).
+//! Commission file entries: intermediate work-in-progress a Participant uploads
+//! into the review loop. Not a Product — private, Index-side, Total-tier content
+//! that never crosses to a PDS.
 //!
-//! Two homes hold a file entry, kept apart on purpose:
-//!
-//! - The **bytes** live behind the [`FileStore`](crate::ports::FileStore) port,
-//!   keyed by an **opaque** [`FileKey`] (a freshly minted UUIDv7 handle) — never a
-//!   content-addressed [`BlobId`](crate::elements::blob::BlobId)/CID, which is the
-//!   *public* PDS boundary's shape (reusing it here would be a category error).
-//!   Content-addressing, real storage, size/format policy, and retention are the
-//!   future blob-architecture walkthrough's call; the v1 store is a mock/local
-//!   implementation behind the port, and a swap keeps these opaque keys valid.
-//! - The **record** that a file entry belongs to a commission is the
-//!   [`CommissionFile`] row (the Index-canonical private link), which the retrieval
-//!   path reads to authorize a participant and which cascades away with the
-//!   commission (it is bookkeeping, never a [`Fact`](super::fact::Fact)). Its
-//!   filename/mime/size ride the [`FileStore`] metadata and the `file_added`
-//!   changelog entry's payload — the entry renders a sentence without joins (the
-//!   Changelog DD's core-renderable rule).
+//! Two homes: the bytes live behind the [`FileStore`](crate::ports::FileStore)
+//! port keyed by an opaque [`FileKey`], and the [`CommissionFile`] row records
+//! that the entry belongs to a commission.
 
 use std::ops::Deref;
 
@@ -29,29 +14,20 @@ use tokio::io::AsyncRead;
 use super::CommissionId;
 use crate::{datetime::DateTimeUtc, elements::user::UserId};
 
-/// The app-private, **opaque** handle for a stored file entry's bytes — a UUIDv7
-/// wrapped for type safety, the key both the [`FileStore`](crate::ports::FileStore)
-/// and the [`CommissionFile`] row are keyed by.
-///
-/// Deliberately **not** a content-address (a
-/// [`BlobId`](crate::elements::blob::BlobId)/CID): file entries are private,
-/// Index-side content that never touches atproto, and hashing multi-megabyte
-/// uploads buys nothing in the v1 mock. A future content-addressed store swaps
-/// behind the port with these opaque keys still valid as handles (ZMVP-88, ruling
-/// E13). Deref exposes the inner UUID for foreign keys and lookups.
+/// The app-private, opaque key of a stored file entry's bytes (UUIDv7) — what
+/// both the [`FileStore`](crate::ports::FileStore) and the [`CommissionFile`]
+/// row are keyed by. Not a content-address: file entries never touch atproto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct FileKey(uuid::Uuid);
 
 impl FileKey {
-    /// Wrap an already-minted UUIDv7. Mirrors [`CommissionId::new`]: the app mints
-    /// the key (PG16 has no native `uuidv7()`), the domain only names it.
+    /// Wrap an already-minted UUIDv7.
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
 
-    /// Mint a fresh opaque key (`Uuid::now_v7()`) for a new upload — the one place
-    /// a file entry's identity is born.
+    /// Mint a fresh opaque key for a new upload.
     pub fn generate() -> Self {
         Self(uuid::Uuid::now_v7())
     }
@@ -65,30 +41,23 @@ impl Deref for FileKey {
     }
 }
 
-/// A file entry's **filename**, validated on the way in — a save-name hint served
-/// back in the download's `Content-Disposition` header.
-///
-/// The gate is security-shaped, not cosmetic: the value crosses into an HTTP
-/// header, so a control character (CR/LF) would be header injection, and a path
-/// separator has no place in a filename (defense-in-depth against any downstream
-/// path use). What is enforced at construction: trimmed, non-empty, at most
-/// [`MAX_BYTES`](Self::MAX_BYTES) bytes, free of control characters, and free of
-/// `/` or `\`. Non-ASCII is allowed (stored verbatim; the download path emits it
-/// RFC 5987-encoded).
+/// A file entry's filename — the save-name hint served back in the download's
+/// `Content-Disposition` header. Enforced here: trimmed, non-empty, at most
+/// [`MAX_BYTES`](Self::MAX_BYTES) bytes, no control characters (they would be
+/// header injection), no `/` or `\`. Non-ASCII is allowed, stored verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileName(String);
 
 /// Why a string was rejected as a [`FileName`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileNameError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
     /// Longer than [`FileName::MAX_BYTES`] bytes after trimming.
     TooLong,
-    /// Contains a control character (newline, tab, NUL, …) — a header-injection
-    /// vector on the download path.
+    /// Contains a control character — a header-injection vector.
     ControlCharacter,
-    /// Contains a path separator (`/` or `\`) — a filename is a name, not a path.
+    /// Contains a path separator (`/` or `\`).
     PathSeparator,
 }
 
@@ -112,8 +81,7 @@ impl std::fmt::Display for FileNameError {
 impl std::error::Error for FileNameError {}
 
 impl FileName {
-    /// The length cap, in bytes — the common filesystem `NAME_MAX`, generous for a
-    /// save-name and tight enough to stay a name.
+    /// The length cap, in bytes — the common filesystem `NAME_MAX`.
     pub const MAX_BYTES: usize = 255;
 
     /// Validate and wrap a filename: trim, then reject empty, over-cap, any control
@@ -150,35 +118,27 @@ impl FileName {
     }
 }
 
-/// The caller-supplied metadata carried alongside a file entry's bytes — the
-/// [`FileStore`](crate::ports::FileStore)'s `put`/`get` payload (ruling E13).
-///
-/// `content_type` is **normalized** at construction: a blank or control-bearing
-/// MIME becomes `application/octet-stream`, so what is stored is always a safe
-/// header value. Combined with the download path's `Content-Disposition:
-/// attachment` + `X-Content-Type-Options: nosniff`, a stored SVG/HTML can never
-/// execute in the app origin.
+/// The metadata carried alongside a file entry's bytes — the
+/// [`FileStore`](crate::ports::FileStore)'s `put`/`get` payload. `content_type`
+/// is normalized at construction, so what is stored is always a safe header
+/// value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMetadata {
     /// The validated save-name (see [`FileName`]).
     pub filename: FileName,
-    /// The normalized MIME type served back as `Content-Type` — never blank, never
-    /// control-bearing. See [`FileMetadata::new`].
+    /// The normalized MIME served back as `Content-Type` — never blank, never
+    /// control-bearing.
     pub content_type: String,
-    /// The byte length of the stored content, carried for display and for the
-    /// changelog entry's payload.
+    /// The byte length of the stored content.
     pub byte_size: i64,
 }
 
 impl FileMetadata {
-    /// The default MIME when the caller supplies none (or an unusable one): the
-    /// safe, opaque `application/octet-stream`.
+    /// The default MIME when the caller supplies none or an unusable one.
     pub const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
-    /// Build metadata, normalizing `content_type`: a value that is blank once
-    /// trimmed, or carries a control character, is replaced with
-    /// [`DEFAULT_CONTENT_TYPE`](Self::DEFAULT_CONTENT_TYPE) — so the stored MIME is
-    /// always a valid, injection-free header value.
+    /// Build metadata, replacing a blank or control-bearing `content_type` with
+    /// [`DEFAULT_CONTENT_TYPE`](Self::DEFAULT_CONTENT_TYPE).
     pub fn new(filename: FileName, content_type: impl Into<String>, byte_size: i64) -> Self {
         let raw = content_type.into();
         let trimmed = raw.trim();
@@ -195,9 +155,8 @@ impl FileMetadata {
     }
 }
 
-/// A file entry's metadata plus a live reader over its bytes, streamed back
-/// from the [`FileStore`](crate::ports::FileStore) — the `get` result
-/// (ZMVP-205: replaces the earlier buffered `StoredFile`).
+/// A file entry's metadata plus a live reader over its bytes — the
+/// [`FileStore`](crate::ports::FileStore)'s `get` result.
 pub struct FileDownload {
     /// The metadata the entry was stored with.
     pub metadata: FileMetadata,
@@ -205,16 +164,10 @@ pub struct FileDownload {
     pub content: Box<dyn AsyncRead + Send + Unpin>,
 }
 
-/// The Index-canonical record that a file entry belongs to a commission (ZMVP-88)
-/// — the private link the retrieval path reads to authorize a participant and to
-/// (later) enumerate a commission's blobs for the hard-delete cascade.
-///
-/// Deliberately **not a fact** (Deletion DD `3014657`): it is commission-owned
-/// bookkeeping that cascades away with the commission (`ON DELETE CASCADE`), so a
-/// commission with only file entries stays hard-deletable (AC2 —
-/// [`commission_has_facts`](crate::ports::CommissionWrites::commission_has_facts)
-/// stays `false`). Its `id` is the same opaque [`FileKey`] the bytes are stored
-/// under.
+/// The Index-canonical record that a file entry belongs to a commission — the
+/// private link the retrieval path reads to authorize a participant. Not a fact:
+/// it cascades away with the commission, so a commission with only file entries
+/// stays hard-deletable. (DD 3014657)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissionFile {
     /// The file entry's opaque key — the [`FileStore`](crate::ports::FileStore)
@@ -222,9 +175,8 @@ pub struct CommissionFile {
     pub id: FileKey,
     /// The commission whose review loop this entry joined.
     pub commission_id: CommissionId,
-    /// The Participant who uploaded it. Deliberately carries no foreign key onto
-    /// users at the database (the changelog precedent): shared history survives a
-    /// user tombstone.
+    /// The Participant who uploaded it. Carries no foreign key onto users, so
+    /// shared history survives a tombstone.
     pub uploaded_by: UserId,
     /// When the entry was uploaded.
     pub created_at: DateTimeUtc,

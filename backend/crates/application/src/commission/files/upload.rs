@@ -15,8 +15,8 @@ use crate::{
     ports::WithPorts,
 };
 
-/// `upload`'s input: the acting Participant, the target commission, and the
-/// wire-optional filename/content-type declared alongside the bytes.
+/// The acting Participant, the target commission, and the wire-optional
+/// filename and content type declared alongside the bytes.
 pub struct Command {
     pub actor_id: UserId,
     pub commission_id: CommissionId,
@@ -24,7 +24,7 @@ pub struct Command {
     pub content_type: Option<String>,
 }
 
-/// `upload`'s output: the newly minted file entry's opaque key.
+/// The new file entry's opaque key.
 #[derive(Debug)]
 pub struct Output {
     pub id: FileKey,
@@ -32,12 +32,9 @@ pub struct Output {
 
 impl Files<'_> {
     /// Uploads a file entry: any Participant, any time, never a status side
-    /// effect. Authorizes **before** a byte of `content` is read. `content` is
-    /// capped at `max_upload_bytes` (+1, to prove an over-cap stream is over
-    /// without buffering the whole overage); the blob write runs **before** the
-    /// transaction (bytes cannot ride a Postgres unit of work), so a rejected
-    /// upload's orphaned blob is deleted before answering. Commits the
-    /// [`CommissionFile`] link and the `file_added` changelog entry atomically.
+    /// effect. Authorizes before a byte of `content` is read, caps it at
+    /// `max_upload_bytes`, and deletes the orphaned blob before refusing.
+    /// Commits the [`CommissionFile`] link and its changelog entry atomically.
     pub async fn upload(
         &self,
         cmd: Command,

@@ -3,7 +3,7 @@
 //! first-party-`Origin` (CSRF) layer.
 
 use application::account::{
-    self, AccountError,
+    self, AccountEntity, AccountError,
     invitation::{self, issue::InviteOutcome},
 };
 use axum::{
@@ -49,7 +49,10 @@ impl From<AccountError> for Problem {
                 "Too many handle changes recently. Please wait before changing it again.",
             ),
             AccountError::IncorrectRole => Problem::forbidden(),
-            AccountError::AccountNotFound => Problem::account_not_found(),
+            AccountError::NotFound(AccountEntity::Account) => Problem::account_not_found(),
+            AccountError::NotFound(AccountEntity::Commission) => Problem::commission_not_found(),
+            AccountError::NotFound(AccountEntity::Workflow) => Problem::workflow_not_found(),
+            AccountError::NotFound(AccountEntity::Column) => Problem::column_not_found(),
             AccountError::NoPendingInvitation => Problem::no_pending_invitation(),
             AccountError::NotAMember => Problem::member_not_found(),
             AccountError::OwnerCannotLeave => Problem::owner_cannot_leave(),
@@ -61,18 +64,34 @@ impl From<AccountError> for Problem {
             AccountError::CannotTransferToSelf => Problem::invalid_request(
                 "You already own this account; transfer ownership to another member.",
             ),
-            AccountError::UserNotFound => Problem::forbidden(),
+            // Never 404 here (actor-existence oracle over DIDs; DD 57081857 F1).
+            AccountError::NotFound(AccountEntity::User) => Problem::forbidden(),
             // TODO(Engineer): status/code for this variant is unruled (409?); no use case produces it yet.
             AccountError::InvitationAlreadyPending => {
                 Problem::invalid_request("An invitation for that user is already pending.")
             }
+            AccountError::ContainsCommissions => Problem::invalid_request(
+                "That column still holds commissions; move them off it first.",
+            ),
+            AccountError::DuplicateName => {
+                Problem::invalid_request("Something on this board already has that name.")
+            }
+            AccountError::IncorrectNumberOfColumns => {
+                Problem::invalid_request("That board cannot hold any more columns.")
+            }
+            AccountError::IndexOutOfRange(_) => {
+                Problem::invalid_request("That position is past the end of the list.")
+            }
+            AccountError::NothingToDo => {
+                Problem::invalid_request("That change would leave everything as it is.")
+            }
+            AccountError::SystemError(err) => Problem::internal_error(err.to_string()),
         }
     }
 }
 
-/// One account membership row. `id` and `did` carry the same value: an Account
-/// is addressed by its DID and nothing else (DD 57081857), and the contract —
-/// additive-only — still declares both.
+/// One account membership row. `id` and `did` carry the same value — an
+/// Account is addressed by its DID alone (DD 57081857).
 impl From<account::list::Listing> for AccountMembership {
     fn from(account: account::list::Listing) -> Self {
         let did = account.id.to_string();
@@ -211,9 +230,7 @@ async fn create_account(
     Ok(response)
 }
 
-// Must fail to compile once the first account-fact table is registered in
-// `adapter_pg::ACCOUNT_FACT_TABLES`, forcing `application::account::facts::exist`
-// to become a real query instead of its constant-`false` body.
+// Fails to compile once the first account-fact table registers (assert below).
 const _: () = assert!(
     adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
     "an account-anchored fact store was registered: replace the constant-`false` body \
@@ -258,8 +275,7 @@ async fn delete_account(
 }
 
 /// `PATCH /accounts/{id}/handle` — the Owner changes the account's handle
-/// post-onboarding. Order matters: the DID document updates first, then the
-/// private store (no cross-store transaction; DD 27852802).
+/// post-onboarding. (DD 27852802)
 ///
 /// - `200 { "id", "did", "handle", "name" }`
 /// - `401` — not signed in · `403` — not this account's Owner
@@ -647,8 +663,7 @@ struct TransferOwnershipResponse {
 }
 
 /// `POST /accounts/{id}/transfer` — transfers ownership to another existing
-/// member, immediately and unilaterally (no recipient acceptance, no PLC
-/// write — the account's `did:plc` is stable).
+/// member, immediately and unilaterally (no recipient acceptance).
 ///
 /// - `200 { "account", "owner", "previous_owner" }`
 /// - `401` — not signed in · `403` — not the account's current Owner

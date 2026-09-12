@@ -1,10 +1,7 @@
 //! `POST /commissions/{id}/files` and `GET /commissions/{id}/files/{file_id}` —
-//! a Participant uploads a work-in-progress file entry, and a Participant
-//! retrieves one. Routing only (ZMVP-205): the use case lives in
-//! `application::commission::files`; this file decodes the request, adapts
-//! axum's multipart/body types to the streaming `FileStore` seam, and renders
-//! the response — including the download hardening headers (presentation
-//! stays the driver's).
+//! a Participant uploads a work-in-progress file, and retrieves one. Routing
+//! only; the use case lives in `application::commission::files`, this file
+//! adapts axum's multipart/body types to the streaming `FileStore` seam.
 
 use application::commission::{
     CommissionError,
@@ -71,8 +68,7 @@ pub(super) async fn upload_file(
         filename: part.filename,
         content_type: part.content_type,
     };
-    // The reader is lazy — nothing is pulled from the wire until the use case
-    // has authorized the caller (`upload`'s "nothing consumed before authz").
+    // Lazy reader — nothing is pulled from the wire until the use case authorizes.
     let reader = StreamReader::new(part.field.map_err(std::io::Error::other));
 
     let outcome = state
@@ -83,9 +79,7 @@ pub(super) async fn upload_file(
         .await;
     let result = match outcome {
         Ok(result) => result,
-        // The exact byte count lives here (the use case only knows the cap
-        // was exceeded, not its value), so this stays a call-site special case
-        // rather than the shared `From<CommissionError> for Problem`.
+        // Exact byte count lives here (the use case only knows the cap was exceeded).
         Err(CommissionError::FileTooLarge) => {
             return Err(Problem::payload_too_large(format!(
                 "The file exceeds the {max}-byte upload limit."

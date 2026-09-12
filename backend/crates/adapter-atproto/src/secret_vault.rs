@@ -1,49 +1,20 @@
-//! Envelope encryption of this store's at-rest OAuth secrets under a **root key**.
+//! Envelope encryption of this crate's at-rest OAuth secrets.
 //!
-//! The `atproto_oauth` rows hold live upstream credentials on the user's behalf:
-//! an established session carries the DPoP **private signing key** plus the
-//! long-lived **refresh token** and access token; an in-flight request carries
-//! the PKCE verifier + DPoP key. A read of those rows in the clear (leaked
-//! backup, read replica, injection read gadget) is a *renewable* PDS-session
-//! takeover — it bypasses the encrypted `did:plc` custody store entirely. So,
-//! exactly as the account custody keys are sealed before they touch disk, every
-//! `data` blob [`AtprotoAuthStore`](crate::AtprotoAuthStore) writes is sealed
-//! with an AEAD (XChaCha20-Poly1305) under a 32-byte **root key** held *outside*
-//! the database — a database compromise alone yields no usable secret.
-//!
-//! # A deliberate mirror of adapter-pg's `key_vault`, not a shared type
-//!
-//! This is a faithful mirror of adapter-pg's `key_vault::RootKey` (the custody
-//! encryptor, DD/26804226): same AEAD, same 24-byte random-nonce-prefixed blob
-//! format, same associated-data binding, and — critically — the **same single
-//! root-key source** (`ZURFUR_DID_KEY_ROOT_KEY`, injected by `api`). It is not
-//! *the same type* because the ports-and-adapters rule forbids one adapter
-//! depending on another (`adapter-pg` is a dev-only dependency here), and this
-//! security fix is deliberately confined to `adapter-atproto`. Hoisting the
-//! envelope primitive into `domain` so both boundaries share one implementation
-//! is the recommended follow-up; it is out of scope for this PR.
-//!
-//! # Root key custody — DEV-ONLY today, KMS next
-//!
-//! Same key, same caveat as custody: a config/env root key is acceptable **only**
-//! pre-alpha; hardening it into a cloud KMS/HSM is the URGENT follow-up ZMVP-53.
-//! Because this store reuses the one custody root key, `api`'s
-//! `ensure_custody_hardened` boot guard (which refuses to run real-identity
-//! configurations under dev-only key custody) already covers this store too.
+//! Every blob [`AtprotoAuthStore`](crate::AtprotoAuthStore) writes is sealed
+//! with XChaCha20-Poly1305 under a 32-byte root key held outside the database,
+//! so a database read alone yields no usable secret. The root key is the same
+//! one adapter-pg's `key_vault` uses; it comes from config/env (DEV-ONLY).
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use zeroize::Zeroizing;
 
-/// XChaCha20-Poly1305 nonce length (192-bit) — large enough that random nonces
-/// never collide in practice, so no counter/state is needed even though this key
-/// also seals custody records (the combined message set stays far under the
-/// birthday bound).
+/// XChaCha20-Poly1305 nonce length (192-bit) — wide enough for random nonces
+/// with no counter or state.
 const NONCE_LEN: usize = 24;
 
 /// The 32-byte root key that seals every at-rest OAuth secret. Held in memory
-/// only; sourced from config/env in v1 (DEV-ONLY — see module docs, ZMVP-53).
-/// [`Debug`] is redacted so the root key can never reach a log line.
+/// only; [`Debug`] is redacted so it can never reach a log line.
 #[derive(Clone)]
 pub struct SecretVault([u8; 32]);
 
@@ -54,10 +25,8 @@ impl std::fmt::Debug for SecretVault {
 }
 
 impl SecretVault {
-    /// Build the vault from exactly 32 bytes (the same decoded
-    /// `ZURFUR_DID_KEY_ROOT_KEY` the custody store uses). Errors on any other
-    /// length so a misconfigured secret fails loudly at boot rather than silently
-    /// weakening encryption.
+    /// Build the vault from exactly 32 bytes; any other length errors, so a
+    /// misconfigured secret fails at boot rather than weakening encryption.
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let arr: [u8; 32] = bytes.try_into().map_err(|_| {
             anyhow::anyhow!(
@@ -72,17 +41,10 @@ impl SecretVault {
         XChaCha20Poly1305::new((&self.0).into())
     }
 
-    /// Seal `plaintext` into an opaque blob: a fresh random nonce followed by the
-    /// AEAD ciphertext. Only a holder of this root key can [`open`](SecretVault::open)
-    /// it.
-    ///
-    /// `aad` is bound in as AEAD **associated data** — it is *not* stored in the
-    /// blob, but the tag check on `open` fails unless the identical `aad` is
-    /// supplied. Passing each row's key as `aad` cryptographically ties a blob to
-    /// its row: an attacker with database write access cannot move one row's
-    /// sealed secret onto another row (the tag fails under the moved-to key).
-    /// Defense-in-depth on top of the core property (a DB read alone yields no
-    /// usable secret).
+    /// Seal `plaintext` into an opaque blob: a fresh random nonce followed by
+    /// the AEAD ciphertext. `aad` is bound in as associated data — not stored,
+    /// but required identically on [`open`](SecretVault::open) — so passing the
+    /// row's key ties the blob to its row and blocks cross-row swaps.
     pub fn seal(&self, aad: &[u8], plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
         let ciphertext = self
@@ -102,16 +64,9 @@ impl SecretVault {
         Ok(blob)
     }
 
-    /// Open a blob produced by [`seal`](SecretVault::seal). `aad` must be identical
-    /// to what the blob was sealed under (the row key). The plaintext is returned
-    /// in a [`Zeroizing`] buffer so the decrypted secret is wiped from the heap on
-    /// drop.
-    ///
-    /// Errors — and **never** returns plaintext — if the blob is malformed, the
-    /// `aad` does not match, or the AEAD tag fails (wrong root key or tampering).
-    /// This is the fail-closed contract: a legacy/plaintext value in the column is
-    /// not valid ciphertext, so it errors here rather than being silently passed
-    /// through as if it had been decrypted.
+    /// Open a blob produced by [`seal`](SecretVault::seal) under the identical
+    /// `aad`; the plaintext is zeroized on drop. Errors — never returning
+    /// plaintext — on a malformed blob, a mismatched `aad`, or a failed tag.
     pub fn open(&self, aad: &[u8], blob: &[u8]) -> anyhow::Result<Zeroizing<Vec<u8>>> {
         if blob.len() < NONCE_LEN {
             anyhow::bail!("sealed oauth blob too short");

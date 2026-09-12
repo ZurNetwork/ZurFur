@@ -1,6 +1,6 @@
-//! `zurfur migrate` (ZMVP-206): apply the embedded migrations. The one
-//! command exempt from the schema-drift gate — it is the fix the gate points
-//! at. Idempotent: a current database reports `applied: 0`.
+//! `zurfur migrate`: apply the embedded migrations. The one command exempt
+//! from the schema-drift gate — it is the fix the gate points at. Idempotent:
+//! a current database reports `applied: 0`.
 
 use composition::Runtime;
 use serde_json::json;

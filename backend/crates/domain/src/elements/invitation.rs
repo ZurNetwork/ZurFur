@@ -1,25 +1,12 @@
-//! The [`Invitation`] — a pending offer of account membership, the issuing half
-//! of invite-then-accept (ZMVP-32; DESIGN/1DD decision 11, DESIGN/Roles).
+//! The [`Invitation`]: a pending offer of account membership — the issuing half
+//! of invite-then-accept. Joining someone else's account is consequential, so it
+//! is consensual: an Owner or Admin issues the offer and the invited User must
+//! accept before any membership exists.
 //!
-//! Seating a member directly is a *grant* ([`crate::elements::role`], ZMVP-15).
-//! But joining someone else's account is consequential — shared brand, wallet,
-//! plugin entitlements, authority — so it is consensual: an Owner or Admin
-//! *issues* an `Invitation`, and the invited User must *accept* before any
-//! membership exists. This element is the issued offer and its lifecycle; the
-//! authority to issue reuses the grant rule ([`Role::can_grant`] — the offered
-//! role sits strictly below the inviter's own rank), and the inviter is recorded
-//! because on acceptance they become the new member's Parent (DESIGN/Roles rule
-//! 4a).
-//!
-//! Scope split: this module (and ZMVP-32) only ever issues a [`Pending`] offer or
-//! [`revoke`](Invitation::revoke)s it to [`Revoked`]. The [`Accepted`] transition
-//! — and the membership it mints — lives in ZMVP-20. There is no expiry: an
-//! invitation stays valid until accepted or revoked.
-//!
-//! [`Pending`]: InvitationState::Pending
-//! [`Revoked`]: InvitationState::Revoked
-//! [`Accepted`]: InvitationState::Accepted
-//! [`Role::can_grant`]: crate::elements::role::Role::can_grant
+//! Authority to issue is the grant rule
+//! ([`Role::can_grant`](crate::elements::role::Role::can_grant)); the inviter is
+//! recorded because on acceptance they become the new member's Parent. There is
+//! no expiry.
 
 use std::ops::Deref;
 use std::str::FromStr;
@@ -34,17 +21,13 @@ use crate::{
     },
 };
 
-/// The app-private, stable handle for an [`Invitation`].
-///
-/// A UUIDv7 wrapped for type safety, mirroring [`AccountId`] and
-/// [`crate::elements::user::UserId`]: the app mints the key, the domain only
-/// names it. Deref exposes the inner UUID.
+/// The app-private key of an [`Invitation`] (UUIDv7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvitationId(uuid::Uuid);
 
 impl InvitationId {
-    /// Wraps an already-minted UUIDv7 — e.g. a row read back from the store.
-    /// A *fresh* id is minted inside [`Invitation::issue`], not here.
+    /// Wraps an already-minted UUIDv7; a fresh id is minted by
+    /// [`Invitation::issue`].
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
@@ -66,27 +49,17 @@ impl FromStr for InvitationId {
     }
 }
 
-/// Where an invitation sits in its lifecycle.
-///
-/// An offer is [`Pending`](InvitationState::Pending) from issuance until it is
-/// either [`Accepted`](InvitationState::Accepted) (ZMVP-20, which mints the
-/// membership) or [`Revoked`](InvitationState::Revoked) by the issuer (ZMVP-32).
-/// Both end states are terminal — a revoked invitation can never be accepted, and
-/// an accepted one is spent. There is no expiry.
-///
-/// A fieldless enum, so it is `Copy`; persisted as its lowercase
-/// [`as_str`](InvitationState::as_str) discriminant, the inverse of
-/// [`TryFrom<String>`].
+/// Where an invitation sits in its lifecycle. Pending from issuance until
+/// accepted or revoked; both end states are terminal and there is no expiry.
+/// Persisted as its lowercase [`as_str`](InvitationState::as_str) discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvitationState {
-    /// Issued and awaiting the invited User's decision. The only state ZMVP-32
-    /// writes on creation, and the only state that may be revoked or accepted.
+    /// Issued and awaiting the invited User's decision — the only state that
+    /// may be revoked or accepted.
     Pending,
-    /// The invited User accepted; the membership has been minted (ZMVP-20).
-    /// Terminal.
+    /// The invited User accepted and the membership was minted. Terminal.
     Accepted,
-    /// The issuer revoked the offer before it was accepted (ZMVP-32). Terminal —
-    /// a revoked invitation can no longer be accepted.
+    /// The issuer revoked the offer before it was accepted. Terminal.
     Revoked,
 }
 
@@ -99,9 +72,8 @@ impl std::fmt::Display for InvitationState {
         }
     }
 }
-/// A stored invitation-state discriminant that isn't one of the three known
-/// states — a schema/data drift signal, not user input. Mirrors
-/// [`crate::elements::role::UnknownRole`]; carries the offending value.
+/// A stored invitation-state discriminant outside the three known states — a
+/// schema-drift signal, not user input; carries the offending value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownInvitationState(pub String);
 
@@ -116,8 +88,7 @@ impl std::error::Error for UnknownInvitationState {}
 impl TryFrom<String> for InvitationState {
     type Error = UnknownInvitationState;
 
-    /// Parse a stored discriminant (`pending` | `accepted` | `revoked`) back into
-    /// a state. The inverse of [`as_str`](InvitationState::as_str).
+    /// Parse a stored discriminant back into a state.
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "pending" => Ok(InvitationState::Pending),
@@ -129,8 +100,7 @@ impl TryFrom<String> for InvitationState {
 }
 
 impl InvitationState {
-    /// The lowercase discriminant (`pending` | `accepted` | `revoked`) — the value
-    /// the store persists, and the inverse of [`TryFrom<String>`].
+    /// The lowercase discriminant the store persists.
     pub fn as_str(&self) -> &'static str {
         match self {
             InvitationState::Pending => "pending",
@@ -141,14 +111,10 @@ impl InvitationState {
 }
 
 /// Why an invitation lifecycle transition was refused.
-///
-/// Today only [`revoke`](Invitation::revoke) can fail, and only one way — the
-/// offer wasn't pending. An enum (not a unit error) so the accept path (ZMVP-20)
-/// can extend it without a breaking change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvitationError {
-    /// The transition needs a [`Pending`](InvitationState::Pending) invitation,
-    /// but this one was already accepted or revoked. Both end states are terminal.
+    /// The transition needs a pending invitation, but this one was already
+    /// accepted or revoked.
     NotPending,
 }
 
@@ -165,44 +131,21 @@ impl std::fmt::Display for InvitationError {
 impl std::error::Error for InvitationError {}
 
 /// A pending (or once-pending) offer of account membership: who is invited, to
-/// which [`AccountId`], at what [`Role`], by whom, and where it sits in its
-/// lifecycle.
-///
-/// Build one with [`Invitation::issue`], which stamps it [`Pending`]; move it to
-/// [`Revoked`] with [`revoke`](Invitation::revoke). Like [`Account`], it is not
-/// `Clone` — an entity with identity and a lifecycle, not a value to copy around;
-/// the store rebuilds it from its parts on read.
-///
-/// The `inviter` is kept deliberately: per DESIGN/Roles rule 4a, on acceptance
-/// (ZMVP-20) the inviter becomes the new member's Parent in the role tree. The
-/// `role` is the *offered* rank; the rule that it sits strictly below the
-/// inviter's own rank is the grant rule ([`Role::can_grant`]), checked by the
-/// caller before issuing — the same authority seam grants use.
-///
-/// References: [`Invitation::issue`], [`Invitation::revoke`],
-/// [`crate::ports::AccountWrites::create_invitation`], DESIGN/1DD decision 11,
-/// DESIGN/Roles, ZMVP-32/ZMVP-20.
-///
-/// [`Pending`]: InvitationState::Pending
-/// [`Revoked`]: InvitationState::Revoked
-/// [`Account`]: crate::elements::account::Account
-/// [`Role::can_grant`]: crate::elements::role::Role::can_grant
+/// which account, at what [`Role`], by whom, and where it sits in its lifecycle.
+/// Build one with [`Invitation::issue`] and move it on with
+/// [`revoke`](Invitation::revoke). Not `Clone` — an entity, not a value.
 pub struct Invitation {
     /// The app-private id, minted at issuance.
     pub id: InvitationId,
     /// The account the invited User is offered membership of.
     pub account: AccountId,
-    /// The User being invited. They become a member only by accepting (ZMVP-20).
+    /// The User being invited; they become a member only by accepting.
     pub invited_user: UserId,
-    /// The offered rank. Sits strictly below the inviter's own (the grant rule,
-    /// checked before issuing). Carries the parent slot like any [`Role`], `None`
-    /// here until the role tree lands.
+    /// The offered rank, strictly below the inviter's own.
     pub role: Role,
-    /// The member who issued the offer. Recorded because on acceptance they become
-    /// the new member's Parent (DESIGN/Roles rule 4a).
+    /// The member who issued the offer — on acceptance, the new member's Parent.
     pub inviter: UserId,
-    /// Where the offer sits in its lifecycle. [`Pending`](InvitationState::Pending)
-    /// at issuance.
+    /// Where the offer sits in its lifecycle; `Pending` at issuance.
     pub state: InvitationState,
     /// When the invitation was issued; equals `updated_at` at issuance.
     pub created_at: DateTimeUtc,
@@ -211,14 +154,10 @@ pub struct Invitation {
 }
 
 impl Invitation {
-    /// Issue a fresh, [`Pending`](InvitationState::Pending) invitation.
-    ///
-    /// Mints the id (`InvitationId::new(Uuid::now_v7())`) and stamps `created_at
-    /// == updated_at == now`. A pure builder, like [`Account::open`]: the
-    /// authority to issue (the offered `role` strictly below the inviter's rank,
-    /// and the inviter being Owner/Admin) is the caller's check via
-    /// [`Role::can_grant`], settled before this is reached — exactly as a grant
-    /// settles authority before [`grant_role`](crate::ports::AccountWrites::grant_role).
+    /// Issue a fresh, [`Pending`](InvitationState::Pending) invitation: mints
+    /// the id and stamps `created_at == updated_at == now`. A pure builder —
+    /// authority to issue is the caller's
+    /// [`can_grant`](crate::elements::role::Role::can_grant) check.
     ///
     /// ```
     /// use chrono::Utc;
@@ -235,9 +174,6 @@ impl Invitation {
     /// assert_eq!(invitation.state, InvitationState::Pending); // issued pending
     /// assert_eq!(invitation.created_at, invitation.updated_at); // stamped once
     /// ```
-    ///
-    /// [`Account::open`]: crate::elements::account::Account::open
-    /// [`Role::can_grant`]: crate::elements::role::Role::can_grant
     pub fn issue(
         account: AccountId,
         invited_user: UserId,
@@ -258,14 +194,9 @@ impl Invitation {
     }
 
     /// Revoke a pending invitation, moving it to
-    /// [`Revoked`](InvitationState::Revoked) and stamping `updated_at`.
-    ///
-    /// The pure encoding of "the issuing member may revoke a *pending*
-    /// invitation": only a [`Pending`](InvitationState::Pending) offer can be
-    /// revoked — revoking one already accepted or revoked is
-    /// [`InvitationError::NotPending`], leaving the state untouched. *Who* may
-    /// revoke (the inviter) is the caller's authority check, like the grant seam;
-    /// this guards only the state transition.
+    /// [`Revoked`](InvitationState::Revoked) and stamping `updated_at`. Only a
+    /// pending offer revokes; otherwise [`InvitationError::NotPending`] and the
+    /// state is untouched. *Who* may revoke is the caller's check.
     ///
     /// ```
     /// use chrono::Utc;
@@ -310,9 +241,7 @@ mod tests {
         UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())))
     }
 
-    // AC3 — "a pending invitation records the invited User, the Account, the
-    // offered role, and the inviter." Issuance captures all four and starts pending,
-    // stamped once.
+    // Issuance captures all four facts and starts pending, stamped once.
     #[test]
     fn issue_builds_a_pending_invitation_recording_its_four_facts() {
         let (account, invited, inviter) = (account(), user(), user());
@@ -335,8 +264,7 @@ mod tests {
         assert_eq!(invitation.updated_at, now);
     }
 
-    // AC4 — revoking a pending invitation moves it to revoked and bumps updated_at,
-    // leaving created_at (the issuance stamp) untouched.
+    // Revoking bumps updated_at and leaves created_at untouched.
     #[test]
     fn revoke_moves_a_pending_invitation_to_revoked() {
         let issued = Utc::now();
@@ -352,8 +280,7 @@ mod tests {
         );
     }
 
-    // AC4 — "a revoked invitation can no longer be accepted." The state guard: only
-    // a pending invitation revokes; a second revoke is rejected and changes nothing.
+    // Only a pending invitation revokes; a second revoke changes nothing.
     #[test]
     fn revoking_a_non_pending_invitation_is_rejected() {
         let mut invitation = Invitation::issue(account(), user(), Role::Member, user(), Utc::now());
@@ -378,8 +305,7 @@ mod tests {
         );
     }
 
-    // The persisted discriminant round-trips, and an unknown one is a typed error
-    // (schema drift), mirroring Role. Covers every variant.
+    // The persisted discriminant round-trips; an unknown one is a typed error.
     #[test]
     fn state_round_trips_through_its_discriminant() {
         for state in [
@@ -397,10 +323,8 @@ mod tests {
         );
     }
 
-    // AC2 — "the offered role sits strictly below the inviter's own rank (Manager
-    // and Member cannot invite)." Invite authority is *the grant rule*, not a new
-    // one: this pins the reuse so issuance and granting can never drift. The full
-    // actor->target matrix is exhausted in `role.rs`; here we assert the binding.
+    // Invite authority IS the grant rule, not a parallel one. The full
+    // actor->target matrix is exhausted in `role.rs`; this pins the binding.
     #[test]
     fn invite_authority_is_the_grant_rule() {
         assert!(

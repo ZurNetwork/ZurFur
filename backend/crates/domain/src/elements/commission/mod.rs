@@ -1,55 +1,10 @@
-//! The [`Commission`] — the platform's most basic unit of work and the aggregator
-//! of the work done under it (DESIGN/Commission).
+//! The [`Commission`] — the platform's basic unit of work and the aggregator of
+//! everything done under it. (DESIGN 3276807)
 //!
-//! This is the **birth** shape (ZMVP-65): only the fixed metadata that always
-//! exists — a UUIDv7 [`CommissionId`], a `Title`, the owning [`UserId`], a single
-//! [`LifecycleStep`], a nullable deadline, and a creation stamp. A commission is
-//! created by any authenticated User with **no Account required** (a user-scoped
-//! write; ZMVP-47, DD 26247170). Everything else the glossary describes — the
-//! flat composition of Tabs/Surfaces/Elements, Seats/Slots, participants beyond
-//! the creator, account [`positioning`] (placement + view grants, ZMVP-70), and
-//! lifecycle/status transitions — materializes in later tickets, not here. (There
-//! is no "managing-account association": Ownership Separation DD `29130754` deleted
-//! that concept — accounts own positioning, never the commission.)
-//!
-//! A commission is **isolated from accounts**: it survives account deletion and its
-//! participants are always Users, never accounts. Visibility is carried as a flat
-//! [`Visibility`] field defaulting to `Private` (the closed-door policy). Since the
-//! Flat Composition DD (`45514754`, ZMVP-166) it is a **plain envelope field, not
-//! an alias for anything**: the commission is the formal root, and its visibility
-//! is the outermost gate under which the composition's own three-term
-//! [`effective_visibility`] applies. (It used to double as the root surface's mode —
-//! the tree had no other home for it; the flat model gives every term its own.)
-//!
-//! The [`fact`] submodule carries the [`Fact`] contract (ZMVP-67) — what it means
-//! for a type to be commission-anchored evidence that blocks hard deletion. The
-//! [`changelog`] submodule carries the commission's append-only memory (ZMVP-87):
-//! the frozen [`ChangelogEntryKind`] taxonomy, the entry shapes, and the
-//! [`ChannelPointer`] "where we talk" value. The [`positioning`] submodule carries
-//! the two account-facing rails (ZMVP-70): [`Placement`] (account-side, where the
-//! commission sits) and the [`GrantLevel`] key-to-see (commission-side) — neither
-//! confers in-commission authority (Ownership Separation DD `29130754`). The
-//! [`element`] submodule carries the **flat composition** (ZMVP-166; Flat
-//! Composition DD `45514754`): typed Elements contributed into code-declared
-//! Surfaces, grouped by Tabs, with effective visibility the min of three terms —
-//! and, as before, the raw loaded composition deliberately never serializes,
-//! down to the [`ElementPayload`] that holds an element's content (projection is
-//! ZMVP-170). The
-//! [`file`] submodule carries the file-entry shapes (ZMVP-88): the opaque
-//! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
-//! Index-canonical link. The [`markup`] submodule carries the [`Markup`]
-//! annotation shapes (ZMVP-90), the [`MarkupKey`] that identifies one, and the
-//! [`CommissionMarkup`] row that stores it alongside the `markup_added` changelog
-//! entry. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
-//! Character positions as elements with a title/notes satellite — fill
-//! deferred wholesale to the Character epic. The [`seat`] submodule carries the
-//! **Seat** (ZMVP-76): the 1:1 structural participant position declared vacant,
-//! and — with it — the persisted participant-membership model whose permanent
-//! floor is the owner. The [`seat_invitation`] submodule carries the
-//! [`SeatInvitation`] (ZMVP-78): the owner's pending offer of a vacant Seat to a
-//! User — the Seat mirror of the account invitation, reusing its
-//! [`InvitationState`](crate::elements::invitation::InvitationState) machine;
-//! filling the Seat on acceptance is ZMVP-79.
+//! This module holds the envelope: id, title, owner, lifecycle, visibility,
+//! deadline, maturity, statuses. A commission belongs to a User, never an
+//! account, and survives account deletion. Its [`Visibility`] is the outermost
+//! gate, applied before the composition's own [`effective_visibility`].
 
 pub mod changelog;
 pub mod element;
@@ -72,7 +27,7 @@ pub use element::{
 pub use fact::Fact;
 pub use file::{CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
-pub use positioning::{GrantLevel, Placement};
+pub use positioning::GrantLevel;
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
@@ -94,18 +49,14 @@ use crate::{
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
-/// The app-private, stable handle for a [`Commission`].
-///
-/// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::account::AccountId`]
-/// and [`crate::elements::user::UserId`]. The UUIDv7 carries the creation timestamp;
-/// Deref exposes the inner UUID for foreign keys and lookups.
+/// The app-private key of a [`Commission`] (UUIDv7, so it sorts by creation
+/// time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CommissionId(uuid::Uuid);
 
 impl CommissionId {
-    /// Wraps an already-minted UUIDv7. Mirrors [`crate::elements::account::AccountId::new`]:
-    /// the app mints the key (PG16 has no native `uuidv7()`), the domain only names it.
+    /// Wraps an already-minted UUIDv7.
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
@@ -133,13 +84,7 @@ impl FromStr for CommissionId {
     }
 }
 
-/// A commission's Title, validated on the way in.
-///
-/// Surrounding whitespace is trimmed; the result must be non-empty. The Title is
-/// the one always-present content facet of a commission (DESIGN/Commission), so a
-/// blank one is rejected rather than stored — the same construction-time gate
-/// [`crate::elements::account::AccountName`] applies to account names (no length cap
-/// is imposed here yet).
+/// A commission's Title: trimmed, and non-empty. No length cap yet.
 ///
 /// ```
 /// use domain::elements::commission::CommissionTitle;
@@ -155,7 +100,7 @@ pub struct CommissionTitle(String);
 /// Why a string was rejected as a commission title.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommissionTitleError {
-    /// Empty once trimmed. Example: `""` or `"   "`.
+    /// Empty once trimmed.
     Empty,
 }
 
@@ -179,8 +124,7 @@ impl CommissionTitle {
 impl TryFrom<String> for CommissionTitle {
     type Error = CommissionTitleError;
 
-    /// Validate and wrap a title: trim surrounding whitespace, then reject an
-    /// empty result with [`CommissionTitleError::Empty`].
+    /// Validate and wrap a title: trim, then reject an empty result.
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         StringBuilder::new(raw)
             .trimmed()
@@ -191,10 +135,7 @@ impl TryFrom<String> for CommissionTitle {
                 StringBuilderViolation::Empty => CommissionTitleError::Empty,
                 StringBuilderViolation::TooLong { .. }
                 | StringBuilderViolation::ControlCharacter => {
-                    // Unreachable by construction: this chain never calls
-                    // `max_chars`/`no_control`/`no_control_except`, and
-                    // `CommissionTitleError` has no variant for either. Fail
-                    // safe onto the only existing variant rather than panic.
+                    // Unreachable: this chain only applies trimmed().non_empty().
                     debug_assert!(
                         false,
                         "CommissionTitle's TryFrom chain only applies trimmed().non_empty()"
@@ -205,8 +146,6 @@ impl TryFrom<String> for CommissionTitle {
     }
 }
 
-/// The std parsing door: `"…".parse::<CommissionTitle>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
 impl std::str::FromStr for CommissionTitle {
     type Err = CommissionTitleError;
 
@@ -215,106 +154,57 @@ impl std::str::FromStr for CommissionTitle {
     }
 }
 
-/// The std read-side view: any `impl AsRef<str>` bound accepts the newtype
-/// directly (ruling R6); [`as_str`](Self::as_str) stays the explicit accessor.
 impl AsRef<str> for CommissionTitle {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
-/// A created commission and its fixed metadata (ZMVP-65).
-///
-/// Build one with [`Commission::create`], which stamps a fresh UUIDv7 id and opens
-/// it in [`LifecycleStep::Draft`] owned by its creator. The struct holds no
-/// participant list, composition, or managing account — those are later tickets;
-/// this is only the always-present envelope. Persisting it is one private-side
-/// write ([`crate::ports::CommissionWrites::create`]).
-///
-/// References: [`Commission::create`], [`crate::ports::CommissionWrites`],
-/// DESIGN/Commission (`3276807`), Ask-for-Art (`28114957`) D0.
+/// A created commission and its fixed metadata. Build one with
+/// [`Commission::create`]; it holds no participant list or composition, only the
+/// always-present envelope. (DESIGN 3276807)
 #[derive(Debug)]
 pub struct Commission {
     /// The app-private id (UUIDv7, so it sorts by creation time).
     pub id: CommissionId,
-    /// The commission's Title — fixed and always present, validated non-empty; every
-    /// other content facet is later composition. See [`CommissionTitle`].
+    /// The commission's Title — always present, validated non-empty.
     pub title: CommissionTitle,
-    /// The User who created the commission and owns it. The owner is permanent in
-    /// the domain model (transfer is an explicit later act; DESIGN/Commission);
-    /// birth just records the creator here.
+    /// The User who created the commission and owns it.
     pub owner_id: UserId,
     /// The single lifecycle state the commission is in; a fresh one is
     /// [`LifecycleStep::Draft`].
     pub lifecycle_step: LifecycleStep,
-    /// Who may see the commission; a fresh one is [`Visibility::Private`] (the
-    /// closed-door default — AC3).
+    /// Who may see the commission; a fresh one is [`Visibility::Private`].
     pub visibility: Visibility,
-    /// The nullable-but-fixed deadline envelope field — `None` when the commission
-    /// carries no deadline (DESIGN/Commission).
+    /// The deadline, or `None` when the commission carries none.
     pub deadline: Option<DateTimeUtc>,
-    /// The commission's maturity posture (ZMVP-31; Maturity Vocabulary DD
-    /// `29982722`) — an envelope field like the deadline, **not** an element
-    /// (the Surfaces DD pins where it *renders*: the Presentation tier, so it
-    /// gates before any content shows). **`None` at birth by invariant**: a
-    /// fresh commission is Private (root `Total` — nobody outside sees
-    /// anything, so no rating is needed yet); rating becomes *required* at the
-    /// widening gate ZMVP-74 owns. Set through the owner-gated
-    /// `PUT /commissions/{id}/maturity`, replace-only — no path clears it back
-    /// to `None`, so a widened commission can never lose its rating.
+    /// The commission's maturity posture. `None` at birth; a rating becomes
+    /// required at the widening gate and, once set, replace-only — no path
+    /// clears it back to `None`. (DD 29982722)
     pub maturity: Option<Maturity>,
-    /// The direction-axis Status, or `None` while none is set (ZMVP-85). One
-    /// nullable cell (ruling E29): a set replaces, a clear writes `None`, and
-    /// only an explicit Participant act through
-    /// [`CommissionWrites::set_direction_status`] ever moves it — never a
+    /// The direction-axis Status, or `None` when cleared. One nullable cell, so
+    /// a set replaces; only an explicit Participant act moves it, never a
     /// content event.
-    ///
-    /// [`CommissionWrites::set_direction_status`]: crate::ports::CommissionWrites::set_direction_status
     pub direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None` while none is held (ZMVP-86). The
-    /// same one-nullable-slot shape as the direction axis (ruling E29), and the
-    /// two axes compose freely. Holds a value only while [`deadline`] is set —
-    /// a commission with no deadline never carries deadline-axis statuses
-    /// (AC4). See [`DeadlineStatus`] for who moves it.
-    ///
-    /// [`deadline`]: Commission::deadline
+    /// The deadline-axis Status, or `None` while none is held. Holds a value
+    /// only while [`deadline`](Commission::deadline) is set; see
+    /// [`DeadlineStatus`] for who moves it.
     pub deadline_status: Option<DeadlineStatus>,
-    /// The external **linked channel** pointer — "where we talk" (ZMVP-87,
-    /// Changelog DD Decision 2) — or `None` while no channel is declared. Owner-set,
-    /// changelog-recorded on set/clear, rendered as an opaque pointer.
+    /// The external linked-channel pointer — "where we talk" — or `None` while
+    /// no channel is declared. Owner-set and changelog-recorded on set/clear.
     pub linked_channel: Option<ChannelPointer>,
-    /// When the commission was **archived** — `None` while active (ZMVP-68).
-    ///
-    /// Archive is the soft path (Deletion DD `3014657`): the mandatory route once
-    /// facts exist, and available regardless of facts (hard delete, ZMVP-66, is
-    /// the fact-gated path). An archived commission is meant to disappear from
-    /// **active views** — listing projections are responsible for filtering on
-    /// this field (active-view filtering lands with the S1 listing work) — but
-    /// the record and its facts survive intact and stay queryable by its
-    /// Participants.
-    /// Owner-only in both directions, and both directions are changelog entries
-    /// ([`ChangelogEntryKind::Archived`]/[`ChangelogEntryKind::Unarchived`]);
-    /// un-archive is an explicit owner act that returns the commission to active
-    /// views (Engineer ruling 2026-07-05, recorded on ZMVP-68). Archive stays in
-    /// the owner-only reserve even when Commission Admin lands (Structural
-    /// Authority DD `29425666` Decision 2).
+    /// When the commission was archived — `None` while active. Owner-only in
+    /// both directions and changelog-recorded; the record and its facts survive
+    /// intact, and listing projections filter on this field. (DD 3014657)
     pub archived_at: Option<DateTimeUtc>,
     /// When the commission was created.
     pub created_at: DateTimeUtc,
 }
 
 impl Commission {
-    /// Create a commission owned by `owner`, born in [`LifecycleStep::Draft`].
-    ///
-    /// Mints the id (`CommissionId::new(Uuid::now_v7())`), records the already-validated
-    /// [`CommissionTitle`] and optional `deadline`, and stamps `created_at` from `now`.
-    /// The title is validated at the boundary ([`CommissionTitle::try_from`]) before this
-    /// is reached, so this constructor is infallible — mirroring how [`Account::open`]
-    /// takes an already-validated [`AccountName`]. Authority (a signed-in User; no
-    /// Account needed — ZMVP-47) is the caller's concern, settled before this is reached.
-    ///
-    /// [`Account::open`]: crate::elements::account::Account::open
-    /// [`AccountName`]: crate::elements::account::AccountName
+    /// Create a commission owned by `owner`, born in [`LifecycleStep::Draft`]
+    /// with a fresh UUIDv7 id, no maturity and no statuses. Infallible — the
+    /// title arrives already validated, and authority is the caller's concern.
     ///
     /// ```
     /// use chrono::Utc;
@@ -361,15 +251,11 @@ impl Commission {
     }
 }
 
-/// The single lifecycle state a commission holds (DESIGN/Commission).
-///
-/// A commission is always in exactly one of these, and the state is moved
-/// **explicitly by a participant**, never by a system event. Only the birth state
-/// ([`Draft`](LifecycleStep::Draft)) is exercised in ZMVP-65; the transitions between
-/// states are later tickets.
+/// The single lifecycle state a commission holds. Always exactly one, moved
+/// explicitly by a participant and never by a system event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LifecycleStep {
-    /// Just created. No content commitments and no facts. Hard delete is possible.
+    /// Just created; no facts yet, so hard delete is possible.
     Draft,
     /// Part of the workload but not active
     Batched,
@@ -384,10 +270,7 @@ pub enum LifecycleStep {
 }
 
 impl LifecycleStep {
-    /// Every state, in declaration order — the closed vocabulary. Lets tests
-    /// prove the token mapping round-trips, and lets adapters derive subsets
-    /// (e.g. the terminal tokens the deadline sweeper excludes) from the enum
-    /// instead of re-listing tokens.
+    /// Every state, in declaration order — the closed vocabulary.
     pub const ALL: &[LifecycleStep] = &[
         Self::Draft,
         Self::Batched,
@@ -397,19 +280,14 @@ impl LifecycleStep {
         Self::Disputed,
     ];
 
-    /// Whether this state is **terminal** — closed work
-    /// ([`Completed`](Self::Completed) / [`Cancelled`](Self::Cancelled)), out of
-    /// scope for the deadline sweeper (ruling E12: a closed commission's missed
-    /// deadline is history, not lateness). [`Disputed`](Self::Disputed) is *not*
-    /// terminal; the dispute freeze ("deadlines freeze, Late pauses") is the
-    /// future Disputes epic and will earn its own exclusion when it lands.
+    /// Whether this state is terminal — closed work, out of scope for the
+    /// deadline sweeper. [`Disputed`](Self::Disputed) is *not* terminal.
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
     }
 
-    /// The stable, lowercase wire/storage token for this state — the value the pg
-    /// adapter writes to the `commission.lifecycle` column. Stable across releases
-    /// (it is persisted), so renaming a token is a migration, not a free edit.
+    /// The stable, lowercase token written to `commission.lifecycle`.
+    /// Persisted — renaming a token is a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Draft => "draft",
@@ -422,9 +300,8 @@ impl LifecycleStep {
     }
 }
 
-/// Why a token failed to resolve to a [`LifecycleStep`] — on a read path a token
-/// outside the vocabulary means row tampering or a missed migration, surfaced as
-/// an error rather than a silent default (ZMVP-87 read port).
+/// Why a token failed to resolve to a [`LifecycleStep`]. Surfaced as an error,
+/// never a silent default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownLifecycleStep;
 
@@ -439,8 +316,7 @@ impl std::error::Error for UnknownLifecycleStep {}
 impl TryFrom<&str> for LifecycleStep {
     type Error = UnknownLifecycleStep;
 
-    /// Resolve a stored token back to its step — an explicit `match` on the closed
-    /// vocabulary, the mirror of [`as_str`](Self::as_str).
+    /// Resolve a stored token back to its step.
     fn try_from(token: &str) -> Result<Self, Self::Error> {
         Ok(match token {
             "draft" => Self::Draft,
@@ -454,15 +330,9 @@ impl TryFrom<&str> for LifecycleStep {
     }
 }
 
-/// The direction-axis Status a commission may carry (DESIGN/Commission, Status;
-/// ZMVP-85) — whose turn the work is waiting on, always set **explicitly by a
-/// Participant** (Engineer ruling 2026-07-01: the former markup/file-entry
-/// auto-transitions are removed from the design; no content event ever moves
-/// this). At most one value at a time: the commission stores it as one nullable
-/// column (ruling E29), so setting a value REPLACES the current one and axis
-/// exclusivity falls out of the shape — `None` is the cleared state. The
-/// deadline axis (Delayed/Late, system-set — ZMVP-86) is a separate axis; the
-/// two compose freely.
+/// The direction-axis Status a commission may carry — whose turn the work is
+/// waiting on. Always set explicitly by a Participant, never by a content
+/// event. One nullable column, so a set replaces and `None` means cleared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectionStatus {
     /// The work waits on input from the client side.
@@ -482,10 +352,8 @@ impl DirectionStatus {
         Self::ChangesRequested,
     ];
 
-    /// The stable, lowercase wire/storage token for this value — what the pg
-    /// adapter writes to the `commission.direction_status` column and the API
-    /// accepts. Stable across releases (it is persisted), so renaming a token
-    /// is a migration, not a free edit.
+    /// The stable, lowercase token written to `commission.direction_status`.
+    /// Persisted — renaming a token is a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::WaitingForInput => "waiting_for_input",
@@ -495,8 +363,7 @@ impl DirectionStatus {
     }
 }
 
-/// Why a token failed to resolve to a [`DirectionStatus`] — the same
-/// tamper-surfacing contract as [`UnknownLifecycleStep`].
+/// Why a token failed to resolve to a [`DirectionStatus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownDirectionStatus;
 
@@ -513,8 +380,7 @@ impl std::error::Error for UnknownDirectionStatus {}
 impl TryFrom<&str> for DirectionStatus {
     type Error = UnknownDirectionStatus;
 
-    /// Resolve a stored token back to its value — an explicit `match` on the
-    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    /// Resolve a stored token back to its value.
     fn try_from(token: &str) -> Result<Self, Self::Error> {
         Ok(match token {
             "waiting_for_input" => Self::WaitingForInput,
@@ -535,27 +401,17 @@ impl std::fmt::Display for DirectionStatus {
     }
 }
 
-/// The deadline-axis Status a commission may carry (DESIGN/Commission, Status;
-/// ZMVP-86) — how the work stands against its deadline. One nullable cell
-/// (ruling E29), so at most one value holds at a time and a set REPLACES the
-/// current one; the direction axis is separate and the two compose freely. A
-/// commission with **no deadline never carries** a deadline-axis status (AC4).
+/// The deadline-axis Status a commission may carry — how the work stands
+/// against its deadline. One nullable cell, so a set replaces; a commission with
+/// no deadline never carries one.
 ///
-/// Who moves it (Engineer ruling 2026-07-05, recorded on the ticket):
-///
-/// - [`Delayed`](Self::Delayed) is a **manual Participant "slipping" flag** —
-///   an explicit act through the deadline-status endpoint, never derived (no
-///   threshold exists).
-/// - [`Late`](Self::Late) is **the system's word**: the deadline sweeper sets
-///   it when the deadline has passed — the one place the system acts — and a
-///   standing Delayed upgrades to Late. No participant sets Late by hand;
-///   it resolves through the deadline itself (extend or clear).
+/// [`Delayed`](Self::Delayed) is a manual Participant flag; [`Late`](Self::Late)
+/// is the system's word, never set by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeadlineStatus {
-    /// The work is slipping — there may be delays, but not exactly lateness.
-    /// A manual Participant flag (Engineer ruling 2026-07-05).
+    /// The work is slipping — delays, but not yet lateness.
     Delayed,
-    /// The deadline passed — system-set by the sweeper (ZMVP-86), never by hand.
+    /// The deadline passed — system-set by the sweeper, never by hand.
     Late,
 }
 
@@ -563,10 +419,8 @@ impl DeadlineStatus {
     /// Every value, in declaration order — the closed two-value vocabulary.
     pub const ALL: &[DeadlineStatus] = &[Self::Delayed, Self::Late];
 
-    /// The stable, lowercase wire/storage token for this value — what the pg
-    /// adapter writes to the `commission.deadline_status` column and the API
-    /// serves. Stable across releases (it is persisted), so renaming a token
-    /// is a migration, not a free edit.
+    /// The stable, lowercase token written to `commission.deadline_status`.
+    /// Persisted — renaming a token is a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Delayed => "delayed",
@@ -593,8 +447,7 @@ pub enum DeadlineStatusError {
 impl TryFrom<&str> for DeadlineStatus {
     type Error = DeadlineStatusError;
 
-    /// Resolve a stored token back to its value — an explicit `match` on the
-    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    /// Resolve a stored token back to its value.
     fn try_from(token: &str) -> Result<Self, Self::Error> {
         Ok(match token {
             "delayed" => Self::Delayed,
@@ -625,25 +478,18 @@ impl FromStr for DeadlineStatus {
     }
 }
 
-/// The effective deadline-axis status at `now` — **`Late` is derived, never
-/// persisted** (Engineer ruling 2026-07-08): a commission whose deadline has
-/// passed and whose lifecycle is not terminal *is* `Late`, recomputed fresh on
-/// every lookup from the same `deadline < now` math the sweeper's log pass uses.
-/// Otherwise the effective status is the stored manual flag — `Delayed` or
-/// `None`. The persisted `deadline_status` column only ever holds `Delayed`;
-/// `Late` supersedes a standing `Delayed` here without overwriting it in storage.
-/// The single home of the Late rule: both adapters call this while rebuilding a
-/// [`Commission`], so a `Late` that isn't derived from a passed deadline is
-/// unrepresentable.
+/// The effective deadline-axis status at `now`. `Late` is derived, never
+/// persisted: a passed deadline on a non-terminal commission *is* `Late`, and it
+/// supersedes a standing `Delayed` without overwriting storage. Otherwise the
+/// stored manual flag. Both adapters call this while rebuilding a [`Commission`].
 pub fn derive_deadline_status(
     deadline: Option<DateTimeUtc>,
     lifecycle_step: &LifecycleStep,
     stored: Option<DeadlineStatus>,
     now: DateTimeUtc,
 ) -> Option<DeadlineStatus> {
-    // AC4: a commission with no deadline carries no deadline-axis status — even
-    // if a `Delayed` flag lingers in storage (it stays dormant, resurfacing only
-    // once a deadline is set again).
+    // No deadline means no deadline-axis status, even if a stored `Delayed`
+    // lingers — it stays dormant until a deadline is set again.
     let deadline = deadline?;
     if deadline < now && !lifecycle_step.is_terminal() {
         Some(DeadlineStatus::Late)
@@ -652,25 +498,17 @@ pub fn derive_deadline_status(
     }
 }
 
-/// One commission the deadline sweep must **log** as Late (ZMVP-86 AC5): the row
-/// [`CommissionWrites::lapsed_deadlines`] returns for every commission whose
-/// deadline has passed, whose lifecycle is not terminal, and that has **not yet
-/// been logged Late** (there is no persisted Late to gate on — the sweep dedupes
-/// on the changelog itself). Carries what the system `late` changelog entry needs
-/// to render a sentence without joins — the missed deadline and the standing
-/// manual flag (if any). The sweep only *logs*; the Late state itself is derived
-/// on lookup ([`derive_deadline_status`]).
-///
-/// [`CommissionWrites::lapsed_deadlines`]: crate::ports::CommissionWrites::lapsed_deadlines
+/// One commission the deadline sweep must log as Late: deadline passed,
+/// lifecycle not terminal, not yet logged (the sweep dedupes on the changelog).
+/// Carries what the `late` entry needs to render without joins. The sweep only
+/// logs; the state itself is derived by [`derive_deadline_status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LapsedDeadline {
     /// The commission to log Late.
     pub id: CommissionId,
     /// The deadline that was missed (named in the Late entry's payload).
     pub deadline: DateTimeUtc,
-    /// The standing manual flag at scan time — `None` or
-    /// [`DeadlineStatus::Delayed`], so the Late entry can record what it
-    /// supersedes.
+    /// The standing manual flag at scan time — what the Late entry supersedes.
     pub status: Option<DeadlineStatus>,
 }
 
@@ -680,8 +518,7 @@ mod tests {
 
     use super::*;
 
-    // The deadline-status tokens are a closed, collision-free vocabulary that
-    // round-trips (ZMVP-86) — the same contract every persisted enum pins.
+    // The deadline-status tokens round-trip and never collide.
     #[test]
     fn deadline_status_tokens_round_trip_and_never_collide() {
         let mut seen = BTreeSet::new();
@@ -697,8 +534,7 @@ mod tests {
         assert_eq!(DeadlineStatus::ALL.len(), 2, "exactly the two values");
     }
 
-    // A token outside the vocabulary is refused, not guessed at — the axes
-    // never bleed into each other.
+    // A token outside the vocabulary is refused; the axes never bleed.
     #[test]
     fn unknown_deadline_status_tokens_do_not_parse() {
         assert_eq!(
@@ -716,8 +552,7 @@ mod tests {
         );
     }
 
-    // A fresh commission carries no deadline status, even when born with a
-    // deadline — statuses arrive only by explicit act or the sweeper.
+    // A fresh commission carries no deadline status, even born with a deadline.
     #[test]
     fn a_fresh_commission_has_no_deadline_status() {
         let c = Commission::create(
@@ -732,9 +567,8 @@ mod tests {
         assert_eq!(c.deadline_status, None);
     }
 
-    // The lifecycle tokens round-trip, and the terminal set is exactly
-    // {completed, cancelled} — Disputed is NOT terminal (the dispute freeze is
-    // the future Disputes epic).
+    // The lifecycle tokens round-trip and the terminal set is exactly
+    // {completed, cancelled} — Disputed is not terminal.
     #[test]
     fn lifecycle_tokens_round_trip_and_terminal_is_exactly_closed_work() {
         let mut seen = BTreeSet::new();
@@ -757,8 +591,7 @@ mod tests {
         assert_eq!(terminal, vec!["completed", "cancelled"]);
     }
 
-    // The direction-status tokens are a closed, collision-free vocabulary that
-    // round-trips (ZMVP-85) — the same contract the changelog kinds pin.
+    // The direction-status tokens round-trip and never collide.
     #[test]
     fn direction_status_tokens_round_trip_and_never_collide() {
         let mut seen = BTreeSet::new();
@@ -805,34 +638,22 @@ mod tests {
     }
 }
 
-/// Who may see a commission (DESIGN/Commission, the Closed-Door Policy).
-///
-/// A **plain envelope field** since the Flat Composition DD (`45514754`,
-/// ZMVP-166): the commission is the formal root, so this is the outermost gate,
-/// applied *before* the composition's own three-term
-/// [`effective_visibility`] — never an alias for a node's mode. (In the retired
-/// tree it doubled as the root surface's mode, via an `as_root_mode` mapping the
-/// flat model deletes: tabs, surfaces, and elements each carry their own
-/// [`VisibilityMode`] now, so nothing needs this field to stand in for one.) A
-/// birth commission defaults to [`Private`](Visibility::Private); widening is an
-/// explicit later act (ZMVP-74).
+/// Who may see a commission — the outermost gate, applied before the
+/// composition's own [`effective_visibility`]. A fresh commission is
+/// [`Private`](Visibility::Private); widening is an explicit later act.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Visibility {
-    /// Closed door — nobody outside the participants sees the commission at all,
-    /// not even its existence. The default at birth.
+    /// Nobody outside the participants sees it at all, not even its existence.
     Private,
-    /// Outsiders see only a status-only card (title/alias, stage, position,
-    /// maturity) — never the brief, client, price, or file entries.
+    /// Outsiders see only a status-only card.
     Listed,
-    /// Outsiders see whatever the owner has composed under Description-visible
-    /// surfaces; everything else stays dark.
+    /// Outsiders see whatever sits under Description-visible surfaces.
     Public,
 }
 
 impl Visibility {
-    /// The stable, lowercase wire/storage token for this value — what the pg adapter
-    /// writes to the `commission.visibility` column. Stable across releases (it is
-    /// persisted), so renaming a token is a migration, not a free edit.
+    /// The stable, lowercase token written to `commission.visibility`.
+    /// Persisted — renaming a token is a migration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Private => "private",
@@ -842,8 +663,7 @@ impl Visibility {
     }
 }
 
-/// Why a token failed to resolve to a [`Visibility`] — the same tamper-surfacing
-/// contract as [`UnknownLifecycleStep`].
+/// Why a token failed to resolve to a [`Visibility`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownVisibility;
 
@@ -858,8 +678,7 @@ impl std::error::Error for UnknownVisibility {}
 impl TryFrom<&str> for Visibility {
     type Error = UnknownVisibility;
 
-    /// Resolve a stored token back to its value — an explicit `match` on the
-    /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
+    /// Resolve a stored token back to its value.
     fn try_from(token: &str) -> Result<Self, Self::Error> {
         Ok(match token {
             "private" => Self::Private,

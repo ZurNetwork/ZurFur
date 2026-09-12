@@ -1,8 +1,9 @@
-//! Account positioning endpoints (Ownership Separation DD `29130754`): the
-//! owner places a commission in an account's position, and manages the view
-//! grants over it (`/placements`, `/grants`). Owner-only in v1.
+//! Account positioning endpoints (DD 29130754): a commission is placed onto
+//! an account's board, and its view grants are managed (`/placements`,
+//! `/grants`). Placement addresses a column — the column names its board,
+//! the board its account — so `/placements` carries no `account_id`.
 
-use application::commission::{place, view};
+use application::{account, commission::view};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -14,20 +15,22 @@ use domain::elements::{
     account::AccountId,
     commission::{CommissionId, GrantLevel},
     user::UserId,
+    workflow::ColumnId,
 };
 use serde::Deserialize;
 
 use crate::{AppState, extract::CallingUser, problem::Problem};
 
-/// The `POST /commissions/{id}/placements` body: the target account.
+/// The `POST /commissions/{id}/placements` body: the column to place the
+/// commission in, and where in it.
 #[derive(Deserialize)]
 pub(super) struct PlaceBody {
-    account_id: String,
+    column_id: String,
+    index: usize,
 }
 
 /// The `POST /commissions/{id}/grants` body: the target user and the key's
-/// level (`presentation` / `description` / `total`). Grants are issued to a
-/// User, never an Account (DD `29130754`, amended 2026-09-04).
+/// level (`presentation`/`description`/`total`). Grants are per-User. (DD 29130754)
 #[derive(Deserialize)]
 pub(super) struct GrantBody {
     target_user_id: String,
@@ -41,9 +44,9 @@ pub(super) struct RevokeBody {
     pub target_user_id: String,
 }
 
-/// Places the commission in an account's position: appends a placement-log
-/// row and repoints the current-placement pointer, atomically. Owner-only.
-/// No changelog entry. Returns `204 No Content`.
+/// Places the commission on an account's board — one card, in one column, at
+/// one index. Requires board membership and commission visibility. Appends no
+/// changelog entry: positioning is account-side view state. `204 No Content`.
 pub(super) async fn place_commission(
     State(state): State<AppState>,
     Path(commission_id): Path<CommissionId>,
@@ -51,18 +54,20 @@ pub(super) async fn place_commission(
     body: Result<Json<PlaceBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let account_id = body
-        .account_id
-        .parse::<AccountId>()
-        .map_err(|_| Problem::invalid_request("The account must be a DID, e.g. \"did:plc:…\"."))?;
+    let column_id = body
+        .column_id
+        .parse::<ColumnId>()
+        .map_err(|_| Problem::invalid_request("The column must be a UUID."))?;
 
-    let command = place::Command {
-        account_id,
+    let index = body.index;
+    let command = account::workflow::column::commission::set_in_column::Command {
+        column_id,
+        index,
         actor_id,
         commission_id,
     };
 
-    state.app().commissions().place(command, Utc::now()).await?;
+    state.app().commissions().insert_in_column(command).await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -110,10 +115,7 @@ pub(super) async fn grant_view(
 /// Content`.
 pub(super) async fn revoke_view(
     State(state): State<AppState>,
-    // TODO(engineer): the `{account_id}` path segment predates the 2026-09-04
-    // amendment to DD 29130754 (grants are per-User, never per-Account) and is
-    // now dead — the target rides in the body. Deciding whether the segment
-    // becomes the target user's DID, or the route drops it, is a contract call.
+    // TODO(engineer): `{account_id}` is dead since grants went per-User (DD 29130754).
     Path((commission_id, _account_id)): Path<(CommissionId, AccountId)>,
     CallingUser(actor_id): CallingUser,
     body: Result<Json<RevokeBody>, JsonRejection>,

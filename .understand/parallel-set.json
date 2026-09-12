@@ -2,7 +2,7 @@
   "uow": "trw07",
   "logbook": null,
   "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
-  "updated": "2026-08-27T12:50:00-06:00",
+  "updated": "2026-09-10T00:00:00-06:00",
   "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
   "tickets": [
     {
@@ -42,12 +42,12 @@
       "key": "ZMVP-164",
       "summary": "Write-side surface-tree depth cap ≤63 (DD 42762241 companion)",
       "phase": "superseded-wont-do",
-      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754; Won't Do, PR #170 closed unmerged; salvage PR #171 MERGED. Cleanup attempted 2026-08-09: worktree ~/code/zurfur-zmvp164 is CLEAN + no compose stack, but the deletion commands (git worktree remove; branch deletes local+origin) were permission-blocked — handed to the Engineer to run.",
+      "next_action": "SUPERSEDED 2026-08-04 by DD 45514754; Won’t Do, PR #170 closed unmerged; salvage PR #171 MERGED. Cleanup COMPLETE: worktree ~/code/zurfur-zmvp164 removed by the Engineer (verified gone 2026-08-23 by /cleanup).",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/170 (CLOSED unmerged) · salvage https://github.com/ZurNetwork/ZurFur/pull/171 (MERGED)",
-      "branch": "feature/zmvp-164-tree-depth-cap (deletion pending, Engineer's hands)",
-      "worktree": "~/code/zurfur-zmvp164 (removal pending, Engineer's hands)",
+      "branch": "deleted",
+      "worktree": null,
       "snapshot": null,
-      "updated": "2026-08-09T14:30:00-06:00"
+      "updated": "2026-08-23T00:00:00-06:00"
     },
     {
       "key": "ZMVP-153",
@@ -63,13 +63,13 @@
     {
       "key": "ZMVP-196",
       "summary": "web: strict TypeScript linting + branded (nominal) domain types",
-      "phase": "pr-open",
-      "next_action": "PR #179 open (stacked on chore PR #178, auto-retargets to main when it merges), Jira In Review. Ship-gates round applied: ?deleted=constructor Map fix (blocker), superforms cleared-error flash-guard restored, satisfies-Actions ×4 (requireAction harness deleted), Session.did/handle branded, error-status range single-sourced, brand.spec + problem.spec added, rulebook globs hoisted + testing-import ban. Gate: eslint 0 err, svelte-check 0 err, 170 tests. Declined: superforms.ts whole-object cast nit (documented TS quirk). Await Copilot triage + Engineer merge (order: #178 → #179).",
-      "pr": "https://github.com/ZurNetwork/ZurFur/pull/179",
-      "branch": "feature/zmvp-196-strict-lint-brands",
+      "phase": "merged-done",
+      "next_action": "DONE: PR #179 merged to main as 5545f83 (after #178). Ledger stamped by /cleanup 2026-08-23.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/179 (MERGED)",
+      "branch": "deleted (was feature/zmvp-196-strict-lint-brands)",
       "worktree": null,
       "snapshot": null,
-      "updated": "2026-08-09T14:30:00-06:00"
+      "updated": "2026-08-23T00:00:00-06:00"
     },
     {
       "key": "ZMVP-163",
@@ -148,15 +148,15 @@
     {
       "key": "ZMVP-205",
       "summary": "application layer landing zone",
-      "phase": "slices-2/4/5/6-pr-open; design-sync-done; engineer-migrating-api-to-application",
+      "phase": "slices-1/2/4/5/6-pr-open; slice 9-20 squash-merged into handle-domain (#196); slice 21-30 pr-open",
       "next_action": "RULED 2026-08-24: new `application` crate, plain async fn use cases + domain error enums; api = routing only; cli calls the same fns. Blueprint = me + create_account. FIRST in the epic — blocks 204 and all 41 operation commands. Engineer builds (worksheet-tutorial offered); Claude sweeps per module after.",
-      "pr": 195,
-      "branch": "feature/zmvp-205-application-me",
+      "pr": "#191 → #192 → #193 → #194 → #195 → #197",
+      "branch": "feature/zmvp-205-workflow-boards (tip) → feature/zmvp-205-handle-domain",
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-27T12:50:00-06:00",
-      "next": "DD 55836674 published (v2) + /design-sync DONE 2026-08-27 over 9 pages (27852802, 19431425, 24870914, 26247170, 37519361, 23592962, 24150017, 11763713, 24543244). PRs: #191 (1) → #192 (2) → #193 (4) → #194 (5 sweep) → #195 (6 HandleDomain); all Copilot-requested. ENGINEER 2026-08-27: after this lands they migrate EVERYTHING remaining api → application THEMSELVES (37 handler transactions; change_handle slice 3 included). Claude: api-layer/cli follow-ups only when asked; ship-gates + design-sync on request. Open on #195: HandleDomain strictness (≥2 labels/charset?); ZURFUR_NAMESPACE_SUFFIX hardcode vs configured domain (reserved-label gate). Jira edits still owed from the investigation brief: ZMVP-205 description signature block; ZMVP-208 mentions `settings` crate (now shared::settings); ZMVP-112 (UserId not User); link 209↔61. Merge order 191 → 192 → 193 → 194 → 195 → (Engineer's slices) → feature→main rubber-stamp → Jira Done."
+      "updated": "2026-09-10T00:00:00-06:00",
+      "next": "2026-09-10: #196 [9-20] (DID re-key + both drivers onto application) squash-merged INTO feature/zmvp-205-handle-domain 2026-09-08. New tip slice PR #197 → handle-domain: Workflow boards (domain/pg/mem/application/api/cli/composition — placement tables retired), the terse-docs sweep + `DidOperations` port, and the Copilot round for #190–#195 applied at the tip (threads replied; #193 key-order finding declined — serde_json Map is a BTreeMap, sorted keys). Copilot requested. Merge order 190 → 191 → 192 → 193 → 194 → 195 → #197 (each retargets on merge), then feature→main rubber-stamp. WIP note: `account/workflow/column/remove.rs` returns Ok(Output) where a todo!() stood — a placeholder, not an implementation. Chore PRs #180 (NODE.md tree) and #184 (54427650 quick-facts) CLOSED as superseded by this chain / DD 57081857; #183 (ledger) CLOSED, folded into this ledger. Boardroom fork 001 (tombstone seam) pushed as chore PR #198 → main. Still owed: Jira edits from the 08-27 brief; HandleDomain strictness ruling; ZMVP-74 ownership gap."
     },
     {
       "key": "ZMVP-206",
@@ -175,7 +175,21 @@
       "key": "ZMVP-207",
       "phase": "pr-open",
       "branch": "feature/zmvp-207-shared-mem-runtime",
-      "next": "PR #190 open 2026-08-25 (→ main), Copilot requested, Jira In Review. #191 stacks on it."
+      "next": "PR #190 open 2026-08-25 (→ main), Copilot requested, Jira In Review. #191 stacks on it.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/190 (→ main; bottom of the ZMVP-205 stack)",
+      "next_action": "PR #190 open, CI green, one Copilot thread (mem fixture doc) fixed at the tip of the stack (#197). Merges first; the stack retargets.",
+      "updated": "2026-09-10T00:00:00-06:00"
+    },
+    {
+      "key": "ZMVP-198",
+      "summary": "web: mock-mode dev environment — ZurfurApiMock Layer, full session loop",
+      "phase": "merged-done",
+      "next_action": "DONE 2026-08-23: merged to main as a9e1314 via PR #181 (single slice; ship-gates Workflow [code-review ∥ security-review Opus/max ∥ critique ∥ document] 12-item fix round pre-PR; 1 Copilot round [fixture cloning + validated handle() mint]; 196 web tests). Companion chore PR #182 (RUSTSEC-2026-0258/-0257 lockfile bumps) merged first. Mock mode: `just dev-mock`; guard: boot-time throw in hooks.server.ts when flag set && !dev && !building. ZMVP-153's port growth will compile-break the mock into staying current.",
+      "pr": "https://github.com/ZurNetwork/ZurFur/pull/181 (MERGED)",
+      "branch": "deleted (was feature/zmvp-198-mock-mode)",
+      "worktree": null,
+      "snapshot": null,
+      "updated": "2026-08-23T00:00:00-06:00"
     }
   ],
   "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend→Rust/Leptos) was REVERTED by the Engineer 2026-08-09 — the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED — flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]].",

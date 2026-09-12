@@ -1,35 +1,13 @@
-//! The [`ActorIdentity`] — a row in the actor super-table (ZMVP-122, DD `34013187`).
+//! The [`ActorIdentity`] — a row in the actor super-table: one row per actor the
+//! Index has ever seen, and the single table every actor reference FKs into.
+//! (DD 34013187)
 //!
-//! One row per actor the Index has ever seen (User, Account, Character; a seated
-//! Golem is a User), the single table every actor reference FKs into: the
-//! app-private id anchor, the closed [`ActorKind`] vocabulary, the optional
-//! [`Did`], liveness [`ActorState`], the cached display handle, and
-//! `first_seen`.
-//!
-//! The invariants:
-//! - **Rows are immortal.** There is no delete anywhere on the port
-//!   ([`crate::ports::ActorIdentityWrites`]); liveness is a *state* on the
-//!   row, never a removal, so an FK into `actor_identity` can never break.
-//! - **Actor-ness is anchored on the internal id, not a DID.** Characters are
-//!   actors and carry no DID (Engineer ruling 2026-07-14) — the DID is an
-//!   optional external alias, never the essence: `UNIQUE` where present (one
-//!   DID = one actor, ever, DB-enforced). DID-bearing actors are created by
-//!   [`crate::ports::ActorIdentityWrites::intern`] — race-safe and idempotent
-//!   by DID; DID-less ones by [`crate::ports::ActorIdentityWrites::create`].
-//! - **Kind-checked references.** [`ActorKind`] is the closed vocabulary
-//!   (`user | account | character`) and, with `UNIQUE (id, kind)` in the
-//!   schema, the anchor every kind-checked reference site's composite FK
-//!   targets (DD decisions 2 and 4).
-//! - **Liveness replaces deletion** (DD decisions 3/5): every row is born
-//!   [`ActorState::Active`]; `pulled`/`tombstoned` are recorded endings, never
-//!   removals. The transitions and the read-path predicate are ZMVP-125's.
-//! - **The handle is a refreshable display cache** — deliberately a plain
-//!   string: external handles are foreign data and never pass through
-//!   Zurfur's claim-validation ([`crate::elements::handle::Handle`] stays the
-//!   claim gate's type). Rows are born uncached.
-//! - **`first_seen` is immutable** — when the Index first saw the actor,
-//!   stamped at create/intern (re-interning a DID keeps the original stamp).
-//!   Injected, never `now()`-defaulted, per house convention.
+//! Rows are immortal: the port exposes no delete, so liveness is an
+//! [`ActorState`] on the row and an FK into `actor_identity` can never break.
+//! [`ActorKind`] is the closed vocabulary that, with `UNIQUE (id, kind)`, every
+//! kind-checked reference's composite FK targets. A row's `handle` is a
+//! refreshable display cache, never a claim-validated handle, and `first_seen`
+//! is immutable.
 
 use std::ops::Deref;
 use std::str::FromStr;
@@ -38,19 +16,14 @@ use crate::datetime::DateTimeUtc;
 use crate::elements::did::Did;
 use crate::elements::id::{IdError, parse_uuid};
 
-/// The app-private, stable handle for an [`ActorIdentity`] row.
-///
-/// A UUIDv7 wrapped for type safety, so an actor-identity id can't be passed
-/// where some other id is wanted. This is the anchor every kind-checked actor
-/// reference will FK to (DD `34013187` decision 4). Deref exposes the inner UUID.
-///
-/// References: [`new`](ActorIdentityId::new), [`ActorIdentity::mint`].
+/// The app-private key of an [`ActorIdentity`] row (UUIDv7) — the anchor every
+/// kind-checked actor reference FKs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ActorIdentityId(uuid::Uuid);
 
 impl ActorIdentityId {
-    /// Rebuilds an id from its stored UUID — e.g. a row read back from Postgres.
-    /// Minting a *fresh* id happens in [`ActorIdentity::mint`], not here.
+    /// Rebuilds an id from its stored UUID; a fresh one is minted by
+    /// [`ActorIdentity::mint`].
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
@@ -72,10 +45,8 @@ impl FromStr for ActorIdentityId {
     }
 }
 
-/// What kind of actor an identity row is — the closed vocabulary of DD
-/// `34013187` decision 2. A seated Golem acts as a User, so there is no `golem`
-/// variant and no occupant union. The unknown-kind representation for bare
-/// network DIDs is deliberately **not** modelled yet (ZMVP-126 decides it).
+/// What kind of actor an identity row is — the closed vocabulary. A seated
+/// Golem acts as a User, so there is no `golem` variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActorKind {
     User,
@@ -109,8 +80,7 @@ impl std::error::Error for UnknownActorKind {}
 impl TryFrom<&str> for ActorKind {
     type Error = UnknownActorKind;
 
-    /// Parse the stored spelling back. The schema's `CHECK` admits only the
-    /// three variants, so an error here means a corrupted row, not user input.
+    /// Parse the stored spelling back; an error means a corrupted row.
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         match raw {
             "user" => Ok(ActorKind::User),
@@ -121,18 +91,15 @@ impl TryFrom<&str> for ActorKind {
     }
 }
 
-/// An actor identity's liveness — a *state* on the immortal row, never a
-/// removal (DD `34013187` decisions 3/5). Identity is permanent and
-/// FK-enforced; liveness is soft and consulted per-read.
+/// An actor identity's liveness — a state on the immortal row, never a removal.
+/// Identity is permanent and FK-enforced; liveness is consulted per-read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActorState {
     /// The normal case: the actor is live.
     Active,
-    /// The DID/PDS stopped resolving — the reference is kept, the content is
-    /// absent (the Data Boundaries `Pulled` semantics).
+    /// The DID/PDS stopped resolving — the reference is kept, content absent.
     Pulled,
-    /// Deleted per the tombstone ruling: the identity is anonymized, the
-    /// facts that reference it stay.
+    /// Deleted: the identity is anonymized, the facts referencing it stay.
     Tombstoned,
 }
 
@@ -162,8 +129,7 @@ impl std::error::Error for UnknownActorState {}
 impl TryFrom<&str> for ActorState {
     type Error = UnknownActorState;
 
-    /// Parse the stored spelling back. The schema's `CHECK` admits only the
-    /// three variants, so an error here means a corrupted row, not user input.
+    /// Parse the stored spelling back; an error means a corrupted row.
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         match raw {
             "active" => Ok(ActorState::Active),
@@ -174,47 +140,31 @@ impl TryFrom<&str> for ActorState {
     }
 }
 
-/// One actor's row in the super-table: its id, what kind of actor it is, its
-/// optional [`Did`], and its liveness [`ActorState`]. The cached handle lands
-/// in a later slice.
+/// One actor's row in the super-table: its id, kind, optional [`Did`],
+/// liveness, cached handle, and when the Index first saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActorIdentity {
     pub id: ActorIdentityId,
     pub kind: ActorKind,
-    /// The actor's DID, when it has one. `None` is a designed state, not a
-    /// gap: Characters are actors and carry no DID (Engineer ruling
-    /// 2026-07-14) — actor-ness is anchored on [`ActorIdentityId`].
+    /// The actor's DID, when it has one. Unique where present — one DID is one
+    /// actor, ever, DB-enforced.
     pub did: Option<Did>,
-    /// Liveness. Every row is born [`ActorState::Active`]; the transitions
-    /// (and the read predicate that ghosts non-active actors) are ZMVP-125.
+    /// Liveness; every row is born [`ActorState::Active`].
     pub state: ActorState,
-    /// A refreshable display **cache** of the actor's atproto handle — foreign
+    /// A refreshable display cache of the actor's atproto handle — foreign
     /// data, so a plain string, never the claim-validated
-    /// [`Handle`](crate::elements::handle::Handle). `None` = nothing cached
-    /// (DID-less actors, or not fetched yet). Rows are born uncached; the
-    /// cache fills via [`crate::ports::ActorIdentityWrites::cache_handle`].
+    /// [`Handle`](crate::elements::handle::Handle). Rows are born uncached.
     pub handle: Option<String>,
-    /// When the Index first saw this actor. An explicit domain fact, injected
-    /// (tests and import flows stay deterministic) and immutable — re-seeing
-    /// an actor never restamps it.
+    /// When the Index first saw this actor — injected, and immutable.
     pub first_seen: DateTimeUtc,
 }
 
 impl ActorIdentity {
-    /// Mint a brand-new **DID-less** actor identity of `kind` with a fresh
-    /// UUIDv7 key, first seen `now`. Any kind *mints* (this is a pure value), but
-    /// the persistence rule is narrower: since ZMVP-123 the store's per-kind DID
-    /// CHECK rejects a DID-less `user`/`account`, so only DID-less kinds (Characters)
-    /// are actually persistable via [`crate::ports::ActorIdentityWrites::create`].
-    /// The invariant here is `did: None`, not the kind (Characters are the actors
-    /// born DID-less, DD `34013187`).
-    ///
-    /// Pure: this only builds the value — persisting it is
-    /// [`crate::ports::ActorIdentityWrites::create`]'s job. Each call mints a
-    /// distinct identity. DID-bearing actors go through
-    /// [`crate::ports::ActorIdentityWrites::intern`] instead, which owns the
-    /// race-safe one-DID-one-actor upsert. `now` is injected so tests and
-    /// import flows stay deterministic.
+    /// Mint a DID-less actor identity of `kind` with a fresh UUIDv7 key, first
+    /// seen `now`. A pure value — persisting it is
+    /// [`create`](crate::ports::ActorIdentityWrites::create)'s job, and the
+    /// store's per-kind CHECK refuses a DID-less user or account. DID-bearing
+    /// actors go through [`intern`](crate::ports::ActorIdentityWrites::intern).
     ///
     /// ```
     /// use chrono::Utc;
@@ -243,7 +193,7 @@ mod tests {
 
     use super::*;
 
-    /// Slice-1 base: every mint is a distinct row-to-be.
+    /// Every mint is a distinct row-to-be.
     #[test]
     fn mint_yields_distinct_ids() {
         assert_ne!(
@@ -252,15 +202,14 @@ mod tests {
         );
     }
 
-    /// The id round-trips through its stored UUID (the read-back path).
+    /// The id round-trips through its stored UUID.
     #[test]
     fn id_rebuilds_from_stored_uuid() {
         let minted = ActorIdentity::mint(ActorKind::Account, Utc::now());
         assert_eq!(ActorIdentityId::new(*minted.id), minted.id);
     }
 
-    /// Slice 2: every kind's stored spelling parses back to itself, and an
-    /// unknown spelling is a loud error (a corrupted row, never a silent kind).
+    /// Every kind's spelling parses back; an unknown one is a loud error.
     #[test]
     fn kind_spelling_round_trips() {
         for kind in [ActorKind::User, ActorKind::Account, ActorKind::Character] {
@@ -272,8 +221,7 @@ mod tests {
         );
     }
 
-    /// Slice 4: every state's stored spelling parses back; rows are born
-    /// Active; an unknown spelling is a loud error.
+    /// Every state's spelling parses back, and rows are born Active.
     #[test]
     fn state_spelling_round_trips_and_mint_is_active() {
         for state in [

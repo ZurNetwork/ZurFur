@@ -93,8 +93,7 @@ pub(super) async fn set_deadline_status(
     body: Result<Json<SetDeadlineStatusBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    // The vocabulary gate is the wire's; `late` parses here and the use case
-    // refuses it as the system's word alone.
+    // `late` parses here; the use case refuses it as the system's word.
     let status = body.status.parse::<DeadlineStatus>().map_err(|_| {
         Problem::invalid_request(format!(
             "{:?} is not a deadline status; expected: delayed.",

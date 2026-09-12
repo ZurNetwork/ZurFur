@@ -1,31 +1,19 @@
 //! Public-boundary record value types — the domain's protocol-free vocabulary
-//! for the records Zurfur publishes into an actor's atproto repo (ZMVP-105).
+//! for the records Zurfur publishes into an actor's atproto repo.
 //!
-//! These are the types the [`PublicRecords`](crate::ports::PublicRecords) port
-//! speaks in. They mirror the merged `app.zurfur.feed.post` lexicon (DESIGN:
-//! Lexicon `10354710`, Gallery Posts DD `29949954`) **as domain data**, carrying
-//! *zero* AT-Protocol/`jacquard` types: the wire shape, CBOR, and CID computation
-//! all live behind the boundary in `adapter-atproto`, so "nothing protocol-shaped
-//! leaks past that crate" (DESIGN/"Domains and Applications").
-//!
-//! A record is addressed by an [`AtUri`] (`at://did/collection/rkey`) and, once
-//! written, fingerprinted by a content-hash [`Cid`] — see [`RecordRef`] and
-//! [`StrongRef`]. The one record kind v1 publishes is a [`FeedPost`]; [`PublicRecord`]
-//! is the extensible envelope over it (one variant now, additively more later),
-//! and the variant is what fixes the collection NSID.
+//! These are what the [`PublicRecords`](crate::ports::PublicRecords) port speaks
+//! in: they mirror the `app.zurfur.feed.post` lexicon as domain data and carry
+//! no AT-Protocol types — the wire shape, CBOR and CID computation live in
+//! `adapter-atproto`. (DD 29949954)
 
 use cid::Cid;
 
 use crate::datetime::DateTimeUtc;
 use crate::elements::did::Did;
 
-/// A collection NSID — the reverse-DNS name of the lexicon a record belongs to
-/// (e.g. `app.zurfur.feed.post`).
-///
-/// A newtype for type-safety at the boundary, not a validating parser: the value
-/// is held as the opaque string. The domain only ever originates the small,
-/// fixed set of NSIDs it publishes (via [`PublicRecord::collection`]); a value
-/// read back off the wire is validated by the adapter, not here.
+/// A collection NSID — the reverse-DNS name of the lexicon a record belongs to.
+/// A newtype, not a validating parser; a value read off the wire is validated by
+/// the adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Nsid(String);
 
@@ -47,11 +35,8 @@ impl std::fmt::Display for Nsid {
     }
 }
 
-/// A record key (`rkey`) — the per-collection identifier of a single record.
-///
-/// For `app.zurfur.feed.post` the key is a TID (a timestamp-ordered identifier)
-/// minted by the repo on create; the domain treats it as an opaque string. A
-/// newtype for type-safety, not a validating parser.
+/// A record key (`rkey`) — the per-collection identifier of a single record,
+/// treated as an opaque string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RecordKey(String);
 
@@ -74,13 +59,9 @@ impl std::fmt::Display for RecordKey {
 }
 
 /// The fully-qualified address of a record in an actor's repo:
-/// `at://<did>/<collection>/<rkey>`.
-///
-/// This is the domain-side [AT-URI](https://atproto.com/specs/at-uri-scheme)
-/// restricted to the repo-record form the boundary needs (authority, collection,
-/// and rkey; no fragment or query). The `put_record`, `delete_record`, and
-/// `get_record` port methods each take one to address a record; a fresh
-/// `create_record` returns one (inside a [`RecordRef`]) rather than taking it.
+/// `at://<did>/<collection>/<rkey>` — the
+/// [AT-URI](https://atproto.com/specs/at-uri-scheme) restricted to the
+/// repo-record form, with no query or fragment.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AtUri {
     /// The repo owner's DID (the URI authority).
@@ -123,14 +104,9 @@ impl AtUri {
         }
     }
 
-    /// Parse an `at://<did>/<collection>/<rkey>` string.
-    ///
-    /// The authority (a DID) contains colons but no slashes, and neither the
-    /// collection NSID nor the rkey contains a slash, so the three path segments
-    /// after `at://` split unambiguously on `/`. A query (`?…`) or fragment
-    /// (`#…`) — legal in the full AT-URI grammar — is rejected: the repo-record
-    /// form has neither, and none of the three parts may contain those
-    /// characters.
+    /// Parse an `at://<did>/<collection>/<rkey>` string. None of the three
+    /// parts may contain `/`, `?` or `#`, so they split unambiguously; a query
+    /// or fragment is rejected outright.
     pub fn parse(s: &str) -> Result<Self, AtUriParseError> {
         let rest = s
             .strip_prefix("at://")
@@ -175,11 +151,8 @@ impl std::str::FromStr for AtUri {
 }
 
 /// A strong reference to a record: its [`AtUri`] paired with the content-hash
-/// [`Cid`] of the exact revision pointed at.
-///
-/// Mirrors `com.atproto.repo.strongRef` — a pointer that is invalidated if the
-/// target record changes, because the CID would no longer match. Used inside a
-/// [`ReplySubject::Record`] arm to anchor a reply to a specific post revision.
+/// [`Cid`] of the exact revision pointed at — a pointer that a change to the
+/// target invalidates. Mirrors `com.atproto.repo.strongRef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrongRef {
     /// The referenced record's address.
@@ -188,13 +161,9 @@ pub struct StrongRef {
     pub cid: Cid,
 }
 
-/// The address + content hash a write returns: where the record landed
-/// ([`AtUri`]) and the [`Cid`] of the revision just written.
-///
-/// Returned by [`create`](crate::ports::PublicRecords::create_record) and
-/// [`put`](crate::ports::PublicRecords::put_record). Structurally identical to a
-/// [`StrongRef`]; kept a distinct type because it names a *write result* (what the
-/// repo now holds) rather than a *reference to* another record.
+/// The address + content hash a write returns: where the record landed and the
+/// [`Cid`] of the revision just written. Distinct from [`StrongRef`] because it
+/// names a write result, not a reference to another record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordRef {
     /// Where the record was written.
@@ -203,13 +172,9 @@ pub struct RecordRef {
     pub cid: Cid,
 }
 
-/// A reference to an uploaded blob: its content-address [`Cid`] plus the
-/// mime type and byte size the repo recorded.
-///
-/// Returned by [`upload_blob`](crate::ports::PublicRecords::upload_blob) and
-/// embedded in a record via [`Embed::blob`]. The [`Cid`] is the same
-/// content-address a [`BlobId`](crate::elements::blob::BlobId) wraps — see
-/// [`BlobRef::id`] — so byte-identical blobs share a ref network-wide.
+/// A reference to an uploaded blob: its content-address [`Cid`] plus the mime
+/// type and byte size the repo recorded. Byte-identical blobs share a ref
+/// network-wide.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobRef {
     /// The blob's content-address.
@@ -221,18 +186,15 @@ pub struct BlobRef {
 }
 
 impl BlobRef {
-    /// The blob's content-addressed identity — the same
-    /// [`BlobId`](crate::elements::blob::BlobId) the rest of the domain refers to
-    /// a blob by. A [`BlobRef`] is that id plus the mime/size the embed needs.
+    /// The blob's content-addressed identity — the
+    /// [`BlobId`](crate::elements::blob::BlobId) the rest of the domain uses.
     pub fn id(&self) -> crate::elements::blob::BlobId {
         crate::elements::blob::BlobId::new(self.cid)
     }
 }
 
-/// A width:height aspect ratio hint for a media embed (both ≥ 1).
-///
-/// Optional layout metadata so a client can reserve space before the blob loads;
-/// may be approximate. Mirrors `app.zurfur.embed.media#aspectRatio`.
+/// A width:height aspect ratio hint for a media embed (both ≥ 1) — optional,
+/// approximate layout metadata. Mirrors `app.zurfur.embed.media#aspectRatio`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AspectRatio {
     /// The width component (≥ 1).
@@ -247,18 +209,15 @@ pub struct AspectRatio {
 pub struct Embed {
     /// The embedded media blob.
     pub blob: BlobRef,
-    /// Required alt-text description of the media (accessibility-first). The
-    /// non-blank rule is enforced at the compose/publish layer, not here (ZMVP-108).
+    /// Required alt-text description; the non-blank rule is enforced at the
+    /// compose/publish layer, not here.
     pub alt: String,
     /// Optional width:height hint for layout before the blob loads.
     pub aspect_ratio: Option<AspectRatio>,
 }
 
-/// The subject of a reply arm: either another post (by [`StrongRef`]) or a
-/// profile (by [`Did`] — the "shout" case, replying to a User/Account identity).
-///
-/// Mirrors the `app.zurfur.feed.post#replyRef` union of a
-/// `com.atproto.repo.strongRef` and a bare-DID `#didSubject`.
+/// The subject of a reply arm: another post (by [`StrongRef`]) or a profile (by
+/// [`Did`] — the "shout" case).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplySubject {
     /// A reply to a specific post revision.
@@ -267,12 +226,9 @@ pub enum ReplySubject {
     Profile(Did),
 }
 
-/// A reply anchor: the thread `root` and the immediate `parent`.
-///
-/// Its presence on a [`FeedPost`] is what makes the post a comment/shout rather
-/// than a gallery publication. v1 composes reply-to-root only (so `parent ==
-/// root`); the distinct-parent shape is reserved for later threaded rendering
-/// (Replyable DD `30572573`).
+/// A reply anchor: the thread `root` and the immediate `parent`. Its presence
+/// on a [`FeedPost`] makes the post a comment/shout. v1 composes reply-to-root
+/// only, so `parent == root`. (DD 30572573)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyRef {
     /// The root of the thread this reply belongs to.
@@ -281,13 +237,9 @@ pub struct ReplyRef {
     pub parent: ReplySubject,
 }
 
-/// A collaborator credit: the DID that contributed and the capacity (`role`) it
-/// contributed in. Mirrors `app.zurfur.feed.defs#credit`.
-///
-/// `role` is an open string (unknown roles render verbatim). A credit is a
-/// **public, permanent, network-wide cross-persona correlation surface** — opt-out
-/// happens at compose time, never by mutating a published record (Gallery Posts
-/// DD `29949954`).
+/// A collaborator credit: the DID that contributed and the open-string capacity
+/// it contributed in. A credit is a public, permanent, network-wide
+/// cross-persona correlation surface — opt-out happens only at compose time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credit {
     /// The capacity the subject contributed in (open set, e.g. `artist`, `colors`).
@@ -297,13 +249,9 @@ pub struct Credit {
 }
 
 /// The maturity self-labels a record carries — content-warning metadata that
-/// travels with the content to any appview.
-///
-/// An **empty** set means Safe (the protocol norm: safety metadata rides with the
-/// content; Zurfur additionally *requires* the field so every post declares a
-/// posture explicitly). Mirrors `com.atproto.label.defs#selfLabels`. The
-/// "a mature work must carry the correct label" rule is enforced at the
-/// compose/publish layer, not here (ZMVP-108).
+/// travels with the content. An empty set means Safe; the field is always
+/// present, so every post declares a posture. Correctness of the label is
+/// enforced at the compose/publish layer, not here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SelfLabels(pub Vec<String>);
 
@@ -319,16 +267,13 @@ impl SelfLabels {
     }
 }
 
-/// The unified Zurfur content record: a gallery publication, a comment, and a
-/// profile shout are all this one shape — a reply is simply a post with
-/// [`reply`](FeedPost::reply) set. Mirrors the `app.zurfur.feed.post` lexicon.
+/// The unified Zurfur content record: a gallery publication, a comment and a
+/// profile shout are all this shape — a reply is a post with
+/// [`reply`](FeedPost::reply) set. Mirrors `app.zurfur.feed.post`.
 ///
-/// `created_at` and [`labels`](FeedPost::labels) are always present (Safe = an
-/// empty label set); everything else is optional. The app-side publish rules the
-/// lexicon cannot express (≥1 of text/embed, conditional maturity label, image
-/// sub-cap, non-blank alt) are enforced at the compose/publish layer, **not** in
-/// this value type nor in the write adapter (ZMVP-108) — ZMVP-105 writes
-/// faithfully and relies on the repo to validate structure.
+/// `created_at` and [`labels`](FeedPost::labels) are always present; everything
+/// else is optional. The publish rules the lexicon cannot express are enforced
+/// at the compose layer, not in this value type nor in the write adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedPost {
     /// Optional poster-authored free text (post body, comment, or shout).
@@ -345,11 +290,8 @@ pub struct FeedPost {
     pub created_at: DateTimeUtc,
 }
 
-/// The extensible envelope over the public records Zurfur can publish.
-///
-/// One variant today ([`FeedPost`]); more may be **added** additively as new
-/// record kinds are introduced (a one-way door, like the lexicons themselves).
-/// The variant fixes the collection NSID — see [`collection`](PublicRecord::collection).
+/// The extensible envelope over the public records Zurfur can publish. Variants
+/// are added additively, and the variant fixes the collection NSID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicRecord {
     /// An `app.zurfur.feed.post` record.
@@ -357,9 +299,8 @@ pub enum PublicRecord {
 }
 
 impl PublicRecord {
-    /// The collection NSID this record belongs to — fixed by the variant, so a
-    /// caller never has to (and never gets to) pick a collection that disagrees
-    /// with the record body.
+    /// The collection NSID this record belongs to, fixed by the variant — a
+    /// caller never picks one that disagrees with the body.
     pub fn collection(&self) -> Nsid {
         match self {
             PublicRecord::FeedPost(_) => Nsid::new("app.zurfur.feed.post"),

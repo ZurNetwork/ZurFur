@@ -30,7 +30,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
-    account::AccountId,
     commission::{
         ChannelPointer, Commission, CommissionFile, CommissionId, CommissionMarkup,
         CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
@@ -42,8 +41,8 @@ use domain::elements::{
     user::UserId,
 };
 use domain::ports::{
-    AccountRepo, ActorIdentityWrites, ChangelogWrites, CommissionReads, CommissionRepo,
-    CommissionWrites, Database, UnitOfWork, UserWrites,
+    AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionReads,
+    CommissionRepo, CommissionWrites, Database, UnitOfWork, UserWrites, WorkflowWrites,
 };
 use reqwest::redirect::Policy;
 use serde_json::json;
@@ -292,6 +291,14 @@ impl UnitOfWork for FactBearingUow {
         self.0.actor_identities()
     }
 
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
+        self.0.workflows()
+    }
+
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
+        self.0.columns()
+    }
+
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         self.0.commit().await
     }
@@ -407,16 +414,6 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool> {
         self.0.set_linked_channel(id, channel).await
-    }
-
-    async fn place(
-        &mut self,
-        commission: &CommissionId,
-        account: &AccountId,
-        placed_by: &UserId,
-        at: DateTimeUtc,
-    ) -> anyhow::Result<()> {
-        self.0.place(commission, account, placed_by, at).await
     }
 
     async fn grant_view(

@@ -1,28 +1,9 @@
-//! Building, signing, and hashing `did:plc` **operations** — the byte-exact core
-//! of the minter. One [`PlcOperation`] builder covers both the **genesis** op
-//! (`prev = null`) and a **handle update** op (`prev` = the CID of the DID's
-//! latest op, `alsoKnownAs` REPLACED with the new handle — ZMVP-50); both are the
-//! same `plc_operation` shape and share one serialization path, so the two can
-//! never drift byte-wise. The `plc_tombstone` op has its own minimal shape.
+//! Building, signing, and hashing `did:plc` operations — `plc_operation`
+//! (genesis and handle update, one builder) and `plc_tombstone`.
 //!
-//! A `did:plc` is *defined by* the hash of its first (genesis) operation, so
-//! every byte is load-bearing. Two serializations of the same operation are used,
-//! and they are **not** the same bytes:
-//!
-//! 1. **Signed bytes** — DAG-CBOR of the operation *without* the `sig` field. This
-//!    is what the rotation key signs (ECDSA-SHA256, low-S, 64-byte r‖s, then
-//!    base64url no-pad).
-//! 2. **Identifier bytes** — DAG-CBOR of the operation *including* that `sig`. Its
-//!    `sha256`, base32-encoded (lowercase, no pad) and truncated to 24 chars, is
-//!    the `did:plc:` suffix.
-//!
-//! DAG-CBOR (RFC 8949 core-deterministic) canonically **sorts map keys by
-//! length-first, then bytewise** on serialize; `serde_ipld_dagcbor` does this for
-//! struct keys too, so declaration order below is irrelevant to the output. The
-//! [`tests`] module pins the whole pipeline to a real, published vector
-//! (`did:plc:ewvi7nxzyoun6zhxrhs64oiz`).
-//!
-//! Spec: <https://web.plc.directory/spec/v0.1/did-plc>.
+//! Two DAG-CBOR serializations per operation, not the same bytes: *without*
+//! `sig` is what the rotation key signs; *with* `sig` is what is hashed into the
+//! DID or CID. Spec: <https://web.plc.directory/spec/v0.1/did-plc>.
 
 use std::collections::BTreeMap;
 
@@ -32,10 +13,9 @@ use sha2::{Digest, Sha256};
 /// The fixed `type` discriminant of a PLC operation.
 const OP_TYPE: &str = "plc_operation";
 
-/// A PLC service entry as it appears under the operation's `services` map (e.g. an
-/// atproto PDS). Identity-only v1 (DD/26935298) emits an **empty** `services` map,
-/// so no `PlcService` is constructed by the minter; the type exists so the shape
-/// is complete and the vector test can reproduce a service-bearing operation.
+/// A PLC service entry under the operation's `services` map (e.g. an atproto
+/// PDS). Never constructed by the minter — v1 operations are identity-only, with
+/// an empty `services` map. (DD 26935298)
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlcService {
     /// The service type, e.g. `AtprotoPersonalDataServer`.
@@ -45,8 +25,8 @@ pub struct PlcService {
     pub endpoint: String,
 }
 
-/// The DAG-CBOR view of an operation **without** `sig` — the bytes a rotation key
-/// signs. `prev` is `None` (serialized as CBOR `null`) for a genesis operation.
+/// The DAG-CBOR view of an operation without `sig` — the bytes a rotation key
+/// signs. `prev` is `None` (CBOR `null`) for a genesis operation.
 #[derive(Serialize)]
 struct UnsignedView<'a> {
     #[serde(rename = "type")]
@@ -61,7 +41,7 @@ struct UnsignedView<'a> {
     prev: Option<&'a str>,
 }
 
-/// The DAG-CBOR / JSON view of an operation **including** `sig` — hashed to derive
+/// The DAG-CBOR / JSON view of an operation including `sig` — hashed to derive
 /// the DID, and serialized to JSON as the directory submission body.
 #[derive(Serialize)]
 struct SignedView<'a> {
@@ -78,16 +58,10 @@ struct SignedView<'a> {
     sig: &'a str,
 }
 
-/// An unsigned identity-only `plc_operation`: the owned field data plus the
-/// [`signing_bytes`](PlcOperation::signing_bytes) it must be signed over. One
-/// builder covers both op kinds of this shape — a **genesis** op
-/// ([`identity_only`](PlcOperation::identity_only), `prev = null`) and a
-/// **handle update** op ([`update_handle`](PlcOperation::update_handle),
-/// `prev` = a CID) — so there is exactly one DAG-CBOR path that can never drift.
-///
-/// "Identity-only" means the `services` map is empty — a valid, resolvable DID
-/// with **no PDS** (the feed-generator pattern, DD/26935298). Attaching a PDS
-/// later is an operation on the same DID, no churn.
+/// An unsigned identity-only `plc_operation`. One builder covers both kinds of
+/// this shape — [`identity_only`](PlcOperation::identity_only) (genesis) and
+/// [`update_handle`](PlcOperation::update_handle) — so there is a single
+/// DAG-CBOR path. Identity-only means an empty `services` map: no PDS.
 pub struct PlcOperation {
     rotation_keys: Vec<String>,
     verification_methods: BTreeMap<String, String>,
@@ -97,15 +71,9 @@ pub struct PlcOperation {
 }
 
 impl PlcOperation {
-    /// Build an **identity-only genesis** operation:
-    ///
-    /// - `rotation_keys` — the `did:key` multikeys of the rotation keypairs, in
-    ///   descending authority (`[cold_recovery, operational]`, DD/26804226 B2).
-    /// - `atproto_signing_did` — the `did:key` of the `#atproto` verification
-    ///   method, included for forward-compat (B3).
-    /// - `handle` — the initial `alsoKnownAs` becomes `at://<handle>`.
-    ///
-    /// `services` is left empty (no `atproto_pds`). `prev` is `null` (genesis).
+    /// Build an identity-only genesis operation (`prev = null`, empty
+    /// `services`). `rotation_keys` are `did:key` multikeys in descending
+    /// authority; `handle` becomes the sole `alsoKnownAs`. (DD 26804226)
     pub fn identity_only(
         rotation_keys: Vec<String>,
         atproto_signing_did: String,
@@ -114,13 +82,9 @@ impl PlcOperation {
         Self::build(rotation_keys, atproto_signing_did, handle, None)
     }
 
-    /// Build an **identity-only handle update** operation (ZMVP-50): the same
-    /// `plc_operation` shape as a genesis op, differing in exactly two fields —
-    /// `alsoKnownAs` is **REPLACED** with `["at://<handle>"]` (the old alias is
-    /// dropped, never retained — DD 27852802 §5) and `prev` is the CID of the
-    /// DID's most recent operation, which this op chains onto. The rest of the
-    /// DID document (rotation keys, verification methods, empty services) is
-    /// reconstructed unchanged from the same key material.
+    /// Build an identity-only handle update chaining onto `prev` (the CID of the
+    /// DID's latest operation). `alsoKnownAs` is REPLACED with the new handle —
+    /// the old alias is dropped, never retained. (DD 27852802)
     pub fn update_handle(
         rotation_keys: Vec<String>,
         atproto_signing_did: String,
@@ -130,9 +94,7 @@ impl PlcOperation {
         Self::build(rotation_keys, atproto_signing_did, handle, Some(prev))
     }
 
-    /// The one constructor both op kinds funnel through — genesis passes
-    /// `prev = None`, update passes `Some(cid)`; every other field is shaped
-    /// identically.
+    /// The one constructor both op kinds funnel through; only `prev` differs.
     fn build(
         rotation_keys: Vec<String>,
         atproto_signing_did: String,
@@ -150,7 +112,7 @@ impl PlcOperation {
         }
     }
 
-    /// The DAG-CBOR bytes to sign: this operation **without** a `sig` field.
+    /// The DAG-CBOR bytes to sign: this operation without a `sig` field.
     pub fn signing_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let view = UnsignedView {
             type_: OP_TYPE,
@@ -163,26 +125,23 @@ impl PlcOperation {
         Ok(serde_ipld_dagcbor::to_vec(&view)?)
     }
 
-    /// Attach a computed signature (base64url-no-pad), yielding the
-    /// [`SignedOperation`] whose hash is the DID (for a genesis op) and whose
-    /// CID the next operation chains onto.
+    /// Attach a computed signature (base64url-no-pad).
     pub fn into_signed(self, sig: String) -> SignedOperation {
         SignedOperation { op: self, sig }
     }
 }
 
-/// A signed `plc_operation` (genesis or handle update): for a genesis op the DID
-/// is derived from its DAG-CBOR hash; for both kinds the JSON is the directory
-/// submission body and the [`cid`](SignedOperation::cid) is what the next
-/// operation chains onto.
+/// A signed `plc_operation` (genesis or handle update): its JSON is the
+/// directory submission body and its [`cid`](SignedOperation::cid) is what the
+/// next operation chains onto.
 pub struct SignedOperation {
     op: PlcOperation,
     sig: String,
 }
 
 impl SignedOperation {
-    /// A borrowed `SignedView` over this operation's fields, for both DAG-CBOR
-    /// hashing and JSON submission (one source of truth for the byte layout).
+    /// One borrowed view over the fields, shared by DAG-CBOR hashing and JSON
+    /// submission, so the byte layout has a single source.
     fn view(&self) -> SignedView<'_> {
         SignedView {
             type_: OP_TYPE,
@@ -195,11 +154,9 @@ impl SignedOperation {
         }
     }
 
-    /// Derive the `did:plc:` identifier: `base32(sha256(dag_cbor(op incl. sig)))`
-    /// lowercased, no padding, truncated to 24 chars. See [`derive_did`].
-    ///
-    /// Only a **genesis** operation defines a DID — calling this on a handle
-    /// update yields a value that identifies nothing.
+    /// Derive the `did:plc:` identifier from this operation's DAG-CBOR bytes.
+    /// Only a genesis operation defines a DID — on a handle update the value
+    /// identifies nothing.
     pub fn did(&self) -> anyhow::Result<String> {
         let cbor = serde_ipld_dagcbor::to_vec(&self.view())?;
         Ok(derive_did(&cbor))
@@ -211,10 +168,9 @@ impl SignedOperation {
         Ok(serde_json::to_value(self.view())?)
     }
 
-    /// This operation's **CID** (CIDv1 / dag-cbor / sha-256) — recorded in the
-    /// operation log so a later operation (e.g. a tombstone) can reference it as
-    /// `prev`. Distinct from [`did`](SignedOperation::did) (which truncates a bare
-    /// base32 hash to the 24-char DID suffix); see [`cid`].
+    /// This operation's CID (CIDv1 / dag-cbor / sha-256) — recorded in the
+    /// operation log so a later operation can reference it as `prev`. Distinct
+    /// from [`did`](SignedOperation::did).
     pub fn cid(&self) -> anyhow::Result<String> {
         let cbor = serde_ipld_dagcbor::to_vec(&self.view())?;
         Ok(cid(&cbor))
@@ -224,10 +180,8 @@ impl SignedOperation {
 /// The fixed `type` discriminant of a PLC tombstone operation.
 const TOMBSTONE_TYPE: &str = "plc_tombstone";
 
-/// The DAG-CBOR view of a tombstone **without** `sig` — the bytes a rotation key
-/// signs. A tombstone carries no data fields, only `type` and the **mandatory**
-/// `prev` (the CID of the DID's most recent operation; not nullable, unlike a
-/// genesis op's `prev`).
+/// The DAG-CBOR view of a tombstone without `sig` — the bytes a rotation key
+/// signs. Only `type` and a mandatory (never null) `prev`.
 #[derive(Serialize)]
 struct TombstoneUnsignedView<'a> {
     #[serde(rename = "type")]
@@ -235,7 +189,7 @@ struct TombstoneUnsignedView<'a> {
     prev: &'a str,
 }
 
-/// The DAG-CBOR / JSON view of a tombstone **including** `sig` — the body submitted
+/// The DAG-CBOR / JSON view of a tombstone including `sig` — the body submitted
 /// to the directory to deactivate the DID.
 #[derive(Serialize)]
 struct TombstoneSignedView<'a> {
@@ -245,10 +199,9 @@ struct TombstoneSignedView<'a> {
     sig: &'a str,
 }
 
-/// An unsigned `plc_tombstone` operation: it permanently deactivates a DID, chaining
-/// onto the DID's most recent operation via `prev` (a mandatory CID). Signed with a
-/// rotation key exactly like a genesis operation — DAG-CBOR without `sig`, then
-/// ECDSA-SHA256 low-S, base64url no-pad. Spec: <https://web.plc.directory/spec/v0.1/did-plc>.
+/// An unsigned `plc_tombstone`: permanently deactivates a DID, chaining onto its
+/// most recent operation via `prev` (a mandatory CID). Signed with a rotation
+/// key exactly like a genesis operation.
 pub struct TombstoneOperation {
     prev: String,
 }
@@ -259,7 +212,7 @@ impl TombstoneOperation {
         Self { prev }
     }
 
-    /// The DAG-CBOR bytes to sign: this tombstone **without** a `sig` field.
+    /// The DAG-CBOR bytes to sign: this tombstone without a `sig` field.
     pub fn signing_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let view = TombstoneUnsignedView {
             type_: TOMBSTONE_TYPE,
@@ -268,24 +221,22 @@ impl TombstoneOperation {
         Ok(serde_ipld_dagcbor::to_vec(&view)?)
     }
 
-    /// Attach a computed signature (base64url-no-pad), yielding the
-    /// [`SignedTombstone`].
+    /// Attach a computed signature (base64url-no-pad).
     pub fn into_signed(self, sig: String) -> SignedTombstone {
         SignedTombstone { op: self, sig }
     }
 }
 
-/// A signed `plc_tombstone`: its JSON is the directory submission body, and its
-/// DAG-CBOR hash is its [`cid`](SignedTombstone::cid) (recorded as the last link in
-/// the audit chain).
+/// A signed `plc_tombstone`: its JSON is the directory submission body, its CID
+/// the last link in the audit chain.
 pub struct SignedTombstone {
     op: TombstoneOperation,
     sig: String,
 }
 
 impl SignedTombstone {
-    /// A borrowed view over this tombstone's fields, for both DAG-CBOR hashing and
-    /// JSON submission (one source of truth for the byte layout).
+    /// One borrowed view over the fields, shared by DAG-CBOR hashing and JSON
+    /// submission, so the byte layout has a single source.
     fn view(&self) -> TombstoneSignedView<'_> {
         TombstoneSignedView {
             type_: TOMBSTONE_TYPE,
@@ -294,8 +245,7 @@ impl SignedTombstone {
         }
     }
 
-    /// This tombstone's CID (CIDv1 / dag-cbor / sha-256) — recorded in the operation
-    /// log as the chain's final link. See [`cid`].
+    /// This tombstone's CID (CIDv1 / dag-cbor / sha-256).
     pub fn cid(&self) -> anyhow::Result<String> {
         let cbor = serde_ipld_dagcbor::to_vec(&self.view())?;
         Ok(cid(&cbor))
@@ -308,25 +258,17 @@ impl SignedTombstone {
     }
 }
 
-/// Derive the `did:plc` string from the DAG-CBOR bytes of a *signed* operation:
-/// `did:plc:` + first 24 chars of the lowercase, unpadded base32 of its SHA-256.
-///
-/// Isolated as a pure function so the safety-net vector test exercises the exact
-/// derivation the minter uses.
+/// Derive the `did:plc` string from a signed operation's DAG-CBOR bytes:
+/// `did:plc:` + the first 24 chars of lowercase unpadded base32 of its SHA-256.
 fn derive_did(signed_op_cbor: &[u8]) -> String {
     let hash = Sha256::digest(signed_op_cbor);
     let b32 = data_encoding::BASE32_NOPAD.encode(&hash).to_lowercase();
     format!("did:plc:{}", &b32[..24])
 }
 
-/// Compute the **CID** of a signed operation's DAG-CBOR bytes — the value a
-/// subsequent operation (e.g. a tombstone) references as its `prev`.
-///
-/// CIDv1, `dag-cbor` codec (`0x71`), `sha-256` multihash (`0x12`), multibase base32
-/// (lowercase, `b` prefix): `"b"` + base32(`0x01 0x71 0x12 0x20` ‖ `sha256(bytes)`).
-/// This is **not** [`derive_did`] — that truncates a bare base32 hash to 24 chars for
-/// the DID *suffix*; a `prev` is a full multiformats CID (`bafyrei…`). Isolated as a
-/// pure function so the safety-net vector test pins the exact byte layout.
+/// Compute the CID of a signed operation's DAG-CBOR bytes — the value a
+/// subsequent operation references as its `prev`. A full multiformats CID
+/// (`bafyrei…`), unlike [`derive_did`]'s truncated bare base32 hash.
 pub fn cid(signed_op_cbor: &[u8]) -> String {
     let hash = Sha256::digest(signed_op_cbor);
     // multibase `b` (base32) over: CIDv1 (0x01), dag-cbor (0x71), then the multihash

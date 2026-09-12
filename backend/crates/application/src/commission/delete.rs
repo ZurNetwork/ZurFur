@@ -17,8 +17,8 @@ pub struct Output {
 impl Commissions<'_> {
     /// Hard-deletes the commission, but only while it is fact-free. Owner-only;
     /// every other caller gets the closed door's `CommissionNotFound`. A
-    /// fact-bearing commission is left untouched and reported as
-    /// [`Outcome::HasFacts`] for the driver to point at Archive.
+    /// fact-bearing commission is untouched and reported as
+    /// [`Outcome::HasFacts`].
     pub async fn delete(&self, cmd: Command) -> CommissionResult<Output> {
         let ports = self.ports();
         let Command {
@@ -32,12 +32,8 @@ impl Commissions<'_> {
             .filter(|c| c.is_owned_by(&actor_id))
             .ok_or(CommissionError::CommissionNotFound)?;
 
-        // One unit, closed on BOTH branches. The fact gate and the delete it
-        // guards must share a transaction (no TOCTOU window — the port's ruling
-        // E17), and the refusal used to leave that unit open, returning `Ok`
-        // while the handle rolled back on drop: harmless only because this
-        // branch writes nothing, and exactly the shape
-        // `tests/unit_of_work_guard.rs` states it cannot see.
+        // One unit, closed on BOTH branches: the fact gate and the delete it
+        // guards must share a transaction, or there is a TOCTOU window.
         let mut uow = self.ports().database.begin().await?;
         let has_facts = uow
             .commissions()

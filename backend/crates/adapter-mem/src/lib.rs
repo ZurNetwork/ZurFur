@@ -1,58 +1,29 @@
-//! In-process fakes of the domain ports. Core development and tests run against
-//! these so neither needs a database or a PDS (see CLAUDE.md, "adapter-mem").
+//! In-process fakes of the domain ports, so core development and tests need
+//! neither a database nor a PDS.
 //!
-//! The private-store repos are split along the read/write line exactly as the
-//! pg adapter is (DD `24150017`): one shared [`MemBackend`] owns the maps, the
-//! read stores ([`MemUserStore`], [`MemAccountStore`], [`MemProfileCache`], and
-//! the commission seam's [`MemCommissionStore`]/[`MemChangelogStore`]) read them
-//! off `&self`, and the *write* views are reachable only on a [`MemUnitOfWork`]
-//! vended by [`MemDatabase`]. The maps live behind
-//! `Arc<Mutex<…>>` shared by every store and view. The public-boundary fakes
-//! ([`MemAuthenticator`], [`MemProfileSource`]) stand in for the user's PDS, and
-//! [`MemDidMinter`] hands out synthetic account DIDs.
-//!
-//! **Fidelity, not realism.** A fake reproduces the *contract* a handler depends
-//! on (idempotent recognition, soft-delete invisibility, cache hits) but skips
-//! everything operational — TTLs, real keypairs. The unit of work, though, *does*
-//! model transactional rollback (DD `24150017`): [`MemDatabase::begin`] takes two
-//! independent deep copies of the domain maps — a pristine `base` and a `staged`
-//! copy the write views mutate — and [`MemUnitOfWork::commit`] diffs the two to
-//! merge only what this unit actually changed back onto the shared store, key by
-//! key (not a wholesale replace, which would let one unit's commit silently
-//! clobber another's disjoint writes). **Dropping the handle without committing
-//! discards `base` and `staged` together**, exactly like pg's drop = rollback. So
-//! a forgotten `commit()` leaves nothing behind in mem either (exercised by
-//! [`tests`], mirroring the pg rollback assertion), and an uncommitted unit's
-//! writes are invisible to the shared read stores — as in pg, where a pool read
-//! can't see another connection's open transaction. The read-through profile
-//! cache is the one exception: its best-effort fill writes straight to the shared
-//! store (a documented Unit-of-Work exemption), so it is neither staged, merged,
-//! nor rolled back. Where behavior intentionally diverges from production it is
-//! called out on the item.
-//!
-//! **Locking discipline.** Mutable state sits behind a `std::sync::Mutex`, not a
-//! `tokio::sync::Mutex`, because no `.await` is ever held across a guard: each
-//! method takes the lock, does synchronous map work, and drops it before
-//! returning. A poisoned lock is unrecoverable here, so every `.lock()` simply
-//! `.expect()`s. Call counters use an [`AtomicUsize`] and need no lock.
-//!
-//! References: DESIGN/"Domains and Applications"; the per-port detail lives on
-//! the trait docs in [`domain::ports`].
+//! One shared [`MemBackend`] owns the maps; read stores read them off `&self`
+//! and write views are reachable only on a [`MemUnitOfWork`] vended by
+//! [`MemDatabase`], which stages a copy and merges it key-by-key on commit —
+//! dropping without committing rolls back. Fidelity to the contract, not to
+//! operational reality; intentional divergence is called out on the item.
 
 mod actor_identity;
 mod commission;
 mod file_store;
 mod public_records;
+mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
 pub use public_records::MemPublicRecords;
+pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
+use workflow::{StoredColumn, StoredWorkflow};
 
 pub(crate) use commission::{
-    StoredChangelogEntry, StoredCommission, StoredElement, StoredPlacement, StoredSeat,
-    StoredSeatInvitation, StoredSlot, StoredTab,
+    StoredChangelogEntry, StoredCommission, StoredElement, StoredSeat, StoredSeatInvitation,
+    StoredSlot, StoredTab,
 };
 pub(crate) use file_store::StoredBlob;
 
@@ -80,148 +51,95 @@ use domain::elements::{
     role::{Role, RoleAlias},
     user::{User, UserId},
     user_account::UserAccount,
+    workflow::{ColumnId, WorkflowId},
 };
 use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
-    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, CommissionRepo,
-    CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites,
+    CommissionRepo, CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore,
+    PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowStore,
+    WorkflowWrites,
 };
 
-/// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`
-/// so the read stores, the [`MemDatabase`] factory, and the write views vended by
-/// its [`MemUnitOfWork`] all observe the same state. Cloning a `MemBackend` (or
-/// any store built from it) clones the `Arc`s, not the data — so a write through
-/// one handle is seen through another.
+/// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
+/// so every store and view observes the same state. Cloning clones the `Arc`s,
+/// not the data.
 #[derive(Clone, Default)]
 pub struct MemBackend {
-    /// Every recognized visitor, keyed by their DID — the natural key that makes
-    /// `provision` idempotent. `find` scans the values to resolve a [`UserId`].
+    /// Every recognized visitor, keyed by DID — the key `provision` is
+    /// idempotent on.
     users: Arc<Mutex<HashMap<Did, User>>>,
-    /// [`StoredAccount`] parts keyed by [`AccountId`] (stored as parts because
-    /// [`Account`] isn't `Clone`; `find` rebuilds a fresh `Account`).
+    /// [`StoredAccount`] parts keyed by [`AccountId`]; `find` rebuilds the
+    /// `Account`, which is not `Clone`.
     accounts: Arc<Mutex<HashMap<AccountId, StoredAccount>>>,
-    /// The [`StoredMembership`] each user holds in each account, keyed by
-    /// `(account, user)`. A missing key means non-membership — what `role_of`
-    /// returns as `None`.
+    /// The [`StoredMembership`] each user holds in each account; a missing key
+    /// means non-membership.
     memberships: Arc<Mutex<HashMap<(AccountId, UserId), StoredMembership>>>,
-    /// [`StoredInvitation`] parts keyed by [`InvitationId`] (ZMVP-32). The
-    /// at-most-one-*pending*-per-(account, user) rule is enforced by scanning for an
-    /// existing pending offer before inserting (the pg adapter uses a partial index).
+    /// [`StoredInvitation`] parts keyed by [`InvitationId`]; at most one pending
+    /// offer per (account, user), enforced by scanning before insert.
     invitations: Arc<Mutex<HashMap<InvitationId, StoredInvitation>>>,
-    /// Cached profiles keyed by DID. Entries never expire here — TTL is the real
-    /// (pg) cache's policy; tests control freshness by what they put in.
+    /// Cached profiles keyed by DID; entries never expire here.
     profiles: Arc<Mutex<HashMap<Did, Profile>>>,
-    /// Append-only handle-change audit log (ZMVP-46), the in-memory mirror of the pg
-    /// `account_handle_changes` table. Backs both the change rate limit and the
-    /// vacated-handle quarantine (DD `27852802` §3/§4). A domain map, so it is staged
-    /// and applied by the Unit of Work exactly like `accounts`/`memberships`.
+    /// Append-only handle-change audit log, backing the change rate limit and
+    /// the vacated-handle quarantine. Staged. (DD 27852802)
     handle_changes: Arc<Mutex<Vec<StoredHandleChange>>>,
-    /// [`StoredCommission`] parts keyed by [`CommissionId`] (ZMVP-65). Stored as
-    /// parts because `Commission` isn't `Clone`; a read rebuilds a fresh
-    /// `Commission`. Mirrors the pg `commission` table. (The commission fakes
-    /// themselves live in [`mod@crate::commission`].)
+    /// [`StoredCommission`] parts keyed by [`CommissionId`]; a read rebuilds the
+    /// `Commission`, which is not `Clone`.
     pub(crate) commissions: Arc<Mutex<HashMap<CommissionId, StoredCommission>>>,
-    /// The append-only commission changelog (ZMVP-87), in append (= `seq`) order —
-    /// the in-memory mirror of the pg `commission_changelog` table. A domain map,
-    /// so it is staged and applied by the Unit of Work exactly like `commissions`:
-    /// an entry commits atomically with the domain write it records (Changelog DD
-    /// D4). Nothing here ever mutates or removes a pushed entry (append-only).
+    /// The commission changelog in append (= `seq`) order. Staged, so an entry
+    /// commits atomically with the write it records; nothing ever mutates or
+    /// removes a pushed entry. (DD 59310081)
     pub(crate) changelog: Arc<Mutex<Vec<StoredChangelogEntry>>>,
-    /// The append-only commission **placement** log (ZMVP-70), in append (= `seq`)
-    /// order — the in-memory mirror of the pg `commission_placement` table. Staged
-    /// and applied by the Unit of Work like `changelog`; never rewritten.
-    pub(crate) placements: Arc<Mutex<Vec<StoredPlacement>>>,
-    /// The denormalized **current-placement** pointer keyed by commission (ZMVP-70)
-    /// — the mem mirror of `commission_current_placement`, upserted in the same
-    /// unit as each placement append so it always equals the latest log row.
-    pub(crate) current_placements: Arc<Mutex<HashMap<CommissionId, StoredPlacement>>>,
-    /// The commission **view grants** keyed by `(commission, grantee DID)`, valued
-    /// by the key's [`GrantLevel`] (ZMVP-70) — the mem mirror of
-    /// `commission_view_grant`. The grantee is held as a bare [`Did`] because the
-    /// pg column is: the write port issues a key to a User and the read port asks
-    /// by an account, so persistence stores the actor's identifier and asserts
-    /// nothing about its class (see the re-key migration's note). The grant is a
-    /// pure key (just the level; who/when live in the changelog, DD `29130754`
-    /// D5). At most one key per pair (upsert on grant); a revoke removes the entry
-    /// (hard-delete).
+    /// Boards keyed by [`WorkflowId`]; one account each, columns in
+    /// [`columns`](Self::columns).
+    pub(crate) workflows: Arc<Mutex<HashMap<WorkflowId, StoredWorkflow>>>,
+    /// Columns keyed by [`ColumnId`], each carrying its cards as one ordered
+    /// list. A card IS a commission's placement, and the only place it lives.
+    /// (DD 29130754)
+    pub(crate) columns: Arc<Mutex<HashMap<ColumnId, StoredColumn>>>,
+    /// Commission view grants keyed by `(commission, grantee DID)`. A pure key —
+    /// just the level, with who/when in the changelog; at most one per pair, and
+    /// a revoke hard-deletes it. (DD 29130754)
     pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, Did), GrantLevel>>>,
     /// [`StoredElement`] parts keyed by [`ElementId`] — the commission's flat
-    /// composition (ZMVP-166), the in-memory mirror of the pg
-    /// `commission_element` table. A domain map, staged and applied by the Unit
-    /// of Work exactly like `commissions`.
+    /// composition. Staged. (DD 45514754)
     pub(crate) elements: Arc<Mutex<HashMap<ElementId, StoredElement>>>,
-    /// [`StoredTab`] parts keyed by [`TabId`] — the commission's tabs
-    /// (ZMVP-166), the in-memory mirror of the pg `commission_tab` table. A
-    /// domain map, staged and applied by the Unit of Work exactly like
-    /// `commissions`: a commission and its skeleton tabs commit together.
+    /// [`StoredTab`] parts keyed by [`TabId`]; staged, so a commission and its
+    /// skeleton tabs commit together.
     pub(crate) tabs: Arc<Mutex<HashMap<TabId, StoredTab>>>,
-    /// The per-commission surface-mode overrides keyed by `(commission,
-    /// surface)` (ZMVP-166) — the in-memory mirror of the pg
-    /// `commission_surface_mode` table. **Sparse**: an absent entry means
-    /// [`VisibilityMode::Total`], the closed door said by saying nothing. Nothing
-    /// in ZMVP-166 writes here (widening is ZMVP-74's act); the map exists so the
-    /// read half and the test seeder have the same shape pg does.
+    /// Per-commission surface-mode overrides, sparse: an absent entry means
+    /// [`VisibilityMode::Total`].
     pub(crate) surface_modes: Arc<Mutex<HashMap<(CommissionId, SurfaceName), VisibilityMode>>>,
-    /// Commission file-entry **links** keyed by [`FileKey`] (ZMVP-88) — the
-    /// in-memory mirror of the pg `commission_file` table. A domain map, so it is
-    /// staged and applied by the Unit of Work exactly like `commissions`: the link
-    /// commits atomically with the `file_added` changelog entry it accompanies
-    /// (Changelog DD D4).
+    /// Commission file-entry links keyed by [`FileKey`]; staged, so a link
+    /// commits atomically with its `file_added` changelog entry.
     pub(crate) files: Arc<Mutex<HashMap<FileKey, CommissionFile>>>,
-    /// Commission **markups** keyed by [`MarkupKey`] (ZMVP-90) — the in-memory
-    /// mirror of the pg `commission_markup` table. A domain map, staged and applied
-    /// by the Unit of Work exactly like `files`: an annotation commits atomically
-    /// with the `markup_added` changelog entry it accompanies (Changelog DD D4).
-    /// Nothing here ever mutates or removes an inserted markup — the write port
-    /// exposes no update and no delete, which is the whole of markup immutability
-    /// now that it no longer rides the append-only changelog.
+    /// Commission markups keyed by [`MarkupKey`]; staged alongside `files`.
+    /// Immutable — the write port exposes no update and no delete.
     pub(crate) markups: Arc<Mutex<HashMap<MarkupKey, CommissionMarkup>>>,
-    /// The file-entry **blob** store keyed by [`FileKey`] (ZMVP-88) — the
-    /// in-memory mirror of the pg `file_blob` table and the [`MemFileStore`] backing
-    /// map. **Shared, not staged** (its `Arc` is cloned like the profile cache): the
-    /// [`FileStore`] blob write is a step *outside* the Unit of Work (bytes cannot
-    /// ride a transaction; orphan-on-rollback accepted), so a unit must neither stage
-    /// nor clobber it.
+    /// The file-entry blob store keyed by [`FileKey`], backing [`MemFileStore`].
+    /// Shared, NOT staged: the blob write sits outside the Unit of Work.
     pub(crate) blobs: Arc<Mutex<HashMap<FileKey, StoredBlob>>>,
-    /// [`StoredSlot`] satellites keyed by the carrying element's [`ElementId`]
-    /// (ZMVP-77) — the in-memory mirror of the pg `commission_slot` table. A
-    /// domain map, staged and applied by the Unit of Work exactly like
-    /// `elements`: a Slot's carrying element and its satellite commit (or
-    /// vanish) together.
+    /// [`StoredSlot`] satellites keyed by the carrying element's [`ElementId`];
+    /// staged, so element and satellite commit or vanish together.
     pub(crate) slots: Arc<Mutex<HashMap<ElementId, StoredSlot>>>,
-    /// Participant membership keyed by `(commission, user)` → when it began —
-    /// the in-memory mirror of the pg `commission_participant` table (ZMVP-76).
-    /// The owner's row is inserted with the commission itself and is the
-    /// permanent floor: no write here removes a participant at all (the pg
-    /// trigger's guarantee holds in mem by there being no removal path). A
-    /// domain map, staged and applied by the Unit of Work like `commissions`.
+    /// Participant membership keyed by `(commission, user)` → when it began.
+    /// Staged; there is no removal path at all, so the owner's row is permanent.
     pub(crate) participants: Arc<Mutex<HashMap<(CommissionId, UserId), DateTimeUtc>>>,
-    /// [`StoredSeat`] parts keyed by the seat's [`ElementId`] — the in-memory
-    /// mirror of the pg `commission_seat` satellite (ZMVP-76): the element map
-    /// carries the seat's composition half, this map its interpreted half,
-    /// sharing the id. A domain map, staged and applied by the Unit of Work like
-    /// `elements`: a seat's element and satellite commit together.
+    /// [`StoredSeat`] parts keyed by the seat's [`ElementId`] — the interpreted
+    /// half of the seat, sharing the element's id. Staged.
     pub(crate) seats: Arc<Mutex<HashMap<ElementId, StoredSeat>>>,
-    /// [`StoredSeatInvitation`] parts keyed by [`SeatInvitationId`] — the
-    /// in-memory mirror of the pg `commission_invitation` table (ZMVP-78): the
-    /// owner's pending offer of a Seat to a User. The at-most-one-*pending*-per-
-    /// (seat, user) rule is enforced by scanning before inserting (the pg
-    /// adapter uses a partial index). A domain map, staged and applied by the
-    /// Unit of Work like `seats`.
+    /// [`StoredSeatInvitation`] parts keyed by [`SeatInvitationId`] — the owner's
+    /// pending offer of a Seat. At most one pending per (seat, user), enforced by
+    /// scanning before insert. Staged.
     pub(crate) seat_invitations: Arc<Mutex<HashMap<SeatInvitationId, StoredSeatInvitation>>>,
-    /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`] — the in-memory
-    /// mirror of the pg `actor_identity` super-table (ZMVP-122, DD 34013187).
-    /// Slice 1: the parts are empty, the key is the row. Rows are immortal — no
-    /// write here removes one. A domain map, staged and applied by the Unit of
-    /// Work like `users`.
+    /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`]. Staged; rows
+    /// are immortal — no write here removes one. (DD 34013187)
     pub(crate) actor_identities: Arc<Mutex<HashMap<ActorIdentityId, StoredActorIdentity>>>,
 }
 
 impl MemBackend {
-    /// An empty backend — no visitors, accounts, memberships, invitations, or
-    /// cached profiles.
+    /// An empty backend.
     pub fn new() -> Self {
         Self::default()
     }
@@ -247,13 +165,22 @@ impl MemBackend {
         Arc::new(MemChangelogStore(self.clone()))
     }
 
+    /// The [`WorkflowStore`] read port over this backend's shared state.
+    pub fn workflow_store(&self) -> Arc<dyn WorkflowStore> {
+        Arc::new(MemWorkflowStore(self.clone()))
+    }
+
+    /// The [`ColumnStore`] read port over this backend's shared state.
+    pub fn column_store(&self) -> Arc<dyn ColumnStore> {
+        Arc::new(MemColumnStore(self.clone()))
+    }
+
     /// The [`ProfileCache`] read port over this backend's shared state.
     pub fn profile_cache(&self) -> Arc<dyn ProfileCache> {
         Arc::new(MemProfileCache(self.clone()))
     }
 
-    /// The [`FileStore`] port over this backend's shared blob map (ZMVP-88 — the
-    /// file-entry blob store's fake).
+    /// The [`FileStore`] port over this backend's shared blob map.
     pub fn file_store(&self) -> Arc<dyn FileStore> {
         Arc::new(MemFileStore(self.clone()))
     }
@@ -263,20 +190,15 @@ impl MemBackend {
         Arc::new(MemDatabase(self.clone()))
     }
 
-    /// The [`ActorIdentityStore`] read port over this backend's shared state
-    /// (ZMVP-122 — the actor super-table's fake).
+    /// The [`ActorIdentityStore`] read port over this backend's shared state.
     pub fn actor_identity_store(&self) -> Arc<dyn ActorIdentityStore> {
         Arc::new(MemActorIdentityStore(self.clone()))
     }
 
-    /// Snapshot the **domain** maps into a fresh staging backend for a unit of work
-    /// (DD `24150017`): the user/account/membership/invitation maps are *deep*-copied
-    /// into new `Arc<Mutex<…>>`, so writes through the unit mutate only the copy until
-    /// [`MemUnitOfWork::commit`] applies it back. The profile cache map is *shared*
-    /// (its `Arc` is cloned, not copied) — the cache fill is a documented Unit-of-Work
-    /// exemption that writes straight through, so a unit must neither stage nor clobber
-    /// it. Dropping the staged backend without applying it is the mem mirror of pg's
-    /// rollback-on-drop.
+    /// Deep-copy the domain maps into a fresh staging backend, so a unit's
+    /// writes mutate only the copy until [`MemUnitOfWork::commit`] applies it.
+    /// The profile cache and blob maps are shared instead — Unit-of-Work
+    /// exemptions that write straight through. (DD 24150017)
     fn stage(&self) -> MemBackend {
         MemBackend {
             users: Arc::new(Mutex::new(
@@ -323,16 +245,16 @@ impl MemBackend {
                     .expect("MemBackend changelog mutex poisoned")
                     .clone(),
             )),
-            placements: Arc::new(Mutex::new(
-                self.placements
+            workflows: Arc::new(Mutex::new(
+                self.workflows
                     .lock()
-                    .expect("MemBackend placements mutex poisoned")
+                    .expect("MemBackend workflows mutex poisoned")
                     .clone(),
             )),
-            current_placements: Arc::new(Mutex::new(
-                self.current_placements
+            columns: Arc::new(Mutex::new(
+                self.columns
                     .lock()
-                    .expect("MemBackend current_placements mutex poisoned")
+                    .expect("MemBackend columns mutex poisoned")
                     .clone(),
             )),
             view_grants: Arc::new(Mutex::new(
@@ -371,8 +293,7 @@ impl MemBackend {
                     .expect("MemBackend markups mutex poisoned")
                     .clone(),
             )),
-            // Shared, not copied: the blob store is a Unit-of-Work exemption (the
-            // blob write is a step outside the unit — the FileStore contract).
+            // Shared, not copied: the blob store is a Unit-of-Work exemption.
             blobs: self.blobs.clone(),
             slots: Arc::new(Mutex::new(
                 self.slots
@@ -407,46 +328,15 @@ impl MemBackend {
         }
     }
 
-    /// Merge a unit's staged writes onto this (shared) backend, key by key — the
-    /// mem mirror of a pg `COMMIT` under row-level concurrency, not a whole-table
-    /// swap. `base` is the pristine snapshot [`stage`](MemBackend::stage) took at
-    /// `begin`, before any write; diffing it against `staged` is what tells a
-    /// key/entry this unit actually touched (inserted, updated, or removed) apart
-    /// from everything that merely rode along in the snapshot untouched — so
-    /// another unit's concurrent, disjoint commit survives instead of being
-    /// silently clobbered by this one. (The bug this replaces: assigning
-    /// `*self.field.lock() = staged.field.lock().clone()` replaced the whole map on
-    /// every commit, so of two units committed in any order, only the last
-    /// writer's snapshot survived — a lost update for anything the other unit
-    /// alone had written.) The profile cache and blob store are Unit-of-Work
-    /// exemptions (see `stage`) — never staged, so there is nothing to merge for
-    /// them here. Only [`MemUnitOfWork::commit`] calls this; a dropped, un-merged
-    /// unit leaves the shared store exactly as it was.
+    /// Merge a unit's staged writes onto the shared backend key by key: `base`
+    /// is the pristine snapshot taken at `begin`, and only keys whose staged
+    /// value differs from it are written (or, if vanished, removed). A key this
+    /// unit merely read merges as a no-op, so another unit's disjoint commit
+    /// survives. `HashMap` fields go through [`merge_map`], append-log `Vec`s
+    /// through [`merge_log`].
     ///
-    /// Every `HashMap` field merges through [`merge_map`]: a key that was in
-    /// `base` but has since vanished from `staged` (removed by this unit) is
-    /// removed from `shared` too; of the keys `staged` still carries, only those
-    /// whose value actually *differs* from `base` are (re)written onto `shared`
-    /// (covering both a fresh insert and an in-place update). A key this unit
-    /// **read** into its snapshot but never changed merges as a no-op — `staged`
-    /// equals `base` for it, so [`merge_map`] skips it and leaves `shared`'s
-    /// current value alone. That is what lets a *third* unit's concurrent
-    /// update-or-delete of a key this unit only read survive this unit's commit,
-    /// instead of being clobbered back to the stale value this unit's snapshot
-    /// happened to carry. The three append-log `Vec` fields (`handle_changes`,
-    /// `changelog`, `placements`) merge through [`merge_log`] instead — the same
-    /// idea applied by value, since a log row carries no separate key.
-    ///
-    /// The remaining, unmodeled gap is a genuine **same-key write-write
-    /// conflict**: two units both *writing* the same key between their respective
-    /// `begin` and `commit`. Nothing here detects that collision — whichever unit
-    /// commits last simply overwrites the other's value (last-writer-wins), where
-    /// pg would instead serialize the second writer on a real row lock (blocking
-    /// it until the first transaction commits or rolls back, then applying its
-    /// write on top). This fake does not model that lock, and nothing in the test
-    /// suite currently depends on it (the tests below cover disjoint writes and a
-    /// third unit's untouched-key read surviving a concurrent update/delete, not
-    /// same-key write-write conflict resolution).
+    /// Not modeled: a same-key write-write conflict is last-writer-wins here,
+    /// where pg would serialize the second writer on a row lock.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),
@@ -540,34 +430,6 @@ impl MemBackend {
                 .lock()
                 .expect("MemBackend changelog mutex poisoned"),
         );
-        merge_log(
-            &mut self
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-            &base
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-            &staged
-                .placements
-                .lock()
-                .expect("MemBackend placements mutex poisoned"),
-        );
-        merge_map(
-            &mut self
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-            &base
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-            &staged
-                .current_placements
-                .lock()
-                .expect("MemBackend current_placements mutex poisoned"),
-        );
         merge_map(
             &mut self
                 .view_grants
@@ -581,6 +443,34 @@ impl MemBackend {
                 .view_grants
                 .lock()
                 .expect("MemBackend view_grants mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+            &base
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+            &staged
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned"),
+        );
+        merge_map(
+            &mut self
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
+            &base
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
+            &staged
+                .columns
+                .lock()
+                .expect("MemBackend columns mutex poisoned"),
         );
         merge_map(
             &mut self
@@ -697,34 +587,28 @@ impl MemBackend {
         );
     }
 
-    // --- Convenience seed/inspection helpers for tests. These operate directly on
-    // the shared state (reusing the read/write impls) so a test can arrange and
-    // assert without spelling out the `begin()`/accessor/`commit()` ceremony. ---
+    // --- Seed/inspection helpers for tests: they write straight to the shared
+    // state, skipping the begin()/accessor/commit() ceremony. ---
 
-    /// Recognize a DID (seed/inspect a User). Idempotent, like the real
-    /// [`UserWrites::provision`].
+    /// Recognize a DID (seed/inspect a User); idempotent.
     pub async fn provision(&self, did: &Did) -> anyhow::Result<User> {
         MemUserWrites(self.clone()).provision(did).await
     }
 
-    /// Resolve a DID to its User without minting one (inspect helper, the read-side
-    /// counterpart to [`provision`](MemBackend::provision)).
+    /// Resolve a DID to its User without minting one (inspect helper).
     pub async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         MemUserStore(self.clone()).find_by_did(did).await
     }
 
-    /// Found an account with its Owner membership (test seed of
-    /// [`AccountWrites::create`]).
+    /// Found an account with its Owner membership (test seed).
     pub async fn create(&self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         MemAccountWrites(self.clone()).create(account, owner).await
     }
 
-    /// Seed a **soft-deleted** account holding `handle` (test-only). There is no
-    /// soft-delete write path yet, so this inserts a tombstoned `StoredAccount`
-    /// directly — the mem mirror of `UPDATE accounts SET deleted_at = …`. It lets a
-    /// test assert that a tombstone (a) is invisible to resolution/`find` yet (b)
-    /// still reserves its handle at founding, exactly as the global pg index does
-    /// (DD `23003138`).
+    /// Seed a soft-deleted account holding `handle` (test-only) by inserting a
+    /// tombstoned row directly — there is no soft-delete write path yet.
+    /// A tombstone is invisible to `find` but still reserves its handle.
+    /// (DD 23003138)
     pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
         let now = Utc::now();
         self.accounts
@@ -742,17 +626,14 @@ impl MemBackend {
             );
     }
 
-    /// Seat/replace a member's role (test seed of [`AccountWrites::grant_role`]).
+    /// Seat or replace a member's role (test seed).
     pub async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
         MemAccountWrites(self.clone()).grant_role(member).await
     }
 
-    /// Seed a member's [`RoleAlias`] directly onto an already-seated membership
-    /// (test-only). There is no set-alias write path yet — `grant_role` deliberately
-    /// never touches it, mirroring the pg adapter's `grant_role` SQL, which only
-    /// writes `role` — so this reaches straight into the stored map, the mem mirror
-    /// of a direct `UPDATE account_members SET alias = …`. Panics if `(account,
-    /// user)` holds no membership: seeding an alias onto nobody is a test bug.
+    /// Seed a member's [`RoleAlias`] onto an already-seated membership
+    /// (test-only); there is no set-alias write path yet. Panics if `(account,
+    /// user)` holds no membership.
     pub fn seed_role_alias(&self, user: UserId, account: AccountId, alias: RoleAlias) {
         self.memberships
             .lock()
@@ -762,7 +643,7 @@ impl MemBackend {
             .alias = Some(alias);
     }
 
-    /// Issue a pending invitation (test seed of [`AccountWrites::create_invitation`]).
+    /// Issue a pending invitation (test seed).
     pub async fn create_invitation(&self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         MemAccountWrites(self.clone())
             .create_invitation(invitation)
@@ -794,9 +675,8 @@ impl MemBackend {
             .await
     }
 
-    /// How many blobs the file store currently holds (inspect helper, ZMVP-205)
-    /// — lets a test prove a rejected upload's blob was deleted, not merely
-    /// orphaned, without reaching for a specific (never-returned) `FileKey`.
+    /// How many blobs the file store currently holds (inspect helper), so a test
+    /// can prove a rejected upload's blob was deleted rather than orphaned.
     pub fn blob_count(&self) -> usize {
         self.blobs
             .lock()
@@ -804,27 +684,13 @@ impl MemBackend {
             .len()
     }
 
-    // The commission seed/inspect helpers (`create_commission`, `find_commission`,
-    // `all_commissions`, `changelog_entries`) live with the commission fakes in
-    // [`mod@crate::commission`].
+    // The commission seed/inspect helpers live with the commission fakes.
 }
 
-/// [`MemBackend::merge`]'s per-`HashMap`-field step: reconcile `shared` with what
-/// this unit changed, told apart by diffing `base` (the pristine pre-write
-/// snapshot) against `staged` (the mutated one) — key by key, never a wholesale
-/// replace. A key that was in `base` but has since vanished from `staged` was
-/// removed by this unit, so it is removed from `shared` too. Of the keys present
-/// in `staged`, only those whose value actually **differs** from `base` are
-/// (re)written onto `shared` — covering both a fresh insert (absent from `base`)
-/// and an in-place update alike; a key `staged` carries unchanged from `base` was
-/// merely read (or simply rode along in the snapshot) and is left alone, so it
-/// does not clobber whatever `shared` holds for that key now. A key `shared`
-/// holds that neither `base` nor `staged` ever saw belongs to another unit's
-/// disjoint, concurrent commit, and is likewise left untouched. Together this is
-/// what turns the merge from a destructive whole-map replace into a per-key,
-/// per-change apply. (`V: PartialEq` is what makes the "actually differs" check
-/// possible; every value type stored in one of these maps derives it for exactly
-/// this reason.)
+/// [`MemBackend::merge`]'s per-`HashMap` step: a key in `base` but gone from
+/// `staged` is removed from `shared`; of the keys `staged` holds, only those
+/// whose value differs from `base` are written. Everything else — an unchanged
+/// key, or a key only `shared` knows — is left alone.
 fn merge_map<K, V>(shared: &mut HashMap<K, V>, base: &HashMap<K, V>, staged: &HashMap<K, V>)
 where
     K: Eq + std::hash::Hash + Clone,
@@ -843,16 +709,10 @@ where
     }
 }
 
-/// [`MemBackend::merge`]'s per-append-log-field step — the [`merge_map`] idea
-/// applied to a `Vec`-shaped log instead of a `HashMap`. A log row (a
-/// [`StoredHandleChange`], [`StoredChangelogEntry`], or [`StoredPlacement`])
-/// carries no id split from its own data, so value equality stands in for the key
-/// equality `merge_map` diffs by — sound because every row is written once, at
-/// push time, and never mutated after (the one way a row disappears is a bulk
-/// removal cascading from a parent's delete, never an edit). A `staged` row absent
-/// from `base` is new and is pushed onto `shared`, once; a `base` row absent from
-/// `staged` was removed by this unit, so one matching copy is dropped from
-/// `shared` too.
+/// [`MemBackend::merge`]'s per-append-log step: the [`merge_map`] idea over a
+/// `Vec`, with value equality standing in for a key — sound because a log row is
+/// written once and never edited. New staged rows are pushed; rows this unit
+/// removed are dropped.
 fn merge_log<T: Clone + PartialEq>(shared: &mut Vec<T>, base: &[T], staged: &[T]) {
     for entry in base {
         if staged.contains(entry) {
@@ -875,9 +735,8 @@ pub struct MemUserStore(MemBackend);
 
 #[async_trait]
 impl UserStore for MemUserStore {
-    /// The users map is keyed by DID, and since the actor re-key (DD `57081857`)
-    /// a [`UserId`] *is* that DID — so this is a direct lookup, not the value
-    /// scan it used to be.
+    /// A direct lookup: a [`UserId`] IS the DID the map is keyed by.
+    /// (DD 57081857)
     async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
         let users = self
             .0
@@ -887,8 +746,7 @@ impl UserStore for MemUserStore {
         Ok(users.get(id).cloned())
     }
 
-    /// Read-only counterpart to `provision`: a miss returns `None` rather than
-    /// minting a new `User`.
+    /// Read-only counterpart to `provision`: a miss returns `None`.
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         let users = self
             .0
@@ -899,29 +757,22 @@ impl UserStore for MemUserStore {
     }
 }
 
-/// In-memory [`UserWrites`] view: recognition writes onto the shared state. Vended
-/// only by [`MemUnitOfWork::users`] in production wiring (tests reach it via
-/// [`MemBackend::provision`]).
+/// In-memory [`UserWrites`] view, vended only by [`MemUnitOfWork::users`].
 pub struct MemUserWrites(MemBackend);
 
 #[async_trait]
 impl UserWrites for MemUserWrites {
-    /// Recognize a DID as the two-step create of ZMVP-123: intern the identity row
-    /// (the shared-PK parent), then key the `users` projection by that identity id.
-    /// Idempotent per DID — the `intern` upsert returns the existing identity and
-    /// `or_insert_with` returns the existing user untouched — so a repeat sign-in maps
-    /// to the same User (same id, same created_at). Both rows land in this (staged, when
-    /// vended by the unit of work) backend, so a dropped unit discards them together.
+    /// Recognize a DID in two steps: intern the identity row, then key the
+    /// `users` projection by it. Idempotent per DID, so a repeat sign-in maps to
+    /// the same User; both rows land in the same backend and commit together.
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
         let now = Utc::now();
-        // Intern first (idempotent by DID) — the identity row is the projection's
-        // parent, and since the actor re-key the DID is what both are keyed by.
+        // Intern first: the identity row is the projection's parent.
         let identity = MemActorIdentityWrites(self.0.clone())
             .intern(did, ActorKind::User, now)
             .await?;
-        // Cross-kind guard, the pg provision's twin: a DID already interned as
-        // another actor kind is a 409-shaped conflict, never a silent reuse of
-        // the other actor's identity id.
+        // A DID already interned as another actor kind is a conflict, never a
+        // silent reuse of that actor's identity id.
         if identity.kind != ActorKind::User {
             let conflict = DidBelongsToAnotherActor {
                 existing_kind: identity.kind.as_str().to_string(),
@@ -941,13 +792,11 @@ impl UserWrites for MemUserWrites {
     }
 }
 
-/// In-memory [`Authenticator`]: stands in for the PDS so the full sign-in flow can
-/// be driven without a network. `start` hands back a fixed callback URL and
-/// `complete` always yields the configured DID — i.e. "the PDS authenticated this
-/// visitor" — letting an e2e test exercise everything downstream of the handshake.
+/// In-memory [`Authenticator`]: `start` hands back a fixed callback URL and
+/// `complete` always yields the configured DID, so the sign-in flow can be
+/// driven without a network.
 pub struct MemAuthenticator {
-    /// The DID every `complete` resolves to — the visitor this fake pretends the
-    /// PDS just authenticated. Fixed at construction.
+    /// The DID every `complete` resolves to, fixed at construction.
     did: Did,
 }
 
@@ -961,8 +810,7 @@ impl MemAuthenticator {
 #[async_trait]
 impl Authenticator for MemAuthenticator {
     async fn start(&self, _handle: &str) -> anyhow::Result<String> {
-        // Any callback URL works; the test issues the callback request itself. The
-        // `code` is opaque to the fake — `complete` ignores it.
+        // Any callback URL works; the test issues the callback itself.
         Ok("/signin-callback?code=test".to_string())
     }
 
@@ -976,20 +824,13 @@ impl Authenticator for MemAuthenticator {
     }
 }
 
-/// In-memory [`ProfileSource`]: stands in for the PDS read so the profile flow
-/// can be exercised without a network. Returns a fixed profile, counts its calls
-/// (so a test can prove a cache hit avoided a second fetch), and can be flipped
-/// to "unreachable" to drive graceful-degradation tests.
+/// In-memory [`ProfileSource`]: returns a fixed profile, counts its calls, and
+/// can be flipped to unreachable for graceful-degradation tests.
 pub struct MemProfileSource {
-    /// The profile handed back for any DID. `Some` while the fake PDS is
-    /// reachable; `None` after [`MemProfileSource::set_unreachable`], which makes
-    /// `fetch` error. Behind a [`Mutex`] only so `set_unreachable` can flip it
-    /// through a shared `&self`.
-    // `None` simulates an unreachable PDS — `fetch` errors instead of returning.
+    /// The profile handed back for any DID; `None` after
+    /// [`MemProfileSource::set_unreachable`] makes `fetch` error instead.
     profile: Mutex<Option<Profile>>,
-    /// Count of `fetch` calls, read via [`MemProfileSource::fetch_count`] to
-    /// prove a cache hit avoided a second source read. [`AtomicUsize`] so it
-    /// needs no lock.
+    /// Count of `fetch` calls, read via [`MemProfileSource::fetch_count`].
     fetches: AtomicUsize,
 }
 
@@ -1010,8 +851,7 @@ impl MemProfileSource {
             .expect("MemProfileSource mutex poisoned") = None;
     }
 
-    /// How many times `fetch` has been called — lets a test assert the cache
-    /// served a repeat view without a second source read.
+    /// How many times `fetch` has been called.
     pub fn fetch_count(&self) -> usize {
         self.fetches.load(Ordering::SeqCst)
     }
@@ -1019,9 +859,8 @@ impl MemProfileSource {
 
 #[async_trait]
 impl ProfileSource for MemProfileSource {
-    /// Returns the configured profile and bumps the call counter; errors instead
-    /// once the fake has been flipped unreachable. The DID is ignored — one
-    /// profile stands in for all.
+    /// Return the configured profile and bump the call counter; errors once the
+    /// fake is unreachable. The DID is ignored.
     async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
         self.fetches.fetch_add(1, Ordering::SeqCst);
         self.profile
@@ -1032,11 +871,9 @@ impl ProfileSource for MemProfileSource {
     }
 }
 
-/// In-memory [`ProfileCache`] over the shared [`MemBackend`]: a plain DID-keyed
-/// map. Never expires — TTL is the real (pg) cache's policy; tests control
-/// freshness by what they put in. Both `get` and the best-effort `put` are `&self`
-/// here, mirroring the pg adapter: the cache fill is a documented exception to the
-/// Unit of Work, not a write view.
+/// In-memory [`ProfileCache`] over the shared [`MemBackend`]: a DID-keyed map
+/// that never expires. Both `get` and the best-effort `put` take `&self` — the
+/// cache fill is a documented Unit-of-Work exemption, not a write view.
 pub struct MemProfileCache(MemBackend);
 
 #[async_trait]
@@ -1061,18 +898,13 @@ impl ProfileCache for MemProfileCache {
     }
 }
 
-/// The fields of an [`Account`] we keep behind the lock. `Account` is not `Clone`
-/// (an aggregate root, not a value), so we store its parts and rebuild a fresh
-/// `Account` on every `find` rather than clone the original. `Clone` so a unit of
-/// work can deep-copy the accounts map into its staging snapshot (see
-/// [`MemBackend::stage`]). `PartialEq` lets [`merge_map`] diff a unit's staged
-/// value against its pristine base snapshot to tell an untouched row (rode along
-/// in the snapshot) apart from one this unit actually wrote.
+/// The fields of an [`Account`] we keep behind the lock; `find` rebuilds the
+/// `Account`, which is not `Clone`. `Clone` lets a unit stage the map,
+/// `PartialEq` lets [`merge_map`] tell an untouched row from a written one.
 #[derive(Clone, PartialEq)]
 struct StoredAccount {
-    /// The account's public handle — the validated, normalized name it is reached
-    /// by, globally unique (a soft-deleted account still reserves it, DD/23003138;
-    /// mirrors the pg `handle` column + its `accounts_handle_key` index).
+    /// The account's public handle; globally unique, and a soft-deleted account
+    /// still reserves it. (DD 23003138)
     handle: Handle,
     /// The account's display name.
     name: AccountName,
@@ -1080,38 +912,27 @@ struct StoredAccount {
     created_at: domain::datetime::DateTimeUtc,
     /// When the account was last modified.
     updated_at: domain::datetime::DateTimeUtc,
-    /// Soft-delete tombstone: `Some` hides the account from `find`, mirroring the
-    /// pg adapter's `deleted_at IS NULL` filter. The row is kept, not dropped.
+    /// Soft-delete tombstone: `Some` hides the account from `find`, keeping the
+    /// row.
     deleted_at: Option<domain::datetime::DateTimeUtc>,
 }
 
-/// One `account_members` row's fields: the [`Role`] held, plus the member's
-/// `listed_on_profile` publication choice (DD `21594113` decision 4).
-///
-/// The flag lives here rather than being dropped on the floor so the fake can
-/// answer [`ListingScope::PublicProfile`] the same way the pg adapter's
-/// `listed_on_profile` predicate does. Storing only the role would make the
-/// fake silently return unlisted memberships to a public listing — a mem/pg
-/// divergence in a *privacy* filter, which is the one class of parity bug the
-/// in-memory adapter must never have.
+/// One `account_members` row: the [`Role`] held plus the member's
+/// `listed_on_profile` choice, which is kept so the fake answers
+/// [`ListingScope::PublicProfile`] exactly as pg does. (DD 21594113)
 #[derive(Clone, PartialEq)]
 struct StoredMembership {
     /// The role the member holds in the account.
     role: Role,
-    /// The member's own alias for that role, if they set one. `None` on the
-    /// floor — no write path sets it yet, mirroring the pg column's nullable,
-    /// unset-by-default column.
+    /// The member's own alias for that role; no write path sets it yet.
     alias: Option<RoleAlias>,
-    /// Whether the member chose to publish this membership on their public
-    /// profile. Mirrors the pg column's `DEFAULT true`: a membership is listed
-    /// unless the member says otherwise.
+    /// Whether the member publishes this membership; listed unless they say
+    /// otherwise.
     listed_on_profile: bool,
 }
 
 impl StoredMembership {
-    /// A membership seated with the column defaults — listed, no alias.
-    /// Founding and `grant_role` both take this path; only invitation-acceptance
-    /// carries an explicit `listed_on_profile` choice.
+    /// A membership seated with the defaults — listed, no alias.
     fn listed(role: Role) -> Self {
         Self {
             role,
@@ -1121,13 +942,8 @@ impl StoredMembership {
     }
 }
 
-/// The fields of an [`Invitation`] we keep behind the lock. Like [`Account`],
-/// `Invitation` isn't `Clone` (an entity with a lifecycle, not a value), so we
-/// store its parts and rebuild a fresh `Invitation` on read. `Clone` so a unit of
-/// work can deep-copy the invitations map into its staging snapshot (see
-/// [`MemBackend::stage`]). `PartialEq` lets [`merge_map`] diff a unit's staged
-/// value against its pristine base snapshot to tell an untouched row (rode along
-/// in the snapshot) apart from one this unit actually wrote.
+/// The fields of an [`Invitation`] we keep behind the lock; a read rebuilds the
+/// `Invitation`, which is not `Clone`.
 #[derive(Clone, PartialEq)]
 struct StoredInvitation {
     /// The account membership is being offered of.
@@ -1136,10 +952,9 @@ struct StoredInvitation {
     invited_user: UserId,
     /// The offered rank.
     role: Role,
-    /// The member who issued the offer (becomes the new member's Parent on
-    /// acceptance — DESIGN/Roles rule 4a).
+    /// The member who issued the offer; the new member's Parent on acceptance.
     inviter: UserId,
-    /// Where the offer sits in its lifecycle. [`InvitationState`] is `Copy`.
+    /// Where the offer sits in its lifecycle.
     state: InvitationState,
     /// When the invitation was issued.
     created_at: domain::datetime::DateTimeUtc,
@@ -1147,22 +962,16 @@ struct StoredInvitation {
     updated_at: domain::datetime::DateTimeUtc,
 }
 
-/// One appended handle change as the mem backend keeps it — the in-memory mirror of a
-/// pg `account_handle_changes` row (ZMVP-46). `Clone` so a unit of work can deep-copy
-/// the log into its staging snapshot (see [`MemBackend::stage`]).
-/// The mem fake keeps only the fields its reads consume — the account, the vacated
-/// `old_handle`, and the instant. It deliberately drops the pg row's `new_handle`
-/// (audit-only, read by nothing here), per this module's "fidelity, not realism" note.
-/// `PartialEq` so [`merge_log`] can diff a unit's staged log against its pristine
-/// base snapshot by value — this row carries no id of its own, so equality IS
-/// identity (sound because a row is written once, at push time, and never mutated).
+/// One appended handle change as the mem backend keeps it. Only the fields its
+/// reads consume are stored — the pg row's audit-only `new_handle` is dropped.
+/// `PartialEq` lets [`merge_log`] diff by value, since the row carries no id.
 #[derive(Clone, PartialEq)]
 struct StoredHandleChange {
     /// The account whose handle changed.
     account_id: AccountId,
-    /// The handle vacated by this change — what the quarantine reserves.
+    /// The handle vacated by this change; what the quarantine reserves.
     old_handle: Handle,
-    /// When the change committed — the rate-limit / quarantine window anchor.
+    /// When the change committed; the rate-limit and quarantine window anchor.
     changed_at: DateTimeUtc,
 }
 
@@ -1171,9 +980,8 @@ pub struct MemAccountStore(MemBackend);
 
 #[async_trait]
 impl AccountStore for MemAccountStore {
-    /// Rebuilds an [`Account`] from its stored parts (it isn't `Clone`). A
-    /// soft-deleted account resolves to `None`, the same as one that never
-    /// existed.
+    /// Rebuild an [`Account`] from its stored parts; a soft-deleted account
+    /// resolves to `None`.
     async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         let accounts = self
             .0
@@ -1196,9 +1004,8 @@ impl AccountStore for MemAccountStore {
             .map(|membership| membership.role.clone()))
     }
 
-    /// Scans for the lone pending offer for `(account, invited_user)`, rebuilding
-    /// an [`Invitation`] from its parts (it isn't `Clone`). Accepted/revoked
-    /// invitations are history, not live offers, so they never match.
+    /// Scan for the lone pending offer for `(account, invited_user)`; accepted
+    /// and revoked invitations never match.
     async fn find_pending_invitation(
         &self,
         account: &AccountId,
@@ -1217,7 +1024,7 @@ impl AccountStore for MemAccountStore {
         }))
     }
 
-    /// Rebuilds the [`Invitation`] for `id` in whatever state it holds, or `None`.
+    /// Rebuild the [`Invitation`] for `id` in whatever state it holds.
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
         let invitations = self
             .0
@@ -1229,11 +1036,8 @@ impl AccountStore for MemAccountStore {
             .map(|stored| rebuild_invitation(*id, stored)))
     }
 
-    /// Scans for the live account whose handle matches, returning its DID — which
-    /// since the actor re-key (DD `57081857`) is the map's own key. A soft-deleted
-    /// account resolves to `None`, mirroring `find` and the pg adapter's
-    /// `deleted_at IS NULL` filter. `Handle` equality is exact (both sides are
-    /// normalized), so this is the in-memory mirror of the unique-index lookup.
+    /// Scan for the live account whose handle matches, returning its DID. A
+    /// soft-deleted account resolves to `None`; handle equality is exact.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         let accounts = self
             .0
@@ -1245,8 +1049,7 @@ impl AccountStore for MemAccountStore {
         }))
     }
 
-    /// Counts this account's recorded changes at or after `since` — the in-memory
-    /// mirror of the pg `count(*)` over `account_handle_changes` (ZMVP-46 rate limit).
+    /// Count this account's recorded handle changes at or after `since`.
     async fn count_handle_changes_since(
         &self,
         account: &AccountId,
@@ -1263,9 +1066,8 @@ impl AccountStore for MemAccountStore {
             .count() as i64)
     }
 
-    /// Whether `handle` was recently vacated by an account other than `excluding` —
-    /// the in-memory mirror of the pg `EXISTS` quarantine check (ZMVP-46 §4). A row for
-    /// `excluding` itself never counts, so an account can reclaim its own vacated handle.
+    /// Whether `handle` was recently vacated by an account other than
+    /// `excluding` — so an account can always reclaim its own vacated handle.
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
@@ -1284,13 +1086,9 @@ impl AccountStore for MemAccountStore {
         }))
     }
 
-    /// Scans `memberships` for `user`'s rows, joins each back to its
-    /// `accounts` entry, and drops any that is soft-deleted or has vanished
-    /// (ZMVP-157) — the mem mirror of the pg adapter's `account_members ⋈
-    /// accounts` query. Sorted by the account's DID afterward, by byte value;
-    /// the `HashMap` scan itself has no natural order, so the sort is what makes
-    /// the result deterministic, mirroring the pg `ORDER BY a.id COLLATE "C"`
-    /// (which is that same byte order — see the query's note).
+    /// Scan `memberships` for `user`'s rows, join each back to its account and
+    /// drop the soft-deleted or vanished ones. Sorted by the account's DID, by
+    /// byte value, so the result is deterministic.
     async fn list_for_user(
         &self,
         user: &UserId,
@@ -1308,7 +1106,7 @@ impl AccountStore for MemAccountStore {
             .expect("MemBackend memberships mutex poisoned");
 
         // A public projection honors the member's publication choice; their own
-        // view ignores it. Mirrors the pg query's `listed_on_profile` predicate.
+        // view ignores it.
         let honors_valve = matches!(scope, ListingScope::PublicProfile);
 
         let mut rows: Vec<AccountMembership> = memberships
@@ -1330,18 +1128,15 @@ impl AccountStore for MemAccountStore {
     }
 }
 
-/// In-memory [`AccountWrites`] view: account/membership/invitation writes. Vended by
-/// [`MemUnitOfWork::accounts`], where the [`MemBackend`] it wraps is the unit's
-/// *staging* snapshot — so writes land in the staged copy and reach the shared store
-/// only on [`MemUnitOfWork::commit`] (drop = rollback). The test seed helpers on
-/// [`MemBackend`] wrap the shared store directly, so they apply at once.
+/// In-memory [`AccountWrites`] view, vended by [`MemUnitOfWork::accounts`] over
+/// the unit's staging snapshot, so writes reach the shared store only on commit.
+/// The test seed helpers wrap the shared store directly and apply at once.
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
-    /// Shared store effects of a member departing (`leave` / `revoke_role`): remove
-    /// the membership and revoke the member's still-pending issued invitations. The
-    /// mem fake doesn't model the role tree's `parent` (see `grant_role`), so there
-    /// are no children to re-home — the pg adapter carries rule-3 re-homing.
+    /// Shared store effects of a member departing: remove the membership and
+    /// revoke their still-pending issued invitations. The mem fake models no role
+    /// tree, so there are no children to re-home.
     fn settle_member_departure(&self, user: &UserId, account: &AccountId) {
         self.0
             .memberships
@@ -1367,17 +1162,10 @@ impl MemAccountWrites {
 
 #[async_trait]
 impl AccountWrites for MemAccountWrites {
-    /// Inserts the account and the owner's membership in turn. The two `HashMap`s
-    /// sit behind separate locks, so this isn't truly atomic — it stands in for
-    /// the real pg adapter's single private-store transaction, which tests don't
-    /// stress for partial failure.
-    ///
-    /// Mirrors the pg `accounts_handle_key` unique index — **global**, spanning
-    /// live *and* soft-deleted accounts (a tombstone reserves its handle, DD
-    /// `23003138`): a handle already present in ANY state fails with [`HandleTaken`],
-    /// the same typed error the handler maps to a `409`. Keeping this fidelity here
-    /// lets the founding backstop (pre-check miss → store rejection) be exercised
-    /// in-process.
+    /// Insert the account and the owner's membership in turn — not truly atomic,
+    /// standing in for pg's single transaction. Handle uniqueness is global across
+    /// live AND soft-deleted accounts: a collision fails with [`HandleTaken`].
+    /// (DD 23003138)
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         let mut accounts = self
             .0
@@ -1385,8 +1173,8 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend accounts mutex poisoned");
 
-        // Global handle uniqueness — NOT filtered on `deleted_at`, unlike the read
-        // path — so a soft-deleted account still reserves its handle.
+        // NOT filtered on `deleted_at`, unlike the read path — so a soft-deleted
+        // account still reserves its handle.
         if accounts
             .values()
             .any(|stored| stored.handle == account.handle)
@@ -1394,12 +1182,8 @@ impl AccountWrites for MemAccountWrites {
             return Err(anyhow::Error::new(HandleTaken));
         }
 
-        // Intern the account's identity row, keyed by the account's OWN id (the shared
-        // PK, ZMVP-123) — the mem mirror of the pg intern+projection in one unit. The
-        // account's DID is freshly minted and unique, so this creates a new identity; a
-        // DID already interned under a different id is a loud bug, not a duplicate row.
-        // Runs BEFORE the projection is staged so a failure leaves no partial
-        // account row — the mem mirror of the pg transaction abort (PR #141 review).
+        // Intern the identity row BEFORE staging the projection, so a failure
+        // leaves no partial account row.
         {
             let mut identities = self
                 .0
@@ -1443,10 +1227,7 @@ impl AccountWrites for MemAccountWrites {
         );
         drop(accounts);
 
-        // `alias` is dropped here exactly as `role` alone survives into
-        // `StoredMembership::listed` — the founder is seated with no alias
-        // (`Account::open` always mints `UserAccount { alias: None, .. }`), and
-        // there is no write path yet that would seat one instead.
+        // The founder is seated with no alias; no write path seats one.
         let UserAccount {
             user_id,
             account_id,
@@ -1465,17 +1246,11 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
-    /// Repoints the stored account's handle to `new` and appends the change to the
-    /// audit log — the in-memory mirror of the pg adapter's single transaction (ZMVP-46).
-    /// `old` is an **optimistic-concurrency precondition** (matching the pg `handle =
-    /// old` guard): the change applies only if the account is live and *still* holds
-    /// `old`, else it fails and records no audit row — so a stale observation can't log a
-    /// wrong `old_handle` (which would leave the truly vacated handle un-quarantined).
-    /// The precondition is checked *before* uniqueness, mirroring the pg `UPDATE` (whose
-    /// `WHERE handle = old` short-circuits ahead of the index). Global handle uniqueness
-    /// across every OTHER account (live *or* tombstoned) then fails a collision with
-    /// [`HandleTaken`] (→ 409), like [`create`](MemAccountWrites::create). Changing to
-    /// the account's own current handle is a caller-side no-op rejected before this.
+    /// Repoint the account's handle to `new` and append the change to the audit
+    /// log. `old` is an optimistic-concurrency precondition checked first: the
+    /// change applies only if the account is live and still holds `old`, else it
+    /// fails and records no audit row. A collision with any OTHER account, live or
+    /// tombstoned, then fails with [`HandleTaken`].
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -1489,9 +1264,8 @@ impl AccountWrites for MemAccountWrites {
             .lock()
             .expect("MemBackend accounts mutex poisoned");
 
-        // Precondition first (mirrors pg's `WHERE ... AND handle = old`, which gates the
-        // row before the unique index is touched): the account must be live and still
-        // hold `old`, else we roll back without auditing a stale change.
+        // Precondition first: the account must be live and still hold `old`,
+        // else we roll back without auditing a stale change.
         if !accounts
             .get(account)
             .is_some_and(|stored| stored.deleted_at.is_none() && &stored.handle == old)
@@ -1503,9 +1277,7 @@ impl AccountWrites for MemAccountWrites {
             );
         }
 
-        // Global handle uniqueness across every OTHER account (live or tombstoned),
-        // mirroring the pg `accounts_handle_key` index; the account's own row is exempt
-        // (a no-op self-rename never reaches here).
+        // Uniqueness across every OTHER account, live or tombstoned.
         if accounts
             .iter()
             .any(|(id, stored)| id != account && &stored.handle == new)
@@ -1533,14 +1305,8 @@ impl AccountWrites for MemAccountWrites {
     }
 
     async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
-        // Upsert into the (account, user) -> role map: a fresh member is seated, an
-        // existing one's role replaced — the in-memory mirror of the pg adapter's
-        // `ON CONFLICT ... DO UPDATE`. Granting a role is how a user joins an
-        // account (DESIGN/Roles); the role tree (`parent`) is deferred on the floor.
-        // `alias` is dropped here exactly as the pg adapter's `grant_role` SQL
-        // only ever touches the `role` column: a role grant never clobbers a
-        // member's already-set alias, and there is no write path yet that would
-        // seat a fresh one (`StoredMembership::listed` mints `alias: None`).
+        // Upsert into the (account, user) -> role map. A role grant never
+        // clobbers a member's already-set alias.
         let UserAccount {
             user_id: user,
             account_id,
@@ -1560,30 +1326,20 @@ impl AccountWrites for MemAccountWrites {
     }
 
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
-        // A revoke is a member-departure event, identical to `leave` at the store
-        // level (the caller settles authority): remove the membership and revoke the
-        // member's pending issued invitations.
+        // A revoke is a departure, identical to `leave` at the store level.
         self.settle_member_departure(user, account);
         Ok(())
     }
 
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
-        // Self-removal (ZMVP-21); preconditions (membership exists, not Owner) are
-        // the caller's. Same store effects as `revoke_role`.
+        // Self-removal; the preconditions are the caller's.
         self.settle_member_departure(user, account);
         Ok(())
     }
 
-    /// Inserts the pending invitation, unless one is already pending for the same
-    /// `(account, invited_user)` — in which case this is a no-op, the in-memory
-    /// mirror of the pg adapter's partial unique index (`... WHERE state =
-    /// 'pending'`). The handler also checks `find_pending_invitation` first, so
-    /// this is the belt-and-suspenders backstop, not the only guard.
-    ///
-    /// Returns the offer that now stands — the freshly inserted one, or the
-    /// pending one already on file when this issue was dropped — so the caller is
-    /// handed the live offer rather than the duplicate it proposed (the pg
-    /// adapter's contract, mirrored).
+    /// Insert the pending invitation unless one is already pending for the same
+    /// `(account, invited_user)`, in which case this is a no-op. Returns the offer
+    /// that now stands — the fresh one, or the pending one already on file.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         let mut invitations = self
             .0
@@ -1597,8 +1353,7 @@ impl AccountWrites for MemAccountWrites {
                 .then(|| rebuild_invitation(*id, stored))
         });
         if let Some(standing) = already_pending {
-            // At most one pending offer per (account, user): a second issue is a
-            // no-op, not a second row.
+            // At most one pending offer per (account, user).
             return Ok(standing);
         }
         let issued = StoredInvitation {
@@ -1615,9 +1370,8 @@ impl AccountWrites for MemAccountWrites {
         Ok(standing)
     }
 
-    /// Flips a pending invitation to revoked and stamps `updated_at`. A non-pending
-    /// or absent invitation is left untouched — a no-op, not an error (the handler
-    /// decides whether that's a 404/409), mirroring the pg adapter's guarded UPDATE.
+    /// Flip a pending invitation to revoked and stamp `updated_at`. A non-pending
+    /// or absent invitation is a no-op, not an error.
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         let mut invitations = self
             .0
@@ -1633,34 +1387,19 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
-    /// Flips the pending invitation to Accepted and seats the invited User as a
-    /// member — the in-memory mirror of the pg adapter's single transaction, where
-    /// the accepted state and the membership land together or not at all. The
-    /// stored offer must still be pending; if it was accepted or revoked in the
-    /// meantime (a lost race against the handler's `Invitation::accept` guard) this
-    /// seats nothing and errors, honoring "a revoked invitation yields no
-    /// membership". Like the pg guarded UPDATE, the *store's* state is what's
-    /// checked — not the passed `invitation`, which the handler has already flipped.
-    ///
-    /// `parent` (the inviter, DESIGN/Roles rule 4a) and `listed_on_profile` are
-    /// deferred on the floor here, exactly as the role tree is in `grant_role`: the
-    /// pg adapter persists them in dedicated columns, but no port reads either back
-    /// (`role_of` returns only the role), so the in-memory map keeps only the role.
-    ///
-    /// Seating is a no-op when the pair is already seated (a role granted through
-    /// another path, e.g. `grant_role`, while this invitation sat pending) — the mem
-    /// mirror of pg's `ON CONFLICT (account_id, user_id) DO NOTHING`. The ORIGINAL
-    /// membership row survives untouched, and the returned [`UserAccount`] carries
-    /// whatever role is actually persisted, not necessarily the one this invitation
-    /// offered.
+    /// Flip the pending invitation to Accepted and seat the invited User; the
+    /// state and the membership land together or not at all. The STORE's state is
+    /// what is checked, so an offer accepted or revoked in the meantime seats
+    /// nothing and errors. Seating an already-seated pair is a no-op, leaving the
+    /// original membership and returning whatever role is actually persisted.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
         {
-            // The pending guard is the atomic backstop: matching no pending offer
-            // means it was accepted or revoked since, so seat no member.
+            // Matching no pending offer means it was accepted or revoked since,
+            // so seat no member.
             let mut invitations = self
                 .0
                 .invitations
@@ -1685,11 +1424,8 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        // `or_insert_with` writes only when the pair is absent, so a re-seat of an
-        // already-seated pair leaves the existing role untouched instead of
-        // overwriting it with this (possibly stale) invitation's offer. The
-        // invitee's `listed_on_profile` choice is seated with it, and likewise
-        // is not overwritten on a re-seat.
+        // `or_insert_with` writes only when the pair is absent, so a re-seat
+        // leaves the existing role and listing choice untouched.
         let seated = StoredMembership {
             role: invitation.role.clone(),
             alias: None,
@@ -1707,16 +1443,9 @@ impl AccountWrites for MemAccountWrites {
         })
     }
 
-    /// Transfer ownership (DESIGN/Roles rule 8): promote the incoming member to the
-    /// sole `Owner` and demote the outgoing `Owner` to `Admin`, in one lock so both
-    /// role writes land together — the in-memory mirror of the pg adapter's single
-    /// transaction. The caller (the handler) has already settled authority; the two
-    /// guards here are the defensive backstop the pg adapter's `SELECT`s are, erroring
-    /// (rather than half-transferring) if either membership vanished since that check.
-    ///
-    /// `parent` re-homing (the outgoing Owner under the new Owner, rule 5) is deferred
-    /// on the floor exactly as it is in `grant_role`/`accept_invitation`: no port reads
-    /// `parent` back, so the in-memory map keeps only the role.
+    /// Transfer ownership: promote the incoming member to sole `Owner` and demote
+    /// the outgoing one to `Admin`, under one lock so both writes land together.
+    /// Errors rather than half-transferring if either membership has vanished.
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
@@ -1753,8 +1482,7 @@ impl AccountWrites for MemAccountWrites {
             ));
         }
 
-        // Only the roles swap — each member keeps their own `listed_on_profile`
-        // choice across the transfer; ownership is not a publication decision.
+        // Only the roles swap; each member keeps their own listing choice.
         if let Some(outgoing) = memberships.get_mut(&outgoing_seat) {
             outgoing.role = Role::Admin;
         }
@@ -1764,12 +1492,9 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
-    /// Stamps `deleted_at` on the stored account (the in-memory mirror of pg's
-    /// `UPDATE accounts SET deleted_at = now`), keeping the row so the handle stays
-    /// reserved and reads (`find`/`find_did_by_handle`, which filter on `deleted_at`)
-    /// treat it as absent. Memberships and invitations are left in place. Idempotent:
-    /// an already-soft-deleted or absent account is a no-op. See the
-    /// [`soft_delete`](AccountWrites::soft_delete) port doc.
+    /// Stamp `deleted_at` on the account, keeping the row so its handle stays
+    /// reserved while reads treat it as absent. Memberships and invitations are
+    /// left in place. Idempotent on an already-deleted or absent account.
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let mut accounts = self
             .0
@@ -1786,20 +1511,11 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
-    /// Removes the account row (freeing its handle for reuse) along with every
-    /// membership, invitation, and handle-change log row belonging to it, and
-    /// **severs the account's positioning rails** — the placements it held and the
-    /// current-placement pointers aimed at it (ZMVP-57 AC1). This mirrors pg's
-    /// delete: the membership/invitation/handle-change FKs are removed
-    /// children-first, while the positioning FKs onto `accounts` are `ON DELETE
-    /// CASCADE`. **View grants are no longer among the rails**: since the actor
-    /// re-key (DD `57081857`) a grant is issued to a User (Engineer ruling
-    /// 2026-09-04) and holds no reference to an account to sever — the pg table
-    /// dropped its foreign key for the same reason. The **commissions themselves
-    /// are untouched** — they are User-owned and survive account deletion
-    /// (Ownership Separation DD `29130754`); only the account-side positioning
-    /// goes. The custody keys are not modeled here. Removing an absent account is
-    /// a no-op. See the [`hard_delete`](AccountWrites::hard_delete) port doc.
+    /// Remove the account row — freeing its handle — with every membership,
+    /// invitation and handle-change row, and sever its boards, columns and cards.
+    /// The commissions those cards pointed at are untouched (they are User-owned),
+    /// and so are view grants, which are no longer an account rail. Custody keys
+    /// are not modeled here; removing an absent account is a no-op. (DD 29130754)
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         self.0
             .accounts
@@ -1819,42 +1535,44 @@ impl AccountWrites for MemAccountWrites {
             .expect("MemBackend invitations mutex poisoned")
             .retain(|_, invitation| &invitation.account != account);
 
-        // Drop this account's handle-change log rows too — the mem mirror of pg's
-        // `account_handle_changes.account_id REFERENCES accounts(id) ON DELETE
-        // CASCADE` (ZMVP-46). Left uncleared, the vacated-handle quarantine would
-        // keep citing a change row for an account that no longer exists.
+        // Drop the handle-change rows too, else the quarantine would keep citing
+        // a change row for an account that no longer exists.
         self.0
             .handle_changes
             .lock()
             .expect("MemBackend handle_changes mutex poisoned")
             .retain(|change| &change.account_id != account);
 
-        // Sever the account's positioning rails (the mem mirror of the ZMVP-70
-        // `ON DELETE CASCADE` on each positioning FK onto `accounts`): drop every
-        // placement-log row and current-placement pointer aimed at this account.
-        // The commissions they referenced are left in place, and so are view
-        // grants — no longer an account rail (see the doc above).
-        self.0
-            .placements
-            .lock()
-            .expect("MemBackend placements mutex poisoned")
-            .retain(|placement| &placement.account_id != account);
+        // Sever the boards, and with them every column and card — the
+        // commissions they pointed at survive.
+        let boards: Vec<WorkflowId> = {
+            let mut workflows = self
+                .0
+                .workflows
+                .lock()
+                .expect("MemBackend workflows mutex poisoned");
+            let boards = workflows
+                .iter()
+                .filter(|(_, stored)| stored.account_id == *account)
+                .map(|(id, _)| id.clone())
+                .collect();
+            workflows.retain(|_, stored| stored.account_id != *account);
+            boards
+        };
 
         self.0
-            .current_placements
+            .columns
             .lock()
-            .expect("MemBackend current_placements mutex poisoned")
-            .retain(|_, placement| &placement.account_id != account);
+            .expect("MemBackend columns mutex poisoned")
+            .retain(|_, stored| !boards.contains(&stored.workflow_id));
 
         Ok(())
     }
 }
 
-/// The read half of an account unit of work over this unit's **staged**
-/// snapshot: the reads see the writes issued through the same handle, which is
-/// what the pg views get from reading through their open transaction. There is
-/// no lock to take in process, so `find_for_update` is `find` — the fake models
-/// the visibility contract, not the concurrency mechanism.
+/// The read half of an account unit of work over the unit's staged snapshot, so
+/// reads see writes issued through the same handle. There is no lock to take in
+/// process, so `find_for_update` is `find`.
 #[async_trait]
 impl AccountReads for MemAccountWrites {
     async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
@@ -1874,19 +1592,16 @@ impl AccountReads for MemAccountWrites {
     }
 }
 
-/// In-memory [`Database`] write factory over the shared [`MemBackend`]. `begin`
-/// snapshots the shared domain maps into a private staging backend and hands back a
-/// [`MemUnitOfWork`] over it, so the unit's writes are isolated until it commits
-/// (DD `24150017`; see the module note).
+/// In-memory [`Database`] write factory: `begin` snapshots the shared domain
+/// maps into a private staging backend, isolating the unit's writes until it
+/// commits. (DD 24150017)
 pub struct MemDatabase(MemBackend);
 
 #[async_trait]
 impl Database for MemDatabase {
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
-        // `staged` is what the write views mutate; `base` is a second, independent
-        // deep copy taken at the same instant and never touched again — the
-        // pristine "before" snapshot `commit` diffs `staged` against to find
-        // exactly what this unit changed (see `MemBackend::merge`).
+        // `staged` is what the write views mutate; `base` is an independent copy
+        // taken at the same instant, never touched, that `commit` diffs against.
         let staged = self.0.stage();
         let base = staged.stage();
         Ok(Box::new(MemUnitOfWork {
@@ -1897,47 +1612,37 @@ impl Database for MemDatabase {
     }
 }
 
-/// In-memory [`UnitOfWork`] that models transactional rollback. Holds the `shared`
-/// store, the pristine `base` snapshot of its domain maps taken at `begin`, and a
-/// `staged` copy of the same snapshot that the write views
-/// ([`accounts`](MemUnitOfWork::accounts)/[`users`](MemUnitOfWork::users)) mutate.
-/// [`commit`](MemUnitOfWork::commit) diffs `base` against `staged` and merges only
-/// what changed back onto `shared`, key by key — **dropping the handle without
-/// committing discards `base`/`staged` together**, the mem mirror of pg's drop =
-/// rollback. Uncommitted writes are therefore invisible to the shared read stores,
-/// matching pg (a pool read can't see another connection's open tx).
+/// In-memory [`UnitOfWork`] that models transactional rollback: it holds the
+/// shared store, a pristine `base` snapshot, and the `staged` copy the write
+/// views mutate. [`commit`](MemUnitOfWork::commit) merges the diff back onto
+/// `shared`; dropping the handle uncommitted discards both copies, so
+/// uncommitted writes are invisible to the shared read stores.
 pub struct MemUnitOfWork {
     /// The real, shared store the unit commits back onto.
     shared: MemBackend,
-    /// A pristine deep copy of the shared domain maps taken at `begin`, before any
-    /// write — never mutated again. `commit` diffs this against `staged` to tell a
-    /// key this unit actually touched (inserted, updated, or removed) apart from
-    /// everything that merely rode along in the snapshot untouched.
+    /// A pristine deep copy taken at `begin` and never mutated; `commit` diffs
+    /// `staged` against it to find what this unit actually touched.
     base: MemBackend,
-    /// A private deep copy of the shared domain maps; the unit's writes land here
-    /// and reach `shared` only on `commit`. (Shares the profile-cache `Arc` — that
-    /// map is a documented Unit-of-Work exemption, never staged.)
+    /// A private deep copy the unit's writes land in, reaching `shared` only on
+    /// `commit`. The profile-cache `Arc` is shared, never staged.
     staged: MemBackend,
 }
 
 #[async_trait]
 impl UnitOfWork for MemUnitOfWork {
-    /// The account repo over this unit's staged snapshot: reads see the unit's
-    /// own uncommitted writes, exactly as the pg views read through their open
-    /// transaction.
+    /// The account repo over this unit's staged snapshot; reads see the unit's
+    /// own uncommitted writes.
     fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
         Box::new(MemAccountWrites(self.staged.clone()))
     }
 
-    /// The commission repo over this unit's staged snapshot — reads and writes on
-    /// the same staged state.
+    /// The commission repo over this unit's staged snapshot.
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(MemCommissionWrites(self.staged.clone()))
     }
 
-    /// A view of the changelog append surface over this unit's staged snapshot
-    /// (ZMVP-87): the entry commits atomically with the domain writes staged
-    /// beside it, or is discarded with them — the mem mirror of Changelog DD D4.
+    /// The changelog append surface over this unit's staged snapshot, so an entry
+    /// commits atomically with the writes staged beside it. (DD 59310081)
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
         Box::new(MemChangelogWrites(self.staged.clone()))
     }
@@ -1946,36 +1651,39 @@ impl UnitOfWork for MemUnitOfWork {
         Box::new(MemUserWrites(self.staged.clone()))
     }
 
-    /// A view of the actor-super-table write surface over this unit's staged
-    /// snapshot (ZMVP-122). No delete exists on it — identity rows are immortal.
+    /// The actor-super-table write surface over this unit's staged snapshot; it
+    /// carries no delete, since identity rows are immortal.
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         Box::new(MemActorIdentityWrites(self.staged.clone()))
     }
 
+    /// The workflow write surface over this unit's staged snapshot, so a card's
+    /// move and the neighbours it displaces land together.
+    fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
+        Box::new(MemWorkflowWrites(self.staged.clone()))
+    }
+
+    /// The column write surface over this unit's staged snapshot.
+    fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
+        Box::new(MemColumnWrites(self.staged.clone()))
+    }
+
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
-        // Merge the staged writes onto the shared store, key by key (see
-        // `MemBackend::merge`). Without this call `base`/`staged` are simply
-        // dropped, so the unit rolls back — as in pg.
+        // Without this call `base`/`staged` are simply dropped, rolling back.
         self.shared.merge(&self.base, &self.staged);
         Ok(())
     }
 
-    /// The mirror opposite of [`commit`](MemUnitOfWork::commit): commit *merges*
-    /// the staged snapshot's changes back onto the shared store, rollback simply
-    /// does **not**. Consuming `self` here drops `base` and `staged` together,
-    /// discarding every write in the unit — the same outcome as dropping the
-    /// handle uncommitted, made explicit and deterministic (mem mirror of pg's
-    /// awaited `ROLLBACK`).
+    /// Drop `base` and `staged` together, discarding every write in the unit —
+    /// the same outcome as dropping the handle, made explicit.
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
-/// Rebuilds an [`Account`] from its stored parts (it isn't `Clone`) — `None`
-/// when the row is soft-deleted, which every read treats as absent (the mem
-/// mirror of the pg `deleted_at IS NULL` filter). The id is passed in because
-/// it is the map's key, and since the actor re-key (DD `57081857`) that key is
-/// the account's DID.
+/// Rebuild an [`Account`] from its stored parts; `None` when the row is
+/// soft-deleted, which every read treats as absent. The id is passed in because
+/// it is the map's key.
 fn rebuild_account(id: AccountId, stored: &StoredAccount) -> Option<Account> {
     if stored.deleted_at.is_some() {
         return None;
@@ -1991,8 +1699,7 @@ fn rebuild_account(id: AccountId, stored: &StoredAccount) -> Option<Account> {
     Some(account)
 }
 
-/// Rebuilds an [`Invitation`] from its stored parts (it isn't `Clone`), the
-/// invitation analogue of how `find` rebuilds an [`Account`].
+/// Rebuild an [`Invitation`] from its stored parts.
 fn rebuild_invitation(id: InvitationId, stored: &StoredInvitation) -> Invitation {
     Invitation {
         id,
@@ -2006,14 +1713,12 @@ fn rebuild_invitation(id: InvitationId, stored: &StoredInvitation) -> Invitation
     }
 }
 
-/// In-memory [`DidMinter`] test fake: hands back a deterministic, unique-per-call
-/// synthetic `did:plc:` value from an internal counter. No real keypair, PLC
-/// genesis, or directory write — just enough shape (`did:plc:mem<n>`) for tests
-/// downstream of minting to run without infrastructure.
+/// In-memory [`DidMinter`] fake: a deterministic, unique-per-call synthetic
+/// `did:plc:mem<n>` from an internal counter, with no keypair, genesis operation
+/// or directory write.
 #[derive(Default)]
 pub struct MemDidMinter {
-    /// Monotonic counter feeding the next DID's suffix; starts at 0, so the first
-    /// mint is `did:plc:mem000000`. [`AtomicUsize`] keeps minting lock-free.
+    /// Monotonic counter feeding the next DID's suffix, starting at 0.
     next: AtomicUsize,
 }
 
@@ -2026,41 +1731,31 @@ impl MemDidMinter {
 
 #[async_trait]
 impl DidMinter for MemDidMinter {
-    /// Hands back the next deterministic, unique synthetic DID
-    /// (`did:plc:mem<n>`, zero-padded to six digits) and never fails — no
-    /// keypair, PLC genesis, or directory write. `handle` is accepted to match
-    /// the port (the real minter binds it into `alsoKnownAs`) but ignored here:
-    /// the fake mints no real operation. Distinct from a *visitor's* recognized
-    /// DID; this one is created on an account's behalf.
+    /// Hand back the next synthetic DID (`did:plc:mem<n>`, zero-padded to six
+    /// digits); never fails, and `handle` is ignored.
     async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::new(format!("did:plc:mem{n:06}")))
     }
 
-    /// No-op: the fake registers nothing, so there is nothing to tombstone. Matches
-    /// the port so API-level deletion tests run without touching infrastructure (the
-    /// real tombstone is exercised in the `RealDidMinter` unit tests).
+    /// No-op: the fake registers nothing, so there is nothing to tombstone.
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         Ok(())
     }
 
     /// No-op: the fake mints no real operation, so there is no `alsoKnownAs` to
-    /// re-point. Matches the port so API-level handle-change tests (ZMVP-46) run
-    /// without touching infrastructure (the real update is exercised in the
-    /// `RealDidMinter` unit tests).
+    /// re-point.
     async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
-/// In-memory [`KeyStore`] test fake: holds custody keys in a process-local map,
-/// **unencrypted** — safe only because they never leave memory and the fake
-/// generates no real DID. Lets crates downstream of minting (and the
-/// `RealDidMinter`'s own unit tests) exercise the put/get contract without a
-/// database or a root key. The real at-rest encryption lives in the pg adapter.
+/// In-memory [`KeyStore`] fake: custody keys in a process-local map,
+/// UNENCRYPTED — safe only because they never leave memory and the fake mints no
+/// real DID. The real at-rest encryption lives in the pg adapter.
 #[derive(Clone, Default)]
 pub struct MemKeyStore {
-    /// DID string → its custody keys. `Arc<Mutex<…>>` so clones share state.
+    /// DID string → its custody keys; clones share the state.
     keys: Arc<Mutex<HashMap<String, AccountKeys>>>,
 }
 
@@ -2073,10 +1768,8 @@ impl MemKeyStore {
 
 #[async_trait]
 impl KeyStore for MemKeyStore {
-    /// Store `keys` under `did`. Per the [`KeyStore`] contract a DID mints once, so a
-    /// second `put` for the same DID is **rejected** — mirroring the pg unique
-    /// constraint on `account_keys.did`, so an accidental double-mint surfaces in
-    /// tests instead of silently overwriting custody keys.
+    /// Store `keys` under `did`. A DID mints once, so a second `put` for the same
+    /// DID is rejected rather than overwriting custody keys.
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
         let mut map = self.keys.lock().unwrap();
         if map.contains_key(did.as_str()) {
@@ -2092,8 +1785,7 @@ impl KeyStore for MemKeyStore {
     }
 }
 
-/// One appended operation as [`MemPlcOperationLog`] keeps it — enough to mirror the
-/// pg adapter's reads (`latest_cid`/`latest_op`) and its two integrity indexes.
+/// One appended operation as [`MemPlcOperationLog`] keeps it.
 #[derive(Clone)]
 struct MemPlcEntry {
     did: String,
@@ -2103,13 +1795,11 @@ struct MemPlcEntry {
     operation_json: String,
 }
 
-/// In-memory [`PlcOperationLog`] test fake: keeps appended operations, in submission
-/// order, in a process-local vec. Lets the `RealDidMinter`'s own unit tests exercise
-/// the append / latest_cid / latest_op contract — chaining a tombstone or a handle
-/// update onto the genesis op's CID — without a database.
+/// In-memory [`PlcOperationLog`] fake: appended operations in submission order,
+/// in a process-local vec.
 #[derive(Clone, Default)]
 pub struct MemPlcOperationLog {
-    /// Appended entries in order; `Arc<Mutex<…>>` so clones share state.
+    /// Appended entries in order; clones share the state.
     entries: Arc<Mutex<Vec<MemPlcEntry>>>,
 }
 
@@ -2122,12 +1812,9 @@ impl MemPlcOperationLog {
 
 #[async_trait]
 impl PlcOperationLog for MemPlcOperationLog {
-    /// Append the operation in submission order, mirroring the pg adapter's two
-    /// integrity indexes so tests catch a retry/fork bug instead of silently
-    /// accepting it: a duplicate `cid` is **rejected** (`UNIQUE(cid)` — a
-    /// content-addressed op is logged at most once), and a second non-genesis op
-    /// chaining an already-used `prev` is **rejected** (`UNIQUE(did, prev)` where
-    /// `prev IS NOT NULL` — the chain never forks; ZMVP-50 F1).
+    /// Append the operation in submission order, mirroring pg's two integrity
+    /// indexes: a duplicate `cid` is rejected, and so is a second non-genesis op
+    /// chaining an already-used `prev` — the chain never forks.
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
         let mut entries = self.entries.lock().unwrap();
         if entries.iter().any(|entry| entry.cid == record.cid) {
@@ -2281,9 +1968,7 @@ mod tests {
         );
     }
 
-    /// A fresh, unique synthetic actor DID — the only way to mint an id since the
-    /// actor re-key (DD `57081857`) made the DID the key. The UUID is only a
-    /// uniqueness source here; nothing reads it back.
+    /// A fresh, unique synthetic actor DID; the UUID is only a uniqueness source.
     fn mint_did() -> Did {
         Did::new(format!("did:plc:mem{}", uuid::Uuid::now_v7().simple()))
     }
@@ -2794,10 +2479,8 @@ mod tests {
         );
     }
 
-    // Bug guard — hard_delete must also drop the account's handle-change log rows,
-    // the mem mirror of pg's `account_handle_changes.account_id REFERENCES
-    // accounts(id) ON DELETE CASCADE` (ZMVP-46). Left uncleared, a hard-deleted
-    // account would keep quarantining a handle no live account owns anymore.
+    // Bug guard: hard_delete must drop the handle-change rows too, else a
+    // hard-deleted account keeps quarantining a handle nobody owns.
     #[tokio::test]
     async fn hard_delete_clears_the_accounts_handle_change_log() {
         let backend = MemBackend::new();
@@ -2846,12 +2529,8 @@ mod tests {
         );
     }
 
-    // Bug guard — `MemUnitOfWork::commit` used to replace each shared map
-    // wholesale with the unit's staged snapshot, so two units committed in
-    // sequence were last-writer-wins across the WHOLE map: the second commit
-    // silently erased the first unit's disjoint write. Two units opened from the
-    // same (empty) shared state, each provisioning a DIFFERENT user, must both
-    // survive once committed.
+    // Bug guard: two units opened from the same shared state, each provisioning
+    // a DIFFERENT user, must both survive once committed.
     #[tokio::test]
     async fn two_units_each_provisioning_a_different_user_both_survive_commit() {
         let backend = MemBackend::new();
@@ -2895,14 +2574,8 @@ mod tests {
         );
     }
 
-    // Bug guard (Copilot review, PR #144) — `merge_map` used to unconditionally
-    // rewrite EVERY key `staged` carried, including ones a unit merely rode
-    // along with in its begin-time snapshot without ever writing. So a unit
-    // that began before a second, concurrent unit updated and committed a key
-    // would clobber that update back to the stale snapshot value on its own,
-    // later commit — a lost update. `merge_map` now diffs `staged` against
-    // `base` and skips a key whose value is unchanged, so only what a unit
-    // actually wrote reaches `shared`.
+    // Bug guard: a unit that merely rode along with a key in its snapshot must
+    // not clobber a concurrent unit's update of it back to the stale value.
     #[tokio::test]
     async fn a_third_units_untouched_read_does_not_clobber_a_concurrent_update() {
         let backend = MemBackend::new();
@@ -2961,10 +2634,8 @@ mod tests {
         );
     }
 
-    // Bug guard (Copilot review, PR #144) — the same stale-snapshot clobber also
-    // resurrected a key another unit had deleted: `unit_a`'s snapshot still
-    // carried the row, so its commit re-inserted it into `shared` even though
-    // `unit_a` never wrote it at all.
+    // Bug guard: the stale-snapshot clobber also resurrected a key another unit
+    // had deleted.
     #[tokio::test]
     async fn a_third_units_untouched_read_does_not_resurrect_a_concurrent_delete() {
         let backend = MemBackend::new();

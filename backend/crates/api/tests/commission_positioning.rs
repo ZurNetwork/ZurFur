@@ -15,8 +15,10 @@
 //!   commission door with the closed-door 404.
 //!
 //! ⚠️ View grants are issued to **Users**, never Accounts (DD `29130754`,
-//! amended 2026-09-04), so AC4/AC5 name a grantee User where they used to name
-//! an account. Placement stays account-side and is untouched.
+//! amended 2026-09-04), so AC4/AC5 name a grantee User. Placement is a card on
+//! an account's board (Decision 6): the account-level placement rails were
+//! deleted (Engineer ruling 2026-09-10), so AC1/AC2 exercise the board and AC3's
+//! current-placement pointer has no referent.
 //! - **AC6** — a commission with no placement and no grants is valid.
 //! - **Closed door** — a non-owner gets the byte-identical 404 a missing
 //!   commission gets (never a 403 oracle); an unauthenticated caller gets 401.
@@ -35,6 +37,7 @@ use domain::elements::{
     role::Role,
     user::{User, UserId},
     user_account::UserAccount,
+    workflow::{ColumnId, ColumnName, LexOrdering, WorkflowId, WorkflowName},
 };
 use reqwest::redirect::Policy;
 use serde_json::json;
@@ -139,6 +142,32 @@ async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>
     account.id
 }
 
+/// Seeds a committed board for `account` with a single column, returning both
+/// ids. A board is where placement lives (Ownership Separation DD `29130754`
+/// D6), so every positioning test needs one.
+async fn seed_board(backend: &MemBackend, account: &AccountId) -> (WorkflowId, ColumnId) {
+    let database = backend.database();
+    let name = "Queue".parse::<WorkflowName>().expect("board name");
+
+    let mut uow = database.begin().await.expect("begin");
+    let mut workflow = uow
+        .workflows()
+        .create(&name, account)
+        .await
+        .expect("create the board");
+    let column_name = "Open".parse::<ColumnName>().expect("column name");
+    let column = workflow.new_column(column_name, workflow.visibility.clone());
+    let column_id = column.id.clone();
+    workflow.insert(0, column).expect("the board is empty");
+    uow.workflows()
+        .set_indexes(&workflow)
+        .await
+        .expect("persist the column");
+    uow.commit().await.expect("commit the board");
+
+    (workflow.id, column_id)
+}
+
 /// Seeds a committed commission owned by a directly-provisioned foreign user.
 async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
     let owner: User = backend
@@ -168,12 +197,23 @@ async fn read_changelog_kinds(client: &reqwest::Client, base: &str, id: uuid::Uu
         .collect()
 }
 
-// AC1 + AC2 + AC3 — the owner places, re-places, and re-places again: each is a
-// 204, the log grows (never rewritten), current = latest, origin = first, and the
-// cached current-placement pointer equals the latest log row every time. No
-// placement changelog entry is appended (the placement log IS the record).
+// AC1 + AC2 — **placement is a card on a board** (Ownership Separation DD
+// `29130754` Decision 6: "placement = workflow membership rows, account-side").
+// The owner places the commission onto an account's board over HTTP: a 204, and
+// the board now holds the card. Placing it onto a SECOND account's board leaves
+// it on both — one commission, N boards, no conflict, because no account ever
+// claimed it (D1: users own commissions).
+//
+// AC3's cached current-placement pointer has no referent any more: it belonged
+// to the 1:1-current placement log, which reconstructed the very managing-account
+// model this DD superseded. There is no per-commission "current" account to
+// cache — by design.
+//
+// No changelog entry is appended: positioning is account-side view state the
+// commission never learns about, and the Changelog DD taxonomy has no placement
+// variant.
 #[tokio::test]
-async fn placement_appends_and_the_current_pointer_tracks_the_latest_row() {
+async fn placing_puts_the_card_on_a_board_and_one_commission_sits_on_many() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
@@ -181,75 +221,73 @@ async fn placement_appends_and_the_current_pointer_tracks_the_latest_row() {
     let cid = CommissionId::new(id);
     let store = backend.commission_store();
 
-    // AC6 — before any placement the commission is valid with no current placement.
+    // The caller must be a member of the board's account: a card goes on a board
+    // you belong to (DESIGN/Workflow — the account owns its positioning).
+    let artist = backend
+        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .await
+        .expect("find")
+        .expect("sign-in provisioned the artist")
+        .id;
+    let account_a = seed_account(&backend, "a.zurfur.app", Some(artist.clone())).await;
+    let account_b = seed_account(&backend, "b.zurfur.app", Some(artist)).await;
+    let (board_a, column_a) = seed_board(&backend, &account_a).await;
+    let (board_b, column_b) = seed_board(&backend, &account_b).await;
+
+    // AC6 — before any placement the commission is valid, on nobody's board.
     assert!(
-        store.current_placement(&cid).await.unwrap().is_none(),
-        "an unplaced commission has no current placement (still valid)"
+        store
+            .current_column_of_workflow(&cid, &board_a)
+            .await
+            .unwrap()
+            .is_none(),
+        "an unplaced commission sits on no board (still valid)"
     );
 
-    let account_a = seed_account(&backend, "a.zurfur.app", None).await;
-    let account_b = seed_account(&backend, "b.zurfur.app", None).await;
-
-    let placements = [account_a.clone(), account_b.clone(), account_a.clone()];
-    for (n, account) in placements.into_iter().enumerate() {
+    for (column, board) in [(&column_a, &board_a), (&column_b, &board_b)] {
         let res = client
             .post(format!("{base}/commissions/{id}/placements"))
-            .json(&json!({ "account_id": account.to_string() }))
+            .json(&json!({ "column_id": column.to_string(), "index": 0 }))
             .send()
             .await
             .expect("POST placement");
         assert_eq!(res.status(), 204, "the owner places the commission");
 
-        let log = store.placement_log(&cid).await.unwrap();
-        assert_eq!(log.len(), n + 1, "each placement appends exactly one row");
-        let current = store
-            .current_placement(&cid)
-            .await
-            .unwrap()
-            .expect("a placed commission has a current placement");
-        let latest = log.last().unwrap();
         assert_eq!(
-            (current.seq, &current.account_id),
-            (latest.seq, &latest.account_id),
-            "the cached current pointer equals the latest log row (AC3)",
+            store
+                .current_column_of_workflow(&cid, board)
+                .await
+                .unwrap()
+                .map(|found| found.id),
+            Some(column.clone()),
+            "the board that positioned it holds the card",
         );
         assert_eq!(
-            current.account_id, account,
-            "current = the just-placed account"
+            store
+                .current_position_in_column(&cid, column)
+                .await
+                .unwrap(),
+            Some(0),
+            "at the index the caller asked for",
         );
     }
 
-    let log = store.placement_log(&cid).await.unwrap();
-    assert_eq!(
-        log.first().unwrap().account_id,
-        account_a,
-        "origin = first row"
-    );
-    assert_eq!(
-        log.last().unwrap().account_id,
-        account_a,
-        "current = latest row"
-    );
+    // Both boards still hold it — the NxM the DD makes native.
     assert!(
-        log[0].seq < log[1].seq && log[1].seq < log[2].seq,
-        "seq orders the log"
+        store
+            .current_column_of_workflow(&cid, &board_a)
+            .await
+            .unwrap()
+            .is_some(),
+        "the first board did not lose the card to the second",
     );
 
     // No placement changelog entry — only the creation entry exists.
     assert_eq!(
         read_changelog_kinds(&client, &base, id).await,
         ["created"],
-        "placement appends no changelog entry (the placement log is the record)",
+        "positioning appends no changelog entry",
     );
-}
-
-/// The grantee, as the read port still spells it. ⚠️ GAP: `grant_view` /
-/// `revoke_view` were re-keyed to `&UserId` by the 2026-09-04 amendment to DD
-/// `29130754`, but the read half — `CommissionStore::view_grant` — still takes
-/// `&AccountId`. Both sides store the bare DID, so re-wrapping the grantee's
-/// DID reads the row back; the port signatures need reconciling.
-fn grantee_key(user: &UserId) -> AccountId {
-    AccountId::new((**user).clone())
 }
 
 // AC4 — the owner grants a User a view grant (a 204, key stored, changelog
@@ -277,10 +315,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
         assert_eq!(res.status(), 204, "the owner issues a view grant");
     }
     assert_eq!(
-        store
-            .view_grant(&cid, &grantee_key(&grantee))
-            .await
-            .unwrap(),
+        store.view_grant(&cid, &grantee.clone()).await.unwrap(),
         Some(GrantLevel::Total),
         "re-granting replaces the level (issuing anew)",
     );
@@ -296,7 +331,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     assert_eq!(res.status(), 204, "the owner revokes the grant");
     assert!(
         store
-            .view_grant(&cid, &grantee_key(&grantee))
+            .view_grant(&cid, &grantee.clone())
             .await
             .unwrap()
             .is_none(),
@@ -344,18 +379,15 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
 
     // A foreign owner's commission, an account the member belongs to, and a
     // Total grant + placement of the commission into that account.
-    let (id, owner_id) = seed_foreign_commission(&backend).await;
+    let (id, _owner_id) = seed_foreign_commission(&backend).await;
     let cid = CommissionId::new(id);
     let account = seed_account(&backend, "granted.zurfur.app", Some(member.id.clone())).await;
+    let (_board, column) = seed_board(&backend, &account).await;
     {
         let db = backend.database();
         let mut uow = db.begin().await.unwrap();
         uow.commissions()
             .grant_view(&cid, &member.id, GrantLevel::Total)
-            .await
-            .unwrap();
-        uow.commissions()
-            .place(&cid, &account, &owner_id, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
@@ -365,7 +397,7 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     assert_eq!(
         backend
             .commission_store()
-            .view_grant(&cid, &grantee_key(&member.id))
+            .view_grant(&cid, &member.id)
             .await
             .unwrap(),
         Some(GrantLevel::Total),
@@ -394,14 +426,6 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
         .expect("GET changelog");
     common::assert_problem(changelog, 404, "commission_not_found").await;
 
-    let place = client
-        .post(format!("{base}/commissions/{id}/placements"))
-        .json(&json!({ "account_id": account.to_string() }))
-        .send()
-        .await
-        .expect("POST placement");
-    common::assert_problem(place, 404, "commission_not_found").await;
-
     let grant = client
         .post(format!("{base}/commissions/{id}/grants"))
         .json(&json!({ "target_user_id": member.id.to_string(), "level": "total" }))
@@ -409,6 +433,23 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
         .await
         .expect("POST grant");
     common::assert_problem(grant, 404, "commission_not_found").await;
+
+    // ...but POSITIONING is not an in-commission act, and their OWN key is one
+    // of the two rails a commission may reach a board by (DD `29130754` D3;
+    // DESIGN/Workflow: "a commission a member can already see through their own
+    // standing or their own view grant"). So this one succeeds — and it is the
+    // line the DD draws: they may file it on their board, and still not read it.
+    let place = client
+        .post(format!("{base}/commissions/{id}/placements"))
+        .json(&json!({ "column_id": column.to_string(), "index": 0 }))
+        .send()
+        .await
+        .expect("POST placement");
+    assert_eq!(
+        place.status(),
+        204,
+        "their own key carries them onto their own board (the push rail)",
+    );
 }
 
 // Closed door — a non-owner placing/granting/revoking gets the byte-identical
@@ -419,11 +460,21 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     let client = client();
     sign_in(&client, &base).await;
     let (foreign, _owner) = seed_foreign_commission(&backend).await;
-    let account = seed_account(&backend, "x.zurfur.app", None).await;
+    let outsider = backend
+        .find_by_did(&Did::new("did:plc:outsider".to_string()))
+        .await
+        .expect("find")
+        .expect("sign-in provisioned the outsider")
+        .id;
+    // The outsider owns a board of their own, so the refusal below is about the
+    // COMMISSION, not about the board — otherwise the membership check would
+    // answer first and the test would prove nothing.
+    let account = seed_account(&backend, "x.zurfur.app", Some(outsider)).await;
+    let (_board, column) = seed_board(&backend, &account).await;
 
     let hidden = client
         .post(format!("{base}/commissions/{foreign}/placements"))
-        .json(&json!({ "account_id": account.to_string() }))
+        .json(&json!({ "column_id": column.to_string(), "index": 0 }))
         .send()
         .await
         .expect("POST placement on a hidden commission");
@@ -433,7 +484,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     let missing_id = uuid::Uuid::now_v7();
     let missing = client
         .post(format!("{base}/commissions/{missing_id}/placements"))
-        .json(&json!({ "account_id": account.to_string() }))
+        .json(&json!({ "column_id": column.to_string(), "index": 0 }))
         .send()
         .await
         .expect("POST placement on a missing commission");
@@ -472,9 +523,10 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
 
     // Nothing was written to the foreign commission.
     let store = backend.commission_store();
+    let (outsider_board, _outsider_column) = seed_board(&backend, &account).await;
     assert!(
         store
-            .current_placement(&CommissionId::new(foreign))
+            .current_column_of_workflow(&CommissionId::new(foreign), &outsider_board)
             .await
             .unwrap()
             .is_none(),
@@ -538,20 +590,20 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
 // account" for a grant to answer. Whether an unknown *grantee* should 404 or
 // provision silently is an open contract question for the Engineer.
 #[tokio::test]
-async fn placing_into_an_unknown_account_is_account_not_found() {
+async fn placing_into_an_unknown_column_is_not_found() {
     let (base, backend) = spawn_app("did:plc:artist").await;
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let ghost = AccountId::new(Did::new("did:plc:no-such-account".to_string()));
+    let ghost = uuid::Uuid::now_v7();
 
     let place = client
         .post(format!("{base}/commissions/{id}/placements"))
-        .json(&json!({ "account_id": ghost.to_string() }))
+        .json(&json!({ "column_id": ghost.to_string(), "index": 0 }))
         .send()
         .await
         .expect("POST placement");
-    common::assert_problem(place, 404, "account_not_found").await;
+    common::assert_problem(place, 404, "column_not_found").await;
 }
 
 // A malformed grant level is a 422 invalid_request (the grant vocabulary is the
@@ -584,11 +636,12 @@ async fn unauthenticated_positioning_is_401() {
     sign_in(&signed_in, &base).await;
     let id = create_commission(&signed_in, &base, &backend).await;
     let account = seed_account(&backend, "z.zurfur.app", None).await;
+    let (_board, column) = seed_board(&backend, &account).await;
 
     let anon = client();
     let place = anon
         .post(format!("{base}/commissions/{id}/placements"))
-        .json(&json!({ "account_id": account.to_string() }))
+        .json(&json!({ "column_id": column.to_string(), "index": 0 }))
         .send()
         .await
         .expect("POST placement unauth");

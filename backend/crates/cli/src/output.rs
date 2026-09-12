@@ -25,7 +25,7 @@ impl Format {
 /// A successful run's stdout payload.
 #[derive(Debug)]
 pub enum Output {
-    /// A JSON value rendered per its [`Format`], newline-terminated.
+    /// A JSON value rendered per its format, newline-terminated.
     Json(serde_json::Value, Format),
     /// Bytes written verbatim (a completion script).
     Raw(Vec<u8>),

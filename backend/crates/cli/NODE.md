@@ -61,3 +61,10 @@ fs:
 **Entry points:** `src/main.rs` (bin: zurfur) · `src/lib.rs` (Cli, run(), dispatch, ExitClass) · `src/commands/mod.rs`.
 
 **Refs:** DD 55836674 — The Application Layer · DD 23592962 — API Response Shape & Error Model · ZMVP-199 epic, ZMVP-201/202/203/204/205/206.
+
+## Notes
+
+- Adding a command = a module under `commands/`, a variant on the `Command`/`BackendCommand` enum, and one arm in `lib.rs::dispatch`.
+- `lib.rs::run` answers `session logout` before `connect()` boots the runtime — logout must work with config or the database broken.
+- `lib.rs::require_current_schema` is the schema-drift gate: it refuses a database whose migrations are behind, ahead, or absent — every command except `migrate` and `health` passes through it.
+- `lib.rs::config_problem` never echoes a raw config value: figment prints the offending value on a type mismatch, which for an env var can be a secret, so only shape-safe error kinds pass through and everything else degrades to a generic message.

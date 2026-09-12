@@ -727,6 +727,183 @@ pub mod changelog {
     }
 }
 
+pub mod column {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FindByCommissionRow {
+        pub id: uuid::Uuid,
+        pub workflow_id: uuid::Uuid,
+        pub name: String,
+        pub visibility: String,
+        pub position: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FindRow {
+        pub workflow_id: uuid::Uuid,
+        pub name: String,
+        pub visibility: String,
+        pub position: String,
+    }
+
+    /// `queries/column/add_card.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Place one card in one column at one index — the second half of the wholesale
+    /// rewrite. The (column_id, position) unique constraint is DEFERRABLE, so the
+    /// rewrite may pass through duplicate indexes and is checked once at COMMIT.
+    pub async fn add_card(
+        conn: impl sqlx::PgExecutor<'_>,
+        column_id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+        position: i32,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/column/add_card.sql"))
+            .bind(column_id)
+            .bind(commission_id)
+            .bind(position)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/column/cards.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// A column's cards in board order. The card order is a plain integer index,
+    /// rewritten wholesale by `set_commissions` — the domain's `Column.commissions`
+    /// is an ordered Vec with no per-card key, so there is no insert-between here.
+    pub async fn cards(
+        conn: impl sqlx::PgExecutor<'_>,
+        column_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<uuid::Uuid>> {
+        sqlx::query_scalar(include_str!("../queries/column/cards.sql"))
+            .bind(column_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/column/clear_cards.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Drop every card edge of one column — the first half of the wholesale rewrite
+    /// `set_commissions` performs. Paired with `add_card.sql` inside one unit of work,
+    /// so the board is never observed empty.
+    pub async fn clear_cards(
+        conn: impl sqlx::PgExecutor<'_>,
+        column_id: uuid::Uuid,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/column/clear_cards.sql"))
+            .bind(column_id)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/column/delete.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete one column. Its card edges go with it (ON DELETE CASCADE); the
+    /// commissions they pointed at are untouched. The caller refuses a column that
+    /// still holds cards, so the cascade is a backstop, not the path.
+    pub async fn delete(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/column/delete.sql"))
+            .bind(id)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/column/find.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// One column's own row. Its cards are a separate read (`cards.sql`), because
+    /// `Column::loaded` takes them already ordered.
+    pub async fn find(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<FindRow>> {
+        sqlx::query_as(include_str!("../queries/column/find.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/column/find_by_commission.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Which column of a given board holds a card, if any. A commission sits in at
+    /// most one column per board, but on as many boards as care to position it — the
+    /// NxM the Ownership Separation DD makes native (D1/D6), so this is deliberately
+    /// scoped by workflow and never answers "the" column of a commission.
+    pub async fn find_by_commission(
+        conn: impl sqlx::PgExecutor<'_>,
+        workflow_id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<FindByCommissionRow>> {
+        sqlx::query_as(include_str!("../queries/column/find_by_commission.sql"))
+            .bind(workflow_id)
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/column/has_commissions.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether a column still holds any card — the gate on deleting one, so removing
+    /// a list never silently drops the cards on it.
+    pub async fn has_commissions(
+        conn: impl sqlx::PgExecutor<'_>,
+        column_id: uuid::Uuid,
+    ) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!("../queries/column/has_commissions.sql"))
+            .bind(column_id)
+            .fetch_one(conn)
+            .await
+    }
+
+    /// `queries/column/owning_account.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The account that owns the board this column sits on — the authorization
+    /// lookup a column mutation makes when it holds only the column's id.
+    pub async fn owning_account(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<String>> {
+        sqlx::query_scalar(include_str!("../queries/column/owning_account.sql"))
+            .bind(id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/column/position_in_column.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// A card's index within one column, or nothing if that column does not hold it.
+    pub async fn position_in_column(
+        conn: impl sqlx::PgExecutor<'_>,
+        column_id: uuid::Uuid,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Option<i32>> {
+        sqlx::query_scalar(include_str!("../queries/column/position_in_column.sql"))
+            .bind(column_id)
+            .bind(commission_id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/column/rename.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Rename one column. The (workflow_id, name) unique constraint is the store-level
+    /// backstop for the board-level check `Workflow::rename_column` already made.
+    pub async fn rename(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        name: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/column/rename.sql"))
+            .bind(id)
+            .bind(name)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+}
+
 pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
@@ -778,15 +955,6 @@ pub mod commission {
         pub linked_channel: Option<String>,
         pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
         pub created_at: chrono::DateTime<chrono::Utc>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
-    pub struct CurrentPlacementRow {
-        pub seq: i64,
-        pub account_id: String,
-        pub placed_by: String,
-        pub placed_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -859,15 +1027,6 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub tab: String,
         pub mode: String,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
-    pub struct PlacementLogRow {
-        pub seq: i64,
-        pub account_id: String,
-        pub placed_by: String,
-        pub placed_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1094,17 +1253,6 @@ pub mod commission {
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
-    }
-
-    /// `queries/commission/current_placement.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn current_placement(
-        conn: impl sqlx::PgExecutor<'_>,
-        commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Option<CurrentPlacementRow>> {
-        sqlx::query_as(include_str!("../queries/commission/current_placement.sql"))
-            .bind(commission_id)
-            .fetch_optional(conn)
-            .await
     }
 
     /// `queries/commission/declare_seat_satellite.sql`, contract inferred from the SQL against the migrated schema.
@@ -1356,56 +1504,6 @@ pub mod commission {
         sqlx::query_as(include_str!("../queries/commission/markups_for_file.sql"))
             .bind(commission_id)
             .bind(file_id)
-            .fetch_all(conn)
-            .await
-    }
-
-    /// `queries/commission/place_append.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn place_append(
-        conn: impl sqlx::PgExecutor<'_>,
-        commission_id: uuid::Uuid,
-        account_id: &str,
-        placed_by: &str,
-        placed_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<i64> {
-        sqlx::query_scalar(include_str!("../queries/commission/place_append.sql"))
-            .bind(commission_id)
-            .bind(account_id)
-            .bind(placed_by)
-            .bind(placed_at)
-            .fetch_one(conn)
-            .await
-    }
-
-    /// `queries/commission/place_repoint_current.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn place_repoint_current(
-        conn: impl sqlx::PgExecutor<'_>,
-        commission_id: uuid::Uuid,
-        account_id: &str,
-        seq: i64,
-        placed_by: &str,
-        placed_at: chrono::DateTime<chrono::Utc>,
-    ) -> sqlx::Result<u64> {
-        sqlx::query(include_str!(
-            "../queries/commission/place_repoint_current.sql"
-        ))
-        .bind(commission_id)
-        .bind(account_id)
-        .bind(seq)
-        .bind(placed_by)
-        .bind(placed_at)
-        .execute(conn)
-        .await
-        .map(|r| r.rows_affected())
-    }
-
-    /// `queries/commission/placement_log.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn placement_log(
-        conn: impl sqlx::PgExecutor<'_>,
-        commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Vec<PlacementLogRow>> {
-        sqlx::query_as(include_str!("../queries/commission/placement_log.sql"))
-            .bind(commission_id)
             .fetch_all(conn)
             .await
     }
@@ -2025,6 +2123,130 @@ pub mod user {
     }
 }
 
+pub mod workflow {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ColumnsRow {
+        pub id: uuid::Uuid,
+        pub name: String,
+        pub visibility: String,
+        pub position: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FindRow {
+        pub account_id: String,
+        pub name: String,
+        pub visibility: String,
+    }
+
+    /// `queries/workflow/columns.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// A board's columns in board order. Ordered by the base-62 fractional key,
+    /// compared BYTEWISE — the column is COLLATE "C", so this ordering is the same
+    /// one `Position` mints against (`Workflow::loaded` refuses keys that do not
+    /// strictly ascend, so a collation mismatch surfaces as an error, not a scramble).
+    pub async fn columns(
+        conn: impl sqlx::PgExecutor<'_>,
+        workflow_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<ColumnsRow>> {
+        sqlx::query_as(include_str!("../queries/workflow/columns.sql"))
+            .bind(workflow_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/workflow/create.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Mint one board for an account. The id and the closed-door default visibility
+    /// are the domain's (`Workflow::new`); this only records them.
+    pub async fn create(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        account_id: &str,
+        name: &str,
+        visibility: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/workflow/create.sql"))
+            .bind(id)
+            .bind(account_id)
+            .bind(name)
+            .bind(visibility)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/workflow/delete.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete a board. Its columns go with it (ON DELETE CASCADE), and the cards on
+    /// them — but never the commissions themselves: a card is account-side
+    /// positioning, and the commission never knew it was there (DD 29130754 D1).
+    pub async fn delete(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/workflow/delete.sql"))
+            .bind(id)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/workflow/find.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// One board's own row. Its columns are a separate read (`columns.sql`), because
+    /// `Workflow::loaded` wants them already ordered and card-filled.
+    pub async fn find(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<FindRow>> {
+        sqlx::query_as(include_str!("../queries/workflow/find.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/workflow/owning_account.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The account a board belongs to — the authorization lookup every board
+    /// mutation makes before touching anything (a workflow belongs to exactly one
+    /// account, DESIGN/Workflow).
+    pub async fn owning_account(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!("../queries/workflow/owning_account.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/workflow/upsert_column.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Persist one column of a board as the domain holds it — the per-column half of
+    /// `set_indexes`. An UPSERT because a board write is never "insert" or "update"
+    /// from the caller's side: `Columns::add` mints a column into the in-memory board
+    /// and hands the WHOLE board over, so the new column and its displaced
+    /// neighbours' keys arrive through one path.
+    pub async fn upsert_column(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        workflow_id: uuid::Uuid,
+        name: &str,
+        visibility: &str,
+        position: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/workflow/upsert_column.sql"))
+            .bind(id)
+            .bind(workflow_id)
+            .bind(name)
+            .bind(visibility)
+            .bind(position)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+}
+
 /// Every statement containing an INSERT/UPDATE/DELETE (CTEs included), as
 /// `namespace::function` — structural classification from the parse tree.
 pub static WRITE_QUERY_FNS: &[&str] = &[
@@ -2050,6 +2272,10 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "actor_identity::create",
     "actor_identity::intern",
     "changelog::append",
+    "column::add_card",
+    "column::clear_cards",
+    "column::delete",
+    "column::rename",
     "commission::add_element",
     "commission::add_file",
     "commission::add_markup",
@@ -2061,8 +2287,6 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::declare_slot_satellite",
     "commission::delete",
     "commission::grant_view",
-    "commission::place_append",
-    "commission::place_repoint_current",
     "commission::remove_element_delete",
     "commission::remove_element_renumber",
     "commission::revoke_seat_invitation",
@@ -2083,4 +2307,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "session::delete_expired",
     "session::save",
     "user::provision",
+    "workflow::create",
+    "workflow::delete",
+    "workflow::upsert_column",
 ];

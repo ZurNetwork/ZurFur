@@ -3,7 +3,7 @@
 AT Protocol adapter: **user-owned** records on the user's **PDS**, addressed by **AT-URI via DID**. This is the *public* side of the data boundary (the private side is `adapter-pg`).
 
 ## Settled invariants (fetch the DD before changing any of these)
-- **`did:plc` everywhere** DIDs are minted (not `did:web`). A **Character carries NO DID** — actor-ness anchors on the internal id, not a DID (superseded 2026-07-14; the earlier "a Character carries its own DID from day one" invariant is retired). → DD *DID:PLC vs DID:Web* (`4358151`); *Identities — the Actor Super-Table* (`34013187`; `did` is NULLABLE on `actor_identity`).
+- **`did:plc` everywhere** DIDs are minted (not `did:web`), and **the DID is the only actor identifier** — every actor, Characters included, mints one at creation; actor tables are keyed by `did NOT NULL`, no surrogate id (2026-08-30). → DD *DID:PLC vs DID:Web* (`4358151`); *Actor Addressing — DID as the Only Identifier* (`57081857`, supersedes-in-part `34013187` and `54427650`).
 - **No cross-store transactions.** Publishing an atproto record alongside private writes is a dual write — a separate, retryable step (outbox-style), never one unit of work.
 - What is user-owned (public PDS) vs app-owned (private pg) → DD *Data Boundaries* (`10354698`); who operates DIDs / platform authority → *Platform Authority* (`9207856`); blob/PDS split → *Blobs, PDS & Private Storage* (`10125341`).
 

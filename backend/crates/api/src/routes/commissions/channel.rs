@@ -34,10 +34,8 @@ pub(super) async fn link_channel(
     CallingUser(actor_id): CallingUser,
     body: Result<Json<LinkChannelBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    // TODO(engineer): no `application::commission::channel` use case exists, so
-    // this act still authorizes and transacts in the driver — the two things DD
-    // 55836674 D6/D7 place in the application layer. Migrating it needs the use
-    // case first; this is wiring, not a design change.
+    // TODO(engineer): no use case exists yet, so this still authorizes and
+    // transacts in the driver (DD 55836674 D6/D7 place both in the application layer).
     require_owner(&state, &commission_id, &actor_id).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -74,8 +72,7 @@ pub(super) async fn clear_channel(
     Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
 ) -> Result<Response, Problem> {
-    // TODO(engineer): unmigrated for the same reason as `link_channel` above —
-    // no use case covers the linked-channel pointer yet.
+    // TODO(engineer): unmigrated for the same reason as link_channel (no use case yet).
     let found = require_owner(&state, &commission_id, &actor_id).await?;
 
     let Some(previous) = found.linked_channel else {

@@ -1,34 +1,22 @@
-//! Submitting a signed PLC operation to a directory.
+//! Submitting a signed PLC operation to a directory (`POST {base_url}/{did}`).
 //!
-//! Registering a `did:plc` means POSTing its signed genesis operation to a PLC
-//! directory (`POST {base_url}/{did}`). This submission is a **public-boundary
-//! dual write** — a separate, retryable step, never inside a private unit of work
-//! (DESIGN/"Domains and Applications"; no cross-store transaction).
-//!
-//! For ZMVP-49 the live minter uses [`NoopPlcDirectory`]: it does **not** register
-//! against the canonical `plc.directory`. The real HTTP submitter
-//! ([`HttpPlcDirectory`]) is wired and ready but **gated off by config** until
-//! launch (C2). Which one the minter holds is chosen in the composition root from
-//! [`DirectoryConfig`].
+//! Submission is a public-boundary dual write — a separate retryable step,
+//! never inside a private unit of work. The composition root picks
+//! [`HttpPlcDirectory`] or [`NoopPlcDirectory`] from [`DirectoryConfig`].
 
 use async_trait::async_trait;
 
-/// Submits a signed PLC operation for a DID. An adapter-local port (not a domain
-/// port): the composition root selects an implementation via
-/// [`plc_directory_from_config`], so `api` never names this trait. The operation is
-/// passed as its already-serialized JSON body, so the same submitter handles a
-/// genesis operation, a tombstone, or any later operation type without coupling to
-/// their Rust shapes.
+/// Submits a signed PLC operation for a DID, as its already-serialized JSON
+/// body — genesis, tombstone or any later operation type. An adapter-local
+/// port; implementations are selected by [`plc_directory_from_config`].
 #[async_trait]
 pub trait PlcDirectory: Send + Sync {
-    /// Submit `operation` (its JSON body) registering/updating `did`. Fallible: the
-    /// HTTP impl performs a network write; the no-op never fails.
+    /// Submit `operation` registering or updating `did`.
     async fn submit(&self, did: &str, operation: &serde_json::Value) -> anyhow::Result<()>;
 }
 
-/// Local/dev directory: accepts the operation and does nothing. Used by the live
-/// minter in ZMVP-49 so minting never touches the canonical `plc.directory`. Logs
-/// only the DID (never key material or the operation body).
+/// Local/dev directory: accepts the operation and does nothing, so minting
+/// never touches the canonical `plc.directory`. Logs only the DID.
 #[derive(Debug, Default, Clone)]
 pub struct NoopPlcDirectory;
 
@@ -40,14 +28,11 @@ impl PlcDirectory for NoopPlcDirectory {
     }
 }
 
-/// Real submitter: `POST {base_url}/{did}` with the signed operation as JSON. Kept
-/// off the live path by config until launch; exercised only when
-/// [`DirectoryConfig::enabled`] is set.
+/// Real submitter: `POST {base_url}/{did}` with the signed operation as JSON.
+/// Only reached when [`DirectoryConfig::enabled`] is set.
 pub struct HttpPlcDirectory {
-    /// The directory base URL, e.g. `https://plc.directory` (canonical) or a local
-    /// `@did-plc/server`. No trailing slash.
+    /// The directory base URL, no trailing slash.
     base_url: String,
-    /// Shared HTTP client (rustls), reused across submissions.
     client: reqwest::Client,
 }
 
@@ -77,13 +62,8 @@ impl PlcDirectory for HttpPlcDirectory {
     }
 }
 
-/// Composition-root config for directory submission (figment-loaded in `api`).
-///
-/// `enabled` gates real registration. In ZMVP-49 it is **off**, so
-/// [`plc_directory_from_config`] returns a [`NoopPlcDirectory`] and no operation
-/// reaches the canonical `plc.directory`. Flipping it on at launch (with
-/// `endpoint = "https://plc.directory"`) switches to [`HttpPlcDirectory`] with no
-/// code change.
+/// Composition-root config for directory submission; `enabled` gates real
+/// registration against the canonical `plc.directory`.
 #[derive(Debug, Clone)]
 pub struct DirectoryConfig {
     /// The directory base URL used when `enabled`.
@@ -92,8 +72,8 @@ pub struct DirectoryConfig {
     pub enabled: bool,
 }
 
-/// Select the directory implementation from config: [`HttpPlcDirectory`] when
-/// enabled, otherwise the [`NoopPlcDirectory`] (the ZMVP-49 default).
+/// Select the directory implementation from config: `HttpPlcDirectory` when
+/// enabled, otherwise `NoopPlcDirectory`.
 pub fn plc_directory_from_config(config: &DirectoryConfig) -> Box<dyn PlcDirectory> {
     if config.enabled {
         Box::new(HttpPlcDirectory::new(config.endpoint.clone()))

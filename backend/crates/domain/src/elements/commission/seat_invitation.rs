@@ -1,25 +1,10 @@
-//! The [`SeatInvitation`] — a pending offer of a commission **Seat**, the issuing
-//! half of seat invite-then-accept (ZMVP-78; DESIGN/Commission, Referenceable/
-//! Slot/Seat DD `28311564`).
+//! The [`SeatInvitation`]: a pending offer of a commission Seat — the issuing
+//! half of seat invite-then-accept. Filling a vacant Seat is consensual, so the
+//! owner issues an offer and the invited User must accept.
 //!
-//! The Seat mirror of the account [`Invitation`](crate::elements::invitation::Invitation)
-//! (ZMVP-32): a Seat is a *structural* participant position declared vacant
-//! (ZMVP-76), and filling one is consensual — the commission owner *issues* a
-//! `SeatInvitation`, and the invited User must *accept* before they occupy the
-//! Seat (ZMVP-79). This element is the issued offer and its lifecycle.
-//!
-//! It **reuses the account invitation's state machine wholesale** — the same
-//! [`InvitationState`] (`pending`/`accepted`/`revoked`, no expiry) and
-//! [`InvitationError`] — rather than growing a parallel one: the seat lifecycle
-//! is the identical pending→accepted|revoked shape, so there is nothing to
-//! diverge. Scope split: this module (and ZMVP-78) only ever issues a
-//! [`Pending`] offer or [`revoke`](SeatInvitation::revoke)s it to [`Revoked`];
-//! the [`Accepted`] transition — and the seat occupancy it mints — lives in
-//! ZMVP-79.
-//!
-//! [`Pending`]: InvitationState::Pending
-//! [`Revoked`]: InvitationState::Revoked
-//! [`Accepted`]: InvitationState::Accepted
+//! Reuses the account invitation's [`InvitationState`] machine wholesale. This
+//! module only issues a pending offer or revokes it; the accepted transition and
+//! the occupancy it mints live elsewhere.
 
 use std::ops::Deref;
 use std::str::FromStr;
@@ -34,18 +19,13 @@ use crate::{
     },
 };
 
-/// The app-private, stable handle for a [`SeatInvitation`].
-///
-/// A UUIDv7 wrapped for type safety, mirroring
-/// [`InvitationId`](crate::elements::invitation::InvitationId) and
-/// [`CommissionId`]: the app mints the key, the domain only names it. Deref
-/// exposes the inner UUID.
+/// The app-private key of a [`SeatInvitation`] (UUIDv7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SeatInvitationId(uuid::Uuid);
 
 impl SeatInvitationId {
-    /// Wraps an already-minted UUIDv7 — e.g. a row read back from the store. A
-    /// *fresh* id is minted inside [`SeatInvitation::issue`], not here.
+    /// Wraps an already-minted UUIDv7; a fresh id is minted by
+    /// [`SeatInvitation::issue`].
     pub fn new(id: uuid::Uuid) -> Self {
         Self(id)
     }
@@ -68,41 +48,21 @@ impl FromStr for SeatInvitationId {
 }
 
 /// A pending (or once-pending) offer of a commission Seat: who is invited, to
-/// which [`seat`](SeatInvitation::seat) of which [`commission`](SeatInvitation::commission),
-/// by whom, and where it sits in its lifecycle.
-///
-/// Build one with [`SeatInvitation::issue`], which stamps it [`Pending`]; move it
-/// to [`Revoked`] with [`revoke`](SeatInvitation::revoke). Like the account
-/// [`Invitation`](crate::elements::invitation::Invitation), it is **not** `Clone`
-/// — an entity with identity and a lifecycle, not a value to copy around; the
-/// store rebuilds it from its parts on read.
-///
-/// The `inviter` is the commission owner (the route's owner-only authority gate
-/// settles that before this is issued). Authority to *fill* the seat — and to
-/// resolve which of several pending invitees wins the race — is ZMVP-79's, not
-/// this element's; this is only the offer and its state.
-///
-/// References: [`SeatInvitation::issue`], [`SeatInvitation::revoke`],
-/// [`CommissionWrites::create_seat_invitation`](crate::ports::CommissionWrites::create_seat_invitation),
-/// DESIGN/Commission, DD `28311564`, ZMVP-78/ZMVP-79.
-///
-/// [`Pending`]: InvitationState::Pending
-/// [`Revoked`]: InvitationState::Revoked
+/// which seat of which commission, by whom, and where it sits in its lifecycle.
+/// Build one with [`SeatInvitation::issue`] and move it on with
+/// [`revoke`](SeatInvitation::revoke). Not `Clone` — an entity, not a value.
 pub struct SeatInvitation {
     /// The app-private id, minted at issuance.
     pub id: SeatInvitationId,
     /// The commission whose Seat is offered.
     pub commission: CommissionId,
-    /// The Seat being offered — its carrying element's id (the `commission_seat`
-    /// satellite key). The invited User occupies it only by accepting (ZMVP-79).
+    /// The Seat being offered — its carrying element's id.
     pub seat: ElementId,
-    /// The User being invited. They fill the Seat only by accepting (ZMVP-79).
+    /// The User being invited; they fill the Seat only by accepting.
     pub invited_user: UserId,
-    /// The commission owner who issued the offer (the route's owner-only gate
-    /// settles authority before issuing).
+    /// The commission owner who issued the offer.
     pub inviter: UserId,
-    /// Where the offer sits in its lifecycle. [`Pending`](InvitationState::Pending)
-    /// at issuance.
+    /// Where the offer sits in its lifecycle; `Pending` at issuance.
     pub state: InvitationState,
     /// When the invitation was issued; equals `updated_at` at issuance.
     pub created_at: DateTimeUtc,
@@ -111,13 +71,9 @@ pub struct SeatInvitation {
 }
 
 impl SeatInvitation {
-    /// Issue a fresh, [`Pending`](InvitationState::Pending) seat invitation.
-    ///
-    /// Mints the id (`SeatInvitationId::new(Uuid::now_v7())`) and stamps
-    /// `created_at == updated_at == now`. A pure builder, like
-    /// [`Invitation::issue`](crate::elements::invitation::Invitation::issue): the
-    /// authority to issue (the inviter being the commission owner, the seat being
-    /// vacant) is the caller's check, settled before this is reached.
+    /// Issue a fresh, [`Pending`](InvitationState::Pending) seat invitation:
+    /// mints the id and stamps `created_at == updated_at == now`. A pure
+    /// builder — authority to issue is the caller's check.
     ///
     /// ```
     /// use chrono::Utc;
@@ -157,15 +113,9 @@ impl SeatInvitation {
     }
 
     /// Revoke a pending seat invitation, moving it to
-    /// [`Revoked`](InvitationState::Revoked) and stamping `updated_at`.
-    ///
-    /// The pure encoding of "the owner may revoke a *pending* seat offer": only a
-    /// [`Pending`](InvitationState::Pending) offer can be revoked — revoking one
-    /// already accepted or revoked is [`InvitationError::NotPending`], leaving the
-    /// state untouched. *Who* may revoke (the owner) is the caller's authority
-    /// check; this guards only the state transition. Mirrors
-    /// [`Invitation::revoke`](crate::elements::invitation::Invitation::revoke)
-    /// exactly (the shared state machine).
+    /// [`Revoked`](InvitationState::Revoked) and stamping `updated_at`. Only a
+    /// pending offer revokes; otherwise [`InvitationError::NotPending`] and the
+    /// state is untouched. *Who* may revoke is the caller's check.
     ///
     /// ```
     /// use chrono::Utc;
@@ -216,8 +166,7 @@ mod tests {
         UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())))
     }
 
-    // Issuance captures all four facts — the invited User, the commission, the
-    // seat, and the inviter — and starts pending, stamped once.
+    // Issuance captures all four facts and starts pending, stamped once.
     #[test]
     fn issue_builds_a_pending_invitation_recording_its_facts() {
         let (commission, seat, invited, inviter) = (commission(), seat(), user(), user());
@@ -235,8 +184,7 @@ mod tests {
         assert_eq!(invitation.updated_at, now);
     }
 
-    // Revoking a pending invitation moves it to revoked and bumps updated_at,
-    // leaving created_at (the issuance stamp) untouched.
+    // Revoking bumps updated_at and leaves created_at untouched.
     #[test]
     fn revoke_moves_a_pending_invitation_to_revoked() {
         let issued = Utc::now();
@@ -252,8 +200,7 @@ mod tests {
         );
     }
 
-    // The state guard: only a pending invitation revokes; a second revoke is
-    // rejected and changes nothing (the shared InvitationState machine).
+    // Only a pending invitation revokes; a second revoke changes nothing.
     #[test]
     fn revoking_a_non_pending_invitation_is_rejected() {
         let mut invitation =

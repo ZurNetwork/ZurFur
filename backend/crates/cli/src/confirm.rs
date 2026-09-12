@@ -1,19 +1,7 @@
-//! The confirmation gate in front of an irreversible operation (Engineer
-//! ruling 2026-08-28).
-//!
-//! `account delete` frees the handle and tombstones the account's `did:plc`;
-//! past the PLC recovery window it cannot be undone. So it is never run
-//! unasked — and, just as important, never run *silently* when there is nobody
-//! to ask. The gate has two sides:
-//!
-//! - a person at a terminal is asked, and only a typed `y`/`yes` proceeds;
-//! - anything else — a pipe, a redirect, CI — is **refused**, not defaulted.
-//!   Absence of a terminal is not consent, so a scripted caller must say so
-//!   in the argument vector (`--yes`). Piping `y` into the command is not a
-//!   confirmation either: the answer channel isn't a person.
-//!
-//! The question goes to **stderr**, never stdout: stdout is the data channel
-//! (exactly one JSON value per successful run) and a prompt is not data.
+//! The confirmation gate in front of an irreversible operation: a person at
+//! a terminal is asked and only a typed `y`/`yes` proceeds; a pipe, redirect
+//! or CI session is refused, not defaulted (`--yes` is the explicit opt-in).
+//! The question goes to stderr — stdout stays the data channel.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -29,14 +17,9 @@ pub enum Session {
 }
 
 impl Session {
-    /// Read the process's own streams. Interactive only when **both** the
-    /// answer's source (stdin) and the question's channel (stderr) are
-    /// terminals — a prompt nobody can see is not a prompt, and an answer
-    /// nobody typed is not an answer.
-    ///
-    /// This is the one part of the module a unit test cannot drive (it would
-    /// need a pty), which is exactly why it is one line: every test hands
-    /// [`confirm`] the variant it means to exercise.
+    /// Interactive only when both stdin and stderr are terminals. Untestable
+    /// directly (needs a pty); tests drive [`confirm`] with the variant they
+    /// mean to exercise.
     pub fn detect() -> Self {
         if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
             Session::Interactive
@@ -47,14 +30,9 @@ impl Session {
 }
 
 /// Ask before an irreversible operation, over the process's real streams.
-///
-/// `Ok(())` is the only outcome that lets the caller proceed; everything else
-/// — a detached session, a declined prompt, an unreadable answer — is a
-/// [`CliError`] the command returns unchanged, so the operation never runs.
-///
-/// The refusal wording names deletion because deletion is the only caller
-/// today; when a second destructive command arrives the noun becomes a
-/// parameter rather than a second copy of this function.
+/// `Ok(())` is the only outcome that lets the caller proceed; anything else
+/// — a detached session, a declined prompt, an unreadable answer — becomes
+/// a [`CliError`], and the operation never runs.
 pub fn confirm_destructive(prompt: &str) -> Result<(), CliError> {
     let stdin = std::io::stdin();
     confirm(
@@ -96,9 +74,7 @@ pub fn confirm(
         )
     })?;
 
-    // Only an explicit yes proceeds. A bare Enter, EOF (`read_line` → 0
-    // bytes), `n`, or anything unrecognized all mean no — the default is No,
-    // and an answer we don't understand is never taken for consent.
+    // Anything but an explicit y/yes means no — including a bare Enter or EOF.
     let reply = reply.trim().to_ascii_lowercase();
     if matches!(reply.as_str(), "y" | "yes") {
         Ok(())

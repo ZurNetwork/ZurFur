@@ -30,16 +30,13 @@ impl From<CommissionError> for Problem {
                 Problem::invalid_request("This commission is already in this state.")
             }
             CommissionError::InsufficientPermissions => Problem::forbidden(),
-            // The closed-door policy: a non-participant answers exactly like an
-            // absent commission (never 403, which would confirm something exists
-            // to be forbidden from).
+            // Closed-door: a non-participant answers exactly like an absent commission.
             CommissionError::NotAMember => Problem::commission_not_found(),
             CommissionError::InvalidStateRequested => Problem::invalid_request(err.to_string()),
             CommissionError::InvalidFileName(e) => {
                 Problem::invalid_request(format!("Invalid filename: {e}."))
             }
-            // The exact `{max}`-byte message lives at the upload call site, which
-            // holds `max_upload_bytes`; this is the generic fallback.
+            // The exact {max}-byte message lives at the upload call site; this is the fallback.
             CommissionError::FileTooLarge => {
                 Problem::invalid_request("The file exceeds the upload limit.")
             }
@@ -48,19 +45,14 @@ impl From<CommissionError> for Problem {
             CommissionError::InvalidMarkup(e) => {
                 Problem::invalid_request(format!("Invalid markup: {e}."))
             }
-            // The entry survives but its bytes do not: server-side data loss,
-            // never the caller's doing.
+            // Bytes lost server-side, never the caller's doing.
             CommissionError::FileBlobMissing => {
                 Problem::internal_error("The file's contents could not be retrieved.")
             }
-            // A Seat is an Element, so a seat absent from this commission
-            // answers as the element it is (the invitation routes' `404
-            // element_not_found`).
+            // A Seat is an Element, so an absent seat answers as element_not_found.
             CommissionError::SeatNotFound => Problem::element_not_found(),
             CommissionError::SeatFilled => Problem::seat_filled(),
-            // The composition-address gates: a fabricated tab and a foreign one
-            // are deliberately indistinguishable (404), while an undeclared
-            // surface under a real tab is the honest 422.
+            // Fabricated/foreign tab → 404; undeclared surface under a real tab → 422.
             CommissionError::TabNotFound => Problem::tab_not_found(),
             CommissionError::UnknownSurface => Problem::unknown_surface(),
             CommissionError::ElementNotFound => Problem::element_not_found(),
@@ -186,23 +178,18 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         )
 }
 
-/// The linked-channel pointer's methods. Pulled out so the deprecation
-/// allowance covers exactly [`link_channel`](channel::link_channel) — the act
-/// is on its way to a plugin (DD `6848513`) but still mounted, so the route
-/// stays and only the warning is silenced.
+/// The linked-channel pointer's methods, pulled out so `#[allow(deprecated)]`
+/// covers only [`link_channel`](channel::link_channel). (DD 6848513)
 #[allow(deprecated)]
 fn channel_methods() -> MethodRouter<AppState> {
     put(channel::link_channel).delete(channel::clear_channel)
 }
 
 /// Admits only the commission's owner, returning the resolved [`Commission`].
-/// A non-participant gets `404 commission_not_found`; a non-owner participant
-/// gets `403`.
+/// `404` for a non-participant, `403` for a non-owner participant.
 ///
-/// ⚠️ Driver-side authorization, which DD 55836674 D7 places in the
-/// application layer instead. It survives only for the two acts that have no
-/// use case yet — `channel` and `elements` — and dies with them; every
-/// migrated handler authorizes inside its use case.
+/// ⚠️ Driver-side authorization (DD 55836674 D7 places this in the
+/// application layer); survives only for `channel`/`elements`.
 async fn require_owner(
     state: &AppState,
     commission: &CommissionId,

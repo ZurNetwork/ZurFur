@@ -1,37 +1,22 @@
-//! Envelope encryption of custody key material under a **root key**.
-//!
-//! The account custody keys ([`AccountKeys`]) are the most sensitive material
-//! Zurfur holds. Before they touch disk (see [`PgKeyStore`](crate::key_store::PgKeyStore))
-//! they are sealed with an AEAD (XChaCha20-Poly1305) under a 32-byte **root key**
-//! that lives *outside* the database — so a database compromise alone yields no
-//! usable key. This is the "envelope" model: one root key wraps every per-account
-//! key (DD/26804226).
-//!
-//! # Root key custody — DEV-ONLY today, KMS next
-//!
-//! In v1 the root key comes from config/env (a plain 32-byte secret). That is
-//! acceptable **only** for pre-alpha/dev: a config-held root key is not a hardware
-//! boundary. Hardening it into a cloud KMS / HSM (the root key never leaving the
-//! module; wrap/unwrap done by the KMS) is the **URGENT follow-up ZMVP-53**, which
-//! must land before any real account is minted. The [`RootKey`] type and the
-//! `wrap`/`unwrap` seam are shaped so that swap is a [`KeyStore`](domain::ports::KeyStore)
-//! adapter change, not a schema change.
+//! Envelope encryption of custody key material under a **root key**
+//! (XChaCha20-Poly1305), before [`AccountKeys`] touch disk via
+//! [`PgKeyStore`](crate::key_store::PgKeyStore) (DD 26804226). The root key is
+//! DEV-ONLY (config/env) in v1 — a KMS/HSM must back it before any real
+//! account is minted.
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use domain::elements::account_keys::{AccountKeys, SecretKey};
 use zeroize::Zeroizing;
 
-/// A secp256k1 private scalar is always 32 bytes; the bundle is the three keys
-/// concatenated in role order.
+/// A secp256k1 private scalar is 32 bytes; the bundle concatenates the three
+/// keys in role order.
 const SECRET_LEN: usize = 32;
-/// XChaCha20-Poly1305 nonce length (192-bit) — large enough that random nonces
-/// never collide in practice, so no counter/state is needed.
+/// XChaCha20-Poly1305 nonce length (192-bit); random nonces don't need a counter.
 const NONCE_LEN: usize = 24;
 
-/// The 32-byte root key that wraps every account's custody keys. Held in memory
-/// only; sourced from config/env in v1 (DEV-ONLY — see module docs, ZMVP-53).
-/// [`Debug`] is redacted so the root key can never reach a log line.
+/// The 32-byte root key that wraps every account's custody keys. In-memory
+/// only. [`Debug`] is redacted so it can never reach a log line.
 #[derive(Clone)]
 pub struct RootKey([u8; 32]);
 
@@ -42,9 +27,8 @@ impl std::fmt::Debug for RootKey {
 }
 
 impl RootKey {
-    /// Build a root key from exactly 32 bytes. Errors on any other length so a
-    /// misconfigured secret fails loudly at boot rather than silently weakening
-    /// encryption.
+    /// Build a root key from exactly 32 bytes. Errors on any other length so
+    /// a misconfigured secret fails loudly at boot.
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let arr: [u8; 32] = bytes.try_into().map_err(|_| {
             anyhow::anyhow!("root key must be exactly 32 bytes, got {}", bytes.len())
@@ -56,18 +40,12 @@ impl RootKey {
         XChaCha20Poly1305::new((&self.0).into())
     }
 
-    /// Seal an account's custody keys into an opaque blob: a fresh random nonce
-    /// followed by the AEAD ciphertext of `[cold ‖ operational ‖ signing]`. Only a
-    /// holder of this root key can [`unwrap`](RootKey::unwrap) it.
-    ///
-    /// The account's `did` is bound in as AEAD **associated data**, so a blob is
-    /// cryptographically tied to its row: an attacker with database write access
-    /// cannot move one account's `wrapped_keys` onto another account's DID — the tag
-    /// check fails on `unwrap` under the moved-to DID. Defense-in-depth on top of the
-    /// core property (a DB read alone yields no usable key).
+    /// Seals an account's custody keys into an opaque blob: a random nonce
+    /// followed by the AEAD ciphertext of `[cold ‖ operational ‖ signing]`.
+    /// The `did` is bound as AEAD associated data, so a blob cannot be moved
+    /// onto another account's row — `unwrap` fails under the wrong DID.
     pub fn wrap(&self, did: &str, keys: &AccountKeys) -> anyhow::Result<Vec<u8>> {
-        // `Zeroizing` wipes the concatenated plaintext key bundle on drop, so raw
-        // key bytes don't linger in the heap after sealing.
+        // `Zeroizing` wipes the plaintext key bundle on drop.
         let mut plaintext = Zeroizing::new(Vec::with_capacity(3 * SECRET_LEN));
         for secret in [&keys.cold_recovery, &keys.operational, &keys.signing] {
             let bytes = secret.expose();
@@ -98,18 +76,17 @@ impl RootKey {
         Ok(blob)
     }
 
-    /// Open a blob produced by [`wrap`](RootKey::wrap) back into [`AccountKeys`].
-    /// `did` must be the same DID the blob was sealed under (it is the AEAD
-    /// associated data). Errors if the blob is malformed, the DID does not match, or
-    /// the AEAD tag fails (wrong root key or tampering).
+    /// Opens a blob from [`wrap`](RootKey::wrap) back into [`AccountKeys`].
+    /// `did` must match the sealing DID. Errors on a malformed blob, wrong
+    /// DID, or failed AEAD tag (wrong root key or tampering).
     pub fn unwrap(&self, did: &str, blob: &[u8]) -> anyhow::Result<AccountKeys> {
         if blob.len() < NONCE_LEN {
             anyhow::bail!("wrapped key blob too short");
         }
         let (nonce_bytes, ciphertext) = blob.split_at(NONCE_LEN);
         let nonce = XNonce::from_slice(nonce_bytes);
-        // `Zeroizing` wipes the decrypted key bundle on drop, once the per-role
-        // `SecretKey`s have been copied out of it below.
+        // `Zeroizing` wipes the decrypted key bundle on drop, after the per-role
+        // `SecretKey`s are copied out of it below.
         let plaintext = Zeroizing::new(
             self.cipher()
                 .decrypt(

@@ -1,29 +1,10 @@
-//! The real [`PublicRecords`] adapter — authenticated `com.atproto.repo.*` writes
-//! (and `uploadBlob`) into an actor's repo on its PDS (ZMVP-105).
+//! The real [`PublicRecords`] adapter — authenticated `com.atproto.repo.*`
+//! writes (and `uploadBlob`) into an actor's repo on its PDS.
 //!
-//! This is the **write half** of Zurfur's public data boundary and the first
-//! authenticated write to a PDS repo in the codebase (DID minting writes to a PLC
-//! directory; profile reads are unauthenticated). Every AT-Protocol type stays
-//! **quarantined here**: the [`PublicRecords`] port speaks domain records + [`Did`]
-//! only, and the `jacquard` wire types + the PDS credential never cross the crate
-//! boundary (DESIGN/"Domains and Applications"; the plugin-trust containment,
-//! DD `24543244`).
-//!
-//! # Auth (ZMVP-105 = Bearer)
-//!
-//! The adapter is **constructed with** its acting identity's Bearer access token
-//! (the `access_jwt` the ZMVP-103 seam vends as `ActingCredential::PdsSession`) and
-//! its PDS endpoint; it sends every request as `Authorization: Bearer <jwt>` to
-//! that endpoint. The port never takes a credential per call, so swapping to a
-//! DPoP-bound OAuth session later (ZMVP-107) is an internal change here — the
-//! error mapping keys on the **XRPC** outcome (status + atproto error name), not
-//! the auth transport, so it survives that swap.
-//!
-//! Reads and writes both target the constructed endpoint directly (no DID→PDS
-//! resolution), which keeps the boundary hermetic against a throwaway PDS whose
-//! `did:plc` lives only in a local stub directory. That scopes reads to the
-//! acting identity's own repo — exactly ZMVP-105's subject; cross-repo reads
-//! (which need resolution) are a later concern.
+//! The adapter is constructed with its acting identity's Bearer token and PDS
+//! endpoint; the port never takes a credential per call, and every request
+//! targets that endpoint directly (no DID→PDS resolution). Error mapping keys on
+//! the XRPC outcome, not the auth transport. Wire types stay quarantined here.
 
 use std::str::FromStr;
 
@@ -49,7 +30,7 @@ use domain::elements::public_record::{
 use domain::ports::{PublicRecords, PublicRecordsError};
 
 /// The real public-boundary record store, bound to one acting identity's PDS
-/// session (Bearer). See the module docs for the auth model.
+/// session (Bearer).
 pub struct AtprotoPublicRecords {
     http: reqwest::Client,
     /// The PDS base URL every request targets.
@@ -60,12 +41,8 @@ pub struct AtprotoPublicRecords {
 
 impl AtprotoPublicRecords {
     /// Build the adapter for the identity authenticated by `access_jwt` on the
-    /// PDS at `endpoint`.
-    ///
-    /// `access_jwt` is the `ActingCredential::PdsSession` access token from the
-    /// ZMVP-103 fixture seam (or, in production later, an OAuth-issued token). It
-    /// is a secret; it lives only inside this value and appears in no port
-    /// signature. Errors only if `endpoint` is not a valid URI.
+    /// PDS at `endpoint`. The token is a secret held only inside this value.
+    /// Errors only if `endpoint` is not a valid URI.
     pub fn new(endpoint: &str, access_jwt: impl Into<String>) -> anyhow::Result<Self> {
         let endpoint = Uri::parse(endpoint.to_string())
             .map_err(|e| anyhow::anyhow!("invalid PDS endpoint {endpoint:?}: {e:?}"))?;
@@ -182,12 +159,8 @@ impl PublicRecords for AtprotoPublicRecords {
         bytes: Vec<u8>,
         mime_type: &str,
     ) -> Result<BlobRef, PublicRecordsError> {
-        // `com.atproto.repo.uploadBlob` is a raw binary POST. We issue it directly
-        // rather than through jacquard's typed request: jacquard 0.12's generated
-        // `UploadBlob::encode_body` is `buffer.copy_from_slice(..)` into an empty
-        // buffer (it should `extend_from_slice`), which panics on the stateless
-        // client path. A plain POST — same Bearer auth, same endpoint — sidesteps
-        // that bug while keeping the wire format identical.
+        // A plain POST, not jacquard's typed request: jacquard 0.12's generated
+        // `UploadBlob::encode_body` panics on the stateless client path.
         let request_size = bytes.len() as u64;
         let response = self
             .http
@@ -201,8 +174,8 @@ impl PublicRecords for AtprotoPublicRecords {
             .send()
             .await
             .map_err(|e| {
-                // A connect/timeout failure is an unreachable PDS; anything else the
-                // request layer refuses is surfaced, never swallowed.
+                // A connect/timeout failure is an unreachable PDS; anything else
+                // is surfaced, never swallowed.
                 if e.is_connect() || e.is_timeout() {
                     PublicRecordsError::Unreachable(anyhow::anyhow!("uploadBlob transport: {e}"))
                 } else {
@@ -230,8 +203,7 @@ impl PublicRecords for AtprotoPublicRecords {
             ))
         })?;
         let mime = blob["mimeType"].as_str().unwrap_or(mime_type).to_string();
-        // Prefer the size the repo recorded; fall back to the bytes we sent if
-        // the response omits it (as with mimeType).
+        // Prefer the size the repo recorded; fall back to the bytes we sent.
         let size = blob["size"].as_u64().unwrap_or(request_size);
         Ok(BlobRef {
             cid: parse_cid(cid)?,
@@ -242,8 +214,8 @@ impl PublicRecords for AtprotoPublicRecords {
 }
 
 impl AtprotoPublicRecords {
-    /// Send an authenticated XRPC request to the bound endpoint. A thin wrapper so
-    /// every write shares one auth + transport-error path.
+    /// Send an authenticated XRPC request to the bound endpoint — the one shared
+    /// auth + transport-error path.
     async fn send<R>(
         &self,
         request: R,
@@ -266,9 +238,9 @@ impl AtprotoPublicRecords {
 
 // --- error mapping (XRPC outcome → domain error; never the auth transport) ---
 
-/// Map a send-layer [`ClientError`](jacquard::common::error::ClientError): a
-/// transport failure is [`PublicRecordsError::Unreachable`]; an HTTP error status
-/// the transport layer surfaced (5xx / 403 / …) is a [`PublicRecordsError::Rejected`].
+/// Map a send-layer client error: a transport failure becomes
+/// [`PublicRecordsError::Unreachable`], an HTTP error status
+/// [`PublicRecordsError::Rejected`] (404 becomes `NotFound`).
 fn map_send_err(err: jacquard::common::error::ClientError) -> PublicRecordsError {
     use jacquard::common::error::ClientErrorKind;
     match err.kind() {
@@ -292,7 +264,7 @@ fn map_send_err(err: jacquard::common::error::ClientError) -> PublicRecordsError
 }
 
 /// Map a response-layer [`XrpcError`] (a PDS that answered but refused) to the
-/// domain error, keying on the atproto error **name** and HTTP status.
+/// domain error, keying on the atproto error name and HTTP status.
 fn map_output_err<E: std::error::Error>(err: XrpcError<E>) -> PublicRecordsError {
     match err {
         XrpcError::Xrpc(typed) => {
@@ -327,13 +299,13 @@ fn map_output_err<E: std::error::Error>(err: XrpcError<E>) -> PublicRecordsError
             PublicRecordsError::Unexpected(anyhow::anyhow!("decode response: {d}"))
         }
         // `XrpcError` is `#[non_exhaustive]`: surface any future variant rather
-        // than swallowing it (never a silent success on failure — AC4).
+        // than swallowing it.
         other => PublicRecordsError::Unexpected(anyhow::anyhow!("XRPC error: {other}")),
     }
 }
 
-/// Build a [`PublicRecordsError::Rejected`] from a non-success atproto error body
-/// (`{"error": "...", "message": "..."}`), keeping the HTTP status and error name.
+/// Build a [`PublicRecordsError::Rejected`] from a non-success atproto error
+/// body, keeping the HTTP status and error name.
 fn rejected_from_body(status: u16, body: &[u8]) -> PublicRecordsError {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
     let error = parsed
@@ -355,19 +327,10 @@ fn rejected_from_body(status: u16, body: &[u8]) -> PublicRecordsError {
     }
 }
 
-/// Whether an atproto error denotes a missing **record specifically** — the exact
-/// `RecordNotFound` code (`com.atproto.repo.getRecord`), never a repo- or
-/// account-level failure (`RepoNotFound`, `AccountNotFound`, `RepoDeactivated`, …)
-/// whose name merely *contains* `NotFound`. Those are real errors — a missing repo
-/// or a deactivated account is not an absent record — so they must propagate with
-/// their real status + message, never be flattened to [`PublicRecordsError::NotFound`].
-///
-/// Accepts either a bare atproto error code (the `error` field of a `Generic` XRPC
-/// error or of an error body) or a jacquard typed-error render of the shape
-/// `"RecordNotFound: <message>"`. The atproto error code is the token before the
-/// first `':'` and never itself contains one, so comparing that token to
-/// `"RecordNotFound"` matches the record-not-found code exactly while rejecting
-/// every other `*NotFound` name.
+/// Whether an atproto error is the exact `RecordNotFound` code — never a
+/// repo/account-level failure whose name merely contains `NotFound`, which must
+/// keep its real status. Accepts a bare code or a `"RecordNotFound: <msg>"`
+/// typed render (the code is the token before the first `':'`).
 fn is_record_not_found(s: &str) -> bool {
     s.split(':').next().map(str::trim) == Some("RecordNotFound")
 }
@@ -436,12 +399,9 @@ struct WireFeedPost {
     created_at: String,
 }
 
-/// `app.zurfur.embed.media` (a single-ref embed — no `$type` needed on the ref).
-///
-/// The `blob` field is jacquard's own [`JacBlob`], **not** a hand-rolled struct:
-/// an atproto blob's `ref` is a first-class CID-link node in the `Data`/CBOR
-/// model (not a plain `{$link}` map), so only jacquard's `Blob` serialises to a
-/// real, PDS-recognised blob reference and reads one back.
+/// `app.zurfur.embed.media` (a single-ref embed — no `$type` on the ref). The
+/// `blob` field must stay jacquard's [`JacBlob`]: only it serialises `ref` as a
+/// real CID-link node the PDS recognises.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireEmbed {
@@ -494,8 +454,7 @@ struct WireSelfLabel {
 
 // --- domain FeedPost ↔ wire mapping ---
 
-/// Serialise the domain record to its wire form. Fails only if the record body
-/// is structurally impossible to render (never, today — one infallible variant).
+/// Serialise the domain record to its wire form.
 fn wire_record_for(record: &PublicRecord) -> Result<WireFeedPost, PublicRecordsError> {
     match record {
         PublicRecord::FeedPost(post) => Ok(wire_feed_post(post)),
@@ -527,8 +486,8 @@ fn wire_feed_post(post: &FeedPost) -> WireFeedPost {
 fn wire_embed(embed: &Embed) -> WireEmbed {
     WireEmbed {
         blob: JacBlob {
-            // `ipld` keeps the CID as a real link node, so `to_data` emits a
-            // genuine atproto blob reference the PDS associates and serves.
+            // `ipld` keeps the CID a real link node, so `to_data` emits a
+            // genuine atproto blob reference.
             r#ref: CidLink::ipld(embed.blob.cid),
             mime_type: MimeType::new_owned(&embed.blob.mime_type),
             size: embed.blob.size as usize,
@@ -567,9 +526,8 @@ fn wire_credit(credit: &Credit) -> WireCredit {
     }
 }
 
-/// Parse the wire record back into a domain [`FeedPost`]. Fails
-/// ([`PublicRecordsError::Unexpected`]) if the repo returned a structurally
-/// malformed record (a bad CID, AT-URI, or timestamp) — never a silent default.
+/// Parse the wire record back into a domain [`FeedPost`]. A malformed CID,
+/// AT-URI or timestamp is an `Unexpected` error, never a silent default.
 fn feed_post_from_wire(wire: WireFeedPost) -> Result<FeedPost, PublicRecordsError> {
     Ok(FeedPost {
         text: wire.text,

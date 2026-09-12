@@ -1,21 +1,8 @@
-//! The atproto well-known route group: handle → DID resolution for the
-//! Zurfur-issued `*.zurfur.app` namespace (ZMVP-44, DD/26607618 "Handle
-//! Resolution for *.zurfur.app — HTTPS well-known").
-//!
-//! A client resolving the atproto handle `alice.zurfur.app` fetches
-//! `https://alice.zurfur.app/.well-known/atproto-did`; the `Host` header carries
-//! the handle. This endpoint reads that `Host`, confirms it is a subdomain of the
-//! configured [`handle_domain`](crate::Config::handle_domain), normalizes it
-//! through the shared [`Handle`] gate, looks up the account's `did:plc` in the
-//! private store, and returns the **bare DID as `text/plain`** (HTTP 200), or
-//! `404` when nothing resolves.
-//!
-//! It carries no auth, changes no state, and bears no cookie — so [`crate::app`]
-//! mounts it top-level, deliberately *outside* the cookie-surface CSRF layer (like
-//! `/health`). Resolution is a single private-store read: no PDS touch, so this
-//! never becomes a cross-store transaction. BYO-domain handles resolve at the
-//! owner's own domain, never here — the `handle_domain` suffix gate makes that
-//! explicit (a request for any other authority is not ours to answer).
+//! The atproto well-known route group: `GET /.well-known/atproto-did`,
+//! handle→DID resolution for the `*.zurfur.app` namespace (DD 26607618).
+//! Reads `Host`, validates it's a subdomain of `handle_domain`, and returns
+//! the bare DID as `text/plain`, or `404`. No auth, no cookie; a single
+//! private-store read (no PDS touch).
 
 use axum::{
     Router,
@@ -28,57 +15,33 @@ use domain::elements::handle::{Handle, HandleDomain};
 
 use crate::AppState;
 
-/// The well-known route group: just `GET /.well-known/atproto-did`. Its own
-/// builder so the composition root can mount it top-level, alongside (not under)
-/// the cookie-surface CSRF layer — a resolver carries no `Origin` and no session.
+/// The well-known route group: just `GET /.well-known/atproto-did`, mounted
+/// top-level alongside (not under) the cookie-surface CSRF layer.
 pub(crate) fn wellknown_router() -> Router<AppState> {
     Router::new().route("/.well-known/atproto-did", get(atproto_did))
 }
 
-/// Parse a request `Host` into the account [`Handle`] it addresses, or `None` if
-/// the host is not ours to resolve.
-///
-/// The host must be a **subdomain** of `handle_domain` — the apex itself, or any
-/// other authority, yields `None`, so we only ever answer for handles in the
-/// Zurfur-issued namespace. Any optional `:port` is dropped and the whole host is
-/// normalized/validated through the shared [`Handle`] gate, so a punycode or
-/// otherwise malformed host resolves to `None` (and is answered `404`) rather than
-/// reaching the store.
+/// Parses a request `Host` into the account [`Handle`] it addresses, or
+/// `None` if the host isn't ours to resolve (not a subdomain of
+/// `handle_domain`, or malformed).
 fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Handle> {
-    // Drop an optional `:port`. A handle authority is a DNS name (no colon in the
-    // host itself), so at most one colon is allowed. Anything with more — an IPv6
-    // literal like `[::1]:443`, or a malformed `host:port:garbage` — is not a valid
-    // handle authority; reject it (fail closed) rather than silently taking a prefix.
+    // Drop an optional :port; more than one colon is not a valid authority (fail closed).
     let host = match host.split_once(':') {
         None => host,
         Some((h, port)) if !h.is_empty() && !port.contains(':') => h,
         Some(_) => return None,
     };
-    // Drop a single FQDN-root trailing dot so `alice.zurfur.app.` resolves the same
-    // as `alice.zurfur.app` — consistent with `Handle`'s `FromStr`'s normalization.
+    // Drop a trailing FQDN-root dot, consistent with Handle's FromStr normalization.
     let host = host.strip_suffix('.').unwrap_or(host);
-    // Normalize + validate the whole host as a handle; a bad one (punycode,
-    // reserved label, malformed) is not a resolvable handle.
     let handle = host.parse::<Handle>().ok()?;
-    // Only answer for a subdomain of our handle namespace — never the apex, never a
-    // foreign authority (a BYO-domain handle resolves at its own domain, not here).
-    // Membership is the domain's own test, over a namespace parsed once at config
-    // load, so this resolver and the claim checks in `application::account` can
-    // never disagree on what the namespace is.
+    // Never the apex or a foreign authority — a BYO-domain handle resolves at its own domain.
     handle.is_in_namespace(handle_domain).then_some(handle)
 }
 
-/// `GET /.well-known/atproto-did` — resolve a Zurfur-issued handle (carried in the
-/// `Host` header) to its account's `did:plc`, returned as a bare `text/plain` body
-/// (HTTP 200). A `Host` that is not a subdomain of
-/// [`handle_domain`](crate::Config::handle_domain), or that no live account holds,
-/// is `404`. No auth; a single private-store read (no PDS touch).
+/// `GET /.well-known/atproto-did` — resolves the `Host` header's handle to its
+/// account's `did:plc`, `text/plain` (`200`).
 ///
-/// ```text
-/// GET /.well-known/atproto-did   Host: alice.zurfur.app
-/// → 200 text/plain  did:plc:abc123        (alice's account DID)
-/// → 404                                   (unknown handle, or a foreign Host)
-/// ```
+/// - `404` — `Host` not a subdomain of `handle_domain`, or no live account holds it
 async fn atproto_did(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
         return StatusCode::NOT_FOUND.into_response();

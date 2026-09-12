@@ -1,10 +1,7 @@
-//! The [`User`] — Zurfur's record of a recognized visitor.
-//!
-//! A visitor's identity lives on their PDS and precedes the platform, so Zurfur
-//! *recognizes* rather than registers: the first time a [`Did`] signs in we mint
-//! a [`User`] for it; thereafter that DID maps to that same User forever. See
-//! [`crate::ports::UserWrites`] for the idempotent provisioning port, ZMVP-9, and
-//! DESIGN/User.
+//! The [`User`] — Zurfur's record of a recognized visitor. A visitor's identity
+//! precedes the platform, so Zurfur recognizes rather than registers: one DID
+//! maps to one User forever, provisioned idempotently through
+//! [`crate::ports::UserWrites`]. (DESIGN 786439)
 
 use std::{ops::Deref, str::FromStr};
 
@@ -15,20 +12,14 @@ use crate::{
     elements::{did::Did, id::IdError},
 };
 
-/// The identity of a [`User`]: their [`Did`], wrapped so a user id cannot be
-/// passed where some other actor's id is wanted.
-///
-/// The DID *is* the key — there is no separate private surrogate (DD
-/// `57081857`). `Deref` exposes the inner [`Did`].
-///
-/// References: [`new`](UserId::new), [`User::recognize`].
+/// The identity of a [`User`]: their [`Did`]. The DID IS the key — there is no
+/// separate private surrogate. (DD 57081857)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(Did);
 
 impl UserId {
-    /// Wraps a [`Did`] as a user id — a session subject, a row read back from
-    /// Postgres, a DID freshly minted for this actor. Deterministic: the same
-    /// DID always yields the same id.
+    /// Wraps a [`Did`] as a user id. Deterministic: the same DID always yields
+    /// the same id.
     pub fn new(id: Did) -> Self {
         Self(id)
     }
@@ -63,29 +54,20 @@ impl From<Did> for UserId {
 }
 
 /// A recognized visitor: their [`Did`] as a [`UserId`], stamped with when
-/// Zurfur first saw it.
-///
-/// One DID maps to one User forever (see [`crate::ports::UserWrites::provision`]).
-/// The struct holds no profile data — handle, display name, and avatar are
-/// user-owned, fetched live from the PDS via [`crate::ports::ProfileSource`]
-/// (DESIGN/User, ZMVP-9/10).
+/// Zurfur first saw it. Holds no profile data — handle, display name and avatar
+/// are user-owned and fetched from the PDS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
     pub id: UserId,
-    /// When Zurfur first recognized this DID. Stored as an explicit domain
-    /// fact: the id carries no timestamp, and import flows can make recognition
-    /// time diverge from when the DID itself was minted.
+    /// When Zurfur first recognized this DID — an explicit domain fact, since
+    /// the id carries no timestamp.
     pub created_at: DateTimeUtc,
 }
 
 impl User {
     /// The act of first recognition: key the User on `did` and stamp the
-    /// moment. `now` is injected so tests and import flows stay deterministic.
-    ///
-    /// Pure: this only builds the value — persisting it (and enforcing the
-    /// one-DID-one-User rule) is [`crate::ports::UserWrites::provision`]'s job.
-    /// The id is the DID, so calling it twice for one DID yields two Users that
-    /// differ only in `created_at`; go through the repo to recognize idempotently.
+    /// moment. A pure value — persisting it, and the one-DID-one-User rule, are
+    /// [`crate::ports::UserWrites::provision`]'s job.
     ///
     /// ```
     /// use chrono::Utc;

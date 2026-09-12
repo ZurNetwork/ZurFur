@@ -1,7 +1,6 @@
-//! The `session` namespace: who the CLI acts as. `whoami` and `logout`
-//! (ZMVP-203) read and clear the identity file; `login` (ZMVP-204) is blocked
-//! on the Engineer's client-model ruling and answers an honest
-//! `not_implemented` problem until then — never a fake success.
+//! The `session` namespace: who the CLI acts as. `whoami` and `logout` read
+//! and clear the identity file; `login` is blocked pending the client-model
+//! decision and answers `not_implemented` — never a fake success.
 
 use std::path::Path;
 
@@ -23,12 +22,10 @@ pub enum SessionOp {
     Whoami,
 }
 
-/// `whoami`'s projection — the same keys, spelling, and omissions as the
-/// HTTP `GetMeResponse`: the DID always; handle/displayName/avatarUrl only
-/// when the profile resolved. A hand copy of the generated contract type
-/// (which lives inside `api`, behind axum); `api/tests/whoami_parity.rs`
-/// asserts the two render identically until the contract moves to a leaf
-/// crate (DD 40992770 D11).
+/// `whoami`'s projection — the same keys as HTTP's `GetMeResponse`: the DID
+/// always, handle/displayName/avatarUrl only when the profile resolved. A
+/// hand copy pinned to the wire by `api/tests/whoami_parity.rs` (DD 40992770
+/// D11).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Whoami {
@@ -94,7 +91,10 @@ pub async fn run(
                 .me(query, &*runtime.profile_cache, &*runtime.profile_source)
                 .await
                 .map_err(|e| match e {
-                    MeError::UnknownUser(_) => CliError::domain("not_authenticated", e),
+                    MeError::UnknownUser(_) => CliError::domain(
+                        "not_authenticated",
+                        "the recorded identity is unknown to this database; run `zurfur session login` again",
+                    ),
                     MeError::Store(_) => CliError::infra("internal_error", e),
                 })?;
             let body = Whoami::from(me);

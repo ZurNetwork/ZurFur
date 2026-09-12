@@ -1,21 +1,19 @@
 //! The orchestrator's factory: one [`Ports`] bag assembled by the composition
-//! root, one [`App`] over it, and per-entity namespaces vended from it. Drivers
-//! hold an [`App`] and pass `now`; they never see a port.
+//! root, one [`App`] over it, and the per-entity namespaces vended from it.
+//! Drivers hold an [`App`] and pass `now`; they never see a port.
 
 use std::sync::Arc;
 
 use domain::ports::{
-    AccountStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, ProfileCache,
-    ProfileSource, UserStore,
+    AccountStore, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter, FileStore,
+    ProfileCache, ProfileSource, UserStore, WorkflowStore,
 };
 
 use crate::{account::Accounts, commission::Commissions, user::Users};
 
 /// Every port the orchestrator may use, built once by the composition root.
-/// Reads are pool-side (outside a unit); writes and in-unit reads come from
-/// [`Database::begin`]. Every entry is **required**: a driver profile that
-/// cannot supply one does not assemble a [`Ports`] at all, so no namespace can
-/// discover a missing port at first use.
+/// Reads are pool-side; writes and in-unit reads come from [`Database::begin`].
+/// Every entry is required, so no namespace can find one missing at first use.
 pub struct Ports {
     pub database: Arc<dyn Database>,
     pub users: Arc<dyn UserStore>,
@@ -26,10 +24,12 @@ pub struct Ports {
     pub profile_cache: Arc<dyn ProfileCache>,
     pub did_minter: Arc<dyn DidMinter>,
     pub files: Arc<dyn FileStore>,
+    pub workflows: Arc<dyn WorkflowStore>,
+    pub columns: Arc<dyn ColumnStore>,
 }
 
-/// The orchestrator, built once at composition. A namespace over [`Ports`];
-/// each accessor vends the entity's use cases with the ports already bound.
+/// The orchestrator, built once at composition: a namespace over [`Ports`]
+/// whose accessors vend each entity's use cases with the ports already bound.
 pub struct App {
     ports: Ports,
 }
@@ -40,8 +40,8 @@ impl App {
         Self { ports }
     }
 
-    /// The bag itself, for a not-yet-migrated call site that still builds a
-    /// per-module `*Ports` view. Goes when the last one migrates.
+    /// The bag itself, for call sites that still build a per-module `*Ports`
+    /// view.
     pub fn ports(&self) -> &Ports {
         &self.ports
     }
@@ -62,11 +62,8 @@ impl App {
     }
 }
 
-/// A namespace needs a port the composition root did not supply.
-///
-/// Currently **unreachable**: every [`Ports`] entry is required, so both
-/// `TryFrom<&Ports>` impls always succeed. The type is kept as the home for the
-/// first port a driver profile is allowed to omit.
+/// A namespace needs a port the composition root did not supply. Unreachable
+/// while every [`Ports`] entry is required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MissingPort {
     Files,

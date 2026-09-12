@@ -1,18 +1,9 @@
-//! In-memory fake of the [`FileStore`] port (ZMVP-88, streaming seam
-//! ZMVP-205): the file-entry **blob** store, a `HashMap<FileKey, StoredBlob>`
-//! behind the shared [`MemBackend`]. The test/dev twin of `adapter-pg`'s
-//! `PgFileStore`.
+//! In-memory fake of the [`FileStore`] port: a `HashMap<FileKey, StoredBlob>`
+//! behind the shared [`MemBackend`].
 //!
-//! **Shared, not staged.** Like the profile cache, the blob map's `Arc` is
-//! cloned (not deep-copied) into a unit of work's staging snapshot, because
-//! the blob write is a step *outside* the Unit of Work — bytes cannot ride a
-//! transaction, and a unit that rolls back accepts leaving the blob orphaned
-//! (nothing points at it).
-//!
-//! **Buffers by definition.** The fake drains a `put`'s reader into a
-//! `Vec<u8>` and wraps a `get`'s stored `Vec<u8>` in a [`Cursor`] — fidelity
-//! to the port's streaming *contract*, not to constant-memory transfer (v1's
-//! pg adapter buffers internally too; see its module docs).
+//! The blob map is shared, never staged — the blob write sits outside the Unit
+//! of Work, so a rolled-back unit accepts an orphaned blob. The fake buffers
+//! both directions: fidelity to the streaming contract, not to constant memory.
 
 use std::io::Cursor;
 
@@ -25,24 +16,22 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::MemBackend;
 
-/// The mem mirror of a `file_blob` row: bytes alongside the metadata they
-/// were stored with. Kept apart from the port's [`FileDownload`] — that is a
-/// live reader, this is at-rest data.
+/// The mem mirror of a `file_blob` row: bytes alongside their metadata. At-rest
+/// data, unlike the port's [`FileDownload`] live reader.
 #[derive(Clone)]
 pub(crate) struct StoredBlob {
     metadata: FileMetadata,
     bytes: Vec<u8>,
 }
 
-/// In-memory [`FileStore`] over the shared [`MemBackend`]'s blob map (ZMVP-88).
+/// In-memory [`FileStore`] over the shared [`MemBackend`]'s blob map.
 pub struct MemFileStore(pub(crate) MemBackend);
 
 #[async_trait]
 impl FileStore for MemFileStore {
-    /// Drain `content` into a `Vec<u8>` and store it under `key` alongside
-    /// its finalized [`FileMetadata`] — an idempotent insert-or-replace,
-    /// straight through to the shared map (never staged): the blob write is
-    /// a Unit-of-Work exemption.
+    /// Drain `content` and store it under `key` with its finalized
+    /// [`FileMetadata`] — an idempotent insert-or-replace, written straight to
+    /// the shared map, never staged.
     async fn put(
         &self,
         key: FileKey,

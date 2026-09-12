@@ -20,11 +20,8 @@ pub struct Command {
 pub struct Output;
 
 impl Deadline<'_> {
-    /// Clear the commission's deadline, as a Participant — the honest lever out
-    /// of a Late standing (no deadline, nothing to be late against).
-    ///
-    /// Clearing a deadline that is already absent is an idempotent no-op:
-    /// nothing written, nothing appended.
+    /// Clear the commission's deadline, as a Participant — the lever out of a
+    /// Late standing. Clearing an already-absent deadline is a no-op.
     pub async fn clear(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
         let ports = self.ports();
         let Command {

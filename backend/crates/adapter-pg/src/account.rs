@@ -1,11 +1,7 @@
 //! [`AccountStore`] (reads) and [`AccountWrites`] (writes) over PostgreSQL:
-//! accounts and their memberships in the `accounts` / `account_members` tables.
-//! Reads are pool-backed; writes are reachable only on an open [`UnitOfWork`]
-//! (`uow.accounts()`), so no account write can skip a transaction. See ZMVP-14,
-//! DESIGN/Account, and DD `24150017` (compile-enforced Unit of Work).
-//!
-//! The SQL lives in `queries/account/`; the typed functions and row shapes are
-//! generated against the migrated schema (see [`crate::queries`]).
+//! accounts and memberships in `accounts` / `account_members`. Reads are
+//! pool-backed; writes only via an open [`UnitOfWork`] (`uow.accounts()`).
+//! (DD 24150017)
 //!
 //! [`UnitOfWork`]: domain::ports::UnitOfWork
 
@@ -30,67 +26,26 @@ use std::str::FromStr;
 use crate::queries::account as sql;
 use crate::queries::actor_identity as actor_sql;
 
-/// THE ACCOUNT-FACT REGISTRY (ZMVP-57; Account Deletion DD `23003138`): the tables
-/// whose rows are **account-anchored facts** — evidence that would be *orphaned* by
-/// removing the account, so an account bearing one is **soft-deleted** (row kept,
-/// handle stays reserved, `did:plc` stays live) and never hard-deleted. The
-/// `account_has_facts` seam in `api/src/routes/accounts.rs` must query **every**
-/// table listed here.
-///
-/// It is **empty by design**: no account-anchored fact store exists yet. The
-/// enumeration of the fact classes is owned by the Account Deletion DD, not this
-/// list — commissions are conspicuously **not** among them (they are User-owned and
-/// survive account deletion, Ownership Separation DD `29130754`), and they carry no
-/// foreign key onto `accounts` at all, so they can never enter the account-fact
-/// scan.
-///
-/// Registering a table here is a **deliberate act with teeth**: the schema tripwire
-/// test (`adapter-pg/tests/account.rs`) fails the moment a migration adds an
-/// `accounts`-referencing table classified in neither this list nor
-/// [`ACCOUNT_NON_FACT_TABLES`], and the compile-time guards below (here and beside
-/// `account_has_facts` in the `api` crate) refuse to build while this list is
-/// non-empty but that seam still returns its unexamined constant `false`. A future
-/// account-fact minter therefore wires its storage into the seam in the same change
-/// that creates it — it cannot merge past either trip by accident.
+/// Account-anchored fact tables: tables whose rows would be orphaned
+/// by removing an account, so a bearing account is soft- never hard-deleted.
+/// Empty today. Every table referencing `accounts` must appear here or in
+/// [`ACCOUNT_NON_FACT_TABLES`]; a schema tripwire test enforces it. (DD 23003138)
 pub const ACCOUNT_FACT_TABLES: &[&str] = &[];
 
-/// Tables that hold a foreign key onto `accounts(id)` but whose rows are
-/// **deliberately not account facts** — account-scoped bookkeeping that is **severed**
-/// with the account (by explicit child-delete or `ON DELETE CASCADE`) instead of
-/// blocking its deletion. Every `accounts`-referencing table must appear in exactly
-/// one of this list or [`ACCOUNT_FACT_TABLES`]; the schema tripwire test enforces the
-/// classification.
-///
-/// - `account_members` / `account_invitations` (ZMVP-14/32): membership bookkeeping,
-///   deleted children-first by [`hard_delete`](AccountWrites::hard_delete) (their FKs
-///   do not cascade). Kept across a *soft*-delete for reactivation, but never a fact
-///   that forces one.
-/// - `account_handle_changes` (ZMVP-46): the handle-change audit log — `ON DELETE
-///   CASCADE`, gone with the account.
-/// - `commission_placement` / `commission_current_placement` (ZMVP-70): the account's
-///   **positioning rails** — where a User-owned commission sits. Each FK onto
-///   `accounts` is `ON DELETE CASCADE`, so account hard-delete **severs** them while
-///   the commission itself survives untouched (Ownership Separation DD `29130754`;
-///   ZMVP-57 AC1). Positioning is environmental — never an account-anchored fact.
-///
-/// `commission_view_grant` left this list with the actor re-key (DD `57081857`): a
-/// view grant is issued to a **User** now (Engineer ruling 2026-09-04), so the table
-/// no longer references `accounts` at all and has nothing to be classified against.
+/// Tables with a foreign key onto `accounts(id)` that are deliberately NOT
+/// account facts — severed with the account instead of blocking its deletion.
+/// Every `accounts`-referencing table must appear here or in
+/// [`ACCOUNT_FACT_TABLES`]; a schema tripwire test enforces it.
 pub const ACCOUNT_NON_FACT_TABLES: &[&str] = &[
+    "workflow",
     "account_members",
     "account_invitations",
     "account_handle_changes",
-    "commission_placement",
-    "commission_current_placement",
 ];
 
-// Tripwire (ZMVP-57 AC4, mirroring ZMVP-67's commission guard): the constant-`false`
-// body of `account_has_facts` (`api/src/routes/accounts.rs`) is sound ONLY while the
-// account-fact registry is empty. Registering the first account-fact table makes this
-// fail to compile, forcing whoever wires an account-fact store to replace that constant
-// with a real EXISTS query over every registered table — and to delete this guard in the
-// same, deliberate edit. The `api` crate carries a mirror of this assertion right beside
-// the seam it protects.
+// Fails to compile once ACCOUNT_FACT_TABLES gains an entry — forces replacing
+// account_has_facts' constant-`false` body (api/src/routes/accounts.rs) with a
+// real query first.
 const _: () = assert!(
     ACCOUNT_FACT_TABLES.is_empty(),
     "ACCOUNT_FACT_TABLES gained an entry: replace the constant-`false` body of \
@@ -100,13 +55,9 @@ const _: () = assert!(
 );
 
 /// Rebuild a domain [`Account`] from its persisted fields — shared by
-/// [`to_account`] (the `find` row, keyed by an id the caller already has) and
-/// [`to_account_membership`] (the `list_for_user` row, which carries its own
-/// id from the join), so the one re-validation body backs both generated row
-/// shapes. The stored name/handle were validated before they were written, so
-/// re-validation here only guards against tampering — surfaced as an error,
-/// never a panic. The stored id IS the account's DID since the actor re-key
-/// (DD `57081857`), so nothing has to be joined back to recover one.
+/// [`to_account`] and [`to_account_membership`]. Re-validates the stored
+/// handle/name; an `Err` on tampering, never a panic. The id IS the account's
+/// DID (DD 57081857).
 fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
     let AccountFields {
         id,
@@ -126,15 +77,9 @@ fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
     })
 }
 
-/// The persisted account columns, converged from every generated row shape that
-/// carries them — `find` and the listing.
-///
-/// Named rather than passed positionally on purpose: the six columns include
-/// two adjacent `String`s (`handle`, `name`) and two adjacent [`DateTimeUtc`]s
-/// (`created_at`, `updated_at`), so a positional call transposing either pair
-/// would compile silently and persist wrong data forever. Converting by field
-/// name makes that transposition unrepresentable. Mirrors `CommissionFields` on
-/// the commission side, which solves the identical problem.
+/// Persisted account columns, converged from every generated row shape that
+/// carries them. Named fields rather than positional to prevent silently
+/// transposing the adjacent `String`/`DateTimeUtc` pairs.
 struct AccountFields {
     id: String,
     handle: String,
@@ -188,28 +133,21 @@ fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
     build_account(row.into())
 }
 
-/// Rebuild a domain [`Account`] from the locking `find_for_update` row — the same
-/// columns under a different generated name. See [`build_account`].
+/// Rebuild a domain [`Account`] from the locking `find_for_update` row. See [`build_account`].
 fn to_account_locked(row: sql::FindForUpdateRow) -> anyhow::Result<Account> {
     build_account(row.into())
 }
 
-/// Rebuild the caller's optional [`RoleAlias`] from its stored column — `NULL`
-/// (`None`) on the floor (no write endpoint sets it yet), a stored empty/
-/// whitespace-only string means row tampering and surfaces as an `Err`, never
-/// a panic — the same posture as every other re-validated column here.
+/// Rebuild the caller's optional [`RoleAlias`] from its stored column. An
+/// `Err` on a tampered (empty/whitespace) stored value, never a panic.
 fn to_role_alias(alias: Option<String>) -> Result<Option<RoleAlias>, InvalidRoleAlias> {
     alias.map(RoleAlias::new).transpose()
 }
 
-/// Rebuild an [`AccountMembership`] from either listing row (ZMVP-157): the
-/// account half via [`build_account`], plus the caller's own [`Role`] and
-/// [`RoleAlias`] the join carries alongside it. Generic over the row shape
-/// because the self-view and public-projection queries return structurally
-/// identical rows under different generated names — both converge through
-/// [`AccountFields`]. A stored role outside its vocabulary means row tampering
-/// and surfaces as an `Err`, never a panic — the same posture as every other
-/// re-validated discriminant here.
+/// Rebuild an [`AccountMembership`] from a listing row: the account via
+/// [`build_account`] plus the caller's [`Role`]/[`RoleAlias`]. Generic over
+/// the row shape since self-view and public-projection rows are structurally
+/// identical. An `Err` on a tampered stored role, never a panic.
 fn to_account_membership<Row>(
     row: Row,
     role: String,
@@ -243,11 +181,10 @@ fn to_invitation(row: sql::AccountInvitationsRow) -> anyhow::Result<Invitation> 
     })
 }
 
-/// PostgreSQL read store for accounts and memberships (the [`AccountStore`] read
-/// surface). Soft deletes are honored on read ([`find`](PgAccountStore::find)
-/// filters `deleted_at IS NULL`). Holds the pool directly — reads pay no
-/// transaction tax. The writes live on [`PgAccountWrites`], reached through the
-/// [`UnitOfWork`](domain::ports::UnitOfWork). See ZMVP-14 and DESIGN/Account.
+/// PostgreSQL read store for accounts and memberships (the [`AccountStore`]
+/// read surface). Soft-deleted accounts read as absent
+/// ([`find`](PgAccountStore::find) filters `deleted_at IS NULL`). Writes live
+/// on [`PgAccountWrites`], reached through the [`UnitOfWork`](domain::ports::UnitOfWork).
 pub struct PgAccountStore {
     pool: PgPool,
 }
@@ -260,48 +197,32 @@ impl PgAccountStore {
     }
 }
 
-/// PostgreSQL write view over an open transaction (the [`AccountWrites`] surface).
-/// Holds **only** a borrowed `&mut PgConnection` — the transaction owned by the
-/// [`PgUnitOfWork`](crate::PgUnitOfWork) — so no pool is in scope here and a
-/// bare-pool write is unrepresentable. Built by `uow.accounts()`; its borrow ties
-/// it to the shared transaction, so writes issued through it commit (or roll back)
-/// together with the rest of the unit. See DD `24150017`.
+/// PostgreSQL write view over an open transaction (the [`AccountWrites`]
+/// surface). Holds only a borrowed `&mut PgConnection` — no pool in scope, so
+/// a bare-pool write is unrepresentable. Built by `uow.accounts()`. (DD 24150017)
 pub struct PgAccountWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
-    /// Every write executes on `&mut *self.conn`; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
 }
 
 impl PgAccountWrites<'_> {
-    /// Settle a member's departure from `account` on the open transaction — shared
-    /// by [`leave`](AccountWrites::leave) and
-    /// [`revoke_role`](AccountWrites::revoke_role), which both remove a member with
-    /// identical store effects and differ only in the caller's preconditions.
-    /// Re-homes the member's children to their parent (DESIGN/Roles rule 3, scoped
-    /// to this account), deletes the membership, and revokes the member's
-    /// still-pending *issued* invitations so none can later seat a member under a
-    /// non-member (DD "Invitation Validity & Issuer Departure" / ZMVP-40 — the
-    /// `Revoked` terminal state, never a hard delete). A membership that vanished
-    /// under a concurrent removal is a no-op.
-    ///
-    /// A method on the write view (not a free function taking a connection) so its
-    /// writes visibly execute on `self.conn` — the transaction-bound shape the
-    /// `no_bare_pool_writes` guard certifies.
+    /// Settle a member's departure from `account` — shared by
+    /// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role).
+    /// Re-homes the member's children to their parent, deletes the membership,
+    /// and revokes their pending issued invitations. No-op if already gone. (DD 24182820)
     async fn settle_member_departure(
         &mut self,
         user: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
-        // The member's parent is where their children re-home. If the membership is
-        // already gone, there is nothing to settle.
+        // No-op if the membership is already gone.
         let Some(parent) =
             sql::departure_membership(&mut *self.conn, account.as_str(), user.as_str()).await?
         else {
             return Ok(());
         };
 
-        // Re-home the member's children to the member's parent — scoped to THIS account
-        // (`parent` is a `users(id)`, so the same user may be a parent elsewhere).
+        // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
         sql::departure_rehome_children(
             &mut *self.conn,
             parent.as_deref(),
@@ -310,10 +231,8 @@ impl PgAccountWrites<'_> {
         )
         .await?;
 
-        // The membership itself is removed.
         sql::departure_delete_membership(&mut *self.conn, account.as_str(), user.as_str()).await?;
 
-        // Revoke the member's still-pending issued invitations.
         sql::departure_revoke_invitations(
             &mut *self.conn,
             InvitationState::Revoked.as_str(),
@@ -328,15 +247,13 @@ impl PgAccountWrites<'_> {
     }
 }
 
-/// The read half of an account unit of work: the same lookups
-/// [`AccountStore`] serves, executed on the unit's own connection so they see
-/// its uncommitted writes and can hold a row lock until commit. Vended together
-/// with the writes as an [`AccountRepo`](domain::ports::AccountRepo) by
-/// `uow.accounts()`.
+/// The read half of an account unit of work: the same lookups as
+/// [`AccountStore`], executed on the unit's own connection so they see its
+/// uncommitted writes. Vended as an [`AccountRepo`](domain::ports::AccountRepo)
+/// by `uow.accounts()`.
 #[async_trait::async_trait]
 impl AccountReads for PgAccountWrites<'_> {
-    /// [`AccountStore::find`] on the unit's connection — same `deleted_at IS NULL`
-    /// filter, same re-validation on the way out.
+    /// [`AccountStore::find`] on the unit's connection.
     async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find(&mut *self.conn, id.as_str())
             .await?
@@ -344,9 +261,8 @@ impl AccountReads for PgAccountWrites<'_> {
             .transpose()
     }
 
-    /// [`find`](Self::find) with `FOR NO KEY UPDATE`: concurrent writers of this
-    /// account wait for the unit to commit, while inserts of its child rows are
-    /// left free.
+    /// [`find`](Self::find) with `FOR NO KEY UPDATE`: concurrent writers wait
+    /// for commit; inserts of child rows stay free.
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find_for_update(&mut *self.conn, id.as_str())
             .await?
@@ -367,10 +283,8 @@ impl AccountReads for PgAccountWrites<'_> {
 
 #[async_trait::async_trait]
 impl AccountStore for PgAccountStore {
-    /// Filters `deleted_at IS NULL`, so a soft-deleted account reads as `None`
-    /// — indistinguishable from one that never existed. The stored `name` is
-    /// re-validated through [`AccountName`]; that only guards against row
-    /// tampering and surfaces as an `Err`, never a panic.
+    /// Filters `deleted_at IS NULL`; a soft-deleted account reads as `None`.
+    /// Re-validates the stored `name`; an `Err` on tampering, never a panic.
     async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find(&self.pool, id.as_str())
             .await?
@@ -383,11 +297,9 @@ impl AccountStore for PgAccountStore {
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
     }
 
-    /// Selects the lone `state = 'pending'` offer for `(account, invited_user)`, or
-    /// `None`. Accepted and revoked invitations are history, not live offers, so
-    /// they never match. The stored `role`/`state` discriminants are re-validated
-    /// through `Role::try_from`/`InvitationState::try_from` on the way out — an
-    /// `Err` on row tampering, never a panic, exactly as `role_of` does for a role.
+    /// The lone `state = 'pending'` offer for `(account, invited_user)`, or
+    /// `None` — accepted/revoked invitations never match. Re-validates the
+    /// stored discriminants; an `Err` on tampering, never a panic.
     async fn find_pending_invitation(
         &self,
         account: &AccountId,
@@ -404,9 +316,8 @@ impl AccountStore for PgAccountStore {
         .transpose()
     }
 
-    /// Loads the invitation for `id` in whatever state it holds (the revoke path
-    /// reads it back to weigh authority and current state), or `None`. Stored
-    /// discriminants are re-validated on read — an `Err` on tampering, never a panic.
+    /// The invitation for `id` in whatever state it holds, or `None`.
+    /// Re-validates stored discriminants; an `Err` on tampering, never a panic.
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
         sql::find_invitation(&self.pool, **id)
             .await?
@@ -414,20 +325,17 @@ impl AccountStore for PgAccountStore {
             .transpose()
     }
 
-    /// Exact-match lookup of a live account's `did` by its normalized `handle`,
-    /// filtering `deleted_at IS NULL` (a soft-deleted account resolves to `None`,
-    /// like [`find`](PgAccountStore::find)). Backs the `/.well-known/atproto-did`
-    /// resolver and the founding-time duplicate-handle pre-check. The `UNIQUE`
-    /// handle index makes at most one row possible.
+    /// A live account's `did` by normalized `handle`; filters `deleted_at IS
+    /// NULL` like [`find`](PgAccountStore::find). Backs `/.well-known/atproto-did`
+    /// resolution and the duplicate-handle pre-check.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         Ok(sql::find_did_by_handle(&self.pool, handle.as_str())
             .await?
             .map(Did::new))
     }
 
-    /// Counts the account's `account_handle_changes` rows at or after `since` — the
-    /// recent-change tally the change handler weighs against the rate limit. Uses the
-    /// `(account_id, changed_at)` index; `count(*)` is never null.
+    /// Count of the account's `account_handle_changes` rows at or after `since`
+    /// — the rate-limit tally. Uses the `(account_id, changed_at)` index.
     async fn count_handle_changes_since(
         &self,
         account: &AccountId,
@@ -436,11 +344,9 @@ impl AccountStore for PgAccountStore {
         Ok(sql::count_handle_changes_since(&self.pool, account.as_str(), since).await?)
     }
 
-    /// `EXISTS` a recent vacation of `handle` by an account other than `excluding` —
-    /// i.e. the handle is quarantined to someone else (DD `27852802` §4). `excluding`
-    /// (the asking account) is threaded as a nullable DID so it can reclaim its own
-    /// vacated handle: `$3 IS NULL OR account_id <> $3`. Uses the
-    /// `(old_handle, changed_at)` index.
+    /// Whether `handle` was recently vacated by an account other than
+    /// `excluding` — i.e. quarantined to someone else. (DD 27852802)
+    /// Uses the `(old_handle, changed_at)` index.
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
@@ -451,20 +357,10 @@ impl AccountStore for PgAccountStore {
         Ok(sql::handle_reserved_for_other(&self.pool, handle.as_str(), since, excluding).await?)
     }
 
-    /// One query joining `account_members` → `accounts` (ZMVP-157), filtered
-    /// live and ordered by id; each row re-validated
-    /// through [`to_account_membership`] exactly as [`find`](PgAccountStore::find)
-    /// re-validates its own row — an `Err` on tampering, never a panic.
-    ///
-    /// `scope` rides into the query as its `listed_on_profile` predicate: a
-    /// [`PublicProfile`](ListingScope::PublicProfile) listing sees only
-    /// published memberships, a [`SelfView`](ListingScope::SelfView) one sees
-    /// every live membership.
-    ///
-    /// The seek is served by `account_members_by_user`; without it the
-    /// `user_id` predicate could not use the composite primary key
-    /// `(account_id, user_id)`, whose leading column this query never
-    /// constrains.
+    /// Live memberships for `user`, joined to their accounts and ordered by
+    /// id; each row re-validated. `scope` controls `listed_on_profile`:
+    /// [`PublicProfile`](ListingScope::PublicProfile) sees only published
+    /// memberships, [`SelfView`](ListingScope::SelfView) sees all.
     async fn list_for_user(
         &self,
         user: &UserId,
@@ -483,8 +379,7 @@ impl AccountStore for PgAccountStore {
     }
 }
 
-/// The unique-violation constraint name carried by an sqlx database error, if
-/// any — the receiver for mapping `accounts_handle_key` onto [`HandleTaken`].
+/// The unique-violation constraint name on an sqlx database error, if any.
 fn constraint_of(err: &sqlx::Error) -> Option<&str> {
     match err {
         sqlx::Error::Database(db_err) => db_err.constraint(),
@@ -494,27 +389,13 @@ fn constraint_of(err: &sqlx::Error) -> Option<&str> {
 
 #[async_trait::async_trait]
 impl AccountWrites for PgAccountWrites<'_> {
-    /// Founding as a two-step write in one unit (ZMVP-123): `intern` the account's DID
-    /// into the actor super-table, then write the `accounts` projection row and the
-    /// founder's `account_members` row — all on the open transaction, so a half-founded
-    /// account can never be observed and the composite FK makes writing the projection
-    /// without its identity parent unrepresentable. Every row lives in the private store,
-    /// so this is one unit of work — never a cross-store dual write.
-    ///
-    /// A **handle** collision — the global `accounts_handle_key` unique index, which
-    /// covers live *and* soft-deleted accounts (a tombstone still reserves its
-    /// handle, DD `23003138`) — fails with [`HandleTaken`] as the error source, so
-    /// the founding handler maps it to a `409` rather than a `500`. On any failure the
-    /// caller's transaction rolls back, taking the just-interned identity row with it,
-    /// so no orphan identity is left behind. The DID lives in `actor_identity` now
-    /// (both id and DID machine-minted, never user-facing), so a duplicate stays an
-    /// opaque store error.
+    /// Founds the account: interns its DID into the actor super-table, then writes
+    /// the `accounts` row and the founder's `account_members` row, all on the open
+    /// transaction. A handle collision on `accounts_handle_key` returns
+    /// [`HandleTaken`]; any other failure rolls the transaction back. (DD 23003138)
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
-        // Step 1 — intern the account's sovereign DID FIRST: the `accounts` row's
-        // composite FK `(id, kind) → actor_identity (did, kind)` makes the reverse
-        // order unrepresentable. The identity row keeps a surrogate `id` of its own
-        // (the super-table still admits DID-less kinds), so a fresh candidate is
-        // minted here; the DID is what both rows are addressed by.
+        // Intern the DID first: the accounts row's composite FK requires the
+        // identity row to exist already.
         let interned = actor_sql::intern(
             &mut *self.conn,
             uuid::Uuid::now_v7(),
@@ -531,9 +412,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             interned.kind
         );
 
-        // Step 2 — the `accounts` projection row, keyed by that same DID. Map a
-        // handle-uniqueness violation to the typed `HandleTaken` so the caller can
-        // answer 409; any other database error stays opaque (→ 500).
+        // Map a handle-uniqueness violation to HandleTaken (409); else opaque (500).
         let insert = sql::create_account(
             &mut *self.conn,
             account.id.as_str(),
@@ -562,27 +441,10 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// Repoints `accounts.handle` to `new` and appends the change to
-    /// `account_handle_changes`, atomically on the open transaction (ZMVP-46, DD
-    /// `27852802`). The audit row is what later rate-limits changes (§3) and
-    /// quarantines the vacated `old` handle (§4), so it must land with the repoint or
-    /// not at all. The public half — re-pointing the DID document's `alsoKnownAs` via
-    /// [`DidMinter::update_handle`](domain::ports::DidMinter::update_handle) — is a
-    /// separate retryable step the caller runs *first*, never in this transaction (DD
-    /// §7; no cross-store dual write).
-    ///
-    /// `old` is an **optimistic-concurrency precondition**, not just an observation: the
-    /// `UPDATE` guards `deleted_at IS NULL` (a live account) **and** `handle = old`, so
-    /// it applies only if the row *still* holds the handle the caller saw. It must touch
-    /// exactly one row, else the whole unit rolls back — a soft-deleted/vanished account,
-    /// or one whose handle changed under a concurrent rename, records **no** audit row,
-    /// so the log can never capture a stale `old_handle` (which would leave the truly
-    /// vacated handle un-quarantined). A collision with the global `accounts_handle_key`
-    /// index (a handle held by another account, live **or** tombstoned — DD 23003138)
-    /// surfaces as [`HandleTaken`] so the handler answers `409`, mirroring
-    /// [`create`](PgAccountWrites::create). Changing to the account's *own* current
-    /// handle is a caller-side no-op rejected before this is reached, so it never hits
-    /// the index. `at` is the change instant.
+    /// Repoints `accounts.handle` to `new` and appends the audit row, atomically.
+    /// `old` is an optimistic-concurrency precondition (`handle = old AND
+    /// deleted_at IS NULL`); a non-matching row rolls the unit back. A handle
+    /// collision returns [`HandleTaken`]. (DD 27852802)
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -599,16 +461,13 @@ impl AccountWrites for PgAccountWrites<'_> {
         )
         .await;
 
-        // Map a handle-uniqueness violation to the typed `HandleTaken` (→ 409), exactly
-        // as `create` does; any other database error stays opaque (→ 500).
+        // HandleTaken (409) on a uniqueness violation; else opaque (500).
         if let Err(ref err) = updated
             && constraint_of(err) == Some("accounts_handle_key")
         {
             return Err(anyhow::Error::new(HandleTaken));
         }
-        // Zero rows means the precondition failed: the account was soft-deleted/removed,
-        // or its handle changed under a concurrent rename since the handler loaded it.
-        // Fail so the unit rolls back rather than audit a change against a stale `old`.
+        // Zero rows means the precondition failed; roll back rather than audit a stale `old`.
         if updated? != 1 {
             anyhow::bail!(
                 "change_handle: account {} is not a live account still holding the expected \
@@ -630,15 +489,9 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// `INSERT ... ON CONFLICT (account_id, user_id) DO UPDATE`: a new member is
-    /// seated, an existing one's role is replaced. `parent` defaults to `NULL`
-    /// (role hierarchy deferred), matching the founder row from
-    /// [`create`](PgAccountWrites::create).
+    /// Upserts the member's role; `parent` defaults to `NULL`, matching the
+    /// founder row from [`create`](PgAccountWrites::create).
     async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
-        // Upsert: granting a role seats a new member or replaces an existing one's
-        // role (DESIGN/Roles — a grant is how a user joins). `parent` is left to
-        // its default NULL: the role-hierarchy tree is deferred ("dress when The
-        // Who closes"), same as the founder row written by `create`.
         sql::grant_role(
             &mut *self.conn,
             member.account_id.as_str(),
@@ -649,35 +502,22 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// A revoke is a member-departure event with the same store effects as
-    /// [`leave`](AccountWrites::leave) (the caller settles authority first): re-home
-    /// children to the member's parent (DESIGN/Roles rule 3), delete the membership,
-    /// and revoke the member's pending issued invitations — atomically on the open
-    /// transaction. Revoking a non-member is a harmless no-op.
+    /// Departure with the same store effects as [`leave`](AccountWrites::leave)
+    /// (the caller settles authority first). No-op on a non-member.
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
-    /// Settle a member leaving the account on the open transaction (ZMVP-21): re-home
-    /// the leaver's children to the leaver's parent, delete the membership, and revoke
-    /// the leaver's still-pending issued invitations. Preconditions (must be a member,
-    /// can't be the `Owner`) are the caller's; a membership that vanished under a
-    /// concurrent removal is a no-op. See the [`leave`](AccountWrites::leave) port doc.
+    /// Settles a member leaving: re-homes children, deletes the membership,
+    /// revokes pending issued invitations. Preconditions are the caller's.
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
-    /// `INSERT ... ON CONFLICT (account_id, invited_user) WHERE state = 'pending'
-    /// DO NOTHING`: the partial unique index (see the migration) enforces at most
-    /// one pending offer per (account, invited user), so a duplicate issue is
-    /// silently dropped rather than becoming a second row — the store-level backstop
-    /// for the idempotent re-invite the handler also guards by checking
-    /// [`find_pending_invitation`](AccountStore::find_pending_invitation) first.
-    ///
-    /// Returns the offer that now stands: the freshly inserted one, or — when the
-    /// partial index dropped this insert — the pending one already on file, re-read
-    /// on the same connection so the caller is handed the live row rather than the
-    /// duplicate it proposed.
+    /// Inserts the invitation, or — a partial unique index enforces at most one
+    /// pending offer per (account, invited user) — silently drops a duplicate.
+    /// Returns whichever offer now stands: the fresh insert, or the pending one
+    /// already on file.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         sql::create_invitation(
             &mut *self.conn,
@@ -709,11 +549,8 @@ impl AccountWrites for PgAccountWrites<'_> {
         to_invitation(standing)
     }
 
-    /// A guarded `UPDATE ... SET state = 'revoked' WHERE id = $1 AND state =
-    /// 'pending'`: only a pending offer flips, and an `UPDATE` matching no row still
-    /// succeeds — so revoking an absent or already-terminal invitation is a harmless
-    /// no-op, not an error (the handler decides whether that's a 404/409). Mirrors
-    /// [`revoke_role`](PgAccountWrites::revoke_role)'s no-op-on-no-match shape.
+    /// Flips a pending offer to revoked; a no-op (not an error) on an absent or
+    /// already-terminal invitation.
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         sql::revoke_invitation(
             &mut *self.conn,
@@ -727,24 +564,10 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// Flips the pending invitation to Accepted and seats the invited User as a
-    /// member on the open transaction, so the accepted state and the membership
-    /// commit together or not at all — the same unit of work as
-    /// [`create`](PgAccountWrites::create), never a cross-store dual write. The
-    /// `UPDATE` is guarded on `state = 'pending'`; if it matches no row the offer was
-    /// already accepted or revoked (a lost race against the handler's in-memory
-    /// `Invitation::accept` guard), so this errors and the caller's transaction rolls
-    /// back with no membership minted — honoring "a revoked invitation yields no
-    /// membership". The new member's `parent` is the `inviter` (DESIGN/Roles rule 4a)
-    /// and `listed_on_profile` records the invitee's opt-in.
-    ///
-    /// Seating itself is `ON CONFLICT (account_id, user_id) DO NOTHING`: a pair
-    /// that's already seated (a role granted through another path, e.g.
-    /// `grant_role`, while this invitation sat pending) mints no row rather than
-    /// raising a primary-key violation, so a repeat accept is a no-op instead of a
-    /// 500. `RETURNING` then yields nothing on that path, so the seated role is
-    /// re-read from the row that's actually there — the ORIGINAL grant survives
-    /// untouched, never overwritten by this invitation's offer.
+    /// Flips the invitation to Accepted and seats the member atomically. Errors
+    /// (rolling back) if the offer is no longer pending. Seating is `ON CONFLICT
+    /// DO NOTHING`: an already-seated pair is a no-op and the existing role is
+    /// re-read rather than overwritten.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -759,10 +582,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         )
         .await?;
 
-        // The guarded UPDATE is the atomic backstop for the handler's in-memory
-        // `Invitation::accept` check: matching no pending row means the offer was
-        // accepted or revoked in the meantime. Erroring rolls back the caller's
-        // transaction rather than seating a member from a spent invitation.
+        // No matching pending row means the offer was already spent; roll back.
         if accepted == 0 {
             return Err(anyhow::anyhow!(
                 "invitation {} is no longer pending; no membership minted",
@@ -780,12 +600,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         )
         .await?;
 
-        // `ON CONFLICT DO NOTHING` skipped the insert (the pair was already
-        // seated), so `RETURNING` gave back no row: fall back to reading the role
-        // that's actually persisted rather than assuming this invitation's offer
-        // took effect. The fallback's alias is always `None`: `role_of` answers
-        // only `Role`, and there is no set-alias endpoint yet for a freshly-seated
-        // row to carry one anyway.
+        // Already seated: RETURNING gave nothing, so read the persisted role instead.
         let (role, alias) = match seated {
             Some(row) => (Role::from_str(&row.role)?, to_role_alias(row.alias)?),
             None => {
@@ -815,30 +630,17 @@ impl AccountWrites for PgAccountWrites<'_> {
         })
     }
 
-    /// Transfer ownership atomically (DESIGN/Roles rule 8): demote the outgoing
-    /// Owner to Admin re-homed under the incoming Owner, and promote the incoming
-    /// member to Owner with no parent (rule 5). Both `UPDATE`s ride the one
-    /// transaction-bound connection, so they commit together or not at all.
-    ///
-    /// Each precondition is enforced **inside** its mutating statement — the demotion
-    /// only fires while the actor is *still* the Owner (`role = 'owner'`), the
-    /// promotion only while the target is *still* a member — and each must touch
-    /// exactly one row or the whole unit rolls back. Guarding the mutation itself
-    /// (rather than a prior `SELECT`) is what makes the single-Owner invariant
-    /// unreachable to violate under concurrency: two simultaneous transfers of the
-    /// same account serialize on the Owner row, so the second one's demotion matches
-    /// zero rows (the Owner is already demoted) and fails closed — it can never mint a
-    /// second Owner. The caller (the handler) still settles authority up front for the
-    /// friendly `403`/`404`; these guards are the last line that also survives a race.
+    /// Transfers ownership atomically: demotes the outgoing Owner to Admin
+    /// re-homed under the incoming Owner, promotes the incoming member to Owner.
+    /// Each precondition is enforced inside its `UPDATE` and must touch exactly
+    /// one row, so a concurrent transfer fails closed rather than minting two Owners.
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
         new_owner: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
-        // Demote the outgoing Owner to Admin, re-homed under the incoming Owner — but
-        // only while they are *still* the Owner. A race that already moved ownership
-        // leaves this matching zero rows, so we error and roll back.
+        // Only while old_owner is still Owner; zero rows means a race already moved it.
         let demoted = sql::transfer_demote_owner(
             &mut *self.conn,
             Role::Admin.as_str(),
@@ -856,9 +658,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             );
         }
 
-        // Promote the incoming member to sole Owner with no parent — but only while
-        // they are *still* a member. Zero rows means they vanished mid-transfer, so we
-        // error and roll back rather than leave the account with no Owner.
+        // Only while new_owner is still a member; zero rows means they vanished mid-transfer.
         let promoted = sql::transfer_promote_heir(
             &mut *self.conn,
             Role::Owner.as_str(),
@@ -877,35 +677,19 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// `UPDATE accounts SET deleted_at = now WHERE id = $1 AND deleted_at IS NULL`:
-    /// stamps the soft-delete marker (and `updated_at`) on a live account, keeping the
-    /// row — so the handle stays reserved (global index) and the DID stays live, while
-    /// [`find`](PgAccountStore::find) now reads it as absent. Memberships and
-    /// invitations are left untouched (a reactivation restores them). The
-    /// `deleted_at IS NULL` guard makes a repeat soft-delete a harmless no-op. See the
-    /// [`soft_delete`](AccountWrites::soft_delete) port doc.
+    /// Stamps `deleted_at` on a live account, keeping the row (handle stays
+    /// reserved, DID stays live); [`find`](PgAccountStore::find) now reads it as
+    /// absent. A repeat soft-delete is a no-op.
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let now = Utc::now();
         sql::soft_delete(&mut *self.conn, Some(now), now, account.as_str()).await?;
         Ok(())
     }
 
-    /// Deletes the account's `account_invitations`, then `account_members`, then the
-    /// `accounts` row — those two child FKs do not cascade, so they are removed
-    /// children-first. The account's other children **do** cascade on the final
-    /// `DELETE accounts`: the `account_handle_changes` audit log (ZMVP-46) and the
-    /// positioning rails — `commission_placement` and `commission_current_placement`
-    /// (ZMVP-70) — carry `ON DELETE CASCADE` on their FK onto `accounts`, so they are
-    /// **severed** with the account while the placed commissions survive untouched
-    /// (Ownership Separation DD `29130754`; ZMVP-57 AC1). `commission_view_grant` is
-    /// no longer among them: a grant is issued to a User now (Engineer ruling
-    /// 2026-09-04), so it holds no reference to an account to sever.
-    /// Removing the `accounts` row **frees its handle** from the global unique index for
-    /// reuse. The custody `account_keys` row is deliberately **not** touched here (the
-    /// ~72h PLC recovery window can still reverse the tombstone). All the deletes run on
-    /// the open transaction, so an empty account is removed atomically; a `DELETE`
-    /// matching no row is a no-op. See the [`hard_delete`](AccountWrites::hard_delete)
-    /// port doc.
+    /// Deletes invitations, then memberships, then the `accounts` row (those FKs
+    /// don't cascade). Frees the handle for reuse. Custody `account_keys` rows are
+    /// deliberately left in place (the PLC recovery window). A `DELETE` matching
+    /// no row is a no-op. (DD 29130754)
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         sql::hard_delete_invitations(&mut *self.conn, account.as_str()).await?;
         sql::hard_delete_memberships(&mut *self.conn, account.as_str()).await?;

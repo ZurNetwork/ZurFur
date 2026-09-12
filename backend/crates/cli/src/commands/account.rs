@@ -1,15 +1,12 @@
 //! The `account` namespace: what the acting identity does with Accounts.
-//! `create` (ZMVP-205 slice 4) is the CLI face of
-//! [`application::account::Accounts::create`] — the same use case behind
-//! `POST /accounts`, so both drivers found accounts through one path.
-//! `delete` (slice 5) is the same arrangement over
-//! [`application::account::Accounts::delete`], the use case behind
-//! `DELETE /accounts/{id}` — with one thing the HTTP driver has no place for:
-//! an irreversible operation asks first ([`crate::confirm`]).
+//! `create` is the CLI face of [`application::account::Accounts::create`]
+//! (`POST /accounts`); `delete` mirrors
+//! [`application::account::Accounts::delete`] (`DELETE /accounts/{id}`),
+//! plus one thing HTTP has no place for: it asks first (`crate::confirm`).
 
 use std::path::Path;
 
-use application::account::{self, AccountError, delete::DeleteOutcome};
+use application::account::{self, AccountEntity, AccountError, delete::DeleteOutcome};
 use chrono::Utc;
 use clap::Subcommand;
 use composition::Runtime;
@@ -34,10 +31,9 @@ pub enum AccountOp {
         handle: String,
     },
     /// Delete an Account the acting identity owns — soft if it holds facts,
-    /// hard if empty. Asks to confirm first (Engineer ruling 2026-08-28).
+    /// hard if empty. Asks to confirm first.
     Delete {
-        /// The account's id — its did:plc (DD 57081857 folded the surrogate
-        /// id into the DID, so the two are now the same value).
+        /// The account's id — its did:plc (DD 57081857).
         account_id: AccountId,
         /// Skip the confirmation prompt (for scripts).
         #[arg(long, short = 'y')]
@@ -45,10 +41,9 @@ pub enum AccountOp {
     },
 }
 
-/// `create`'s projection — the same keys and spelling as the HTTP
-/// `CreateAccountResponse` (`{id, did, handle, name}`). `id` and `did` carry
-/// the same value: DD 57081857 folded the account's surrogate id into its
-/// sovereign DID, so one field now answers both wire keys.
+/// `create`'s projection — the same keys as the HTTP `CreateAccountResponse`
+/// (`{id, did, handle, name}`). `id` and `did` carry the same value (DD
+/// 57081857 folded the surrogate id into the sovereign DID).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Founded {
@@ -70,10 +65,9 @@ impl From<account::create::Output> for Founded {
     }
 }
 
-/// `delete`'s projection — the same key and spelling as the HTTP
-/// `DeleteAccountResponse` (`{outcome}`), which the CLI cannot name (it lives
-/// inside `api`, behind axum). A hand copy, pinned to the wire by the parity
-/// test `api/tests/delete_account_parity.rs`.
+/// `delete`'s projection — the same key as HTTP's `DeleteAccountResponse`
+/// (`{outcome}`), which the CLI cannot import (it lives behind axum in
+/// `api`). Pinned to the wire by `api/tests/delete_account_parity.rs`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deleted {
@@ -100,9 +94,7 @@ pub async fn run(
 ) -> Result<serde_json::Value, CliError> {
     match op {
         AccountOp::Create { name, handle } => {
-            // Founding is a write: resolve the principal first (the HTTP
-            // driver's `require_user`), then parse — the same 422-class
-            // refusals as the API's `invalid_request`, before anything is minted.
+            // Resolve the principal first, then parse — nothing is minted before both succeed.
             let principal = Principal::resolve(runtime, identity_path).await?;
             let name = name
                 .parse::<AccountName>()
@@ -123,18 +115,18 @@ pub async fn run(
                 .await
                 .map_err(|err| match err {
                     AccountError::HandleTaken => CliError::domain("handle_taken", err),
-                    // The terse `Display` is what the user sees; the cause goes to
-                    // the diagnostics channel (stderr, before the problem line).
+                    // The terse `Display` is what the user sees; the cause goes to stderr.
                     AccountError::Infrastructure(_) => {
                         tracing::error!(error = ?err, "founding the account failed");
                         CliError::infra("internal_error", err)
                     }
-                    // Unreachable from founding — nothing here acts on an existing
-                    // account, so there is no role to fail and no account to be
-                    // missing. Mapped rather than swept under a wildcard so the match
-                    // stays exhaustive and a future variant lands as a compile error.
+                    // Unreachable from founding; mapped to keep the match exhaustive.
                     AccountError::IncorrectRole => CliError::domain("forbidden", err),
-                    AccountError::AccountNotFound => CliError::domain("account_not_found", err),
+                    AccountError::NotFound(AccountEntity::Account) => {
+                        CliError::domain("account_not_found", err)
+                    }
+                    // Unreachable from founding; mapped to keep the match exhaustive.
+                    AccountError::NotFound(_) => CliError::domain("not_found", err),
                     // Unreachable from founding — the namespace check is change_handle's own.
                     AccountError::UnsupportedHandle => CliError::domain("unsupported_handle", err),
                     // Unreachable from founding — both are change_handle-only outcomes.
@@ -153,31 +145,27 @@ pub async fn run(
                     // Unreachable here: membership-only outcomes of invite/transfer.
                     AccountError::AlreadyMember => CliError::domain("already_member", err),
                     AccountError::CannotTransferToSelf => CliError::domain("invalid_request", err),
-                    // Unreachable from founding — no user lookup by DID happens here.
-                    AccountError::UserNotFound => CliError::domain("forbidden", err),
                     // Unreachable from founding — no invitation is issued here.
                     AccountError::InvitationAlreadyPending => {
                         CliError::domain("invalid_request", err)
                     }
+                    // Unreachable from founding; mapped to keep the match exhaustive.
+                    AccountError::ContainsCommissions
+                    | AccountError::DuplicateName
+                    | AccountError::IncorrectNumberOfColumns
+                    | AccountError::NothingToDo
+                    | AccountError::IndexOutOfRange(_) => CliError::domain("invalid_request", err),
+                    AccountError::SystemError(_) => CliError::domain("internal_error", err),
                 })?;
             let body = Founded::from(founded);
             Ok(serde_json::to_value(body).expect("Founded serializes"))
         }
         AccountOp::Delete { account_id, yes } => {
-            // Deleting is a write: resolve the principal first (the HTTP
-            // driver's `require_user`), so an unrecognized caller is turned
-            // away before any account is loaded. `account_id` is already an
-            // `AccountId` — clap parsed it (its `FromStr` is a did:plc), so a
-            // malformed one never reaches here and is clap's usage error
-            // (exit 2). That is this driver's analogue of the API's
-            // 404-on-non-uuid: the terminal has a usage channel the HTTP
-            // surface doesn't.
+            // Resolve the principal first, so an unrecognized caller is turned away
+            // before any account is loaded. `account_id` is already parsed (clap).
             let principal = Principal::resolve(runtime, identity_path).await?;
-            // Then confirm, and only then act. The order is deliberate: an
-            // anonymous caller is `not_authenticated` before any question is
-            // asked, and nothing is looked up before the answer — the account
-            // is the use case's to load, so a declined prompt leaks nothing
-            // about whether the id names anything.
+            // Confirm only after resolving, and act only after confirming — a
+            // declined prompt leaks nothing about whether the id names anything.
             if !yes {
                 let account_id_display = account_id.to_string();
                 let prompt = format!(
@@ -198,18 +186,18 @@ pub async fn run(
                     .delete(command)
                     .await
                     .map_err(|err| match err {
-                        AccountError::AccountNotFound => CliError::domain("account_not_found", err),
+                        AccountError::NotFound(AccountEntity::Account) => {
+                            CliError::domain("account_not_found", err)
+                        }
+                        // Unreachable from delete; mapped to keep the match exhaustive.
+                        AccountError::NotFound(_) => CliError::domain("not_found", err),
                         AccountError::IncorrectRole => CliError::domain("forbidden", err),
-                        // The terse `Display` is what the user sees; the cause goes
-                        // to the diagnostics channel (stderr, before the problem
-                        // line).
+                        // The terse `Display` is what the user sees; the cause goes to stderr.
                         AccountError::Infrastructure(_) => {
                             tracing::error!(error = ?err, "deleting the account failed");
                             CliError::infra("internal_error", err)
                         }
-                        // Unreachable from delete (no handle is claimed here);
-                        // mapped rather than caught by a wildcard so the
-                        // exhaustiveness keeps its value.
+                        // Unreachable from delete (no handle is claimed here).
                         AccountError::HandleTaken => CliError::domain("handle_taken", err),
                         // Unreachable from delete — no handle-namespace check runs here.
                         AccountError::UnsupportedHandle => {
@@ -237,12 +225,19 @@ pub async fn run(
                         AccountError::CannotTransferToSelf => {
                             CliError::domain("invalid_request", err)
                         }
-                        // Unreachable from delete — no user lookup by DID happens here.
-                        AccountError::UserNotFound => CliError::domain("forbidden", err),
                         // Unreachable from delete — no invitation is issued here.
                         AccountError::InvitationAlreadyPending => {
                             CliError::domain("invalid_request", err)
                         }
+                        // Unreachable from delete; mapped to keep the match exhaustive.
+                        AccountError::ContainsCommissions
+                        | AccountError::DuplicateName
+                        | AccountError::IncorrectNumberOfColumns
+                        | AccountError::NothingToDo
+                        | AccountError::IndexOutOfRange(_) => {
+                            CliError::domain("invalid_request", err)
+                        }
+                        AccountError::SystemError(_) => CliError::domain("internal_error", err),
                     })?;
             let body = Deleted::from(deleted);
             Ok(serde_json::to_value(body).expect("Deleted serializes"))

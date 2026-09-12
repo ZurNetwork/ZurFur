@@ -1,20 +1,8 @@
-//! Use cases about [`Commission`](domain::elements::commission::Commission)s.
+//! Use cases about [`Commission`]s.
 //!
-//! The **deadline sweep** (ZMVP-86, conductor ruling E12) is the first of them —
-//! and the one place the system acts on a commission rather than a Participant.
-//! The deadline axis is otherwise entirely Participant-moved (the manual Delayed
-//! flag, the deadline itself); the sweep's whole authority is: when a
-//! commission's deadline has passed, say so in the changelog as a **system
-//! entry** (no actor). It is provably scoped to exactly that — it calls
-//! [`lapsed_deadlines`](domain::ports::CommissionWrites::lapsed_deadlines)
-//! (which already excludes terminal lifecycles, already-Late commissions, and
-//! anything without a deadline — AC4) and appends to the changelog; it holds no
-//! handle that could move a Lifecycle or a direction status.
-//!
-//! [`sweep_deadlines`] is the whole policy. The wall-clock timer and the
-//! advisory-lock leader election that drive it live in `api` — a driver
-//! concern — so the policy stays deterministic and testable at an injected
-//! instant.
+//! [`sweep_deadlines`] is the one act with no actor — the system recording a
+//! lapsed deadline. Its wall-clock timer and leader election live in `api`, so
+//! the policy stays deterministic at an injected instant.
 
 use domain::{
     datetime::DateTimeUtc,
@@ -44,7 +32,6 @@ pub mod list;
 pub mod markup;
 pub mod maturity;
 pub mod notes;
-pub mod place;
 pub mod seats;
 pub mod slots;
 pub mod status;
@@ -52,8 +39,7 @@ pub mod unarchive;
 pub mod view;
 
 /// Commission use cases, with the ports already bound. A namespace, not a
-/// mediator: every use-case file adds its own `impl Commissions<'_>` block
-/// holding exactly one use case; helpers stay free functions.
+/// mediator: one `impl Commissions<'_>` block per use-case file.
 #[derive(Clone, Copy)]
 pub struct Commissions<'a> {
     ports: &'a crate::Ports,
@@ -74,16 +60,14 @@ impl<'a> Commissions<'a> {
 impl<'a> TryFrom<&'a crate::Ports> for Commissions<'a> {
     type Error = crate::MissingPort;
 
-    /// Cannot fail: [`Ports`](crate::Ports) carries a file store unconditionally,
-    /// so [`MissingPort`](crate::MissingPort) is unreachable from here.
+    /// Cannot fail: [`Ports`](crate::Ports) always carries a file store.
     fn try_from(ports: &'a crate::Ports) -> Result<Self, Self::Error> {
         Ok(Self::new(ports))
     }
 }
 
 impl<'a> From<&'a crate::App> for Commissions<'a> {
-    /// Binds the namespace to the app's ports. The `expect` is unreachable while
-    /// [`try_from`](Commissions::try_from) is infallible.
+    /// Binds the namespace to the app's ports.
     fn from(app: &'a crate::App) -> Self {
         Self::try_from(app.ports()).expect("composition root supplies the blob store")
     }
@@ -107,17 +91,12 @@ pub struct CommissionPorts<'a> {
 
 pub type CommissionResult<T> = Result<T, CommissionError>;
 
-/// Why a commission use case could not answer. One enum per module: a driver
-/// maps each variant to its own surface (problem+json, `{class, code}`).
-///
-/// `Display` is deliberately terse and never interpolates the cause — a store
-/// error can carry SQL or constraint names, and a driver printing `{err}` must
-/// not leak them. The cause stays on [`source`](std::error::Error::source) for
-/// tracing.
+/// Why a commission use case could not answer. `Display` stays terse and never
+/// interpolates the cause; the cause rides
+/// [`source`](std::error::Error::source).
 #[derive(Debug)]
 pub enum CommissionError {
-    /// The commission store failed. The unit of work rolled back whole, so
-    /// nothing was marked halfway; the caller may retry.
+    /// The commission store failed; the unit of work rolled back whole.
     Infrastructure(anyhow::Error),
     UserNotFound,
     CommissionNotFound,
@@ -125,10 +104,10 @@ pub enum CommissionError {
     InsufficientPermissions,
     NotAMember,
     InvalidStateRequested,
-    /// The uploaded filename failed [`FileName`](domain::elements::commission::FileName)'s
-    /// validation gate; the cause rides [`source`](std::error::Error::source).
+    /// The uploaded filename failed
+    /// [`FileName`](domain::elements::commission::FileName)'s validation gate.
     InvalidFileName(FileNameError),
-    /// The uploaded content exceeded the caller's configured upload cap.
+    /// The uploaded content exceeded the configured upload cap.
     FileTooLarge,
     /// The uploaded content was zero bytes.
     FileEmpty,
@@ -136,31 +115,23 @@ pub enum CommissionError {
     FileNotFound,
     FileBlobMissing,
     SeatNotFound,
-    /// The Seat named is already occupied, so it cannot be invited to — a state
-    /// conflict, not a missing thing (ZMVP-78).
+    /// The Seat named is already occupied, so it cannot be invited to.
     SeatFilled,
-    /// The tab named is not one of *this* commission's tabs — fabricated, or
-    /// belonging to another commission. The two are deliberately
-    /// indistinguishable.
+    /// The tab named is not one of this commission's tabs. Fabricated and
+    /// belonging-to-another are deliberately indistinguishable.
     TabNotFound,
     /// The `(tab, surface)` pair names no surface this commission declares.
     UnknownSurface,
     /// The element named is not one of this commission's elements.
     ElementNotFound,
-    /// A deadline-axis act on a commission that carries no deadline: there is
-    /// nothing to be Delayed against.
+    /// A deadline-axis act on a commission that carries no deadline.
     NoDeadline,
-    /// The commission stands Late, and Late is the **system's** word — a
-    /// participant cannot set or clear the axis over it.
+    /// The commission stands Late — the system's word, not a participant's.
     CommissionLate,
-    /// The DID offered is already interned as a *different* kind of actor, so it
-    /// cannot be provisioned as a User.
+    /// The DID offered is already interned as a different kind of actor.
     DidBelongsToAnotherActor,
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
-    /// numeric gate — a coordinate outside normalized 0–1 space, a degenerate
-    /// extent, a blank or over-long comment. The cause rides
-    /// [`source`](std::error::Error::source), mirroring
-    /// [`InvalidFileName`](Self::InvalidFileName).
+    /// numeric gate.
     InvalidMarkup(MarkupError),
     IncorrectContent,
     AccountNotFound,
@@ -196,17 +167,10 @@ impl std::fmt::Display for CommissionError {
     }
 }
 
-/// The **one** place a store error becomes a use-case error.
-///
-/// The stores raise a small set of typed errors through `anyhow` — the
+/// The one place a store error becomes a use-case error: the
 /// composition-address gates ([`UnknownTab`], [`UnknownSurface`],
-/// [`ElementNotFound`]) and the actor-kind conflict
-/// ([`DidBelongsToAnotherActor`]) — each of which the wire already answers
-/// precisely. Recognizing them here rather than at each call site is
-/// deliberate: `?` is the only way a store error reaches a use case, so every
-/// use case inherits the translation and none can quietly let a `409`/`404`
-/// degrade into a `500`. Anything unrecognized stays
-/// [`Infrastructure`](CommissionError::Infrastructure).
+/// [`ElementNotFound`]) and [`DidBelongsToAnotherActor`] are recognized,
+/// anything else stays [`Infrastructure`](CommissionError::Infrastructure).
 impl From<anyhow::Error> for CommissionError {
     fn from(err: anyhow::Error) -> Self {
         if err.downcast_ref::<UnknownTab>().is_some() {
@@ -223,17 +187,10 @@ impl From<anyhow::Error> for CommissionError {
     }
 }
 
-/// The **closed door**: resolve the commission for an actor who must be a
-/// Participant of it, or refuse in a way that reveals nothing.
-///
-/// A non-participant is answered [`NotAMember`](CommissionError::NotAMember),
-/// which the drivers render byte-identically to an absent commission's `404`.
-/// Never [`InsufficientPermissions`](CommissionError::InsufficientPermissions):
-/// a `403` confirms there is something here to be forbidden from, which is an
-/// existence oracle over private work.
-///
-/// Lives here, once, because every act on a commission owes the same answer and
-/// per-use-case copies drift (they already did — the api suite caught four).
+/// The closed door: resolve the commission for an actor who must be a
+/// Participant of it. Anyone else is answered
+/// [`NotAMember`](CommissionError::NotAMember), which the drivers render
+/// byte-identically to an absent commission — never `403`.
 pub(crate) async fn require_participant(
     ports: &crate::Ports,
     commission_id: &CommissionId,
@@ -255,18 +212,10 @@ pub(crate) async fn require_participant(
     Ok(commission)
 }
 
-/// The **managing-authority** gate: resolve the commission for an act only its
-/// owner may perform.
-///
-/// Three answers, and the split matters. The owner passes. A Participant who is
-/// *not* the owner already knows the commission exists, so they get an honest
-/// [`InsufficientPermissions`](CommissionError::InsufficientPermissions) —
-/// `403`. Everyone else gets the same closed door as
-/// [`require_participant`]: `404`, indistinguishable from an absent commission.
-///
-/// This is the policy the driver-side `require_owner` held before the use cases
-/// moved down (DD `55836674` D7); it is restated here because that is now where
-/// authorization belongs.
+/// Resolve the commission for an act only its owner may perform. The owner
+/// passes; a non-owner Participant gets
+/// [`InsufficientPermissions`](CommissionError::InsufficientPermissions);
+/// everyone else gets the same closed door as [`require_participant`].
 pub(crate) async fn require_owner(
     ports: &crate::Ports,
     commission_id: &CommissionId,
@@ -282,10 +231,8 @@ pub(crate) async fn require_owner(
         return Ok(commission);
     }
 
-    // Ownership is settled before membership is consulted, mirroring the gate
-    // this replaces: the owner's Participant row is a permanent floor, so
-    // asking is redundant for them — and were that row ever missing, the owner
-    // must not be locked out of their own commission.
+    // Ownership before membership: the owner must never be locked out of their
+    // own commission by a missing Participant row.
     if ports
         .commissions
         .is_participant(&commission.id, actor_id)
@@ -307,31 +254,16 @@ impl std::error::Error for CommissionError {
     }
 }
 
-/// What one [`sweep_deadlines`] pass did, as the drivers render it: how many
-/// commissions this pass newly recorded as Late.
+/// How many commissions one [`sweep_deadlines`] pass newly recorded as Late.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SweepResult {
     pub marked_late: usize,
 }
 
-/// Run **one** deadline sweep as of `now`.
-///
-/// A use case with no actor: `now` is injected (never read from a wall clock
-/// here — the `datetime` doctrine, so the policy is deterministic by
-/// construction) and the whole pass is **one unit of work** (ruling E12). The
-/// candidate scan
-/// ([`lapsed_deadlines`](domain::ports::CommissionWrites::lapsed_deadlines) —
-/// deadline passed, not already Late, lifecycle not terminal) and each matching
-/// **system** changelog entry (actor `NULL`, payload naming the missed
-/// `deadline` and the standing flag — `delayed` or null — it replaced) commit
-/// atomically or roll back together, so a swept commission without its Late
-/// entry is unrepresentable (Changelog DD D4). A standing manual Delayed
-/// upgrades to Late here (Engineer ruling 2026-07-05); a commission already
-/// Late is never re-marked or re-logged — the *next* entry for the same
-/// commission takes a fresh deadline miss (extend, then miss again).
-///
-/// A commission with no deadline never receives a deadline-axis value (AC4):
-/// the scan cannot return one.
+/// Run one deadline sweep as of the injected `now`: scan the lapsed deadlines
+/// and append a system `Late` changelog entry for each, the whole pass in one
+/// unit of work. A commission already Late is never re-marked; one without a
+/// deadline is never returned by the scan.
 pub async fn sweep_deadlines(
     database: &dyn Database,
     now: DateTimeUtc,
@@ -339,9 +271,7 @@ pub async fn sweep_deadlines(
     let marked_late = transaction(database, async move |uow: &mut dyn UnitOfWork| {
         let lapsed = uow.commissions().lapsed_deadlines(now).await?;
         for lapse in &lapsed {
-            // Log-only: `Late` is derived on lookup and never persisted
-            // (Engineer ruling 2026-07-08). This pass just records the
-            // transition once, so hooks/plugins have an event to consume.
+            // Log-only: `Late` is derived on lookup and never persisted.
             let entry = NewChangelogEntry::system(
                 lapse.id,
                 ChangelogEntryKind::Late,

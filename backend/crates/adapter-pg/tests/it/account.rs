@@ -10,8 +10,8 @@
 use std::collections::BTreeSet;
 
 use adapter_pg::{
-    ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgCommissionStore, PgDatabase,
-    PgPool,
+    ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgColumnStore, PgCommissionStore,
+    PgDatabase, PgPool, PgWorkflowStore,
 };
 use chrono::{Duration, Utc};
 use domain::{
@@ -24,8 +24,9 @@ use domain::{
         role::{Role, RoleAlias},
         user::{User, UserId},
         user_account::UserAccount,
+        workflow::{ColumnName, LexOrdering, WorkflowName},
     },
-    ports::{AccountStore, CommissionStore, Database, HandleTaken},
+    ports::{AccountStore, ColumnStore, CommissionStore, Database, HandleTaken, WorkflowStore},
 };
 
 /// A fresh, fully migrated private database — a clone of the shared template
@@ -1415,7 +1416,7 @@ async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
 /// holds no reference to an account to cascade from — see the actor re-key
 /// migration's note on that table.
 #[tokio::test]
-async fn hard_delete_severs_placements_while_the_commission_survives() {
+async fn hard_delete_severs_the_boards_while_the_commission_survives() {
     let (pool, _container) = fresh_pool().await;
     let commissions = PgCommissionStore::new(pool.clone());
     let accounts = PgAccountStore::new(pool.clone());
@@ -1450,32 +1451,43 @@ async fn hard_delete_severs_placements_while_the_commission_survives() {
     let account_id = account.id.clone();
     create(&pool, &account, &membership).await;
 
-    // Place the commission in the account's position and grant it a Total view key.
-    {
+    // Position the commission on the account's board — placement IS a card on a
+    // board (Ownership Separation DD `29130754` D6).
+    let (board_id, column_id) = {
         let db = PgDatabase::new(pool.clone());
         let mut uow = db.begin().await.expect("begin");
-        uow.commissions()
-            .place(&commission_id, &account_id, &owner.id, Utc::now())
+        let name = "Queue".parse::<WorkflowName>().expect("board name");
+        let mut workflow = uow
+            .workflows()
+            .create(&name, &account_id)
             .await
-            .expect("place");
+            .expect("create the board");
+        let column_name = "Open".parse::<ColumnName>().expect("column name");
+        let mut column = workflow.new_column(column_name, workflow.visibility.clone());
+        column
+            .push(commission_id)
+            .expect("the column takes the card");
+        let column_id = column.id.clone();
+        workflow.insert(0, column.clone()).expect("board is empty");
+        uow.workflows()
+            .set_indexes(&workflow)
+            .await
+            .expect("persist the column");
+        uow.columns()
+            .set_commissions(&column)
+            .await
+            .expect("place the card");
         uow.commit().await.expect("commit");
-    }
-    // Precondition: the positioning rails exist before the delete.
+        (workflow.id, column_id)
+    };
+    // Precondition: the positioning rail exists before the delete.
     assert!(
         commissions
-            .current_placement(&commission_id)
+            .current_column_of_workflow(&commission_id, &board_id)
             .await
             .unwrap()
             .is_some(),
-        "the commission is placed before the delete"
-    );
-    assert!(
-        !commissions
-            .placement_log(&commission_id)
-            .await
-            .unwrap()
-            .is_empty(),
-        "the placement log has a row before the delete"
+        "the commission is on the board before the delete"
     );
 
     // Hard-delete the account: it holds no account-anchored fact (a placed commission
@@ -1487,22 +1499,31 @@ async fn hard_delete_severs_placements_while_the_commission_survives() {
         accounts.find(&account_id).await.expect("find").is_none(),
         "the account is hard-deleted"
     );
-    // ...its positioning rails are severed...
+    // ...its positioning rail is severed — the board cascades away, taking its
+    // columns and every card on them...
     assert!(
-        commissions
-            .current_placement(&commission_id)
+        PgWorkflowStore::new(pool.clone())
+            .find(&board_id)
             .await
             .unwrap()
             .is_none(),
-        "the current-placement pointer is severed with the account"
+        "the board is severed with the account"
+    );
+    assert!(
+        PgColumnStore::new(pool.clone())
+            .find(&column_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "and its columns with it"
     );
     assert!(
         commissions
-            .placement_log(&commission_id)
+            .current_column_of_workflow(&commission_id, &board_id)
             .await
             .unwrap()
-            .is_empty(),
-        "the placement log is severed with the account"
+            .is_none(),
+        "so the card is gone too"
     );
     // ...but the commission itself survives untouched.
     let survivor = commissions

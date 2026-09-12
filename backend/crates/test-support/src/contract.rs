@@ -1,7 +1,7 @@
 //! The shared [`PublicRecords`] conformance suite (ZMVP-105, AC5).
 //!
 //! One generic body, run against **every** adapter that claims to implement the
-//! public-boundary write port — the in-memory fake ([`adapter-mem`]'s
+//! public-boundary write port — the in-memory fake (`adapter-mem`'s
 //! `MemPublicRecords`, fast unit test) and the real atproto adapter driving a
 //! [`ThrowawayPds`](crate::ThrowawayPds) fixture account (integration test,
 //! container). The suite *existing and passing on both* is the acceptance

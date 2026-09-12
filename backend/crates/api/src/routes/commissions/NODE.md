@@ -62,3 +62,7 @@ fs:
 **Conventions:** commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto). Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403. A new act adds a file here rather than growing a hotspot. The handler shape (ZMVP-205): `CallingUser` in, then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction. `channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists.
 
 **Refs:** DESIGN "Commission" (3276807) · DD "Commission Composition" (45514754) · DD "The Changelog" (30408741) · DD "The Application Layer" (55836674).
+
+## Notes
+- `unknown_surface` is `422` not `404`: the `(tab, surface)` skeleton is code-declared and global, so an undeclared pair is a program fact, not a per-commission one — contrast `tab_not_found`/`element_not_found` (404, per-row, cross-commission collapse).
+- `SeatNotFound` maps to `element_not_found` (a Seat is an Element).
