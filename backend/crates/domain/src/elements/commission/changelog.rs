@@ -483,6 +483,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::elements::did::Did;
 
     // The storage tokens are a closed, collision-free vocabulary that round-trips.
     #[test]
@@ -543,17 +544,17 @@ mod tests {
     #[test]
     fn constructors_set_the_actor_arm() {
         let commission = CommissionId::new(uuid::Uuid::now_v7());
-        let actor = UserId::new(uuid::Uuid::now_v7());
+        let actor = UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())));
         let now = chrono::Utc::now();
 
         let event = NewChangelogEntry::event(
             commission,
             ChangelogEntryKind::Created,
-            actor,
+            actor.clone(),
             serde_json::json!({}),
             now,
         );
-        assert_eq!(event.actor_id, Some(actor));
+        assert_eq!(event.actor_id, Some(actor.clone()));
 
         let system = NewChangelogEntry::system(
             commission,
@@ -563,7 +564,7 @@ mod tests {
         );
         assert_eq!(system.actor_id, None, "a system entry has no actor");
 
-        let note = NewChangelogEntry::note(commission, actor, "hi".to_string(), now);
+        let note = NewChangelogEntry::note(commission, actor.clone(), "hi".to_string(), now);
         assert!(matches!(note.kind, ChangelogEntryKind::Note));
         assert_eq!(note.note.as_deref(), Some("hi"));
 

@@ -17,6 +17,8 @@
 //! - [`user_account`] — the membership tuple binding a user, an account, and a role.
 //! - [`invitation`] — a pending offer of membership, issued then accepted/revoked
 //!   (ZMVP-32/ZMVP-20, DESIGN/Roles).
+//! - [`id`] — [`id::IdError`], the shared parse failure every id newtype's
+//!   `FromStr` returns (UUID-backed and DID-backed alike).
 //! - [`did`] — a decentralized identifier, the AT Protocol identity primitive.
 //! - [`handle`] — a validated, normalized atproto-style Account handle, the one
 //!   shared claim-validation gate (ZMVP-48/45, DESIGN/24870914 §6, DD/26050561).
@@ -38,6 +40,7 @@ pub mod character;
 pub mod commission;
 pub mod did;
 pub mod handle;
+pub mod id;
 pub mod invitation;
 pub mod markdown;
 pub mod maturity;

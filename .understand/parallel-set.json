@@ -2,7 +2,7 @@
   "uow": "trw07",
   "logbook": null,
   "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
-  "updated": "2026-08-24T16:00:00-06:00",
+  "updated": "2026-08-27T12:50:00-06:00",
   "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
   "tickets": [
     {
@@ -83,50 +83,54 @@
     {
       "key": "ZMVP-200",
       "summary": "composition: extract Config + runtime wiring out of api",
-      "phase": "pr-open",
+      "phase": "merged-done",
       "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/185 (→ main)",
-      "branch": "feature/zmvp-200-composition",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T18:30:00-06:00"
+      "updated": "2026-08-24T18:30:00-06:00",
+      "next": "DONE 2026-08-25: merged to main via #185 4f36dae; Jira Done. Copilot + Engineer rounds addressed (Ahead schema state, ConnectError::source, env-name consts, shared cli/tests/common harness, Profile::new builders, 0700 re-assert)."
     },
     {
       "key": "ZMVP-201",
       "summary": "cli: crate scaffold, conventions, harnesses, just glue",
-      "phase": "pr-open",
+      "phase": "merged-done",
       "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/186 (→ feature/zmvp-200-composition)",
-      "branch": "feature/zmvp-201-cli-scaffold",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T18:30:00-06:00"
+      "updated": "2026-08-24T18:30:00-06:00",
+      "next": "DONE 2026-08-25: merged to main via #186 f46150a; Jira Done. Copilot + Engineer rounds addressed (Ahead schema state, ConnectError::source, env-name consts, shared cli/tests/common harness, Profile::new builders, 0700 re-assert)."
     },
     {
       "key": "ZMVP-202",
       "summary": "cli: health",
-      "phase": "pr-open",
+      "phase": "merged-done",
       "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, Did constructor shape, logout↔grant revocation, error-code vocabulary, CLI migration ownership.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/187 (→ feature/zmvp-201-cli-scaffold)",
-      "branch": "feature/zmvp-202-cli-health",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T18:30:00-06:00"
+      "updated": "2026-08-24T18:30:00-06:00",
+      "next": "DONE 2026-08-25: merged to main via #187 (into #186); Jira Done. Copilot + Engineer rounds addressed (Ahead schema state, ConnectError::source, env-name consts, shared cli/tests/common harness, Profile::new builders, 0700 re-assert)."
     },
     {
       "key": "ZMVP-203",
       "summary": "cli: identity file + principal; session whoami/logout",
-      "phase": "pr-open",
+      "phase": "merged-done",
       "next_action": "PR open 2026-08-24, Jira In Review; ship-gate reviews (Opus code + Opus security) applied; Copilot requested. Merge order 185 → 186 → 187 → 188 (each retargets on merge). Engineer rulings owed: F2 lazy custody wiring, logout↔grant revocation, error-code vocabulary, CLI migration ownership. RULED 2026-08-24: FromStr for Did = the untrusted door (in #188).",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/188 (→ feature/zmvp-202-cli-health)",
-      "branch": "feature/zmvp-203-cli-identity",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T18:30:00-06:00"
+      "updated": "2026-08-24T18:30:00-06:00",
+      "next": "DONE 2026-08-25: merged to main via #188 5f9b239; Jira Done. Copilot + Engineer rounds addressed (Ahead schema state, ConnectError::source, env-name consts, shared cli/tests/common harness, Profile::new builders, 0700 re-assert)."
     },
     {
       "key": "ZMVP-204",
@@ -138,31 +142,40 @@
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T19:00:00-06:00"
+      "updated": "2026-08-24T19:00:00-06:00",
+      "next": "Blocked by ZMVP-205 (application layer first). RULED 2026-08-24: option C — login --handle resolves an EXISTING User, never provisions. Stack on main now (boilerplate all merged 2026-08-25); /security-review confirms no write path from login."
     },
     {
       "key": "ZMVP-205",
       "summary": "application layer landing zone",
-      "phase": "ruled-first-engineer-lane",
+      "phase": "slices-2/4/5/6-pr-open; design-sync-done; engineer-migrating-api-to-application",
       "next_action": "RULED 2026-08-24: new `application` crate, plain async fn use cases + domain error enums; api = routing only; cli calls the same fns. Blueprint = me + create_account. FIRST in the epic — blocks 204 and all 41 operation commands. Engineer builds (worksheet-tutorial offered); Claude sweeps per module after.",
-      "pr": null,
-      "branch": null,
+      "pr": 195,
+      "branch": "feature/zmvp-205-application-me",
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T22:45:00-06:00"
+      "updated": "2026-08-27T12:50:00-06:00",
+      "next": "DD 55836674 published (v2) + /design-sync DONE 2026-08-27 over 9 pages (27852802, 19431425, 24870914, 26247170, 37519361, 23592962, 24150017, 11763713, 24543244). PRs: #191 (1) → #192 (2) → #193 (4) → #194 (5 sweep) → #195 (6 HandleDomain); all Copilot-requested. ENGINEER 2026-08-27: after this lands they migrate EVERYTHING remaining api → application THEMSELVES (37 handler transactions; change_handle slice 3 included). Claude: api-layer/cli follow-ups only when asked; ship-gates + design-sync on request. Open on #195: HandleDomain strictness (≥2 labels/charset?); ZURFUR_NAMESPACE_SUFFIX hardcode vs configured domain (reserved-label gate). Jira edits still owed from the investigation brief: ZMVP-205 description signature block; ZMVP-208 mentions `settings` crate (now shared::settings); ZMVP-112 (UserId not User); link 209↔61. Merge order 191 → 192 → 193 → 194 → 195 → (Engineer's slices) → feature→main rubber-stamp → Jira Done."
     },
     {
       "key": "ZMVP-206",
       "summary": "cli: migrate + schema-drift gate",
-      "phase": "pr-open",
+      "phase": "merged-done",
       "next_action": "Built + PR #189 open 2026-08-24 (→ feature/zmvp-203-cli-identity); Engineer ruling option B. Merge after #188.",
       "pr": "https://github.com/ZurNetwork/ZurFur/pull/189",
-      "branch": "feature/zmvp-206-cli-migrate",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T22:30:00-06:00"
+      "updated": "2026-08-24T22:30:00-06:00",
+      "next": "DONE 2026-08-25: merged to main via #189 38a7e3a; Jira Done. Copilot + Engineer rounds addressed (Ahead schema state, ConnectError::source, env-name consts, shared cli/tests/common harness, Profile::new builders, 0700 re-assert)."
+    },
+    {
+      "key": "ZMVP-207",
+      "phase": "pr-open",
+      "branch": "feature/zmvp-207-shared-mem-runtime",
+      "next": "PR #190 open 2026-08-25 (→ main), Copilot requested, Jira In Review. #191 stacks on it."
     }
   ],
   "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend→Rust/Leptos) was REVERTED by the Engineer 2026-08-09 — the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED — flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]].",

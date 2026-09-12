@@ -22,10 +22,16 @@
 //! [`Role::can_grant`]: crate::elements::role::Role::can_grant
 
 use std::ops::Deref;
+use std::str::FromStr;
 
 use crate::{
     datetime::DateTimeUtc,
-    elements::{account::AccountId, role::Role, user::UserId},
+    elements::{
+        account::AccountId,
+        id::{IdError, parse_uuid},
+        role::Role,
+        user::UserId,
+    },
 };
 
 /// The app-private, stable handle for an [`Invitation`].
@@ -49,6 +55,14 @@ impl Deref for InvitationId {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl FromStr for InvitationId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
     }
 }
 
@@ -76,6 +90,15 @@ pub enum InvitationState {
     Revoked,
 }
 
+impl std::fmt::Display for InvitationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Accepted => write!(f, "accepted"),
+            Self::Revoked => write!(f, "revoked"),
+        }
+    }
+}
 /// A stored invitation-state discriminant that isn't one of the three known
 /// states — a schema/data drift signal, not user input. Mirrors
 /// [`crate::elements::role::UnknownRole`]; carries the offending value.
@@ -200,13 +223,14 @@ impl Invitation {
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     account::AccountId, invitation::{Invitation, InvitationState}, role::Role, user::UserId,
+    ///     account::AccountId, did::Did, invitation::{Invitation, InvitationState}, role::Role,
+    ///     user::UserId,
     /// };
     ///
-    /// let account = AccountId::new(uuid::Uuid::now_v7());
-    /// let invited = UserId::new(uuid::Uuid::now_v7());
-    /// let inviter = UserId::new(uuid::Uuid::now_v7());
-    /// let invitation = Invitation::issue(account, invited, Role::Member(None), inviter, Utc::now());
+    /// let account = AccountId::new(Did::new("did:plc:acme".to_string()));
+    /// let invited = UserId::new(Did::new("did:plc:alice".to_string()));
+    /// let inviter = UserId::new(Did::new("did:plc:bob".to_string()));
+    /// let invitation = Invitation::issue(account, invited, Role::Member, inviter, Utc::now());
     ///
     /// assert_eq!(invitation.state, InvitationState::Pending); // issued pending
     /// assert_eq!(invitation.created_at, invitation.updated_at); // stamped once
@@ -246,15 +270,15 @@ impl Invitation {
     /// ```
     /// use chrono::Utc;
     /// use domain::elements::{
-    ///     account::AccountId, invitation::{Invitation, InvitationError, InvitationState},
+    ///     account::AccountId, did::Did, invitation::{Invitation, InvitationError, InvitationState},
     ///     role::Role, user::UserId,
     /// };
     ///
     /// let mut invitation = Invitation::issue(
-    ///     AccountId::new(uuid::Uuid::now_v7()),
-    ///     UserId::new(uuid::Uuid::now_v7()),
-    ///     Role::Member(None),
-    ///     UserId::new(uuid::Uuid::now_v7()),
+    ///     AccountId::new(Did::new("did:plc:acme".to_string())),
+    ///     UserId::new(Did::new("did:plc:alice".to_string())),
+    ///     Role::Member,
+    ///     UserId::new(Did::new("did:plc:bob".to_string())),
     ///     Utc::now(),
     /// );
     /// assert!(invitation.revoke(Utc::now()).is_ok());
@@ -275,14 +299,15 @@ impl Invitation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::elements::did::Did;
     use chrono::{Duration, Utc};
 
     fn account() -> AccountId {
-        AccountId::new(uuid::Uuid::now_v7())
+        AccountId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())))
     }
 
     fn user() -> UserId {
-        UserId::new(uuid::Uuid::now_v7())
+        UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())))
     }
 
     // AC3 — "a pending invitation records the invited User, the Account, the
@@ -293,11 +318,17 @@ mod tests {
         let (account, invited, inviter) = (account(), user(), user());
         let now = Utc::now();
 
-        let invitation = Invitation::issue(account, invited, Role::Admin(None), inviter, now);
+        let invitation = Invitation::issue(
+            account.clone(),
+            invited.clone(),
+            Role::Admin,
+            inviter.clone(),
+            now,
+        );
 
         assert_eq!(invitation.account, account);
         assert_eq!(invitation.invited_user, invited);
-        assert_eq!(invitation.role, Role::Admin(None));
+        assert_eq!(invitation.role, Role::Admin);
         assert_eq!(invitation.inviter, inviter);
         assert_eq!(invitation.state, InvitationState::Pending);
         assert_eq!(invitation.created_at, now);
@@ -309,8 +340,7 @@ mod tests {
     #[test]
     fn revoke_moves_a_pending_invitation_to_revoked() {
         let issued = Utc::now();
-        let mut invitation =
-            Invitation::issue(account(), user(), Role::Member(None), user(), issued);
+        let mut invitation = Invitation::issue(account(), user(), Role::Member, user(), issued);
         let later = issued + Duration::seconds(30);
 
         assert_eq!(invitation.revoke(later), Ok(()));
@@ -326,8 +356,7 @@ mod tests {
     // a pending invitation revokes; a second revoke is rejected and changes nothing.
     #[test]
     fn revoking_a_non_pending_invitation_is_rejected() {
-        let mut invitation =
-            Invitation::issue(account(), user(), Role::Member(None), user(), Utc::now());
+        let mut invitation = Invitation::issue(account(), user(), Role::Member, user(), Utc::now());
         invitation
             .revoke(Utc::now())
             .expect("first revoke succeeds");
@@ -375,16 +404,16 @@ mod tests {
     #[test]
     fn invite_authority_is_the_grant_rule() {
         assert!(
-            Role::Owner(None).can_grant(&Role::Admin(None)),
+            Role::Owner.can_grant(&Role::Admin),
             "an Owner may invite an Admin"
         );
         assert!(
-            !Role::Admin(None).can_grant(&Role::Admin(None)),
+            !Role::Admin.can_grant(&Role::Admin),
             "an Admin may not invite a peer Admin"
         );
-        for inviter in [Role::Manager(None), Role::Member(None)] {
+        for inviter in [Role::Manager, Role::Member] {
             assert!(
-                !inviter.can_grant(&Role::Member(None)),
+                !inviter.can_grant(&Role::Member),
                 "{inviter:?} cannot invite anyone"
             );
         }

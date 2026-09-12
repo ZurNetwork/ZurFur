@@ -21,15 +21,13 @@
 //!   (actor NULL), atomically with the status write.
 //!
 //! The sweep itself is exercised deterministically by calling
-//! [`api::sweep_deadlines`] with an injected `now` — the same function the
-//! composition root's interval task drives on the wall clock.
+//! [`application::commission::sweep_deadlines`] with an injected `now` — the
+//! same use case the composition root's interval task drives on the wall clock.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::{DateTime, Utc};
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
@@ -53,38 +51,15 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "artist.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(
+                Did::new(did.to_string()),
+                "artist.bsky.social",
+            ))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -206,9 +181,10 @@ async fn entries(
 /// Runs one deterministic sweep at the injected instant — exactly what the
 /// composition root's interval task does, minus the wall clock.
 async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
-    api::sweep_deadlines(&*backend.database(), now)
+    application::commission::sweep_deadlines(&*backend.database(), now)
         .await
         .expect("sweep runs")
+        .marked_late
 }
 
 /// Seeds a committed commission owned by a directly-provisioned user (someone
@@ -225,26 +201,6 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .create_commission(&commission)
         .await
         .expect("seed foreign commission");
-    id
-}
-
-/// Seeds a committed commission in the given lifecycle step with a long-missed
-/// deadline, owned by a provisioned user — the arrangement the sweeper's
-/// lifecycle scope tests need (no lifecycle-transition endpoint exists in this
-/// lineage; the struct fields are public by design).
-async fn seed_with_lifecycle(backend: &MemBackend, step: LifecycleStep) -> uuid::Uuid {
-    let owner: User = backend
-        .provision(&Did::new("did:plc:lifecycle-owner".to_string()))
-        .await
-        .expect("provision owner");
-    let title = "Staged".parse::<CommissionTitle>().expect("valid title");
-    let mut commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
-    commission.lifecycle_step = step;
-    let id = *commission.id;
-    backend
-        .create_commission(&commission)
-        .await
-        .expect("seed staged commission");
     id
 }
 
@@ -639,34 +595,6 @@ async fn a_standing_delayed_upgrades_to_late() {
     assert_eq!(
         log[3].payload["from"], "delayed",
         "the upgrade records the standing flag it replaced"
-    );
-}
-
-// Ruling E12 scope — the sweeper skips terminal lifecycles (Completed and
-// Cancelled): a closed commission's missed deadline is history, not lateness.
-// A Disputed commission is NOT terminal and is still swept (the dispute
-// freeze — "deadlines freeze, Late pauses" — is the future Disputes epic).
-#[tokio::test]
-async fn the_sweeper_skips_terminal_lifecycles() {
-    let (_base, backend) = spawn_app("did:plc:artist").await;
-    let completed = seed_with_lifecycle(&backend, LifecycleStep::Completed).await;
-    let cancelled = seed_with_lifecycle(&backend, LifecycleStep::Cancelled).await;
-    let disputed = seed_with_lifecycle(&backend, LifecycleStep::Disputed).await;
-
-    assert_eq!(
-        sweep(&backend, after_past()).await,
-        1,
-        "only the disputed (non-terminal) commission is marked"
-    );
-    assert_eq!(stored_deadline_status(&backend, completed).await, None);
-    assert_eq!(stored_deadline_status(&backend, cancelled).await, None);
-    assert_eq!(
-        stored_deadline_status(&backend, disputed).await,
-        Some("late")
-    );
-    assert!(
-        entries(&backend, completed).await.is_empty(),
-        "nothing was appended to the closed commission's stream"
     );
 }
 

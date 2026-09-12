@@ -8,10 +8,8 @@
 //! and `find_did_by_handle(old)` stops — is asserted through the shared store the
 //! handler wrote. The `did:plc` `alsoKnownAs` re-point (§5/§7) is the ZMVP-50 op,
 //! exercised in `adapter-atproto`'s own tests; here the mem minter stands in for it.
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
@@ -37,38 +35,12 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "owner.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -128,7 +100,7 @@ async fn change(client: &reqwest::Client, base: &str, id: &str, new: &str) -> re
 }
 
 fn handle(h: &str) -> Handle {
-    Handle::try_new(h).expect("valid handle")
+    h.parse::<Handle>().expect("valid handle")
 }
 
 // AC (Done-when) — an Owner changes the handle and BOTH resolution halves follow: the
@@ -141,12 +113,14 @@ async fn owner_changes_handle_and_resolution_follows() {
     let id = found_account(&client, &base, "Rename Studio", "before.zurfur.app").await;
 
     // The account's DID, captured before the change so we can assert resolution moves.
-    let did = backend
-        .find(AccountId::new(Uuid::parse_str(&id).unwrap()))
+    // `id` *is* the account's DID (AccountId wraps Did), so read it back through the
+    // found account rather than a second, separate field.
+    let account = backend
+        .find(&AccountId::new(Did::new(id.clone())))
         .await
         .expect("find")
-        .expect("account present")
-        .did;
+        .expect("account present");
+    let did = (*account.id).clone();
 
     let res = change(&client, &base, &id, "after.zurfur.app").await;
     assert_eq!(res.status(), 200, "the Owner's change succeeds");
@@ -253,8 +227,9 @@ async fn only_the_owner_may_change_the_handle() {
     backend
         .grant_role(&UserAccount {
             user_id: me.id,
-            account_id: account.id,
-            role: Role::Member(None),
+            account_id: account.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat me as a member");

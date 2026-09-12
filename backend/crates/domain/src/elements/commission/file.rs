@@ -23,6 +23,9 @@
 
 use std::ops::Deref;
 
+use serde::Deserialize;
+use tokio::io::AsyncRead;
+
 use super::CommissionId;
 use crate::{datetime::DateTimeUtc, elements::user::UserId};
 
@@ -36,7 +39,8 @@ use crate::{datetime::DateTimeUtc, elements::user::UserId};
 /// uploads buys nothing in the v1 mock. A future content-addressed store swaps
 /// behind the port with these opaque keys still valid as handles (ZMVP-88, ruling
 /// E13). Deref exposes the inner UUID for foreign keys and lookups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
 pub struct FileKey(uuid::Uuid);
 
 impl FileKey {
@@ -191,14 +195,14 @@ impl FileMetadata {
     }
 }
 
-/// A file entry's bytes plus its metadata, as read back from the
-/// [`FileStore`](crate::ports::FileStore) — the `get` result.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredFile {
+/// A file entry's metadata plus a live reader over its bytes, streamed back
+/// from the [`FileStore`](crate::ports::FileStore) — the `get` result
+/// (ZMVP-205: replaces the earlier buffered `StoredFile`).
+pub struct FileDownload {
     /// The metadata the entry was stored with.
     pub metadata: FileMetadata,
-    /// The stored content.
-    pub bytes: Vec<u8>,
+    /// The stored content, streamed rather than buffered whole.
+    pub content: Box<dyn AsyncRead + Send + Unpin>,
 }
 
 /// The Index-canonical record that a file entry belongs to a commission (ZMVP-88)

@@ -7,10 +7,8 @@
 //! exercised here against the in-process fakes; the `parent` re-homing (rule 5) is the
 //! store's job and is proven against PostgreSQL in `adapter-pg`'s own tests (the mem
 //! fake doesn't model `parent`). DESIGN/Roles rule 8.
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
@@ -36,39 +34,12 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "owner.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -138,11 +109,10 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
         .expect("sign-in provisioned owner");
     backend
         .grant_role(&UserAccount {
-            user_id: heir.id,
-            account_id: domain::elements::account::AccountId::new(
-                Uuid::parse_str(&account_id).unwrap(),
-            ),
-            role: Role::Member(None),
+            user_id: heir.id.clone(),
+            account_id: domain::elements::account::AccountId::new(Did::new(account_id.clone())),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat the heir as a member");
@@ -159,22 +129,22 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
     assert_eq!(body["owner"].as_str(), Some("did:plc:heir"));
     assert_eq!(body["previous_owner"].as_str(), Some("did:plc:xferowner"));
 
-    let account = domain::elements::account::AccountId::new(Uuid::parse_str(&account_id).unwrap());
+    let account = domain::elements::account::AccountId::new(Did::new(account_id));
     // AC: the named member is now the sole Owner; the prior Owner is now Admin.
     assert_eq!(
         backend
-            .role_of(heir.id, account)
+            .role_of(&heir.id, &account)
             .await
             .expect("role_of heir"),
-        Some(Role::Owner(None)),
+        Some(Role::Owner),
         "the heir is the new Owner",
     );
     assert_eq!(
         backend
-            .role_of(owner.id, account)
+            .role_of(&owner.id, &account)
             .await
             .expect("role_of owner"),
-        Some(Role::Admin(None)),
+        Some(Role::Admin),
         "the prior Owner is demoted to Admin",
     );
 }
@@ -198,7 +168,7 @@ async fn only_the_owner_may_transfer() {
     let (account, owner_membership) = Account::open(
         host.id,
         Did::new("did:plc:hostacct".to_string()),
-        Handle::try_new("host.zurfur.app").unwrap(),
+        "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
     );
@@ -209,8 +179,9 @@ async fn only_the_owner_may_transfer() {
     backend
         .grant_role(&UserAccount {
             user_id: me.id,
-            account_id: account.id,
-            role: Role::Member(None),
+            account_id: account.id.clone(),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat me as a member");
@@ -307,7 +278,7 @@ async fn after_transfer_the_former_owner_can_leave() {
     sign_in(&client, &base).await;
 
     let account_id = found_account(&client, &base, "Exit Studio", "exit.zurfur.app").await;
-    let account = domain::elements::account::AccountId::new(Uuid::parse_str(&account_id).unwrap());
+    let account = domain::elements::account::AccountId::new(Did::new(account_id.clone()));
 
     let heir = backend
         .provision(&Did::new("did:plc:successor".to_string()))
@@ -317,7 +288,8 @@ async fn after_transfer_the_former_owner_can_leave() {
         .grant_role(&UserAccount {
             user_id: heir.id,
             account_id: account,
-            role: Role::Member(None),
+            role: Role::Member,
+            alias: None,
         })
         .await
         .expect("seat the successor");

@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use domain::ports::{
-    AccountWrites, ActorIdentityWrites, ChangelogWrites, CommissionWrites, Database, UnitOfWork,
+    AccountRepo, ActorIdentityWrites, ChangelogWrites, CommissionRepo, Database, UnitOfWork,
     UserWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
@@ -64,15 +64,18 @@ pub struct PgUnitOfWork {
 
 #[async_trait]
 impl UnitOfWork for PgUnitOfWork {
-    /// A view of the account write surface over this transaction. The reborrow
-    /// `&mut *self.tx` hands the view a `&mut PgConnection` into the shared tx; the
-    /// returned box's lifetime ties it to that borrow, so it must be dropped (end of
-    /// statement) before the next accessor or before `commit`.
-    fn accounts(&mut self) -> Box<dyn AccountWrites + '_> {
+    /// The account repo over this transaction — reads and writes on one
+    /// connection. The reborrow `&mut *self.tx` hands the view a
+    /// `&mut PgConnection` into the shared tx; the returned box's lifetime ties it
+    /// to that borrow, so it must be dropped (end of statement) before the next
+    /// accessor or before `commit`.
+    fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
         Box::new(PgAccountWrites { conn: &mut self.tx })
     }
 
-    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_> {
+    /// The commission repo over this transaction: reads (including the locking
+    /// `*_for_update` lookups) and writes on one connection.
+    fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(PgCommissionWrites { conn: &mut self.tx })
     }
 

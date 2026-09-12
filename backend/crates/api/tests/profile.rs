@@ -5,28 +5,11 @@
 //! read-through is exercised without a network or a database.
 use std::sync::Arc;
 
-use adapter_mem::{MemAuthenticator, MemBackend, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemProfileSource;
+use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
-
-fn config_for(addr: std::net::SocketAddr) -> Config {
-    Config {
-        env: Environment::DEV,
-        http_addr: addr,
-        public_url: format!("http://{addr}"),
-        database_url: "postgres://unused".to_string(),
-        log_level: "info".to_string(),
-        handle_domain: "zurfur.app".to_string(),
-        // ZMVP-49 config (unused by the mem minter in these tests).
-        did_key_root_key: "unused-in-tests".to_string(),
-        plc_directory_endpoint: "https://plc.directory".to_string(),
-        plc_directory_submit: false,
-        deadline_sweep_interval_secs: 60,
-        max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-    }
-}
 
 /// Sign in through the faked OAuth handshake; leaves the client holding the session
 /// cookie. Returns once `/me` is reachable as the signed-in visitor.
@@ -55,28 +38,22 @@ async fn me_shows_profile_then_serves_it_from_cache() {
         .expect("bind");
     let addr = listener.local_addr().expect("addr");
 
-    // Typed handle to the source so we can count PDS reads.
-    let source = Arc::new(MemProfileSource::new(Profile {
-        did: Did::new(did.to_string()),
-        handle: "alice.bsky.social".to_string(),
-        display_name: Some("Alice".to_string()),
-        avatar_url: Some("https://pds.example/avatar/alice.jpg".to_string()),
-    }));
-    let backend = MemBackend::new();
-    let state = AppState {
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
-        config: config_for(addr),
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: source.clone(),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-    };
+    // Typed handle to the source so we can count PDS reads. The fixture builds
+    // its own internal MemProfileSource from the given Profile, so this test
+    // overrides `profile_source` after `build()` to keep that handle around
+    // for `fetch_count`/`set_unreachable` — no custom trait, just a swap of a
+    // pub field on the built Runtime (justification: this test needs the
+    // concrete adapter, not the `dyn ProfileSource` the fixture returns).
+    let profile = Profile::new(Did::new(did.to_string()), "alice.bsky.social")
+        .with_display_name("Alice")
+        .with_avatar_url("https://pds.example/avatar/alice.jpg");
+    let source = Arc::new(MemProfileSource::new(profile));
+    let test_support::runtime::MemRuntime { mut runtime, .. } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .public_url(format!("http://{addr}"))
+            .build();
+    runtime.profile_source = source.clone();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -148,29 +125,17 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
         .expect("bind");
     let addr = listener.local_addr().expect("addr");
 
-    // The PDS is down and nothing is cached: the page must still load.
-    let source = MemProfileSource::new(Profile {
-        did: Did::new(did.to_string()),
-        handle: "bob.bsky.social".to_string(),
-        display_name: None,
-        avatar_url: None,
-    });
+    // The PDS is down and nothing is cached: the page must still load. Same
+    // post-build override as the test above — the fixture has no way to hand
+    // back a pre-configured (unreachable) MemProfileSource.
+    let source = MemProfileSource::new(Profile::new(Did::new(did.to_string()), "bob.bsky.social"));
     source.set_unreachable();
-    let backend = MemBackend::new();
-    let state = AppState {
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(adapter_mem::MemDidMinter::new()),
-        config: config_for(addr),
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(source),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-    };
+    let test_support::runtime::MemRuntime { mut runtime, .. } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .public_url(format!("http://{addr}"))
+            .build();
+    runtime.profile_source = Arc::new(source);
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

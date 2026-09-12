@@ -90,6 +90,9 @@ pub struct AccountMembership {
     /// rendered from this field.
     #[prost(string, tag = "5")]
     pub role: ::prost::alloc::string::String,
+    /// The caller's alias for their role on this account, if they set one — free-form label, no authority.
+    #[prost(string, optional, tag = "6")]
+    pub alias: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// `POST /api/v1/accounts` — founding takes real input, not a bare click.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

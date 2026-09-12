@@ -40,7 +40,7 @@ async fn create_commit_find_round_trips() {
 
     let store = PgActorIdentityStore::new(pool.clone());
     let found = store
-        .find(identity.id)
+        .find(&identity.id)
         .await
         .expect("find")
         .expect("row exists");
@@ -76,7 +76,7 @@ async fn uncommitted_create_rolls_back() {
     }
 
     let store = PgActorIdentityStore::new(pool.clone());
-    let found = store.find(identity.id).await.expect("find");
+    let found = store.find(&identity.id).await.expect("find");
     assert_eq!(found, None, "an uncommitted create must not persist");
 }
 
@@ -98,7 +98,7 @@ async fn kind_round_trips_and_check_rejects_unknown() {
         .expect("create");
     uow.commit().await.expect("commit");
     let found = store
-        .find(character.id)
+        .find(&character.id)
         .await
         .expect("find")
         .expect("row exists");
@@ -124,7 +124,7 @@ async fn kind_round_trips_and_check_rejects_unknown() {
         assert_eq!(interned.kind, kind, "{kind:?} must round-trip");
 
         let found = store
-            .find(interned.id)
+            .find(&interned.id)
             .await
             .expect("find")
             .expect("row exists");
@@ -234,7 +234,7 @@ async fn null_dids_coexist_and_present_dids_are_unique() {
     );
     assert_eq!(
         PgActorIdentityStore::new(pool.clone())
-            .find(interned.id)
+            .find(&interned.id)
             .await
             .expect("find"),
         Some(interned)
@@ -268,7 +268,7 @@ async fn rows_are_born_active_and_state_check_holds() {
 
     for identity in [&created, &interned] {
         let found = store
-            .find(identity.id)
+            .find(&identity.id)
             .await
             .expect("find")
             .expect("row exists");
@@ -316,13 +316,13 @@ async fn handle_cache_fills_refreshes_and_clears() {
     ] {
         let mut uow = db.begin().await.expect("begin");
         uow.actor_identities()
-            .cache_handle(interned.id, set_to)
+            .cache_handle(&interned.id, set_to)
             .await
             .expect("cache_handle");
         uow.commit().await.expect("commit");
 
         let found = store
-            .find(interned.id)
+            .find(&interned.id)
             .await
             .expect("find")
             .expect("row exists");
@@ -333,7 +333,7 @@ async fn handle_cache_fills_refreshes_and_clears() {
     let missing = uow
         .actor_identities()
         .cache_handle(
-            domain::elements::actor_identity::ActorIdentity::mint(ActorKind::User, Utc::now()).id,
+            &domain::elements::actor_identity::ActorIdentity::mint(ActorKind::User, Utc::now()).id,
             Some("ghost.example.com"),
         )
         .await;

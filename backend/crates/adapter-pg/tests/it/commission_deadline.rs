@@ -53,7 +53,7 @@ async fn seed(
 ) -> Commission {
     let mut commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id,
+        owner.id.clone(),
         Utc::now(),
         deadline,
     );
@@ -92,17 +92,17 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     {
         let mut commissions = uow.commissions();
         commissions
-            .set_deadline(id, Some(deadline))
+            .set_deadline(&id, Some(deadline))
             .await
             .expect("set deadline");
         commissions
-            .set_deadline_status(id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
             .await
             .expect("set delayed");
     }
     uow.commit().await.expect("commit");
 
-    let found = store.find(id).await.expect("find").expect("exists");
+    let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, Some(deadline));
     assert_eq!(found.deadline_status, Some(DeadlineStatus::Delayed));
 
@@ -111,11 +111,11 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     // `late` outright). Then clear everything; an absent commission is a no-op.
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_deadline(id, Some(ts("2020-01-01T00:00:00Z")))
+        .set_deadline(&id, Some(ts("2020-01-01T00:00:00Z")))
         .await
         .expect("move deadline into the past");
     uow.commit().await.expect("commit");
-    let found = store.find(id).await.expect("find").expect("exists");
+    let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(
         found.deadline_status,
         Some(DeadlineStatus::Late),
@@ -126,23 +126,23 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     {
         let mut commissions = uow.commissions();
         commissions
-            .set_deadline(id, None)
+            .set_deadline(&id, None)
             .await
             .expect("clear deadline");
         commissions
-            .set_deadline_status(id, None)
+            .set_deadline_status(&id, None)
             .await
             .expect("clear status");
         commissions
             .set_deadline(
-                domain::elements::commission::CommissionId::new(uuid::Uuid::now_v7()),
+                &domain::elements::commission::CommissionId::new(uuid::Uuid::now_v7()),
                 Some(deadline),
             )
             .await
             .expect("absent commission is a no-op");
     }
     uow.commit().await.expect("commit");
-    let found = store.find(id).await.expect("find").expect("exists");
+    let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, None);
     assert_eq!(found.deadline_status, None);
 
@@ -150,11 +150,11 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     {
         let mut uow = db.begin().await.expect("begin");
         uow.commissions()
-            .set_deadline(id, Some(deadline))
+            .set_deadline(&id, Some(deadline))
             .await
             .expect("staged set");
     }
-    let found = store.find(id).await.expect("find").expect("exists");
+    let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, None, "a dropped unit rolls the set back");
 }
 
@@ -239,7 +239,7 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let mut uow = db.begin().await.expect("begin");
     {
         uow.commissions()
-            .set_deadline_status(delayed.id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&delayed.id, Some(DeadlineStatus::Delayed))
             .await
             .expect("flag delayed");
         // Late is deduped on the changelog (no persisted Late), staged on the

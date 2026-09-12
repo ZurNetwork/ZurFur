@@ -14,10 +14,8 @@
 //!
 //! Same in-process fakes as the other account e2e suites — no network, no database.
 
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
@@ -41,38 +39,12 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "owner.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -132,7 +104,7 @@ async fn seed_foreign_account(backend: &MemBackend, owner_did: &str, handle: &st
     let (account, membership) = Account::open(
         owner.id,
         Did::new(format!("{owner_did}:acct")),
-        Handle::try_new(handle).expect("valid handle"),
+        handle.parse::<Handle>().expect("valid handle"),
         "Host Studio".parse::<AccountName>().expect("valid name"),
         Utc::now(),
     );
@@ -191,7 +163,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
         .expect("find me")
         .expect("sign-in provisioned me");
     assert_eq!(
-        backend.role_of(me.id, account.id).await.expect("role_of"),
+        backend.role_of(&me.id, &account.id).await.expect("role_of"),
         None,
         "a forbidden write seats no membership for the actor",
     );
@@ -232,8 +204,11 @@ async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
         .expect("the grant provisioned the grantee");
     let account = account_id_from(&account_id);
     assert_eq!(
-        backend.role_of(grantee.id, account).await.expect("role_of"),
-        Some(Role::Member(None)),
+        backend
+            .role_of(&grantee.id, &account)
+            .await
+            .expect("role_of"),
+        Some(Role::Member),
         "the grantee is seated as a Member",
     );
 }
@@ -270,8 +245,8 @@ async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
     let body: serde_json::Value = res.json().await.expect("json body");
     let account = account_id_from(body["id"].as_str().expect("account id"));
     assert_eq!(
-        backend.role_of(me.id, account).await.expect("role_of"),
-        Some(Role::Owner(None)),
+        backend.role_of(&me.id, &account).await.expect("role_of"),
+        Some(Role::Owner),
         "founding makes the zero-account User the Owner",
     );
 }
@@ -311,5 +286,5 @@ async fn anonymous_read_of_account_public_data_still_succeeds() {
 /// Parse an account-id string (as returned by the API) back into an `AccountId` for
 /// backend introspection.
 fn account_id_from(id: &str) -> domain::elements::account::AccountId {
-    domain::elements::account::AccountId::new(Uuid::parse_str(id).expect("id is a uuid"))
+    domain::elements::account::AccountId::new(Did::new(id.to_string()))
 }

@@ -20,10 +20,8 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, ElementId, SKELETON},
@@ -45,38 +43,15 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "artist.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(
+                Did::new(did.to_string()),
+                "artist.bsky.social",
+            ))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -210,7 +185,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .expect("the invitee was provisioned");
     let found = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(id), &ElementId::new(seat), &invitee.id)
         .await
         .expect("query")
         .expect("a pending offer was recorded");
@@ -357,7 +332,11 @@ async fn owner_revokes_a_pending_invitation() {
     assert!(
         backend
             .commission_store()
-            .find_pending_seat_invitation(CommissionId::new(id), ElementId::new(seat), invitee.id)
+            .find_pending_seat_invitation(
+                &CommissionId::new(id),
+                &ElementId::new(seat),
+                &invitee.id
+            )
             .await
             .expect("query")
             .is_none(),
@@ -485,7 +464,7 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
         .expect("invitee was provisioned by the invite");
     let still_pending = backend
         .commission_store()
-        .find_pending_seat_invitation(CommissionId::new(b), ElementId::new(b_seat), invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(b), &ElementId::new(b_seat), &invitee.id)
         .await
         .expect("query");
     assert!(

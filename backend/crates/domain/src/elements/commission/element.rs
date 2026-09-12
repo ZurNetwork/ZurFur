@@ -41,9 +41,16 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 
+use serde::Deserialize;
+use uuid::Uuid;
+
 use crate::{
     datetime::DateTimeUtc,
-    elements::{commission::CommissionId, user::UserId},
+    elements::{
+        commission::CommissionId,
+        id::{IdError, parse_uuid},
+        user::UserId,
+    },
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
@@ -53,8 +60,10 @@ use crate::{
 /// A UUIDv7 wrapped for type safety, mirroring [`CommissionId`]: the app mints
 /// the key, the domain only names it. `Deref` exposes the inner UUID for foreign
 /// keys and lookups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
 pub struct ElementId(uuid::Uuid);
+pub type SeatId = ElementId;
 
 impl ElementId {
     /// Wraps an already-minted UUID — e.g. a row read back from the store, or a
@@ -76,6 +85,20 @@ impl Deref for ElementId {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl std::str::FromStr for ElementId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
+    }
+}
+
+impl From<Uuid> for ElementId {
+    fn from(value: Uuid) -> Self {
+        Self(value)
     }
 }
 
@@ -108,6 +131,22 @@ impl Deref for TabId {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl std::str::FromStr for TabId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
+    }
+}
+
+impl TryFrom<Uuid> for TabId {
+    type Error = IdError;
+
+    fn try_from(value: Uuid) -> Result<Self, Self::Error> {
+        Ok(Self(value))
     }
 }
 
@@ -739,6 +778,7 @@ impl NewElement {
     ///         Band, CommissionId, ElementPayload, ElementType, NewElement, SurfaceAddress,
     ///         SurfaceName, TabId,
     ///     },
+    ///     did::Did,
     ///     user::UserId,
     /// };
     ///
@@ -748,7 +788,7 @@ impl NewElement {
     ///     "content".parse::<SurfaceName>().unwrap(),
     /// );
     /// let element_type = "note".parse::<ElementType>().unwrap();
-    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(Did::new("did:plc:alice".to_string()));
     /// let body = serde_json::json!({ "body": "hi" });
     /// let payload = ElementPayload::from(body.clone());
     ///
@@ -929,6 +969,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::elements::did::Did;
 
     fn element(surface: &str, mode: VisibilityMode, tab: TabId) -> ElementRow {
         ElementRow {
@@ -938,7 +979,7 @@ mod tests {
             mode,
             band: Band::default(),
             position: 0,
-            created_by: UserId::new(uuid::Uuid::now_v7()),
+            created_by: UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7()))),
             created_at: Utc::now(),
             payload: ElementPayload::default(),
         }
@@ -1242,7 +1283,7 @@ mod tests {
         let surface = "content".parse::<SurfaceName>().expect("valid");
         let address = SurfaceAddress::new(tab, surface.clone());
         let element_type = "note".parse::<ElementType>().expect("valid");
-        let owner = UserId::new(uuid::Uuid::now_v7());
+        let owner = UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())));
         let body = json!({ "body": "Reference: 三毛猫 🐾", "revision": 3 });
         let payload = ElementPayload::from(body.clone());
 
@@ -1251,7 +1292,7 @@ mod tests {
             address.clone(),
             element_type.clone(),
             payload.clone(),
-            owner,
+            owner.clone(),
             Utc::now(),
         );
 

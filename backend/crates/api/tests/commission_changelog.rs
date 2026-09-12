@@ -18,10 +18,8 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionTitle},
@@ -44,38 +42,15 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "artist.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(
+                Did::new(did.to_string()),
+                "artist.bsky.social",
+            ))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -551,4 +526,81 @@ async fn no_route_edits_or_removes_changelog_entries() {
 
     let entries = read_changelog(&client, &base, id).await;
     assert_eq!(entries.len(), 1, "the stream is untouched by the probes");
+}
+
+/// Creates a commission over HTTP and returns its id, identified by diffing the
+/// backend's id set before and after. [`create_commission`]'s `last()` reads an
+/// unordered map, so it only names the newest while exactly one exists.
+async fn create_and_identify(
+    client: &reqwest::Client,
+    base: &str,
+    backend: &MemBackend,
+) -> uuid::Uuid {
+    let ids = async || -> std::collections::HashSet<uuid::Uuid> {
+        backend
+            .all_commissions()
+            .await
+            .expect("list commissions")
+            .iter()
+            .map(|commission| *commission.id)
+            .collect()
+    };
+
+    let before = ids().await;
+    let res = client
+        .post(format!("{base}/commissions"))
+        .json(&json!({ "title": "A ref sheet" }))
+        .send()
+        .await
+        .expect("POST /commissions");
+    assert_eq!(res.status(), 201, "creating a commission returns 201");
+
+    let fresh: Vec<uuid::Uuid> = ids().await.difference(&before).copied().collect();
+    assert_eq!(fresh.len(), 1, "exactly one commission was created");
+    fresh[0]
+}
+
+// AC5 (the ordering key itself) — the `seq` a stream reports is the STORE's
+// key, never a position in the page the read happened to return. The key is one
+// monotonic sequence across every commission (a `bigserial` in pg, mirrored in
+// the fake), so a second commission's entry lands strictly BETWEEN the first
+// commission's two — an ordering a 0-based renumbering of each stream cannot
+// produce. `seq` is not gapless per commission and the cursor semantics read
+// from it, so renumbering breaks both.
+#[tokio::test]
+async fn seq_is_the_stores_key_not_the_position_in_the_page() {
+    let (base, backend) = spawn_app("did:plc:artist").await;
+    let client = client();
+    sign_in(&client, &base).await;
+
+    // Interleave two streams: A's creation, B's creation, then a note on A.
+    // `create_commission`'s `all_commissions().last()` cannot be used twice —
+    // the fake's map is unordered — so each id is identified by diffing the set.
+    let first = create_and_identify(&client, &base, &backend).await;
+    let second = create_and_identify(&client, &base, &backend).await;
+    assert_ne!(first, second, "two distinct commissions");
+    let res = client
+        .post(format!("{base}/commissions/{first}/notes"))
+        .json(&json!({ "note": "after the second commission was created" }))
+        .send()
+        .await
+        .expect("POST note");
+    assert_eq!(res.status(), 201);
+
+    let seq_of = |entries: &[serde_json::Value]| -> Vec<i64> {
+        entries
+            .iter()
+            .map(|e| e["seq"].as_i64().expect("seq is an integer"))
+            .collect()
+    };
+    let first_seqs = seq_of(&read_changelog(&client, &base, first).await);
+    let second_seqs = seq_of(&read_changelog(&client, &base, second).await);
+    assert_eq!(first_seqs.len(), 2, "creation + the note");
+    assert_eq!(second_seqs.len(), 1, "creation only");
+
+    assert!(
+        first_seqs[0] < second_seqs[0] && second_seqs[0] < first_seqs[1],
+        "the second commission's entry sits between the first's two: \
+         {first_seqs:?} vs {second_seqs:?}",
+    );
 }

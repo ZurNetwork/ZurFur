@@ -50,6 +50,7 @@ mod fixture;
 mod pds;
 pub mod pg;
 mod plc_stub;
+pub mod runtime;
 
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;

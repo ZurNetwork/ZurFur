@@ -1,18 +1,8 @@
 //! `POST /commissions/{id}/seats` — the owner declares a Seat on the
-//! commission (ZMVP-76; Referenceable/Slot/Seat DD `28311564` Decisions 1, 3,
-//! 8): a 1:1 structural participant position, born **vacant**, typed by an
-//! open kind (Creator, Client, … — deliberately not the Role enum: Role keeps
-//! authority, aliases keep display), optionally carrying its requirements —
-//! the v1 vocabulary of a free-text prompt and/or an external link (no form
-//! builder; that is a Plugin).
-//!
-//! A dedicated endpoint rather than the generic element add: a seat is an
-//! element in the composition (which gives it its address, its order, and its
-//! own visibility mode) **plus** the typed satellite the core interprets, and
-//! only a dedicated route can populate both atomically. The declaration is
-//! changelog-recorded (`seat_declared` — an existing variant of ZMVP-87's
-//! frozen taxonomy) in the same unit of work.
+//! commission (Referenceable/Slot/Seat DD `28311564`): a structural
+//! participant position, born vacant, typed by an open kind.
 
+use application::commission::seats::declare;
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -20,20 +10,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::{
-    elements::commission::{
-        ChangelogEntryKind, CommissionId, NewChangelogEntry, NewSeat, SeatKind, SeatLink,
-        SeatPrompt,
-    },
-    ports::UnitOfWork,
-};
+use domain::elements::commission::{CommissionId, SeatKind, SeatLink, SeatPrompt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tower_sessions::Session;
 use uuid::Uuid;
 
-use super::require_owner;
-use crate::{AppState, problem::Problem};
+use crate::{AppState, extract::CallingUser, problem::Problem};
 
 /// `POST /commissions/{id}/seats`'s `201` body: the new seat's element id — see
 /// [`declare_seat`].
@@ -42,13 +23,9 @@ struct DeclareSeatResponse {
     id: Uuid,
 }
 
-/// The `POST /commissions/{id}/seats` request body: the address to declare the
-/// seat at (`tab` by id, `surface` by declared name — the seat projects under
-/// that surface's mode, so a vacant seat under a Description-visible surface is
-/// the published ask), the seat's typed `kind` (required; open vocabulary), and
-/// the optional requirements — a free-text `prompt` and/or an external `link`,
-/// each validated at the boundary. There is deliberately no occupant field:
-/// seats are born vacant (filling one is ZMVP-79's invitation-mediated act).
+/// The `POST /commissions/{id}/seats` request body: the address (`tab` +
+/// `surface`), the seat's typed `kind`, and optional `prompt`/`link`
+/// requirements. No occupant field — seats are born vacant.
 #[derive(Deserialize)]
 pub(super) struct DeclareSeatBody {
     tab: Uuid,
@@ -58,35 +35,16 @@ pub(super) struct DeclareSeatBody {
     link: Option<String>,
 }
 
-/// Declare a Seat into one of the commission's declared **surfaces**
-/// (ZMVP-76 AC1/AC2), as its owner.
-///
-/// Owner-only via the shared [`require_owner`] gate (the one managing-authority
-/// path; ZMVP-83 activates its Admin arm): a non-participant — and a truly
-/// absent commission — gets the uniform
-/// [`commission_not_found`](Problem::commission_not_found) 404 (never a 403; no
-/// existence oracle). A malformed body, a blank/oversized kind, or an invalid
-/// prompt/link is a `422`. The address walks the same gates as every element
-/// write, through the one shared mapping
-/// ([`elements::to_problem`](super::elements::to_problem)): a tab that doesn't
-/// exist in **this** commission — fabricated, or belonging to some other
-/// commission — is the indistinguishable
-/// [`tab_not_found`](Problem::tab_not_found) 404, an undeclared (tab, surface)
-/// pair the honest `422` [`unknown_surface`](Problem::unknown_surface). The seat's
-/// element, its satellite, and its `seat_declared` changelog entry land in **one
-/// unit of work** — a seat can never exist without its record. Returns `201
-/// Created` with the seat's element id — `{"id": "…"}` — the identity later
-/// tickets (invitations 78, applications 80, ceilings 96) address it by.
+/// Declares a Seat into one of the commission's declared surfaces, as its
+/// owner. Owner-only; `422` for a malformed body or invalid prompt/link,
+/// `404 tab_not_found` / `422 unknown_surface` for a bad address. Returns
+/// `201 Created` with `{"id": "…"}`.
 pub(super) async fn declare_seat(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    session: Session,
+    Path(commission_id): Path<CommissionId>,
+    CallingUser(actor_id): CallingUser,
     body: Result<Json<DeclareSeatBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
-    let user = super::current_user(&state, &session).await?;
-    let commission = CommissionId::new(id);
-    require_owner(&state, commission, &user).await?;
-
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     let kind =
         SeatKind::try_from(body.kind).map_err(|e| Problem::invalid_request(e.to_string()))?;
@@ -97,42 +55,37 @@ pub(super) async fn declare_seat(
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
     let link = body
         .link
-        .map(SeatLink::try_from)
+        .map(SeatLink::try_from) // If possible, I'd like to use parse
         .transpose()
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
 
     let address = super::elements::address(body.tab, body.surface)?;
 
     let now = Utc::now();
-    let seat = NewSeat::contributed_at(commission, address, kind, prompt, link, user.id, now);
-    let seat_id = *seat.id;
-    // The record: the payload carries the kind so the sentence ("declared a
-    // Creator seat") renders without joins (the DD's core-renderable rule);
-    // the seat's element id names which seat for later entries in the stream.
-    let entry = NewChangelogEntry::event(
-        commission,
-        ChangelogEntryKind::SeatDeclared,
-        user.id,
-        json!({ "kind": seat.kind.as_str(), "seat": seat_id }),
-        now,
-    );
 
-    state
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().declare_seat(&seat).await?;
-            uow.changelog().append(&entry).await
-        })
-        .await
-        .map_err(super::elements::to_problem)?;
+    let command = declare::Command {
+        actor_id,
+        commission_id,
+        link,
+        seat_kind: kind,
+        prompt,
+        surface_address: address,
+    };
 
-    let body = DeclareSeatResponse { id: seat_id };
+    let declare::Output { seat_id } = state
+        .app()
+        .commissions()
+        .seats()
+        .declare(command, now)
+        .await?;
+
+    let body = DeclareSeatResponse { id: *seat_id };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 #[cfg(test)]
 mod tests {
-    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}` — the exact string
-    //! form `json!({ "id": seat_id })` used to emit (ZMVP-158 AC1/AC3).
+    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}`.
 
     use super::*;
 

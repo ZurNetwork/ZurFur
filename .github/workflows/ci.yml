@@ -62,6 +62,7 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: '1.72.0'
+          github_token: ${{ github.token }}
       # Lint the corpus (STANDARD rules; see contract/buf.yaml).
       - run: buf lint contract
       # Frontend codegen drift (ZMVP-161): regenerate protobuf-es output and

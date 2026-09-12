@@ -34,6 +34,8 @@ message AccountMembership {
   // for the UI: `DeleteAccount` is Owner-only, so the delete affordance is
   // rendered from this field.
   string role = 5;
+  // The caller's alias for their role on this account, if they set one — free-form label, no authority.
+  optional string alias = 6;
 }
 
 // `POST /api/v1/accounts` — founding takes real input, not a bare click.

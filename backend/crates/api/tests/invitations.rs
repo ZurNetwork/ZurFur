@@ -1,10 +1,8 @@
 //! End-to-end invitation flow: issuing and issuer-revocation (ZMVP-32), and the
 //! invitee-side accept and decline (ZMVP-20). Same in-process fakes as the other
 //! account e2e suites: no network, no database.
-use std::sync::Arc;
-
-use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
-use api::{AppState, Config, Environment};
+use adapter_mem::MemBackend;
+use api::AppState;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
@@ -13,6 +11,7 @@ use domain::elements::{
     profile::Profile,
     role::Role,
     user::UserId,
+    user_account::UserAccount,
 };
 use reqwest::redirect::Policy;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
@@ -28,39 +27,12 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let backend = MemBackend::new();
-    let state = AppState {
-        config: Config {
-            env: Environment::DEV,
-            http_addr: addr,
-            public_url: format!("http://{addr}"),
-            database_url: "postgres://unused".to_string(),
-            log_level: "info".to_string(),
-            handle_domain: "zurfur.app".to_string(),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
-            plc_directory_endpoint: "https://plc.directory".to_string(),
-            plc_directory_submit: false,
-            deadline_sweep_interval_secs: 60,
-            max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
-        },
-        pool: adapter_pg::lazy_pool("postgres://unused/unused").expect("lazy pool"),
-        auth: Arc::new(MemAuthenticator::new(Did::new(did.to_string()))),
-        users: backend.user_store(),
-        profile_source: Arc::new(MemProfileSource::new(Profile {
-            did: Did::new(did.to_string()),
-            handle: "owner.bsky.social".to_string(),
-            display_name: None,
-            avatar_url: None,
-        })),
-        profile_cache: backend.profile_cache(),
-        database: backend.database(),
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        files: backend.file_store(),
-        did_minter: Arc::new(MemDidMinter::new()),
-    };
+    let test_support::runtime::MemRuntime { runtime, backend } =
+        test_support::runtime::mem(&Did::new(did.to_string()))
+            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+            .public_url(format!("http://{addr}"))
+            .build();
+    let state: AppState = runtime;
     let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -160,9 +132,9 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .provision(&Did::new(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let account = AccountId::new(Did::new(account_id));
     let pending = backend
-        .find_pending_invitation(account, invitee.id)
+        .find_pending_invitation(&account, &invitee.id)
         .await
         .expect("find_pending_invitation")
         .expect("a pending invitation exists");
@@ -196,10 +168,10 @@ async fn inviting_at_owner_is_refused() {
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let account = AccountId::new(Did::new(account_id));
     assert!(
         backend
-            .find_pending_invitation(account, invitee.id)
+            .find_pending_invitation(&account, &invitee.id)
             .await
             .expect("find_pending_invitation")
             .is_none(),
@@ -250,9 +222,9 @@ async fn re_inviting_a_pending_user_is_idempotent() {
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let account = AccountId::new(Did::new(account_id));
     let pending = backend
-        .find_pending_invitation(account, invitee.id)
+        .find_pending_invitation(&account, &invitee.id)
         .await
         .expect("find_pending_invitation")
         .expect("a pending invitation exists");
@@ -301,10 +273,10 @@ async fn issuer_revokes_a_pending_invitation() {
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let account = AccountId::new(Did::new(account_id));
     assert!(
         backend
-            .find_pending_invitation(account, invitee.id)
+            .find_pending_invitation(&account, &invitee.id)
             .await
             .expect("find_pending_invitation")
             .is_none(),
@@ -348,10 +320,10 @@ async fn inviting_an_existing_member_is_a_conflict() {
         .provision(&Did::new(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Uuid::parse_str(&account_id).expect("id is a uuid"));
+    let account = AccountId::new(Did::new(account_id));
     assert!(
         backend
-            .find_pending_invitation(account, invitee.id)
+            .find_pending_invitation(&account, &invitee.id)
             .await
             .expect("find_pending_invitation")
             .is_none(),
@@ -390,10 +362,10 @@ async fn seed_pending_invite(
         .await
         .expect("provision invitee");
     let (account, owner_membership) = Account::open(
-        owner.id,
+        owner.id.clone(),
         Did::new("did:plc:seedacct".to_string()),
-        Handle::try_new("acme.zurfur.app").unwrap(),
-        AccountName::try_from("Acme Studio".to_string()).expect("account name"),
+        "acme.zurfur.app".parse::<Handle>().unwrap(),
+        "Acme Studio".parse::<AccountName>().expect("account name"),
         chrono::Utc::now(),
     );
     backend
@@ -401,10 +373,10 @@ async fn seed_pending_invite(
         .await
         .expect("found the account");
     let invitation = Invitation::issue(
-        account.id,
-        invitee.id,
-        Role::Member(None),
-        owner.id,
+        account.id.clone(),
+        invitee.id.clone(),
+        Role::Member,
+        owner.id.clone(),
         chrono::Utc::now(),
     );
     backend
@@ -440,7 +412,7 @@ async fn invitee_declines_a_pending_invitation() {
 
     assert!(
         backend
-            .find_pending_invitation(account_id, invitee_id)
+            .find_pending_invitation(&account_id, &invitee_id)
             .await
             .expect("find_pending_invitation")
             .is_none(),
@@ -448,7 +420,7 @@ async fn invitee_declines_a_pending_invitation() {
     );
     assert!(
         backend
-            .role_of(invitee_id, account_id)
+            .role_of(&invitee_id, &account_id)
             .await
             .expect("role_of")
             .is_none(),
@@ -470,8 +442,8 @@ async fn declining_with_no_pending_invitation_is_not_found() {
     let (account, owner_membership) = Account::open(
         owner.id,
         Did::new("did:plc:seedacct".to_string()),
-        Handle::try_new("acme.zurfur.app").unwrap(),
-        AccountName::try_from("Acme Studio".to_string()).expect("account name"),
+        "acme.zurfur.app".parse::<Handle>().unwrap(),
+        "Acme Studio".parse::<AccountName>().expect("account name"),
         chrono::Utc::now(),
     );
     backend
@@ -513,11 +485,11 @@ async fn invitee_accepts_and_becomes_a_member() {
 
     // The invitee is now a member at the offered role.
     let role = backend
-        .role_of(invitee_id, account_id)
+        .role_of(&invitee_id, &account_id)
         .await
         .expect("role_of");
     assert!(
-        matches!(role, Some(Role::Member(_))),
+        matches!(role, Some(Role::Member)),
         "accepting mints a Member membership at the offered role"
     );
 }
@@ -535,14 +507,14 @@ async fn inviting_an_accounts_own_did_is_a_did_conflict() {
     let account_id = found_account(&client, &base, "Conflict Studio").await;
 
     let account = backend
-        .find(AccountId::new(account_id.parse().expect("uuid id")))
+        .find(&AccountId::new(Did::new(account_id.clone())))
         .await
         .expect("find")
         .expect("the founded account exists");
 
     let res = client
         .post(format!("{base}/accounts/{account_id}/invitations"))
-        .json(&serde_json::json!({ "user": account.did.as_str(), "role": "member" }))
+        .json(&serde_json::json!({ "user": account.id.as_str(), "role": "member" }))
         .send()
         .await
         .expect("POST invite with an account's DID");
@@ -554,4 +526,165 @@ async fn inviting_an_accounts_own_did_is_a_did_conflict() {
     let problem: serde_json::Value = res.json().await.expect("problem+json body");
     let conflict_code = problem["code"].as_str().unwrap_or_default().to_string();
     assert_eq!(conflict_code, "did_belongs_to_another_actor");
+}
+
+// Ordering guard (security review, PR #196) — the actor's own standing is
+// settled BEFORE the target is looked at. Until it was, a signed-in NON-MEMBER
+// could tell three states of an arbitrary DID apart through this one route:
+// `409 already_member` (a member), `404 member_not_found` (invited, so the
+// actor check was reached), `404 no_pending_invitation` (neither). That is a
+// membership *and* invitation oracle over an account the caller holds no
+// standing in, and a pending invitation is not public. All three must answer
+// byte-identically now.
+#[tokio::test]
+async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() {
+    let (base, backend) = spawn_app("did:plc:e2eprobe").await;
+    let (account_id, invited_id, _owner) =
+        seed_pending_invite(&backend, "did:plc:e2eprobe-invited").await;
+
+    // A seated member on the same account — the `already_member` arm.
+    let member = backend
+        .provision(&Did::new("did:plc:e2eprobe-member".to_string()))
+        .await
+        .expect("provision the member");
+    let membership = UserAccount {
+        user_id: member.id.clone(),
+        account_id: account_id.clone(),
+        alias: None,
+        role: Role::Member,
+    };
+    backend
+        .grant_role(&membership)
+        .await
+        .expect("seat the member");
+
+    let client = client();
+    sign_in(&client, &base).await; // did:plc:e2eprobe holds NO role here
+
+    let mut answers = Vec::new();
+    for target in [
+        member.id.to_string(),                   // a member
+        invited_id.to_string(),                  // invited, not yet a member
+        "did:plc:e2eprobe-stranger".to_string(), // neither
+    ] {
+        let res = client
+            .delete(format!("{base}/accounts/{}/invitations", *account_id))
+            .json(&serde_json::json!({ "user": target }))
+            .send()
+            .await
+            .expect("DELETE /accounts/{id}/invitations");
+        assert_eq!(res.status(), 404, "a non-member is refused for {target}");
+        answers.push(res.text().await.expect("problem body"));
+    }
+
+    let refusal: serde_json::Value =
+        serde_json::from_str(&answers[0]).expect("the refusal is problem+json");
+    assert_eq!(
+        refusal["code"], "member_not_found",
+        "the closed door is the actor's own missing membership",
+    );
+    assert_eq!(
+        answers[0], answers[1],
+        "a member and an invitee must be indistinguishable to a non-member",
+    );
+    assert_eq!(
+        answers[1], answers[2],
+        "an invitee and a stranger must be indistinguishable to a non-member",
+    );
+
+    // The probing changed nothing: the pending offer still stands.
+    assert!(
+        backend
+            .find_pending_invitation(&account_id, &invited_id)
+            .await
+            .expect("find_pending_invitation")
+            .is_some(),
+        "a refused revoke leaves the offer standing",
+    );
+}
+
+// Liveness gate (security review, PR #196) — `role_of` reads the membership
+// table alone, with no tombstone predicate, so until the gate landed an Owner
+// could still issue invitations into their own soft-deleted account (DD
+// `23003138`).
+#[tokio::test]
+async fn a_soft_deleted_account_takes_no_new_invitations() {
+    let (base, backend) = spawn_app("did:plc:seedowner").await;
+    let (account_id, _invited, _owner) =
+        seed_pending_invite(&backend, "did:plc:e2etombstone-invited").await;
+
+    // Tombstone the account. Its memberships and the pending offer survive —
+    // only the account row is stamped — which is exactly why standing alone was
+    // never a sufficient gate.
+    let handle: Handle = "acme.zurfur.app".parse().expect("valid handle");
+    backend.seed_soft_deleted_account(&account_id, &handle);
+    assert!(
+        backend.find(&account_id).await.expect("find").is_none(),
+        "the account reads back as gone",
+    );
+
+    let client = client();
+    sign_in(&client, &base).await; // signed in as the account's Owner
+
+    let newcomer_did = Did::new("did:plc:e2etombstone-newcomer".to_string());
+    let res = client
+        .post(format!("{base}/accounts/{}/invitations", *account_id))
+        .json(&serde_json::json!({ "user": newcomer_did.as_str(), "role": "member" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/invitations");
+    common::assert_problem(res, 404, "account_not_found").await;
+
+    let newcomer = UserId::new(newcomer_did.clone());
+    assert!(
+        backend
+            .find_pending_invitation(&account_id, &newcomer)
+            .await
+            .expect("find_pending_invitation")
+            .is_none(),
+        "no offer was minted into a dead account",
+    );
+    assert!(
+        backend
+            .find_by_did(&newcomer_did)
+            .await
+            .expect("find_by_did")
+            .is_none(),
+        "and no User was provisioned for the would-be invitee",
+    );
+}
+
+// Liveness gate, invitee side — an offer outliving its account cannot be
+// redeemed: accepting a soft-deleted account's invitation would seat a
+// membership in something already gone (DD `23003138`).
+#[tokio::test]
+async fn a_soft_deleted_accounts_invitation_cannot_be_accepted() {
+    let invitee_did = "did:plc:e2etombstone-accepter";
+    let (base, backend) = spawn_app(invitee_did).await;
+    let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
+
+    let handle: Handle = "acme.zurfur.app".parse().expect("valid handle");
+    backend.seed_soft_deleted_account(&account_id, &handle);
+
+    let client = client();
+    sign_in(&client, &base).await;
+    let res = client
+        .post(format!(
+            "{base}/accounts/{}/invitations/accept",
+            *account_id
+        ))
+        .json(&serde_json::json!({ "listed_on_profile": true }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/invitations/accept");
+    common::assert_problem(res, 404, "account_not_found").await;
+
+    assert!(
+        backend
+            .role_of(&invitee_id, &account_id)
+            .await
+            .expect("role_of")
+            .is_none(),
+        "a refused accept seats no membership in a dead account",
+    );
 }

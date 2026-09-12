@@ -8,11 +8,20 @@
 //! Persisting the pair is one private-side transaction
 //! ([`crate::ports::AccountWrites::create`]).
 
-use std::ops::Deref;
+use std::{ops::Deref, str::FromStr};
+
+use serde::Deserialize;
 
 use crate::{
     datetime::DateTimeUtc,
-    elements::{did::Did, handle::Handle, role::Role, user::UserId, user_account::UserAccount},
+    elements::{
+        did::Did,
+        handle::Handle,
+        id::IdError,
+        role::{Role, RoleAlias},
+        user::UserId,
+        user_account::UserAccount,
+    },
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
@@ -21,22 +30,35 @@ use crate::{
 /// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::user::UserId`].
 /// The account's *public* identity is its [`Did`]; this id is the private key
 /// used for foreign keys and lookups. Deref exposes the inner UUID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AccountId(uuid::Uuid);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct AccountId(Did);
 
 impl AccountId {
     /// Wraps an already-minted UUIDv7. Mirrors [`crate::elements::user::UserId::new`]:
     /// the app mints the key (PG16 has no native `uuidv7()`), the domain only names it.
-    pub fn new(id: uuid::Uuid) -> Self {
+    pub fn new(id: Did) -> Self {
         Self(id)
     }
 }
 
 impl Deref for AccountId {
-    type Target = uuid::Uuid;
+    type Target = Did;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl FromStr for AccountId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let id = s
+            .parse::<Did>()
+            .map(Self)
+            .map_err(|_| IdError::ParsingError)?;
+        Ok(id)
     }
 }
 
@@ -56,7 +78,7 @@ pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
 /// assert_eq!(name.as_str(), "Acme Studio"); // trimmed
 ///
 /// assert!("   ".parse::<AccountName>().is_err()); // empty after trim
-/// assert!(AccountName::try_from("x".repeat(121)).is_err()); // too long
+/// assert!("x".repeat(121).parse::<AccountName>().is_err()); // too long
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountName(String);
@@ -96,11 +118,13 @@ impl AccountName {
     }
 }
 
-impl TryFrom<String> for AccountName {
-    type Error = AccountNameError;
+/// The std parsing door: `"…".parse::<AccountName>()?` — the one validating
+/// constructor (ruling R6: `FromStr` for string parsing): trim first, then
+/// check the bounds above.
+impl std::str::FromStr for AccountName {
+    type Err = AccountNameError;
 
-    /// Validate and wrap a name: trim first, then check the bounds above.
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         StringBuilder::new(raw)
             .trimmed()
             .non_empty()
@@ -116,21 +140,11 @@ impl TryFrom<String> for AccountName {
                     // most conservative existing variant rather than panic.
                     debug_assert!(
                         false,
-                        "AccountName's TryFrom chain never calls no_control; ControlCharacter is unreachable"
+                        "AccountName's FromStr chain never calls no_control; ControlCharacter is unreachable"
                     );
                     AccountNameError::Empty
                 }
             })
-    }
-}
-
-/// The std parsing door: `"…".parse::<AccountName>()?` — delegates to the
-/// [`TryFrom<String>`] rules (ruling R6: `FromStr` for string parsing).
-impl std::str::FromStr for AccountName {
-    type Err = AccountNameError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::try_from(raw.to_owned())
     }
 }
 
@@ -139,6 +153,12 @@ impl std::str::FromStr for AccountName {
 impl AsRef<str> for AccountName {
     fn as_ref(&self) -> &str {
         self.as_str()
+    }
+}
+
+impl std::fmt::Display for AccountName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -155,7 +175,6 @@ impl AsRef<str> for AccountName {
 /// [`crate::ports::DidMinter`] (which mints `did`), DESIGN/Account, ZMVP-14.
 pub struct Account {
     pub id: AccountId,
-    pub did: Did,
     /// The public handle the account is reached by — a validated, normalized
     /// atproto handle chosen at founding (`POST /accounts`), unique across **all**
     /// accounts (a soft-deleted account still reserves its handle; DD/23003138).
@@ -179,7 +198,7 @@ impl Account {
     ///
     /// Mints the account (`AccountId::new(Uuid::now_v7())`, `created_at ==
     /// updated_at == now`) and pairs it with `UserAccount { user_id: owner,
-    /// account_id: id, role: Role::Owner(None) }` — the founder seated as Owner
+    /// account_id: id, role: Role::Owner }` — the founder seated as Owner
     /// with no role alias. The `name` and `handle` are already validated (see
     /// [`AccountName`], [`Handle`]); the `did` is minted upstream by a `DidMinter`.
     ///
@@ -190,15 +209,15 @@ impl Account {
     /// use chrono::Utc;
     /// use domain::elements::{account::{Account, AccountName}, did::Did, handle::Handle, role::Role, user::UserId};
     ///
-    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(Did::new("did:plc:owner".to_string()));
     /// let (account, membership) = Account::open(
     ///     owner,
     ///     Did::new("did:plc:example".to_string()),
-    ///     Handle::try_new("acme.zurfur.app").unwrap(),
+    ///     "acme.zurfur.app".parse::<Handle>().unwrap(),
     ///     "Acme Studio".parse::<AccountName>().unwrap(),
     ///     Utc::now(),
     /// );
-    /// assert_eq!(membership.role, Role::Owner(None)); // founder is Owner
+    /// assert_eq!(membership.role, Role::Owner); // founder is Owner
     /// assert_eq!(account.handle.as_str(), "acme.zurfur.app"); // reached by its handle
     /// assert_eq!(account.created_at, account.updated_at);   // stamped once
     /// ```
@@ -210,8 +229,7 @@ impl Account {
         now: DateTimeUtc,
     ) -> (Account, UserAccount) {
         let new_account = Account {
-            id: AccountId::new(uuid::Uuid::now_v7()),
-            did,
+            id: AccountId::new(did),
             handle,
             name,
             created_at: now,
@@ -220,8 +238,9 @@ impl Account {
         };
         let membership = UserAccount {
             user_id: owner,
-            account_id: new_account.id,
-            role: Role::Owner(None),
+            account_id: new_account.id.clone(),
+            role: Role::Owner,
+            alias: None,
         };
         (new_account, membership)
     }
@@ -244,6 +263,10 @@ pub struct AccountMembership {
     /// or its whole member list — the role the querying user holds, carried
     /// along by the membership join.
     pub role: Role,
+    /// The caller's own [`RoleAlias`] for that role, if they set one — a
+    /// free-form label carrying no authority (see [`Role::can_grant`]); `None`
+    /// when unset.
+    pub alias: Option<RoleAlias>,
 }
 
 /// Who a membership listing is *for* — and therefore whether the

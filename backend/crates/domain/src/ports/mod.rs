@@ -13,7 +13,8 @@ pub mod file;
 pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
-    CommissionStore, CommissionWrites, ElementNotFound, UnknownSurface, UnknownTab,
+    CommissionReads, CommissionRepo, CommissionStore, CommissionWrites, ElementNotFound,
+    UnknownSurface, UnknownTab,
 };
 pub use file::FileStore;
 
@@ -67,12 +68,15 @@ pub trait Database: Send + Sync {
 /// can skip the transaction.
 #[async_trait]
 pub trait UnitOfWork: Send {
-    /// A view of the [`Account`] write surface over **this** transaction. The
-    /// returned box borrows the handle, tying the view to the shared tx; drop it
-    /// (end of statement) before calling another accessor or [`commit`](UnitOfWork::commit).
-    fn accounts(&mut self) -> Box<dyn AccountWrites + '_>;
+    /// The [`Account`] repo over **this** transaction: reads and writes on one
+    /// connection ([`AccountRepo`]). The returned box borrows the handle, tying
+    /// the view to the shared tx; drop it (end of statement) before calling
+    /// another accessor or [`commit`](UnitOfWork::commit).
+    fn accounts(&mut self) -> Box<dyn AccountRepo + '_>;
 
-    fn commissions(&mut self) -> Box<dyn CommissionWrites + '_>;
+    /// The commission repo over this transaction: reads (including the locking
+    /// `*_for_update` lookups) and writes on one connection ([`CommissionRepo`]).
+    fn commissions(&mut self) -> Box<dyn CommissionRepo + '_>;
 
     /// A view of the commission-changelog **append** surface over this
     /// transaction (ZMVP-87). On the Unit of Work — never pool-backed — because
@@ -94,7 +98,9 @@ pub trait UnitOfWork: Send {
     /// the whole unit back.
     async fn commit(self: Box<Self>) -> anyhow::Result<()>;
 
-    /// Abort the unit; awaited so the rollback is deterministic rather than relying on drop.
+    /// Abort the unit explicitly. Dropping the handle rolls back just the same;
+    /// this exists for the legacy `transaction()` wrapper and goes when its last
+    /// caller migrates to the factory shape (`begin` → reads → writes → `commit`).
     async fn rollback(self: Box<Self>) -> anyhow::Result<()>;
 }
 
@@ -160,7 +166,7 @@ pub trait UserWrites: Send {
 pub trait UserStore: Send + Sync {
     /// Resolve a session's stored UserId back to its User, without touching the
     /// PDS. Returns None if no such User exists. (Criterion 3.)
-    async fn find(&self, id: UserId) -> anyhow::Result<Option<User>>;
+    async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>>;
 
     /// Resolve a DID to its User *without minting one* — the read-only counterpart
     /// to [`UserWrites::provision`]. Returns None if no User has ever been
@@ -236,11 +242,11 @@ pub trait ProfileCache: Send + Sync {
 pub trait AccountStore: Send + Sync {
     /// Resolve an AccountId back to its Account, or None if no such account
     /// exists (or it has been soft-deleted).
-    async fn find(&self, id: AccountId) -> anyhow::Result<Option<Account>>;
+    async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>>;
 
     /// The role a user holds in an account, or None if they are not a member.
     /// Lets callers verify membership/authority without loading every member.
-    async fn role_of(&self, user: UserId, account: AccountId) -> anyhow::Result<Option<Role>>;
+    async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>>;
 
     /// The pending invitation for `(account, invited_user)`, or `None` if there
     /// isn't one. Underpins the idempotent re-invite (a hit means "already
@@ -248,14 +254,14 @@ pub trait AccountStore: Send + Sync {
     /// pending offer — accepted/revoked invitations are history, not live offers.
     async fn find_pending_invitation(
         &self,
-        account: AccountId,
-        invited_user: UserId,
+        account: &AccountId,
+        invited_user: &UserId,
     ) -> anyhow::Result<Option<Invitation>>;
 
     /// Resolve an [`InvitationId`] to its [`Invitation`] in any state, or `None`.
     /// Lets the revoke path load the offer to check the inviter's authority and
     /// its current state before transitioning it.
-    async fn find_invitation(&self, id: InvitationId) -> anyhow::Result<Option<Invitation>>;
+    async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>>;
 
     /// Resolve a live account's [`Handle`] to its sovereign [`Did`], or `None` if
     /// no live account holds it. Backs atproto handle resolution — the
@@ -273,7 +279,7 @@ pub trait AccountStore: Send + Sync {
     /// the caller's policy (it passes `since = now − window`).
     async fn count_handle_changes_since(
         &self,
-        account: AccountId,
+        account: &AccountId,
         since: DateTimeUtc,
     ) -> anyhow::Result<i64>;
 
@@ -289,7 +295,7 @@ pub trait AccountStore: Send + Sync {
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
-        excluding: Option<AccountId>,
+        excluding: Option<&AccountId>,
         since: DateTimeUtc,
     ) -> anyhow::Result<bool>;
 
@@ -315,7 +321,7 @@ pub trait AccountStore: Send + Sync {
     /// the cross-persona correlation ZMVP-17 forbids.
     async fn list_for_user(
         &self,
-        user: UserId,
+        user: &UserId,
         scope: ListingScope,
     ) -> anyhow::Result<Vec<AccountMembership>>;
 }
@@ -407,7 +413,7 @@ pub trait AccountWrites: Send {
     /// [`DidMinter::update_handle`]: DidMinter::update_handle
     async fn change_handle(
         &mut self,
-        account: AccountId,
+        account: &AccountId,
         old: &Handle,
         new: &Handle,
         at: DateTimeUtc,
@@ -431,7 +437,7 @@ pub trait AccountWrites: Send {
     /// later seat a member under a non-member). Idempotent: removing a non-member is a
     /// no-op. Authorization (who may revoke whom) is the caller's concern, settled
     /// before this is reached. A private-side write, never a cross-store dual write.
-    async fn revoke_role(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+    async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// A member **leaves** their own account on their own action (ZMVP-21). Unlike
     /// [`revoke_role`](AccountWrites::revoke_role) — which an `Owner`/`Admin` invokes on
@@ -446,7 +452,7 @@ pub trait AccountWrites: Send {
     /// `Owner` cannot leave while still `Owner` — so this assumes a valid, non-`Owner`
     /// member; a vanished membership (a concurrent removal) is a no-op, not an error. A
     /// private-side write, never a cross-store dual write.
-    async fn leave(&mut self, user: UserId, account: AccountId) -> anyhow::Result<()>;
+    async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// Persist a freshly issued, pending [`Invitation`] (ZMVP-32 — the issuing
     /// half of invite-then-accept). At most one *pending* invitation may exist per
@@ -456,14 +462,14 @@ pub trait AccountWrites: Send {
     /// first. Authority (the inviter being Owner/Admin, the offered role below their
     /// rank) is the caller's check via `Role::can_grant`, settled before this is
     /// reached. A private-side write, never a cross-store dual write (DESIGN/Roles).
-    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<()>;
+    async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation>;
 
     /// Transition a pending invitation to revoked, so it can no longer be accepted
     /// (ZMVP-32). Idempotent on a non-pending or absent invitation — a no-op, not
     /// an error; the caller decides whether absence/already-revoked is a 404/409.
     /// *Who* may revoke (the issuing member) is the caller's authority check. A
     /// private-side write, never a cross-store dual write (DESIGN/Roles).
-    async fn revoke_invitation(&mut self, id: InvitationId) -> anyhow::Result<()>;
+    async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()>;
 
     /// Accept a pending invitation: in ONE private-store transaction (the same unit
     /// of work as `create`, never a cross-store dual write) flip the invitation to
@@ -496,9 +502,9 @@ pub trait AccountWrites: Send {
     /// [`revoke_role`]: AccountWrites::revoke_role
     async fn transfer_ownership(
         &mut self,
-        old_owner: UserId,
-        new_owner: UserId,
-        account: AccountId,
+        old_owner: &UserId,
+        new_owner: &UserId,
+        account: &AccountId,
     ) -> anyhow::Result<()>;
 
     /// **Soft-delete** an account: mark it deactivated (`accounts.deleted_at = now`)
@@ -516,7 +522,7 @@ pub trait AccountWrites: Send {
     /// User-owned and survives account deletion, Ownership Separation DD `29130754`) —
     /// that policy is the caller's. Idempotent: re-soft-deleting a soft-deleted account
     /// is a no-op. A private-side write, never a cross-store dual write.
-    async fn soft_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
+    async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 
     /// **Hard-delete** an empty account: remove its `account_invitations`,
     /// `account_members`, and `accounts` rows in one unit of work (ZMVP-34, DD
@@ -533,8 +539,30 @@ pub trait AccountWrites: Send {
     /// deletion. **Tombstoning the DID is a separate retryable atproto step**, never
     /// part of this private transaction (no cross-store dual write — the mint path's
     /// mirror). Idempotent: hard-deleting an absent account is a no-op.
-    async fn hard_delete(&mut self, account: AccountId) -> anyhow::Result<()>;
+    async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 }
+
+/// The **read** side of an account unit of work — [`AccountStore`]'s lookups
+/// on the unit's own connection (sees the unit's writes, may hold row locks).
+/// Grows only when a migrating use case needs a read inside its unit.
+#[async_trait]
+pub trait AccountReads: Send {
+    /// The live account `id` names, or `None`; as [`AccountStore::find`].
+    async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>>;
+
+    /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) until commit.
+    async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>>;
+
+    /// `user`'s role in `account`, or `None`; as [`AccountStore::role_of`].
+    async fn role_of(&mut self, user: &UserId, account: &AccountId)
+    -> anyhow::Result<Option<Role>>;
+}
+
+/// An account unit of work: [`AccountReads`] + [`AccountWrites`] on one
+/// connection. Vended by [`UnitOfWork::accounts`].
+pub trait AccountRepo: AccountReads + AccountWrites {}
+
+impl<T: AccountReads + AccountWrites> AccountRepo for T {}
 
 /// Why a [`PublicRecords`] operation failed.
 ///

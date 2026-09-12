@@ -195,6 +195,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "async-trait",
  "axum",
  "chrono",
@@ -203,20 +204,40 @@ dependencies = [
  "contract-gen",
  "domain",
  "dotenvy",
+ "futures-util",
  "pbjson",
  "pbjson-types",
  "prost 0.14.4",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "shared",
  "sqlx",
  "tempfile",
  "test-support",
  "tokio",
+ "tokio-util",
  "tower-http",
  "tower-sessions",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "composition",
+ "domain",
+ "serde_json",
+ "shared",
+ "test-support",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -882,6 +903,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "assert_cmd",
  "chrono",
  "clap",
@@ -898,6 +920,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -938,6 +961,7 @@ dependencies = [
  "adapter-atproto",
  "adapter-pg",
  "anyhow",
+ "application",
  "base64",
  "domain",
  "figment",
@@ -1431,6 +1455,7 @@ dependencies = [
  "cid",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
  "zeroize",
 ]
@@ -4938,6 +4963,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5426,11 +5458,13 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 name = "test-support"
 version = "0.1.0"
 dependencies = [
+ "adapter-mem",
  "adapter-pg",
  "anyhow",
  "atrium-crypto",
  "axum",
  "chrono",
+ "composition",
  "data-encoding",
  "domain",
  "rand 0.8.6",

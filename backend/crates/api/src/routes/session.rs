@@ -16,21 +16,20 @@
 //!
 //! References: ZMVP-8 through ZMVP-11; ZMVP-151; DESIGN/Account.
 
+use application::user::me::{self, MeError, MeQuery};
 use axum::{
     Form, Json, Router,
     extract::{Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use domain::{
-    elements::{profile::Profile, user::UserId},
-    ports::UnitOfWork,
-};
+use domain::ports::UnitOfWork;
 use serde::Deserialize;
 use tower_sessions::Session;
-use uuid::Uuid;
 
-use crate::{AppState, SESSION_USER_KEY, generated::GetMeResponse, problem::Problem};
+use crate::{
+    AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
+};
 
 /// The session route group: the OAuth sign-in flow and the JSON whoami. Each
 /// route here is on the cookie surface; the composition root wraps the group with
@@ -170,7 +169,7 @@ async fn signin_callback(
     // through the repo without re-asking the PDS. The cookie now survives reload;
     // land the visitor on the signed-in frontend root.
     if session.cycle_id().await.is_err()
-        || session.insert(SESSION_USER_KEY, *user.id).await.is_err()
+        || session.insert(SESSION_USER_KEY, &*user.id).await.is_err()
     {
         return Problem::internal_error(
             "Your sign-in succeeded but the session couldn't be saved. Please try again.",
@@ -191,7 +190,7 @@ async fn signin_callback(
 /// PDS with nothing cached still returns `200`, with the profile KEYS OMITTED and
 /// the DID present (absence is not an error).
 ///
-/// References: [`UserStore`](domain::ports::UserStore), [`GetMeResponse`], [`Profile::resolve_through`].
+/// References: [`CallingUser`], [`GetMeResponse`], [`application::user::me`].
 ///
 /// ```text
 /// GET /me   (Cookie: zurfur.sid=...)
@@ -202,36 +201,45 @@ async fn signin_callback(
 /// ```
 async fn me(
     State(state): State<AppState>,
-    session: Session,
+    CallingUser(user_id): CallingUser,
 ) -> Result<Json<GetMeResponse>, Problem> {
-    let Ok(Some(id)) = session.get::<Uuid>(SESSION_USER_KEY).await else {
-        return Err(Problem::not_authenticated());
-    };
-    let Ok(Some(user)) = state.users.find(UserId::new(id)).await else {
-        return Err(Problem::not_authenticated());
-    };
-    let profile =
-        Profile::resolve_through(&*state.profile_cache, &*state.profile_source, &user.did).await;
-    let did = user.did.to_string();
-    let body = match profile {
-        // A resolved profile: the handle is always present, display name and avatar
-        // are the source's own optionals.
-        Some(profile) => GetMeResponse {
-            did,
-            handle: Some(profile.handle),
-            display_name: profile.display_name,
-            avatar_url: profile.avatar_url,
-        },
-        // No profile (unreachable PDS, nothing cached): degrade to the bare DID —
-        // absence is not an error, so the profile keys are simply omitted (R4).
-        None => GetMeResponse {
-            did,
-            handle: None,
-            display_name: None,
-            avatar_url: None,
-        },
-    };
+    let query = MeQuery { user_id };
+
+    let me = state
+        .app()
+        .users()
+        .me(query, &*state.profile_cache, &*state.profile_source)
+        .await
+        .map_err(|err| match err {
+            MeError::UnknownUser(_) => Problem::not_authenticated(),
+            MeError::Store(err) => Problem::from(err),
+        })?;
+
+    let body = GetMeResponse::from(me);
     Ok(Json(body))
+}
+
+/// The `GET /me` projection: a resolved profile contributes its handle and
+/// optionals; no profile degrades to the bare DID — absence is not an error,
+/// the keys are simply omitted (R4).
+impl From<me::Output> for GetMeResponse {
+    fn from(me: me::Output) -> Self {
+        let did = me.id.to_string();
+        match me.profile {
+            Some(profile) => GetMeResponse {
+                did,
+                handle: Some(profile.handle),
+                display_name: profile.display_name,
+                avatar_url: profile.avatar_url,
+            },
+            None => GetMeResponse {
+                did,
+                handle: None,
+                display_name: None,
+                avatar_url: None,
+            },
+        }
+    }
 }
 
 /// The exit door (ZMVP-11). Destroys the session server-side: `flush` removes the

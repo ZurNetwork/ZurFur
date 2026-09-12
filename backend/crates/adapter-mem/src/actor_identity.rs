@@ -52,13 +52,13 @@ pub struct MemActorIdentityStore(pub(crate) MemBackend);
 
 #[async_trait]
 impl ActorIdentityStore for MemActorIdentityStore {
-    async fn find(&self, id: ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
+    async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
         let identities = self
             .0
             .actor_identities
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
-        Ok(identities.get(&id).map(|stored| rebuild(id, stored)))
+        Ok(identities.get(id).map(|stored| rebuild(*id, stored)))
     }
 
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
@@ -167,7 +167,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
 
     async fn cache_handle(
         &mut self,
-        id: ActorIdentityId,
+        id: &ActorIdentityId,
         handle: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut identities = self
@@ -176,8 +176,8 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
         let stored = identities
-            .get_mut(&id)
-            .ok_or_else(|| anyhow::anyhow!("actor identity not found: {}", *id))?;
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("actor identity not found: {}", **id))?;
         stored.handle = handle.map(str::to_string);
         Ok(())
     }
@@ -206,7 +206,7 @@ mod tests {
 
         let found = backend
             .actor_identity_store()
-            .find(identity.id)
+            .find(&identity.id)
             .await
             .expect("find");
         assert_eq!(found, Some(identity));
@@ -229,7 +229,7 @@ mod tests {
 
         let found = backend
             .actor_identity_store()
-            .find(identity.id)
+            .find(&identity.id)
             .await
             .expect("find");
         assert_eq!(found, None);
@@ -316,14 +316,14 @@ mod tests {
             .await
             .expect("intern");
         uow.actor_identities()
-            .cache_handle(interned.id, Some("alice.bsky.social"))
+            .cache_handle(&interned.id, Some("alice.bsky.social"))
             .await
             .expect("cache");
         uow.commit().await.expect("commit");
 
         let found = backend
             .actor_identity_store()
-            .find(interned.id)
+            .find(&interned.id)
             .await
             .expect("find")
             .expect("row exists");
@@ -331,13 +331,13 @@ mod tests {
 
         let mut uow = backend.database().begin().await.expect("begin");
         uow.actor_identities()
-            .cache_handle(interned.id, None)
+            .cache_handle(&interned.id, None)
             .await
             .expect("clear");
         let missing = uow
             .actor_identities()
             .cache_handle(
-                ActorIdentity::mint(ActorKind::User, Utc::now()).id,
+                &ActorIdentity::mint(ActorKind::User, Utc::now()).id,
                 Some("ghost"),
             )
             .await;
@@ -349,7 +349,7 @@ mod tests {
 
         let cleared = backend
             .actor_identity_store()
-            .find(interned.id)
+            .find(&interned.id)
             .await
             .expect("find")
             .expect("row exists");

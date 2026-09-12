@@ -22,6 +22,8 @@
 //! bookkeeping that cascades away with the commission (the tables are registered
 //! in `COMMISSION_NON_FACT_TABLES`).
 
+use std::str::FromStr;
+
 use crate::{
     datetime::DateTimeUtc,
     elements::{account::AccountId, commission::CommissionId, user::UserId},
@@ -51,29 +53,33 @@ pub enum GrantLevel {
     Total,
 }
 
-impl GrantLevel {
-    /// Every variant, in declaration order — the closed vocabulary, so a test can
-    /// prove the token mapping round-trips and stays collision-free.
-    pub const ALL: &[GrantLevel] = &[Self::Presentation, Self::Description, Self::Total];
-
-    /// The stable, lowercase wire/storage token — the value the pg adapter writes
-    /// to the `commission_view_grant.level` column and the API accepts/serves.
-    /// Stable across releases (it is persisted), so renaming a token is a
-    /// migration, not a free edit.
-    pub fn as_str(&self) -> &'static str {
+impl std::fmt::Display for GrantLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Presentation => "presentation",
-            Self::Description => "description",
-            Self::Total => "total",
+            Self::Presentation => write!(f, "presentation"),
+            Self::Description => write!(f, "description"),
+            Self::Total => write!(f, "total"),
         }
     }
+}
+#[derive(Debug)]
+pub struct GrantLevelError;
+impl std::fmt::Display for GrantLevelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Grant level parsing error")
+    }
+}
+impl std::error::Error for GrantLevelError {}
+impl FromStr for GrantLevel {
+    type Err = GrantLevelError;
 
-    /// Resolve a token back to its level, or `None` for one outside the closed
-    /// vocabulary — a bad request at the boundary (`422`), and on a read path
-    /// row tampering or a missed migration (surfaced as an error, never a silent
-    /// default).
-    pub fn parse(token: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|l| l.as_str() == token)
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "presentation" => Self::Presentation,
+            "description" => Self::Description,
+            "total" => Self::Total,
+            _ => Err(GrantLevelError)?,
+        })
     }
 }
 
@@ -109,22 +115,32 @@ mod tests {
 
     use super::*;
 
+    // The closed grant-level vocabulary, in declaration order. `GrantLevel`
+    // deliberately dropped its public `ALL` with the move to `Display`/`FromStr`
+    // (only the wire tokens are public API); the round-trip test below still
+    // needs every variant, so it names its own local, test-only list.
+    const ALL_GRANT_LEVELS: &[GrantLevel] = &[
+        GrantLevel::Presentation,
+        GrantLevel::Description,
+        GrantLevel::Total,
+    ];
+
     // The grant-level tokens are a closed, collision-free vocabulary that
     // round-trips — the same contract the changelog kinds hold.
     #[test]
     fn grant_level_tokens_round_trip_and_never_collide() {
         let mut seen = BTreeSet::new();
-        for level in GrantLevel::ALL {
-            let token = level.as_str();
-            assert!(seen.insert(token), "duplicate token {token:?}");
+        for level in ALL_GRANT_LEVELS {
+            let token = level.to_string();
+            assert!(seen.insert(token.clone()), "duplicate token {token:?}");
+            let parsed: GrantLevel = token.parse().expect("a valid token must parse");
             assert_eq!(
-                GrantLevel::parse(token),
-                Some(*level),
-                "token {token:?} must parse back to its level",
+                parsed, *level,
+                "token {token:?} must parse back to its level"
             );
         }
         assert_eq!(
-            GrantLevel::ALL.len(),
+            ALL_GRANT_LEVELS.len(),
             3,
             "exactly three modes exist (DD D3)"
         );
@@ -134,13 +150,15 @@ mod tests {
     // vocabulary is the raw modes, never the Visibility aliases.
     #[test]
     fn unknown_and_alias_tokens_do_not_parse() {
-        assert_eq!(GrantLevel::parse(""), None);
-        assert_eq!(GrantLevel::parse("Total"), None, "tokens are lowercase");
-        assert_eq!(
-            GrantLevel::parse("private"),
-            None,
+        assert!("".parse::<GrantLevel>().is_err());
+        assert!(
+            "Total".parse::<GrantLevel>().is_err(),
+            "tokens are lowercase"
+        );
+        assert!(
+            "private".parse::<GrantLevel>().is_err(),
             "a grant speaks raw modes, never the Private/Listed/Public aliases",
         );
-        assert_eq!(GrantLevel::parse("listed"), None);
+        assert!("listed".parse::<GrantLevel>().is_err());
     }
 }

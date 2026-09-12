@@ -14,20 +14,20 @@ use domain::elements::{
     account::AccountId,
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
-        CommissionComposition, CommissionFile, CommissionId, CommissionTitle, DeadlineStatus,
-        DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, GrantLevel,
-        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewElement, NewSeat, NewSlot, Placement,
-        Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotTitle,
-        SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
-        declared_tabs, declares_surface, derive_deadline_status,
+        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionTitle,
+        DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
+        FileKey, GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewElement, NewSeat,
+        NewSlot, Placement, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt,
+        Slot, SlotTitle, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility,
+        VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
     },
     invitation::InvitationState,
     maturity::Maturity,
     user::UserId,
 };
 use domain::ports::{
-    ChangelogStore, ChangelogWrites, CommissionStore, CommissionWrites, ElementNotFound,
-    UnknownSurface, UnknownTab,
+    ChangelogStore, ChangelogWrites, CommissionReads, CommissionStore, CommissionWrites,
+    ElementNotFound, UnknownSurface, UnknownTab,
 };
 use serde_json::Value;
 
@@ -130,7 +130,7 @@ fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<
         mode: VisibilityMode::default(),
         band: element.band.clone(),
         position,
-        created_by: element.created_by,
+        created_by: element.created_by.clone(),
         created_at: element.created_at,
         payload: element.payload.clone(),
     };
@@ -194,7 +194,7 @@ impl StoredCommission {
         Commission {
             id,
             title: self.title.clone(),
-            owner_id: self.owner_id,
+            owner_id: self.owner_id.clone(),
             lifecycle_step: self.lifecycle_step.clone(),
             visibility: self.visibility.clone(),
             deadline: self.deadline,
@@ -342,8 +342,8 @@ impl StoredSeatInvitation {
             id,
             commission: self.commission,
             seat: self.seat,
-            invited_user: self.invited_user,
-            inviter: self.inviter,
+            invited_user: self.invited_user.clone(),
+            inviter: self.inviter.clone(),
             state: self.state,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -384,7 +384,7 @@ impl StoredChangelogEntry {
             seq: self.seq,
             commission_id: self.commission_id,
             kind: self.kind,
-            actor_id: self.actor_id,
+            actor_id: self.actor_id.clone(),
             payload: self.payload.clone(),
             note: self.note.clone(),
             created_at: self.created_at,
@@ -422,8 +422,8 @@ impl StoredPlacement {
         Placement {
             seq: self.seq,
             commission_id: self.commission_id,
-            account_id: self.account_id,
-            placed_by: self.placed_by,
+            account_id: self.account_id.clone(),
+            placed_by: self.placed_by.clone(),
             placed_at: self.placed_at,
         }
     }
@@ -466,7 +466,7 @@ impl CommissionWrites for MemCommissionWrites {
                 commission.id,
                 StoredCommission {
                     title: commission.title.clone(),
-                    owner_id: commission.owner_id,
+                    owner_id: commission.owner_id.clone(),
                     lifecycle_step: commission.lifecycle_step.clone(),
                     visibility: commission.visibility.clone(),
                     deadline: commission.deadline,
@@ -501,7 +501,7 @@ impl CommissionWrites for MemCommissionWrites {
         // here, but ZMVP-79's seat acceptance re-adds whoever it seats, who
         // may already be a participant through another seat.
         participants
-            .entry((commission.id, commission.owner_id))
+            .entry((commission.id, commission.owner_id.clone()))
             .or_insert(commission.created_at);
         Ok(())
     }
@@ -532,9 +532,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// not elements.
     async fn remove_element(
         &mut self,
-        commission: CommissionId,
-        element: ElementId,
+        commission: &CommissionId,
+        element: &ElementId,
     ) -> anyhow::Result<()> {
+        let (commission, element) = (*commission, *element);
         // `tabs` before `elements`, the SAME order `insert_element` takes — the
         // mem mirror of pg's "lock the tab row before touching an element row",
         // and the reason the two maps can never be acquired in opposite orders
@@ -618,6 +619,21 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
+    /// Record one annotation on the unit's staged snapshot (ZMVP-90) — the
+    /// in-memory mirror of the pg `INSERT INTO commission_markup`, so it commits
+    /// atomically with the `markup_added` changelog entry the caller appends on the
+    /// same unit (drop = rollback). No pg-side composite foreign key exists here, so
+    /// the file entry's existence stays the caller's check, exactly as it is today.
+    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
+        let mut markups = self
+            .0
+            .markups
+            .lock()
+            .expect("MemBackend markups mutex poisoned");
+        markups.insert(markup.id, markup.clone());
+        Ok(())
+    }
+
     /// Declare a batch of Slots — the mem mirror of the pg per-Slot two-insert
     /// transaction (ZMVP-77; array operation per the PR #108 ruling): per
     /// Slot, the same shared address gate ([`require_address`]) and append
@@ -635,7 +651,7 @@ impl CommissionWrites for MemCommissionWrites {
                 slot.commission_id,
                 slot.address.clone(),
                 ElementType::slot(),
-                slot.created_by,
+                slot.created_by.clone(),
                 slot.created_at,
             );
             insert_element(&self.0, &carrier)?;
@@ -668,7 +684,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// registers the first fact table there MUST also give this fake the matching
     /// fact map and check it here, or mem-backed gate tests would pass against a
     /// predicate blind to the facts they stage.
-    async fn commission_has_facts(&mut self, _id: CommissionId) -> anyhow::Result<bool> {
+    async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
 
@@ -689,7 +705,8 @@ impl CommissionWrites for MemCommissionWrites {
     ///
     /// A future commission-child map added to [`MemBackend`] must cascade here
     /// too, mirroring its pg table's cascade.
-    async fn delete(&mut self, id: CommissionId) -> anyhow::Result<()> {
+    async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
+        let id = *id;
         {
             let mut commissions = self
                 .0
@@ -761,9 +778,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// only on commit.
     async fn set_archived(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         archived_at: Option<domain::datetime::DateTimeUtc>,
     ) -> anyhow::Result<bool> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -783,7 +801,8 @@ impl CommissionWrites for MemCommissionWrites {
     /// `UPDATE commission SET maturity, graphic` (ZMVP-31). Replace-only by
     /// signature (no clear arm exists); an absent commission is a no-op, per
     /// the port contract (existence is the caller's check).
-    async fn set_maturity(&mut self, id: CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -807,7 +826,7 @@ impl CommissionWrites for MemCommissionWrites {
             seat.commission_id,
             seat.address.clone(),
             ElementType::seat(),
-            seat.created_by,
+            seat.created_by.clone(),
             seat.created_at,
         );
         insert_element(&self.0, &carrier)?;
@@ -838,42 +857,50 @@ impl CommissionWrites for MemCommissionWrites {
     /// first, so this is the belt-and-suspenders backstop. Several *different*
     /// Users may hold pending invitations to one Seat — only a duplicate for the
     /// same pair is dropped. Staged like every write here.
-    async fn create_seat_invitation(&mut self, invitation: &SeatInvitation) -> anyhow::Result<()> {
+    /// Returns the offer that now stands — the freshly inserted one, or the
+    /// pending one already on file when this issue was dropped — so the caller is
+    /// handed the live offer rather than the duplicate it proposed (the pg
+    /// adapter's contract, mirrored).
+    async fn create_seat_invitation(
+        &mut self,
+        invitation: &SeatInvitation,
+    ) -> anyhow::Result<SeatInvitation> {
         let mut invitations = self
             .0
             .seat_invitations
             .lock()
             .expect("MemBackend seat_invitations mutex poisoned");
-        let already_pending = invitations.values().any(|stored| {
-            stored.seat == invitation.seat
+        let already_pending = invitations.iter().find_map(|(id, stored)| {
+            (stored.seat == invitation.seat
                 && stored.invited_user == invitation.invited_user
-                && stored.state == InvitationState::Pending
+                && stored.state == InvitationState::Pending)
+                .then(|| stored.rebuild(*id))
         });
-        if already_pending {
+        if let Some(standing) = already_pending {
             // At most one pending offer per (seat, user): a second issue is a
             // no-op, not a second row.
-            return Ok(());
+            return Ok(standing);
         }
-        invitations.insert(
-            invitation.id,
-            StoredSeatInvitation {
-                commission: invitation.commission,
-                seat: invitation.seat,
-                invited_user: invitation.invited_user,
-                inviter: invitation.inviter,
-                state: invitation.state,
-                created_at: invitation.created_at,
-                updated_at: invitation.updated_at,
-            },
-        );
-        Ok(())
+        let issued = StoredSeatInvitation {
+            commission: invitation.commission,
+            seat: invitation.seat,
+            invited_user: invitation.invited_user.clone(),
+            inviter: invitation.inviter.clone(),
+            state: invitation.state,
+            created_at: invitation.created_at,
+            updated_at: invitation.updated_at,
+        };
+        let standing = issued.rebuild(invitation.id);
+        invitations.insert(invitation.id, issued);
+        Ok(standing)
     }
 
     /// Flip a pending seat invitation to revoked and stamp `updated_at`. A
     /// non-pending or absent invitation is left untouched — a no-op, not an error
     /// (the handler decides whether that's a 404/200), mirroring the pg guarded
     /// `UPDATE` (ZMVP-78). Staged like every write here.
-    async fn revoke_seat_invitation(&mut self, id: SeatInvitationId) -> anyhow::Result<()> {
+    async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
+        let id = *id;
         let mut invitations = self
             .0
             .seat_invitations
@@ -895,9 +922,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// `false`, per the port contract (existence is the caller's check).
     async fn set_linked_channel(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -922,9 +950,9 @@ impl CommissionWrites for MemCommissionWrites {
     /// log is never rewritten.
     async fn place(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
-        placed_by: UserId,
+        commission: &CommissionId,
+        account: &AccountId,
+        placed_by: &UserId,
         at: DateTimeUtc,
     ) -> anyhow::Result<()> {
         let mut placements = self
@@ -935,9 +963,9 @@ impl CommissionWrites for MemCommissionWrites {
         let seq = placements.last().map(|p| p.seq + 1).unwrap_or(1);
         let row = StoredPlacement {
             seq,
-            commission_id: commission,
-            account_id: account,
-            placed_by,
+            commission_id: *commission,
+            account_id: account.clone(),
+            placed_by: placed_by.clone(),
             placed_at: at,
         };
         placements.push(row.clone());
@@ -947,42 +975,44 @@ impl CommissionWrites for MemCommissionWrites {
             .current_placements
             .lock()
             .expect("MemBackend current_placements mutex poisoned")
-            .insert(commission, row);
+            .insert(*commission, row);
         Ok(())
     }
 
-    /// Upsert the account's key on the unit's staged snapshot — the mem mirror of
-    /// the pg `commission_view_grant` upsert: one key per (commission, account),
-    /// re-granting replaces the level.
+    /// Upsert the grantee's key on the unit's staged snapshot — the mem mirror
+    /// of the pg `commission_view_grant` upsert: one key per (commission,
+    /// grantee), re-granting replaces the level. Keyed by the grantee's DID, the
+    /// same single column the pg table carries.
     async fn grant_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
         level: GrantLevel,
     ) -> anyhow::Result<()> {
         self.0
             .view_grants
             .lock()
             .expect("MemBackend view_grants mutex poisoned")
-            .insert((commission, account), level);
+            .insert((*commission, (**to_user).clone()), level);
         Ok(())
     }
 
-    /// Remove the account's key on the staged snapshot (hard-delete, DD `29130754`
-    /// D5) — the mem mirror of the pg `DELETE`. Returns whether a key existed: a
-    /// revoke of a non-existent key is an idempotent no-op answering `false`, the
-    /// bool the caller keys its `view_grant_revoked` changelog append on.
+    /// Remove the grantee's key on the staged snapshot (hard-delete, DD
+    /// `29130754` D5) — the mem mirror of the pg `DELETE`. Returns whether a key
+    /// existed: a revoke of a non-existent key is an idempotent no-op answering
+    /// `false`, the bool the caller keys its `view_grant_revoked` changelog
+    /// append on.
     async fn revoke_view(
         &mut self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        to_user: &UserId,
     ) -> anyhow::Result<bool> {
         Ok(self
             .0
             .view_grants
             .lock()
             .expect("MemBackend view_grants mutex poisoned")
-            .remove(&(commission, account))
+            .remove(&(*commission, (**to_user).clone()))
             .is_some())
     }
 
@@ -992,9 +1022,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// port contract (existence is the caller's check).
     async fn set_direction_status(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -1015,9 +1046,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// no-op, per the port contract (existence is the caller's check).
     async fn set_deadline(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         deadline: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -1039,9 +1071,10 @@ impl CommissionWrites for MemCommissionWrites {
     /// port contract.
     async fn set_deadline_status(
         &mut self,
-        id: CommissionId,
+        id: &CommissionId,
         status: Option<DeadlineStatus>,
     ) -> anyhow::Result<bool> {
+        let id = *id;
         let mut commissions = self
             .0
             .commissions
@@ -1146,12 +1179,58 @@ impl ChangelogWrites for MemChangelogWrites {
             seq,
             commission_id: entry.commission_id,
             kind: entry.kind,
-            actor_id: entry.actor_id,
+            actor_id: entry.actor_id.clone(),
             payload: entry.payload.clone(),
             note: entry.note.clone(),
             created_at: entry.created_at,
         });
         Ok(())
+    }
+}
+
+/// The read half of a commission unit of work over this unit's **staged**
+/// snapshot: the reads see the writes issued through the same handle, which is
+/// what the pg views get from reading through their open transaction. There is
+/// no lock to take in process, so `find_for_update`/`tab_for_update` are their
+/// unlocked twins — the fake models the visibility contract, not the
+/// concurrency mechanism (its single backend mutex is the coarser stand-in).
+#[async_trait]
+impl CommissionReads for MemCommissionWrites {
+    async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        MemCommissionStore(self.0.clone()).find(id).await
+    }
+
+    async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        MemCommissionStore(self.0.clone()).find(id).await
+    }
+
+    async fn is_participant(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool> {
+        MemCommissionStore(self.0.clone())
+            .is_participant(commission, user)
+            .await
+    }
+
+    /// The tab row, scoped to `commission` — an absent id and one belonging to
+    /// another commission both answer `None`, the same collapse
+    /// [`require_tab`] refuses with.
+    async fn tab_for_update(
+        &mut self,
+        commission: &CommissionId,
+        tab: &TabId,
+    ) -> anyhow::Result<Option<TabRow>> {
+        let tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
+        let located = tabs
+            .get(tab)
+            .filter(|stored| &stored.commission_id == commission);
+        Ok(located.map(|stored| TabRow {
+            id: *tab,
+            tab: stored.tab.clone(),
+            mode: stored.mode,
+        }))
     }
 }
 
@@ -1163,7 +1242,8 @@ pub struct MemCommissionStore(pub(crate) MemBackend);
 impl CommissionStore for MemCommissionStore {
     /// Rebuilds a [`Commission`] from its stored parts (it isn't `Clone`), or
     /// `None` if never created.
-    async fn find(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        let id = *id;
         let commissions = self
             .0
             .commissions
@@ -1177,8 +1257,9 @@ impl CommissionStore for MemCommissionStore {
     /// `commission_current_placement` read.
     async fn current_placement(
         &self,
-        commission: CommissionId,
+        commission: &CommissionId,
     ) -> anyhow::Result<Option<Placement>> {
+        let commission = *commission;
         Ok(self
             .0
             .current_placements
@@ -1191,7 +1272,8 @@ impl CommissionStore for MemCommissionStore {
     /// The commission's placement log in append order (ascending `seq`) — the
     /// rows are pushed in seq order, so filtering preserves it (the mem mirror of
     /// `ORDER BY seq`). An unplaced commission has an empty log.
-    async fn placement_log(&self, commission: CommissionId) -> anyhow::Result<Vec<Placement>> {
+    async fn placement_log(&self, commission: &CommissionId) -> anyhow::Result<Vec<Placement>> {
+        let commission = *commission;
         Ok(self
             .0
             .placements
@@ -1207,15 +1289,15 @@ impl CommissionStore for MemCommissionStore {
     /// the mem mirror of a `commission_view_grant` lookup.
     async fn view_grant(
         &self,
-        commission: CommissionId,
-        account: AccountId,
+        commission: &CommissionId,
+        account: &AccountId,
     ) -> anyhow::Result<Option<GrantLevel>> {
         Ok(self
             .0
             .view_grants
             .lock()
             .expect("MemBackend view_grants mutex poisoned")
-            .get(&(commission, account))
+            .get(&(*commission, (**account).clone()))
             .copied())
     }
 
@@ -1228,8 +1310,9 @@ impl CommissionStore for MemCommissionStore {
     /// fresh one and is not absence.
     async fn load_composition(
         &self,
-        id: CommissionId,
+        id: &CommissionId,
     ) -> anyhow::Result<Option<CommissionComposition>> {
+        let id = *id;
         let mut tabs: Vec<TabRow> = {
             let stored = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
             stored
@@ -1273,7 +1356,7 @@ impl CommissionStore for MemCommissionStore {
                     mode: element.mode,
                     band: element.band.clone(),
                     position: element.position,
-                    created_by: element.created_by,
+                    created_by: element.created_by.clone(),
                     created_at: element.created_at,
                     payload: element.payload.clone(),
                 })
@@ -1310,19 +1393,24 @@ impl CommissionStore for MemCommissionStore {
     /// **Unaffected by placement or view grants** (Ownership Separation DD
     /// Decision 8): positioning is environmental and a key is only a view, so
     /// neither makes an account's members Participants.
-    async fn is_participant(&self, commission: CommissionId, user: UserId) -> anyhow::Result<bool> {
+    async fn is_participant(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool> {
         let participants = self
             .0
             .participants
             .lock()
             .expect("MemBackend participants mutex poisoned");
-        Ok(participants.contains_key(&(commission, user)))
+        Ok(participants.contains_key(&(*commission, user.clone())))
     }
 
     /// The commission's seat satellites in declaration order — the mem mirror
     /// of the pg `ORDER BY id` read (seat ids are UUIDv7, so id order is
     /// declaration order). No seats (or no commission) is the empty list.
-    async fn seats(&self, commission: CommissionId) -> anyhow::Result<Vec<Seat>> {
+    async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
+        let commission = *commission;
         let seats = self
             .0
             .seats
@@ -1336,7 +1424,7 @@ impl CommissionStore for MemCommissionStore {
                 kind: stored.kind.clone(),
                 prompt: stored.prompt.clone(),
                 link: stored.link.clone(),
-                occupant: stored.occupant,
+                occupant: stored.occupant.clone(),
             })
             .collect();
         found.sort_by_key(|seat| *seat.id);
@@ -1351,10 +1439,11 @@ impl CommissionStore for MemCommissionStore {
     /// (the authorization binding lives in the lookup, not caller discipline).
     async fn find_pending_seat_invitation(
         &self,
-        commission: CommissionId,
-        seat: ElementId,
-        user: UserId,
+        commission: &CommissionId,
+        seat: &ElementId,
+        user: &UserId,
     ) -> anyhow::Result<Option<SeatInvitation>> {
+        let (commission, seat) = (*commission, *seat);
         let invitations = self
             .0
             .seat_invitations
@@ -1363,7 +1452,7 @@ impl CommissionStore for MemCommissionStore {
         Ok(invitations.iter().find_map(|(id, stored)| {
             (stored.commission == commission
                 && stored.seat == seat
-                && stored.invited_user == user
+                && &stored.invited_user == user
                 && stored.state == InvitationState::Pending)
                 .then(|| stored.rebuild(*id))
         }))
@@ -1375,7 +1464,7 @@ impl CommissionStore for MemCommissionStore {
     /// existence oracle).
     async fn find_file(
         &self,
-        commission: CommissionId,
+        commission: &CommissionId,
         key: FileKey,
     ) -> anyhow::Result<Option<CommissionFile>> {
         let files = self
@@ -1385,8 +1474,35 @@ impl CommissionStore for MemCommissionStore {
             .expect("MemBackend files mutex poisoned");
         Ok(files
             .get(&key)
-            .filter(|file| file.commission_id == commission)
+            .filter(|file| &file.commission_id == commission)
             .cloned())
+    }
+
+    /// Scans `markups` for the annotations on one file entry and sorts them by
+    /// [`MarkupKey`] — UUIDv7 sorts as creation order, mirroring the pg `ORDER BY
+    /// id`; the `HashMap` scan itself has no natural order. Filtered on the
+    /// commission too, so a file key from another commission yields an empty vector
+    /// rather than a signal (the mem mirror of the scoped `WHERE`).
+    async fn markups_for_file(
+        &self,
+        commission: &CommissionId,
+        file: FileKey,
+    ) -> anyhow::Result<Vec<CommissionMarkup>> {
+        let commission = *commission;
+        let markups = self
+            .0
+            .markups
+            .lock()
+            .expect("MemBackend markups mutex poisoned");
+
+        let mut found: Vec<CommissionMarkup> = markups
+            .values()
+            .filter(|markup| markup.commission_id == commission && markup.file_id == file)
+            .cloned()
+            .collect();
+        found.sort_by_key(|markup| markup.id);
+
+        Ok(found)
     }
 
     /// Scans `commissions` for `owner`'s rows, drops archived ones (ZMVP-157 —
@@ -1395,7 +1511,7 @@ impl CommissionStore for MemCommissionStore {
     /// [`find`](Self::find) uses. Sorted by [`CommissionId`] afterward (UUIDv7
     /// sorts as creation order); the `HashMap` scan itself has no natural
     /// order, mirroring the pg `ORDER BY id`.
-    async fn list_owned_by(&self, owner: UserId) -> anyhow::Result<Vec<Commission>> {
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         let commissions = self
             .0
             .commissions
@@ -1403,7 +1519,7 @@ impl CommissionStore for MemCommissionStore {
             .expect("MemBackend commissions mutex poisoned");
         let mut owned: Vec<Commission> = commissions
             .iter()
-            .filter(|(_, stored)| stored.owner_id == owner && stored.archived_at.is_none())
+            .filter(|(_, stored)| &stored.owner_id == owner && stored.archived_at.is_none())
             .map(|(id, stored)| stored.rebuild(*id))
             .collect();
         owned.sort_by_key(|commission| *commission.id);
@@ -1418,7 +1534,8 @@ pub struct MemChangelogStore(pub(crate) MemBackend);
 impl ChangelogStore for MemChangelogStore {
     /// The commission's stream in ascending `seq` — the entries are pushed in
     /// seq order, so a filter preserves it (the mem mirror of `ORDER BY seq`).
-    async fn entries(&self, commission: CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
+    async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
+        let commission = *commission;
         let changelog = self
             .0
             .changelog
@@ -1446,7 +1563,7 @@ impl MemBackend {
     /// Resolve a commission by id (inspect helper; the read-port fake is
     /// [`MemCommissionStore`], reachable via [`MemBackend::commission_store`]).
     pub async fn find_commission(&self, id: CommissionId) -> anyhow::Result<Option<Commission>> {
-        MemCommissionStore(self.clone()).find(id).await
+        MemCommissionStore(self.clone()).find(&id).await
     }
 
     /// Every stored commission, rebuilt from its parts, in unspecified order
@@ -1469,7 +1586,7 @@ impl MemBackend {
         &self,
         commission: CommissionId,
     ) -> anyhow::Result<Vec<ChangelogEntry>> {
-        MemChangelogStore(self.clone()).entries(commission).await
+        MemChangelogStore(self.clone()).entries(&commission).await
     }
 
     /// The declared Slot whose carrying element is `element`, or `None` (inspect
@@ -1500,7 +1617,7 @@ impl MemBackend {
     /// writes must address.
     pub async fn tabs_of(&self, commission: CommissionId) -> anyhow::Result<Vec<TabRow>> {
         let composition = MemCommissionStore(self.clone())
-            .load_composition(commission)
+            .load_composition(&commission)
             .await?;
         Ok(composition.map(|loaded| loaded.tabs).unwrap_or_default())
     }
@@ -1509,7 +1626,7 @@ impl MemBackend {
     /// (inspect helper — the composition read reached without wiring a store).
     pub async fn elements_of(&self, commission: CommissionId) -> anyhow::Result<Vec<ElementRow>> {
         let composition = MemCommissionStore(self.clone())
-            .load_composition(commission)
+            .load_composition(&commission)
             .await?;
         Ok(composition
             .map(|loaded| loaded.elements)
@@ -1603,13 +1720,21 @@ impl MemBackend {
 mod tests {
     use chrono::Utc;
     use domain::elements::commission::{NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle};
+    use domain::elements::did::Did;
     use domain::ports::{ElementNotFound, UnknownSurface, UnknownTab};
     use serde_json::json;
 
     use super::*;
 
+    /// A fresh, unique synthetic actor DID — the only way to mint an id since
+    /// the actor re-key (DD `57081857`) made the DID the key. The UUID is only a
+    /// uniqueness source here; nothing reads it back.
+    fn mint_did() -> Did {
+        Did::new(format!("did:plc:mem{}", uuid::Uuid::now_v7().simple()))
+    }
+
     fn user_id() -> UserId {
-        UserId::new(uuid::Uuid::now_v7())
+        UserId::new(mint_did())
     }
 
     fn commission(title: &str, owner: UserId) -> Commission {
@@ -1632,7 +1757,7 @@ mod tests {
         let database = backend.database();
         let owner = user_id();
 
-        let created = commission("A ref sheet", owner);
+        let created = commission("A ref sheet", owner.clone());
         let id = created.id;
 
         let mut uow = database.begin().await.unwrap();
@@ -1717,7 +1842,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Logged", owner);
+        let created = commission("Logged", owner.clone());
         let id = created.id;
 
         let mut uow = database.begin().await.unwrap();
@@ -1726,7 +1851,7 @@ mod tests {
             .append(&NewChangelogEntry::event(
                 id,
                 ChangelogEntryKind::Created,
-                owner,
+                owner.clone(),
                 json!({ "title": "Logged" }),
                 Utc::now(),
             ))
@@ -1740,7 +1865,7 @@ mod tests {
             uow.changelog()
                 .append(&NewChangelogEntry::note(
                     id,
-                    owner,
+                    owner.clone(),
                     "never happened".to_string(),
                     Utc::now(),
                 ))
@@ -1751,7 +1876,7 @@ mod tests {
         let entries = backend.changelog_entries(id).await.unwrap();
         assert_eq!(entries.len(), 1, "only the committed entry survives");
         assert!(matches!(entries[0].kind, ChangelogEntryKind::Created));
-        assert_eq!(entries[0].actor_id, Some(owner));
+        assert_eq!(entries[0].actor_id, Some(owner.clone()));
 
         // A second committed entry lands after the first, and other commissions'
         // streams stay separate.
@@ -1789,9 +1914,9 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let doomed = commission("Doomed", owner);
+        let doomed = commission("Doomed", owner.clone());
         let doomed_id = doomed.id;
-        let survivor = commission("Survivor", owner);
+        let survivor = commission("Survivor", owner.clone());
         let survivor_id = survivor.id;
 
         let mut uow = database.begin().await.unwrap();
@@ -1802,7 +1927,7 @@ mod tests {
                 .append(&NewChangelogEntry::event(
                     id,
                     ChangelogEntryKind::Created,
-                    owner,
+                    owner.clone(),
                     json!({ "title": title }),
                     Utc::now(),
                 ))
@@ -1812,7 +1937,7 @@ mod tests {
         uow.commit().await.unwrap();
 
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().delete(doomed_id).await.unwrap();
+        uow.commissions().delete(&doomed_id).await.unwrap();
         uow.commit().await.unwrap();
 
         assert!(
@@ -1857,7 +1982,7 @@ mod tests {
 
         {
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().delete(id).await.unwrap();
+            uow.commissions().delete(&id).await.unwrap();
             // `uow` drops here without `commit` → the staged delete is discarded.
         }
 
@@ -1876,14 +2001,14 @@ mod tests {
 
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .delete(CommissionId::new(uuid::Uuid::now_v7()))
+            .delete(&CommissionId::new(uuid::Uuid::now_v7()))
             .await
             .unwrap();
         uow.commit().await.unwrap();
     }
 
     fn account_id() -> AccountId {
-        AccountId::new(uuid::Uuid::now_v7())
+        AccountId::new(mint_did())
     }
 
     // ZMVP-70 (mem store layer) — placement appends to the log and repoints the
@@ -1895,65 +2020,76 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Positioned", owner);
+        let created = commission("Positioned", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let store = backend.commission_store();
         let account = account_id();
         let member = user_id();
+        // A view grant is issued to a **User** (Engineer ruling 2026-09-04), while
+        // the read port still asks by `AccountId`. Both address the one `grantee`
+        // DID column, so the read is addressed by the grantee's own DID — see the
+        // re-key migration's note on `commission_view_grant`.
+        let grantee = member.clone();
+        let grant_key = AccountId::new((*grantee).clone());
 
         // Place in `account` twice; the current pointer tracks the latest row.
         for _ in 0..2 {
             let mut uow = database.begin().await.unwrap();
             uow.commissions()
-                .place(id, account, owner, Utc::now())
+                .place(&id, &account, &owner, Utc::now())
                 .await
                 .unwrap();
             uow.commit().await.unwrap();
         }
-        let log = store.placement_log(id).await.unwrap();
+        let log = store.placement_log(&id).await.unwrap();
         assert_eq!(
             log.len(),
             2,
             "each placement appends (the log is never rewritten)"
         );
-        let current = store.current_placement(id).await.unwrap().expect("current");
+        let current = store
+            .current_placement(&id)
+            .await
+            .unwrap()
+            .expect("current");
+        let latest = log.last().expect("the log holds the appended rows");
         assert_eq!(
-            (current.seq, current.account_id),
-            (log.last().unwrap().seq, log.last().unwrap().account_id),
+            (current.seq, &current.account_id),
+            (latest.seq, &latest.account_id),
             "the cached current pointer equals the latest log row",
         );
 
         // Grant Total, then revoke — the key is gone immediately.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .grant_view(id, account, GrantLevel::Total)
+            .grant_view(&id, &grantee, GrantLevel::Total)
             .await
             .unwrap();
         uow.commit().await.unwrap();
         assert_eq!(
-            store.view_grant(id, account).await.unwrap(),
+            store.view_grant(&id, &grant_key).await.unwrap(),
             Some(GrantLevel::Total)
         );
 
         // A view grant / placement makes the account's members no Participant (D8).
         assert!(
-            !store.is_participant(id, member).await.unwrap(),
+            !store.is_participant(&id, &member).await.unwrap(),
             "positioning and keys confer no in-commission authority",
         );
         assert!(
-            store.is_participant(id, owner).await.unwrap(),
+            store.is_participant(&id, &owner).await.unwrap(),
             "the owner still is"
         );
 
         let mut uow = database.begin().await.unwrap();
         assert!(
-            uow.commissions().revoke_view(id, account).await.unwrap(),
+            uow.commissions().revoke_view(&id, &grantee).await.unwrap(),
             "revoking an existing key reports a transition",
         );
         uow.commit().await.unwrap();
         assert!(
-            store.view_grant(id, account).await.unwrap().is_none(),
+            store.view_grant(&id, &grant_key).await.unwrap().is_none(),
             "a revoked key is gone immediately",
         );
 
@@ -1961,79 +2097,72 @@ mod tests {
         {
             let mut uow = database.begin().await.unwrap();
             uow.commissions()
-                .place(id, account_id(), owner, Utc::now())
+                .place(&id, &account_id(), &owner, Utc::now())
                 .await
                 .unwrap();
             uow.commissions()
-                .grant_view(id, account, GrantLevel::Description)
+                .grant_view(&id, &grantee, GrantLevel::Description)
                 .await
                 .unwrap();
             // drop without commit
         }
         assert_eq!(
-            store.placement_log(id).await.unwrap().len(),
+            store.placement_log(&id).await.unwrap().len(),
             2,
             "the dropped placement left no row",
         );
         assert!(
-            store.view_grant(id, account).await.unwrap().is_none(),
+            store.view_grant(&id, &grant_key).await.unwrap().is_none(),
             "the dropped grant never landed",
         );
     }
 
-    // ZMVP-57 AC1 (mem parity) — hard-deleting an account **severs** its positioning
-    // rails (the placements it held and its view grants) while the placed commission
-    // **survives untouched**. This mirrors pg's `ON DELETE CASCADE` on the positioning
-    // FKs onto `accounts`: only the account-side positioning goes; the User-owned
-    // commission stays (Ownership Separation DD 29130754).
+    // ZMVP-57 AC1 (mem parity) — hard-deleting an account **severs** its placement
+    // rails while the placed commission **survives untouched**. This mirrors pg's
+    // `ON DELETE CASCADE` on the placement FKs onto `accounts`: only the
+    // account-side positioning goes; the User-owned commission stays (Ownership
+    // Separation DD 29130754).
+    //
+    // The **view grant** used to be asserted here as a third rail. It no longer is:
+    // a grant is issued to a User (Engineer ruling 2026-09-04), so the pg table
+    // holds no reference to an account to cascade from and the mem fake mirrors
+    // that. See the re-key migration's note on `commission_view_grant`.
     #[tokio::test]
     async fn hard_deleting_an_account_severs_its_positioning_but_keeps_the_commission() {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Placed then orphaned", owner);
+        let created = commission("Placed then orphaned", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let store = backend.commission_store();
         let account = account_id();
 
-        // Place the commission in the account and grant it a view key.
+        // Place the commission in the account.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .place(id, account, owner, Utc::now())
-            .await
-            .unwrap();
-        uow.commissions()
-            .grant_view(id, account, GrantLevel::Total)
+            .place(&id, &account, &owner, Utc::now())
             .await
             .unwrap();
         uow.commit().await.unwrap();
         assert!(
-            store.current_placement(id).await.unwrap().is_some(),
+            store.current_placement(&id).await.unwrap().is_some(),
             "placed before the delete"
-        );
-        assert!(
-            store.view_grant(id, account).await.unwrap().is_some(),
-            "granted before the delete"
         );
 
         // Hard-delete the account.
         let mut uow = database.begin().await.unwrap();
-        uow.accounts().hard_delete(account).await.unwrap();
+        uow.accounts().hard_delete(&account).await.unwrap();
         uow.commit().await.unwrap();
 
-        // The positioning rails are severed...
+        // The placement rails are severed...
         assert!(
-            store.current_placement(id).await.unwrap().is_none(),
+            store.current_placement(&id).await.unwrap().is_none(),
             "the current-placement pointer is severed with the account",
         );
         assert!(
-            store.placement_log(id).await.unwrap().is_empty(),
+            store.placement_log(&id).await.unwrap().is_empty(),
             "the placement log is severed with the account",
-        );
-        assert!(
-            store.view_grant(id, account).await.unwrap().is_none(),
-            "the view grant is severed with the account",
         );
         // ...but the commission itself survives untouched.
         assert!(
@@ -2061,7 +2190,7 @@ mod tests {
 
         let composition = backend
             .commission_store()
-            .load_composition(id)
+            .load_composition(&id)
             .await
             .unwrap()
             .expect("a created commission always has its tabs");
@@ -2102,12 +2231,12 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Growing", owner);
+        let created = commission("Growing", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let address = only_address(&backend, id).await;
 
-        let first = element_at(id, address.clone(), owner);
+        let first = element_at(id, address.clone(), owner.clone());
         let second = element_at(id, address.clone(), owner);
         let (first_id, second_id) = (first.id, second.id);
         let mut uow = database.begin().await.unwrap();
@@ -2146,7 +2275,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let mine = commission("Mine", owner);
+        let mine = commission("Mine", owner.clone());
         let theirs = commission("Theirs", user_id());
         let mine_id = mine.id;
         let theirs_id = theirs.id;
@@ -2156,7 +2285,7 @@ mod tests {
 
         // A tab id that exists nowhere.
         let fabricated_address = SurfaceAddress::new(TabId::mint(), only_surface());
-        let fabricated = element_at(mine_id, fabricated_address, owner);
+        let fabricated = element_at(mine_id, fabricated_address, owner.clone());
         let mut uow = database.begin().await.unwrap();
         let err = uow
             .commissions()
@@ -2198,7 +2327,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Fail-closed", owner);
+        let created = commission("Fail-closed", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let tab = backend.tabs_of(id).await.unwrap()[0].id;
@@ -2229,7 +2358,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Wrongly addressed", owner);
+        let created = commission("Wrongly addressed", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
 
@@ -2265,7 +2394,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Doubly wrong", owner);
+        let created = commission("Doubly wrong", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
 
@@ -2289,7 +2418,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Opaque", owner);
+        let created = commission("Opaque", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let address = only_address(&backend, id).await;
@@ -2331,7 +2460,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Tx", owner);
+        let created = commission("Tx", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let address = only_address(&backend, id).await;
@@ -2359,7 +2488,7 @@ mod tests {
     async fn effective_visibility_clamps_against_the_loaded_composition() {
         let backend = MemBackend::new();
         let owner = user_id();
-        let created = commission("Clamped", owner);
+        let created = commission("Clamped", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
         let address = only_address(&backend, id).await;
@@ -2371,7 +2500,11 @@ mod tests {
 
         // Everything closed at birth: the element projects Total.
         let store = backend.commission_store();
-        let composition = store.load_composition(id).await.unwrap().expect("composed");
+        let composition = store
+            .load_composition(&id)
+            .await
+            .unwrap()
+            .expect("composed");
         let only = &composition.elements[0];
         assert_eq!(
             composition.effective_visibility_of(only),
@@ -2383,7 +2516,11 @@ mod tests {
         // the element's OWN mode is still Total, so it stays closed.
         backend.set_tab_mode(address.tab, VisibilityMode::Description);
         backend.set_surface_mode(id, address.surface.clone(), VisibilityMode::Description);
-        let composition = store.load_composition(id).await.unwrap().expect("composed");
+        let composition = store
+            .load_composition(&id)
+            .await
+            .unwrap()
+            .expect("composed");
         let only = &composition.elements[0];
         assert_eq!(
             composition.effective_visibility_of(only),
@@ -2394,7 +2531,11 @@ mod tests {
         // Narrow the surface back down and over-claim on the element: the
         // surface still wins, because the result is the MIN.
         backend.set_surface_mode(id, address.surface.clone(), VisibilityMode::Presentation);
-        let mut composition = store.load_composition(id).await.unwrap().expect("composed");
+        let mut composition = store
+            .load_composition(&id)
+            .await
+            .unwrap()
+            .expect("composed");
         composition.elements[0].mode = VisibilityMode::Description;
         let only = &composition.elements[0];
         assert_eq!(
@@ -2413,7 +2554,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .load_composition(CommissionId::new(uuid::Uuid::now_v7()))
+                .load_composition(&CommissionId::new(uuid::Uuid::now_v7()))
                 .await
                 .unwrap()
                 .is_none()
@@ -2424,7 +2565,7 @@ mod tests {
         backend.create_commission(&created).await.unwrap();
         let composition = backend
             .commission_store()
-            .load_composition(id)
+            .load_composition(&id)
             .await
             .unwrap()
             .expect("an existing commission composes to Some, however empty");
@@ -2461,7 +2602,7 @@ mod tests {
         // Set, then replace — one nullable cell, so the second set wins whole.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_direction_status(id, Some(DirectionStatus::WaitingForInput))
+            .set_direction_status(&id, Some(DirectionStatus::WaitingForInput))
             .await
             .unwrap();
         uow.commit().await.unwrap();
@@ -2472,7 +2613,7 @@ mod tests {
 
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_direction_status(id, Some(DirectionStatus::ChangesRequested))
+            .set_direction_status(&id, Some(DirectionStatus::ChangesRequested))
             .await
             .unwrap();
         uow.commit().await.unwrap();
@@ -2486,7 +2627,7 @@ mod tests {
         {
             let mut uow = database.begin().await.unwrap();
             uow.commissions()
-                .set_direction_status(id, None)
+                .set_direction_status(&id, None)
                 .await
                 .unwrap();
         }
@@ -2499,12 +2640,12 @@ mod tests {
         // Clear commits to NULL; an absent commission is a no-op, not an error.
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_direction_status(id, None)
+            .set_direction_status(&id, None)
             .await
             .unwrap();
         uow.commissions()
             .set_direction_status(
-                CommissionId::new(uuid::Uuid::now_v7()),
+                &CommissionId::new(uuid::Uuid::now_v7()),
                 Some(DirectionStatus::WaitingForApproval),
             )
             .await
@@ -2531,9 +2672,9 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         {
             let mut commissions = uow.commissions();
-            commissions.set_deadline(id, Some(deadline)).await.unwrap();
+            commissions.set_deadline(&id, Some(deadline)).await.unwrap();
             commissions
-                .set_deadline_status(id, Some(DeadlineStatus::Delayed))
+                .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
                 .await
                 .unwrap();
         }
@@ -2550,8 +2691,8 @@ mod tests {
         {
             let mut uow = database.begin().await.unwrap();
             let mut commissions = uow.commissions();
-            commissions.set_deadline(id, None).await.unwrap();
-            commissions.set_deadline_status(id, None).await.unwrap();
+            commissions.set_deadline(&id, None).await.unwrap();
+            commissions.set_deadline_status(&id, None).await.unwrap();
         }
         let found = backend.find_commission(id).await.unwrap().expect("exists");
         assert_eq!(found.deadline, Some(deadline), "the clear rolled back");
@@ -2561,10 +2702,10 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         {
             let mut commissions = uow.commissions();
-            commissions.set_deadline(id, None).await.unwrap();
-            commissions.set_deadline_status(id, None).await.unwrap();
+            commissions.set_deadline(&id, None).await.unwrap();
+            commissions.set_deadline_status(&id, None).await.unwrap();
             commissions
-                .set_deadline(CommissionId::new(uuid::Uuid::now_v7()), Some(deadline))
+                .set_deadline(&CommissionId::new(uuid::Uuid::now_v7()), Some(deadline))
                 .await
                 .unwrap();
         }
@@ -2593,11 +2734,11 @@ mod tests {
         {
             let mut commissions = uow.commissions();
             commissions
-                .set_deadline(id, Some(Utc::now() - chrono::Duration::days(1)))
+                .set_deadline(&id, Some(Utc::now() - chrono::Duration::days(1)))
                 .await
                 .unwrap();
             commissions
-                .set_deadline_status(id, Some(DeadlineStatus::Delayed))
+                .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
                 .await
                 .unwrap();
         }
@@ -2626,7 +2767,7 @@ mod tests {
         let seed = |title: &str, deadline, step: Option<LifecycleStep>| {
             let mut c = Commission::create(
                 title.parse::<CommissionTitle>().unwrap(),
-                owner,
+                owner.clone(),
                 now,
                 deadline,
             );
@@ -2659,7 +2800,7 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         {
             uow.commissions()
-                .set_deadline_status(slipping.id, Some(DeadlineStatus::Delayed))
+                .set_deadline_status(&slipping.id, Some(DeadlineStatus::Delayed))
                 .await
                 .unwrap();
             // Late is deduped on the changelog (no persisted Late), staged on the
@@ -2697,16 +2838,16 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Mine", owner);
+        let created = commission("Mine", owner.clone());
         let id = created.id;
         backend.create_commission(&created).await.unwrap();
 
         let store = backend.commission_store();
-        assert!(store.is_participant(id, owner).await.unwrap());
-        assert!(!store.is_participant(id, user_id()).await.unwrap());
+        assert!(store.is_participant(&id, &owner).await.unwrap());
+        assert!(!store.is_participant(&id, &user_id()).await.unwrap());
         assert!(
             !store
-                .is_participant(CommissionId::new(uuid::Uuid::now_v7()), owner)
+                .is_participant(&CommissionId::new(uuid::Uuid::now_v7()), &owner)
                 .await
                 .unwrap()
         );
@@ -2715,14 +2856,14 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         assert!(
             uow.commissions()
-                .set_linked_channel(id, Some(&pointer))
+                .set_linked_channel(&id, Some(&pointer))
                 .await
                 .unwrap(),
             "the first link is a real change"
         );
         assert!(
             !uow.commissions()
-                .set_linked_channel(id, Some(&pointer))
+                .set_linked_channel(&id, Some(&pointer))
                 .await
                 .unwrap(),
             "re-linking the identical pointer answers false"
@@ -2730,7 +2871,7 @@ mod tests {
         uow.commit().await.unwrap();
         assert_eq!(
             store
-                .find(id)
+                .find(&id)
                 .await
                 .unwrap()
                 .expect("exists")
@@ -2742,14 +2883,14 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         assert!(
             uow.commissions()
-                .set_linked_channel(id, None)
+                .set_linked_channel(&id, None)
                 .await
                 .unwrap(),
             "the clear is a real change"
         );
         assert!(
             !uow.commissions()
-                .set_linked_channel(id, None)
+                .set_linked_channel(&id, None)
                 .await
                 .unwrap(),
             "clearing an already-clear channel answers false"
@@ -2757,7 +2898,7 @@ mod tests {
         uow.commit().await.unwrap();
         assert!(
             store
-                .find(id)
+                .find(&id)
                 .await
                 .unwrap()
                 .expect("exists")
@@ -2793,7 +2934,7 @@ mod tests {
                     graphic,
                 };
                 let mut uow = database.begin().await.unwrap();
-                uow.commissions().set_maturity(id, posture).await.unwrap();
+                uow.commissions().set_maturity(&id, posture).await.unwrap();
                 uow.commit().await.unwrap();
                 assert_eq!(
                     backend
@@ -2813,7 +2954,7 @@ mod tests {
             let mut uow = database.begin().await.unwrap();
             uow.commissions()
                 .set_maturity(
-                    id,
+                    &id,
                     Maturity {
                         rating: MaturityRating::Suggestive,
                         graphic: true,
@@ -2842,7 +2983,7 @@ mod tests {
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
             .set_maturity(
-                CommissionId::new(uuid::Uuid::now_v7()),
+                &CommissionId::new(uuid::Uuid::now_v7()),
                 Maturity {
                     rating: MaturityRating::Adult,
                     graphic: false,
@@ -2921,7 +3062,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         let mut uow = database.begin().await?;
         uow.commissions()
-            .remove_element(commission, element)
+            .remove_element(&commission, &element)
             .await?;
         uow.commit().await
     }
@@ -2935,10 +3076,10 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
-        let first = element_at(id, address.clone(), owner);
-        let doomed = element_at(id, address.clone(), owner);
+        let first = element_at(id, address.clone(), owner.clone());
+        let doomed = element_at(id, address.clone(), owner.clone());
         let last = element_at(id, address.clone(), owner);
         let (first_id, doomed_id, last_id) = (first.id, doomed.id, last.id);
         let mut uow = database.begin().await.unwrap();
@@ -2969,7 +3110,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (mine, my_address) = composed_commission(&backend, owner).await;
+        let (mine, my_address) = composed_commission(&backend, owner.clone()).await;
         let theirs = commission("Theirs", user_id());
         let theirs_id = theirs.id;
         backend.create_commission(&theirs).await.unwrap();
@@ -3022,16 +3163,16 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
-        let element = element_at(id, address.clone(), owner);
+        let element = element_at(id, address.clone(), owner.clone());
         let seat = NewSeat::contributed_at(
             id,
             address.clone(),
             "Creator".parse::<SeatKind>().unwrap(),
             None,
             None,
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         let seat_id = seat.id;
@@ -3040,12 +3181,12 @@ mod tests {
             address.clone(),
             "The knight".parse::<SlotTitle>().unwrap(),
             None,
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         let slot_id = slot.id;
         let invited = user_id();
-        let invitation = SeatInvitation::issue(id, seat_id, invited, owner, Utc::now());
+        let invitation = SeatInvitation::issue(id, seat_id, invited.clone(), owner, Utc::now());
         let mut uow = database.begin().await.unwrap();
         uow.commissions().add_element(&element).await.unwrap();
         uow.commissions().declare_seat(&seat).await.unwrap();
@@ -3058,20 +3199,20 @@ mod tests {
         backend.set_surface_mode(id, address.surface, VisibilityMode::Description);
 
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().delete(id).await.unwrap();
+        uow.commissions().delete(&id).await.unwrap();
         uow.commit().await.unwrap();
 
         let store = backend.commission_store();
         assert!(
-            store.load_composition(id).await.unwrap().is_none(),
+            store.load_composition(&id).await.unwrap().is_none(),
             "a deleted commission composes to None, exactly as in pg"
         );
-        assert!(store.seats(id).await.unwrap().is_empty());
+        assert!(store.seats(&id).await.unwrap().is_empty());
         assert!(backend.slots_of(id).await.unwrap().is_empty());
         assert!(backend.find_slot(slot_id).await.unwrap().is_none());
         assert!(
             store
-                .find_pending_seat_invitation(id, seat_id, invited)
+                .find_pending_seat_invitation(&id, &seat_id, &invited)
                 .await
                 .unwrap()
                 .is_none(),
@@ -3086,7 +3227,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let element = element_at(id, address, owner);
         let element_id = element.id;
@@ -3097,7 +3238,7 @@ mod tests {
         {
             let mut uow = database.begin().await.unwrap();
             uow.commissions()
-                .remove_element(id, element_id)
+                .remove_element(&id, &element_id)
                 .await
                 .unwrap();
             assert_eq!(
@@ -3130,7 +3271,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let created = commission("Membered", owner);
+        let created = commission("Membered", owner.clone());
         let id = created.id;
         let created_at = created.created_at;
 
@@ -3144,14 +3285,14 @@ mod tests {
             .expect("participants mutex poisoned")
             .clone();
         assert_eq!(
-            participants.get(&(id, owner)),
+            participants.get(&(id, owner.clone())),
             Some(&created_at),
             "the owner's membership row is born with the commission"
         );
         assert!(
             backend
                 .commission_store()
-                .is_participant(id, owner)
+                .is_participant(&id, &owner)
                 .await
                 .unwrap(),
             "the predicate reads the membership record"
@@ -3173,7 +3314,7 @@ mod tests {
         assert!(
             !backend
                 .commission_store()
-                .is_participant(id, seated)
+                .is_participant(&id, &seated)
                 .await
                 .unwrap(),
             "not a participant before any membership row exists"
@@ -3182,11 +3323,11 @@ mod tests {
             .participants
             .lock()
             .expect("participants mutex poisoned")
-            .insert((id, seated), Utc::now());
+            .insert((id, seated.clone()), Utc::now());
         assert!(
             backend
                 .commission_store()
-                .is_participant(id, seated)
+                .is_participant(&id, &seated)
                 .await
                 .unwrap(),
             "a membership row alone makes a participant (the ZMVP-79 seated arm's shape)"
@@ -3202,7 +3343,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let first = NewSeat::contributed_at(
             id,
@@ -3210,7 +3351,7 @@ mod tests {
             "Creator".parse::<SeatKind>().unwrap(),
             Some("Two refs, please.".parse::<SeatPrompt>().unwrap()),
             Some("https://forms.example/apply".parse::<SeatLink>().unwrap()),
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         // A second seat of the SAME kind — kinds repeat freely (AC1).
@@ -3249,7 +3390,7 @@ mod tests {
         );
 
         // The interpreted half: the satellite rows, keyed by the same ids.
-        let seats = backend.commission_store().seats(id).await.unwrap();
+        let seats = backend.commission_store().seats(&id).await.unwrap();
         assert_eq!(seats.len(), 2);
         let first_seat = seats.iter().find(|s| s.id == first_id).expect("first");
         assert_eq!(first_seat.kind.as_str(), "Creator");
@@ -3276,7 +3417,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .seats(CommissionId::new(uuid::Uuid::now_v7()))
+                .seats(&CommissionId::new(uuid::Uuid::now_v7()))
                 .await
                 .unwrap()
                 .is_empty()
@@ -3291,7 +3432,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         {
             let seat = NewSeat::contributed_at(
@@ -3315,7 +3456,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .seats(id)
+                .seats(&id)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -3331,7 +3472,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
         let theirs = commission("Theirs", user_id());
         let theirs_id = theirs.id;
         backend.create_commission(&theirs).await.unwrap();
@@ -3344,7 +3485,7 @@ mod tests {
                 "Creator".parse::<SeatKind>().unwrap(),
                 None,
                 None,
-                owner,
+                owner.clone(),
                 Utc::now(),
             )
         };
@@ -3393,7 +3534,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .seats(id)
+                .seats(&id)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -3410,7 +3551,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let seat = NewSeat::contributed_at(
             id,
@@ -3418,12 +3559,12 @@ mod tests {
             "Creator".parse::<SeatKind>().unwrap(),
             None,
             None,
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         let seat_id = seat.id;
         let invited = user_id();
-        let invitation = SeatInvitation::issue(id, seat_id, invited, owner, Utc::now());
+        let invitation = SeatInvitation::issue(id, seat_id, invited.clone(), owner, Utc::now());
         let mut uow = database.begin().await.unwrap();
         uow.commissions().declare_seat(&seat).await.unwrap();
         uow.commissions()
@@ -3434,7 +3575,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .find_pending_seat_invitation(id, seat_id, invited)
+                .find_pending_seat_invitation(&id, &seat_id, &invited)
                 .await
                 .unwrap()
                 .is_some(),
@@ -3450,7 +3591,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .seats(id)
+                .seats(&id)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -3459,7 +3600,7 @@ mod tests {
         assert!(
             backend
                 .commission_store()
-                .find_pending_seat_invitation(id, seat_id, invited)
+                .find_pending_seat_invitation(&id, &seat_id, &invited)
                 .await
                 .unwrap()
                 .is_none(),
@@ -3476,14 +3617,14 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let knight = NewSlot::contributed_at(
             id,
             address.clone(),
             "The knight".parse::<SlotTitle>().unwrap(),
             Some("plate, not chain".to_string()),
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         let mage = NewSlot::contributed_at(
@@ -3538,7 +3679,7 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let slot_at = |address: SurfaceAddress, title: &str| {
             NewSlot::contributed_at(
@@ -3546,7 +3687,7 @@ mod tests {
                 address,
                 title.parse::<SlotTitle>().unwrap(),
                 None,
-                owner,
+                owner.clone(),
                 Utc::now(),
             )
         };
@@ -3597,14 +3738,14 @@ mod tests {
         let backend = MemBackend::new();
         let database = backend.database();
         let owner = user_id();
-        let (id, address) = composed_commission(&backend, owner).await;
+        let (id, address) = composed_commission(&backend, owner.clone()).await;
 
         let staged = NewSlot::contributed_at(
             id,
             address.clone(),
             "Uncommitted".parse::<SlotTitle>().unwrap(),
             None,
-            owner,
+            owner.clone(),
             Utc::now(),
         );
         let staged_id = staged.id;

@@ -392,6 +392,7 @@ impl NewSeat {
     /// use chrono::Utc;
     /// use domain::elements::{
     ///     commission::{CommissionId, NewSeat, SeatKind, SurfaceAddress, SurfaceName, TabId},
+    ///     did::Did,
     ///     user::UserId,
     /// };
     ///
@@ -400,7 +401,7 @@ impl NewSeat {
     ///     TabId::new(uuid::Uuid::now_v7()),
     ///     "content".parse::<SurfaceName>().unwrap(),
     /// );
-    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(Did::new("did:plc:alice".to_string()));
     /// let kind = "Creator".parse::<SeatKind>().unwrap();
     /// let seat = NewSeat::contributed_at(commission, address.clone(), kind, None, None, owner, Utc::now());
     /// assert_eq!(seat.address, address);
@@ -468,6 +469,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+    use crate::elements::did::Did;
 
     // AC1 — the kind vocabulary is OPEN (ruling E21): any reasonable label
     // wraps, trimmed; it is deliberately not the Role enum, so nothing here
@@ -554,7 +556,7 @@ mod tests {
             super::super::element::TabId::new(uuid::Uuid::now_v7()),
             "content".parse().unwrap(),
         );
-        let owner = UserId::new(uuid::Uuid::now_v7());
+        let owner = UserId::new(Did::new(format!("did:plc:{}", uuid::Uuid::now_v7())));
         let kind = "Creator".parse::<SeatKind>().unwrap();
         let prompt = "Two refs, please.".parse::<SeatPrompt>().unwrap();
         let link = "https://forms.example/apply".parse::<SeatLink>().unwrap();
@@ -565,7 +567,7 @@ mod tests {
             kind.clone(),
             Some(prompt.clone()),
             Some(link.clone()),
-            owner,
+            owner.clone(),
             Utc::now(),
         );
 

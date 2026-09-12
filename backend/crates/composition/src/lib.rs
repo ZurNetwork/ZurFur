@@ -9,6 +9,7 @@
 //! so a non-HTTP driver never links a web framework.
 //!
 //! What lives here: [`Config`] + [`Config::load`] (profile TOML → `DATABASE_URL`
+//!
 //! → `ZURFUR_*` env, env wins), the boot-time custody guard
 //! [`ensure_custody_hardened`], and [`Runtime`] — the bag of `Arc<dyn Port>`s —
 //! with [`Runtime::connect`], the live pg + atproto wiring. What deliberately
@@ -19,10 +20,11 @@
 //! ZMVP-200; ZMVP-3 (the original composition root).
 
 mod config;
-mod runtime;
+pub mod ports;
+pub(crate) mod runtime;
 
 pub use config::{
     CONFIG_DIR_ENV, Config, DATABASE_URL_ENV, ENV_PREFIX, EXAMPLE_DEV_ROOT_KEY, Environment,
     PROFILE_ENV, ROOT_KEY_ENV, ensure_custody_hardened,
 };
-pub use runtime::{ConnectError, Runtime, transaction};
+pub use runtime::{ConnectError, Runtime};

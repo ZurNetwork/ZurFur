@@ -22,6 +22,9 @@ impl serde::Serialize for AccountMembership {
         if !self.role.is_empty() {
             len += 1;
         }
+        if self.alias.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.AccountMembership", len)?;
         if !self.id.is_empty() {
             struct_ser.serialize_field("id", &self.id)?;
@@ -38,6 +41,9 @@ impl serde::Serialize for AccountMembership {
         if !self.role.is_empty() {
             struct_ser.serialize_field("role", &self.role)?;
         }
+        if let Some(v) = self.alias.as_ref() {
+            struct_ser.serialize_field("alias", v)?;
+        }
         struct_ser.end()
     }
 }
@@ -53,6 +59,7 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
             "handle",
             "name",
             "role",
+            "alias",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -62,6 +69,7 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
             Handle,
             Name,
             Role,
+            Alias,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -88,6 +96,7 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
                             "handle" => Ok(GeneratedField::Handle),
                             "name" => Ok(GeneratedField::Name),
                             "role" => Ok(GeneratedField::Role),
+                            "alias" => Ok(GeneratedField::Alias),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -112,6 +121,7 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
                 let mut handle__ = None;
                 let mut name__ = None;
                 let mut role__ = None;
+                let mut alias__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Id => {
@@ -144,6 +154,12 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
                             }
                             role__ = Some(map_.next_value()?);
                         }
+                        GeneratedField::Alias => {
+                            if alias__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("alias"));
+                            }
+                            alias__ = map_.next_value()?;
+                        }
                     }
                 }
                 Ok(AccountMembership {
@@ -152,6 +168,7 @@ impl<'de> serde::Deserialize<'de> for AccountMembership {
                     handle: handle__.unwrap_or_default(),
                     name: name__.unwrap_or_default(),
                     role: role__.unwrap_or_default(),
+                    alias: alias__,
                 })
             }
         }

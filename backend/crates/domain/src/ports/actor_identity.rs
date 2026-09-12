@@ -20,7 +20,7 @@ pub trait ActorIdentityStore: Send + Sync {
     /// Resolve an [`ActorIdentityId`] back to its row, or `None` if no such
     /// identity exists. (There is no "gone" — rows are immortal — so `None`
     /// always means *never seen*.)
-    async fn find(&self, id: ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>>;
+    async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>>;
 
     /// Resolve a [`Did`] to the one actor that holds it, or `None` if the DID
     /// has never been seen. One DID maps to at most one actor, ever — the
@@ -68,7 +68,7 @@ pub trait ActorIdentityWrites: Send {
     /// exists (caching for a never-seen actor is a caller bug).
     async fn cache_handle(
         &mut self,
-        id: ActorIdentityId,
+        id: &ActorIdentityId,
         handle: Option<&str>,
     ) -> anyhow::Result<()>;
 }

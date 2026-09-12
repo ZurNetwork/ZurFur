@@ -14,6 +14,10 @@ domain = { path = "../domain" }
 adapter-pg = { path = "../adapter-pg" }
 # The shared composition root: Config + the Runtime port bag (ZMVP-200).
 composition = { path = "../composition" }
+# The use-case layer both drivers call (ZMVP-205).
+application = { path = "../application" }
+# The shared leaf crate (global build-time settings) — the one thing every layer may consume.
+shared = { path = "../shared" }
 axum = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
@@ -34,6 +38,13 @@ tower-http = { workspace = true }
 # is the only direct use of sqlx in this crate — reads/writes otherwise go through the
 # adapter-pg ports.
 sqlx = { workspace = true }
+# Adapts an upload's multipart `Field` to `AsyncRead` (`StreamReader`) and a
+# download's `FileDownload` reader back to a body `Stream` (`ReaderStream`) —
+# the streaming FileStore seam's driver-side glue (ZMVP-88/205).
+tokio-util = { workspace = true }
+# `TryStreamExt::map_err`, converting a multipart field's `MultipartError`
+# into `std::io::Error` ahead of `StreamReader` (ZMVP-205).
+futures-util = { workspace = true }
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }

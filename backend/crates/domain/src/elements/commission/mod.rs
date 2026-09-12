@@ -38,8 +38,9 @@
 //! [`file`] submodule carries the file-entry shapes (ZMVP-88): the opaque
 //! [`FileKey`], the validated [`FileMetadata`], and the [`CommissionFile`]
 //! Index-canonical link. The [`markup`] submodule carries the [`Markup`]
-//! annotation shapes (ZMVP-90) that ride the `markup_added` changelog entry's
-//! payload. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
+//! annotation shapes (ZMVP-90), the [`MarkupKey`] that identifies one, and the
+//! [`CommissionMarkup`] row that stores it alongside the `markup_added` changelog
+//! entry. The [`slot`] submodule carries the declared **Slots** (ZMVP-77):
 //! Character positions as elements with a title/notes satellite — fill
 //! deferred wholesale to the Character epic. The [`seat`] submodule carries the
 //! **Seat** (ZMVP-76): the 1:1 structural participant position declared vacant,
@@ -69,20 +70,27 @@ pub use element::{
     TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface, effective_visibility,
 };
 pub use fact::Fact;
-pub use file::{CommissionFile, FileKey, FileMetadata, FileName, FileNameError, StoredFile};
-pub use markup::{Markup, MarkupError, MarkupShape};
+pub use file::{CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError};
+pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
 pub use positioning::{GrantLevel, Placement};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
+use serde::{Deserialize, Serialize};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
+use uuid::Uuid;
 
 use std::ops::Deref;
+use std::str::FromStr;
 
 use crate::{
     datetime::DateTimeUtc,
-    elements::{maturity::Maturity, user::UserId},
+    elements::{
+        id::{IdError, parse_uuid},
+        maturity::Maturity,
+        user::UserId,
+    },
     string_builder::{StringBuilder, StringBuilderViolation},
 };
 
@@ -91,7 +99,8 @@ use crate::{
 /// A UUIDv7 wrapped for type safety, mirroring [`crate::elements::account::AccountId`]
 /// and [`crate::elements::user::UserId`]. The UUIDv7 carries the creation timestamp;
 /// Deref exposes the inner UUID for foreign keys and lookups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct CommissionId(uuid::Uuid);
 
 impl CommissionId {
@@ -102,11 +111,25 @@ impl CommissionId {
     }
 }
 
+impl From<Uuid> for CommissionId {
+    fn from(id: Uuid) -> Self {
+        Self(id)
+    }
+}
+
 impl Deref for CommissionId {
     type Target = uuid::Uuid;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl FromStr for CommissionId {
+    type Err = IdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_uuid(s).map(Self)
     }
 }
 
@@ -295,11 +318,13 @@ impl Commission {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{commission::{Commission, CommissionTitle, LifecycleStep}, user::UserId};
+    /// use domain::elements::{
+    ///     commission::{Commission, CommissionTitle, LifecycleStep}, did::Did, user::UserId,
+    /// };
     ///
-    /// let owner = UserId::new(uuid::Uuid::now_v7());
+    /// let owner = UserId::new(Did::new("did:plc:alice".to_string()));
     /// let title = "A ref sheet".parse::<CommissionTitle>().unwrap();
-    /// let c = Commission::create(title, owner, Utc::now(), None);
+    /// let c = Commission::create(title, owner.clone(), Utc::now(), None);
     /// assert_eq!(c.owner_id, owner);                             // the creator owns it
     /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
     /// assert_eq!(c.title.as_str(), "A ref sheet");
@@ -325,6 +350,14 @@ impl Commission {
             linked_channel: None,
             archived_at: None,
         }
+    }
+
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_none()
+    }
+
+    pub fn is_owned_by(&self, user_id: &UserId) -> bool {
+        self.owner_id == *user_id
     }
 }
 
@@ -442,6 +475,7 @@ pub enum DirectionStatus {
 
 impl DirectionStatus {
     /// Every value, in declaration order — the closed three-value vocabulary.
+    //FIXME: This is a disallowed pattern
     pub const ALL: &[DirectionStatus] = &[
         Self::WaitingForInput,
         Self::WaitingForApproval,
@@ -491,6 +525,16 @@ impl TryFrom<&str> for DirectionStatus {
     }
 }
 
+impl std::fmt::Display for DirectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WaitingForInput => write!(f, "waiting_for_input"),
+            Self::WaitingForApproval => write!(f, "waiting_for_approval"),
+            Self::ChangesRequested => write!(f, "changes_requested"),
+        }
+    }
+}
+
 /// The deadline-axis Status a commission may carry (DESIGN/Commission, Status;
 /// ZMVP-86) — how the work stands against its deadline. One nullable cell
 /// (ruling E29), so at most one value holds at a time and a set REPLACES the
@@ -531,21 +575,23 @@ impl DeadlineStatus {
     }
 }
 
-/// Why a token failed to resolve to a [`DeadlineStatus`] — the same
-/// tamper-surfacing contract as [`UnknownLifecycleStep`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnknownDeadlineStatus;
-
-impl std::fmt::Display for UnknownDeadlineStatus {
+impl std::fmt::Display for DeadlineStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("token is not one of: delayed, late")
+        match self {
+            Self::Delayed => write!(f, "delayed"),
+            Self::Late => write!(f, "late"),
+        }
     }
 }
 
-impl std::error::Error for UnknownDeadlineStatus {}
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeadlineStatusError {
+    ParseError,
+    InvalidValue,
+}
 
 impl TryFrom<&str> for DeadlineStatus {
-    type Error = UnknownDeadlineStatus;
+    type Error = DeadlineStatusError;
 
     /// Resolve a stored token back to its value — an explicit `match` on the
     /// closed vocabulary, the mirror of [`as_str`](Self::as_str).
@@ -553,8 +599,29 @@ impl TryFrom<&str> for DeadlineStatus {
         Ok(match token {
             "delayed" => Self::Delayed,
             "late" => Self::Late,
-            _ => return Err(UnknownDeadlineStatus),
+            _ => return Err(DeadlineStatusError::InvalidValue),
         })
+    }
+}
+
+impl std::fmt::Display for DeadlineStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidValue => write!(f, "Invalid value"),
+            Self::ParseError => write!(f, "Parsing error"),
+        }
+    }
+}
+
+impl FromStr for DeadlineStatus {
+    type Err = DeadlineStatusError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "delayed" => Ok(Self::Delayed),
+            "late" => Ok(Self::Late),
+            _ => Err(DeadlineStatusError::InvalidValue),
+        }
     }
 }
 
@@ -636,11 +703,17 @@ mod tests {
     fn unknown_deadline_status_tokens_do_not_parse() {
         assert_eq!(
             DeadlineStatus::try_from("waiting_for_input"),
-            Err(UnknownDeadlineStatus),
+            Err(DeadlineStatusError::InvalidValue),
             "direction axis ≠ deadline axis"
         );
-        assert_eq!(DeadlineStatus::try_from(""), Err(UnknownDeadlineStatus));
-        assert_eq!(DeadlineStatus::try_from("Late"), Err(UnknownDeadlineStatus));
+        assert_eq!(
+            DeadlineStatus::try_from(""),
+            Err(DeadlineStatusError::InvalidValue)
+        );
+        assert_eq!(
+            DeadlineStatus::try_from("Late"),
+            Err(DeadlineStatusError::InvalidValue)
+        );
     }
 
     // A fresh commission carries no deadline status, even when born with a
@@ -649,7 +722,10 @@ mod tests {
     fn a_fresh_commission_has_no_deadline_status() {
         let c = Commission::create(
             "Ref".parse::<CommissionTitle>().unwrap(),
-            crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
+            crate::elements::user::UserId::new(crate::elements::did::Did::new(format!(
+                "did:plc:{}",
+                uuid::Uuid::now_v7()
+            ))),
             chrono::Utc::now(),
             Some(chrono::Utc::now()),
         );
@@ -718,7 +794,10 @@ mod tests {
     fn a_fresh_commission_has_no_direction_status() {
         let c = Commission::create(
             "Ref".parse::<CommissionTitle>().unwrap(),
-            crate::elements::user::UserId::new(uuid::Uuid::now_v7()),
+            crate::elements::user::UserId::new(crate::elements::did::Did::new(format!(
+                "did:plc:{}",
+                uuid::Uuid::now_v7()
+            ))),
             chrono::Utc::now(),
             None,
         );
