@@ -1,0 +1,32 @@
+**PHASE S1 — ATTACK**
+
+### **Option A: Reorder in place**
+*   **Strongest case AGAINST:** It violates the Doctrine floor (anti-domination/sanity). If the local `uow.commit()` succeeds but the synchronous `did_minter.tombstone` fails (e.g., network partition to `plc.directory`), the handle is freed and the local account is dead, but the DID remains active on the public network indefinitely. The user is locked out, the intent is swallowed into a `warn!` log, and there is no UI or automated way to retry. It creates an orphaned identity.
+*   **Strongest case FOR:** Zero infrastructural bloat. It requires no new tables, no background polling, and fits the exact operational profile of the existing `application/src/account/delete.rs` code, shifting only the line order. 
+*   **Concrete failure scenario:** The private hard-delete commits. The process receives a `SIGTERM` or OOM-kills exactly before `did_minter.tombstone` is invoked. The platform drops the public step entirely. The user's DID remains publicly queryable on the AT Protocol forever, despite them invoking account deletion.
+
+### **Option B: Transactional outbox**
+*   **Strongest case AGAINST:** Schizophrenic durability. `adapter-atproto` already handles its own durable state (`op_log`), meaning this approach splits the lifecycle of a single public intent across two storage concepts: an application-owned outbox row and an adapter-owned `op_log` row. This introduces complex, distributed two-phase state synchronization for a single operation.
+*   **Strongest case FOR:** Textbook prevention of cross-store dual-write failures. Writing the outbox row in the same Postgres transaction guarantees that the intent to tombstone survives any crash post-commit, satisfying DD 23003138 D3’s mandate for a "separate retryable step" without blocking the user request.
+*   **Concrete failure scenario:** The background sweep job picks up an outbox row and calls `tombstone`. The directory submission succeeds, and crucially, `adapter-atproto` successfully appends to `op_log`. The application then crashes *before* the outbox row is marked "done". On retry, the adapter reads the *new* `latest_cid(did)` (which is the tombstone itself) and blindly signs a tombstone-of-a-tombstone. The PLC directory rejects this invalid chain, trapping the outbox row in an infinite failing loop.
+
+### **Option C: Marker on the account row**
+*   **Strongest case AGAINST:** It halts addressing the immediate defect (Claim 11). By making infrastructure queues dependent on domain lifecycle states (`tombstoned_at`), this option cannot be implemented until DD 57081857 D6 (re-keying the system on DID instead of Account ID) is merged and stable. It inappropriately entangles external I/O tracking with the core entity schema.
+*   **Strongest case FOR:** Eradicates the need for a separate outbox table entirely. By piggybacking on the imminent fact that account rows will become immortal (DD 57081857 D6), the `pending_tombstone` state becomes a highly observable, inherent property of the entity. 
+*   **Concrete failure scenario:** A user deletes their account, setting the marker. A sweep job begins processing the tombstone. Simultaneously, an admin (or user via an out-of-band support flow) reverses the local deletion using the retained custody keys (Claim 6). The sweep job finishes and successfully submits the tombstone to the PLC directory, rendering the local restoration void and severing the recovered account from the network. 
+
+### **Option D: Compile-enforced ordering**
+*   **Strongest case AGAINST:** It is a category error. Type-state guards enforce code topology, not distributed durability. This option merely guarantees the developer places the tombstone call *after* the commit in the source text; it provides exactly zero guarantees that the tombstone actually executes or retries if the network drops.
+*   **Strongest case FOR:** Satisfies the doctrine mandate to "make unsoundness unreachable." By forcing `tombstone` to consume a receipt from `commit()`, it guarantees no developer can accidentally place the network call inside the database unit-of-work, preventing long-running transactions and rollback anomalies.
+*   **Concrete failure scenario:** The code is perfectly structured and compiles. At runtime, the database commit succeeds and returns the receipt. The host kernel panics one millisecond later. The receipt vanishes from memory, the process dies, and the tombstone intent is permanently lost without a retry mechanism.
+
+### **Option E: Adapter-owned durability**
+*   **Strongest case AGAINST:** Violates DD 55836674 D6 and D7. The adapter layer is meant to be driven. Forcing the adapter to persist intent and run its own internal retry loops leaks orchestration and transaction management out of the `application` layer into a bounded context that should only map I/O. 
+*   **Strongest case FOR:** Maximum encapsulation of AT-Protocol specifics. The application layer shouldn't care about `prev` CID tracking or PLC directory transient downtime. Pushing durability into the adapter aligns with the fact that `adapter-atproto` already owns PostgreSQL persistence (Claim 13) for OAuth.
+*   **Concrete failure scenario:** The application commits the private database transaction and calls the durable adapter port to register the intent. The adapter attempts to save this intent to its Postgres table, but the connection pool is exhausted or the disk is full, returning `Err`. The application cannot roll back the already-committed private transaction, resulting in a dropped tombstone intent and a permanently orphaned public identity.
+
+### **MISSING OPTION**
+
+**Option F: Public-First Ordering (The Reversible Saga)**
+*   **Definition:** The use case executes the network write (`did_minter.tombstone`) *before* opening the private-store transaction (mirroring the exact ordering already used in `change_handle.rs`), utilizing the native 72-hour `did:plc` recovery window to roll back the PLC directory state if the subsequent database commit fails. 
+*   **Why it exposes the framing:** The brief arbitrarily presumes the reliability seam *must* live after the private commit, completely ignoring that a `did:plc` tombstone is inherently reversible by design (Claim 5). Executing the public step first eliminates the need for complex outboxes entirely: if the database commit fails, the system safely reverses the public tombstone using the custody keys it deliberately retains for this exact reason (Claim 6).
