@@ -14,3 +14,6 @@ lexicons/node_modules
 
 # Live tutoring worksheet (session artifact, /worksheet-tutorial)
 WORKSHEET.md
+
+# Claude Code project MCP config — local only, never committed (Engineer ruling 2026-09-11)
+.mcp.json
