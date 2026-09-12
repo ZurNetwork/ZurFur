@@ -1,6 +1,6 @@
-//! The commission fact predicate over PostgreSQL (ZMVP-67), against a throwaway
+//! The commission fact predicate over PostgreSQL, against a throwaway
 //! container: `commission_has_facts` lives on the [`UnitOfWork`]'s commissions
-//! view — the same transaction a future delete/archive gate (ZMVP-66/68) runs in
+//! view — the same transaction a future delete/archive gate runs in
 //! — and, with no fact-minter wired, every commission answers `false`. The
 //! schema tripwire below is what forces a future fact-minter to wire its table
 //! into the predicate **deliberately**. Requires a container runtime socket
@@ -102,9 +102,9 @@ async fn an_unknown_commission_answers_false() {
     uow.rollback().await.expect("rollback read-only unit");
 }
 
-/// ZMVP-66 AC1 (pg): the hard delete — gated by `commission_has_facts` **in the
-/// same transaction** (ruling E17) — removes the `commission` row, and every
-/// child table in this lineage reaps via its `ON DELETE CASCADE` (ruling E35):
+/// The hard delete — gated by `commission_has_facts` **in the
+/// same transaction** — removes the `commission` row, and every
+/// child table in this lineage reaps via its `ON DELETE CASCADE`:
 /// `commission_changelog` is the only commission-referencing table at this
 /// stack. Also proves the delete is transactional: a rolled-back unit deletes
 /// nothing.
@@ -185,7 +185,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     );
 }
 
-/// ZMVP-68 (pg store layer): `set_archived` flips the `archived_at` column in
+/// At the pg store layer, `set_archived` flips the `archived_at` column in
 /// the unit of work and reports **whether the state actually transitioned** —
 /// the bool the route keys its changelog append on, so a repeated archive (or
 /// un-archive) can never mint a duplicate entry. The first stamp survives a
@@ -305,7 +305,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     );
 }
 
-/// THE TRIPWIRE (ZMVP-67, conductor ruling E18): every table that references
+/// THE TRIPWIRE: every table that references
 /// `commission(id)` must be **deliberately classified** — either registered in
 /// [`COMMISSION_FACT_TABLES`] (its rows are facts; the predicate must query it)
 /// or exempted in [`COMMISSION_NON_FACT_TABLES`] (its rows are bookkeeping that

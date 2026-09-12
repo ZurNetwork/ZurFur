@@ -1,7 +1,7 @@
 //! The platform-wide maturity rating primitive: the atproto self-label
 //! vocabulary adopted as Zurfur's own — Safe / Suggestive / Nudity / Adult
 //! ([`MaturityRating`]) plus an orthogonal Graphic flag, together one
-//! [`Maturity`] value. (DD 29982722)
+//! [`Maturity`] value.
 //!
 //! There is no mapping layer: the network self-label a rating emits is derived
 //! from it, never chosen separately.

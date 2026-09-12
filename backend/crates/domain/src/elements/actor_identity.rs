@@ -1,6 +1,5 @@
 //! The [`ActorIdentity`] — a row in the actor super-table: one row per actor the
 //! Index has ever seen, and the single table every actor reference FKs into.
-//! (DD 34013187)
 //!
 //! Rows are immortal: the port exposes no delete, so liveness is an
 //! [`ActorState`] on the row and an FK into `actor_identity` can never break.

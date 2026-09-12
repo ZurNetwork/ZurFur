@@ -1,9 +1,9 @@
--- Every LIVE account `$1` holds a role in, together with that role (ZMVP-157) —
+-- Every LIVE account `$1` holds a role in, together with that role —
 -- not owned-only: gaining a role is how a user joins an account on this
 -- platform, so an accepted invitation belongs here exactly as a founded
--- account does. Keeps `find`'s `deleted_at IS NULL` liveness filter; since the
--- actor re-key (DD 57081857) `accounts.id` IS the DID, so the actor_identity
--- join that used to recover one is gone.
+-- account does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
+-- `accounts.id` IS the DID, so the actor_identity join that used to
+-- recover one is gone.
 --
 -- ORDER BY … COLLATE "C" sorts the DID by byte value, which is what Rust's
 -- `str` ordering does — the adapter-mem twin sorts the same list in process, and
@@ -11,7 +11,7 @@
 -- locale. (Creation order is no longer available from the key: a DID carries no
 -- timestamp, where the retired UUIDv7 did.)
 --
--- `$2` gates the `listed_on_profile` privacy valve (DD 21594113 decision 4).
+-- `$2` gates the `listed_on_profile` privacy valve.
 -- TRUE for a PUBLIC projection of this user's memberships, which shows only
 -- the ones they chose to publish; FALSE for the member's OWN view, which shows
 -- every live membership — a member's own records are not hidden from them by

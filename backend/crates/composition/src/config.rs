@@ -60,7 +60,7 @@ pub struct Config {
     pub log_level: String,
     /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`.
     /// Parsed once here, so an invalid namespace fails the boot and the claim
-    /// checks and the well-known resolver cannot disagree. (DD 26607618)
+    /// checks and the well-known resolver cannot disagree.
     #[serde(
         default = "default_handle_domain",
         deserialize_with = "deserialize_handle_domain"

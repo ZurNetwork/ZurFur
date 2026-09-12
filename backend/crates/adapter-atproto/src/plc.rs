@@ -15,7 +15,7 @@ const OP_TYPE: &str = "plc_operation";
 
 /// A PLC service entry under the operation's `services` map (e.g. an atproto
 /// PDS). Never constructed by the minter — v1 operations are identity-only, with
-/// an empty `services` map. (DD 26935298)
+/// an empty `services` map.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlcService {
     /// The service type, e.g. `AtprotoPersonalDataServer`.
@@ -73,7 +73,7 @@ pub struct PlcOperation {
 impl PlcOperation {
     /// Build an identity-only genesis operation (`prev = null`, empty
     /// `services`). `rotation_keys` are `did:key` multikeys in descending
-    /// authority; `handle` becomes the sole `alsoKnownAs`. (DD 26804226)
+    /// authority; `handle` becomes the sole `alsoKnownAs`.
     pub fn identity_only(
         rotation_keys: Vec<String>,
         atproto_signing_did: String,
@@ -84,7 +84,7 @@ impl PlcOperation {
 
     /// Build an identity-only handle update chaining onto `prev` (the CID of the
     /// DID's latest operation). `alsoKnownAs` is REPLACED with the new handle —
-    /// the old alias is dropped, never retained. (DD 27852802)
+    /// the old alias is dropped, never retained.
     pub fn update_handle(
         rotation_keys: Vec<String>,
         atproto_signing_did: String,

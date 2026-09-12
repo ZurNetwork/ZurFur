@@ -1,5 +1,5 @@
 //! `Users::me` over the in-memory fakes: the one implementation both drivers
-//! call (ZMVP-205 AC2).
+//! call.
 
 use application::user::me::{MeError, MeProfile, MeQuery};
 use domain::elements::{did::Did, profile::Profile, user::UserId};

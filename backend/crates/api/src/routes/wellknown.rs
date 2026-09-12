@@ -1,5 +1,5 @@
 //! The atproto well-known route group: `GET /.well-known/atproto-did`,
-//! handle→DID resolution for the `*.zurfur.app` namespace (DD 26607618).
+//! handle→DID resolution for the `*.zurfur.app` namespace.
 //! Reads `Host`, validates it's a subdomain of `handle_domain`, and returns
 //! the bare DID as `text/plain`, or `404`. No auth, no cookie; a single
 //! private-store read (no PDS touch).

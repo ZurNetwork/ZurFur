@@ -1,5 +1,4 @@
-//! `zurfur account create` / `delete` in process (ZMVP-205 slices 4 and 5):
-//! the CLI calls the same `application::account::Accounts::{create,
+//! `zurfur account create` / `delete` in process: the CLI calls the same `application::account::Accounts::{create,
 //! delete}` as `POST /accounts` / `DELETE /accounts/{id}`, and projects them
 //! with the same keys.
 
@@ -84,8 +83,8 @@ async fn founded_account(runtime: &Runtime, path: &Path, handle: &str) -> Accoun
 }
 
 /// A syntactically valid account id that names no live account — a random
-/// did:plc nothing ever mints (`AccountId` is a DID, DD 57081857, not a
-/// bare UUID).
+/// did:plc nothing ever mints (`AccountId` is itself a DID, not a
+/// bare UUID paired with one).
 fn unknown_account_id() -> AccountId {
     AccountId::new(Did::new(format!("did:plc:{}", Uuid::now_v7())))
 }

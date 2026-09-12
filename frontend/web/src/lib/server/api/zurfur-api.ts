@@ -1,5 +1,5 @@
 /**
- * The `ZurfurApi` port (DD 39944194): every backend call the SvelteKit server
+ * The `ZurfurApi` port: every backend call the SvelteKit server
  * makes, as one service named by role with a prod Layer (real HTTP through the
  * `/api` split) and an in-memory Layer for tests — `adapter-mem` parity for
  * the frontend. Success payloads decode through Effect Schema at the boundary;
@@ -38,8 +38,7 @@ import {
 } from './errors';
 
 /**
- * The contract's boundary decoder (ZMVP-161; amended Decision 4 of
- * DD 39944194): `fromJson` against a GENERATED schema — produced from
+ * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
  * `contract/zurfur/api/v1/*.proto`, so it structurally cannot drift from the
  * contract, which is a stronger property than the hand-written Effect Schema
  * it replaces offered. `ignoreUnknownFields: true` is MANDATORY here

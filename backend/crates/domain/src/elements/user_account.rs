@@ -1,6 +1,6 @@
 //! The [`UserAccount`] — a membership: which [`Role`] a user holds in an
 //! account. A membership IS the join: granting a role is how a user joins,
-//! revoking it is how they leave. (DESIGN 2162692)
+//! revoking it is how they leave.
 
 use crate::elements::{
     account::AccountId,

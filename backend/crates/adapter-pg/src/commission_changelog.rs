@@ -18,7 +18,7 @@ use crate::queries::changelog as sql;
 
 /// PostgreSQL append view over an open transaction (the [`ChangelogWrites`]
 /// surface). Holds only a borrowed `&mut PgConnection`, so a pool-backed
-/// (dual-write) append is unrepresentable. Built by `uow.changelog()`. (DD 24150017)
+/// (dual-write) append is unrepresentable. Built by `uow.changelog()`.
 pub struct PgChangelogWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub(crate) conn: &'a mut PgConnection,

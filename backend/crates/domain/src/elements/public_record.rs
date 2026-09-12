@@ -4,7 +4,7 @@
 //! These are what the [`PublicRecords`](crate::ports::PublicRecords) port speaks
 //! in: they mirror the `app.zurfur.feed.post` lexicon as domain data and carry
 //! no AT-Protocol types — the wire shape, CBOR and CID computation live in
-//! `adapter-atproto`. (DD 29949954)
+//! `adapter-atproto`.
 
 use cid::Cid;
 
@@ -228,7 +228,7 @@ pub enum ReplySubject {
 
 /// A reply anchor: the thread `root` and the immediate `parent`. Its presence
 /// on a [`FeedPost`] makes the post a comment/shout. v1 composes reply-to-root
-/// only, so `parent == root`. (DD 30572573)
+/// only, so `parent == root`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyRef {
     /// The root of the thread this reply belongs to.

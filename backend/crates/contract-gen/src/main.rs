@@ -1,6 +1,6 @@
 //! `just gen-contract` — regenerate the api crate's committed
-//! `src/generated/` module from the repo-root contract corpus (DD 40992770
-//! decision 11). The workspace build never needs this to run: the output is
+//! `src/generated/` module from the repo-root contract corpus. The
+//! workspace build never needs this to run: the output is
 //! committed and `@generated`-marked, and the api crate's `contract_current`
 //! test fails loudly (with a diff) when it is stale. One generation body
 //! lives in [`contract_gen::generate`]; this binary and that test are its two

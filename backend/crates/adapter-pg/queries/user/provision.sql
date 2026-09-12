@@ -1,5 +1,5 @@
 -- Insert (or resolve) the User projection row keyed by its shared actor_identity id —
--- the id the caller has just interned the visitor's DID under (ZMVP-123). The DID and
+-- the id the caller has just interned the visitor's DID under. The DID and
 -- the one-DID-one-actor race are the intern step's job now; this only lands the
 -- projection. Idempotent on the shared PK: a repeat sign-in resolves to the same
 -- identity id, whose users row already exists, so the no-op DO UPDATE lets RETURNING

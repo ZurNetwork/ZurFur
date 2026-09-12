@@ -1,6 +1,6 @@
 //! The [`Fact`] contract: what it means for a type to be commission-anchored
 //! evidence that work happened. A commission bearing any fact can never be hard
-//! deleted, only archived. (DD 3014657)
+//! deleted, only archived.
 
 use super::CommissionId;
 

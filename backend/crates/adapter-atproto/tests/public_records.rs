@@ -1,4 +1,4 @@
-//! `AtprotoPublicRecords` against a real, throwaway reference PDS (ZMVP-105).
+//! `AtprotoPublicRecords` against a real, throwaway reference PDS.
 //!
 //! Runs the **same** shared conformance suite the mem fake runs
 //! ([`test_support::contract`]) — that both pass is AC5 — plus the atproto-only

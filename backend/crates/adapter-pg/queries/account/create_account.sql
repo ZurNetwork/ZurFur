@@ -1,4 +1,4 @@
--- The account's DID now lives in the actor super-table (ZMVP-123): the caller interns
+-- The account's DID now lives in the actor super-table: the caller interns
 -- it (keyed by this same id) as the first step of the create unit, so the projection
 -- row carries no `did`. `kind` is filled by its constant column DEFAULT ('account')
 -- and never named here. `handle` STAYS on accounts — it is the authoritative, globally

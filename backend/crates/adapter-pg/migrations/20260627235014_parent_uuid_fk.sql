@@ -1,4 +1,4 @@
--- ZMVP-20: the role-tree parent edge is the inviter's internal UserId — a UUIDv7
+-- The role-tree parent edge is the inviter's internal UserId — a UUIDv7
 -- minted app-side (`users.id`), NOT a DID and not a loose string. Promote
 -- `account_members.parent` from `text` to a real `uuid` foreign key now, while the
 -- column is still entirely NULL (this ticket is its first writer). This reverses the

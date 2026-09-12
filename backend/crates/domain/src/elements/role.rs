@@ -1,6 +1,6 @@
 //! [`Role`] — a member's rank inside an account, and the rule for who may grant
 //! what. Four ranks, Owner highest; only Owner and Admin may change roles, and
-//! the grant rule itself lives in [`Role::can_grant`]. (DESIGN 2162692)
+//! the grant rule itself lives in [`Role::can_grant`].
 
 use std::str::FromStr;
 
@@ -75,7 +75,6 @@ impl Role {
     /// Whether a member holding `self` may grant `target` to another member —
     /// the one authority seam. Only an Owner or Admin grants at all, and only a
     /// role strictly below their own: granting Owner is transfer, its own seam.
-    /// (DESIGN 2162692)
     pub fn can_grant(&self, target: &Role) -> bool {
         // Two parts: only Owner/Admin grant at all (a Manager outranks a Member
         // but grants nothing), and the target must sit strictly below the actor

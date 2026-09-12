@@ -1,8 +1,7 @@
-//! ZMVP-68 — the owner archives (and un-archives) a fact-bearing commission,
+//! The owner archives (and un-archives) a fact-bearing commission,
 //! end to end over HTTP.
 //!
-//! Pins the acceptance criteria at the API surface (DESIGN/Commission; the
-//! Engineer ruling of 2026-07-05 on the ticket):
+//! Pins the acceptance criteria at the API surface:
 //!
 //! - **AC1** — the owner archives a commission: it is marked out of active
 //!   views (`archived_at` set) but its record survives intact.

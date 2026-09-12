@@ -1,7 +1,6 @@
-//! ZMVP-17 — *A User's alternate handles are never publicly correlated.*
+//! Cross-persona unlinkability — *A User's alternate handles are never publicly correlated.*
 //!
-//! The surviving invariant after the 1DD "User-Profiles, the Handle Swap &
-//! Content Maturity" (DESIGN, DECIDED 2026-06-22): a person who runs separate
+//! The invariant: a person who runs separate
 //! personas does so as separate handles → separate Users → separate DIDs and
 //! logins. **No public surface may join one handle's User/Account graph to
 //! another's as belonging to the same person.** The separation holds *by
@@ -17,20 +16,20 @@
 //!   introduces one — e.g. an identity surface that names a caller's *other*
 //!   personas, or a global user-enumeration endpoint.
 //! - **Sanctioned, and NOT constrained here:** an Account-Profile roster of a
-//!   *single* account's members/participants (1DD decision 5). Listing who is in
+//!   *single* account's members/participants. Listing who is in
 //!   one account does not assert that any two of them are the same human, so it is
 //!   not cross-persona correlation. A future roster endpoint is a deliberate,
 //!   designed surface — not something this guard should trip on.
-//! - **Also sanctioned:** a caller reading *their own* accounts (`GET /accounts`,
-//!   ZMVP-157). It is `401` to anonymous, takes no parameter naming a user, and
+//! - **Also sanctioned:** a caller reading *their own* accounts (`GET /accounts`).
+//!   It is `401` to anonymous, takes no parameter naming a user, and
 //!   names no User but the caller — so obtaining it requires already being that
-//!   persona. DD `21594113` decision 4 publishes strictly more than this (the
-//!   *public* User-Profile lists account memberships by default), so a private
+//!   persona. The public User-Profile publishes strictly more than this (it
+//!   lists account memberships by default), so a private
 //!   self-listing cannot be the leak. What must stay true is behavioural, and is
-//!   tested below: it never names a co-member (Engineer ruling 2026-07-25,
-//!   re-aiming this guard from route-absence onto the leak itself).
+//!   tested below: it never names a co-member — this guard is aimed at the
+//!   leak itself, not merely at whether the route exists.
 //!
-//! Scope of the claim (1DD "Accepted tradeoff"): *not correlated in-product, not
+//! Scope of the claim: *not correlated in-product, not
 //! surfaced publicly by default* — not adversarial anonymity, since shared
 //! infrastructure can still correlate for a determined observer.
 //!
@@ -105,7 +104,7 @@ async fn sign_in_as_alice(client: &reqwest::Client, base: &str) {
     assert_eq!(res.status(), 303, "callback should redirect on success");
 }
 
-/// The behavioral heart of ZMVP-17: even when two personas share private state
+/// The behavioral heart of cross-persona unlinkability: even when two personas share private state
 /// (here, co-membership of one account), the public identity surface reflects
 /// only the *caller's own* handle and never names the other persona. If a change
 /// ever made `/me` (or its User-Profile successor) surface a caller's other
@@ -216,11 +215,11 @@ async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
 /// Structural guard: there is no global user-enumeration surface. A list of all
 /// Users (with the accounts each belongs to) is the classic way a person's
 /// separate handles get correlated, so its *absence* is part of the invariant.
-/// This fails the moment such a route is added — at which point ZMVP-17 must be
-/// reconsidered, not silently regressed.
+/// This fails the moment such a route is added — at which point cross-persona
+/// unlinkability must be reconsidered, not silently regressed.
 ///
-/// `/accounts` was removed from this list in ZMVP-157 (Engineer ruling
-/// 2026-07-25) because it now exists as a **caller-scoped** read: it takes no
+/// `/accounts` was removed from this list once it became a **caller-scoped**
+/// read: it takes no
 /// user-naming parameter, so it cannot enumerate anyone, and the property that
 /// actually matters is tested behaviourally instead — see
 /// [`the_identity_surface_never_names_a_callers_other_persona`], which asserts
@@ -252,8 +251,8 @@ async fn there_is_no_global_user_enumeration_endpoint() {
 /// The half of the old `/accounts` absence assertion that still carries weight:
 /// the own-accounts listing is **closed to anonymous callers**. A `2xx` here is
 /// the real regression the structural guard was protecting against — it would
-/// mean the listing had become a public surface, which is exactly what ZMVP-17
-/// forbids. `401` is the sanctioned answer (the route exists; you must be
+/// mean the listing had become a public surface, which is exactly what
+/// cross-persona unlinkability forbids. `401` is the sanctioned answer (the route exists; you must be
 /// someone to read it); anything in the 2xx range is a leak.
 #[tokio::test]
 async fn the_own_accounts_listing_is_closed_to_anonymous_callers() {

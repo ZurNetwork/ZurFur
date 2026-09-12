@@ -1,5 +1,5 @@
 -- Persistent home for atproto OAuth state, replacing jacquard's in-memory
--- MemoryAuthStore (see ZMVP-12). The store impl lives in adapter-atproto (it
+-- MemoryAuthStore. The store impl lives in adapter-atproto (it
 -- speaks the jacquard `ClientAuthStore` trait); the schema lives here because
 -- adapter-pg owns all DDL and migration machinery. Two row families mirror the
 -- trait's two responsibilities.

@@ -1,7 +1,6 @@
-//! The dependency rule (ZMVP-205 AC1): `domain` never depends on
-//! `application`, and `application` links no adapter, no composition root,
-//! and no HTTP stack. `cargo tree` over the normal dependency graph is the
-//! witness.
+//! The dependency rule: `domain` never depends on `application`, and
+//! `application` links no adapter, no composition root, and no HTTP stack.
+//! `cargo tree` over the normal dependency graph is the witness.
 //!
 //! The **dev** graph is deliberately cyclic — `application` dev-depends on
 //! `test-support`, which links `composition`, which links `application` (for

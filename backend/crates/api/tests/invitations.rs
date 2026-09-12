@@ -1,5 +1,5 @@
-//! End-to-end invitation flow: issuing and issuer-revocation (ZMVP-32), and the
-//! invitee-side accept and decline (ZMVP-20). Same in-process fakes as the other
+//! End-to-end invitation flow: issuing and issuer-revocation, and the
+//! invitee-side accept and decline. Same in-process fakes as the other
 //! account e2e suites: no network, no database.
 use adapter_mem::MemBackend;
 use api::AppState;

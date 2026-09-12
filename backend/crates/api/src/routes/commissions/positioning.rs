@@ -1,4 +1,4 @@
-//! Account positioning endpoints (DD 29130754): a commission is placed onto
+//! Account positioning endpoints: a commission is placed onto
 //! an account's board, and its view grants are managed (`/placements`,
 //! `/grants`). Placement addresses a column — the column names its board,
 //! the board its account — so `/placements` carries no `account_id`.
@@ -30,7 +30,8 @@ pub(super) struct PlaceBody {
 }
 
 /// The `POST /commissions/{id}/grants` body: the target user and the key's
-/// level (`presentation`/`description`/`total`). Grants are per-User. (DD 29130754)
+/// level (`presentation`/`description`/`total`). Grants are issued to Users,
+/// never to Accounts.
 #[derive(Deserialize)]
 pub(super) struct GrantBody {
     target_user_id: String,

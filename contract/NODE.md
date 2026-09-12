@@ -1,12 +1,12 @@
 ---
 path: contract
-charted: 2026-08-21
+charted: 2026-09-12
 fs:
   - name: README.md
     role: orientation: authority claim, layout, the rules in one breath
     node: false
   - name: VERSIONING.md
-    role: the binding versioning/deprecation contract (ZMVP-28): rulings R1–R11, breaking-change list, 12-month notice
+    role: the binding versioning/deprecation contract: rulings R1–R11, breaking-change list, 12-month notice
     node: false
   - name: buf.yaml
     role: v2 module config — lint STANDARD, breaking gate WIRE_JSON
@@ -30,4 +30,4 @@ fs:
 
 **Entry points:** `README.md` → `VERSIONING.md` · `just gen-contract` · CI job `contract` (lint + breaking + clean-slate generate diff) · `backend/crates/api/tests/contract_routes.rs`.
 
-**Refs:** DD "The API Contract — Protobuf as the Independent IDL" (40992770) · DD 23592962 · "Plugin — API Stability & Versioning" (41189413).
+**Refs:** DD 40992770 — The API Contract, Protobuf as the Independent IDL (README.md, VERSIONING.md: authority of this directory over both tiers; decision 3: service blocks are route-declarations only, messages-only codegen) · DD 23592962 — API Response Shape & Error Model (RFC 9457) · DD 41189413 — Plugin — API Stability & Versioning.

@@ -1,7 +1,7 @@
 //! Ports for the actor super-table: [`ActorIdentityStore`] pool-backed,
 //! [`ActorIdentityWrites`] reachable only on an open
 //! [`UnitOfWork`](crate::ports::UnitOfWork). Neither carries a delete — identity
-//! rows are immortal, and liveness is a state on the row. (DD 34013187)
+//! rows are immortal, and liveness is a state on the row.
 
 use async_trait::async_trait;
 

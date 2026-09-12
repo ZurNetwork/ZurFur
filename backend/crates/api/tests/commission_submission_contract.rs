@@ -1,10 +1,9 @@
-//! ZMVP-89 — the submission contract: file upload and Status-set are **two
-//! explicit, never-coupled API calls** (Engineer ruling 2026-07-05: no UI ships
-//! in this epic; the future submission form orchestrates these two calls — no
-//! backend shortcut, no coupled write exists, by design).
+//! The submission contract: file upload and Status-set are **two
+//! explicit, never-coupled API calls** — no UI ships yet; a future submission
+//! form orchestrates these two calls, but no backend shortcut and no coupled
+//! write exists, by design.
 //!
-//! Pins the always-explicit rule (DESIGN/Commission — Status; explicit-transition
-//! ruling 2026-07-01) at the API surface:
+//! Pins the always-explicit rule at the API surface:
 //!
 //! - **Negative contract** — `POST /commissions/{id}/files` NEVER mutates any
 //!   status: not the direction axis, not the deadline axis, not the Lifecycle —
@@ -12,7 +11,7 @@
 //!   field and a query parameter), it is ignored, never applied.
 //! - **The walkthrough shape** — upload then explicit Status-set as two separate
 //!   calls, each landing its **own** changelog entry (`file_added`, then
-//!   `status_changed`), exactly as the ZMVP-91 walkthrough will exercise it.
+//!   `status_changed`), exactly as a future full walkthrough will exercise it.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 

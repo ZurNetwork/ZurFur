@@ -49,7 +49,7 @@ impl Profile {
     /// PDS failure degrades to `None` rather than erroring.
     ///
     /// The cache fill is pool-backed and best-effort — a documented exception to
-    /// the compile-enforced Unit of Work (DD 24150017), and a `put` failure is
+    /// the compile-enforced Unit of Work, and a `put` failure is
     /// swallowed so a cache hiccup never fails the read.
     pub async fn resolve_through(
         cache: &dyn ProfileCache,

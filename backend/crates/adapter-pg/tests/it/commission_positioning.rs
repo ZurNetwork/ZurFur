@@ -1,6 +1,6 @@
-//! Commission positioning over PostgreSQL (ZMVP-70; Ownership Separation DD
-//! `29130754`), against a throwaway container: the board rail (**placement is a
-//! card on a board** — Decision 6, "placement = workflow membership rows,
+//! Commission positioning over PostgreSQL, against a throwaway container:
+//! the board rail (**placement is a
+//! card on a board** — "placement = workflow membership rows,
 //! account-side") and the view-grant key's upsert/hard-delete. The writes go
 //! through the [`UnitOfWork`]'s views; the reads through the pool-backed stores.
 //! Requires a container runtime socket.

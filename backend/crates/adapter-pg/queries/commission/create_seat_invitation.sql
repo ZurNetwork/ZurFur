@@ -1,4 +1,4 @@
--- Persist a freshly issued, pending seat invitation (ZMVP-78). The partial
+-- Persist a freshly issued, pending seat invitation. The partial
 -- unique index (`... WHERE state = 'pending'`, see the migration) enforces at
 -- most one pending offer per (seat, invited_user), so a duplicate issue is
 -- silently dropped rather than becoming a second row — the store-level backstop

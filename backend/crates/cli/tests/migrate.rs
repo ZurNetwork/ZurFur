@@ -1,4 +1,4 @@
-//! `zurfur migrate` + the schema-drift gate end to end (ZMVP-206), on a
+//! `zurfur migrate` + the schema-drift gate end to end, on a
 //! **bare** throwaway Postgres: data commands refuse until `migrate` runs;
 //! `health` reports instead of refusing; `migrate` is idempotent.
 

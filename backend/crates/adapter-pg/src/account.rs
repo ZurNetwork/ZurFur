@@ -1,7 +1,6 @@
 //! [`AccountStore`] (reads) and [`AccountWrites`] (writes) over PostgreSQL:
 //! accounts and memberships in `accounts` / `account_members`. Reads are
 //! pool-backed; writes only via an open [`UnitOfWork`] (`uow.accounts()`).
-//! (DD 24150017)
 //!
 //! [`UnitOfWork`]: domain::ports::UnitOfWork
 
@@ -29,7 +28,7 @@ use crate::queries::actor_identity as actor_sql;
 /// Account-anchored fact tables: tables whose rows would be orphaned
 /// by removing an account, so a bearing account is soft- never hard-deleted.
 /// Empty today. Every table referencing `accounts` must appear here or in
-/// [`ACCOUNT_NON_FACT_TABLES`]; a schema tripwire test enforces it. (DD 23003138)
+/// [`ACCOUNT_NON_FACT_TABLES`]; a schema tripwire test enforces it.
 pub const ACCOUNT_FACT_TABLES: &[&str] = &[];
 
 /// Tables with a foreign key onto `accounts(id)` that are deliberately NOT
@@ -57,7 +56,7 @@ const _: () = assert!(
 /// Rebuild a domain [`Account`] from its persisted fields — shared by
 /// [`to_account`] and [`to_account_membership`]. Re-validates the stored
 /// handle/name; an `Err` on tampering, never a panic. The id IS the account's
-/// DID (DD 57081857).
+/// DID — accounts have no separate surrogate key.
 fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
     let AccountFields {
         id,
@@ -199,7 +198,7 @@ impl PgAccountStore {
 
 /// PostgreSQL write view over an open transaction (the [`AccountWrites`]
 /// surface). Holds only a borrowed `&mut PgConnection` — no pool in scope, so
-/// a bare-pool write is unrepresentable. Built by `uow.accounts()`. (DD 24150017)
+/// a bare-pool write is unrepresentable. Built by `uow.accounts()`.
 pub struct PgAccountWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub(crate) conn: &'a mut PgConnection,
@@ -209,7 +208,7 @@ impl PgAccountWrites<'_> {
     /// Settle a member's departure from `account` — shared by
     /// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role).
     /// Re-homes the member's children to their parent, deletes the membership,
-    /// and revokes their pending issued invitations. No-op if already gone. (DD 24182820)
+    /// and revokes their pending issued invitations. No-op if already gone.
     async fn settle_member_departure(
         &mut self,
         user: &UserId,
@@ -345,7 +344,7 @@ impl AccountStore for PgAccountStore {
     }
 
     /// Whether `handle` was recently vacated by an account other than
-    /// `excluding` — i.e. quarantined to someone else. (DD 27852802)
+    /// `excluding` — i.e. quarantined to someone else.
     /// Uses the `(old_handle, changed_at)` index.
     async fn handle_reserved_for_other(
         &self,
@@ -392,7 +391,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Founds the account: interns its DID into the actor super-table, then writes
     /// the `accounts` row and the founder's `account_members` row, all on the open
     /// transaction. A handle collision on `accounts_handle_key` returns
-    /// [`HandleTaken`]; any other failure rolls the transaction back. (DD 23003138)
+    /// [`HandleTaken`]; any other failure rolls the transaction back.
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         // Intern the DID first: the accounts row's composite FK requires the
         // identity row to exist already.
@@ -444,7 +443,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Repoints `accounts.handle` to `new` and appends the audit row, atomically.
     /// `old` is an optimistic-concurrency precondition (`handle = old AND
     /// deleted_at IS NULL`); a non-matching row rolls the unit back. A handle
-    /// collision returns [`HandleTaken`]. (DD 27852802)
+    /// collision returns [`HandleTaken`].
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -689,7 +688,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Deletes invitations, then memberships, then the `accounts` row (those FKs
     /// don't cascade). Frees the handle for reuse. Custody `account_keys` rows are
     /// deliberately left in place (the PLC recovery window). A `DELETE` matching
-    /// no row is a no-op. (DD 29130754)
+    /// no row is a no-op.
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         sql::hard_delete_invitations(&mut *self.conn, account.as_str()).await?;
         sql::hard_delete_memberships(&mut *self.conn, account.as_str()).await?;

@@ -1,9 +1,8 @@
-//! ZMVP-85 — a Participant sets the direction-axis Status explicitly, end to
+//! A Participant sets the direction-axis Status explicitly, end to
 //! end over HTTP.
 //!
-//! Pins the acceptance criteria at the API surface (DESIGN/Commission, Status;
-//! Engineer ruling E29 — one nullable column, so axis exclusivity falls out of
-//! the shape):
+//! Pins the acceptance criteria at the API surface. Direction status is one
+//! nullable column, so axis exclusivity falls out of the shape:
 //!
 //! - **AC1** — a Participant sets a direction status (Waiting for Input /
 //!   Waiting for Approval / Changes Requested) or clears it; each change
@@ -11,12 +10,12 @@
 //! - **AC2** — direction-axis values are mutually exclusive: setting one
 //!   REPLACES the current one (never accumulates).
 //! - **AC3** — direction and deadline axes compose freely: the direction
-//!   status never touches the deadline envelope field (the deadline-axis
-//!   machinery itself is ZMVP-86).
+//!   status never touches the deadline envelope field (deadline-axis
+//!   machinery is separate).
 //! - **AC4** — no content event changes a direction status by itself: a note
 //!   (the content event that exists today) leaves it untouched; the only
-//!   writer of the column is this explicit endpoint, so the future markup/file
-//!   emitters (ZMVP-88/90) inherit the rule by construction.
+//!   writer of the column is this explicit endpoint, so future markup/file
+//!   emitters inherit the rule by construction.
 //! - **Closed door** — a non-participant (who may not learn the commission
 //!   exists) gets the byte-identical 404 a missing commission gets, never a
 //!   403; anonymous callers get a 401.

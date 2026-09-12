@@ -1,6 +1,6 @@
 ---
 path: backend/crates/application/src/commission
-charted: 2026-09-06
+charted: 2026-09-12
 fs:
   - name: create.rs
     role: create a Commission for the caller (+ creation changelog entry, skeleton tabs)

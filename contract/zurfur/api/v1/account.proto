@@ -1,10 +1,11 @@
 // The Citizen's surface: founding, listing, renaming, deleting Accounts.
 //
-// Only messages are generated; the service block declares routes for the
-// descriptor test (DD 40992770 decision 3). Ids are OPAQUE to clients
-// (VERSIONING.md R6): stable, unique, ≤64-char strings — do not parse, do not
-// order by them. The `role` vocabulary is a STRING, not an enum (R8): the
-// backend's `Role::try_from` is the enforcement; this file only describes.
+// Only messages are generated; the service block below exists solely to
+// declare routes — handlers are hand-written and return the generated
+// types. Ids are OPAQUE to clients (VERSIONING.md R6): stable, unique,
+// ≤64-char strings — do not parse, do not order by them. The `role`
+// vocabulary is a STRING, not an enum (R8): the backend's `Role::try_from`
+// is the enforcement; this file only describes.
 
 syntax = "proto3";
 
@@ -75,10 +76,9 @@ message ChangeHandleResponse {
 }
 
 // `DELETE /api/v1/accounts/{id}` succeeds `200` and SAYS WHICH deletion
-// happened (Engineer ruling 2026-07-25: the frontend is an interface — it
-// renders what the program tells it, and cannot infer an outcome it was
-// never told; ZMVP-152's AC needs this). Minted at `/api/v1`; the pre-GA
-// surface answered a bodiless `204`.
+// happened — the frontend is an interface, so it can only render an
+// outcome it was actually told. Minted at `/api/v1`; the pre-GA surface
+// answered a bodiless `204`.
 message DeleteAccountResponse {
   // Extensible string vocabulary (R8), domain-enforced:
   // `soft` — the account held facts; row kept, handle reserved, DID live;
@@ -94,7 +94,7 @@ message ListAccountsResponse {
   repeated AccountMembership accounts = 1;
 }
 
-// `PATCH /api/v1/accounts/{id}/handle` — the Owner-only rename (DD 27852802).
+// `PATCH /api/v1/accounts/{id}/handle` — the Owner-only handle-rename endpoint.
 message ChangeHandleRequest {
   // Opaque account id, from the path.
   string id = 1;
@@ -111,8 +111,8 @@ message DeleteAccountRequest {
 // The accounts service. Every route requires a session (401 otherwise) and
 // answers Problems per problem.proto.
 service AccountService {
-  // Every live account the caller holds a role in — not owned-only
-  // (Engineer ruling 2026-07-24). Soft-deleted accounts excluded.
+  // Every live account the caller holds a role in — not owned-only.
+  // Soft-deleted accounts excluded.
   rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
     option (google.api.http) = {
       get: "/api/v1/accounts"
@@ -137,7 +137,7 @@ service AccountService {
   }
 
   // Owner-only delete. Fact-bearing → soft (`outcome: "soft"`), fact-free →
-  // hard (`outcome: "hard"`). `200` + the outcome — ruled 2026-07-25.
+  // hard (`outcome: "hard"`). `200` + the outcome.
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse) {
     option (google.api.http) = {
       delete: "/api/v1/accounts/{id}"

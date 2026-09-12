@@ -1,4 +1,4 @@
-//! ZMVP-88 — a Participant uploads a file entry to the changelog, and retrieves
+//! A Participant uploads a file entry to the changelog, and retrieves
 //! one, end to end over HTTP. The stack's security anchor: Total-tier file content
 //! served by the API, participant-only, with the download hardened against stored
 //! XSS.

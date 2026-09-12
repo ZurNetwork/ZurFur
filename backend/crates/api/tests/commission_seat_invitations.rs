@@ -1,4 +1,4 @@
-//! ZMVP-78 — the owner invites a User to a Seat (issue + revoke), over HTTP.
+//! The owner invites a User to a Seat (issue + revoke), over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface (the store-layer seams — the
 //! partial unique index, the pending→revoked flip — are covered in
@@ -11,7 +11,7 @@
 //! - **AC3** — re-inviting an already-pending User to the same seat is
 //!   idempotent (`200`, the existing offer), never a second row.
 //! - **AC4** — a Golem cannot be invited: satisfied by construction (an invitee
-//!   is a User by DID; no golem ActorKind exists — DD 34013187), so there is no
+//!   is a User by DID; no golem ActorKind exists), so there is no
 //!   representable Golem invitee to reject and no test can reach one.
 //! - The owner revokes a pending offer (`200`); revoking nothing pending is an
 //!   idempotent `200` no-op.
@@ -123,7 +123,7 @@ async fn create_commission(
 
 /// The commission's only tab id, introspected off the backend. There is no
 /// ROUTE that hands a caller a tab id yet — reading the composition is
-/// ZMVP-163's `GET` — so tests read it from the store.
+/// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
         .tabs_of(CommissionId::new(commission))

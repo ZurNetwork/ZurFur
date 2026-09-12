@@ -1,6 +1,6 @@
 /**
  * The single rewrite that makes in-app `fetch('/api/v1/...')` behave identically in
- * the browser and during SSR (ZMVP-150, AC3).
+ * the browser and during SSR.
  *
  * In the browser the call rides Caddy: same-origin `/api/v1/*` reaches axum with the
  * `/api` prefix stripped. During SSR there is no Caddy in the loop, so SvelteKit's
@@ -23,7 +23,7 @@ const API_PREFIX = '/api/v1';
 /**
  * The ONLY cookie ever forwarded to the upstream: the host-only session cookie.
  * Named once so the filter below and any future caller can't drift apart —
- * exported so the mock `ZurfurApi` Layer (ZMVP-198, `zurfur-api-mock.ts`)
+ * exported so the mock `ZurfurApi` Layer (`zurfur-api-mock.ts`)
  * reports the same name `signout` clears, rather than a hand-copied literal.
  */
 export const SESSION_COOKIE_NAME = 'zurfur.sid';

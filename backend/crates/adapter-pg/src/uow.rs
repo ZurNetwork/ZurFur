@@ -1,5 +1,5 @@
 //! The private-store [`Database`] factory and its [`UnitOfWork`] handle over
-//! PostgreSQL — "transactions as a capability" made concrete (DD 24150017).
+//! PostgreSQL — "transactions as a capability" made concrete.
 //! [`PgDatabase`] holds the pool and vends a [`PgUnitOfWork`], which holds
 //! only the `sqlx::Transaction`; per-aggregate write views borrow it, so a
 //! bare-pool write is unrepresentable.
@@ -20,7 +20,7 @@ use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
 
 /// The PostgreSQL [`Database`] factory: holds the pool and opens one
 /// transaction per [`begin`](Database::begin). Serves no writes itself —
-/// those live only on the [`PgUnitOfWork`] it vends. (DD 24150017)
+/// those live only on the [`PgUnitOfWork`] it vends.
 pub struct PgDatabase {
     pool: PgPool,
 }

@@ -1,6 +1,6 @@
 ---
 path: backend/crates/application
-charted: 2026-09-06
+charted: 2026-09-12
 fs:
   - name: Cargo.toml
     role: deps shared+domain+anyhow+tracing+serde_json+tokio(io-util, upload streaming); dev-deps test-support+composition+tokio+uuid+chrono+async-trait
@@ -20,11 +20,17 @@ fs:
   - name: src/user.rs
     role: user module — MeQuery/MeResult/MeProfile/MeError, the flat me use case
     node: false
-  - name: src/account.rs + src/account/
-    role: account module root (AccountError/AccountPorts/AccountResult) + one file per use case
+  - name: src/account.rs
+    role: account module root — AccountError, AccountPorts, AccountResult, require_live_account
+    node: false
+  - name: src/account/
+    role: one file per account use case
     node: true
-  - name: src/commission.rs + src/commission/
-    role: commission module root (CommissionError/CommissionPorts, sweep_deadlines) + per-facet use-case trees
+  - name: src/commission.rs
+    role: commission module root — CommissionError, CommissionPorts, require_participant/require_owner, sweep_deadlines
+    node: false
+  - name: src/commission/
+    role: per-facet trees of commission use-case files
     node: true
   - name: tests/account.rs
     role: account use cases against adapter-mem — still imports the pre-restructure flat names (WIP)
@@ -41,12 +47,20 @@ fs:
   - name: tests/dep_guard.rs
     role: cargo-tree witness — application must never link an adapter, composition, or an HTTP stack (normal edges only; the dev graph is deliberately cyclic)
     node: false
+  - name: tests/unit_of_work_guard.rs
+    role: pins that a closed unit of work cannot be written to after commit/rollback
+    node: false
+  - name: tests/workflow.rs
+    role: integration tests for the account board use cases (boards, columns, card placement)
+    node: false
 ---
 **Is:** The application layer (DD 55836674): one plain async fn per use case, called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees plus the flat `user` module and the shared `transaction()` orchestrator.
 
-**Conventions:** one plain `pub async fn run` per use case, no mediator. Each use case is its own file exporting `Command` (or `Query`) + `Output` + `run`, so call sites read `commission::slots::declare::run(...)`; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module. The module root file keeps the per-entity `Ports` struct of `&dyn` ports, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias. Runtime config + `now: DateTimeUtc` are plain params. Output DTOs carry domain VALUES, never entities. Writes call `transaction()`; reads skip the unit of work. Depends on `domain` and `shared` only — never an adapter or `composition` — enforced by `tests/dep_guard.rs`. A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now`.
+**Conventions:** one plain `pub async fn run` per use case, no mediator. Each use case is its own file exporting `Command` (or `Query`) + `Output` + `run`, so call sites read `commission::slots::declare::run(...)`; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module. The module root file keeps the per-entity `Ports` struct of `&dyn` ports, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias. Runtime config + `now: DateTimeUtc` are plain params. Output DTOs carry domain VALUES, never entities. Writes call `transaction()`; reads skip the unit of work; the dependency floor is witnessed by `tests/dep_guard.rs`. A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now`.
 
 **Entry points:** `src/lib.rs` · `src/app.rs` · `src/account.rs` · `src/commission.rs` · `src/user.rs` · `src/transaction.rs`.
+
+**Refs:** DD 55836674 — The Application Layer, Use Cases, DTOs and Ports · DD 24150017 — Transactions as a capability (src/transaction.rs, tests/unit_of_work_guard.rs: the begin/commit/rollback orchestrator + the closed-unit guard) · DD 23003138 — Account Deletion, Tombstoning & Handle Reuse (src/account.rs: the liveness gate answers unknown-id and soft-deleted alike) · ZMVP-205 — the application-layer restructure that moved use cases below the HTTP layer (tests/dep_guard.rs, tests/user.rs, tests/account.rs, tests/commission.rs, tests/commission_files.rs) · memory `project_application_layer_convention` · memory `project_transaction_unit_of_work` · memory `feedback_work_by_module`.
 
 ## Notes
 - The composition root assembles ONE `Ports` bag (`app.rs`); `App` vends the per-entity namespaces `Accounts`/`Commissions`/`Users` with the ports already bound, and drivers pass only `now`. Every `Ports` entry is required, so `MissingPort` is currently unreachable — it is the home for the first port a driver profile may omit.
@@ -54,5 +68,3 @@ fs:
 - Its closure bound is `domain::ports::UnitOfWorkFn` plus explicit `F: Send`/`T: Send`, NOT std's `AsyncFnOnce` — higher-ranked `AsyncFnOnce` bounds do not hold the returned future `Send` (rust-lang/rust#110338).
 - Each module's `From<anyhow::Error>` impl is the single place a typed store error becomes a use-case error; `?` is the only path a store error takes, so no call site can let a 404/409 degrade into a 500.
 - Authorization posture across the crate: refusals never distinguish "absent" from "forbidden" for a caller with no standing. See the per-module NODE.md notes.
-
-**Refs:** DD 55836674 — The Application Layer, Use Cases, DTOs and Ports · DD 24150017 — Transactions as a capability · DD 23003138 — Account Deletion, Tombstoning & Handle Reuse · memory `project_application_layer_convention` · memory `project_transaction_unit_of_work` · memory `feedback_work_by_module`.

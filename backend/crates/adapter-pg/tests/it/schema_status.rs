@@ -1,4 +1,4 @@
-//! `schema_status` against a real Postgres (ZMVP-206): bare → Unknown,
+//! `schema_status` against a real Postgres: bare → Unknown,
 //! partially migrated → Behind{pending}, fully migrated → Current, a ledger
 //! with versions this binary never embedded → Ahead{unknown}.
 

@@ -10,8 +10,8 @@ import { loginForm } from '$lib/server/forms/login';
 import { problemMessage } from '$lib/server/forms/problem-message';
 
 /**
- * A signed-in visitor has nothing to do here — bounce home (ruling 9b makes
- * `/` the signed-in landing; the session rides in from the root layout's one
+ * A signed-in visitor has nothing to do here — bounce home (`/` is the
+ * signed-in landing page; the session rides in from the root layout's one
  * whoami). The auth gate runs FIRST, fail-closed order (authorization
  * precedes validation — the `[id]` route's rule). Otherwise surface any
  * `?error=<code>` a failed `signin_callback` redirected back with, plus a

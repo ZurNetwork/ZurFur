@@ -46,8 +46,8 @@ async fn health(state: State<AppState>) -> (StatusCode, Json<HealthResponse>) {
 #[cfg(test)]
 mod tests {
     //! Pins the body's wire shape to the exact strings the retired
-    //! `json!({ "status": …, "database": … })` literals produced (ZMVP-158
-    //! AC1/AC3) — alphabetical key order, matching `serde_json`'s `BTreeMap`
+    //! `json!({ "status": …, "database": … })` literals produced —
+    //! alphabetical key order, matching `serde_json`'s `BTreeMap`
     //! (no `preserve_order`).
 
     use super::*;

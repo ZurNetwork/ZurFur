@@ -82,7 +82,7 @@ pub enum AccountEntity {
 /// [`source`](std::error::Error::source).
 #[derive(Debug)]
 pub enum AccountError {
-    /// The handle is claimed — live, tombstoned or quarantined (DD 23003138).
+    /// The handle is claimed — live, tombstoned or quarantined.
     HandleTaken,
     /// The handle's namespace isn't supported for this operation.
     UnsupportedHandle,
@@ -261,7 +261,8 @@ impl From<anyhow::Error> for AccountError {
 
 /// Resolve the account a use case acts on, or refuse with `NotFound` — the one
 /// liveness gate every account use case shares. An unknown id and a
-/// soft-deleted account get the same answer (DD 23003138).
+/// soft-deleted account get the same answer, so a caller with no standing
+/// cannot tell tombstoned from never-existed.
 pub(crate) async fn require_live_account(
     ports: &crate::Ports,
     account_id: &AccountId,

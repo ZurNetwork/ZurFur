@@ -1,5 +1,5 @@
-//! ZMVP-70 — the owner places a commission in an account's position and manages
-//! its view grants, end to end over HTTP (Ownership Separation DD `29130754`).
+//! The owner places a commission in an account's position and manages
+//! its view grants, end to end over HTTP.
 //!
 //! Pins the acceptance criteria at the API surface:
 //!
@@ -14,10 +14,10 @@
 //!   commission is still not a Participant and is turned away from every
 //!   commission door with the closed-door 404.
 //!
-//! ⚠️ View grants are issued to **Users**, never Accounts (DD `29130754`,
-//! amended 2026-09-04), so AC4/AC5 name a grantee User. Placement is a card on
-//! an account's board (Decision 6): the account-level placement rails were
-//! deleted (Engineer ruling 2026-09-10), so AC1/AC2 exercise the board and AC3's
+//! ⚠️ View grants are issued to **Users**, never Accounts,
+//! so AC4/AC5 name a grantee User. Placement is a card on
+//! an account's board: the account-level placement rails were
+//! deleted, so AC1/AC2 exercise the board and AC3's
 //! current-placement pointer has no referent.
 //! - **AC6** — a commission with no placement and no grants is valid.
 //! - **Closed door** — a non-owner gets the byte-identical 404 a missing
@@ -110,8 +110,8 @@ async fn create_commission(
 }
 
 /// Seeds a committed account with a distinct handle, returning its
-/// [`AccountId`] — which *is* its DID (DD 57081857). `member`, when given, is
-/// seated as a plain Member of the account.
+/// [`AccountId`] — which *is* its DID, with no separate surrogate id.
+/// `member`, when given, is seated as a plain Member of the account.
 async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>) -> AccountId {
     let owner = backend
         .provision(&Did::new(format!("did:plc:acctowner-{handle}")))
@@ -143,8 +143,7 @@ async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>
 }
 
 /// Seeds a committed board for `account` with a single column, returning both
-/// ids. A board is where placement lives (Ownership Separation DD `29130754`
-/// D6), so every positioning test needs one.
+/// ids. A board is where placement lives, so every positioning test needs one.
 async fn seed_board(backend: &MemBackend, account: &AccountId) -> (WorkflowId, ColumnId) {
     let database = backend.database();
     let name = "Queue".parse::<WorkflowName>().expect("board name");

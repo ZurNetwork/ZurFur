@@ -1,6 +1,5 @@
 //! `POST /commissions/{id}/archive` / `POST /commissions/{id}/unarchive` — the
-//! owner archives, or un-archives, a commission (the soft-delete path, DD
-//! `3014657`).
+//! owner archives, or un-archives, a commission (the soft-delete path).
 
 use application::commission::{archive, unarchive};
 use axum::{

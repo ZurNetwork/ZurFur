@@ -1,29 +1,13 @@
--- Actor Addressing — the DID becomes the actor key (DD 57081857).
+-- Actor Addressing — the DID becomes the actor key.
 --
 -- Until now an actor had two names: a surrogate UUIDv7 row key and the
--- `did:plc` everything public already used. Decision 1 of the DD collapses them
--- — "did is the primary key of every actor table, and every FK to an actor is a
--- DID column" — so `users.id` and `accounts.id` become the DID text, and every
--- column that pointed at an actor by UUID is retyped to carry the DID instead.
--- Bluesky's own PDS/AppView/Ozone key their actor tables `did … PRIMARY KEY`;
--- this migration adopts the same shape.
---
--- DATA-PRESERVING. Nothing is dropped and nothing is invented: `actor_identity`
--- already holds the (id → did) map for every actor (migration
--- 20260718193956 backfilled it, and 20260718194001's CHECK makes a user/account
--- identity's DID NOT NULL), so every UUID in the schema can be rewritten to the
--- DID it already stood for. `actor_did()` below does that lookup once and
--- RAISEs — loudly, naming the offending UUID — rather than inventing a value if
--- an actor ever fails to resolve.
---
--- WHAT IS *NOT* DONE HERE. `actor_identity` keeps its own `id uuid PRIMARY KEY`.
--- The DD would have that surrogate go too, but `ActorIdentityId` is still a UUID
--- newtype in the domain and `ActorIdentity.did` is still `Option<Did>` (the
--- super-table admits DID-less kinds), so re-keying it is a domain change, not an
--- adapter one. The projections' parent constraint is repointed at the natural
--- key — `users (id, kind) → actor_identity (did, kind)` — so the ZMVP-123
--- invariant ("a projection row has an identity parent of matching kind") is kept
--- exactly, addressed by DID like everything else.
+-- `did:plc` everything public already used. This migration collapses them:
+-- `users.id` and `accounts.id` become the DID text, and every column that
+-- pointed at an actor by UUID is retyped to carry the DID instead.
+-- DATA-PRESERVING throughout — nothing is dropped or invented; every UUID is
+-- rewritten to the DID it already stood for, via `actor_identity`. See
+-- NODE.md ("20260907060908_rekey_actors_on_did.sql") for the full rationale,
+-- including what is deliberately NOT re-keyed here.
 
 -- The one lookup this migration is built on: the DID an actor UUID already
 -- stood for. NULL in, NULL out (nullable actor columns stay nullable); a UUID
@@ -84,7 +68,7 @@ ALTER TABLE accounts ALTER COLUMN id TYPE text USING actor_did(id);
 ALTER TABLE account_members
     ALTER COLUMN account_id TYPE text USING actor_did(account_id),
     ALTER COLUMN user_id    TYPE text USING actor_did(user_id),
-    -- Nullable — the role tree's root has no parent (DESIGN/Roles rule 5).
+    -- Nullable — the role tree's root has no parent.
     ALTER COLUMN parent     TYPE text USING actor_did(parent);
 
 ALTER TABLE account_invitations
@@ -118,25 +102,13 @@ ALTER TABLE commission_current_placement
     ALTER COLUMN account_id TYPE text USING actor_did(account_id),
     ALTER COLUMN placed_by  TYPE text USING actor_did(placed_by);
 
--- `account_id` becomes `grantee`, and loses its foreign key.
---
--- Which actor CLASS holds a view grant is in flux: the write port now issues one
--- to a User (`grant_view(commission, to_user, level)`, per the Engineer's
--- 2026-09-04 ruling amended inline onto Ownership Separation DD 29130754 —
--- "view grants are issued to Users; membership confers no view"), while the read
--- port still asks by `AccountId` and `AccountWrites::hard_delete` still
--- describes grants as account rails severed by cascade. Rows written under the
--- old reading exist and point at accounts; rows written under the new one point
--- at users, so no single reference can hold both — and re-pointing the column at
--- `users` would mean DELETING the account-keyed rows, which is a decision for
--- the Engineer, not a side effect of a re-key.
---
--- So the column stores an actor's DID and asserts nothing about its class. That
--- is not a new posture: `commission_changelog.actor_id`,
--- `commission_file.uploaded_by` and `commission_placement.placed_by` already
--- carry an actor without a foreign key. The name follows suit — `grantee` is the
--- role the DID plays, true under either reading, where `account_id` is now a
--- claim the data may not support.
+-- `account_id` becomes `grantee`, and loses its foreign key: which actor
+-- CLASS holds a view grant is in flux (the write port now issues grants to
+-- Users, the read port still asks by AccountId), so no single reference can
+-- hold both old and new rows. The column stores an actor's DID and asserts
+-- nothing about its class — the same posture `commission_changelog.actor_id`
+-- and `commission_file.uploaded_by` already hold. See NODE.md
+-- ("20260907060908_rekey_actors_on_did.sql") for the full rationale.
 ALTER TABLE commission_view_grant
     ALTER COLUMN account_id TYPE text USING actor_did(account_id);
 ALTER TABLE commission_view_grant
@@ -145,7 +117,7 @@ ALTER TABLE commission_view_grant
 ALTER TABLE commission_element
     ALTER COLUMN created_by TYPE text USING actor_did(created_by);
 
--- Nullable — a declared Seat is born vacant (ZMVP-76).
+-- Nullable — a declared Seat is born vacant.
 ALTER TABLE commission_seat
     ALTER COLUMN occupant TYPE text USING actor_did(occupant);
 

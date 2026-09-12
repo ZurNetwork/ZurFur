@@ -1,6 +1,6 @@
 //! The commission's Slots: declared Character positions — a commission may
 //! define them, title them, count them — whose filling is deferred to the
-//! Character epic. (DESIGN 5931025)
+//! Character epic.
 //!
 //! Declaring one contributes an ordinary element typed
 //! [`ElementType::slot`](super::ElementType::slot), with the title and notes in

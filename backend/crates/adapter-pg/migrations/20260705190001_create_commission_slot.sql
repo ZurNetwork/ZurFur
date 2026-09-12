@@ -1,9 +1,8 @@
--- Declared Slots (ZMVP-77; DESIGN/Slots 5931025, Referenceable/Slot/Seat DD
--- 28311564): the Slot itself. A Slot is not a kind of tree node — declaring
+-- Declared Slots: the Slot itself. A Slot is not a kind of tree node — declaring
 -- one plants an ordinary commission_node component leaf, and this table
 -- carries the Slot — the required title and optional freeform notes — keyed
--- by that component's node id (the Slot mirror of the Seat satellite ruling,
--- Gate A E20). The generic component add cannot populate this, which is why
+-- by that component's node id (the same satellite pattern the Seat table uses).
+-- The generic component add cannot populate this, which is why
 -- declaration has its own port/endpoint.
 --
 -- Deliberately NO occupant column of any kind: filling a Slot is the Character
@@ -14,12 +13,11 @@
 -- node_id        The carrying component's commission_node row — satellite
 --                key = node key.
 --                ON DELETE CASCADE: the satellite is meaningless without its
---                node (subtree pruning, ZMVP-73, sweeps it for free).
+--                node (subtree pruning sweeps it for free).
 -- commission_id  The owning commission, denormalized from the node for direct
 --                "slots of this commission" reads and for its own cascade:
---                slots are commission-owned bookkeeping, NOT facts (Deletion
---                DD 3014657) — they go when the commission hard-deletes
---                (ruling E35; ZMVP-66 relies on this). Classified in
+--                slots are commission-owned bookkeeping, NOT facts — they go
+--                when the commission hard-deletes. Classified in
 --                COMMISSION_NON_FACT_TABLES (adapter-pg/src/commission.rs).
 -- title          The Slot's required title, validated non-blank app-side
 --                (SlotTitle); the CHECK gives the required-ness DB teeth.

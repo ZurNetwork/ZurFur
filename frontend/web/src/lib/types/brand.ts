@@ -1,7 +1,7 @@
 /**
  * Branded (nominal) domain primitives — the TypeScript analogue of a Rust
- * newtype (semantic style rulebook, Confluence DESIGN 37519361: domain
- * primitives behind newtypes). `Brand<T, K>` is `T` widened with an
+ * newtype (domain primitives behind newtypes, never bare strings).
+ * `Brand<T, K>` is `T` widened with an
  * unreachable, uniquely-keyed marker property so structurally-identical
  * strings (an `AccountId` and a `Did` are both just `string` at runtime)
  * stop being interchangeable at the type level: assigning a bare `string`
@@ -16,12 +16,12 @@
  *    assertion, not a check ({@link accountId}, {@link did},
  *    {@link handleFromTrusted});
  *  - a VALIDATED MINT from UNTRUSTED input — the constructor actually
- *    checks the shape and returns `undefined` on failure, DD 39944194 D7's
+ *    checks the shape and returns `undefined` on failure, this codebase's
  *    no-Option convention (`T | undefined` is TypeScript's Option here)
  *    ({@link handle}).
  *
  * This module must never import `effect`: it lives ABOVE and BELOW the
- * runes seam, and Effect is confined to `src/lib/server/**` (DD 39944194).
+ * runes seam, and Effect is confined to `src/lib/server/**`.
  */
 
 import { ATPROTO_HANDLE, HANDLE_MAX_LEN, isPunycodeLabeled } from './handle-format';
@@ -72,9 +72,9 @@ export function handleFromTrusted(value: string): Handle {
 /**
  * Validated mint from UNTRUSTED input: checks the same shape rule
  * `claimHandleField` enforces server-side — trimmed, length-capped,
- * atproto-shaped, punycode-rejected (DD 26050561) — sourced from
+ * atproto-shaped, punycode (`xn--`) rejected — sourced from
  * {@link import('./handle-format')} so the two validators cannot drift.
- * Returns `undefined` on any failure (DD 39944194 D7: no Option type,
+ * Returns `undefined` on any failure (no Option type,
  * strict-null `T | undefined` is TypeScript's Option). This is a MINT, not a
  * parse — it does not report WHY input was rejected, only whether it was
  * accepted; a form wanting field-level messages uses `claimHandleField`

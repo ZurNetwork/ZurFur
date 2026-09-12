@@ -1,4 +1,4 @@
--- One annotation's canonical row (ZMVP-90). Written on the open transaction
+-- One annotation's canonical row. Written on the open transaction
 -- alongside the markup_added changelog entry it accompanies, so the geometry and
 -- its timeline fact land together. The (file_id, commission_id) composite foreign
 -- key makes a markup on another commission's file unrepresentable, so no guard is

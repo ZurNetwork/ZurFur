@@ -1,10 +1,10 @@
-//! The deadline axis over PostgreSQL (ZMVP-86), against a throwaway container:
+//! The deadline axis over PostgreSQL, against a throwaway container:
 //! `set_deadline` / `set_deadline_status` live on the [`UnitOfWork`]'s
 //! commissions view (so a deadline write and its changelog entry commit
 //! together), and `lapsed_deadlines` is the sweeper's **transactional**
 //! candidate scan — asked on the same open unit that then marks Late, so no
-//! commission can slip between the scan and the mark (ruling E12; the same
-//! same-transaction posture as `commission_has_facts`). Requires a container
+//! commission can slip between the scan and the mark (the
+//! same same-transaction posture as `commission_has_facts`). Requires a container
 //! runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};

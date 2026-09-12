@@ -1,5 +1,5 @@
-//! The one `begin`/`commit`/`rollback` orchestrator for the private store
-//! (DD 24150017). The use case owns its transaction boundary.
+//! The one `begin`/`commit`/`rollback` orchestrator for the private store.
+//! The use case owns its transaction boundary.
 
 use domain::ports::{Database, UnitOfWorkFn};
 

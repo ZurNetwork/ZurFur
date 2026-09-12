@@ -1,6 +1,6 @@
--- One live account by id. Since the actor re-key (DD 57081857) `accounts.id` IS the
--- account's DID, so the row carries no separate `did` column and needs no
--- actor_identity join to recover one.
+-- One live account by id. `accounts.id` IS the account's DID, so the row
+-- carries no separate `did` column and needs no actor_identity join to
+-- recover one.
 SELECT a.id, a.handle, a.name, a.created_at, a.updated_at, a.deleted_at
 FROM accounts a
 WHERE a.id = $1

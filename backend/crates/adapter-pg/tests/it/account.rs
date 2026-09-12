@@ -4,7 +4,7 @@
 //! its Owner membership in one transaction, that reads come back, and that the
 //! Unit-of-Work seam commits across aggregates atomically (and rolls back a
 //! dropped unit). Reads go through [`PgAccountStore`]; every write goes through the
-//! [`PgDatabase`] factory's [`UnitOfWork`] (DD `24150017`). The founder is
+//! [`PgDatabase`] factory's [`UnitOfWork`]. The founder is
 //! provisioned first because `account_members.user_id` references `users(id)`.
 //! Requires a container runtime socket (DOCKER_HOST honored).
 use std::collections::BTreeSet;
@@ -1347,7 +1347,7 @@ async fn change_handle_rejects_a_stale_old_handle() {
 
 // ── ZMVP-57: account-anchored fact gate & positioning severance ──────────────────
 
-/// AC4 — THE ACCOUNT-FACT TRIPWIRE (mirrors ZMVP-67's commission tripwire): every
+/// THE ACCOUNT-FACT TRIPWIRE (mirrors the equivalent commission tripwire): every
 /// table holding a foreign key onto `accounts(id)` must be **deliberately
 /// classified** — registered in [`ACCOUNT_FACT_TABLES`] (its rows are
 /// account-anchored facts; an account bearing one is soft-deleted, never hard) or in
@@ -1356,7 +1356,7 @@ async fn change_handle_rejects_a_stale_old_handle() {
 /// author makes that call in code — and registering a fact table trips the
 /// compile-time guards in `adapter_pg::account` and beside `account_has_facts` in the
 /// `api` crate, which refuse to build until that seam stops returning its unexamined
-/// constant `false`. Neither step can happen by accident (Account Deletion DD 23003138).
+/// constant `false`. Neither step can happen by accident.
 #[tokio::test]
 async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
     let (pool, _container) = fresh_pool().await;
@@ -1404,15 +1404,15 @@ async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
     );
 }
 
-/// AC1 — account hard-delete **severs** the account's placement rails while the
+/// Account hard-delete **severs** the account's placement rails while the
 /// placed **commission survives untouched**. Commissions are User-owned, not
-/// account facts (Ownership Separation DD 29130754), so a placed commission never
-/// forces a soft-delete; severance rides the ZMVP-70 `ON DELETE CASCADE` on each
+/// account facts, so a placed commission never
+/// forces a soft-delete; severance rides an `ON DELETE CASCADE` on each
 /// placement FK onto `accounts`, exercised through the real
 /// [`AccountWrites::hard_delete`](domain::ports::AccountWrites::hard_delete) path.
 ///
 /// The **view grant** used to be asserted here as a third rail. It no longer is: a
-/// grant is issued to a User (Engineer ruling 2026-09-04), so `commission_view_grant`
+/// grant is now issued to a User, so `commission_view_grant`
 /// holds no reference to an account to cascade from — see the actor re-key
 /// migration's note on that table.
 #[tokio::test]

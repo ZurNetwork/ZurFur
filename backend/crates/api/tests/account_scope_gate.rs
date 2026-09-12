@@ -1,4 +1,4 @@
-//! ZMVP-47 — capability-scoped write gating, end to end. The account-scope
+//! Capability-scoped write gating, end to end. The account-scope
 //! authorization floor is now one shared `AccountRole` extractor every
 //! account-scoped write flows through; this pins the three tiers of authority it
 //! enforces, plus the two things it must **not** do:
@@ -8,9 +8,10 @@
 //!   and the attempt mutates nothing;
 //! - **authed User holding the requisite role → success** (the gate isn't a blanket deny);
 //! - **authed User with zero Accounts → a *user-scoped* write still succeeds** (founding
-//!   an account is not account-scoped, so the gate is not applied — DD 26247170 §5);
+//!   an account is not account-scoped, so the gate is not applied — Users are
+//!   first-class actors that need no Account);
 //! - **anonymous read of an account's public data still succeeds** — the write gate must
-//!   never close a public read path (discovery; DD 26247170 §5).
+//!   never close a public read path (discovery).
 //!
 //! Same in-process fakes as the other account e2e suites — no network, no database.
 

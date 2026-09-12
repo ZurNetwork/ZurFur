@@ -1,6 +1,6 @@
 ---
 path: frontend/web/src
-charted: 2026-08-29
+charted: 2026-09-12
 fs:
   - name: lib/
     role: shared code, split above/below the runes seam
@@ -23,4 +23,10 @@ fs:
 
 **Conventions:** THE RUNES SEAM — Effect lives only under `lib/server/**`; `runApi` (`ManagedRuntime.runPromise`) is the one place programs become promises; loads/actions/components receive plain data and never see a fiber. Generated protobuf types never cross the seam — they decode server-side and map to hand-written plain interfaces in `lib/api/`. One-channel forms: values, field errors AND the backend Problem all ride the superform `message`. Absence is `T | undefined` — no `Option`, no `null`. Domain strings are branded (`AccountId`, `Did`, `Handle`).
 
-**Entry points:** `lib/server/runtime.ts`.
+**Entry points:** `hooks.server.ts` · `lib/server/runtime.ts`.
+
+**Refs:** internal ruling "9b" — `/` is the signed-in landing page after login/logout (cited in `routes/+page.svelte.spec.ts`, `routes/login/+page.server.ts`); not yet a recorded DD, ask the Engineer if this should become one.
+
+## hooks.server.ts — the boot-time mock-mode guard
+
+Checked at BOOT (not lazily on first request, unlike an earlier revision that lived in `runtime.ts`) so a misconfigured server fails to start rather than serving one request before crashing. Misconfiguration = `ZURFUR_WEB_MOCK` requested AND NOT a dev build AND NOT `vite build`'s own postbuild `building` phase (that carve-out keeps `ZURFUR_WEB_MOCK=1 yarn build` green when the flag leaks in from a dotenv-loaded `.env`, since `just`'s `dotenv-load` applies to every recipe, not only `dev-mock`). Loopback assumption stated once: mock mode is safe only because `vite dev` binds `127.0.0.1` by default — never pair `just dev-mock` with `--host`. `throw` is otherwise banned in production code (errors are values), but there is no request in flight yet at boot to carry one, so this is the one exception.

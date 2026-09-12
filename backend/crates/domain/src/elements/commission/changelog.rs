@@ -1,6 +1,7 @@
 //! The commission changelog: an append-only, immutable, per-commission record of
 //! every domain event, and the platform's structured communication channel.
-//! Nothing is derived from it. (DD 59310081)
+//! It is the only durable record of what happened — state is read directly
+//! from its own tables, never replayed from this stream.
 //!
 //! Not a chat: free text enters only as note entries, standalone or attached,
 //! and an entry cannot reference another — replies are unrepresentable.
@@ -27,7 +28,8 @@ pub enum ChangelogEntryKind {
     Created,
     /// The commission moved to another lifecycle step (Draft/Batched/Active/…).
     LifecycleMoved,
-    /// A direction-status transition (the per-direction status of ZMVP-85).
+    /// A direction-status transition (the per-direction status between the
+    /// creator and the commissioner).
     StatusChanged,
     /// A deadline was set (or cleared — the payload says which).
     DeadlineSet,
@@ -87,7 +89,7 @@ pub enum ChangelogEntryKind {
     /// A gallery snapshot of the commission was published.
     SnapshotPublished,
     /// The owner archived the commission — soft-removed from active views, the
-    /// record and its facts surviving intact. (DD 3014657)
+    /// record and its facts surviving intact.
     Archived,
     /// The owner un-archived the commission, returning it to active views.
     Unarchived,
@@ -196,7 +198,7 @@ impl ChangelogEntryKind {
 /// A changelog entry to append; the store assigns `seq` on insert. Built via
 /// [`event`](Self::event) / [`system`](Self::system) / [`note`](Self::note) so
 /// the actor arm is explicit, then appended on an open unit of work — an entry
-/// commits atomically with the domain write it records. (DD 59310081)
+/// commits atomically with the domain write it records.
 #[derive(Debug)]
 pub struct NewChangelogEntry {
     /// The commission whose stream this entry joins.

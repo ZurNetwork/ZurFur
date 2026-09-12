@@ -1,7 +1,6 @@
 -- Append-only log of the PLC operations Zurfur has submitted for each minted
--- account did:plc (ZMVP-34 tombstone; reused by ZMVP-50 alsoKnownAs updates and
--- the ZMVP-51 transparency-log monitor). DD "Account Deletion, Tombstoning &
--- Handle Reuse" (DESIGN/23003138) + DD 26804226 (custody).
+-- account did:plc — tombstone, handle-change (alsoKnownAs) updates, and a
+-- future transparency-log monitor all read/append here.
 --
 -- A did:plc is a chain of operations: every non-genesis operation references the
 -- CID of the DID's most recent operation as its `prev`. We do not (in v1) fetch

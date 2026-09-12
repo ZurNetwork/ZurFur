@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// The generated RFC 9457 problem type (DD 40992770). Construct only via the
+/// The generated RFC 9457 problem type. Construct only via the
 /// named registry methods below — never field by field — so `type`/`code`/
 /// `title`/`status` stay fixed per kind; `detail` is the one per-call part and
 /// must be non-empty.
@@ -204,8 +204,8 @@ impl Problem {
         )
     }
 
-    /// `409` — the DID is already interned as a different actor kind (one DID =
-    /// one actor). (DD 34013187)
+    /// `409` — the DID is already interned as a different actor kind: a DID
+    /// identifies exactly one actor, never more than one.
     pub fn did_belongs_to_another_actor() -> Self {
         Self::new(
             "urn:zurfur:error:did-belongs-to-another-actor",
@@ -229,7 +229,7 @@ impl Problem {
     }
 
     /// `409` — the commission bears facts, so hard delete is no longer
-    /// possible; points the caller at Archive instead. (DD 3014657)
+    /// possible; points the caller at Archive instead.
     pub fn commission_has_facts() -> Self {
         Self::new(
             "urn:zurfur:error:commission-has-facts",
@@ -241,7 +241,7 @@ impl Problem {
     }
 
     /// `409` — the handle is already claimed, including by a tombstoned
-    /// account (the handle index is global). (DD 23003138)
+    /// account (the handle index is global).
     pub fn handle_taken() -> Self {
         Self::new(
             "urn:zurfur:error:handle-taken",
@@ -323,7 +323,7 @@ impl Problem {
     }
 
     /// `422`, code `unknown_maturity_rating` — a maturity token outside the
-    /// fixed four-tier vocabulary (Safe/Suggestive/Nudity/Adult). (DD 29982722)
+    /// fixed four-tier vocabulary (Safe/Suggestive/Nudity/Adult).
     pub fn unknown_maturity_rating(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:invalid-request",
@@ -335,7 +335,7 @@ impl Problem {
     }
 
     /// `422`, code `unsupported_handle` — handle change isn't supported yet for
-    /// this namespace (v1: `*.zurfur.app` only). (DD 27852802)
+    /// this namespace (v1: `*.zurfur.app` only).
     pub fn unsupported_handle(detail: impl Into<String>) -> Self {
         Self::new(
             "urn:zurfur:error:invalid-request",

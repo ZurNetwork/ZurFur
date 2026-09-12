@@ -1,5 +1,5 @@
 //! The commission's flat composition: typed elements contributed into
-//! code-declared surfaces, grouped by tabs, with no parent pointers. (DD 45514754)
+//! code-declared surfaces, grouped by tabs, with no parent pointers.
 //!
 //! Structure is code ([`SKELETON`]), modes are data. Effective visibility is
 //! `min(tab, surface, element)` — [`effective_visibility`]. The raw composition

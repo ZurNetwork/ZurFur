@@ -1,7 +1,7 @@
-//! The in-memory [`Runtime`] every driver's fast suite boots (Engineer
-//! ruling 2026-08-25, ZMVP-199 ruling 8): one fixture instead of a copy per
-//! test file. The fakes come from `adapter-mem`; the pool is lazy and never
-//! connects; the config is a dev profile with placeholder secrets.
+//! The in-memory [`Runtime`] every driver's fast suite boots: one shared
+//! fixture instead of a copy per test file. The fakes come from
+//! `adapter-mem`; the pool is lazy and never connects; the config is a dev
+//! profile with placeholder secrets.
 
 use std::sync::Arc;
 

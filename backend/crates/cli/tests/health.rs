@@ -1,4 +1,4 @@
-//! `zurfur health` end to end (ZMVP-202): a reachable database answers
+//! `zurfur health` end to end: a reachable database answers
 //! `ok` with exit 0; an unreachable one is an infrastructure problem with a
 //! distinct code and exit 3. The reachable case rides the shared
 //! testcontainers Postgres, like the rest of the workspace.

@@ -1,8 +1,8 @@
-//! ZMVP-166 — the owner composes the commission over HTTP.
+//! The owner composes the commission over HTTP.
 //!
-//! **This suite replaces three.** The retired tree needed `commission_surfaces`
-//! (ZMVP-71), `commission_components` (ZMVP-72), and `commission_removal`
-//! (ZMVP-73) because it had three write routes; the flat model has one pair, so
+//! **This suite replaces three.** The retired recursive-tree model needed
+//! separate suites for surfaces, components, and removal because it had three
+//! write routes; the flat model has one pair, so
 //! their acceptance criteria land here together. What each of them pinned still
 //! is pinned:
 //!
@@ -14,7 +14,7 @@
 //!   `POST /commissions/{id}/elements`; the `201` body carries the new element's
 //!   id, appended within its ordering group.
 //! - **Born closed** — every element is born mode `Total`; no mode is accepted
-//!   from the client at all (widening is ZMVP-74).
+//!   from the client at all (widening is a future feature).
 //! - **Opaque payload** — the payload round-trips unmodified, and an omitted one
 //!   defaults to the empty object.
 //! - **Remove** — `DELETE /commissions/{id}/elements/{element}` answers `204`
@@ -120,7 +120,7 @@ async fn create_commission(
 /// The commission's only tab id, introspected off the backend.
 ///
 /// ⚠️ There is no ROUTE that hands a caller a tab id: reading the composition is
-/// ZMVP-163's `GET`. Until it lands, an element write is only exercisable with
+/// a future feature. Until it lands, an element write is only exercisable with
 /// an id read out of the store like this — which is exactly why the gap is
 /// called out in [`api::routes`]'s element module docs rather than papered over.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {

@@ -82,28 +82,27 @@ pub struct MemBackend {
     /// Cached profiles keyed by DID; entries never expire here.
     profiles: Arc<Mutex<HashMap<Did, Profile>>>,
     /// Append-only handle-change audit log, backing the change rate limit and
-    /// the vacated-handle quarantine. Staged. (DD 27852802)
+    /// the vacated-handle quarantine. Staged.
     handle_changes: Arc<Mutex<Vec<StoredHandleChange>>>,
     /// [`StoredCommission`] parts keyed by [`CommissionId`]; a read rebuilds the
     /// `Commission`, which is not `Clone`.
     pub(crate) commissions: Arc<Mutex<HashMap<CommissionId, StoredCommission>>>,
     /// The commission changelog in append (= `seq`) order. Staged, so an entry
     /// commits atomically with the write it records; nothing ever mutates or
-    /// removes a pushed entry. (DD 59310081)
+    /// removes a pushed entry.
     pub(crate) changelog: Arc<Mutex<Vec<StoredChangelogEntry>>>,
     /// Boards keyed by [`WorkflowId`]; one account each, columns in
     /// [`columns`](Self::columns).
     pub(crate) workflows: Arc<Mutex<HashMap<WorkflowId, StoredWorkflow>>>,
     /// Columns keyed by [`ColumnId`], each carrying its cards as one ordered
     /// list. A card IS a commission's placement, and the only place it lives.
-    /// (DD 29130754)
     pub(crate) columns: Arc<Mutex<HashMap<ColumnId, StoredColumn>>>,
     /// Commission view grants keyed by `(commission, grantee DID)`. A pure key —
     /// just the level, with who/when in the changelog; at most one per pair, and
-    /// a revoke hard-deletes it. (DD 29130754)
+    /// a revoke hard-deletes it.
     pub(crate) view_grants: Arc<Mutex<HashMap<(CommissionId, Did), GrantLevel>>>,
     /// [`StoredElement`] parts keyed by [`ElementId`] — the commission's flat
-    /// composition. Staged. (DD 45514754)
+    /// composition. Staged.
     pub(crate) elements: Arc<Mutex<HashMap<ElementId, StoredElement>>>,
     /// [`StoredTab`] parts keyed by [`TabId`]; staged, so a commission and its
     /// skeleton tabs commit together.
@@ -134,7 +133,7 @@ pub struct MemBackend {
     /// scanning before insert. Staged.
     pub(crate) seat_invitations: Arc<Mutex<HashMap<SeatInvitationId, StoredSeatInvitation>>>,
     /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`]. Staged; rows
-    /// are immortal — no write here removes one. (DD 34013187)
+    /// are immortal — no write here removes one.
     pub(crate) actor_identities: Arc<Mutex<HashMap<ActorIdentityId, StoredActorIdentity>>>,
 }
 
@@ -154,8 +153,8 @@ impl MemBackend {
         Arc::new(MemAccountStore(self.clone()))
     }
 
-    /// The [`CommissionStore`] read port over this backend's shared state
-    /// (ZMVP-87 — the canonical commission read port's fake).
+    /// The [`CommissionStore`] read port over this backend's shared state —
+    /// the canonical commission read port's fake.
     pub fn commission_store(&self) -> Arc<dyn CommissionStore> {
         Arc::new(MemCommissionStore(self.clone()))
     }
@@ -198,7 +197,7 @@ impl MemBackend {
     /// Deep-copy the domain maps into a fresh staging backend, so a unit's
     /// writes mutate only the copy until [`MemUnitOfWork::commit`] applies it.
     /// The profile cache and blob maps are shared instead — Unit-of-Work
-    /// exemptions that write straight through. (DD 24150017)
+    /// exemptions that write straight through.
     fn stage(&self) -> MemBackend {
         MemBackend {
             users: Arc::new(Mutex::new(
@@ -608,7 +607,6 @@ impl MemBackend {
     /// Seed a soft-deleted account holding `handle` (test-only) by inserting a
     /// tombstoned row directly — there is no soft-delete write path yet.
     /// A tombstone is invisible to `find` but still reserves its handle.
-    /// (DD 23003138)
     pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
         let now = Utc::now();
         self.accounts
@@ -736,7 +734,6 @@ pub struct MemUserStore(MemBackend);
 #[async_trait]
 impl UserStore for MemUserStore {
     /// A direct lookup: a [`UserId`] IS the DID the map is keyed by.
-    /// (DD 57081857)
     async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
         let users = self
             .0
@@ -904,7 +901,7 @@ impl ProfileCache for MemProfileCache {
 #[derive(Clone, PartialEq)]
 struct StoredAccount {
     /// The account's public handle; globally unique, and a soft-deleted account
-    /// still reserves it. (DD 23003138)
+    /// still reserves it.
     handle: Handle,
     /// The account's display name.
     name: AccountName,
@@ -919,7 +916,7 @@ struct StoredAccount {
 
 /// One `account_members` row: the [`Role`] held plus the member's
 /// `listed_on_profile` choice, which is kept so the fake answers
-/// [`ListingScope::PublicProfile`] exactly as pg does. (DD 21594113)
+/// [`ListingScope::PublicProfile`] exactly as pg does.
 #[derive(Clone, PartialEq)]
 struct StoredMembership {
     /// The role the member holds in the account.
@@ -1165,7 +1162,6 @@ impl AccountWrites for MemAccountWrites {
     /// Insert the account and the owner's membership in turn — not truly atomic,
     /// standing in for pg's single transaction. Handle uniqueness is global across
     /// live AND soft-deleted accounts: a collision fails with [`HandleTaken`].
-    /// (DD 23003138)
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         let mut accounts = self
             .0
@@ -1515,7 +1511,7 @@ impl AccountWrites for MemAccountWrites {
     /// invitation and handle-change row, and sever its boards, columns and cards.
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
-    /// are not modeled here; removing an absent account is a no-op. (DD 29130754)
+    /// are not modeled here; removing an absent account is a no-op.
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         self.0
             .accounts
@@ -1594,7 +1590,7 @@ impl AccountReads for MemAccountWrites {
 
 /// In-memory [`Database`] write factory: `begin` snapshots the shared domain
 /// maps into a private staging backend, isolating the unit's writes until it
-/// commits. (DD 24150017)
+/// commits.
 pub struct MemDatabase(MemBackend);
 
 #[async_trait]
@@ -1642,7 +1638,7 @@ impl UnitOfWork for MemUnitOfWork {
     }
 
     /// The changelog append surface over this unit's staged snapshot, so an entry
-    /// commits atomically with the writes staged beside it. (DD 59310081)
+    /// commits atomically with the writes staged beside it.
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
         Box::new(MemChangelogWrites(self.staged.clone()))
     }

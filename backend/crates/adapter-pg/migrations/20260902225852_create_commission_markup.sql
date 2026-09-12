@@ -1,28 +1,9 @@
--- Commission Markup (ZMVP-90; DESIGN/Commission — "File entries and Markup"):
--- coordinate-anchored annotation a Participant draws over a file entry in the
--- review loop. Until now a markup had no home of its own — it rode the
--- `markup_added` changelog entry's jsonb payload, so the only way to render one
--- image's annotations was to load the commission's entire stream and filter it
--- client-side. This table gives markup the same shape its sibling already has:
--- `commission_file` is a real row PLUS a `file_added` changelog entry, and markup
--- is now a real row PLUS the `markup_added` entry it already appended.
---
--- The table is canonical for the geometry; the changelog entry remains the
--- timeline fact ("Ana circled a region on ref.png"). Both are written on the same
--- Unit of Work, so they commit or vanish together (Changelog DD D4).
---
--- Classified NON-FACT in adapter-pg/src/commission.rs (COMMISSION_NON_FACT_TABLES):
--- like a file entry, a markup is commission-owned bookkeeping that cascades away
--- with the commission rather than blocking its hard deletion (ZMVP-66 AC2,
--- Deletion DD 3014657).
---
--- Immutability is NOT enforced here. It used to be free — the changelog is
--- append-only, so a payload could never be edited. A table takes an UPDATE, so
--- "no edit, no delete" becomes a policy the write port must keep: no update or
--- delete method is exposed on CommissionWrites. The deferred File Activity &
--- Markup DD owns whether that ever relaxes (threading, resolution state,
--- persistence across file replacement) — this table is the identity those
--- features would need and the payload could never provide.
+-- Commission Markup: coordinate-anchored annotation a Participant draws over
+-- a file entry in the review loop, given its own canonical row alongside the
+-- `markup_added` changelog entry that remains the timeline fact. See NODE.md
+-- ("20260902225852_create_commission_markup.sql") for the full rationale.
+-- Immutability is a write-port policy, not a database constraint: no update
+-- or delete method is exposed on CommissionWrites for this table.
 
 -- Give commission_file a key the markup rows can point at as a PAIR. `id` is
 -- already the primary key, so this constraint costs nothing and adds nothing new
@@ -43,8 +24,8 @@ ALTER TABLE commission_file
 --               reference is deliberate — it makes "a markup on a file from a
 --               DIFFERENT commission" unrepresentable rather than merely
 --               unreachable.
--- added_by      The annotating Participant, as their DID (DD 57081857 — the DID
---               is the actor key). Deliberately NO foreign key onto the actor
+-- added_by      The annotating Participant, as their DID — the actor key
+--               everywhere. Deliberately NO foreign key onto the actor
 --               tables: shared history survives a tombstone, exactly like
 --               commission_file.uploaded_by and the changelog's actor_id.
 -- shape         The annotation geometry, validated by domain::…::MarkupShape

@@ -1,4 +1,4 @@
--- An Account and its membership roster (see ZMVP-14, DESIGN/Account, DESIGN/Roles).
+-- An Account and its membership roster.
 -- An account is a sovereign entity: it carries both an app-internal UUIDv7 key and
 -- its own did:plc. It is founded by a User who, in the same act, becomes its Owner.
 -- Both rows below are written in a single private-side transaction (no cross-store

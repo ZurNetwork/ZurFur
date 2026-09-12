@@ -1,4 +1,4 @@
-//! End-to-end account founding (ZMVP-14): a signed-in visitor POSTs `/accounts`,
+//! End-to-end account founding: a signed-in visitor POSTs `/accounts`,
 //! the server mints the account's sovereign `did:plc`, founds the account, and makes
 //! the creating User its Owner. An anonymous visitor is turned away. Same in-process
 //! fakes as the sign-in e2e — no network, no database.

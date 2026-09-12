@@ -1,10 +1,10 @@
-//! `zurfur account create` must render exactly like `POST /accounts`
-//! (ZMVP-205 slice 4). Both drivers call the one use case
+//! `zurfur account create` must render exactly like `POST /accounts`.
+//! Both drivers call the one use case
 //! (`application::account::create_account`) and project its
 //! `CreateAccountResult`; the CLI cannot name the generated
 //! `CreateAccountResponse` (it lives inside `api`, behind axum), so its
 //! `Founded` is a hand copy. This test keeps the two projections identical
-//! until the contract moves to a leaf crate (DD 40992770 D11) — the same
+//! until the contract moves to a leaf crate both drivers can share — the same
 //! guard `whoami_parity.rs` gives `GET /me`.
 
 use api::generated::CreateAccountResponse;

@@ -1,29 +1,13 @@
 /**
- * The mock `ZurfurApi` Layer (ZMVP-198): a full, in-memory stand-in for
+ * The mock `ZurfurApi` Layer: a full, in-memory stand-in for
  * {@link ZurfurApiLive} so `yarn dev` renders a working, signed-in app with
  * no backend, no Docker, and no Caddy. Every fact about whether mock mode is
  * live is read exactly once, here — {@link mockModeRequested},
- * {@link mockModeEnabled}, {@link mockModeMisconfigured} — so
- * `runtime.ts`'s seam branch, the `/mock/signin` route's fail-closed 404,
- * and `hooks.server.ts`'s boot-time prod guard all read the SAME flag the
- * SAME way (feedback_make_unsoundness_unreachable: one shared enforced
- * path). Implements the FULL {@link ZurfurApiShape}, not a `Partial` — when
- * a future ticket grows the shape, this module fails to compile until it
- * grows too (honesty by typecheck; {@link zurfurApiTest}'s anonymous-default
- * stub exists for the opposite reason — tests that only care about ONE call
- * at a time).
- *
- * State is one {@link MockStore}, seeded signed-in with a fixture visitor and
- * one owner membership. The dev process runs on a single module-scope
- * instance (`sharedStore`) so a request's `ZurfurApi` Layer and the
- * `/mock/signin` route see the same world; it resets on server restart or
- * HMR of this module — acceptable and never load-bearing for anything real.
- * A test builds its own store with {@link createMockStore} instead of
- * touching the shared one.
- *
- * Loopback assumption: mock mode is safe only because `vite dev` binds
- * `127.0.0.1` by default — it is unauthenticated, in-memory fixture data,
- * so `just dev-mock` must never be paired with `--host`.
+ * {@link mockModeEnabled}, {@link mockModeMisconfigured}. Implements the
+ * FULL {@link ZurfurApiShape}, not a `Partial`, so a grown shape fails to
+ * compile here too. State is one shared {@link MockStore}; see NODE.md for
+ * the full rationale (why one shared flag reader, the shared-store lifetime,
+ * the loopback assumption).
  */
 
 import { building, dev } from '$app/environment';
@@ -279,7 +263,7 @@ function mockDeleteAccount(
  * The dev-mode Layer: the full {@link ZurfurApiShape} over `store` (the
  * shared singleton by default), six uniform `mock*`-named entries. Callers
  * that run in a real server hold this Layer for the whole process
- * (`runtime.ts` builds it once at module scope, ZMVP-198) rather than
+ * (`runtime.ts` builds it once at module scope) rather than
  * rebuilding it per request — safe because every entry below is already
  * LAZY (`Effect.suspend`/`Effect.sync`), so state is read at EFFECT-RUN
  * time, never at Layer-construction time. Kept as a parameterized factory

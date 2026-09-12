@@ -167,7 +167,7 @@ pub struct FileDownload {
 /// The Index-canonical record that a file entry belongs to a commission — the
 /// private link the retrieval path reads to authorize a participant. Not a fact:
 /// it cascades away with the commission, so a commission with only file entries
-/// stays hard-deletable. (DD 3014657)
+/// stays hard-deletable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissionFile {
     /// The file entry's opaque key — the [`FileStore`](crate::ports::FileStore)

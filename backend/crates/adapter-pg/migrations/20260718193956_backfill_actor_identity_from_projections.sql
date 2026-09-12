@@ -1,21 +1,9 @@
--- ZMVP-123 (DD 34013187 decisions 1-2): make the per-kind actor tables (users,
--- accounts) shared-PK PROJECTIONS of the actor super-table. This first slice
--- BACKFILLS one `actor_identity` row per existing users/accounts row, then asserts
--- the mapping is unambiguous BEFORE the next slice adds the composite FK.
---
--- There is no `character` table on `main` yet (Characters are DID-less actors with
--- no projection table), so the scope is exactly users + accounts.
---
--- Each projection row's own id becomes its identity row's id (shared PK): the id is
--- carried across verbatim, the DID moves into the band's UNIQUE `did`, `state` is
--- born 'active' (liveness transitions are ZMVP-125, never creation), `first_seen` is
--- seeded from the row's own creation instant, and the display-handle cache is left
--- NULL — born uncached per ZMVP-122 (it fills only from a live network fetch via
--- `cache_handle`, and is deliberately NOT the account's authoritative handle claim).
---
--- Idempotent w.r.t. a DID already interned (ON CONFLICT (did) DO NOTHING): if some
--- DID was interned before this migration (e.g. seen bare from the network), its row
--- is left as-is and the coverage assertion below catches any resulting orphan.
+-- Makes the per-kind actor tables (users, accounts) shared-PK PROJECTIONS of
+-- the actor super-table: backfills one `actor_identity` row per existing
+-- users/accounts row, then asserts the mapping is unambiguous before a later
+-- migration adds the composite FK. See NODE.md
+-- ("20260718193956_backfill_actor_identity_from_projections.sql") for the
+-- full rationale.
 
 -- Guard 1 — a DID shared between a users row and an accounts row would need TWO
 -- identity rows (one per kind), but `actor_identity.did` is UNIQUE, so the backfill

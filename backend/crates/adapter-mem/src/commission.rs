@@ -177,7 +177,7 @@ pub(crate) struct StoredElement {
     /// The commission this element belongs to.
     pub(crate) commission_id: CommissionId,
     /// Where it sits: the (tab, surface) pair — the whole addressing model.
-    /// There is no parent field, here or in pg. (DD 45514754)
+    /// There is no parent field, here or in pg.
     pub(crate) address: SurfaceAddress,
     /// What it is — the open type tag.
     pub(crate) element_type: ElementType,
@@ -528,7 +528,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// Whether the commission bears any fact, answered on the unit's staged
     /// snapshot. Constant `false`: no fact-minter exists yet, so there is no fact
     /// map to scan. Whoever registers the first fact table in the pg adapter MUST
-    /// add the matching map here too. (DD 3014657)
+    /// add the matching map here too.
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
@@ -601,7 +601,7 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(())
     }
 
-    /// Flip the stored archive stamp (ZMVP-68) — the mem mirror of the pg
+    /// Flip the stored archive stamp — the mem mirror of the pg
     /// conditional `UPDATE`: the write applies only on a **real transition**
     /// (the `is_none`/`is_some` arms differ between stored and requested), so a
     /// repeat in the same direction changes nothing, answers `false`, and keeps
@@ -630,7 +630,7 @@ impl CommissionWrites for MemCommissionWrites {
     }
 
     /// Write the maturity posture — the mem mirror of the pg
-    /// `UPDATE commission SET maturity, graphic` (ZMVP-31). Replace-only by
+    /// `UPDATE commission SET maturity, graphic`. Replace-only by
     /// signature (no clear arm exists); an absent commission is a no-op, per
     /// the port contract (existence is the caller's check).
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
@@ -774,7 +774,6 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Remove the grantee's key (a hard delete), returning whether one existed —
     /// the bool the caller keys its `view_grant_revoked` append on.
-    /// (DD 29130754)
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -922,7 +921,6 @@ impl CommissionWrites for MemCommissionWrites {
 
 /// In-memory [`ChangelogWrites`] view: appends land on the unit's staged
 /// snapshot, so an entry commits atomically with the domain writes beside it.
-/// (DD 59310081)
 pub struct MemChangelogWrites(pub(crate) MemBackend);
 
 #[async_trait]
@@ -1008,7 +1006,6 @@ impl CommissionStore for MemCommissionStore {
 
     /// The [`GrantLevel`] `user` holds on `commission`, or `None`. A key is
     /// issued to a User, never an Account, so account membership confers nothing.
-    /// (DD 29130754)
     async fn view_grant(
         &self,
         commission: &CommissionId,
@@ -1024,7 +1021,7 @@ impl CommissionStore for MemCommissionStore {
     }
 
     /// Which column of `workflow_id` holds this commission, or `None`. Scoped by
-    /// board: a commission sits in at most one column per board. (DD 29130754)
+    /// board: a commission sits in at most one column per board.
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -1139,7 +1136,7 @@ impl CommissionStore for MemCommissionStore {
     /// Answered from the persisted membership map, never a computed
     /// owner-∪-seated union; an unknown commission answers `false`. Unaffected by
     /// placement or view grants — neither makes an account's members
-    /// Participants. (DD 29130754)
+    /// Participants.
     async fn is_participant(
         &self,
         commission: &CommissionId,

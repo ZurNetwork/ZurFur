@@ -179,7 +179,7 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
 }
 
 /// The linked-channel pointer's methods, pulled out so `#[allow(deprecated)]`
-/// covers only [`link_channel`](channel::link_channel). (DD 6848513)
+/// covers only [`link_channel`](channel::link_channel).
 #[allow(deprecated)]
 fn channel_methods() -> MethodRouter<AppState> {
     put(channel::link_channel).delete(channel::clear_channel)
@@ -188,8 +188,8 @@ fn channel_methods() -> MethodRouter<AppState> {
 /// Admits only the commission's owner, returning the resolved [`Commission`].
 /// `404` for a non-participant, `403` for a non-owner participant.
 ///
-/// ⚠️ Driver-side authorization (DD 55836674 D7 places this in the
-/// application layer); survives only for `channel`/`elements`.
+/// ⚠️ Driver-side authorization: use-case code should own this check instead;
+/// it survives here only for `channel`/`elements`, which have no use case yet.
 async fn require_owner(
     state: &AppState,
     commission: &CommissionId,

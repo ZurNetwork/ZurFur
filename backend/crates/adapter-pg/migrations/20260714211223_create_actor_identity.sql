@@ -1,4 +1,4 @@
--- actor_identity: the actor super-table (Party pattern) — DD 34013187 / ZMVP-122.
+-- actor_identity: the actor super-table shared by every actor kind (Party pattern).
 -- Built incrementally: this slice is existence only. kind / did / handle / state /
 -- first_seen arrive in later slices, each with its own tests.
 -- Rows are immortal — no DELETE path, ever (liveness will be a state, not a removal).

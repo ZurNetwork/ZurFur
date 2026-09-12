@@ -1,49 +1,10 @@
-//! Shared test rig for the atproto (public-data) boundary — ZMVP-103.
+//! Shared test rig for the atproto (public-data) boundary.
 //!
-//! Boots a **throwaway PDS** in a container per test, provisions a fixture
-//! account on it, and tears everything down on drop — the same isolation the
-//! Postgres testcontainers harness already gives the private boundary,
-//! extended to the atproto side. Scope is deliberately the PDS fixture seam
-//! only: the existing inline-per-file Postgres pattern is not retrofitted.
-//!
-//! # Writing a PDS-backed integration test
-//!
-//! ```no_run
-//! # async fn demo() -> anyhow::Result<()> {
-//! use test_support::{ActingCredential, ThrowawayPds};
-//!
-//! let pds = ThrowawayPds::boot().await?;                    // fresh, empty, hermetic
-//! let account = pds.provision_account("alice.test").await?; // the ZMVP-105 seam
-//! let token = match &account.credential {
-//!     ActingCredential::PdsSession { access_jwt, .. } => access_jwt.clone(),
-//!     _ => unreachable!("new credential variants opt in explicitly"),
-//! };
-//! // ... send `Authorization: Bearer {token}` to `account.endpoint`, acting as `account.did` ...
-//! drop(pds);                                                // container + state gone
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! Requires a container runtime socket (`DOCKER_HOST` honored), exactly like
-//! the Postgres-based suites, and a Tokio runtime (`#[tokio::test]`).
-//!
-//! # Hermeticity
-//!
-//! The rig makes **zero requests to the public atproto network**. Each
-//! [`ThrowawayPds`] owns an in-process stub PLC directory on an ephemeral
-//! loopback port; the container reaches it through the Docker `host-gateway`
-//! alias, so identity minting (`did:plc` genesis operations) lands at the stub
-//! and nowhere else — [`ThrowawayPds::published_plc_dids`] exposes what
-//! arrived, letting tests assert the publication was local. No appview,
-//! crawler, or report-service endpoint is ever configured.
-//!
-//! # Container reuse (escape hatch, off by default)
-//!
-//! One PDS boots per `ThrowawayPds::boot()`. If CI boot time ever hurts,
-//! share one instance per test binary instead of changing CI infrastructure:
-//! `ThrowawayPds` is `Send + Sync`, so a `tokio::sync::OnceCell<ThrowawayPds>`
-//! in a test's common module (with per-test unique handles) is the intended
-//! lever — the same reuse escape hatch the Postgres harness leaves available.
+//! Boots a throwaway PDS in a container per test, with an in-process stub
+//! PLC directory so no request ever reaches the public atproto network,
+//! provisions a fixture account, and tears everything down on drop. See
+//! this directory's NODE.md for the usage recipe, the hermeticity
+//! guarantees, and the container-reuse escape hatch.
 
 pub mod contract;
 mod fixture;
@@ -66,9 +27,9 @@ const _: fn() = || {
 /// The reference-PDS image the throwaway harness boots.
 ///
 /// Must stay **the same literal** as the canonical `ZURFUR_PDS_IMAGE` pin in
-/// `.env.example` (owned by ZMVP-102, the dev-loop lane — one image, two
-/// lifecycles). The `default_image_matches_env_example` test asserts the two
-/// never drift; update both together.
+/// `.env.example`, which drives the real dev-loop container — one image
+/// pinned in two places. The `default_image_matches_env_example` test
+/// asserts the two never drift; update both together.
 pub const DEFAULT_PDS_IMAGE: &str = "ghcr.io/bluesky-social/pds@sha256:1fa8bbceabb65d8e1710749b1ea92c1c20a7489ca38da4a0a5f64c0c10a70c29";
 
 /// The image reference the harness will actually boot: the `ZURFUR_PDS_IMAGE`
@@ -118,7 +79,7 @@ fn split_image_ref(image: &str) -> (String, String) {
 /// one we control (the loopback stub PLC) — never a public atproto host.
 ///
 /// Grounded in observed behavior of `ghcr.io/bluesky-social/pds:0.4`
-/// (`@atproto/pds` 0.5.9), booted empirically during ZMVP-103:
+/// (`@atproto/pds` 0.5.9):
 /// - `PDS_DATA_DIRECTORY` must exist → the harness tmpfs-mounts `/pds`.
 /// - `PDS_HOSTNAME=localhost` gives an `http://` public URL and `.test`
 ///   service-handle domains.
@@ -231,13 +192,13 @@ mod tests {
         }
     }
 
-    /// Image-pin drift guard (uow 28ca4f decision): the canonical
-    /// `ZURFUR_PDS_IMAGE` literal lives in `.env.example` (ZMVP-102's file);
-    /// this crate duplicates it as `DEFAULT_PDS_IMAGE`. The two must be equal.
+    /// Image-pin drift guard: the canonical `ZURFUR_PDS_IMAGE` literal lives
+    /// in `.env.example`; this crate duplicates it as `DEFAULT_PDS_IMAGE`.
+    /// The two must be equal.
     ///
-    /// Until ZMVP-102 lands the key, the guard reports itself unarmed and
-    /// passes — `/close-gaps --post` reconciles the literals across the two
-    /// branches; once the key exists on main this test enforces them forever.
+    /// Until `.env.example` defines that key, the guard reports itself
+    /// unarmed and passes; once the key exists on main this test enforces
+    /// the two match forever.
     #[test]
     fn default_image_matches_env_example() {
         let env_example = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../.env.example");

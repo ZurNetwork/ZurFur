@@ -1,4 +1,4 @@
--- Indexes for the ZMVP-157 listing endpoints. Both are read on every signed-in
+-- Indexes for the account/commission listing endpoints. Both are read on every signed-in
 -- page load, and both filter tables that grow with EVERY user's data rather
 -- than the caller's — so an unindexed predicate is a whole-table scan that any
 -- authenticated caller can drive repeatedly.

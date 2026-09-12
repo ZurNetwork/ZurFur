@@ -1,4 +1,4 @@
-//! `zurfur session …` end to end (ZMVP-203) against a real throwaway
+//! `zurfur session …` end to end against a real throwaway
 //! Postgres, with the identity file redirected into a temp dir through
 //! `ZURFUR_CLI_HOME`. Pins the exit classes and the JSON on both channels.
 

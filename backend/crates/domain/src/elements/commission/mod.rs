@@ -1,5 +1,5 @@
 //! The [`Commission`] — the platform's basic unit of work and the aggregator of
-//! everything done under it. (DESIGN 3276807)
+//! everything done under it.
 //!
 //! This module holds the envelope: id, title, owner, lifecycle, visibility,
 //! deadline, maturity, statuses. A commission belongs to a User, never an
@@ -162,7 +162,7 @@ impl AsRef<str> for CommissionTitle {
 
 /// A created commission and its fixed metadata. Build one with
 /// [`Commission::create`]; it holds no participant list or composition, only the
-/// always-present envelope. (DESIGN 3276807)
+/// always-present envelope.
 #[derive(Debug)]
 pub struct Commission {
     /// The app-private id (UUIDv7, so it sorts by creation time).
@@ -180,7 +180,7 @@ pub struct Commission {
     pub deadline: Option<DateTimeUtc>,
     /// The commission's maturity posture. `None` at birth; a rating becomes
     /// required at the widening gate and, once set, replace-only — no path
-    /// clears it back to `None`. (DD 29982722)
+    /// clears it back to `None`.
     pub maturity: Option<Maturity>,
     /// The direction-axis Status, or `None` when cleared. One nullable cell, so
     /// a set replaces; only an explicit Participant act moves it, never a
@@ -195,7 +195,7 @@ pub struct Commission {
     pub linked_channel: Option<ChannelPointer>,
     /// When the commission was archived — `None` while active. Owner-only in
     /// both directions and changelog-recorded; the record and its facts survive
-    /// intact, and listing projections filter on this field. (DD 3014657)
+    /// intact, and listing projections filter on this field.
     pub archived_at: Option<DateTimeUtc>,
     /// When the commission was created.
     pub created_at: DateTimeUtc,
@@ -218,7 +218,7 @@ impl Commission {
     /// assert_eq!(c.owner_id, owner);                             // the creator owns it
     /// assert!(matches!(c.lifecycle_step, LifecycleStep::Draft)); // born in Draft
     /// assert_eq!(c.title.as_str(), "A ref sheet");
-    /// assert!(c.maturity.is_none()); // born unrated (ZMVP-31: rating gates widening, not birth)
+    /// assert!(c.maturity.is_none()); // born unrated: a rating gates widening, not birth
     /// ```
     pub fn create(
         title: CommissionTitle,

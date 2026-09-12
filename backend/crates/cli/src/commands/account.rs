@@ -33,7 +33,7 @@ pub enum AccountOp {
     /// Delete an Account the acting identity owns — soft if it holds facts,
     /// hard if empty. Asks to confirm first.
     Delete {
-        /// The account's id — its did:plc (DD 57081857).
+        /// The account's id — its did:plc.
         account_id: AccountId,
         /// Skip the confirmation prompt (for scripts).
         #[arg(long, short = 'y')]
@@ -42,8 +42,8 @@ pub enum AccountOp {
 }
 
 /// `create`'s projection — the same keys as the HTTP `CreateAccountResponse`
-/// (`{id, did, handle, name}`). `id` and `did` carry the same value (DD
-/// 57081857 folded the surrogate id into the sovereign DID).
+/// (`{id, did, handle, name}`). `id` and `did` carry the same value: the
+/// account's identifier IS its did:plc, with no separate surrogate id.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Founded {

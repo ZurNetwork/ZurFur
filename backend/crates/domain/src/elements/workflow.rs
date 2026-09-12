@@ -1,5 +1,4 @@
 //! Workflows — an account's boards: ordered columns of commission cards.
-//! (DESIGN 9895957)
 //!
 //! A Workflow knows about commissions, never the reverse. Columns and cards are
 //! ordered by [`Position`], a base-62 fractional key compared bytewise, so an

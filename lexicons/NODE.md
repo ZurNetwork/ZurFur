@@ -1,6 +1,6 @@
 ---
 path: lexicons
-charted: 2026-08-21
+charted: 2026-09-12
 fs:
   - name: app.zurfur.feed.post.json
     role: the unified content primitive record (key: tid): gallery publication, comment, shout — a reply is a post with `reply` set
@@ -20,8 +20,8 @@ fs:
   - name: lexicons.test.js
     role: the gate: loads every doc into one @atproto/lexicon Lexicons instance (clean .add() IS validity) + structural assertions
     node: false
-  - name: package.json
-    role: private CommonJS `zurfur-lexicons`; npm test → node --test; devDep @atproto/lexicon
+  - name: package.json + package-lock.json
+    role: private CommonJS `zurfur-lexicons`; npm test → node --test; devDep @atproto/lexicon, pinned by the lockfile
     node: false
   - name: vendor/
     role: upstream atproto core lexicons vendored verbatim (label.defs, repo.strongRef) so refs resolve offline — a plain tracked dir, not a submodule
@@ -29,7 +29,7 @@ fs:
 ---
 **Is:** The source of truth for Zurfur's atproto lexicon JSON — the Class A, PDS-canonical record and def schemas under `app.zurfur.*`, plus a hermetic test validating the graph against the real atproto meta-schema.
 
-**Conventions:** JSON-only — no Rust codegen from lexicons. Filename == NSID == the doc's `id`; `"lexicon": 1` everywhere. One-way door: fields only ADDED, never removed or tightened — a breaking change is a NEW NSID. Publish-late: a lexicon publishes only when its feature ships. Vocabularies are OPEN strings with `knownValues`. What the meta-schema can't express (either-of rules, per-mime caps, consent paths) is enforced app-side and documented inline. `description` fields carry the normative rationale with DESIGN citations; stubs are labelled PLACEHOLDER. `vendor/*.json` are never edited.
+**Conventions:** JSON-only — no Rust codegen from lexicons. Filename == NSID == the doc's `id`; `"lexicon": 1` everywhere. One-way door: fields only ADDED, never removed or tightened — a breaking change is a NEW NSID. Publish-late: a lexicon publishes only when its feature ships. Vocabularies are OPEN strings with `knownValues`. What the meta-schema can't express (either-of rules, per-mime caps, consent paths) is enforced app-side and documented inline. `description` fields are schema text, not doc comments, so they DO carry the normative rationale with its DESIGN citations inline — the vacuum rule does not reach them; stubs are labelled PLACEHOLDER. `vendor/*.json` are never edited.
 
 **Entry points:** `app.zurfur.feed.post.json` · `npm test` from this directory.
 

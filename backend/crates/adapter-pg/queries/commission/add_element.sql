@@ -1,4 +1,4 @@
--- Contribute one element into a declared surface (ZMVP-166). The single insert
+-- Contribute one element into a declared surface. The single insert
 -- path: the generic element add, a Slot's carrying element, and a Seat's all
 -- come through here, differing only in the `type` tag and payload they bind, so
 -- there is no second place an element can be born.

@@ -1,13 +1,7 @@
--- Custody store for the private keys behind a minted account did:plc (ZMVP-49,
--- DD "did:plc Identity Custody, Minting & Credible Exit" DESIGN/26804226).
---
--- When Zurfur mints an account's sovereign identity it generates per-account
--- secp256k1 keypairs (a cold-recovery key, an operational key, and an #atproto
--- signing key) and must keep the private halves so it can operate the DID. These
--- are the most sensitive rows Zurfur holds, so they are NEVER stored in the clear:
--- every key is envelope-encrypted under a root key held outside the database
--- (config/env in v1; a cloud KMS in the URGENT follow-up ZMVP-53). A database
--- compromise alone therefore yields no usable key material.
+-- Custody store for the private keys behind a minted account did:plc.
+-- Every key is envelope-encrypted under a root key held outside the
+-- database before it is written — see NODE.md
+-- ("20260630190000_create_account_keys_table.sql") for the full rationale.
 --
 -- did           The account's did:plc — the natural, unique key. There is
 --               deliberately NO foreign key to accounts(did): the keys are written

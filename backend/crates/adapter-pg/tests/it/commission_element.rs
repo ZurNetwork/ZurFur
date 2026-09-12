@@ -1,5 +1,5 @@
-//! The flat commission composition over PostgreSQL (ZMVP-166; Flat Composition
-//! DD `45514754`), against a throwaway container: every commission is born with
+//! The flat commission composition over PostgreSQL, against a throwaway
+//! container: every commission is born with
 //! (or backfilled to) its skeleton tabs, the owner contributes elements into
 //! declared surfaces in append order within a band, the whole composition loads
 //! back, and removal renumbers the ordering group.
@@ -36,8 +36,8 @@ use domain::{
 };
 use serde_json::json;
 
-/// The ZMVP-166 migration (drop `commission_node`, create the flat tables, mint
-/// the skeleton tabs), as sqlx numbers it. The backfill test runs everything
+/// The flat-composition migration (drops `commission_node`, creates the flat
+/// tables, mints the skeleton tabs), as sqlx numbers it. The backfill test runs everything
 /// *before* this version, seeds pre-composition commissions, then lets the full
 /// migrator catch up.
 const FLAT_COMPOSITION_MIGRATION: i64 = 20260805234354;
@@ -71,7 +71,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     user
 }
 
-/// Seed a visitor the way the schema *before* the actor re-key (DD `57081857`)
+/// Seed a visitor the way the schema *before* the actor re-key to DID keys
 /// held one: an `actor_identity` parent plus its `users` projection, both under a
 /// surrogate UUID key. Hands back that key alongside the domain [`User`] whose id
 /// is the DID the re-key will collapse onto — so a migration test can seed the

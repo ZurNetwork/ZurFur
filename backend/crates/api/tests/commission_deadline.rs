@@ -1,12 +1,11 @@
-//! ZMVP-86 — the deadline axis, end to end over HTTP: a Participant sets or
+//! The deadline axis, end to end over HTTP: a Participant sets or
 //! clears the deadline and the manual Delayed "slipping" flag; the **system**
 //! (the deadline sweeper) sets Late — the one place the system acts.
 //!
-//! Pins the acceptance criteria at the API surface (DESIGN/Commission, Status;
-//! Engineer ruling 2026-07-05 on the ticket — Delayed is a MANUAL Participant
-//! flag, the system sets ONLY Late, a standing Delayed upgrades to Late, no
-//! derived threshold; conductor ruling E12 — the sweeper is a pure `sweep(now)`
-//! over one unit of work; ruling E29 — one nullable column per axis):
+//! Pins the acceptance criteria at the API surface: Delayed is a MANUAL
+//! Participant flag, the system sets ONLY Late, a standing Delayed upgrades
+//! to Late, no derived threshold; the sweeper is a pure `sweep(now)`
+//! over one unit of work; each axis is one nullable column:
 //!
 //! - **AC1** — the deadline lives on the commission envelope, nullable; a
 //!   Participant sets or clears it (with `deadline_set`/`deadline_extended`

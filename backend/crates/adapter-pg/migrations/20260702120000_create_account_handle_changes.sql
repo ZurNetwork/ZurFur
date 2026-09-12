@@ -1,12 +1,12 @@
--- The account handle-change audit log (ZMVP-46, DD "Account Handle Change Flow"
--- 27852802). One row per successful handle change; append-only.
+-- The account handle-change audit log. One row per successful handle change;
+-- append-only.
 --
 -- This single table backs BOTH policy knobs of the change flow, so there is no
 -- second bespoke "rate limit" or "quarantine" store to keep in sync:
---   * Rate limit (§3) — a light anti-abuse throttle: count an account's rows within
+--   * Rate limit — a light anti-abuse throttle: count an account's rows within
 --     the recent window (account_id, changed_at index) and refuse a further change
 --     past the limit.
---   * Quarantine (§4) — a vacated *.zurfur.app handle stays RESERVED to the account
+--   * Quarantine — a vacated *.zurfur.app handle stays RESERVED to the account
 --     that left it, reclaimable, for a window: a handle appears as `old_handle` in a
 --     recent row iff its former holder still has a claim on it (old_handle, changed_at
 --     index). The availability check at BOTH claim sites (founding + change) treats a
@@ -21,11 +21,11 @@
 --
 -- id          UUIDv7 minted app-side; opaque internal key (same convention as accounts.id).
 -- account_id  The account whose handle changed. ON DELETE CASCADE: a hard-deleted
---             account frees its handle (DD 23003138), so its quarantine/rate-limit
+--             account frees its handle, so its quarantine/rate-limit
 --             history goes with it — never holding a name for an account that is gone.
 -- old_handle  The handle vacated by this change (drives the quarantine reservation).
--- new_handle  The handle adopted. Kept for audit/history (name-history proper is the
---             native did:plc log / future ZMVP-64; this is the private record).
+-- new_handle  The handle adopted. Kept for audit/history (name-history proper is a
+--             separate, native did:plc log; this is the private record).
 -- changed_at  When the change committed (application-supplied, UTC), the window anchor.
 CREATE TABLE account_handle_changes (
     id         uuid        PRIMARY KEY,

@@ -1,5 +1,5 @@
 //! `POST /commissions` — any signed-in User creates a commission they own; no
-//! Account required, a user-scoped write (DD 26247170). The act itself is the
+//! Account required, a user-scoped write. The act itself is the
 //! changelog's genesis entry.
 
 use application::commission::{create, list};

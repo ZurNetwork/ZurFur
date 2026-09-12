@@ -1,8 +1,8 @@
-//! Workflows over PostgreSQL (DESIGN/Workflow 9895957): board writes via
+//! Workflows over PostgreSQL: board writes via
 //! [`PgWorkflowWrites`] on an open [`UnitOfWork`](domain::ports::UnitOfWork)
-//! (`uow.workflows()`, DD 24150017); reads via the pool-backed
+//! (`uow.workflows()`); reads via the pool-backed
 //! [`PgWorkflowStore`]. Placement lives here only — a commission's presence
-//! on a board IS its placement (DD 29130754).
+//! on a board IS its placement.
 
 use domain::{
     elements::{

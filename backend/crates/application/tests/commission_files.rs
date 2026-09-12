@@ -1,5 +1,5 @@
-//! Commission file entries (ZMVP-88, streaming seam ZMVP-205) as a use case:
-//! upload then download, against the in-memory fakes. The HTTP-surface
+//! Commission file entries as a use case: upload then download, against the
+//! in-memory fakes. The HTTP-surface
 //! behaviors (headers, closed-door 404s, cross-commission invisibility) stay
 //! pinned at `api/tests/commission_files.rs`; this file is the use case's own
 //! contract — streaming, authorization order, and the reject-then-delete

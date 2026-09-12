@@ -1,4 +1,4 @@
-//! The browser session surface (ZMVP-151): the JSON whoami, the OAuth callback's
+//! The browser session surface: the JSON whoami, the OAuth callback's
 //! success and failure shapes, the sign-in failure shape, and the retirement of the
 //! old HTML form route. Every dependency is faked in-process — the PDS
 //! (`MemAuthenticator`/`MemProfileSource`), the user store (`MemBackend`), and the

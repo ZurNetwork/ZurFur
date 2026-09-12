@@ -1,4 +1,4 @@
-//! The shared [`PublicRecords`] conformance suite (ZMVP-105, AC5).
+//! The shared [`PublicRecords`] conformance suite.
 //!
 //! One generic body, run against **every** adapter that claims to implement the
 //! public-boundary write port — the in-memory fake (`adapter-mem`'s
@@ -32,7 +32,7 @@ pub const TINY_PNG: &[u8] = &[
 /// A fixed, millisecond-precision timestamp so field-identical round-trips do not
 /// depend on sub-millisecond clock precision surviving an RFC-3339 encode.
 ///
-/// Public so a determinism capstone (ZMVP-106) can pin the **same** `createdAt`
+/// Public so a future determinism check can pin the **same** `createdAt`
 /// this suite uses: with the timestamp fixed, the record's DAG-CBOR bytes — and
 /// therefore its content-address record CID — are identical across two runs on
 /// two freshly-booted PDSes, which is exactly what "the write path is

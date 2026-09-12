@@ -1,7 +1,7 @@
-//! ZMVP-87 — the changelog records the commission's events, notes, and linked
+//! The changelog records the commission's events, notes, and linked
 //! channel, end to end over HTTP.
 //!
-//! Pins the acceptance criteria at the API surface (the Changelog DD `30408741`):
+//! Pins the acceptance criteria at the API surface:
 //!
 //! - **AC1 (in-stack slice)** — creation itself appends a `created` entry; the
 //!   other emitters (lifecycle, status, seats, transfers, placements, view

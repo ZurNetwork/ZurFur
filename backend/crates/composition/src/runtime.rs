@@ -33,8 +33,8 @@ pub struct Runtime {
     /// DID rather than erroring.
     pub profile_source: Arc<dyn ProfileSource>,
     /// Read-through cache fronting [`profile_source`](Runtime::profile_source).
-    /// Pool-backed both ways — a documented exception to the unit of work, the
-    /// fill carrying no transactional invariant. (DD 24150017)
+    /// Pool-backed both ways — a documented exception to the unit-of-work
+    /// write rule, since the fill carries no transactional invariant.
     pub profile_cache: Arc<dyn ProfileCache>,
     /// Account, membership and invitation reads; every account write lives on
     /// the [`UnitOfWork`](domain::ports::UnitOfWork).
@@ -61,7 +61,7 @@ pub struct Runtime {
     /// The write factory: the only way to reach a private-store domain write.
     /// A caller `begin()`s, writes through the returned
     /// [`UnitOfWork`](domain::ports::UnitOfWork)'s views, then `commit()`s once
-    /// — drop rolls back. (DD 24150017)
+    /// — drop rolls back.
     pub database: Arc<dyn Database>,
     /// Mints a sovereign `did:plc` for a newly founded account.
     pub did_minter: Arc<dyn DidMinter>,
