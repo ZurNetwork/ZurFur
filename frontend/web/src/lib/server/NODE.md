@@ -20,7 +20,7 @@ fs:
   - name: api-proxy.ts
     role: pure rewriteApiRequest used by hooks.server.ts (no $env, unit-tests standalone)
     node: false
-  - name: "*.spec.ts"
+  - name: '*.spec.ts'
     role: node-project specs beside each program module (accounts, session, api-proxy)
     node: false
 ---
