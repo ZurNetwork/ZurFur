@@ -1,0 +1,19 @@
+# S0 — consolidated verdicts (judge: Claude; fork 003 is odd)
+
+Seats: GPT (web search), Gemini (Google grounding). Where they split, the judge resolved with one primary-source fetch and records it here. **Corrected claims replace the originals for S1–S4; a claim may not be argued from in its original form.**
+
+| # | Verdict | Resolution / corrected claim |
+|---|---|---|
+| 1 | **CONFIRMED** (both) | did:plc rotation keys are priority-ordered; within ~72 h a higher-authority key can nullify operations signed by a lower-authority key (did-plc spec v0.1). |
+| 2 | **CONFIRMED** (both) | A PLC operation may carry an empty services map; `atproto_pds` can be added later by a regular update op without changing the DID. |
+| 3 | **CONFIRMED** (both) | A PDS hosts many accounts, each with a repo + CAR export; migration = export → import on the new host (deactivated) → identity update → activate → deactivate old (atproto.com/guides/account-migration). |
+| 4 | **CORRECTED** (GPT WRONG vs Gemini CONFIRMED → GPT's nuance upheld) | Handles are `alsoKnownAs` claims verified bidirectionally via DNS TXT or HTTPS well-known. The spec says: *"In API responses, the special handle value `handle.invalid` can be used to indicate that there is no bi-directionally valid handle for the given DID"* and that such a handle *"can not be used in most situations (search queries, API requests, etc)"*. **Display is not mandated** — AppViews commonly show it, but the claim's "rendered by AppViews as `handle.invalid`" is an observation about current clients, not a protocol guarantee. Source: atproto.com/specs/handle (fetched by the judge). |
+| 5 | **CONFIRMED** (both) | Lexicons publish as `com.atproto.lexicon.schema` records; `app.zurfur.*` resolves via `_lexicon.zurfur.app` DNS TXT to the schema-holding DID. |
+| 6 | **CONFIRMED** (both, context) | Per-Character rotation-key material, never per-Keeper, prevents correlation through the PLC log (57081857 D2 / 54427650). |
+| 7 | **CONFIRMED** (both) | The PLC log is public and append-only; the genesis `createdAt` persists indefinitely, tombstone included. |
+| 8 | **CORRECTED** (GPT UNVERIFIABLE vs Gemini CONFIRMED → split the claim) | First half CONFIRMED from context: the alpha ships no AppView and no production PDS (dev-loop container only). Second half REPLACED: a Character repo's **custom `app.zurfur.*` records render only in Zurfur's own views or in generic record browsers**; Bluesky-class AppViews render only the lexicons they implement (a standard `app.bsky.actor.profile` record in the Character's repo would render as a profile; the ref-sheet/art records would not). No third-party AppView rendering of Zurfur's custom records is evidenced. |
+| 9 | **CORRECTED** (GPT WRONG vs Gemini CONFIRMED → GPT's arithmetic upheld and tightened) | Accounts hosted on Zurfur's PDS = **the number of public Characters only** — Users bring their own PDS (they sign in with existing DIDs) and Accounts are identity-only (26935298, unchanged), so no Keeper account is hosted; the "Keepers × Characters" product was wrong. The reference PDS publishes sizing guidance (README: ~1 GB RAM, 1 core, 20 GB SSD for 1–20 users) and rate limits, **no protocol hard limit** on accounts per instance. Source: github.com/bluesky-social/pds README (GPT). |
+| 10 | **CONFIRMED** (both, context) | ACP/CCS ownership claims are custom `net.got-paws.*` records under a domain authority; not an atproto-standard mechanism; a third-party verifier needs the vulpes spec. |
+| 11 | **CONFIRMED** (both, context) | DD 54427650 (priority-ordered keys + one claim per co-owner) and CCS (one in-force ownership edge per character; N humans behind an account-owned character) are different co-ownership models. |
+
+Struck as argument material: nothing entirely; the original wording of 4, 8 and 9 may not be argued from.

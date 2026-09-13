@@ -93,6 +93,11 @@
       "page": 29130754,
       "title": "Commission Ownership Separation — View Grants & Account Placement",
       "governs": "view grants"
+    },
+    {
+      "page": 62488577,
+      "title": "Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board",
+      "governs": "workflow/column/** use cases: anchor (after) resolved in the domain, stale anchor → 409 anchor-not-in-column, re-placing a card is a MOVE; no read-in-transaction, no row locks"
     }
   ],
   "notes": [

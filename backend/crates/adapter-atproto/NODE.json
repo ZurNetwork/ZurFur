@@ -15,7 +15,7 @@
   "fs": [
     {
       "name": "CLAUDE.md",
-      "role": "settled invariants: did:plc everywhere, a Character carries no DID, no cross-store transactions",
+      "role": "settled invariants: did:plc everywhere, the DID is the only actor identifier (Characters included), no cross-store transactions",
       "node": false
     },
     {
@@ -56,14 +56,14 @@
       "governs": "key custody + minter lifecycle; src/plc.rs, src/did_minter.rs: genesis-op signing authority and the safety-net derivation"
     },
     {
-      "page": 26935298,
-      "title": "Zurfur Public Presence & PDS — Identity-Only for v1",
-      "governs": "v1 mints identity-only did:plc, no PDS services; src/plc.rs: `PlcService`/`identity_only` empty-`services` invariant"
-    },
-    {
       "page": 27852802,
       "title": "Account Handle Change Flow",
       "governs": "REPLACE `alsoKnownAs`, submit-before-record ordering, idempotent replay; src/plc.rs `update_handle`, src/did_minter.rs `update_handle`"
+    },
+    {
+      "page": 54427650,
+      "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
+      "governs": "src/plc.rs: PlcService/identity_only (empty services) is the MINT STAGE, not an invariant — hosted actors (Accounts, public Characters) attach a PDS repo afterwards via one PLC update op (atproto_pds service + PDS keys); hosted key list [owner, pds, zurfur]; supersedes 26935298 in full"
     }
   ],
   "notes": [

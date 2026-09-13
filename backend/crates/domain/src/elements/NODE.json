@@ -227,6 +227,11 @@
       "page": 59310081,
       "title": "The Changelog as the Only Record",
       "governs": "supersedes-in-part 30408741; commission/changelog.rs, commission/mod.rs Archived variant"
+    },
+    {
+      "page": 62488577,
+      "title": "Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board",
+      "governs": "workflow.rs: columns and cards order by a fractional Position key (LexOrdering trait, jitter from the element's UUIDv7 tail), (position, id) total order, anchor-based placement, one card per board = MOVE; invariants live here, the store only backstops"
     }
   ],
   "notes": [

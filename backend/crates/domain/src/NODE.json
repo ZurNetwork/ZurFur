@@ -78,11 +78,6 @@
       "governs": "ports/mod.rs find_did_by_handle"
     },
     {
-      "page": 26935298,
-      "title": "Zurfur Public Presence & PDS — Identity-Only for v1",
-      "governs": "ports/mod.rs DidMinter"
-    },
-    {
       "page": 27852802,
       "title": "Account Handle Change Flow",
       "governs": "ports/mod.rs count_handle_changes_since/handle_reserved_for_other/change_handle/update_handle"
@@ -106,6 +101,11 @@
       "page": 45514754,
       "title": "Commission Composition",
       "governs": "ports/commission.rs load_composition/add_element"
+    },
+    {
+      "page": 54427650,
+      "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
+      "governs": "ports/mod.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
     },
     {
       "page": 59310081,
