@@ -1,6 +1,7 @@
 {
   "path": "scripts",
   "charted": "2026-09-13",
+  "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "conventions": [
     "`ZURFUR_*` env convention (env wins over `.env.example` defaults); each smoke script proves the dev loop itself at the shell/`just` level, distinct from the automated per-test-throwaway integration harness."

@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/application/src/commission",
   "charted": "2026-09-12",
+  "short": "Commission use cases",
   "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `run` file per action; the module root `../commission.rs` holds `CommissionError`, `CommissionPorts`, `CommissionResult` and the system-actor `sweep_deadlines`.",
   "conventions": [],
   "entry_points": [

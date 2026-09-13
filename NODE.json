@@ -1,6 +1,7 @@
 {
   "path": ".",
   "charted": "2026-09-13",
+  "short": "The Zurfur monorepo: Rust backend, SvelteKit frontend, contract, lexicons",
   "is": "Zurfur — an AT Protocol-native art-commission platform: a Rust ports-and-adapters backend, a SvelteKit frontend, and the protobuf contract + atproto lexicons that sit between them and the network.",
   "conventions": [
     "All design lives in Confluence DESIGN (single source of truth; `docs/confluence-design-index.md` is the pointer index) — fetch before asserting; Jira ZMVP holds the ticket record.",

@@ -1,6 +1,7 @@
 {
   "path": "docs",
   "charted": "2026-09-12",
+  "short": "Pointer index into Confluence DESIGN",
   "is": "The local pointer index into Confluence DESIGN — titles, page IDs, and fetch coordinates only, never copied page content.",
   "conventions": [
     "This is the index every `Refs` section resolves against, so it is the one place page ids belong in bulk — but still ids and titles only, never page bodies.",

@@ -1,6 +1,7 @@
 {
   "path": "contract",
   "charted": "2026-09-12",
+  "short": "The protobuf API contract, authoritative over both tiers",
   "is": "The API contract — protobuf as the independent IDL, authoritative over BOTH tiers (axum via prost+pbjson, SvelteKit via protobuf-es), owned by neither and generated into both.",
   "conventions": [
     "JSON over HTTP is the v1 transport — nothing here implies gRPC; transports are adapters.",
