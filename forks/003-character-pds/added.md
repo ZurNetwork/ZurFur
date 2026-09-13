@@ -1,0 +1,6 @@
+Board-added options from S1 (both seats independently proposed E; F is Gemini's):
+
+- **E — Own DID + a minimal, claims-only repo.** At publicize the Character gets a Zurfur-hosted repo holding ONLY: its CCS ownership half (`net.got-paws.acp.relationship.ownership`, role `owned`), a standard `app.bsky.actor.profile` stub, and (GPT's variant) signed pointers/manifests to content held elsewhere. Ref sheets, art records, custom `app.zurfur.*` lexicons and blobs stay Index-only for the alpha; they move into the repo later only if independent portability justifies it. Rationale: it is the one capability B fundamentally lacks — the Character speaking for itself — without dragging the Gallery/content model and blob hosting into the alpha.
+- **F — Own DID + repo, vulpes-compliant ownership via an Account.** The Character's single in-force ownership edge points at an Account DID; the N human Keepers co-own the Account. Satisfies CCS's one-edge rule (claim 11) instead of fighting it; co-ownership becomes an Account-membership concern on Zurfur's side.
+
+Both seats state that no repo topology resolves the co-ownership contradiction (claim 11) by itself; E and F differ in whether the contradiction is deferred (E) or dissolved by re-pointing the edge (F).
