@@ -1,0 +1,137 @@
+{
+  "path": "backend/crates/api",
+  "charted": "2026-09-12",
+  "is": "The HTTP driving adapter over `composition::Runtime`: the axum router, the RFC 9457 error shape, the generated wire contract, the session layer, and the one background task — handlers are thin drivers over the shared `application::*` use cases (`commissions/channel` + `commissions/elements` still await a use case, and `session`'s sign-in provisioning still opens its own unit of work).",
+  "conventions": [
+    "Two endpoint shapes coexist — the browser sign-in flow redirects; every JSON API returns status codes (401, never a redirect).",
+    "Errors are `application/problem+json` with a `urn:zurfur:error:*` type and terse code.",
+    "A namespace boundary is a policy boundary: cookie-surface routers sit under the first-party-Origin CSRF layer; `/health` and a future bearer `/plugin/v1` mount outside it by construction.",
+    "Session→identity resolution is one axum extractor, `extract::CallingUser`, never a per-module helper.",
+    "Parity tests (`create_account_parity.rs`, `delete_account_parity.rs`, `whoami_parity.rs`) pin this driver's projections identical to the CLI's until the contract moves to a leaf crate."
+  ],
+  "entry_points": [
+    "src/main.rs",
+    "src/lib.rs::app"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "wires domain + adapter-pg + composition + application + shared, tokio-util/futures-util for upload streaming glue (adapter-mem/test-support/contract-gen/cli as dev-deps); sqlx only for the sweeper's advisory lock",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "lib/main, extractors, routes, problem, sweep, generated contract types",
+      "node": true
+    },
+    {
+      "name": "tests/",
+      "role": "~40 flat integration suites over reqwest (accounts, commissions/*, csrf, session_fixation, cross_persona_unlinkability, golden_wire, contract_current, e2e, plus CLI/API parity tests create_account_parity/delete_account_parity/whoami_parity) + tests/common/mod.rs assert_problem",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "`routes/commissions/delete.rs`/`archive.rs`, `tests/commission_delete.rs`, `tests/commission_listing.rs`"
+    },
+    {
+      "page": 6848513,
+      "title": "External Chat Tracking",
+      "governs": "`routes/commissions/mod.rs`, `channel.rs`"
+    },
+    {
+      "page": 11763713,
+      "title": "Domains and Applications",
+      "governs": "`routes/mod.rs`"
+    },
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "`src/problem.rs`, `tests/account_listing.rs`, `tests/accounts.rs`, `tests/invitations.rs`"
+    },
+    {
+      "page": 23592962,
+      "title": "API Response Shape & Error Model",
+      "governs": "`src/problem.rs`"
+    },
+    {
+      "page": 24543244,
+      "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",
+      "governs": "the cookie-surface policy zone"
+    },
+    {
+      "page": 26247170,
+      "title": "User as Actor & On-Demand Accounts",
+      "governs": "`routes/commissions/create.rs`, `tests/commissions.rs`, `tests/account_scope_gate.rs` — a user-scoped write needs no Account"
+    },
+    {
+      "page": 26607618,
+      "title": "Handle Resolution for *.zurfur.app",
+      "governs": "`routes/wellknown.rs`"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "`routes/accounts.rs`"
+    },
+    {
+      "page": 28311564,
+      "title": "Referenceable, Slot & Seat",
+      "governs": "`routes/commissions/seats.rs`"
+    },
+    {
+      "page": 29130754,
+      "title": "Commission Ownership Separation",
+      "governs": "`routes/commissions/positioning.rs`, `tests/commission_positioning.rs` — grants are per-User, placement lives on the account board"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "`routes/commissions/maturity.rs`, `src/problem.rs`, `tests/commission_maturity.rs`"
+    },
+    {
+      "page": 30408741,
+      "title": "The Changelog",
+      "governs": "`routes/commissions/create.rs`"
+    },
+    {
+      "page": 32112642,
+      "title": "The Linked Channel",
+      "governs": "`routes/commissions/mod.rs`, `channel.rs`"
+    },
+    {
+      "page": 34013187,
+      "title": "Identities, the Actor Super-Table",
+      "governs": "actor-kind uniqueness: `src/problem.rs`, `tests/commission_seat_invitations.rs`, `tests/invitations.rs`"
+    },
+    {
+      "page": 40992770,
+      "title": "The API Contract",
+      "governs": "the generated wire types every handler returns"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition",
+      "governs": "`routes/commissions/elements.rs`"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer",
+      "governs": "D6/D7: authorization + transaction belong in `application`, so driver-side authz survives only in `routes/commissions/elements.rs`/`channel.rs`/`mod.rs`; D10: CLI/API projection parity, `routes/accounts.rs`"
+    },
+    {
+      "page": 57081857,
+      "title": "Actor Addressing",
+      "governs": "`routes/accounts.rs`, `tests/commission_positioning.rs` — an Account id IS a DID, no surrogate"
+    }
+  ],
+  "notes": [
+    "Cross-persona unlinkability: no route may join one person's separate handles/Users as the same human (holds by construction — separate handle → separate User → separate DID); guarded by `tests/cross_persona_unlinkability.rs`.",
+    "The cookie surface also carries `Cache-Control: no-store` (beyond CSRF) so authenticated identity/PII JSON is never cached (CWE-525).",
+    "`src/generated/*.rs` still carries DD pointers in its doc comments: it is generated from `contract/*.proto`, so the fix belongs on the `.proto` field comments, not here — a hand-edit would be regenerated away.",
+    "See also: `contract/VERSIONING.md`.",
+    "See also: ZMVP-205."
+  ]
+}

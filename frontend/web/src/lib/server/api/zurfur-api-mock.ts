@@ -5,7 +5,7 @@
  * live is read exactly once, here — {@link mockModeRequested},
  * {@link mockModeEnabled}, {@link mockModeMisconfigured}. Implements the
  * FULL {@link ZurfurApiShape}, not a `Partial`, so a grown shape fails to
- * compile here too. State is one shared {@link MockStore}; see NODE.md for
+ * compile here too. State is one shared {@link MockStore}; see NODE.json for
  * the full rationale (why one shared flag reader, the shared-store lifetime,
  * the loopback assumption).
  */

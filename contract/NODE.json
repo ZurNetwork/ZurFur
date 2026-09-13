@@ -1,0 +1,80 @@
+{
+  "path": "contract",
+  "charted": "2026-09-12",
+  "is": "The API contract — protobuf as the independent IDL, authoritative over BOTH tiers (axum via prost+pbjson, SvelteKit via protobuf-es), owned by neither and generated into both.",
+  "conventions": [
+    "JSON over HTTP is the v1 transport — nothing here implies gRPC; transports are adapters.",
+    "`service`/`rpc` blocks exist only to host `google.api.http` annotations; ONLY MESSAGES are generated, handlers stay hand-written but return the generated types.",
+    "Path-major is welded to the package: `zurfur.api.v1` ⇒ `/api/v1/…`.",
+    "Additive-only within a major; `buf breaking` at WIRE_JSON, the skip label is banned (R9).",
+    "R1 canonical lowerCamelCase keys (`json_name` rejected).",
+    "R4 absence = \"not set\" only.",
+    "R6 ids opaque (≤64-char strings).",
+    "R7 listings wrapped (`{\"accounts\": […]}`).",
+    "R8 vocabularies are documented extensible `string`s, never enums.",
+    "Deletions reserve number AND name.",
+    "Serializer options are contract text pinned by `golden_wire.rs`."
+  ],
+  "entry_points": [
+    "README.md → VERSIONING.md",
+    "just gen-contract",
+    "backend/crates/api/tests/contract_routes.rs"
+  ],
+  "fs": [
+    {
+      "name": "README.md",
+      "role": "orientation: authority claim, layout, the rules in one breath",
+      "node": false
+    },
+    {
+      "name": "VERSIONING.md",
+      "role": "the binding versioning/deprecation contract: rulings R1–R11, breaking-change list, 12-month notice",
+      "node": false
+    },
+    {
+      "name": "buf.gen.yaml",
+      "role": "frontend codegen (protoc-gen-es, target=ts) into frontend/web/src/lib/server/api/generated",
+      "node": false
+    },
+    {
+      "name": "buf.yaml",
+      "role": "v2 module config — lint STANDARD, breaking gate WIRE_JSON",
+      "node": false
+    },
+    {
+      "name": "google/",
+      "role": "vendored googleapis annotations (api/annotations.proto, api/http.proto) — verbatim upstream, never edited",
+      "node": false
+    },
+    {
+      "name": "lifecycle.toml",
+      "role": "per-major lifecycle manifest ([major.v1] live|deprecated|sunset); CI routes follow it",
+      "node": false
+    },
+    {
+      "name": "zurfur/",
+      "role": "the Zurfur corpus; pass-through to api/v1",
+      "node": true
+    }
+  ],
+  "refs": [
+    {
+      "page": 23592962,
+      "title": "API Response Shape & Error Model",
+      "governs": "RFC 9457"
+    },
+    {
+      "page": 40992770,
+      "title": "The API Contract — Protobuf as the Independent IDL",
+      "governs": "README.md, VERSIONING.md: authority of this directory over both tiers; decision 3: service blocks are route-declarations only, messages-only codegen"
+    },
+    {
+      "page": 41189413,
+      "title": "Plugin — API Stability & Versioning",
+      "governs": ""
+    }
+  ],
+  "notes": [
+    "CI job `contract` runs lint + breaking + the clean-slate generate diff."
+  ]
+}

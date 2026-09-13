@@ -7,7 +7,7 @@ import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
  * PROD GUARD: mock mode must be UNREACHABLE in a real server, checked at
  * BOOT — `hooks.server.ts` loads before adapter-node starts accepting
  * requests, so a failed check here fails the process at startup rather than
- * lazily on the first request that touches the seam. See NODE.md for the
+ * lazily on the first request that touches the seam. See NODE.json for the
  * full rationale (why `throw`, the loopback assumption, `building`-phase
  * carve-out).
  */

@@ -1,0 +1,46 @@
+{
+  "path": "forks",
+  "charted": "2026-09-12",
+  "is": "The `/boardroom` skill's working directory — one numbered subfolder per multi-model deliberation run (each holds the brief, per-phase seat transcripts, the sealed Engineer ranking, and the judge's synthesis).",
+  "conventions": [
+    "Numbered `NNN-slug` folders, minted from `.counter`.",
+    "`sealed.md` holds the Engineer's ranking given BEFORE the seats run and must never leak into seat-facing prompts (`run.py` asserts this).",
+    "Deliberation only — nothing here is a decision; a decided fork still routes through `/design-decision`."
+  ],
+  "entry_points": [
+    "forks/<NNN-slug>/brief.md (the proposal put to the board)",
+    "forks/<NNN-slug>/run.py (the runner)"
+  ],
+  "fs": [
+    {
+      "name": ".counter",
+      "role": "next fork number for the boardroom skill to mint",
+      "node": false
+    },
+    {
+      "name": "001-a6-tombstone-seam/",
+      "role": "one boardroom SCRUTINIZE run's working files (brief, seat transcripts, sealed ranking, verdict)",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "grounded fork 001's brief"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer",
+      "governs": "grounded fork 001's brief"
+    },
+    {
+      "page": 57081857,
+      "title": "Actor Addressing, DID everywhere",
+      "governs": "grounded fork 001's brief"
+    }
+  ],
+  "notes": [
+    "Citations inside a brief or transcript stay put: these are debate artifacts, not doc comments, and stripping them would break the record of what was actually scrutinized."
+  ]
+}

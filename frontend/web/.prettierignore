@@ -8,3 +8,6 @@ bun.lockb
 # Miscellaneous
 /static/
 src/lib/server/api/generated/
+
+# NODE.json files are formatted by the nodes tool (canonical form); prettier must not fight it.
+**/NODE.json

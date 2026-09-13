@@ -45,8 +45,9 @@ fi
 # `just migrate-add` — sqlx stamps a to-the-second UTC version. A round hour or
 # half-hour HHMMSS means the filename was hand-typed, which risks a version-key
 # collision with another branch's migration at rebase/integration (see CLAUDE.md).
-# Only NEW migrations over trunk are checked, so already-merged offenders don't block.
-if new_migrations=$(jj diff --from 'trunk()' --to '@' --name-only 2>/dev/null | grep 'crates/adapter-pg/migrations/'); then
+# Only NEW migrations over trunk are checked (the `A` lines of --summary), so
+# already-merged offenders don't block — not even when a comment in one is edited.
+if new_migrations=$(jj diff --from 'trunk()' --to '@' --summary 2>/dev/null | awk '$1 == "A" { print $2 }' | grep 'crates/adapter-pg/migrations/'); then
     offenders=$(printf '%s\n' "$new_migrations" | grep -E '/[0-9]{8}[0-9]{2}(00|30)00_[^/]*\.sql$' || true)
     if [ -n "$offenders" ]; then
         echo "jj-push: migration timestamp looks hand-typed (round hour/half-hour) — mint it with 'just migrate-add <name>' and move the SQL over:"

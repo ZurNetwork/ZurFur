@@ -1,0 +1,40 @@
+{
+  "path": "frontend",
+  "charted": "2026-09-12",
+  "is": "The client tier — exactly one SvelteKit app fronting the axum backend; this directory is a thin container.",
+  "conventions": [
+    "Plain SvelteKit + TypeScript — the Leptos and ZesTTY/Dialect alternatives were both retired 2026-08-09; don't re-litigate the stack without new evidence.",
+    "The React auth frontend is deleted."
+  ],
+  "entry_points": [
+    "web/ (there is nothing else here)"
+  ],
+  "fs": [
+    {
+      "name": "web/",
+      "role": "the SvelteKit + Svelte 5 + TypeScript app (the only frontend)",
+      "node": true
+    }
+  ],
+  "refs": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack, Server-Only Effect & the Runes Seam",
+      "governs": "governing"
+    },
+    {
+      "page": 46596098,
+      "title": "The Dialect, ZesTTY",
+      "governs": "retired 2026-08-09"
+    },
+    {
+      "page": 47939586,
+      "title": "The Rust Frontend, Leptos",
+      "governs": "reverted 2026-08-09"
+    }
+  ],
+  "notes": [
+    "See also: ZMVP-148 (the deleted React auth frontend).",
+    "See also: memory `project_frontend_stack_history`."
+  ]
+}

@@ -3,7 +3,7 @@
 //! Boots a throwaway PDS in a container per test, with an in-process stub
 //! PLC directory so no request ever reaches the public atproto network,
 //! provisions a fixture account, and tears everything down on drop. See
-//! this directory's NODE.md for the usage recipe, the hermeticity
+//! this directory's NODE.json for the usage recipe, the hermeticity
 //! guarantees, and the container-reuse escape hatch.
 
 pub mod contract;

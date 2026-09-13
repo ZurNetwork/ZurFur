@@ -2,7 +2,7 @@
 //! fakes — the module the drivers call, exercised below the HTTP layer.
 //!
 //! Every test here pins a refusal the module shipped without: the delete
-//! role gate, the liveness gate `account/NODE.md` makes mandatory, the
+//! role gate, the liveness gate `account/NODE.json` makes mandatory, the
 //! caller-named-account-vs-board reconciliation, and the order that keeps a
 //! non-member from reading board state off an error.
 

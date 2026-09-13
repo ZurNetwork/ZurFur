@@ -1,6 +1,6 @@
 //! The shared-container Postgres harness: one container per test process, a
 //! migrated template database, and a private clone per test via
-//! `CREATE DATABASE … TEMPLATE …`. See this directory's NODE.md for the
+//! `CREATE DATABASE … TEMPLATE …`. See this directory's NODE.json for the
 //! lifecycle/refcounting details.
 
 use std::sync::{Arc, Mutex, Weak};

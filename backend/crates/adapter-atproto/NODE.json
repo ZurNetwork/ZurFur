@@ -1,0 +1,77 @@
+{
+  "path": "backend/crates/adapter-atproto",
+  "charted": "2026-09-12",
+  "is": "The public data boundary: the only crate that knows the AT Protocol — OAuth sign-in, PDS record/blob writes, public profile reads, and real did:plc minting with key custody — quarantining jacquard behind domain port traits.",
+  "conventions": [
+    "Nothing protocol-shaped leaks past this crate's surface (the jacquard client type is a private alias).",
+    "Uses `PgPool` as a plain DB client injected by `composition`; its queries run against adapter-pg's migrations.",
+    "OAuth at-rest secrets (DPoP key, tokens, PKCE verifier) are envelope-encrypted under the same custody root key as adapter-pg's `key_vault`.",
+    "`auth_store` is one of the five documented Unit-of-Work exemptions.",
+    "Genesis signatures are atproto-canonical ECDSA-SHA256 low-S via atrium-crypto — never hand-rolled."
+  ],
+  "entry_points": [
+    "src/lib.rs"
+  ],
+  "fs": [
+    {
+      "name": "CLAUDE.md",
+      "role": "settled invariants: did:plc everywhere, a Character carries no DID, no cross-store transactions",
+      "node": false
+    },
+    {
+      "name": "Cargo.toml",
+      "role": "jacquard/jacquard-oauth, atrium-crypto, DAG-CBOR/sha2 for PLC, reqwest+rustls, sqlx for the auth store",
+      "node": false
+    },
+    {
+      "name": "queries/auth_store/",
+      "role": "6 statements for OAuth persistence: auth request info + session save/get/delete",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "lib.rs (AtprotoAuthenticator), did_minter (Real/Stub), plc + plc_directory (genesis op, hashing, submission), profile, public_records, auth_store, secret_vault, @generated queries.rs",
+      "node": false
+    },
+    {
+      "name": "tests/",
+      "role": "auth_store round-trip, public_records against the throwaway PDS + conformance suite, wipe_replay",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 4358151,
+      "title": "DID:PLC vs DID:Web",
+      "governs": ""
+    },
+    {
+      "page": 9207856,
+      "title": "Platform Authority",
+      "governs": ""
+    },
+    {
+      "page": 26804226,
+      "title": "did:plc Identity Custody",
+      "governs": "key custody + minter lifecycle; src/plc.rs, src/did_minter.rs: genesis-op signing authority and the safety-net derivation"
+    },
+    {
+      "page": 26935298,
+      "title": "Zurfur Public Presence & PDS — Identity-Only for v1",
+      "governs": "v1 mints identity-only did:plc, no PDS services; src/plc.rs: `PlcService`/`identity_only` empty-`services` invariant"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "REPLACE `alsoKnownAs`, submit-before-record ordering, idempotent replay; src/plc.rs `update_handle`, src/did_minter.rs `update_handle`"
+    }
+  ],
+  "notes": [
+    "Port → impl: `Authenticator` = `AtprotoAuthenticator` (lib.rs) · `ProfileSource` = `AtprotoProfileSource` · `DidMinter` = `RealDidMinter` / `StubDidMinter` · `PublicRecords` = `AtprotoPublicRecords`. `PlcDirectory` is adapter-local, selected by `plc_directory_from_config`.",
+    "`secret_vault::SecretVault` deliberately mirrors adapter-pg's `key_vault::RootKey` (same AEAD, blob format and root key `ZURFUR_DID_KEY_ROOT_KEY`) rather than sharing a type — one adapter may not depend on another. Hoisting the envelope into `domain` is the open follow-up. Root-key custody is DEV-ONLY (config/env) pending a KMS; `composition::ensure_custody_hardened` covers this store too at boot.",
+    "Op ordering: `mint` writes custody + the genesis op BEFORE submitting; `tombstone` and `update_handle` submit BEFORE recording, so a failed submit never advances the local chain.",
+    "`plc.rs` is pinned to the published vector `did:plc:ewvi7nxzyoun6zhxrhs64oiz`; it is the tripwire for the whole DAG-CBOR → sha256 → base32/24 pipeline.",
+    "This crate's half of the `codegen_current` staleness gate lives over in adapter-pg's `tests/it/`, not here.",
+    "See also: `CLAUDE.md` here."
+  ]
+}

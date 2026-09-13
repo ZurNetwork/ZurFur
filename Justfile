@@ -1,5 +1,10 @@
 set dotenv-load := true
 
+# The `nodes` tool (github.com/ZurNetwork/nodes — the NODE.json normalizer and
+# lookup CLI), pinned to one release tag. Bump it HERE and nowhere else: the
+# NODE.json files and the tool's schema move in lockstep on this pin.
+NODES_VERSION := "v0.1.1"
+
 default:
     @just --list
 
@@ -123,6 +128,27 @@ gen-contract:
     cd contract && buf generate
 
 
+# --- The node tree (NODE.json) ---
+
+# The per-directory NODE.json chart, through the pinned `nodes` binary:
+# `just nodes tree` · `just nodes chain <path>` · `just nodes get <path> [field]`
+# · `just nodes refs <pageId>` · `just nodes find <term>` · `just nodes fmt [file…]`
+# · `just nodes set <path> <field> <json>` · add-ref / rm-ref / touch (`nodes --help`).
+# Needs the binary: `just nodes-install` (run by `just setup`).
+nodes *ARGS:
+    nodes {{ARGS}}
+
+# Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
+# every ref against the DESIGN pointer index (a SUPERSEDED entry warns). Part of
+# `just gate`; CI runs it as the `nodes` job.
+nodes-check:
+    nodes check --ref-index docs/confluence-design-index.md
+
+# Download the pinned `nodes` release binary into ~/.cargo/bin (checksum-verified;
+# falls back to `cargo install --git` when no prebuilt archive fits this machine).
+nodes-install:
+    sh scripts/nodes-install.sh {{NODES_VERSION}}
+
 # --- Worktrees (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
@@ -154,6 +180,7 @@ gate:
     cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
+    just nodes-check
     buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
@@ -168,6 +195,7 @@ setup:
     @echo "Installing tools..."
     cargo install just cargo-watch bacon
     cargo install sqlx-cli --no-default-features --features postgres
+    just nodes-install
     cd frontend/web && yarn install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
