@@ -1,4 +1,7 @@
 set dotenv-load := true
+# Recipe arguments reach the shell as "$@", so `just nodes add-ref … "a title" "text (with parens)"`
+# passes every argument through intact; `{{ARGS}}` would re-split and re-parse them.
+set positional-arguments := true
 
 # The `nodes` tool (github.com/ZurNetwork/nodes — the NODE.json normalizer and
 # lookup CLI), pinned to one release tag. Bump it HERE and nowhere else: the
@@ -109,7 +112,7 @@ test:
 
 # The terminal driving adapter (epic ZMVP-199): `just zurfur -- session whoami`.
 zurfur *ARGS:
-    cargo run --quiet --package cli -- {{ARGS}}
+    cargo run --quiet --package cli -- "$@"
 
 # Regenerate both adapters' src/queries.rs (typed query functions) from the
 # queries/*.sql trees, described against a throwaway migrated Postgres. Run
@@ -136,7 +139,7 @@ gen-contract:
 # · `just nodes set <path> <field> <json>` · add-ref / rm-ref / touch (`nodes --help`).
 # Needs the binary: `just nodes-install` (run by `just setup`).
 nodes *ARGS:
-    nodes {{ARGS}}
+    nodes "$@"
 
 # Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
 # every ref against the DESIGN pointer index (a SUPERSEDED entry warns). Part of
