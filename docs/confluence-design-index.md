@@ -24,7 +24,7 @@ Know these without fetching; fetch the linked DD page for detail.
 - `10125333` — The Index
 - `786450` — Project Philosophy
 - `9895947` — Product
-- `589826` — Project MVP (current MVP doc)
+- `589826` — Project MVP (current MVP doc; **AMENDED 2026-09-12 — the alpha is cut to the spine**: Core capabilities = the Release Board's Alpha column [34], Beta [11] and Release (v1.0+) [10] under non-goals/Roadmap; no plugin required to ship, Telegram + Notifications at Release; the shared "Zurfur Release Board" artifact is the live source the page mirrors)
 - `3670017` — MVP & Roadmap — SUPERSEDED, merged → Project MVP (`589826`); known to be in flux/contradictory, don't treat as ground truth
 - `9994307` — Blocking Gaps for v1
 
@@ -33,7 +33,7 @@ Know these without fetching; fetch the linked DD page for detail.
 - `1966081` — Account
 - `2162692` — Roles (Owner/Admin/Manager/Member hierarchy)
 - `3276807` — Commission
-- `5668866` — Character
+- `5668866` — Character (2026-09-12: `Claims` section — ownership is a SYMMETRICAL claim, Character claims User + User claims Character, edge only when both exist; alpha; record shape open, DD pending)
 - `5931025` — Slots
 - `8912899` — Collections
 - `9961473` — Batch
