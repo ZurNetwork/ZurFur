@@ -125,6 +125,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@v1
 
+  nodes:
+    name: nodes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      # The pinned release binary (NODES_VERSION in the Justfile), then the
+      # same check `just gate` runs: every NODE.json against the schema, the
+      # tree and the DESIGN pointer index.
+      - run: just nodes-install
+      - run: just nodes-check
+
   web:
     name: web
     runs-on: ubuntu-latest

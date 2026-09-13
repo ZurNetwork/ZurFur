@@ -1,0 +1,154 @@
+{
+  "path": "backend/crates/adapter-pg",
+  "charted": "2026-09-13",
+  "is": "The private data boundary in PostgreSQL: app-owned rows (actors keyed by their DID, everything else UUIDv7), SQL kept in per-statement files, and typed accessors generated from a live migrated schema.",
+  "conventions": [
+    "SQL never lives in Rust; `query!`/`query_as!` macros are retired by construction (`macros` feature off), and a query's doc text is slimmed in its `.sql` file, never in the generated module.",
+    "The EXEMPT list in `tests/it/no_bare_pool_writes.rs` is the authoritative record of the bare-pool write holes — a new exemption is a design question, not a quiet edit.",
+    "Migrations only via `just migrate-add <name>` (a hand-typed round-hour version is a latent collision); filename = `<version>_<name>.sql`.",
+    "Custody key material is envelope-encrypted (XChaCha20-Poly1305) under a root key before it touches disk.",
+    "Table names singular from ZMVP-65 on.",
+    "Commission-owned satellite rows that annotate other bookkeeping (e.g. `commission_markup`) are NON-FACT and carry a composite FK back onto their parent row, so a cross-commission reference is unrepresentable.",
+    "`FileStore` streams at the port (`AsyncRead` in, `FileDownload` out) but this v1 adapter buffers in memory — a documented exception pending the blob architecture."
+  ],
+  "entry_points": [
+    "src/lib.rs",
+    "src/uow.rs",
+    "tests/it/main.rs"
+  ],
+  "fs": [
+    {
+      "name": "CLAUDE.md",
+      "role": "settled invariants: no cross-store transactions, transactions-as-capability, the five bare-pool exemptions",
+      "node": false
+    },
+    {
+      "name": "Cargo.toml",
+      "role": "sqlx (derive, not macros), tower-sessions-core, chacha20poly1305/zeroize; dev-deps sqlx-rust-codegen + query-codegen + adapter-atproto + test-support",
+      "node": false
+    },
+    {
+      "name": "build.rs",
+      "role": "embeds migrations/ into OUT_DIR as a sorted (version, description, sql) array — replaces sqlx::migrate!",
+      "node": false
+    },
+    {
+      "name": "migrations/",
+      "role": "timestamp-versioned forward-only SQL (42 files, latest creates workflow/workflow_column and drops the superseded placement tables), embedded and run on boot and by every test template",
+      "node": false
+    },
+    {
+      "name": "queries/",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (36 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find), workflow/ + column/ (the account's boards and their cards), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/, key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "node": false
+    },
+    {
+      "name": "sqlx.toml",
+      "role": "date-time preferred-crate = chrono",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "port impls — uow (PgDatabase/PgUnitOfWork), account, user, commission (+markup), commission_changelog, workflow (boards/columns + placement), actor_identity, profile, session_store, file_store (streaming, buffers internally), key_store, key_vault, plc_operation_log; @generated queries.rs; lib.rs pool/migrator",
+      "node": false
+    },
+    {
+      "name": "tests/it/",
+      "role": "one integration binary sharing a Postgres container across ~22 modules — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "`src/commission.rs`, `src/account.rs`, and the non-fact tables created in `migrations/20260705190001_create_commission_slot.sql`, `20260705150000_create_commission_node.sql`, `20260710055222_create_commission_files.sql`, `20260705120000_create_commission_changelog.sql`, `20260705200000_create_commission_placement_and_view_grant.sql`, `20260706100001_create_commission_participant_and_seat.sql`, `20260717012204_create_commission_invitation.sql`, `20260805234354_flat_commission_composition.sql`, `20260910185856_create_workflow_and_columns.sql`, `20260705190000_add_archived_at_commission.sql`; fact/non-fact classification"
+    },
+    {
+      "page": 10125341,
+      "title": "Blobs, PDS & Private Storage",
+      "governs": ""
+    },
+    {
+      "page": 21594113,
+      "title": "User-Profiles, the Handle Swap & Content Maturity",
+      "governs": "`queries/account/list_for_user.sql` / `src/queries.rs`; decision 4, the `listed_on_profile` valve"
+    },
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "`src/account.rs`, `migrations/20260630140000_add_account_handle.sql`, `20260718194008_drop_projection_did.sql`, `tests/it/account.rs`"
+    },
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability — compile-enforced Unit of Work",
+      "governs": "the tx-bound write views across `src/uow.rs`, `src/account.rs`, `src/user.rs`, `src/commission.rs`, `src/commission_changelog.rs`, `src/key_store.rs`, `src/profile.rs`, `src/actor_identity.rs`, `src/lib.rs`, and their `tests/it/*` doc comments"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "`src/account.rs::settle_member_departure`"
+    },
+    {
+      "page": 26804226,
+      "title": "did:plc Identity Custody, Minting & Credible Exit",
+      "governs": "`src/key_vault.rs`, `migrations/20260630190000_create_account_keys_table.sql`"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "`src/account.rs`, `migrations/20260702120000_create_account_handle_changes.sql`"
+    },
+    {
+      "page": 28311564,
+      "title": "Referenceable, Slot & Seat",
+      "governs": "the Slot/Seat satellite pattern in `migrations/20260705190001_create_commission_slot.sql`, `20260706100001_create_commission_participant_and_seat.sql`, `20260805234354_flat_commission_composition.sql`"
+    },
+    {
+      "page": 29130754,
+      "title": "Commission Ownership Separation — View Grants & Account Placement",
+      "governs": "`src/commission.rs`, `src/workflow.rs`, `migrations/20260705200000_create_commission_placement_and_view_grant.sql`, `20260910185856_create_workflow_and_columns.sql`, `20260910193912_drop_superseded_placement_tables.sql`, `queries/commission/grant_view.sql`, `revoke_view.sql`, `view_grant.sql`, `queries/workflow/delete.sql`, `tests/it/account.rs`, `tests/it/commission_positioning.rs`"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary — Adopting atproto Self-Labels",
+      "governs": "`migrations/20260707000000_add_maturity_commission.sql`"
+    },
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
+      "governs": "every `actor_identity` slice migration, `src/actor_identity.rs`, `src/user.rs`, and `tests/it/actor_identity.rs` / `actor_projection.rs`; `20260714211223`, `20260714214839`, `20260714220545`, `20260714221008`, `20260714222043`, `20260714232603`, `20260718194001_actor_projection_composite_fk.sql`, `20260718193956_backfill_actor_identity_from_projections.sql`"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition — Flat Extension Points",
+      "governs": "`queries/commission/create_tab.sql`, `migrations/20260805234354_flat_commission_composition.sql`; the migration this decision drove"
+    },
+    {
+      "page": 57081857,
+      "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
+      "governs": "the whole did-as-key model: `src/account.rs`, `src/queries.rs`, `migrations/20260907060908_rekey_actors_on_did.sql`, `20260902225852_create_commission_markup.sql`, `20260910185856_create_workflow_and_columns.sql`, and every `queries/**/*.sql` file that resolves an actor by DID; generated; the migration this decision drove; `account/find.sql`, `account/find_did_by_handle.sql`, `account/list_for_user.sql`, `account/handle_reserved_for_other.sql`, `commission/grant_view.sql`, `commission/view_grant.sql`, `commission/revoke_view.sql`, `user/find.sql`, `user/find_by_did.sql`, `workflow/delete.sql`"
+    }
+  ],
+  "notes": [
+    "Module → port: `commission.rs` backs `CommissionStore`/`CommissionWrites`, `workflow.rs` backs `WorkflowStore`/`WorkflowWrites` + `ColumnStore`/`ColumnWrites` (board placement lives here, not in `commission.rs`), `account.rs` backs the account stores/writes.",
+    "DDL lives here and only here: `migrations/` is the schema's one home; no other crate ships SQL.",
+    "Fact-anchored deletion is encoded as two constants per aggregate — `{COMMISSION,ACCOUNT}_FACT_TABLES` / `_NON_FACT_TABLES`. Every table with an FK onto `commission(id)` / `accounts(id)` must appear in exactly one list; a schema tripwire test (`tests/it/commission.rs`, `tests/it/account.rs`) enforces it, and a `const_assert`-style guard fails the build when a FACT list gains its first entry (DD 3014657, DD 23003138).",
+    "`account.rs::hard_delete` deletes children-first — `account_invitations` → `account_members` → `accounts` (the FKs do not cascade); `account_handle_changes` cascades off the account row.",
+    "Composition writes serialize per tab: both the add and the remove path take the shared `require_tab` row lock before touching any element row, so a renumber `UPDATE` cannot race an append's position-assignment subquery.",
+    "`src/queries.rs` still carries the old pointer-bearing doc text until the next `just gen-queries` picks up the cleaned `.sql` headers. Left as-is deliberately: in-body `--` explainers, `RAISE EXCEPTION` strings inside migration functions, and test-body section dividers are code, not documentation.",
+    "Moved migration rationale: Full design-history text trimmed out of oversized migration headers during the 2026-09-12 sweep (Job 1), kept here for anyone who needs the \"why,\" not just the \"what.\"",
+    "**`20260630140000_add_account_handle.sql`** — Adds the account's public handle: the validated, normalized atproto handle chosen by the founder at `POST /accounts` (either a Zurfur-issued `<label>.zurfur.app` subdomain or a brought/BYO domain, validated by the domain `Handle` newtype). REQUIRED and UNIQUE; the unique index (`accounts_handle_key`) is GLOBAL — not filtered on `deleted_at` — so a soft-deleted (tombstoned) account still reserves its handle, freed only on hard delete (deliberate: a tombstoned handle must not be silently re-claimable). NOT NULL with no default: every account has always been founded with a handle from this migration onward. The unique index is the store-level backstop the founding handler maps to a 409.",
+    "**`20260702000000_plc_operations_no_chain_fork.sql`** — A minted did:plc is a strictly LINEAR chain of operations — every non-genesis op chains onto exactly one `prev` (the CID of the op before it), and a given op may be chained onto at most once. Without this, two concurrent handle updates both read the same `latest_cid` as their `prev`, build different operations, and both append — forking the local chain, permanently disagreeing with the canonical directory's real tip. A partial UNIQUE index over `(did, prev)` makes a non-genesis fork unrepresentable: the losing concurrent writer's INSERT fails, and `update_handle`'s benign-replay guard sees a different tip, propagates the error, and the caller's retry re-reads and chains onto the new tip — serializing concurrent writers into one linear chain. Scoped `WHERE prev IS NOT NULL` because a genesis op has `prev = NULL` and is already one-per-DID by construction.",
+    "**`20260707000000_add_maturity_commission.sql`** — Two nullable envelope columns on the commission row (like deadline, not a tree/tab node). `maturity` is the four-tier axis token ('safe'|'suggestive'|'nudity'|'adult'); `graphic` is the orthogonal Graphic flag (gore is not a sexual-maturity question), meaningful only alongside a rating. Both start NULL for every commission: a commission is born unrated by invariant (birth commissions are Private/root-Total, so nobody outside can see anything yet). The rating becomes REQUIRED at the widening gate — \"cannot widen to non-participants unrated.\" The CHECK makes a half-set posture unrepresentable: rated = both columns, unrated = neither.",
+    "**`20260910193912_drop_superseded_placement_tables.sql`** — Drops the superseded account-level placement rails. `commission_placement` and its denormalized `commission_current_placement` pointer were an append-only log with exactly one CURRENT account per commission — the shape of a managing-account assignment log that Ownership Separation superseded in favor of \"placement = workflow membership rows, account-side.\" So placement was never a second thing; it is a card in a column (`workflow_column_commission`), which is also why one commission can sit on N accounts' boards with no conflict. Nothing reads or writes the dropped tables any more. **Drop, not migrate** — pre-alpha, no real data to carry across, and a row here names no board/column in the new model.",
+    "**`20260630190000_create_account_keys_table.sql`** — Custody store for the private keys behind a minted account did:plc. When Zurfur mints an account's sovereign identity it generates per-account secp256k1 keypairs (a cold-recovery key, an operational key, and an atproto signing key) and must keep the private halves to operate the DID. These are the most sensitive rows Zurfur holds, so every key is envelope-encrypted under a root key held outside the database (config/env in v1; a cloud KMS is a planned follow-up) — a database compromise alone yields no usable key material.",
+    "**`20260705200000_create_commission_placement_and_view_grant.sql`** — Two account-facing rails that replaced the deleted managing-account concept: Users own commissions, accounts own positioning, and NEITHER rail confers any in-commission authority. Placement is account-side (an append-only log plus a denormalized current-placement pointer, upserted in the same unit of work as each log append); the view grant is a commission-side key that NEVER shares a table with placement. Both are commission-owned bookkeeping, not facts, so they cascade away with the commission and (via `ON DELETE CASCADE`) with the account, never blocking either deletion. The view grant HARD-DELETES on revoke (no soft-deleted rows); its history lives only in the changelog. (Both tables were later dropped — see `20260910193912_drop_superseded_placement_tables.sql`.)",
+    "**`20260907060908_rekey_actors_on_did.sql`** — Until this migration an actor had two names: a surrogate UUIDv7 row key and the `did:plc` everything public already used. This migration collapses them: `users.id` and `accounts.id` become the DID text, and every column that pointed at an actor by UUID is retyped to carry the DID instead (Bluesky's own PDS/AppView/Ozone key their actor tables the same way). DATA-PRESERVING: nothing is dropped or invented — `actor_identity` already holds the (id → did) map for every actor, so every UUID in the schema can be rewritten to the DID it already stood for; a helper function does that lookup once and RAISEs loudly, naming the offending UUID, rather than inventing a value if an actor ever fails to resolve. WHAT IS NOT DONE HERE: `actor_identity` keeps its own `id uuid PRIMARY KEY` — re-keying it is a domain change (the domain still models `ActorIdentityId` as a UUID newtype), not an adapter one; the projections' parent constraint is instead repointed at the natural key, `users (id, kind) → actor_identity (did, kind)`.",
+    "**`20260805234354_flat_commission_composition.sql`** — Retires the recursive `commission_node` adjacency tree and replaces it with three fixed-depth tables (`commission_tab`, `commission_element`, `commission_surface_mode`) and no parent pointers anywhere: depth is fixed by the model (commission > tab > surface > element), so effective visibility is `min(tab.mode, surface_mode, element.mode)` — three lookups, zero recursion. Surface STRUCTURE is code (a global invariant skeleton in Rust); surface MODES are data, and only once widened past the default (absent row = Total). **Drop-and-recreate, not a data migration** — pre-alpha, no real data: existing dev databases keep their commissions and every envelope fact, but lose their tree content, declared Slots/Seats, every seat invitation, and every non-owner participant row. The skeleton (tab rows) is backfilled so \"a commission always has its tab state\" holds for old rows too. Membership dies with the seats that justified it: dropping every Seat drops every justification for non-owner membership (a participant row is the key to the closed door `is_participant` checks), so the residue is swept — the owner's permanent floor row survives (it never came from a Seat), and everyone else re-earns membership through seat-invitation acceptance from a seat that actually exists. Slot and Seat became identity-sharing satellites keyed on the element id via a COMPOSITE foreign key `(element id, commission_id) → commission_element (id, commission_id)`, making a satellite that claims a different commission than its own element unrepresentable at the database rather than merely unwritten.",
+    "See also: `CLAUDE.md` here.",
+    "See also: memory `project_sqlx_offline_cache`.",
+    "See also: Superseded design (kept for history, not re-cited): DD 28246028 \"Commission Surfaces\" and DD 28409880 \"Commission Tree Storage\" governed the now-retired `commission_node` tree (`migrations/20260705150000_create_commission_node.sql`); both are superseded-in-part by DD 45514754.",
+    "Migration headers that say `See NODE.md (\"<file>\")` mean this node: the moved rationale sits in these notes, keyed by migration filename. The headers stay byte-for-byte as shipped because sqlx checksums every migration on boot."
+  ]
+}

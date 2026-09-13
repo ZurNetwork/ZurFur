@@ -1,7 +1,7 @@
 //! `zurfur` — the terminal driving adapter's entry point: parses the command
 //! line, boots tracing to stderr, runs the command, and maps the outcome to
 //! the exit-code classes on [`cli::ExitClass`]. No `.env` loading — see this
-//! crate's `NODE.md`.
+//! crate's `NODE.json`.
 
 use clap::Parser as _;
 

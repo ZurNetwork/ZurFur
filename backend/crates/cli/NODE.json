@@ -1,0 +1,138 @@
+{
+  "path": "backend/crates/cli",
+  "charted": "2026-09-12",
+  "is": "The `zurfur` terminal driving adapter: one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.",
+  "conventions": [
+    "Stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`.",
+    "Exit codes are the four ExitClasses: 0 ok, 1 domain error, 2 usage (clap), 3 infrastructure.",
+    "Problem `code`s reuse the API's vocabulary (`api/src/problem.rs`) where the same refusal exists, plus CLI-only codes (config, identity_*, not_implemented, cancelled, no_session).",
+    "Commands are thin: each is the CLI face of the same application-layer use case the HTTP driver calls — no domain logic duplicated here.",
+    "Irreversible operations go through `crate::confirm`: a person at a terminal is asked (only typed y/yes proceeds); anything without a terminal is refused, not defaulted — `--yes` is the explicit scripted opt-in.",
+    "No `.env` loading in `main` — walking parent dirs for `.env` would leak `DATABASE_URL`/root key from an unrelated directory.",
+    "The identity file (`$ZURFUR_CLI_HOME/identity.json` or platform config dir) is the one record of which User the CLI acts as; versioned JSON, written 0600 atomically, fingerprinted to its database."
+  ],
+  "entry_points": [
+    "src/main.rs (bin: zurfur)",
+    "src/lib.rs (Cli, run(), dispatch, ExitClass)",
+    "src/commands/mod.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "bin `zurfur`; deps on composition, application, domain, adapter-pg, clap; dev-deps assert_cmd/adapter-mem/test-support",
+      "node": false
+    },
+    {
+      "name": "src/commands/",
+      "role": "one module per domain namespace (account/health/migrate/session)",
+      "node": true
+    },
+    {
+      "name": "src/confirm.rs",
+      "role": "terminal confirmation gate for irreversible ops (Session enum, y/yes prompt on stderr, refuses non-terminal callers)",
+      "node": false
+    },
+    {
+      "name": "src/identity.rs",
+      "role": "identity file — load/save, versioned JSON, atomic write 0600, database fingerprint",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "Cli/dispatch, ExitClass, CliError, ties commands together; documents the stdout/stderr/exit-code conventions",
+      "node": false
+    },
+    {
+      "name": "src/main.rs",
+      "role": "entry point — parse Cli, init tracing to stderr, run with ctrl-c racing to Interrupted exit class",
+      "node": false
+    },
+    {
+      "name": "src/output.rs",
+      "role": "stdout data channel — Format::Pretty/Compact JSON writer",
+      "node": false
+    },
+    {
+      "name": "src/principal.rs",
+      "role": "Principal::resolve — identity file -> UserStore::find_by_did -> the acting User",
+      "node": false
+    },
+    {
+      "name": "src/problem.rs",
+      "role": "CliError + ExitClass + Problem JSON rendering on stderr",
+      "node": false
+    },
+    {
+      "name": "tests/account.rs",
+      "role": "in-process/process tests for account create/delete",
+      "node": false
+    },
+    {
+      "name": "tests/account_process.rs",
+      "role": "process-level (spawned binary) tests for account commands",
+      "node": false
+    },
+    {
+      "name": "tests/common/mod.rs",
+      "role": "shared process-level test harness — spawns the real zurfur binary with env/config for tests",
+      "node": false
+    },
+    {
+      "name": "tests/health.rs",
+      "role": "tests for `zurfur health`",
+      "node": false
+    },
+    {
+      "name": "tests/in_process.rs",
+      "role": "in-process harness variant (adapter-mem ports, no subprocess)",
+      "node": false
+    },
+    {
+      "name": "tests/migrate.rs",
+      "role": "tests for `zurfur migrate`",
+      "node": false
+    },
+    {
+      "name": "tests/process.rs",
+      "role": "process-level harness variant (real binary via assert_cmd)",
+      "node": false
+    },
+    {
+      "name": "tests/session.rs",
+      "role": "tests for whoami/logout/login",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 23592962,
+      "title": "API Response Shape & Error Model",
+      "governs": "Problem `code` vocabulary, `src/problem.rs`"
+    },
+    {
+      "page": 40992770,
+      "title": "The API Contract",
+      "governs": "`commands/session.rs`: `Whoami` is a hand copy of the wire `GetMeResponse`, pinned by `api/tests/whoami_parity.rs`"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer",
+      "governs": "the use-case/DTO/Ports shape `commands/*.rs` calls into"
+    },
+    {
+      "page": 57081857,
+      "title": "Actor Addressing",
+      "governs": "`commands/account.rs`: `AccountId` is a did:plc itself, no surrogate id"
+    }
+  ],
+  "notes": [
+    "Adding a command = a module under `commands/`, a variant on the `Command`/`BackendCommand` enum, and one arm in `lib.rs::dispatch`.",
+    "`lib.rs::run` answers `session logout` before `connect()` boots the runtime — logout must work with config or the database broken.",
+    "`lib.rs::require_current_schema` is the schema-drift gate: it refuses a database whose migrations are behind, ahead, or absent — every command except `migrate` and `health` passes through it.",
+    "`lib.rs::config_problem` never echoes a raw config value: figment prints the offending value on a type mismatch, which for an env var can be a secret, so only shape-safe error kinds pass through and everything else degrades to a generic message.",
+    "See also: epic ZMVP-199 (this crate) with slices ZMVP-201..206 (process/in-process harnesses, health, migrate, session, account).",
+    "See also: security review finding ZMVP-203 F1 (no `.env` loading in `main`, `tests/process.rs`).",
+    "See also: client-model decision pending (`commands/session.rs`: `login` answers `not_implemented`).",
+    "See also: Engineer ruling 2026-08-28 (`tests/account_process.rs`: unconfirmed `delete` without a terminal is refused, exit 1, not defaulted)."
+  ]
+}

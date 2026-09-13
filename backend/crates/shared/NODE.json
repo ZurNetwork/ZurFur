@@ -1,0 +1,45 @@
+{
+  "path": "backend/crates/shared",
+  "charted": "2026-09-12",
+  "is": "The bottom leaf crate: build-time configuration constants that every other backend layer, `domain` included, is allowed to consume.",
+  "conventions": [
+    "No intra-workspace dependency may ever be added here (only external crates, pinned at the workspace root — today just `chrono`), so consuming `shared` can never pull an adapter or driver into a lower layer.",
+    "Holds build-time constants only (windows/limits/ceilings a design decision leaves to implementation); runtime config (env, profiles, ports) is `composition::Config`."
+  ],
+  "entry_points": [
+    "src/lib.rs",
+    "src/settings.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "crate manifest — no intra-workspace deps; only external dep is chrono",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "crate root doc + `pub mod settings`",
+      "node": false
+    },
+    {
+      "name": "src/settings.rs",
+      "role": "compile-time constants — handle-change limit/window, handle-quarantine window",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "src/settings.rs: governs `HANDLE_CHANGE_LIMIT`, `HANDLE_CHANGE_WINDOW`, `HANDLE_QUARANTINE_WINDOW`"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer",
+      "governs": "Cargo.toml: source of the \"shared = the one leaf crate domain may consume\" ruling, dated 2026-08-26"
+    }
+  ],
+  "notes": [
+    "See also: memory `project_application_layer_convention.md`."
+  ]
+}

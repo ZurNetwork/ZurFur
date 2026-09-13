@@ -1,0 +1,58 @@
+{
+  "path": "scripts",
+  "charted": "2026-09-13",
+  "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
+  "conventions": [
+    "`ZURFUR_*` env convention (env wins over `.env.example` defaults); each smoke script proves the dev loop itself at the shell/`just` level, distinct from the automated per-test-throwaway integration harness."
+  ],
+  "entry_points": [
+    "../Justfile (the pds-provision, pds-smoke, web-smoke, worktree-init, nodes-install recipes call these)",
+    "nodes-fmt-hook.sh (run by .claude/settings.json on every Write|Edit)"
+  ],
+  "fs": [
+    {
+      "name": "jj-push.sh",
+      "role": "pre-push gate for jj — fmt + lint before code leaves the machine",
+      "node": false
+    },
+    {
+      "name": "nodes-fmt-hook.sh",
+      "role": "PostToolUse hook — nodes fmt on any NODE.json a model writes; fails soft without the binary",
+      "node": false
+    },
+    {
+      "name": "nodes-install.sh",
+      "role": "download the pinned nodes release binary (checksum-verified) into ~/.cargo/bin; cargo-install fallback",
+      "node": false
+    },
+    {
+      "name": "pds-provision.sh",
+      "role": "create/sign into the fixture test account on the local dev PDS, print session JSON",
+      "node": false
+    },
+    {
+      "name": "pds-smoke-test.sh",
+      "role": "shell-level scripted proof the local PDS+PLC dev loop boots and is repeatable",
+      "node": false
+    },
+    {
+      "name": "uow-status.sh",
+      "role": "SessionStart hook — print in-flight unit-of-work status from the ledger",
+      "node": false
+    },
+    {
+      "name": "web-smoke.sh",
+      "role": "shell-level scripted proof the one-origin Caddy routing split works",
+      "node": false
+    },
+    {
+      "name": "worktree-init.sh",
+      "role": "give a git worktree its own isolated dev-loop ports/DB/compose project",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": [
+    "uow-status.sh (SessionStart) and jj-push.sh (the `jj push` alias) run as hooks, not just recipes."
+  ]
+}

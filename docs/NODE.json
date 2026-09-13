@@ -1,0 +1,21 @@
+{
+  "path": "docs",
+  "charted": "2026-09-12",
+  "is": "The local pointer index into Confluence DESIGN — titles, page IDs, and fetch coordinates only, never copied page content.",
+  "conventions": [
+    "This is the index every `Refs` section resolves against, so it is the one place page ids belong in bulk — but still ids and titles only, never page bodies.",
+    "`/optimize-memory` and `/save-reference` maintain it; don't hand-append."
+  ],
+  "entry_points": [
+    "docs/confluence-design-index.md"
+  ],
+  "fs": [
+    {
+      "name": "confluence-design-index.md",
+      "role": "local pointer index of every Confluence DESIGN page (titles + ids + fetch coordinates)",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": []
+}

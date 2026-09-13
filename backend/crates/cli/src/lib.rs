@@ -1,7 +1,7 @@
 //! `zurfur`: the terminal driving adapter. Calls the same application-layer
 //! use cases as `api`, in-process via [`composition::Runtime`] — no HTTP, no
 //! bearer token. Commands are one-shot `clap` subcommands under [`commands`].
-//! See this crate's `NODE.md` for the stdout/stderr/exit-code conventions
+//! See this crate's `NODE.json` for the stdout/stderr/exit-code conventions
 //! and the problem-code vocabulary.
 
 use std::path::{Path, PathBuf};

@@ -1,0 +1,125 @@
+{
+  "path": "backend/crates/domain/src",
+  "charted": "2026-09-12",
+  "is": "Four public modules: the nouns (elements), the seams (ports), the one clock type, and the shared string-validation builder.",
+  "conventions": [
+    "A new port area adds a file under `ports/` rather than growing `mod.rs`.",
+    "Time is injected, never read from the ambient clock."
+  ],
+  "entry_points": [
+    "ports/mod.rs (Database + UnitOfWork traits)"
+  ],
+  "fs": [
+    {
+      "name": "datetime.rs",
+      "role": "DateTimeUtc — the single injected clock type",
+      "node": false
+    },
+    {
+      "name": "elements.rs",
+      "role": "module index for elements/, live entities vs stubs",
+      "node": false
+    },
+    {
+      "name": "elements/",
+      "role": "one entity/value-object cluster per file",
+      "node": true
+    },
+    {
+      "name": "lib.rs",
+      "role": "crate root; the ports-and-adapters position and the eventual split",
+      "node": false
+    },
+    {
+      "name": "ports/",
+      "role": "trait seams: mod.rs = Database/UnitOfWork/User/Account/Profile/Did/Key/Plc ports; actor_identity, changelog, commission, file re-exported flat",
+      "node": false
+    },
+    {
+      "name": "string_builder.rs",
+      "role": "StringBuilder: the one trimmed/capped-string gate every newtype validates through (ZMVP-113)",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "ports/commission.rs commission_has_facts/delete/set_archived"
+    },
+    {
+      "page": 9895957,
+      "title": "Workflow",
+      "governs": "ports/workflow.rs"
+    },
+    {
+      "page": 11763713,
+      "title": "Domains and Applications",
+      "governs": "lib.rs: the dependency rule"
+    },
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "ports/mod.rs HandleTaken/soft_delete/hard_delete/tombstone"
+    },
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability",
+      "governs": "ports/mod.rs Database::begin/ProfileCache, ports/commission.rs; also lib.rs's profile.rs cache-fill exception"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "ports/mod.rs revoke_role"
+    },
+    {
+      "page": 26607618,
+      "title": "Handle Resolution for *.zurfur.app",
+      "governs": "ports/mod.rs find_did_by_handle"
+    },
+    {
+      "page": 26935298,
+      "title": "Zurfur Public Presence & PDS — Identity-Only for v1",
+      "governs": "ports/mod.rs DidMinter"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "ports/mod.rs count_handle_changes_since/handle_reserved_for_other/change_handle/update_handle"
+    },
+    {
+      "page": 29130754,
+      "title": "Commission Ownership Separation",
+      "governs": "ports/commission.rs view_grant/grant_view/revoke_view"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "ports/commission.rs set_maturity"
+    },
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table",
+      "governs": "ports/mod.rs UnitOfWork::actor_identities + HasDid marker, ports/actor_identity.rs"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition",
+      "governs": "ports/commission.rs load_composition/add_element"
+    },
+    {
+      "page": 59310081,
+      "title": "The Changelog as the Only Record",
+      "governs": "ports/mod.rs UnitOfWork::changelog, ports/changelog.rs x2"
+    }
+  ],
+  "notes": [
+    "Adapters: `adapter-pg` implements the private-store ports, `adapter-atproto` the public ones (`PublicRecords`, the real `DidMinter`), `adapter-mem` fakes both.",
+    "`UnitOfWork` vends exactly seven write ports: `accounts`, `commissions`, `changelog`, `users`, `actor_identities`, `workflows`, `columns`.",
+    "Documented exceptions to the Unit of Work — pool-backed `&self` writes: `ProfileCache` (read-through cache fill), `FileStore` (blob bytes can't ride a Postgres transaction), and the api-side `session_store`/`auth_store`.",
+    "Changelog entries are appended in the same unit as the domain write they record, and nothing is derived from them (59310081).",
+    "`commission_element` carries a **composite** FK `(tab_id, commission_id) → commission_tab (id, commission_id)`, so an element citing another commission's tab is unwritable; `UnknownTab` is the friendly 404 half of that rule (45514754).",
+    "View grants are per-User, never per-Account; membership confers no view (29130754, amended 2026-09-04).",
+    "`DidOperations` is interface-only — no adapter implements it, and whether `tombstone`/`update_handle` migrate off `DidMinter` is an open Engineer ruling."
+  ]
+}
