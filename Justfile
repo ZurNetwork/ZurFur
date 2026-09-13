@@ -6,7 +6,7 @@ set positional-arguments := true
 # The `nodes` tool (github.com/ZurNetwork/nodes — the NODE.json normalizer and
 # lookup CLI), pinned to one release tag. Bump it HERE and nowhere else: the
 # NODE.json files and the tool's schema move in lockstep on this pin.
-NODES_VERSION := "v0.1.1"
+NODES_VERSION := "v0.1.2"
 
 default:
     @just --list
