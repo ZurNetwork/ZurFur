@@ -1,6 +1,7 @@
 {
   "path": "frontend/web/src",
   "charted": "2026-09-12",
+  "short": "The app: handleFetch, $lib, routes",
   "is": "The app proper: a server-side `handleFetch` rewrite, a `$lib` split into an above-the-seam plain-data half and a below-the-seam Effect half, and the route tree (now with a dev-only mock signin endpoint under `routes/mock/`).",
   "conventions": [
     "THE RUNES SEAM — Effect lives only under `lib/server/**`; `runApi` (`ManagedRuntime.runPromise`) is the one place programs become promises; loads/actions/components receive plain data and never see a fiber.",

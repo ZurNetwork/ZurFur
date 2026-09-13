@@ -1,6 +1,7 @@
 {
   "path": "frontend/web/src/lib",
   "charted": "2026-09-12",
+  "short": "Shared library, cut by the runes seam",
   "is": "The shared library, cut by the seam: `api`/`types`/`components`/`testing` are Effect-free and browser-safe; `server/` is the Effect half.",
   "conventions": [
     "`$lib/api/*` is the vocabulary that crosses the seam — plain interfaces + `as const` maps.",

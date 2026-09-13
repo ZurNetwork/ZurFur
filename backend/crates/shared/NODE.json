@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/shared",
   "charted": "2026-09-12",
+  "short": "Leaf crate of build-time constants",
   "is": "The bottom leaf crate: build-time configuration constants that every other backend layer, `domain` included, is allowed to consume.",
   "conventions": [
     "No intra-workspace dependency may ever be added here (only external crates, pinned at the workspace root — today just `chrono`), so consuming `shared` can never pull an adapter or driver into a lower layer.",

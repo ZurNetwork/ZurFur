@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
   "charted": "2026-09-12",
+  "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "conventions": [
     "Commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto).",

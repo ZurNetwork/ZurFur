@@ -1,6 +1,7 @@
 {
   "path": "forks",
   "charted": "2026-09-12",
+  "short": "/boardroom deliberation runs",
   "is": "The `/boardroom` skill's working directory — one numbered subfolder per multi-model deliberation run (each holds the brief, per-phase seat transcripts, the sealed Engineer ranking, and the judge's synthesis).",
   "conventions": [
     "Numbered `NNN-slug` folders, minted from `.counter`.",

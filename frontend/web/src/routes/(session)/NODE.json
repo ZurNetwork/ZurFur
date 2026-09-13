@@ -1,6 +1,7 @@
 {
   "path": "frontend/web/src/routes/(session)",
   "charted": "2026-09-12",
+  "short": "The signed-in area behind the session gate",
   "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login`, containing the account screens and the logout action.",
   "conventions": [
     "The gate is UX ONLY and covers page LOADS — form-action POSTs run before layout loads, so the backend's own 401 is the real guard for actions.",

@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/domain",
   "charted": "2026-09-12",
+  "short": "The I/O-free domain core",
   "is": "Zurfur's I/O-free core — the platform's nouns and the trait seams every adapter implements; deliberately transitional, to split into per-namespace crates (identity, gallery, workflow, plugin).",
   "conventions": [
     "Every element mirrors a DESIGN glossary page.",

@@ -1,6 +1,7 @@
 {
   "path": "frontend",
   "charted": "2026-09-12",
+  "short": "The client tier: one SvelteKit app",
   "is": "The client tier — exactly one SvelteKit app fronting the axum backend; this directory is a thin container.",
   "conventions": [
     "Plain SvelteKit + TypeScript — the Leptos and ZesTTY/Dialect alternatives were both retired 2026-08-09; don't re-litigate the stack without new evidence.",

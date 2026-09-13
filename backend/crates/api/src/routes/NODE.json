@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/api/src/routes",
   "charted": "2026-09-12",
+  "short": "Route groups, one policy zone each",
   "is": "Route groups split along the DESIGN subdomain→namespace→router seam, each an independently mounted policy zone.",
   "conventions": [
     "Each module exposes exactly one `*_router()`; adding a domain = a new module + one line in `app()`.",

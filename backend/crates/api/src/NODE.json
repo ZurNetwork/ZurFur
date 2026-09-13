@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/api/src",
   "charted": "2026-09-12",
+  "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "conventions": [
     "Handlers translate HTTP ↔ use-case Commands/Outputs only; no domain logic here.",

@@ -1,6 +1,7 @@
 {
   "path": "backend",
   "charted": "2026-09-12",
+  "short": "The Rust backend (ports and adapters)",
   "is": "The Rust backend: a pure `domain` core, an `application` layer of use cases, a private Postgres boundary, a public AT-Protocol boundary, in-memory fakes, and one HTTP-free composition root driven by both the axum `api` and the `zurfur` cli.",
   "conventions": [
     "No `backend/Cargo.toml` — the workspace root is the repo root.",

@@ -1,6 +1,7 @@
 {
   "path": "caddy",
   "charted": "2026-09-12",
+  "short": "Dev reverse proxy: the one public origin",
   "is": "The dev reverse proxy that makes the whole app same-origin — one Caddyfile fanning `ZURFUR_PUBLIC_URL` out to axum and the SvelteKit vite dev server.",
   "conventions": [
     "Loopback-only (`bind 127.0.0.1`, `network_mode: host`); `handle` blocks are mutually exclusive/first-match; `/api/v1/*` strips to axum's unprefixed route table; unversioned `/api/*` falls through to SvelteKit (pre-GA, no deprecation owed); everything else is the SvelteKit catch-all (WebSocket/HMR passes through natively)."

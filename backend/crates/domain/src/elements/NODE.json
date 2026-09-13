@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/domain/src/elements",
   "charted": "2026-09-12",
+  "short": "The domain's nouns and value objects",
   "is": "The domain's nouns: identity (user, account, actor identity, did, handle, keys), the commission aggregate, and value objects for maturity/markdown/profile/public records.",
   "conventions": [
     "Each file owns its id type, value objects, and pure invariant logic.",

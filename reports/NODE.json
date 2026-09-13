@@ -1,6 +1,7 @@
 {
   "path": "reports",
   "charted": "2026-09-12",
+  "short": "Ad-hoc third-party tool output, not source",
   "is": "A parking spot for ad-hoc third-party tool output kept for reference — currently two Maigret username-search HTML reports, unrelated to Zurfur's own design or code.",
   "conventions": [
     "Not source; not part of the build or docs.",

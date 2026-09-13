@@ -1,6 +1,7 @@
 {
   "path": "frontend/web/src/lib/server/api",
   "charted": "2026-09-12",
+  "short": "The ZurfurApi port, errors, generated messages",
   "is": "The backend boundary: one `ZurfurApi` service (a live HTTP Layer, a mock in-memory Layer for `yarn dev`, and an in-memory test Layer), a tagged error union, and the protobuf-es messages generated from `contract/`.",
   "conventions": [
     "Decode only through `decodeContract` / the generated schemas — hand-rolled `fromJson` and hand-written narrowing are banned.",

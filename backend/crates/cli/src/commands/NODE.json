@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/cli/src/commands",
   "charted": "2026-09-12",
+  "short": "One module per CLI namespace",
   "is": "One module per domain namespace exposing a `clap::Subcommand` enum plus `run(&Runtime, op) -> Result<Value, CliError>`; the root dispatch in `lib.rs` routes to it.",
   "conventions": [],
   "entry_points": [

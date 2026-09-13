@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/domain/src",
   "charted": "2026-09-12",
+  "short": "Elements, ports, the clock, the string builder",
   "is": "Four public modules: the nouns (elements), the seams (ports), the one clock type, and the shared string-validation builder.",
   "conventions": [
     "A new port area adds a file under `ports/` rather than growing `mod.rs`.",

@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/composition",
   "charted": "2026-09-12",
+  "short": "HTTP-free composition root: Config + Runtime",
   "is": "The HTTP-free composition root shared by every driving adapter (api, cli): loads Config and wires the live Runtime bag of domain ports.",
   "conventions": [
     "HTTP-free by construction, enforced by `tests/no_http_deps.rs` — never add axum/tower-sessions here or to `cli`.",

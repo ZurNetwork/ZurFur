@@ -1,6 +1,7 @@
 {
   "path": "frontend/web",
   "charted": "2026-09-12",
+  "short": "The SvelteKit 2 / Svelte 5 app",
   "is": "A SvelteKit 2 / Svelte 5 app in forced runes mode, node adapter, talking to axum only from the server side, with a yarn-driven check/lint/test/build gate mirrored by `just check-all`.",
   "conventions": [
     "Two vitest projects split by filename — `*.svelte.spec.ts` runs in real Chromium (`src/lib/server/**` excluded), every other `*.spec.ts` in node; `expect.requireAssertions` on.",

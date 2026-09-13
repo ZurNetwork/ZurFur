@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/application/src/account",
   "charted": "2026-09-12",
+  "short": "Account use cases",
   "is": "Account use cases — founding, renaming, deleting an Account and the membership lifecycle (invitations, roles, leaving, ownership transfer, listing), one Command/Query + Output + `run` file per action; the module root `../account.rs` holds `AccountError`, `AccountPorts`, `AccountResult`.",
   "conventions": [],
   "entry_points": [

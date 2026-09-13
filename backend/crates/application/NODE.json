@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/application",
   "charted": "2026-09-12",
+  "short": "Use cases: one plain async fn each",
   "is": "The application layer (DD 55836674): one plain async fn per use case, called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees plus the flat `user` module and the shared `transaction()` orchestrator.",
   "conventions": [
     "One plain `pub async fn run` per use case, no mediator.",

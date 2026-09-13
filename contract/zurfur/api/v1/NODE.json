@@ -1,6 +1,7 @@
 {
   "path": "contract/zurfur/api/v1",
   "charted": "2026-09-12",
+  "short": "The v1 proto corpus (session, account, commission, problem)",
   "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, error), welded to `/api/v1`.",
   "conventions": [
     "Every file opens with a plain-language orientation header (no cross-repo pointers — see Refs below for what each header used to cite).",
