@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/adapter-pg",
   "charted": "2026-09-13",
+  "short": "Private boundary: the PostgreSQL adapter",
   "is": "The private data boundary in PostgreSQL: app-owned rows (actors keyed by their DID, everything else UUIDv7), SQL kept in per-statement files, and typed accessors generated from a live migrated schema.",
   "conventions": [
     "SQL never lives in Rust; `query!`/`query_as!` macros are retired by construction (`macros` feature off), and a query's doc text is slimmed in its `.sql` file, never in the generated module.",

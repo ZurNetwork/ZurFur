@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/query-codegen",
   "charted": "2026-09-12",
+  "short": "The sqlx-rust-codegen runner (just gen-queries)",
   "is": "The Zurfur-specific runner around the extracted `sqlx-rust-codegen` library — boots a throwaway Postgres, migrates it with the real embedded migration set, describes every statement under `adapter-pg`'s and `adapter-atproto`'s `queries/` trees, and rewrites each crate's committed `src/queries.rs`.",
   "conventions": [
     "The `codegen_current` staleness test that shares this crate's config lives in the adapter crates, not here.",

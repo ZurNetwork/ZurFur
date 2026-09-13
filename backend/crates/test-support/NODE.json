@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/test-support",
   "charted": "2026-09-13",
+  "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, and the cross-adapter PublicRecords conformance suite.",
   "conventions": [
     "Zero requests to the public atproto network — minting lands at the local stub only.",

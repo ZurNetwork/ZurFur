@@ -1,6 +1,7 @@
 {
   "path": "backend/crates",
   "charted": "2026-09-12",
+  "short": "The twelve workspace crates",
   "is": "Twelve workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, and three support/codegen crates.",
   "conventions": [
     "read/write split per aggregate — `*Store` is pool-backed and non-transactional, `*Writes` is reachable only on an open `UnitOfWork`.",

@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/adapter-atproto",
   "charted": "2026-09-12",
+  "short": "Public boundary: the AT Protocol adapter (OAuth, PDS, did:plc)",
   "is": "The public data boundary: the only crate that knows the AT Protocol — OAuth sign-in, PDS record/blob writes, public profile reads, and real did:plc minting with key custody — quarantining jacquard behind domain port traits.",
   "conventions": [
     "Nothing protocol-shaped leaks past this crate's surface (the jacquard client type is a private alias).",

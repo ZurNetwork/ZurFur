@@ -1,6 +1,7 @@
 {
   "path": "lexicons",
   "charted": "2026-09-12",
+  "short": "Zurfur's atproto lexicon JSON + validation test",
   "is": "The source of truth for Zurfur's atproto lexicon JSON — the Class A, PDS-canonical record and def schemas under `app.zurfur.*`, plus a hermetic test validating the graph against the real atproto meta-schema.",
   "conventions": [
     "JSON-only — no Rust codegen from lexicons.",

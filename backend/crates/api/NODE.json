@@ -1,6 +1,7 @@
 {
   "path": "backend/crates/api",
   "charted": "2026-09-12",
+  "short": "The axum HTTP driver",
   "is": "The HTTP driving adapter over `composition::Runtime`: the axum router, the RFC 9457 error shape, the generated wire contract, the session layer, and the one background task — handlers are thin drivers over the shared `application::*` use cases (`commissions/channel` + `commissions/elements` still await a use case, and `session`'s sign-in provisioning still opens its own unit of work).",
   "conventions": [
     "Two endpoint shapes coexist — the browser sign-in flow redirects; every JSON API returns status codes (401, never a redirect).",
