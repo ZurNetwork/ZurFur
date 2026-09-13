@@ -2,7 +2,10 @@
 
 use async_trait::async_trait;
 use domain::{
-    elements::{did::Did, profile::Profile},
+    elements::{
+        did::Did,
+        profile::{DisplayHandle, Profile},
+    },
     ports::ProfileSource,
 };
 use jacquard::api::app_bsky::actor::profile::Profile as BskyProfile;
@@ -42,8 +45,8 @@ impl ProfileSource for AtprotoProfileSource {
     /// other read failure is an `Err`, so a transient fault is never cached as a
     /// stripped profile. The presented handle is bidirectionally verified.
     async fn fetch(&self, did: &Did) -> anyhow::Result<Profile> {
-        let at_did: AtDid = AtDid::new_owned(did.as_str())
-            .map_err(|e| anyhow::anyhow!("invalid DID {}: {e:?}", did.as_str()))?;
+        let at_did: AtDid = AtDid::new_owned(AsRef::<str>::as_ref(did))
+            .map_err(|e| anyhow::anyhow!("invalid DID {}: {e:?}", AsRef::<str>::as_ref(did)))?;
 
         let doc = self
             .client
@@ -65,7 +68,7 @@ impl ProfileSource for AtprotoProfileSource {
             Err(_) => None,
         };
         let handle = presented_handle(
-            did.as_str(),
+            AsRef::<str>::as_ref(did),
             &claimed_handle,
             resolved_back.as_ref().map(|resolved| resolved.as_str()),
         );
@@ -74,9 +77,11 @@ impl ProfileSource for AtprotoProfileSource {
             .pds_endpoint()
             .ok_or_else(|| anyhow::anyhow!("DID document carries no PDS endpoint"))?;
 
-        let uri: AtUri =
-            AtUri::new_owned(format!("at://{}/app.bsky.actor.profile/self", did.as_str()))
-                .map_err(|e| anyhow::anyhow!("building profile AT-URI: {e:?}"))?;
+        let uri: AtUri = AtUri::new_owned(format!(
+            "at://{}/app.bsky.actor.profile/self",
+            AsRef::<str>::as_ref(did)
+        ))
+        .map_err(|e| anyhow::anyhow!("building profile AT-URI: {e:?}"))?;
         let record: Option<BskyProfile> = match self.client.get_record::<BskyProfile, _>(&uri).await
         {
             Ok(resp) => match resp.into_output() {
@@ -102,14 +107,14 @@ impl ProfileSource for AtprotoProfileSource {
                 format!(
                     "{}/xrpc/com.atproto.sync.getBlob?did={}&cid={}",
                     pds.as_str().trim_end_matches('/'),
-                    did.as_str(),
+                    AsRef::<str>::as_ref(did),
                     avatar.blob().cid().as_str(),
                 )
             });
 
         Ok(Profile {
             did: did.clone(),
-            handle,
+            handle: DisplayHandle::from(handle),
             display_name,
             avatar_url,
         })
@@ -126,39 +131,4 @@ fn presented_handle(did: &str, candidate: &str, resolved_back: Option<&str>) -> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::presented_handle;
-
-    const DID: &str = "did:plc:actor";
-
-    // Finding 2: a handle is only the actor's when it resolves BACK to this DID.
-    #[test]
-    fn a_handle_that_resolves_back_to_this_did_is_presented() {
-        assert_eq!(
-            presented_handle(DID, "alice.zurfur.app", Some(DID)),
-            "alice.zurfur.app",
-            "a bidirectionally-verified handle is trusted"
-        );
-    }
-
-    #[test]
-    fn a_handle_resolving_to_another_did_is_never_presented() {
-        // A spoofed / stale `alsoKnownAs`: the claimed handle belongs to someone else.
-        assert_eq!(
-            presented_handle(DID, "victim.zurfur.app", Some("did:plc:someoneelse")),
-            DID,
-            "a handle owned by a different DID falls back to the DID, never impersonates"
-        );
-    }
-
-    #[test]
-    fn an_unresolvable_handle_falls_back_to_the_did() {
-        // Reverse resolution could not be completed (malformed handle, resolver
-        // failure, …) — the claim is unconfirmed, so it must not be presented.
-        assert_eq!(
-            presented_handle(DID, "alice.zurfur.app", None),
-            DID,
-            "an unconfirmable handle is never presented as trusted"
-        );
-    }
-}
+mod tests;

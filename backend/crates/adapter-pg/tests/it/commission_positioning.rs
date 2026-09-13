@@ -31,7 +31,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -64,7 +64,7 @@ async fn seed_account(pool: &PgPool, owner_did: &str, handle: &str) -> AccountId
     let owner = provision(pool, owner_did).await;
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new(format!("did:plc:acct-{handle}")),
+        Did::from(format!("did:plc:acct-{handle}")),
         handle.parse::<Handle>().expect("handle"),
         "PG Studio".parse::<AccountName>().expect("name"),
         Utc::now(),

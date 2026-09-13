@@ -51,9 +51,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -190,7 +190,7 @@ async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -236,7 +236,7 @@ async fn a_participant_sets_the_deadline() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + deadline set");
     let set = &log[1];
-    assert_eq!(set.kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(set.kind), "deadline_set");
     assert!(set.actor_id.is_some(), "an explicit set names its actor");
     assert!(set.payload["from"].is_null(), "born without a deadline");
     assert_eq!(set.payload["to"], "2027-03-01T00:00:00Z");
@@ -261,7 +261,7 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(res.status(), 204);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + extension");
-    assert_eq!(log[1].kind.as_str(), "deadline_extended");
+    assert_eq!(<&'static str>::from(log[1].kind), "deadline_extended");
     assert_eq!(log[1].payload["from"], "2027-03-01T00:00:00Z");
     assert_eq!(log[1].payload["to"], "2027-06-01T00:00:00Z");
 
@@ -270,7 +270,7 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(res.status(), 204);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3);
-    assert_eq!(log[2].kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(log[2].kind), "deadline_set");
     assert_eq!(log[2].payload["from"], "2027-06-01T00:00:00Z");
     assert_eq!(log[2].payload["to"], "2027-04-01T00:00:00Z");
 }
@@ -318,7 +318,7 @@ async fn clearing_the_deadline_wipes_the_axis() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + delayed flag + deadline cleared");
     let clear = &log[2];
-    assert_eq!(clear.kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(clear.kind), "deadline_set");
     assert_eq!(clear.payload["from"], "2027-03-01T00:00:00Z");
     assert!(clear.payload["to"].is_null(), "a clear records to: null");
 
@@ -378,7 +378,7 @@ async fn a_participant_flags_the_commission_as_slipping() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + delayed flag");
     let delayed = &log[1];
-    assert_eq!(delayed.kind.as_str(), "delayed");
+    assert_eq!(<&'static str>::from(delayed.kind), "delayed");
     assert!(
         delayed.actor_id.is_some(),
         "Delayed is a manual Participant act, never a system entry"
@@ -400,7 +400,7 @@ async fn a_participant_flags_the_commission_as_slipping() {
     assert_eq!(stored_deadline_status(&backend, id).await, None);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + flag + clear");
-    assert_eq!(log[2].kind.as_str(), "delayed");
+    assert_eq!(<&'static str>::from(log[2].kind), "delayed");
     assert_eq!(log[2].payload["from"], "delayed");
     assert!(log[2].payload["to"].is_null());
 
@@ -524,7 +524,7 @@ async fn the_sweeper_marks_missed_deadlines_late() {
     let log = entries(&backend, first).await;
     assert_eq!(log.len(), 2, "creation + the system Late entry");
     let late = &log[1];
-    assert_eq!(late.kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(late.kind), "late");
     assert_eq!(late.actor_id, None, "the system entry carries no actor");
     assert_eq!(
         late.payload["deadline"], "2020-01-01T00:00:00Z",
@@ -589,7 +589,7 @@ async fn a_standing_delayed_upgrades_to_late() {
         4,
         "creation + delayed flag + deadline move + system Late"
     );
-    assert_eq!(log[3].kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(log[3].kind), "late");
     assert_eq!(log[3].actor_id, None);
     assert_eq!(
         log[3].payload["from"], "delayed",
@@ -625,7 +625,7 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
     );
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + Late + extension");
-    assert_eq!(log[2].kind.as_str(), "deadline_extended");
+    assert_eq!(<&'static str>::from(log[2].kind), "deadline_extended");
 
     // The new deadline is missed too: the deadline_extended entry re-arms the
     // log, so a NEW Late entry lands (each miss is its own event). Asserted on
@@ -635,7 +635,7 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
     assert_eq!(sweep(&backend, far_future).await, 1);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 4, "each miss is its own event");
-    assert_eq!(log[3].kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(log[3].kind), "late");
     assert_eq!(log[3].payload["deadline"], "2099-01-01T00:00:00Z");
 }
 

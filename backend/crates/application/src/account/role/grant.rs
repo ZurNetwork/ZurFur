@@ -51,7 +51,7 @@ impl Roles<'_> {
         // Provisioning is a write: an unauthorized grant must not leave a User
         // row behind for the DID it named.
         let mut uow = self.ports().database.begin().await?;
-        let target = uow.users().provision(&target_id).await?;
+        let target = uow.users().provision(target_id.did()).await?;
 
         let member = UserAccount {
             user_id: target.id.clone(),

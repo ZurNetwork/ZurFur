@@ -13,6 +13,10 @@ publish = false
 shared = { path = "../shared" }
 domain = { path = "../domain" }
 anyhow = { workspace = true }
+# `derive(Error)` for the per-module error enums (Display/source/From by attribute).
+thiserror = { workspace = true }
+# Enum string tables (`NotFoundEntity`, `AccountEntity`).
+strum = { workspace = true }
 # Structured logging for the steps a use case deliberately swallows (e.g. the
 # retryable did:plc tombstone after a hard delete).
 tracing = { workspace = true }

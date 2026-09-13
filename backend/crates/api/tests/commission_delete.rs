@@ -64,9 +64,9 @@ async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Databas
     // possibly-interposed `database`) so the fact-bearing double in this file
     // (`FactBearingDatabase`) can wrap the same backend it reads through.
     let test_support::runtime::MemRuntime { runtime, .. } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -150,7 +150,7 @@ async fn sign_in_and_create(
 async fn seed_foreign_commission(backend: &MemBackend, title: &str) -> CommissionId {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
-        UserId::new(Did::new("did:plc:offsession-owner".to_string())),
+        UserId::from(Did::from("did:plc:offsession-owner".to_string())),
         Utc::now(),
         None,
     );
@@ -285,6 +285,10 @@ impl UnitOfWork for FactBearingUow {
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
         self.0.users()
+    }
+
+    fn characters(&mut self) -> Box<dyn domain::ports::character::CharacterWrites + '_> {
+        self.0.characters()
     }
 
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {

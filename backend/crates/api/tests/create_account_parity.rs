@@ -14,7 +14,7 @@ use domain::elements::{account::AccountId, did::Did};
 
 fn founded() -> create::Output {
     create::Output {
-        account_id: AccountId::new(Did::new("did:plc:parity".to_string())),
+        account_id: AccountId::new(Did::from("did:plc:parity".to_string())),
         handle: "parity.zurfur.app".parse().expect("a valid handle"),
         name: "Parity Studio".parse().expect("a valid name"),
     }

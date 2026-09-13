@@ -36,9 +36,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -213,7 +213,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         "the upload appends exactly its own entry, nothing else"
     );
     let uploaded = log.last().expect("the new entry");
-    assert_eq!(uploaded.kind.as_str(), "file_added");
+    assert_eq!(<&'static str>::from(uploaded.kind), "file_added");
     // Sorted before comparing: serde_json's Map iteration order is
     // feature-dependent (`preserve_order`), and the contract pins the key SET.
     let mut payload_keys: Vec<&str> = uploaded
@@ -232,7 +232,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
     assert!(
         !log.iter()
             .skip(log_before)
-            .any(|e| e.kind.as_str() == "status_changed"),
+            .any(|e| <&'static str>::from(e.kind) == "status_changed"),
         "no status_changed entry rode along with the upload"
     );
 }
@@ -280,7 +280,7 @@ async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
     // Each call produced its own entry: creation, then file_added, then
     // status_changed — three distinct records, never a merged one.
     let log = entries(&backend, id).await;
-    let kinds: Vec<&str> = log.iter().map(|e| e.kind.as_str()).collect();
+    let kinds: Vec<&str> = log.iter().map(|e| <&'static str>::from(e.kind)).collect();
     assert_eq!(
         kinds,
         ["created", "file_added", "status_changed"],
@@ -288,7 +288,7 @@ async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
     );
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("provisioned");

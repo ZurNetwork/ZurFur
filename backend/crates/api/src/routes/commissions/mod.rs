@@ -3,7 +3,10 @@
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
-use application::commission::CommissionError;
+use application::{
+    commission::CommissionError,
+    common_error::{CommonError, NotFoundEntity},
+};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -23,9 +26,21 @@ use crate::{AppState, problem::Problem};
 impl From<CommissionError> for Problem {
     fn from(err: CommissionError) -> Self {
         match err {
-            CommissionError::Infrastructure(err) => Problem::from(err),
-            CommissionError::UserNotFound => Problem::not_authenticated(),
-            CommissionError::CommissionNotFound => Problem::commission_not_found(),
+            CommissionError::CommonError(common) => match common {
+                CommonError::Infrastructure(err) => Problem::from(err),
+                CommonError::NotFound(NotFoundEntity::User) => Problem::not_authenticated(),
+                CommonError::NotFound(NotFoundEntity::Commission) => {
+                    Problem::commission_not_found()
+                }
+                CommonError::NotFound(NotFoundEntity::Element) => Problem::element_not_found(),
+                CommonError::NotFound(NotFoundEntity::Account) => Problem::account_not_found(),
+                // Not reachable through commission use cases today; exhaustive fallback.
+                CommonError::NotFound(NotFoundEntity::Character) => {
+                    Problem::internal_error("Unexpected character reference.")
+                }
+                CommonError::DidBelongsToAnotherActor => Problem::did_belongs_to_another_actor(),
+                CommonError::HandleTaken => Problem::handle_taken(),
+            },
             CommissionError::CommissionAlreadyAtState => {
                 Problem::invalid_request("This commission is already in this state.")
             }
@@ -55,14 +70,11 @@ impl From<CommissionError> for Problem {
             // Fabricated/foreign tab → 404; undeclared surface under a real tab → 422.
             CommissionError::TabNotFound => Problem::tab_not_found(),
             CommissionError::UnknownSurface => Problem::unknown_surface(),
-            CommissionError::ElementNotFound => Problem::element_not_found(),
             CommissionError::NoDeadline => Problem::no_deadline(),
             CommissionError::CommissionLate => Problem::commission_late(),
-            CommissionError::DidBelongsToAnotherActor => Problem::did_belongs_to_another_actor(),
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
-            CommissionError::AccountNotFound => Problem::account_not_found(),
         }
     }
 }

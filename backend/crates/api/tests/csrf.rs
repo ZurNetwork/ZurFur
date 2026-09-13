@@ -22,9 +22,9 @@ async fn spawn_app() -> String {
     let test_support::runtime::MemRuntime {
         runtime,
         backend: _,
-    } = test_support::runtime::mem(&Did::new("did:plc:test".to_string()))
+    } = test_support::runtime::mem(&Did::from("did:plc:test".to_string()))
         .profile(Profile::new(
-            Did::new("did:plc:test".to_string()),
+            Did::from("did:plc:test".to_string()),
             "t.bsky.social",
         ))
         .public_url(format!("http://{addr}"))

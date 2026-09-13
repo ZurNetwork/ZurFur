@@ -8,11 +8,11 @@
 use api::generated::GetMeResponse;
 use application::user::me::{self, MeProfile};
 use cli::commands::session::Whoami;
-use domain::elements::{did::Did, user::UserId};
+use domain::elements::{did::Did, profile::DisplayHandle, user::UserId};
 
 fn me(profile: Option<MeProfile>) -> me::Output {
     me::Output {
-        id: UserId::new(Did::new("did:plc:parity".to_string())),
+        id: UserId::from(Did::from("did:plc:parity".to_string())),
         profile,
     }
 }
@@ -20,7 +20,7 @@ fn me(profile: Option<MeProfile>) -> me::Output {
 #[test]
 fn whoami_renders_exactly_like_get_me() {
     let bare = MeProfile {
-        handle: "parity.bsky.social".to_string(),
+        handle: DisplayHandle::from("parity.bsky.social"),
         display_name: None,
         avatar_url: None,
     };

@@ -17,7 +17,7 @@ const DID: &str = "did:plc:cli-account";
 const OTHER_DID: &str = "did:plc:cli-account-other";
 
 fn mem_runtime() -> Runtime {
-    test_support::runtime::mem(&Did::new(DID.to_string()))
+    test_support::runtime::mem(&Did::from(DID.to_string()))
         .build()
         .runtime
 }
@@ -35,7 +35,7 @@ async fn signed_in(runtime: &Runtime) -> (tempfile::TempDir, PathBuf) {
 /// Provision `did` and hand back an identity file recorded against it — the
 /// one seam `Principal::resolve` reads, so this is how a test chooses who acts.
 async fn signed_in_as(runtime: &Runtime, did: &str) -> (tempfile::TempDir, PathBuf) {
-    let provisioned = Did::new(did.to_string());
+    let provisioned = Did::from(did.to_string());
     runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.users().provision(&provisioned).await?;
@@ -86,7 +86,7 @@ async fn founded_account(runtime: &Runtime, path: &Path, handle: &str) -> Accoun
 /// did:plc nothing ever mints (`AccountId` is itself a DID, not a
 /// bare UUID paired with one).
 fn unknown_account_id() -> AccountId {
-    AccountId::new(Did::new(format!("did:plc:{}", Uuid::now_v7())))
+    AccountId::new(Did::from(format!("did:plc:{}", Uuid::now_v7())))
 }
 
 #[tokio::test]

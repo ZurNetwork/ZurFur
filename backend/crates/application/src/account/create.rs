@@ -6,9 +6,8 @@ use domain::{
         user::UserId,
     },
 };
-use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
-use crate::account::{AccountError, AccountResult, Accounts};
+use crate::account::{AccountResult, Accounts, ensure_handle_claimable};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -35,21 +34,7 @@ impl Accounts<'_> {
             handle,
             name,
         } = cmd;
-        let existing_account = ports.accounts.find_did_by_handle(&handle).await?;
-
-        if existing_account.is_some() {
-            return Err(AccountError::HandleTaken);
-        }
-
-        if handle.is_in_namespace(handle_domain) {
-            let quarantined = ports
-                .accounts
-                .handle_reserved_for_other(&handle, None, now - HANDLE_QUARANTINE_WINDOW)
-                .await?;
-            if quarantined {
-                return Err(AccountError::HandleTaken);
-            }
-        }
+        ensure_handle_claimable(ports, &handle, handle_domain, None, now).await?;
 
         let did = ports.did_minter.mint(&handle).await?;
 

@@ -33,6 +33,11 @@ impl AccountId {
     pub fn new(id: Did) -> Self {
         Self(id)
     }
+
+    /// The DID this id is: the actor key itself.
+    pub fn did(&self) -> &Did {
+        &self.0
+    }
 }
 
 impl Deref for AccountId {
@@ -176,10 +181,10 @@ impl Account {
     /// use chrono::Utc;
     /// use domain::elements::{account::{Account, AccountName}, did::Did, handle::Handle, role::Role, user::UserId};
     ///
-    /// let owner = UserId::new(Did::new("did:plc:owner".to_string()));
+    /// let owner = UserId::from(Did::from("did:plc:owner".to_string()));
     /// let (account, membership) = Account::open(
     ///     owner,
-    ///     Did::new("did:plc:example".to_string()),
+    ///     Did::from("did:plc:example".to_string()),
     ///     "acme.zurfur.app".parse::<Handle>().unwrap(),
     ///     "Acme Studio".parse::<AccountName>().unwrap(),
     ///     Utc::now(),

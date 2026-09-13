@@ -46,7 +46,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -209,7 +209,7 @@ async fn create_persists_the_account_and_its_owner_membership() {
     // The founder must exist: account_members.user_id references users(id).
     let owner = provision(&pool, "did:plc:pgowner").await;
 
-    let account_did = Did::new("did:plc:pgacct".to_string());
+    let account_did = Did::from("did:plc:pgacct".to_string());
     let account_handle = "pgacct.example.com".parse::<Handle>().unwrap();
     let account_name = "PG Studio".parse::<AccountName>().unwrap();
     let (account, membership) = Account::open(
@@ -256,7 +256,7 @@ async fn one_unit_of_work_commits_writes_across_aggregates_atomically() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:multi-acct".to_string()),
+        Did::from("did:plc:multi-acct".to_string()),
         "multi-acct.example.com".parse::<Handle>().unwrap(),
         "Multi Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -304,7 +304,7 @@ async fn a_dropped_unit_of_work_rolls_back_every_write() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:rollback-acct".to_string()),
+        Did::from("did:plc:rollback-acct".to_string()),
         "rollback-acct.example.com".parse::<Handle>().unwrap(),
         "Rollback".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -341,7 +341,7 @@ async fn find_unknown_account_is_none() {
     // Founded in the domain but never persisted, so its id is genuinely unknown.
     let (unfounded, _) = Account::open(
         owner.id,
-        Did::new("did:plc:ghost".to_string()),
+        Did::from("did:plc:ghost".to_string()),
         "ghost.example.com".parse::<Handle>().unwrap(),
         "Ghost".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -363,7 +363,7 @@ async fn role_of_non_member_is_none() {
 
     let (account, membership) = Account::open(
         owner.id,
-        Did::new("did:plc:pgacct3".to_string()),
+        Did::from("did:plc:pgacct3".to_string()),
         "pgacct3.example.com".parse::<Handle>().unwrap(),
         "PG Studio 3".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -387,7 +387,7 @@ async fn invitation_fixture(pool: &PgPool, tag: &str) -> (Account, UserId, UserI
     let invitee = provision(pool, &format!("did:plc:pginvitee-{tag}")).await;
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new(format!("did:plc:pgacct-{tag}")),
+        Did::from(format!("did:plc:pgacct-{tag}")),
         format!("pgacct-{tag}.example.com")
             .parse::<Handle>()
             .unwrap(),
@@ -601,12 +601,12 @@ async fn parent_of(pool: &PgPool, account: &AccountId, user: &UserId) -> Option<
     let parent = sqlx::query_scalar::<_, Option<String>>(
         "SELECT parent FROM account_members WHERE account_id = $1 AND user_id = $2",
     )
-    .bind(account.as_str())
-    .bind(user.as_str())
+    .bind(account.as_ref())
+    .bind(user.as_ref())
     .fetch_one(pool)
     .await
     .expect("read parent");
-    parent.map(|did| UserId::new(Did::new(did)))
+    parent.map(|did| UserId::from(Did::from(did)))
 }
 
 /// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
@@ -636,7 +636,7 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:rehome-acct".to_string()),
+        Did::from("did:plc:rehome-acct".to_string()),
         "rehome-acct.example.com".parse::<Handle>().unwrap(),
         "Tree".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -680,7 +680,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
 
     let (acct1, m1) = Account::open(
         o1.id.clone(),
-        Did::new("did:plc:scope-acct1".to_string()),
+        Did::from("did:plc:scope-acct1".to_string()),
         "scope-acct1.example.com".parse::<Handle>().unwrap(),
         "One".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -688,7 +688,7 @@ async fn leave_is_scoped_to_the_account_being_left() {
     create(&pool, &acct1, &m1).await;
     let (acct2, m2) = Account::open(
         o2.id.clone(),
-        Did::new("did:plc:scope-acct2".to_string()),
+        Did::from("did:plc:scope-acct2".to_string()),
         "scope-acct2.example.com".parse::<Handle>().unwrap(),
         "Two".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -732,7 +732,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:rev-acct".to_string()),
+        Did::from("did:plc:rev-acct".to_string()),
         "rev-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -789,7 +789,7 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:rv-acct".to_string()),
+        Did::from("did:plc:rv-acct".to_string()),
         "rv-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -845,7 +845,7 @@ async fn create_rejects_a_duplicate_handle() {
 
     let (a1, m1) = Account::open(
         o1.id,
-        Did::new("did:plc:dup-a1".to_string()),
+        Did::from("did:plc:dup-a1".to_string()),
         "dup.zurfur.app".parse::<Handle>().unwrap(),
         "One".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -855,7 +855,7 @@ async fn create_rejects_a_duplicate_handle() {
     // A different account (its own did/id) claiming the same handle is rejected.
     let (a2, m2) = Account::open(
         o2.id,
-        Did::new("did:plc:dup-a2".to_string()),
+        Did::from("did:plc:dup-a2".to_string()),
         "dup.zurfur.app".parse::<Handle>().unwrap(),
         "Two".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -883,7 +883,7 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
     let handle = "reserved.zurfur.app".parse::<Handle>().unwrap();
     let (a1, m1) = Account::open(
         o1.id,
-        Did::new("did:plc:ts-a1".to_string()),
+        Did::from("did:plc:ts-a1".to_string()),
         handle.clone(),
         "Gone".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -903,7 +903,7 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
     // which the handler answers 409 (not 500).
     let (a2, m2) = Account::open(
         o2.id,
-        Did::new("did:plc:ts-a2".to_string()),
+        Did::from("did:plc:ts-a2".to_string()),
         handle.clone(),
         "Reclaim".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -948,7 +948,7 @@ async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:xfer-acct".to_string()),
+        Did::from("did:plc:xfer-acct".to_string()),
         "xfer-acct.example.com".parse::<Handle>().unwrap(),
         "Hand-Off".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -993,7 +993,7 @@ async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:nonowner-acct".to_string()),
+        Did::from("did:plc:nonowner-acct".to_string()),
         "nonowner-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1036,7 +1036,7 @@ async fn transfer_to_a_non_member_errors_and_keeps_the_owner() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:nonmember-acct".to_string()),
+        Did::from("did:plc:nonmember-acct".to_string()),
         "nonmember-acct.example.com".parse::<Handle>().unwrap(),
         "Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1078,7 +1078,7 @@ async fn hard_delete_frees_the_handle_for_reuse() {
     let handle = "freed.zurfur.app".parse::<Handle>().unwrap();
     let (a1, m1) = Account::open(
         o1.id.clone(),
-        Did::new("did:plc:hd-a1".to_string()),
+        Did::from("did:plc:hd-a1".to_string()),
         handle.clone(),
         "Empty".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1105,7 +1105,7 @@ async fn hard_delete_frees_the_handle_for_reuse() {
     // soft-delete case above, where the handle stays reserved).
     let (a2, m2) = Account::open(
         o2.id,
-        Did::new("did:plc:hd-a2".to_string()),
+        Did::from("did:plc:hd-a2".to_string()),
         handle.clone(),
         "Reclaimed".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1131,7 +1131,7 @@ async fn hard_delete_removes_pending_invitations() {
 
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:hi-a".to_string()),
+        Did::from("did:plc:hi-a".to_string()),
         "invited.zurfur.app".parse::<Handle>().unwrap(),
         "Has Invite".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1222,7 +1222,7 @@ async fn change_handle_repoints_resolution_and_records_the_change() {
     let new = "chg-after.zurfur.app".parse::<Handle>().unwrap();
     let (account, membership) = Account::open(
         owner.id,
-        Did::new("did:plc:chg-acct".to_string()),
+        Did::from("did:plc:chg-acct".to_string()),
         old.clone(),
         "Rename".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1269,7 +1269,7 @@ async fn change_handle_rejects_a_taken_handle() {
     let mine = "chgdup-mine.zurfur.app".parse::<Handle>().unwrap();
     let (a1, m1) = Account::open(
         o1.id,
-        Did::new("did:plc:chgdup-a1".to_string()),
+        Did::from("did:plc:chgdup-a1".to_string()),
         mine.clone(),
         "Mine".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1279,7 +1279,7 @@ async fn change_handle_rejects_a_taken_handle() {
     let theirs = "chgdup-theirs.zurfur.app".parse::<Handle>().unwrap();
     let (a2, m2) = Account::open(
         o2.id,
-        Did::new("did:plc:chgdup-a2".to_string()),
+        Did::from("did:plc:chgdup-a2".to_string()),
         theirs.clone(),
         "Theirs".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1314,7 +1314,7 @@ async fn change_handle_rejects_a_stale_old_handle() {
     let current = "stale-current.zurfur.app".parse::<Handle>().unwrap();
     let (account, membership) = Account::open(
         owner.id,
-        Did::new("did:plc:stale-acct".to_string()),
+        Did::from("did:plc:stale-acct".to_string()),
         current.clone(),
         "Stale".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1443,7 +1443,7 @@ async fn hard_delete_severs_the_boards_while_the_commission_survives() {
     let account_owner = provision(&pool, "did:plc:sever-acct-owner").await;
     let (account, membership) = Account::open(
         account_owner.id,
-        Did::new("did:plc:sever-acct".to_string()),
+        Did::from("did:plc:sever-acct".to_string()),
         "sever-acct.zurfur.app".parse::<Handle>().unwrap(),
         "Holder".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1553,7 +1553,7 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
     let moved_to = "quar-moved.zurfur.app".parse::<Handle>().unwrap();
     let (account, membership) = Account::open(
         owner.id,
-        Did::new("did:plc:quar-acct".to_string()),
+        Did::from("did:plc:quar-acct".to_string()),
         vacated.clone(),
         "Quar".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -1565,7 +1565,7 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
 
     let window = Utc::now() - Duration::days(30);
     // Some OTHER account is barred from the vacated handle.
-    let stranger = AccountId::new(Did::new("did:plc:pgquar-stranger".to_string()));
+    let stranger = AccountId::new(Did::from("did:plc:pgquar-stranger".to_string()));
     assert!(
         reserved_for_other(&pool, &vacated, Some(&stranger), window).await,
         "the vacated handle is quarantined to its former holder — barred to others"
@@ -1614,7 +1614,7 @@ async fn list_for_user(
 async fn found_account(pool: &PgPool, owner: &UserId, tag: &str) -> Account {
     let (account, membership) = Account::open(
         owner.clone(),
-        Did::new(format!("did:plc:pglist-{tag}")),
+        Did::from(format!("did:plc:pglist-{tag}")),
         format!("pglist-{tag}.example.com")
             .parse::<Handle>()
             .unwrap(),
@@ -1718,8 +1718,8 @@ async fn list_for_user_round_trips_a_role_alias() {
 
     sqlx::query("UPDATE account_members SET alias = $1 WHERE account_id = $2 AND user_id = $3")
         .bind("Studio Head")
-        .bind(aliased.id.as_str())
-        .bind(caller.id.as_str())
+        .bind(aliased.id.as_ref())
+        .bind(caller.id.as_ref())
         .execute(&pool)
         .await
         .expect("seed the alias column directly");

@@ -35,8 +35,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -99,18 +102,18 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
 
     // Seat a second, existing member — the transfer target.
     let heir = backend
-        .provision(&Did::new("did:plc:heir".to_string()))
+        .provision(&Did::from("did:plc:heir".to_string()))
         .await
         .expect("provision heir");
     let owner = backend
-        .find_by_did(&Did::new("did:plc:xferowner".to_string()))
+        .find_by_did(&Did::from("did:plc:xferowner".to_string()))
         .await
         .expect("find owner")
         .expect("sign-in provisioned owner");
     backend
         .grant_role(&UserAccount {
             user_id: heir.id.clone(),
-            account_id: domain::elements::account::AccountId::new(Did::new(account_id.clone())),
+            account_id: domain::elements::account::AccountId::new(Did::from(account_id.clone())),
             role: Role::Member,
             alias: None,
         })
@@ -129,7 +132,7 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
     assert_eq!(body["owner"].as_str(), Some("did:plc:heir"));
     assert_eq!(body["previous_owner"].as_str(), Some("did:plc:xferowner"));
 
-    let account = domain::elements::account::AccountId::new(Did::new(account_id));
+    let account = domain::elements::account::AccountId::new(Did::from(account_id));
     // AC: the named member is now the sole Owner; the prior Owner is now Admin.
     assert_eq!(
         backend
@@ -157,17 +160,17 @@ async fn only_the_owner_may_transfer() {
     sign_in(&client, &base).await;
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:notowner".to_string()))
+        .find_by_did(&Did::from("did:plc:notowner".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let host = backend
-        .provision(&Did::new("did:plc:host".to_string()))
+        .provision(&Did::from("did:plc:host".to_string()))
         .await
         .expect("provision host");
     let (account, owner_membership) = Account::open(
         host.id,
-        Did::new("did:plc:hostacct".to_string()),
+        Did::from("did:plc:hostacct".to_string()),
         "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -205,7 +208,7 @@ async fn cannot_transfer_to_a_non_member() {
 
     // A user who exists but holds no membership in this account is not a valid target.
     backend
-        .provision(&Did::new("did:plc:stranger".to_string()))
+        .provision(&Did::from("did:plc:stranger".to_string()))
         .await
         .expect("provision stranger");
 
@@ -278,10 +281,10 @@ async fn after_transfer_the_former_owner_can_leave() {
     sign_in(&client, &base).await;
 
     let account_id = found_account(&client, &base, "Exit Studio", "exit.zurfur.app").await;
-    let account = domain::elements::account::AccountId::new(Did::new(account_id.clone()));
+    let account = domain::elements::account::AccountId::new(Did::from(account_id.clone()));
 
     let heir = backend
-        .provision(&Did::new("did:plc:successor".to_string()))
+        .provision(&Did::from("did:plc:successor".to_string()))
         .await
         .expect("provision successor");
     backend

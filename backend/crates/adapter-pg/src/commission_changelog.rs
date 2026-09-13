@@ -32,8 +32,8 @@ impl ChangelogWrites for PgChangelogWrites<'_> {
         sql::append(
             &mut *self.conn,
             *entry.commission_id,
-            entry.kind.as_str(),
-            entry.actor_id.as_ref().map(|actor| actor.as_str()),
+            <&'static str>::from(entry.kind),
+            entry.actor_id.as_ref().map(|actor| actor.as_ref()),
             &entry.payload,
             entry.note.as_deref(),
             entry.created_at,
@@ -66,7 +66,7 @@ impl ChangelogStore for PgChangelogStore {
 
         rows.into_iter()
             .map(|row| {
-                let kind = ChangelogEntryKind::parse(&row.kind).ok_or_else(|| {
+                let kind = row.kind.parse::<ChangelogEntryKind>().ok().ok_or_else(|| {
                     anyhow::anyhow!(
                         "commission_changelog seq {} holds unknown kind token {:?}",
                         row.seq,
@@ -77,7 +77,7 @@ impl ChangelogStore for PgChangelogStore {
                     seq: row.seq,
                     commission_id: *commission,
                     kind,
-                    actor_id: row.actor_id.map(|did| UserId::new(Did::new(did))),
+                    actor_id: row.actor_id.map(|did| UserId::from(Did::from(did))),
                     payload: row.payload,
                     note: row.note,
                     created_at: row.created_at,

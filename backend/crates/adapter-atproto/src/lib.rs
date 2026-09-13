@@ -88,7 +88,7 @@ impl Authenticator for AtprotoAuthenticator {
         };
         let session = self.oauth.callback(params).await?;
         let did = session.data.read().await.account_did.clone();
-        Ok(Did::new(did.to_string()))
+        Ok(Did::from(did.to_string()))
     }
 }
 

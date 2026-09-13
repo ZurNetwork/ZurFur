@@ -102,7 +102,10 @@ async fn signin_callback(
 
     // Rotate the session id at this privilege change (session-fixation hardening).
     if session.cycle_id().await.is_err()
-        || session.insert(SESSION_USER_KEY, &*user.id).await.is_err()
+        || session
+            .insert(SESSION_USER_KEY, user.id.did())
+            .await
+            .is_err()
     {
         return Problem::internal_error(
             "Your sign-in succeeded but the session couldn't be saved. Please try again.",
@@ -144,7 +147,7 @@ impl From<me::Output> for GetMeResponse {
         match me.profile {
             Some(profile) => GetMeResponse {
                 did,
-                handle: Some(profile.handle),
+                handle: Some(profile.handle.to_string()),
                 display_name: profile.display_name,
                 avatar_url: profile.avatar_url,
             },

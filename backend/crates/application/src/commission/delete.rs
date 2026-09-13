@@ -1,6 +1,9 @@
 use domain::elements::{commission::CommissionId, user::UserId};
 
-use crate::commission::{CommissionError, CommissionResult, Commissions};
+use crate::{
+    commission::{CommissionResult, Commissions},
+    common_error::{CommonError, NotFoundEntity},
+};
 
 pub enum Outcome {
     Deleted,
@@ -30,7 +33,7 @@ impl Commissions<'_> {
             .find(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommissionError::CommissionNotFound)?;
+            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
         // One unit, closed on BOTH branches: the fact gate and the delete it
         // guards must share a transaction, or there is a TOCTOU window.

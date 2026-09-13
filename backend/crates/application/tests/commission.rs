@@ -39,7 +39,7 @@ async fn seed(
     deadline: Option<DateTime<Utc>>,
     step: LifecycleStep,
 ) -> CommissionId {
-    let owner_did = Did::new(owner_did.to_string());
+    let owner_did = Did::from(owner_did.to_string());
     let title: CommissionTitle = title.parse().expect("valid title");
     transaction(database, async move |uow: &mut dyn UnitOfWork| {
         let owner = uow.users().provision(&owner_did).await?;
@@ -96,7 +96,7 @@ async fn sweep(database: &dyn Database, now: DateTime<Utc>) -> SweepResult {
 // is already the system's standing word).
 #[tokio::test]
 async fn the_sweep_records_every_missed_deadline_once() {
-    let fixture = test_support::runtime::mem(&Did::new("did:plc:sweeper".to_string())).build();
+    let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = fixture.runtime;
     let database = &*runtime.database;
     let first = seed(
@@ -159,7 +159,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
     let log = entries(&*runtime.changelog, first).await;
     assert_eq!(log.len(), 1, "the system Late entry");
     let late = &log[0];
-    assert_eq!(late.kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(late.kind), "late");
     assert_eq!(late.actor_id, None, "the system entry carries no actor");
     assert_eq!(
         late.payload["deadline"], "2020-01-01T00:00:00Z",
@@ -189,7 +189,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
 // upgraded from.
 #[tokio::test]
 async fn a_standing_delayed_upgrades_to_late() {
-    let fixture = test_support::runtime::mem(&Did::new("did:plc:sweeper".to_string())).build();
+    let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = fixture.runtime;
     let database = &*runtime.database;
     let id = seed(
@@ -205,7 +205,7 @@ async fn a_standing_delayed_upgrades_to_late() {
     assert_eq!(sweep(database, after_past()).await.marked_late, 1);
     let log = entries(&*runtime.changelog, id).await;
     assert_eq!(log.len(), 1, "the system Late entry");
-    assert_eq!(log[0].kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(log[0].kind), "late");
     assert_eq!(log[0].actor_id, None);
     assert_eq!(
         log[0].payload["from"], "delayed",
@@ -219,7 +219,7 @@ async fn a_standing_delayed_upgrades_to_late() {
 // freeze — "deadlines freeze, Late pauses" — is the future Disputes epic).
 #[tokio::test]
 async fn the_sweeper_skips_terminal_lifecycles() {
-    let fixture = test_support::runtime::mem(&Did::new("did:plc:sweeper".to_string())).build();
+    let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = fixture.runtime;
     let database = &*runtime.database;
     let owner = "did:plc:lifecycle-owner";

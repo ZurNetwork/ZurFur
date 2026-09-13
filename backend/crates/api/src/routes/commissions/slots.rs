@@ -61,7 +61,7 @@ pub(super) async fn declare_slots(
                 })?;
                 let surface = super::elements::address(entry.tab, entry.surface)?;
                 let slot = SlotBody {
-                    tab: TabId::new(entry.tab),
+                    tab: TabId::from(entry.tab),
                     surface,
                     title,
                     notes: entry.notes,
@@ -82,29 +82,15 @@ pub(super) async fn declare_slots(
         .slots()
         .declare(command, Utc::now())
         .await?;
-    let ids: Vec<Uuid> = declared.slot_ids.into_iter().map(|slot| *slot).collect();
+    let ids: Vec<Uuid> = declared
+        .slot_ids
+        .into_iter()
+        .map(uuid::Uuid::from)
+        .collect();
 
     let body = DeclareSlotsResponse { ids };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 #[cfg(test)]
-mod tests {
-    //! Pins the `201` body's wire shape: `{"ids": ["<uuid>", …]}`.
-
-    use super::*;
-
-    #[test]
-    fn declare_slots_response_serializes_to_a_bare_ids_array() {
-        let first = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000004").unwrap();
-        let second = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000005").unwrap();
-        let body = DeclareSlotsResponse {
-            ids: vec![first, second],
-        };
-
-        assert_eq!(
-            serde_json::to_string(&body).unwrap(),
-            format!("{{\"ids\":[\"{first}\",\"{second}\"]}}")
-        );
-    }
-}
+mod tests;

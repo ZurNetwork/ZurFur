@@ -37,18 +37,18 @@ impl KeyStore for PgKeyStore {
     /// Envelope-encrypts `keys` under the root key and inserts them for `did`.
     /// One DID mints once, so a duplicate insert is a constraint error.
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
-        let wrapped = self.root.wrap(did.as_str(), keys)?;
-        sql::put(&self.pool, did.as_str(), &wrapped, 1i32, Utc::now()).await?;
+        let wrapped = self.root.wrap(did.as_ref(), keys)?;
+        sql::put(&self.pool, did.as_ref(), &wrapped, 1i32, Utc::now()).await?;
         Ok(())
     }
 
     /// Loads the sealed blob for `did` and opens it into [`AccountKeys`], or
     /// `None` if unknown. Decryption failure is an error, not a `None`.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
-        let wrapped = sql::get(&self.pool, did.as_str()).await?;
+        let wrapped = sql::get(&self.pool, did.as_ref()).await?;
 
         match wrapped {
-            Some(wrapped) => Ok(Some(self.root.unwrap(did.as_str(), &wrapped)?)),
+            Some(wrapped) => Ok(Some(self.root.unwrap(did.as_ref(), &wrapped)?)),
             None => Ok(None),
         }
     }

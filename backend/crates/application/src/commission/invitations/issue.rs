@@ -43,7 +43,7 @@ impl Invitations<'_> {
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
         let mut uow = self.ports().database.begin().await?;
-        let target_user = uow.users().provision(&target_id).await?;
+        let target_user = uow.users().provision(target_id.did()).await?;
         let seats = ports.commissions.seats(&commission.id).await?;
 
         // Two distinct answers, deliberately not folded into one: an absent

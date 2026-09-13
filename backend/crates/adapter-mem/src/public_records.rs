@@ -81,7 +81,7 @@ impl PublicRecords for MemPublicRecords {
             .expect("MemPublicRecords records mutex poisoned")
             .insert(
                 (
-                    repo.as_str().to_string(),
+                    repo.to_string(),
                     collection.as_str().to_string(),
                     rkey.as_str().to_string(),
                 ),
@@ -148,7 +148,7 @@ impl PublicRecords for MemPublicRecords {
 /// The map key for an [`AtUri`]: `(repo did, collection, rkey)`.
 fn key_of(uri: &AtUri) -> RecordAddr {
     (
-        uri.did.as_str().to_string(),
+        uri.did.to_string(),
         uri.collection.as_str().to_string(),
         uri.rkey.as_str().to_string(),
     )

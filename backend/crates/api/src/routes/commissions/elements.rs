@@ -44,7 +44,7 @@ struct AddElementResponse {
 
 /// The default payload for a request that omits it.
 fn empty_object() -> serde_json::Value {
-    ElementPayload::default().into_value()
+    serde_json::Value::from(ElementPayload::default())
 }
 
 /// Contributes an element into one of the commission's declared surfaces, as
@@ -62,7 +62,9 @@ pub(super) async fn add_element(
     require_owner(&state, &commission_id, &actor_id).await?;
 
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let element_type = ElementType::try_from(body.r#type)
+    let element_type = body
+        .r#type
+        .parse::<ElementType>()
         .map_err(|err| Problem::invalid_request(format!("Invalid element type: {err}.")))?;
     let address = address(body.tab, body.surface)?;
 
@@ -75,7 +77,7 @@ pub(super) async fn add_element(
         actor_id,
         Utc::now(),
     );
-    let element_id = *element.id;
+    let element_id = uuid::Uuid::from(element.id);
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
@@ -116,9 +118,10 @@ pub(super) async fn remove_element(
 /// one address-parsing path shared by every route that writes an element.
 /// `422` for a malformed `surface`.
 pub(super) fn address(tab: Uuid, surface: String) -> Result<SurfaceAddress, Problem> {
-    let surface = SurfaceName::try_from(surface)
+    let surface = surface
+        .parse::<SurfaceName>()
         .map_err(|err| Problem::invalid_request(format!("Invalid surface: {err}.")))?;
-    Ok(SurfaceAddress::new(TabId::new(tab), surface))
+    Ok(SurfaceAddress::new(TabId::from(tab), surface))
 }
 
 /// Maps the store's composition errors to RFC 9457 problems — the one
@@ -136,19 +139,4 @@ pub(super) fn to_problem(err: anyhow::Error) -> Problem {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Pins the `201` body's wire shape: `{"id": "<uuid>"}`.
-
-    use super::*;
-
-    #[test]
-    fn add_element_response_serializes_to_a_bare_id_object() {
-        let id = Uuid::parse_str("0192f6f0-0000-7000-8000-000000000001").unwrap();
-        let body = AddElementResponse { id };
-
-        assert_eq!(
-            serde_json::to_string(&body).unwrap(),
-            format!("{{\"id\":\"{id}\"}}")
-        );
-    }
-}
+mod tests;

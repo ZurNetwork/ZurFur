@@ -58,4 +58,8 @@ test-support = { path = "../test-support" }
 # `tests/whoami_parity.rs`: the CLI's hand-copied `whoami` projection must
 # render exactly like the generated `GetMeResponse` (ZMVP-203).
 cli = { path = "../cli" }
+# Snapshot files for the wire-shape guards (golden_wire, contract_*, parity).
+insta = { workspace = true }
+# Shared fixtures across the per-route test files.
+rstest = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }

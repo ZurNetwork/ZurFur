@@ -8,7 +8,8 @@ use domain::{
 use serde_json::json;
 
 use crate::{
-    commission::{CommissionError, CommissionResult, view::View},
+    commission::{CommissionResult, view::View},
+    common_error::{CommonError, NotFoundEntity},
     ports::WithPorts,
 };
 
@@ -40,10 +41,10 @@ impl View<'_> {
             .find(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommissionError::CommissionNotFound)?;
+            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
         let mut uow = self.ports().database.begin().await?;
-        let target_user = uow.users().provision(&target_user_id).await?;
+        let target_user = uow.users().provision(target_user_id.did()).await?;
 
         let entry = NewChangelogEntry::event(
             commission.id,

@@ -62,8 +62,8 @@ async fn spawn_app() -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(ALICE_DID.to_string()))
-            .profile(Profile::new(Did::new(ALICE_DID.to_string()), ALICE_HANDLE))
+        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
+            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -145,7 +145,7 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
     // B is now a real, separate User sharing private state with A.
     assert!(
         backend
-            .find_by_did(&Did::new(BOB_DID.to_string()))
+            .find_by_did(&Did::from(BOB_DID.to_string()))
             .await
             .expect("find_by_did")
             .is_some(),

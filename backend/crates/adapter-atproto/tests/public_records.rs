@@ -28,7 +28,7 @@ async fn adapter_for(pds: &ThrowawayPds, handle: &str) -> (AtprotoPublicRecords,
     };
     let store = AtprotoPublicRecords::new(&account.endpoint, access_jwt)
         .expect("build atproto public-records adapter");
-    (store, Did::new(account.did))
+    (store, Did::from(account.did))
 }
 
 /// AC5: the real adapter satisfies the same contract as the fake.
@@ -74,7 +74,7 @@ async fn uploaded_blob_downloads_byte_identical() {
     let url = format!(
         "{}/xrpc/com.atproto.sync.getBlob?did={}&cid={}",
         pds.endpoint(),
-        actor.as_str(),
+        actor.as_ref(),
         blob_ref.cid,
     );
     let downloaded = reqwest::get(&url)
@@ -107,7 +107,7 @@ async fn unreachable_pds_is_a_domain_error() {
     });
 
     match store
-        .create_record(&Did::new("did:plc:whoever".to_string()), &record)
+        .create_record(&Did::from("did:plc:whoever".to_string()), &record)
         .await
     {
         Err(PublicRecordsError::Unreachable(_)) => {}
@@ -125,7 +125,7 @@ async fn rejected_write_is_a_domain_error() {
 
     // A syntactically valid DID that is NOT the acting identity: the PDS refuses
     // to let Carol's session write into someone else's repo.
-    let foreign_repo = Did::new("did:plc:someoneelserepo000000000".to_string());
+    let foreign_repo = Did::from("did:plc:someoneelserepo000000000".to_string());
     let record = PublicRecord::FeedPost(FeedPost {
         text: Some("not my repo".to_string()),
         embed: None,

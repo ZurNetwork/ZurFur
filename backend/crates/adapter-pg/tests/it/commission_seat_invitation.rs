@@ -35,7 +35,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -122,8 +122,8 @@ async fn rows_for(pool: &PgPool, seat: ElementId, user: UserId) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM commission_invitation WHERE seat_id = $1 AND invited_user = $2",
     )
-    .bind(*seat)
-    .bind(user.as_str())
+    .bind(uuid::Uuid::from(seat))
+    .bind(user.as_ref())
     .fetch_one(pool)
     .await
     .expect("count commission_invitation")
@@ -272,7 +272,7 @@ async fn two_users_may_hold_pending_invitations_to_one_seat() {
     let seat_total: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM commission_invitation WHERE seat_id = $1 AND state = 'pending'",
     )
-    .bind(*seat)
+    .bind(uuid::Uuid::from(seat))
     .fetch_one(&pool)
     .await
     .expect("count");

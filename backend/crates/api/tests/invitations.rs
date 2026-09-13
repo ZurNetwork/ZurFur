@@ -28,8 +28,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -125,14 +128,14 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
 
     // A pending invitation is recorded for the invitee, naming the Owner as inviter.
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let pending = backend
         .find_pending_invitation(&account, &invitee.id)
         .await
@@ -165,10 +168,10 @@ async fn inviting_at_owner_is_refused() {
     assert_eq!(res.status(), 403, "Owner cannot be offered by invitation");
 
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -219,10 +222,10 @@ async fn re_inviting_a_pending_user_is_idempotent() {
 
     // Still exactly one pending offer, and it's the original (no second row).
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let pending = backend
         .find_pending_invitation(&account, &invitee.id)
         .await
@@ -270,10 +273,10 @@ async fn issuer_revokes_a_pending_invitation() {
 
     // The offer is no longer live, and reads back revoked — it can never be accepted.
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -317,10 +320,10 @@ async fn inviting_an_existing_member_is_a_conflict() {
     common::assert_problem(res, 409, "already_member").await;
 
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -354,16 +357,16 @@ async fn seed_pending_invite(
     invitee_did: &str,
 ) -> (AccountId, UserId, UserId) {
     let owner = backend
-        .provision(&Did::new("did:plc:seedowner".to_string()))
+        .provision(&Did::from("did:plc:seedowner".to_string()))
         .await
         .expect("provision owner");
     let invitee = backend
-        .provision(&Did::new(invitee_did.to_string()))
+        .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision invitee");
     let (account, owner_membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:seedacct".to_string()),
+        Did::from("did:plc:seedacct".to_string()),
         "acme.zurfur.app".parse::<Handle>().unwrap(),
         "Acme Studio".parse::<AccountName>().expect("account name"),
         chrono::Utc::now(),
@@ -436,12 +439,12 @@ async fn declining_with_no_pending_invitation_is_not_found() {
     let (base, backend) = spawn_app(did).await;
     // An account exists, but the signed-in user holds no invitation to it.
     let owner = backend
-        .provision(&Did::new("did:plc:seedowner".to_string()))
+        .provision(&Did::from("did:plc:seedowner".to_string()))
         .await
         .expect("provision owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new("did:plc:seedacct".to_string()),
+        Did::from("did:plc:seedacct".to_string()),
         "acme.zurfur.app".parse::<Handle>().unwrap(),
         "Acme Studio".parse::<AccountName>().expect("account name"),
         chrono::Utc::now(),
@@ -507,14 +510,14 @@ async fn inviting_an_accounts_own_did_is_a_did_conflict() {
     let account_id = found_account(&client, &base, "Conflict Studio").await;
 
     let account = backend
-        .find(&AccountId::new(Did::new(account_id.clone())))
+        .find(&AccountId::new(Did::from(account_id.clone())))
         .await
         .expect("find")
         .expect("the founded account exists");
 
     let res = client
         .post(format!("{base}/accounts/{account_id}/invitations"))
-        .json(&serde_json::json!({ "user": account.id.as_str(), "role": "member" }))
+        .json(&serde_json::json!({ "user": account.id.as_ref(), "role": "member" }))
         .send()
         .await
         .expect("POST invite with an account's DID");
@@ -544,7 +547,7 @@ async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() 
 
     // A seated member on the same account — the `already_member` arm.
     let member = backend
-        .provision(&Did::new("did:plc:e2eprobe-member".to_string()))
+        .provision(&Did::from("did:plc:e2eprobe-member".to_string()))
         .await
         .expect("provision the member");
     let membership = UserAccount {
@@ -626,16 +629,16 @@ async fn a_soft_deleted_account_takes_no_new_invitations() {
     let client = client();
     sign_in(&client, &base).await; // signed in as the account's Owner
 
-    let newcomer_did = Did::new("did:plc:e2etombstone-newcomer".to_string());
+    let newcomer_did = Did::from("did:plc:e2etombstone-newcomer".to_string());
     let res = client
         .post(format!("{base}/accounts/{}/invitations", *account_id))
-        .json(&serde_json::json!({ "user": newcomer_did.as_str(), "role": "member" }))
+        .json(&serde_json::json!({ "user": newcomer_did.as_ref(), "role": "member" }))
         .send()
         .await
         .expect("POST /accounts/{id}/invitations");
     common::assert_problem(res, 404, "account_not_found").await;
 
-    let newcomer = UserId::new(newcomer_did.clone());
+    let newcomer = UserId::from(newcomer_did.clone());
     assert!(
         backend
             .find_pending_invitation(&account_id, &newcomer)

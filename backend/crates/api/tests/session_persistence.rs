@@ -31,9 +31,9 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
         .expect("bind ephemeral port");
     let addr = listener.local_addr().expect("local addr");
 
-    let profile = Profile::new(Did::new(did.to_string()), "persistalice.bsky.social");
+    let profile = Profile::new(Did::from(did.to_string()), "persistalice.bsky.social");
     let test_support::runtime::MemRuntime { mut runtime, .. } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(profile)
             .public_url(format!("http://{addr}"))
             .build();
@@ -68,7 +68,7 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     // session row, which lives in Postgres.
     let backend = MemBackend::new();
     backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision seeds the recognized user");
 

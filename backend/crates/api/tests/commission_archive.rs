@@ -40,9 +40,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -120,7 +120,7 @@ async fn read_changelog(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -172,13 +172,13 @@ async fn the_owner_archives_and_the_record_survives() {
     assert_eq!(entries.len(), 2, "creation + the archive entry");
     assert_eq!(entries[1]["kind"], "archived");
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     assert_eq!(
         entries[1]["actor_id"],
-        json!(*me.id),
+        json!(me.id.to_string()),
         "archiving is an owner act, never a system entry",
     );
     assert_eq!(

@@ -31,8 +31,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -119,17 +122,17 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
     // The signed-in user is provisioned by sign-in; seat them as a *Member* of an
     // account someone else owns, so leaving isn't blocked by the Owner rule.
     let me = backend
-        .find_by_did(&Did::new("did:plc:leaver".to_string()))
+        .find_by_did(&Did::from("did:plc:leaver".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let host = backend
-        .provision(&Did::new("did:plc:host".to_string()))
+        .provision(&Did::from("did:plc:host".to_string()))
         .await
         .expect("provision host");
     let (account, owner_membership) = Account::open(
         host.id,
-        Did::new("did:plc:hostacct".to_string()),
+        Did::from("did:plc:hostacct".to_string()),
         "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),

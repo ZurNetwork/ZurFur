@@ -57,7 +57,7 @@ impl Seats<'_> {
             actor_id,
             json!({
                 "kind": seat.kind.as_str(),
-                "seat": *seat_id
+                "seat": seat_id.to_string()
             }),
             now,
         );
