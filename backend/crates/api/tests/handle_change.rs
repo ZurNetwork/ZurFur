@@ -36,8 +36,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -116,7 +119,7 @@ async fn owner_changes_handle_and_resolution_follows() {
     // `id` *is* the account's DID (AccountId wraps Did), so read it back through the
     // found account rather than a second, separate field.
     let account = backend
-        .find(&AccountId::new(Did::new(id.clone())))
+        .find(&AccountId::new(Did::from(id.clone())))
         .await
         .expect("find")
         .expect("account present");
@@ -127,7 +130,7 @@ async fn owner_changes_handle_and_resolution_follows() {
     let body: Value = res.json().await.expect("json");
     assert_eq!(body["handle"].as_str(), Some("after.zurfur.app"));
     assert_eq!(body["id"].as_str(), Some(id.as_str()));
-    assert_eq!(body["did"].as_str(), Some(did.as_str()));
+    assert_eq!(body["did"].as_str(), Some(did.as_ref()));
 
     // handle→DID resolution follows: new resolves to the DID, old no longer resolves.
     let store = backend.account_store();
@@ -205,17 +208,17 @@ async fn only_the_owner_may_change_the_handle() {
 
     // The signed-in user is only a Member of an account someone else owns.
     let me = backend
-        .find_by_did(&Did::new("did:plc:memberonly".to_string()))
+        .find_by_did(&Did::from("did:plc:memberonly".to_string()))
         .await
         .expect("find me")
         .expect("provisioned me");
     let host = backend
-        .provision(&Did::new("did:plc:host".to_string()))
+        .provision(&Did::from("did:plc:host".to_string()))
         .await
         .expect("provision host");
     let (account, owner_membership) = Account::open(
         host.id,
-        Did::new("did:plc:hostacct".to_string()),
+        Did::from("did:plc:hostacct".to_string()),
         handle("host.zurfur.app"),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -277,12 +280,12 @@ async fn rejects_a_taken_handle() {
 
     // Seed another live account holding `theirs.zurfur.app`.
     let other = backend
-        .provision(&Did::new("did:plc:otherowner".to_string()))
+        .provision(&Did::from("did:plc:otherowner".to_string()))
         .await
         .expect("provision other");
     let (account, membership) = Account::open(
         other.id,
-        Did::new("did:plc:otheracct".to_string()),
+        Did::from("did:plc:otheracct".to_string()),
         handle("theirs.zurfur.app"),
         "Theirs".parse::<AccountName>().unwrap(),
         Utc::now(),

@@ -19,8 +19,11 @@ async fn spawn_app(did: &str) -> String {
     let test_support::runtime::MemRuntime {
         runtime,
         backend: _,
-    } = test_support::runtime::mem(&Did::new(did.to_string()))
-        .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+    } = test_support::runtime::mem(&Did::from(did.to_string()))
+        .profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        ))
         .public_url(format!("http://{addr}"))
         .build();
     let state: AppState = runtime;

@@ -47,9 +47,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -151,7 +151,7 @@ async fn entries(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -193,7 +193,7 @@ async fn a_participant_sets_each_direction_status() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 4, "creation + three status changes");
     let last = &log[3];
-    assert_eq!(last.kind.as_str(), "status_changed");
+    assert_eq!(<&'static str>::from(last.kind), "status_changed");
     assert!(
         last.actor_id.is_some(),
         "an explicit set is never a system entry"
@@ -263,7 +263,7 @@ async fn a_participant_clears_the_direction_status() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + set + clear");
     let clear = &log[2];
-    assert_eq!(clear.kind.as_str(), "status_changed");
+    assert_eq!(<&'static str>::from(clear.kind), "status_changed");
     assert_eq!(clear.payload["from"], "changes_requested");
     assert!(clear.payload["to"].is_null(), "a clear records to: null");
 

@@ -1,5 +1,8 @@
 use domain::{
-    elements::{profile::Profile, user::UserId},
+    elements::{
+        profile::{DisplayHandle, Profile},
+        user::UserId,
+    },
     ports::{ProfileCache, ProfileSource},
 };
 
@@ -24,7 +27,7 @@ pub struct Output {
 /// The public-profile facts `me` surfaces. No `did` — it's on [`Output`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeProfile {
-    pub handle: String,
+    pub handle: DisplayHandle,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
 }
@@ -84,10 +87,10 @@ impl Users<'_> {
         let ports = self.ports();
         let user = ports
             .users
-            .find_by_did(&query.user_id)
+            .find_by_did(query.user_id.did())
             .await?
             .ok_or(MeError::UnknownUser(query.user_id))?;
-        let profile = Profile::resolve_through(profile_cache, profile_source, &user.id).await;
+        let profile = Profile::resolve_through(profile_cache, profile_source, user.id.did()).await;
         Ok(Output {
             id: user.id,
             profile: profile.map(MeProfile::from),

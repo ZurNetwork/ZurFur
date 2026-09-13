@@ -20,7 +20,7 @@ use domain::elements::{
 async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:factless-owner".to_string()))
+        .provision(&Did::from("did:plc:factless-owner".to_string()))
         .await
         .expect("provision owner");
     let title = "A ref sheet"
@@ -85,7 +85,7 @@ async fn an_unknown_commission_answers_false() {
 async fn set_archived_round_trips_and_reports_transitions() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:archiving-owner".to_string()))
+        .provision(&Did::from("did:plc:archiving-owner".to_string()))
         .await
         .expect("provision owner");
     let commission = Commission::create(
@@ -195,7 +195,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
 async fn a_dropped_unit_of_work_discards_the_archive() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:rollback-owner".to_string()))
+        .provision(&Did::from("did:plc:rollback-owner".to_string()))
         .await
         .expect("provision owner");
     let commission = Commission::create(

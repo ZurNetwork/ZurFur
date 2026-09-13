@@ -205,7 +205,7 @@ async fn bearer_adapter(pds: &ThrowawayPds, handle: &str) -> (AtprotoPublicRecor
     };
     let store = AtprotoPublicRecords::new(&account.endpoint, access_jwt)
         .expect("build the atproto public-records adapter");
-    (store, Did::new(account.did))
+    (store, Did::from(account.did))
 }
 
 /// Unwrap the single-variant public-record envelope to its [`FeedPost`].
@@ -221,7 +221,7 @@ async fn raw_get_blob(pds: &ThrowawayPds, did: &Did, blob_cid: &cid::Cid) -> Vec
     let url = format!(
         "{}/xrpc/com.atproto.sync.getBlob?did={}&cid={}",
         pds.endpoint(),
-        did.as_str(),
+        did.as_ref(),
         blob_cid,
     );
     reqwest::get(&url)
@@ -242,7 +242,7 @@ async fn raw_get_record_value(pds: &ThrowawayPds, uri: &AtUri) -> serde_json::Va
     let url = format!(
         "{}/xrpc/com.atproto.repo.getRecord?repo={}&collection={}&rkey={}",
         pds.endpoint(),
-        uri.did.as_str(),
+        uri.did.as_ref(),
         uri.collection.as_str(),
         uri.rkey.as_str(),
     );

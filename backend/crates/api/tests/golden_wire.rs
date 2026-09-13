@@ -30,7 +30,7 @@ async fn spawn_app(did: &str, profile: Profile) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(profile)
             .public_url(format!("http://{addr}"))
             .build();
@@ -124,8 +124,8 @@ fn normalized_timestamp(value: &Value) -> Value {
 #[tokio::test]
 async fn me_wire_shape_resolved() {
     let profile = Profile {
-        did: Did::new("did:plc:golden".to_string()),
-        handle: "golden.bsky.social".to_string(),
+        did: Did::from("did:plc:golden".to_string()),
+        handle: "golden.bsky.social".to_string().into(),
         display_name: Some("Golden".to_string()),
         avatar_url: Some("https://pds.example/a.jpg".to_string()),
     };
@@ -157,8 +157,8 @@ async fn me_wire_shape_resolved() {
 #[tokio::test]
 async fn me_wire_shape_partial_profile_omits_unset_keys() {
     let profile = Profile {
-        did: Did::new("did:plc:bare".to_string()),
-        handle: "bare.bsky.social".to_string(),
+        did: Did::from("did:plc:bare".to_string()),
+        handle: "bare.bsky.social".to_string().into(),
         display_name: None,
         avatar_url: None,
     };
@@ -194,8 +194,8 @@ async fn me_wire_shape_partial_profile_omits_unset_keys() {
 #[tokio::test]
 async fn account_wire_shapes() {
     let profile = Profile {
-        did: Did::new("did:plc:acctgold".to_string()),
-        handle: "acctgold.bsky.social".to_string(),
+        did: Did::from("did:plc:acctgold".to_string()),
+        handle: "acctgold.bsky.social".to_string().into(),
         display_name: None,
         avatar_url: None,
     };
@@ -266,8 +266,8 @@ async fn account_wire_shapes() {
 #[tokio::test]
 async fn commission_wire_shapes() {
     let profile = Profile {
-        did: Did::new("did:plc:commgold".to_string()),
-        handle: "commgold.bsky.social".to_string(),
+        did: Did::from("did:plc:commgold".to_string()),
+        handle: "commgold.bsky.social".to_string().into(),
         display_name: None,
         avatar_url: None,
     };

@@ -1,12 +1,14 @@
 //! Use cases about [`Account`]s.
-
 use domain::{
+    datetime::DateTimeUtc,
     elements::{
         account::{Account, AccountId},
+        handle::{Handle, HandleDomain},
         workflow::WorkflowError,
     },
     ports::{AccountStore, Database, DidBelongsToAnotherActor, DidMinter, HandleTaken, UserStore},
 };
+use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
 use crate::ports::WithPorts;
 
@@ -274,6 +276,36 @@ pub(crate) async fn require_live_account(
         .find(account_id)
         .await?
         .ok_or(AccountError::NotFound(AccountEntity::Account))
+}
+
+/// The one handle-claim gate: refuse with `HandleTaken` when a live account
+/// already holds `handle`, or when, inside the Zurfur namespace, another
+/// account vacated it within the quarantine window. `exempt` names the account
+/// whose own vacated handle does not count against it.
+// TODO(Engineer): Characters claim through this gate too once their handle
+// namespace is ruled. A namespace shared with Accounts needs a taken-check that
+// spans both actor kinds, not `AccountStore` alone.
+pub(crate) async fn ensure_handle_claimable(
+    ports: &crate::Ports,
+    handle: &Handle,
+    handle_domain: &HandleDomain,
+    exempt: Option<&AccountId>,
+    now: DateTimeUtc,
+) -> AccountResult<()> {
+    if ports.accounts.find_did_by_handle(handle).await?.is_some() {
+        return Err(AccountError::HandleTaken);
+    }
+
+    if handle.is_in_namespace(handle_domain) {
+        let quarantined = ports
+            .accounts
+            .handle_reserved_for_other(handle, exempt, now - HANDLE_QUARANTINE_WINDOW)
+            .await?;
+        if quarantined {
+            return Err(AccountError::HandleTaken);
+        }
+    }
+    Ok(())
 }
 
 /// The ports the account use cases reach: reads off [`AccountStore`] and

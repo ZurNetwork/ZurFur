@@ -20,7 +20,11 @@ use domain::{
 };
 use serde_json::json;
 
-use crate::{ports::WithPorts, transaction};
+use crate::{
+    common_error::{CommonError, NotFoundEntity},
+    ports::WithPorts,
+    transaction,
+};
 pub mod archive;
 pub mod changelog;
 pub mod create;
@@ -94,99 +98,74 @@ pub type CommissionResult<T> = Result<T, CommissionError>;
 /// Why a commission use case could not answer. `Display` stays terse and never
 /// interpolates the cause; the cause rides
 /// [`source`](std::error::Error::source).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CommissionError {
+    #[error(transparent)]
+    CommonError(#[from] CommonError),
     /// The commission store failed; the unit of work rolled back whole.
-    Infrastructure(anyhow::Error),
-    UserNotFound,
-    CommissionNotFound,
+    #[error("The commission is already at the requested state")]
     CommissionAlreadyAtState,
+    #[error("Insufficient permissions")]
     InsufficientPermissions,
+    #[error("Not a member")]
     NotAMember,
+    #[error("Invalid state requested")]
     InvalidStateRequested,
     /// The uploaded filename failed
     /// [`FileName`](domain::elements::commission::FileName)'s validation gate.
+    #[error("Invalid file name")]
     InvalidFileName(FileNameError),
     /// The uploaded content exceeded the configured upload cap.
+    #[error("File too large")]
     FileTooLarge,
     /// The uploaded content was zero bytes.
+    #[error("File is empty")]
     FileEmpty,
     /// No such file entry on this commission.
+    #[error("File not found")]
     FileNotFound,
+    #[error("File blob missing")]
     FileBlobMissing,
+    #[error("Seat not found")]
     SeatNotFound,
     /// The Seat named is already occupied, so it cannot be invited to.
+    #[error("Seat already filled")]
     SeatFilled,
     /// The tab named is not one of this commission's tabs. Fabricated and
     /// belonging-to-another are deliberately indistinguishable.
+    #[error("Tab not found")]
     TabNotFound,
     /// The `(tab, surface)` pair names no surface this commission declares.
+    #[error("Unknown surface")]
     UnknownSurface,
-    /// The element named is not one of this commission's elements.
-    ElementNotFound,
     /// A deadline-axis act on a commission that carries no deadline.
+    #[error("No deadline")]
     NoDeadline,
     /// The commission stands Late — the system's word, not a participant's.
+    #[error("Commission is late")]
     CommissionLate,
-    /// The DID offered is already interned as a different kind of actor.
-    DidBelongsToAnotherActor,
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
     /// numeric gate.
+    #[error("Invalid markup")]
     InvalidMarkup(MarkupError),
+    #[error("Incorrect content")]
     IncorrectContent,
-    AccountNotFound,
 }
 
-impl std::fmt::Display for CommissionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Infrastructure(_) => write!(f, "the commission store failed"),
-            Self::UserNotFound => write!(f, "The user could not be found"),
-            Self::CommissionNotFound => write!(f, "The commission could not be found"),
-            Self::CommissionAlreadyAtState => write!(f, "This commission is already in this state"),
-            Self::InsufficientPermissions => write!(f, "Insufficient permissions to do this"),
-            Self::NotAMember => write!(f, "Not a member of this commission"),
-            Self::InvalidStateRequested => write!(f, "The state couldn't get set"),
-            Self::InvalidFileName(_) => write!(f, "The filename is invalid"),
-            Self::FileTooLarge => write!(f, "The file exceeds the upload limit"),
-            Self::FileEmpty => write!(f, "The uploaded file is empty"),
-            Self::FileNotFound => write!(f, "The file could not be found"),
-            Self::FileBlobMissing => write!(f, "The blob seems to be missing"),
-            Self::SeatNotFound => write!(f, "Seat not found"),
-            Self::SeatFilled => write!(f, "That seat is already filled"),
-            Self::TabNotFound => write!(f, "Tab not found"),
-            Self::UnknownSurface => write!(f, "That surface is not declared here"),
-            Self::ElementNotFound => write!(f, "Element not found"),
-            Self::NoDeadline => write!(f, "This commission has no deadline"),
-            Self::CommissionLate => write!(f, "Late is set by the system"),
-            Self::DidBelongsToAnotherActor => write!(f, "That DID is already another actor"),
-            Self::InvalidMarkup(_) => write!(f, "This markup is not valid"),
-            Self::IncorrectContent => write!(f, "No content"),
-            Self::AccountNotFound => write!(f, "Account not found"),
-        }
-    }
-}
-
-/// The one place a store error becomes a use-case error: the
-/// composition-address gates ([`UnknownTab`], [`UnknownSurface`],
-/// [`ElementNotFound`]) and [`DidBelongsToAnotherActor`] are recognized,
-/// anything else stays [`Infrastructure`](CommissionError::Infrastructure).
 impl From<anyhow::Error> for CommissionError {
     fn from(err: anyhow::Error) -> Self {
-        if err.downcast_ref::<UnknownTab>().is_some() {
-            Self::TabNotFound
+        if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
+            return CommonError::DidBelongsToAnotherActor.into();
+        } else if err.downcast_ref::<UnknownTab>().is_some() {
+            return Self::TabNotFound;
         } else if err.downcast_ref::<UnknownSurface>().is_some() {
-            Self::UnknownSurface
+            return Self::UnknownSurface;
         } else if err.downcast_ref::<ElementNotFound>().is_some() {
-            Self::ElementNotFound
-        } else if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
-            Self::DidBelongsToAnotherActor
-        } else {
-            Self::Infrastructure(err)
+            return CommonError::NotFound(NotFoundEntity::Element).into();
         }
+        Self::CommonError(err.into())
     }
 }
-
 /// The closed door: resolve the commission for an actor who must be a
 /// Participant of it. Anyone else is answered
 /// [`NotAMember`](CommissionError::NotAMember), which the drivers render
@@ -200,7 +179,7 @@ pub(crate) async fn require_participant(
         .commissions
         .find(commission_id)
         .await?
-        .ok_or(CommissionError::CommissionNotFound)?;
+        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
     if !ports
         .commissions
@@ -225,7 +204,7 @@ pub(crate) async fn require_owner(
         .commissions
         .find(commission_id)
         .await?
-        .ok_or(CommissionError::CommissionNotFound)?;
+        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
     if commission.is_owned_by(actor_id) {
         return Ok(commission);
@@ -241,17 +220,6 @@ pub(crate) async fn require_owner(
         return Err(CommissionError::InsufficientPermissions);
     }
     Err(CommissionError::NotAMember)
-}
-
-impl std::error::Error for CommissionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Infrastructure(e) => Some(e.as_ref()),
-            Self::InvalidFileName(e) => Some(e),
-            Self::InvalidMarkup(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 /// How many commissions one [`sweep_deadlines`] pass newly recorded as Late.
@@ -286,7 +254,7 @@ pub async fn sweep_deadlines(
         Ok(lapsed.len())
     })
     .await
-    .map_err(CommissionError::Infrastructure)?;
+    .map_err(CommonError::Infrastructure)?;
 
     Ok(SweepResult { marked_late })
 }

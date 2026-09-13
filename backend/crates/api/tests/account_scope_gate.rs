@@ -41,8 +41,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -99,12 +102,12 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str, handle:
 /// (no HTTP) — the signed-in test user is deliberately *not* a member of it.
 async fn seed_foreign_account(backend: &MemBackend, owner_did: &str, handle: &str) -> Account {
     let owner = backend
-        .provision(&Did::new(owner_did.to_string()))
+        .provision(&Did::from(owner_did.to_string()))
         .await
         .expect("provision the foreign owner");
     let (account, membership) = Account::open(
         owner.id,
-        Did::new(format!("{owner_did}:acct")),
+        Did::from(format!("{owner_did}:acct")),
         handle.parse::<Handle>().expect("valid handle"),
         "Host Studio".parse::<AccountName>().expect("valid name"),
         Utc::now(),
@@ -159,7 +162,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
     // was NOT provisioned as a side effect (grant_role recognizes grantees by DID, so a
     // leak here would mint a User the forbidden request should never have created).
     let me = backend
-        .find_by_did(&Did::new("did:plc:stranger".to_string()))
+        .find_by_did(&Did::from("did:plc:stranger".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
@@ -170,7 +173,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
     );
     assert!(
         backend
-            .find_by_did(&Did::new("did:plc:whoever".to_string()))
+            .find_by_did(&Did::from("did:plc:whoever".to_string()))
             .await
             .expect("find grantee")
             .is_none(),
@@ -199,7 +202,7 @@ async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
 
     // The grant took effect — the grantee now holds the seated role.
     let grantee = backend
-        .find_by_did(&Did::new("did:plc:grantee".to_string()))
+        .find_by_did(&Did::from("did:plc:grantee".to_string()))
         .await
         .expect("find grantee")
         .expect("the grant provisioned the grantee");
@@ -224,7 +227,7 @@ async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
 
     // The signed-in user holds no accounts yet.
     let me = backend
-        .find_by_did(&Did::new("did:plc:newcomer".to_string()))
+        .find_by_did(&Did::from("did:plc:newcomer".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
@@ -287,5 +290,5 @@ async fn anonymous_read_of_account_public_data_still_succeeds() {
 /// Parse an account-id string (as returned by the API) back into an `AccountId` for
 /// backend introspection.
 fn account_id_from(id: &str) -> domain::elements::account::AccountId {
-    domain::elements::account::AccountId::new(Did::new(id.to_string()))
+    domain::elements::account::AccountId::new(Did::from(id.to_string()))
 }

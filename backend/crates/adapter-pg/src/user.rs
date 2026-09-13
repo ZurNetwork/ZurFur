@@ -44,8 +44,8 @@ pub struct PgUserWrites<'a> {
 #[async_trait::async_trait]
 impl UserStore for PgUserStore {
     async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
-        Ok(sql::find(&self.pool, id.as_str()).await?.map(|row| User {
-            id: UserId::new(Did::new(row.id)),
+        Ok(sql::find(&self.pool, id.as_ref()).await?.map(|row| User {
+            id: UserId::from(Did::from(row.id)),
             created_at: row.created_at,
         }))
     }
@@ -54,10 +54,10 @@ impl UserStore for PgUserStore {
     /// `None` rather than recognizing a new visitor (the no-mint counterpart
     /// to [`UserWrites::provision`]).
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
-        Ok(sql::find_by_did(&self.pool, did.as_str())
+        Ok(sql::find_by_did(&self.pool, did.as_ref())
             .await?
             .map(|row| User {
-                id: UserId::new(Did::new(row.id)),
+                id: UserId::from(Did::from(row.id)),
                 created_at: row.created_at,
             }))
     }
@@ -81,7 +81,7 @@ impl UserWrites for PgUserWrites<'_> {
             candidate_id,
             ActorKind::User.as_str(),
             // Always present: provision is a DID-bearing path.
-            Some(did.as_str()),
+            Some(did.as_ref()),
             ActorState::Active.as_str(),
             now,
         )
@@ -96,10 +96,10 @@ impl UserWrites for PgUserWrites<'_> {
         }
 
         // Idempotent: a repeat sign-in hits the existing row and its original created_at.
-        let row = sql::provision(&mut *self.conn, did.as_str(), now).await?;
+        let row = sql::provision(&mut *self.conn, did.as_ref(), now).await?;
 
         Ok(User {
-            id: UserId::new(Did::new(row.id)),
+            id: UserId::from(Did::from(row.id)),
             created_at: row.created_at,
         })
     }

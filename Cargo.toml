@@ -83,6 +83,22 @@ figment = { version = "0.10.19", features = ["env", "toml"] }
 fluent-uri = { version = "0.4.1", features = ["std"] }
 dotenvy = { version = "0.15.7" }
 anyhow = "1.0.103"
+# `derive(Error)` for the application layer's per-module error enums: `Display`,
+# `source()` and `From` from attributes; the recognition logic stays hand-written.
+thiserror = "2.0.20"
+# Derives for std traits on domain newtypes (Display, AsRef, Deref, From, Into,
+# FromStr forwarding). Its `Error` derive is deliberately NOT enabled: errors
+# are `thiserror`'s. Derives are always path-qualified at the use site.
+derive_more = { version = "2.1.1", features = ["display", "as_ref", "deref", "from", "into", "from_str"] }
+# Enum string tables (Display/EnumString/VariantNames). Exact-pinned on purpose:
+# its casing rules produce persisted tokens, and every enum pins them in a test.
+strum = { version = "0.28.0", features = ["derive"] }
+# --- test-only: property tests, snapshot shape guards, mock HTTP, fixtures ---
+proptest = "1.11.0"
+insta = { version = "1.48.0", features = ["json"] }
+# Quiet upstream since 2025-08; re-check activity before any bump.
+wiremock = "0.6.5"
+rstest = "0.27.0"
 rand = { version = "0.8" }
 # --- ZMVP-49: real did:plc minter, key custody, envelope encryption ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +

@@ -31,7 +31,7 @@ fn keys() -> AccountKeys {
 async fn put_then_get_round_trips_the_keys() {
     let (pool, _container) = fresh_pool().await;
     let store = PgKeyStore::new(pool, RootKey::from_bytes(&[9u8; 32]).unwrap());
-    let did = Did::new("did:plc:alice".to_string());
+    let did = Did::from("did:plc:alice".to_string());
 
     assert!(
         store.get(&did).await.unwrap().is_none(),
@@ -45,14 +45,14 @@ async fn put_then_get_round_trips_the_keys() {
 async fn keys_are_encrypted_at_rest_not_plaintext() {
     let (pool, _container) = fresh_pool().await;
     let store = PgKeyStore::new(pool.clone(), RootKey::from_bytes(&[9u8; 32]).unwrap());
-    let did = Did::new("did:plc:bob".to_string());
+    let did = Did::from("did:plc:bob".to_string());
     store.put(&did, &keys()).await.unwrap();
 
     // Read the raw stored bytes and assert none of the three plaintext key runs
     // appear — the column holds ciphertext, never the secp256k1 scalars.
     let wrapped_keys: Vec<u8> =
         sqlx::query_scalar("SELECT wrapped_keys FROM account_keys WHERE did = $1")
-            .bind(did.as_str())
+            .bind(did.as_ref())
             .fetch_one(&pool)
             .await
             .unwrap();

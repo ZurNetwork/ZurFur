@@ -27,7 +27,7 @@ async fn account_create_over_the_binary() {
     let database = PgDatabase::new(pool);
     let mut uow = database.begin().await.expect("begin");
     uow.users()
-        .provision(&Did::new(DID.to_string()))
+        .provision(&Did::from(DID.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -90,7 +90,7 @@ async fn account_delete_over_the_binary() {
     let database = PgDatabase::new(pool);
     let mut uow = database.begin().await.expect("begin");
     uow.users()
-        .provision(&Did::new(DELETE_DID.to_string()))
+        .provision(&Did::from(DELETE_DID.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");

@@ -36,7 +36,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -90,7 +90,7 @@ async fn slot_row(pool: &PgPool, element: ElementId) -> Option<(String, Option<S
     sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT title, notes FROM commission_slot WHERE element_id = $1",
     )
-    .bind(*element)
+    .bind(uuid::Uuid::from(element))
     .fetch_optional(pool)
     .await
     .expect("query commission_slot")
@@ -151,7 +151,7 @@ async fn declare_slot_persists_the_element_and_its_satellite() {
         );
         assert_eq!(element.created_by, owner.id);
         assert_eq!(
-            element.payload.as_value(),
+            element.payload.as_ref(),
             &json!({}),
             "the substance is the satellite's"
         );

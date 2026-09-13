@@ -32,7 +32,7 @@ fn record(did: &Did, cid: &str, op_type: &str, prev: Option<&str>) -> PlcOperati
 async fn append_then_latest_cid_returns_the_most_recent_per_did() {
     let (pool, _container) = fresh_pool().await;
     let log = PgPlcOperationLog::new(pool.clone());
-    let did = Did::new("did:plc:oplog-a".to_string());
+    let did = Did::from("did:plc:oplog-a".to_string());
 
     assert!(
         log.latest_cid(&did).await.expect("latest_cid").is_none(),
@@ -62,7 +62,7 @@ async fn append_then_latest_cid_returns_the_most_recent_per_did() {
     );
 
     // Another DID's log is independent.
-    let other = Did::new("did:plc:oplog-b".to_string());
+    let other = Did::from("did:plc:oplog-b".to_string());
     assert!(
         log.latest_cid(&other).await.expect("latest_cid").is_none(),
         "a different DID has no operations",
@@ -77,7 +77,7 @@ async fn append_then_latest_cid_returns_the_most_recent_per_did() {
 async fn an_update_op_becomes_the_latest_and_a_replay_is_rejected() {
     let (pool, _container) = fresh_pool().await;
     let log = PgPlcOperationLog::new(pool.clone());
-    let did = Did::new("did:plc:oplog-update".to_string());
+    let did = Did::from("did:plc:oplog-update".to_string());
 
     log.append(&record(&did, "bafyreigenesis2", "plc_operation", None))
         .await
@@ -118,7 +118,7 @@ async fn an_update_op_becomes_the_latest_and_a_replay_is_rejected() {
 async fn two_different_ops_cannot_chain_the_same_prev() {
     let (pool, _container) = fresh_pool().await;
     let log = PgPlcOperationLog::new(pool.clone());
-    let did = Did::new("did:plc:oplog-fork".to_string());
+    let did = Did::from("did:plc:oplog-fork".to_string());
 
     log.append(&record(&did, "bafyreigenesis3", "plc_operation", None))
         .await
@@ -152,7 +152,7 @@ async fn two_different_ops_cannot_chain_the_same_prev() {
 async fn latest_op_returns_the_full_most_recent_record() {
     let (pool, _container) = fresh_pool().await;
     let log = PgPlcOperationLog::new(pool.clone());
-    let did = Did::new("did:plc:oplog-latestop".to_string());
+    let did = Did::from("did:plc:oplog-latestop".to_string());
 
     assert!(
         log.latest_op(&did).await.expect("latest_op").is_none(),
@@ -193,7 +193,7 @@ async fn latest_op_returns_the_full_most_recent_record() {
 async fn a_duplicate_cid_is_rejected() {
     let (pool, _container) = fresh_pool().await;
     let log = PgPlcOperationLog::new(pool.clone());
-    let did = Did::new("did:plc:oplog-dup".to_string());
+    let did = Did::from("did:plc:oplog-dup".to_string());
 
     log.append(&record(&did, "bafyreidup", "plc_operation", None))
         .await

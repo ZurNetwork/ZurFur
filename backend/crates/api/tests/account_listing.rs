@@ -36,9 +36,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "lister.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -84,12 +84,12 @@ async fn sign_in(client: &reqwest::Client, base: &str) {
 /// round trip. Returns the founded [`Account`].
 async fn seed_account(backend: &MemBackend, owner_did: &str, handle: &str) -> Account {
     let owner = backend
-        .provision(&Did::new(owner_did.to_string()))
+        .provision(&Did::from(owner_did.to_string()))
         .await
         .expect("provision owner");
     let (account, membership) = Account::open(
         owner.id,
-        Did::new(format!("{owner_did}:acct")),
+        Did::from(format!("{owner_did}:acct")),
         handle.parse::<Handle>().expect("valid handle"),
         "Seed Studio".parse::<AccountName>().expect("valid name"),
         Utc::now(),
@@ -111,7 +111,7 @@ async fn lists_every_live_account_the_caller_holds_a_role_in_with_that_role() {
     let client = client();
     sign_in(&client, &base).await;
     let me = backend
-        .find_by_did(&Did::new(did.to_string()))
+        .find_by_did(&Did::from(did.to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -209,7 +209,7 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
     let client = client();
     sign_in(&client, &base).await;
     let me = backend
-        .find_by_did(&Did::new(did.to_string()))
+        .find_by_did(&Did::from(did.to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -273,7 +273,7 @@ async fn a_members_role_alias_rides_along_when_set_and_is_absent_when_not() {
     let client = client();
     sign_in(&client, &base).await;
     let me = backend
-        .find_by_did(&Did::new(did.to_string()))
+        .find_by_did(&Did::from(did.to_string()))
         .await
         .expect("find me")
         .expect("signed in");

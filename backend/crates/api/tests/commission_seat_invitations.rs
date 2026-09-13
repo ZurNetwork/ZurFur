@@ -44,9 +44,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -129,7 +129,7 @@ async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .tabs_of(CommissionId::new(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -179,18 +179,18 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
 
     // The offer is queryable through the store.
     let invitee = backend
-        .find_by_did(&Did::new("did:plc:invitee".to_string()))
+        .find_by_did(&Did::from("did:plc:invitee".to_string()))
         .await
         .expect("find invitee")
         .expect("the invitee was provisioned");
     let found = backend
         .commission_store()
-        .find_pending_seat_invitation(&CommissionId::new(id), &ElementId::new(seat), &invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(id), &ElementId::from(seat), &invitee.id)
         .await
         .expect("query")
         .expect("a pending offer was recorded");
     assert_eq!(found.state.as_str(), "pending");
-    assert_eq!(*found.seat, seat);
+    assert_eq!(uuid::Uuid::from(found.seat), seat);
 }
 
 // AC2 — a Seat that is already occupied cannot be invited to (409 seat_filled).
@@ -205,10 +205,10 @@ async fn inviting_to_a_filled_seat_is_a_conflict() {
 
     // Fill the seat (stand-in for ZMVP-79's accept).
     let occupant = backend
-        .provision(&Did::new("did:plc:occupant".to_string()))
+        .provision(&Did::from("did:plc:occupant".to_string()))
         .await
         .expect("provision occupant");
-    backend.occupy_seat(ElementId::new(seat), occupant.id);
+    backend.occupy_seat(ElementId::from(seat), occupant.id);
 
     let res = client
         .post(format!("{base}/commissions/{id}/invitations"))
@@ -325,7 +325,7 @@ async fn owner_revokes_a_pending_invitation() {
     assert_eq!(res.status(), 200, "revoking a pending offer returns 200");
 
     let invitee = backend
-        .find_by_did(&Did::new("did:plc:invitee".to_string()))
+        .find_by_did(&Did::from("did:plc:invitee".to_string()))
         .await
         .expect("find")
         .expect("provisioned");
@@ -334,7 +334,7 @@ async fn owner_revokes_a_pending_invitation() {
             .commission_store()
             .find_pending_seat_invitation(
                 &CommissionId::new(id),
-                &ElementId::new(seat),
+                &ElementId::from(seat),
                 &invitee.id
             )
             .await
@@ -376,14 +376,14 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
     let client = client();
     sign_in(&client, &base).await;
     let artist = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find artist")
         .expect("signed in provisions the artist");
 
     // A commission owned by someone else, with the artist seated as a participant.
     let foreign_owner = backend
-        .provision(&Did::new("did:plc:foreign-owner".to_string()))
+        .provision(&Did::from("did:plc:foreign-owner".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -458,13 +458,13 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
     assert_eq!(res.status(), 200, "cross-commission revoke is a bare no-op");
 
     let invitee = backend
-        .find_by_did(&Did::new("did:plc:invitee".to_string()))
+        .find_by_did(&Did::from("did:plc:invitee".to_string()))
         .await
         .expect("lookup")
         .expect("invitee was provisioned by the invite");
     let still_pending = backend
         .commission_store()
-        .find_pending_seat_invitation(&CommissionId::new(b), &ElementId::new(b_seat), &invitee.id)
+        .find_pending_seat_invitation(&CommissionId::new(b), &ElementId::from(b_seat), &invitee.id)
         .await
         .expect("query");
     assert!(

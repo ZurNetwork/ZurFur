@@ -21,8 +21,8 @@ async fn fresh_pool() -> (PgPool, impl Sized) {
 
 fn profile(did: &str) -> Profile {
     Profile {
-        did: Did::new(did.to_string()),
-        handle: "alice.bsky.social".to_string(),
+        did: Did::from(did.to_string()),
+        handle: "alice.bsky.social".to_string().into(),
         display_name: Some("Alice".to_string()),
         avatar_url: Some("https://pds.example/avatar/alice.jpg".to_string()),
     }
@@ -46,7 +46,7 @@ async fn get_unknown_did_is_a_miss() {
     let cache = PgProfileCache::new(pool, Duration::from_secs(3600));
 
     let got = cache
-        .get(&Did::new("did:plc:nobody".to_string()))
+        .get(&Did::from("did:plc:nobody".to_string()))
         .await
         .expect("get");
 
@@ -79,7 +79,7 @@ async fn put_upserts_the_latest_profile() {
     updated.avatar_url = None;
     cache.put(&updated).await.expect("second put");
 
-    let got = cache.get(&Did::new(did.to_string())).await.expect("get");
+    let got = cache.get(&Did::from(did.to_string())).await.expect("get");
     assert_eq!(
         got,
         Some(updated),

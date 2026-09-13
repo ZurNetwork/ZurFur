@@ -42,6 +42,7 @@ impl From<&Runtime> for Ports {
             files: state.files.clone(),
             workflows: state.workflows.clone(),
             columns: state.columns.clone(),
+            characters: state.characters.clone(),
         }
     }
 }

@@ -28,8 +28,11 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
+        test_support::runtime::mem(&Did::from(did.to_string()))
+            .profile(Profile::new(
+                Did::from(did.to_string()),
+                "owner.bsky.social",
+            ))
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
@@ -106,10 +109,10 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
 
     // The creating User is the Owner of the founded account (the heart of ZMVP-14).
     let user = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision is idempotent — returns the signed-in User");
-    let account = AccountId::new(Did::new(account_id.to_string()));
+    let account = AccountId::new(Did::from(account_id.to_string()));
     let role = backend.role_of(&user.id, &account).await.expect("role_of");
     assert_eq!(
         role,
@@ -126,7 +129,7 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
         .expect("account is stored");
     assert_eq!(
         *found.id,
-        Did::new(account_did.to_string()),
+        Did::from(account_did.to_string()),
         "the founded account is stored under its minted did"
     );
     assert_eq!(
@@ -225,7 +228,7 @@ async fn owner_deletes_their_empty_account() {
     );
 
     // Empty → hard-deleted → gone.
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     assert!(
         backend.find(&account).await.expect("find").is_none(),
         "the deleted account is gone"
@@ -315,17 +318,17 @@ async fn a_non_owner_member_cannot_delete() {
     sign_in(&client, &base).await;
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:deleter-nonowner".to_string()))
+        .find_by_did(&Did::from("did:plc:deleter-nonowner".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let owner = backend
-        .provision(&Did::new("did:plc:realowner".to_string()))
+        .provision(&Did::from("did:plc:realowner".to_string()))
         .await
         .expect("provision owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new("did:plc:ownedacct".to_string()),
+        Did::from("did:plc:ownedacct".to_string()),
         "owned.zurfur.app".parse::<Handle>().unwrap(),
         "Not Yours".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -387,10 +390,10 @@ async fn owner_grants_a_role_and_seats_the_member() {
     // The grantee is now an Admin of the account. Provisioning their DID is
     // idempotent — it returns the very User the grant recognized.
     let grantee = backend
-        .provision(&Did::new(grantee_did.to_string()))
+        .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision the grantee");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -423,10 +426,10 @@ async fn granting_owner_is_refused() {
 
     // Nothing was seated for the would-be owner.
     let grantee = backend
-        .provision(&Did::new(grantee_did.to_string()))
+        .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -455,10 +458,10 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
     assert_eq!(res.status(), 403, "the Owner cannot be demoted by a grant");
 
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -533,7 +536,7 @@ async fn anonymous_visitor_cannot_found_an_account() {
         "an unrecognized visitor cannot found an account"
     );
     // Nothing was minted or persisted as a side effect of the rejected request.
-    let never_minted = AccountId::new(Did::new(format!("did:plc:{}", Uuid::now_v7())));
+    let never_minted = AccountId::new(Did::from(format!("did:plc:{}", Uuid::now_v7())));
     let found = backend.find(&never_minted).await.expect("find");
     assert!(found.is_none());
 }
@@ -576,9 +579,9 @@ async fn owner_revokes_a_member_and_unseats_them() {
         "the response echoes the revoked member"
     );
 
-    let account = AccountId::new(Did::new(account_id.clone()));
+    let account = AccountId::new(Did::from(account_id.clone()));
     let member = backend
-        .provision(&Did::new(member_did.to_string()))
+        .provision(&Did::from(member_did.to_string()))
         .await
         .expect("provision the member");
     let role = backend
@@ -589,7 +592,7 @@ async fn owner_revokes_a_member_and_unseats_them() {
 
     // The Owner is unaffected by revoking someone else.
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
     let owner_role = backend.role_of(&owner.id, &account).await.expect("role_of");
@@ -625,10 +628,10 @@ async fn the_owner_cannot_be_revoked() {
     assert_eq!(res.status(), 403, "an Owner cannot be revoked here");
 
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::new(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -787,7 +790,7 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
     // Seed a tombstoned account holding `gone.zurfur.app` (no soft-delete write path
     // exists yet, so insert it directly — the mem mirror of an UPDATE deleted_at).
     let reserved = "gone.zurfur.app".parse::<Handle>().unwrap();
-    backend.seed_soft_deleted_account(&Did::new("did:plc:tombstoned".to_string()), &reserved);
+    backend.seed_soft_deleted_account(&Did::from("did:plc:tombstoned".to_string()), &reserved);
 
     // The resolver does not serve a tombstoned handle.
     let res = client()
@@ -904,17 +907,17 @@ async fn wellknown_does_not_serve_a_foreign_host() {
 /// fixed owner/handle here never collide across tests.
 async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &str) -> Account {
     let me = backend
-        .find_by_did(&Did::new(my_did.to_string()))
+        .find_by_did(&Did::from(my_did.to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let owner = backend
-        .provision(&Did::new("did:plc:rankowner".to_string()))
+        .provision(&Did::from("did:plc:rankowner".to_string()))
         .await
         .expect("provision owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new("did:plc:rankacct".to_string()),
+        Did::from("did:plc:rankacct".to_string()),
         "ranked.zurfur.app".parse::<Handle>().unwrap(),
         "Ranked Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -950,7 +953,7 @@ async fn admin_cannot_demote_a_peer_admin() {
     // A peer Admin — the same rank as the actor.
     let peer_did = "did:plc:e2epeer-admin";
     let peer = backend
-        .provision(&Did::new(peer_did.to_string()))
+        .provision(&Did::from(peer_did.to_string()))
         .await
         .expect("provision peer");
     backend
@@ -1003,7 +1006,7 @@ async fn admin_can_grant_to_a_non_member() {
     assert_eq!(res.status(), 200, "an Admin seats a brand-new member");
 
     let newcomer = backend
-        .provision(&Did::new(newcomer_did.to_string()))
+        .provision(&Did::from(newcomer_did.to_string()))
         .await
         .expect("provision newcomer");
     assert_eq!(
@@ -1029,7 +1032,7 @@ async fn admin_can_re_role_a_member_below_them() {
     // Seat a Member — a rank below the Admin actor.
     let member_did = "did:plc:e2emember";
     let member = backend
-        .provision(&Did::new(member_did.to_string()))
+        .provision(&Did::from(member_did.to_string()))
         .await
         .expect("provision member");
     backend
@@ -1073,12 +1076,12 @@ async fn owner_can_re_role_an_admin() {
     sign_in(&client, &base).await;
     // The signed-in caller founds the account, so they are its Owner.
     let account_id = found_account(&client, &base, "Owned Studio").await;
-    let account = AccountId::new(Did::new(account_id.clone()));
+    let account = AccountId::new(Did::from(account_id.clone()));
 
     // Seat an Admin under the Owner.
     let admin_did = "did:plc:e2eadmin-grantee";
     let admin = backend
-        .provision(&Did::new(admin_did.to_string()))
+        .provision(&Did::from(admin_did.to_string()))
         .await
         .expect("provision admin");
     backend

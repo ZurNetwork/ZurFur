@@ -50,9 +50,9 @@ async fn spawn_app(did: &str, max_upload_bytes: u64) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -167,7 +167,7 @@ async fn read_changelog(
 /// Seeds a committed commission owned by someone other than the signed-in caller.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let commission = Commission::create(
@@ -211,7 +211,7 @@ async fn a_participant_uploads_a_file_as_a_changelog_event() {
     );
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("provisioned");
@@ -222,7 +222,7 @@ async fn a_participant_uploads_a_file_as_a_changelog_event() {
     assert_eq!(entry["kind"], "file_added");
     assert_eq!(
         entry["actor_id"],
-        json!(*me.id),
+        json!(me.id.to_string()),
         "the uploader is the actor"
     );
     assert_eq!(entry["payload"]["filename"], "sketch.png");

@@ -91,7 +91,7 @@ async fn load_workflow(pool: &PgPool, id: &WorkflowId) -> anyhow::Result<Option<
     let workflow = Workflow::loaded(
         id.clone(),
         name,
-        AccountId::new(Did::new(row.account_id)),
+        AccountId::new(Did::from(row.account_id)),
         to_visibility(&row.visibility)?,
         columns,
     )
@@ -122,7 +122,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
         workflow_sql::create(
             &mut *self.conn,
             *workflow.id,
-            account_id.as_str(),
+            account_id.as_ref(),
             name,
             workflow.visibility.as_str(),
         )
@@ -186,7 +186,7 @@ impl WorkflowStore for PgWorkflowStore {
     ) -> anyhow::Result<Option<AccountId>> {
         let did = workflow_sql::owning_account(&self.pool, **workflow_id).await?;
 
-        Ok(did.map(|did| AccountId::new(Did::new(did))))
+        Ok(did.map(|did| AccountId::new(Did::from(did))))
     }
 
     /// A board's columns in board order, each with its cards.
@@ -310,7 +310,7 @@ impl ColumnStore for PgColumnStore {
             .into_iter()
             .next();
 
-        Ok(did.map(|did| AccountId::new(Did::new(did))))
+        Ok(did.map(|did| AccountId::new(Did::from(did))))
     }
 
     /// The whole board a column sits on. An absent column or board is an

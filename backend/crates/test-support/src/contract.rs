@@ -259,11 +259,11 @@ async fn rich_record_round_trips<T: PublicRecords + ?Sized>(store: &T, actor: &D
         credits: vec![
             Credit {
                 role: "artist".to_string(),
-                did: Did::new("did:plc:collaborator1".to_string()),
+                did: Did::from("did:plc:collaborator1".to_string()),
             },
             Credit {
                 role: "some-unknown-open-role".to_string(),
-                did: Did::new("did:plc:collaborator2".to_string()),
+                did: Did::from("did:plc:collaborator2".to_string()),
             },
         ],
         labels: SelfLabels(vec!["nudity".to_string(), "adult".to_string()]),

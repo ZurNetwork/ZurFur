@@ -65,6 +65,11 @@
       "page": 54427650,
       "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
       "governs": "src/plc.rs: PlcService/identity_only (empty services) is the MINT STAGE, not an invariant — hosted actors (Accounts, public Characters) attach a PDS repo afterwards via one PLC update op (atproto_pds service + PDS keys); hosted key list [owner, pds, zurfur]; supersedes 26935298 in full"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "dev-deps proptest (PLC signing determinism) and wiremock (directory/PDS client mocks replacing the raw TcpListener mock)"
     }
   ],
   "notes": [

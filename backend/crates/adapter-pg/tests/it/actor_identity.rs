@@ -117,7 +117,7 @@ async fn kind_round_trips_and_check_rejects_unknown() {
         let mut uow = db.begin().await.expect("begin");
         let interned = uow
             .actor_identities()
-            .intern(&Did::new(did.to_string()), kind, Utc::now())
+            .intern(&Did::from(did.to_string()), kind, Utc::now())
             .await
             .expect("intern");
         uow.commit().await.expect("commit");
@@ -152,7 +152,7 @@ async fn intern_is_idempotent_by_did() {
     let (pool, _container) = fresh_pool().await;
     let db = PgDatabase::new(pool.clone());
     let store = PgActorIdentityStore::new(pool.clone());
-    let did = Did::new("did:plc:intern-me".to_string());
+    let did = Did::from("did:plc:intern-me".to_string());
 
     let first_sighting = Utc::now();
     let mut uow = db.begin().await.expect("begin");
@@ -181,7 +181,7 @@ async fn intern_is_idempotent_by_did() {
     let by_did = store.find_by_did(&did).await.expect("find_by_did");
     assert_eq!(by_did, Some(first.clone()));
 
-    let other = Did::new("did:plc:someone-else".to_string());
+    let other = Did::from("did:plc:someone-else".to_string());
     let mut uow = db.begin().await.expect("begin");
     let second = uow
         .actor_identities()
@@ -212,7 +212,7 @@ async fn null_dids_coexist_and_present_dids_are_unique() {
     let interned = uow
         .actor_identities()
         .intern(
-            &Did::new("did:plc:unique-me".to_string()),
+            &Did::from("did:plc:unique-me".to_string()),
             ActorKind::User,
             Utc::now(),
         )
@@ -258,7 +258,7 @@ async fn rows_are_born_active_and_state_check_holds() {
     let interned = uow
         .actor_identities()
         .intern(
-            &Did::new("did:plc:born-active".to_string()),
+            &Did::from("did:plc:born-active".to_string()),
             ActorKind::User,
             Utc::now(),
         )
@@ -300,7 +300,7 @@ async fn handle_cache_fills_refreshes_and_clears() {
     let interned = uow
         .actor_identities()
         .intern(
-            &Did::new("did:plc:cache-me".to_string()),
+            &Did::from("did:plc:cache-me".to_string()),
             ActorKind::User,
             Utc::now(),
         )

@@ -55,7 +55,7 @@ impl<'a> Accounts<'a> {
             if let Err(err) = ports.did_minter.tombstone(&account_id).await {
                 tracing::warn!(
                     error = ?err,
-                    did = %account_id.as_str(),
+                    did = %AsRef::<str>::as_ref(&*account_id),
                     "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
                 )
             };

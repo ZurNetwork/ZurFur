@@ -52,7 +52,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -102,7 +102,7 @@ async fn participant_rows(pool: &PgPool, commission: CommissionId) -> Vec<UserId
     .await
     .expect("scan commission_participant");
     dids.into_iter()
-        .map(|did| UserId::new(Did::new(did)))
+        .map(|did| UserId::from(Did::from(did)))
         .collect()
 }
 
@@ -163,7 +163,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
          VALUES ($1, $2, $3)",
     )
     .bind(*commission.id)
-    .bind(seated.id.as_str())
+    .bind(seated.id.as_ref())
     .bind(Utc::now())
     .execute(&pool)
     .await
@@ -209,11 +209,11 @@ async fn the_migration_backfills_the_owners_participant_row() {
     // it — cannot run. The row is keyed by a **surrogate UUID** here: the actor re-key
     // (DD `57081857`) that makes `users.id` the DID is one of the catch-up migrations
     // below, which is exactly what this test drives the owner's key through.
-    let owner = User::recognize(Did::new("did:plc:early-adopter".to_string()), Utc::now());
+    let owner = User::recognize(Did::from("did:plc:early-adopter".to_string()), Utc::now());
     let owner_row_id = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO users (id, did, created_at) VALUES ($1, $2, $3)")
         .bind(owner_row_id)
-        .bind(owner.id.as_str())
+        .bind(owner.id.as_ref())
         .bind(owner.created_at)
         .execute(&pool)
         .await
@@ -266,7 +266,7 @@ async fn add_participant_is_idempotent_for_an_already_seated_pair() {
     adapter_pg::queries::commission::add_participant(
         &pool,
         *commission.id,
-        &seated.id,
+        seated.id.as_ref(),
         first_created_at,
     )
     .await
@@ -277,7 +277,7 @@ async fn add_participant_is_idempotent_for_an_already_seated_pair() {
     let rows_affected = adapter_pg::queries::commission::add_participant(
         &pool,
         *commission.id,
-        &seated.id,
+        seated.id.as_ref(),
         second_created_at,
     )
     .await
@@ -308,7 +308,7 @@ async fn created_at_of(
         "SELECT created_at FROM commission_participant WHERE commission_id = $1 AND user_id = $2",
     )
     .bind(*commission)
-    .bind(user.as_str())
+    .bind(user.as_ref())
     .fetch_one(pool)
     .await
     .expect("fetch created_at")
@@ -330,7 +330,7 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
          VALUES ($1, $2, $3)",
     )
     .bind(*commission.id)
-    .bind(seated.id.as_str())
+    .bind(seated.id.as_ref())
     .bind(Utc::now())
     .execute(&pool)
     .await
@@ -338,7 +338,7 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
 
     // Deleting the owner's row raises.
     let refused = sqlx::query("DELETE FROM commission_participant WHERE user_id = $1")
-        .bind(owner.id.as_str())
+        .bind(owner.id.as_ref())
         .execute(&pool)
         .await;
     let err = refused.expect_err("the owner's row is the permanent floor");
@@ -349,7 +349,7 @@ async fn the_owners_participant_row_is_irremovable_while_the_commission_lives() 
 
     // Deleting the seated (non-owner) row is fine.
     sqlx::query("DELETE FROM commission_participant WHERE user_id = $1")
-        .bind(seated.id.as_str())
+        .bind(seated.id.as_ref())
         .execute(&pool)
         .await
         .expect("a non-owner membership row deletes freely");

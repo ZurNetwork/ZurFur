@@ -6,7 +6,9 @@
 
 pub mod account;
 pub mod app;
+pub mod character;
 pub mod commission;
+pub mod common_error;
 pub(crate) mod ports;
 mod transaction;
 pub mod user;

@@ -126,6 +126,11 @@
       "page": 57081857,
       "title": "Actor Addressing",
       "governs": "`routes/accounts.rs`, `tests/commission_positioning.rs` — an Account id IS a DID, no surrogate"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "dev-deps insta (shape-guard snapshots: golden_wire, contract_*, parity) and rstest (shared fixtures)"
     }
   ],
   "notes": [

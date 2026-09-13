@@ -57,9 +57,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -128,7 +128,7 @@ async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .tabs_of(CommissionId::new(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -170,7 +170,7 @@ async fn add_element(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -197,11 +197,8 @@ async fn a_created_commission_is_born_with_its_skeleton_tabs() {
         .tabs_of(CommissionId::new(id))
         .await
         .expect("load tabs");
-    let names: Vec<&str> = tabs.iter().map(|tab| tab.tab.as_str()).collect();
-    let declared: Vec<String> = declared_tabs()
-        .iter()
-        .map(|tab| tab.as_str().to_owned())
-        .collect();
+    let names: Vec<&str> = tabs.iter().map(|tab| tab.tab.as_ref()).collect();
+    let declared: Vec<String> = declared_tabs().iter().map(|tab| tab.to_string()).collect();
     assert_eq!(names, declared, "exactly the code-declared skeleton");
     assert!(
         tabs.iter().all(|tab| tab.mode == VisibilityMode::Total),
@@ -238,7 +235,7 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
     let second = add_element(&client, &base, id, tab, &json!({})).await;
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -248,12 +245,12 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2);
-    assert_eq!(*elements[0].id, first, "append order");
+    assert_eq!(uuid::Uuid::from(elements[0].id), first, "append order");
     assert_eq!(elements[0].position, 0);
-    assert_eq!(*elements[1].id, second);
+    assert_eq!(uuid::Uuid::from(elements[1].id), second);
     assert_eq!(elements[1].position, 1);
     assert_eq!(
-        elements[0].payload.as_value(),
+        elements[0].payload.as_ref(),
         &payload,
         "the payload round-trips unmodified"
     );
@@ -264,8 +261,12 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
             "every element is born Total"
         );
         assert_eq!(element.created_by, me.id, "the envelope names the creator");
-        assert_eq!(element.address.surface.as_str(), only_surface());
-        assert_eq!(*element.address.tab, tab, "addressed by tab id");
+        assert_eq!(element.address.surface.as_ref(), only_surface());
+        assert_eq!(
+            uuid::Uuid::from(element.address.tab),
+            tab,
+            "addressed by tab id"
+        );
         assert_eq!(element.element_type, "note".parse::<ElementType>().unwrap());
     }
 
@@ -304,7 +305,7 @@ async fn an_omitted_payload_defaults_to_the_empty_object() {
         .elements_of(CommissionId::new(id))
         .await
         .expect("load elements");
-    assert_eq!(elements[0].payload.as_value(), &json!({}));
+    assert_eq!(elements[0].payload.as_ref(), &json!({}));
 }
 
 // Remove — the owner removes an element with a 204, the ordering group
@@ -336,7 +337,7 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
         .expect("load elements");
     let surviving: Vec<(uuid::Uuid, i32)> = elements
         .iter()
-        .map(|element| (*element.id, element.position))
+        .map(|element| (uuid::Uuid::from(element.id), element.position))
         .collect();
     assert_eq!(
         surviving,
@@ -528,7 +529,7 @@ async fn a_real_surface_under_the_wrong_tab_is_a_422() {
 
     let res = client
         .post(format!("{base}/commissions/{id}/elements"))
-        .json(&json!({ "tab": *other, "surface": only_surface(), "type": "note" }))
+        .json(&json!({ "tab": uuid::Uuid::from(other), "surface": only_surface(), "type": "note" }))
         .send()
         .await
         .expect("POST a wrongly addressed pair");
@@ -568,14 +569,14 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
         use domain::elements::commission::{NewElement, SurfaceAddress, TabId};
         use domain::ports::UnitOfWork;
         let owner = backend
-            .find_by_did(&Did::new("did:plc:someone-else".to_string()))
+            .find_by_did(&Did::from("did:plc:someone-else".to_string()))
             .await
             .expect("find")
             .expect("provisioned");
         let element = NewElement::contributed(
             CommissionId::new(foreign),
             SurfaceAddress::new(
-                TabId::new(foreign_tab),
+                TabId::from(foreign_tab),
                 only_surface().parse().expect("declared"),
             ),
             "note".parse().expect("valid type"),
@@ -583,7 +584,7 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
             owner.id,
             Utc::now(),
         );
-        let element_id = *element.id;
+        let element_id = uuid::Uuid::from(element.id);
         let database = backend.database();
         let mut uow = database.begin().await.expect("begin");
         UnitOfWork::commissions(&mut *uow)

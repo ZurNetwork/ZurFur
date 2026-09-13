@@ -5,6 +5,7 @@
 
 pub mod actor_identity;
 pub mod changelog;
+pub mod character;
 pub mod commission;
 pub mod file;
 pub mod workflow;
@@ -36,6 +37,7 @@ use crate::elements::{
     user::{User, UserId},
     user_account::UserAccount,
 };
+use crate::ports::character::CharacterWrites;
 
 /// The factory for a private-store [`UnitOfWork`] — the only way to reach a
 /// private-store write, which is therefore unrepresentable without first opening
@@ -80,6 +82,8 @@ pub trait UnitOfWork: Send {
     /// The column write surface over this transaction. Column *order* is a
     /// workflow write, not a column one.
     fn columns(&mut self) -> Box<dyn ColumnWrites + '_>;
+
+    fn characters(&mut self) -> Box<dyn CharacterWrites + '_>;
 
     /// Commit the unit, consuming the handle; every write lands atomically.
     /// Dropping the handle instead rolls the whole unit back.
@@ -480,6 +484,10 @@ pub trait DidMinter: Send + Sync {
     /// Fallible: key generation, the [`KeyStore`] write, and the directory
     /// submission can each fail.
     async fn mint(&self, handle: &Handle) -> anyhow::Result<Did>;
+
+    /// Mint a new DID with no alias: `alsoKnownAs` is empty. For an actor that
+    /// claims a handle later through [`update_handle`](Self::update_handle).
+    async fn mint_handleless(&self) -> anyhow::Result<Did>;
 
     /// Sign, log and submit `plc_tombstone` for `did`, chained on its latest
     /// logged operation. A public-boundary step run after the private delete has

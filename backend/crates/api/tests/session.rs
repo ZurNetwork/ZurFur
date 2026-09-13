@@ -58,8 +58,8 @@ impl Authenticator for FailingAuthenticator {
 /// A profile with a full complement of fields, so a JSON `/me` read can assert each.
 fn alice_profile() -> Profile {
     Profile {
-        did: Did::new(DID.to_string()),
-        handle: "alice.bsky.social".to_string(),
+        did: Did::from(DID.to_string()),
+        handle: "alice.bsky.social".to_string().into(),
         display_name: Some("Alice".to_string()),
         avatar_url: Some("https://pds.example/avatar/alice.jpg".to_string()),
     }
@@ -76,7 +76,7 @@ async fn serve(auth: Arc<dyn Authenticator>, source: Arc<MemProfileSource>) -> S
     // profile source poisoned via `set_unreachable`), so the shared fixture is
     // built for its config/pool/stores and then overridden with them.
     let test_support::runtime::MemRuntime { mut runtime, .. } =
-        test_support::runtime::mem(&Did::new(DID.to_string()))
+        test_support::runtime::mem(&Did::from(DID.to_string()))
             .public_url(format!("http://{addr}"))
             .build();
     runtime.auth = auth;
@@ -92,7 +92,7 @@ async fn serve(auth: Arc<dyn Authenticator>, source: Arc<MemProfileSource>) -> S
 /// The default boot: an always-succeeding PDS that authenticates every visitor as
 /// [`DID`] and serves [`alice_profile`].
 async fn serve_happy() -> String {
-    let auth = Arc::new(MemAuthenticator::new(Did::new(DID.to_string())));
+    let auth = Arc::new(MemAuthenticator::new(Did::from(DID.to_string())));
     serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await
 }
 
@@ -156,7 +156,7 @@ async fn me_omits_the_profile_fields_when_the_pds_is_unreachable_and_uncached() 
     // DID) and simply omits the profile keys — absence is not an error.
     let source = MemProfileSource::new(alice_profile());
     source.set_unreachable();
-    let auth = Arc::new(MemAuthenticator::new(Did::new(DID.to_string())));
+    let auth = Arc::new(MemAuthenticator::new(Did::from(DID.to_string())));
     let base = serve(auth, Arc::new(source)).await;
     let client = client();
     sign_in(&client, &base).await;

@@ -25,7 +25,7 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
     Ok(ActorIdentity {
         id: ActorIdentityId::new(row.id),
         kind,
-        did: row.did.map(Did::new),
+        did: row.did.map(Did::from),
         state,
         handle: row.handle,
         first_seen: row.first_seen,
@@ -82,7 +82,7 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
             candidate,
             kind.as_str(),
             // Always present: intern is the DID-bearing path.
-            Some(did.as_str()),
+            Some(did.as_ref()),
             ActorState::Active.as_str(),
             now,
         )
@@ -121,7 +121,7 @@ impl ActorIdentityStore for PgActorIdentityStore {
     }
 
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
-        let row = sql::find_by_did(&self.pool, did.as_str()).await?;
+        let row = sql::find_by_did(&self.pool, did.as_ref()).await?;
         row.map(rebuild).transpose()
     }
 }

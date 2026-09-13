@@ -33,9 +33,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "lister.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -87,7 +87,7 @@ async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
     let client = client();
     sign_in(&client, &base).await;
     let me = backend
-        .find_by_did(&Did::new(did.to_string()))
+        .find_by_did(&Did::from(did.to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -116,7 +116,7 @@ async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
 
     // A commission owned by SOMEONE ELSE — must never appear on this list.
     let someone_else = backend
-        .provision(&Did::new("did:plc:other-owner".to_string()))
+        .provision(&Did::from("did:plc:other-owner".to_string()))
         .await
         .expect("provision someone else");
     let theirs = Commission::create(
@@ -176,7 +176,7 @@ async fn excludes_archived_commissions() {
     let client = client();
     sign_in(&client, &base).await;
     let me = backend
-        .find_by_did(&Did::new(did.to_string()))
+        .find_by_did(&Did::from(did.to_string()))
         .await
         .expect("find me")
         .expect("signed in");

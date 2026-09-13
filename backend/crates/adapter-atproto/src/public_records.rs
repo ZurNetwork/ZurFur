@@ -338,8 +338,11 @@ fn is_record_not_found(s: &str) -> bool {
 // --- domain ↔ jacquard string-type construction ---
 
 fn jac_did(did: &Did) -> Result<JacDid<SmolStr>, PublicRecordsError> {
-    JacDid::new_owned(did.as_str()).map_err(|e| {
-        PublicRecordsError::InvalidRecord(format!("invalid DID {:?}: {e:?}", did.as_str()))
+    JacDid::new_owned(AsRef::<str>::as_ref(did)).map_err(|e| {
+        PublicRecordsError::InvalidRecord(format!(
+            "invalid DID {:?}: {e:?}",
+            AsRef::<str>::as_ref(did)
+        ))
     })
 }
 
@@ -514,7 +517,7 @@ fn wire_subject(subject: &ReplySubject) -> WireReplySubject {
             cid: strong.cid.to_string(),
         },
         ReplySubject::Profile(did) => WireReplySubject::Profile {
-            did: did.as_str().to_string(),
+            did: did.to_string(),
         },
     }
 }
@@ -522,7 +525,7 @@ fn wire_subject(subject: &ReplySubject) -> WireReplySubject {
 fn wire_credit(credit: &Credit) -> WireCredit {
     WireCredit {
         role: credit.role.clone(),
-        did: credit.did.as_str().to_string(),
+        did: credit.did.to_string(),
     }
 }
 
@@ -538,7 +541,7 @@ fn feed_post_from_wire(wire: WireFeedPost) -> Result<FeedPost, PublicRecordsErro
             .into_iter()
             .map(|c| Credit {
                 role: c.role,
-                did: Did::new(c.did),
+                did: Did::from(c.did),
             })
             .collect(),
         labels: SelfLabels(wire.labels.values.into_iter().map(|v| v.val).collect()),
@@ -585,33 +588,9 @@ fn subject_from_wire(wire: WireReplySubject) -> Result<ReplySubject, PublicRecor
             })?,
             cid: parse_cid(&cid)?,
         })),
-        WireReplySubject::Profile { did } => Ok(ReplySubject::Profile(Did::new(did))),
+        WireReplySubject::Profile { did } => Ok(ReplySubject::Profile(Did::from(did))),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::is_record_not_found;
-
-    // Finding 3: only the exact `RecordNotFound` code (bare, or in jacquard's
-    // `"RecordNotFound: <message>"` typed render) is a missing *record*; every other
-    // `*NotFound` is a real repo/account/identity failure that must keep its status.
-    #[test]
-    fn record_not_found_is_the_only_missing_record_signal() {
-        // The record-absent code — bare, and jacquard's typed render with the PDS
-        // "could not locate record" message appended — both classify as NotFound.
-        assert!(is_record_not_found("RecordNotFound"));
-        assert!(is_record_not_found(
-            "RecordNotFound: Could not locate record: at://did:plc:x/app.zurfur.feed.post/1"
-        ));
-
-        // Repo-, account- and identity-level failures merely CONTAIN "NotFound"; they
-        // are genuine errors, never an absent record, so must NOT be flattened.
-        assert!(!is_record_not_found("RepoNotFound"));
-        assert!(!is_record_not_found("AccountNotFound"));
-        assert!(!is_record_not_found("RepoDeactivated"));
-        assert!(!is_record_not_found("InvalidRequest"));
-        // A bare "NotFound" is not the record code either — the old substring bug.
-        assert!(!is_record_not_found("NotFound"));
-    }
-}
+mod tests;

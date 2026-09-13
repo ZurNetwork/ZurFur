@@ -66,8 +66,7 @@ impl Files<'_> {
         let written = ports
             .files
             .put(key, &filename, &content_type, &mut capped)
-            .await
-            .map_err(CommissionError::Infrastructure)?;
+            .await?;
 
         if written > max_upload_bytes {
             if let Err(err) = ports.files.delete(key).await {

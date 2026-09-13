@@ -18,7 +18,7 @@ use test_support::runtime::DATABASE_URL;
 
 /// The shared in-memory runtime, acting as the harness DID.
 fn mem_runtime() -> Runtime {
-    let did = Did::new(DID.to_string());
+    let did = Did::from(DID.to_string());
     let profile = Profile::new(did.clone(), "harness.bsky.social").with_display_name("The Harness");
     test_support::runtime::mem(&did)
         .profile(profile)
@@ -35,7 +35,7 @@ fn identity_path() -> (tempfile::TempDir, PathBuf) {
 
 /// Recognize the harness DID as a User — the write `login` will do.
 async fn provision(runtime: &Runtime) {
-    let did = Did::new(DID.to_string());
+    let did = Did::from(DID.to_string());
     runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             uow.users().provision(&did).await?;

@@ -52,9 +52,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -114,12 +114,12 @@ async fn create_commission(
 /// `member`, when given, is seated as a plain Member of the account.
 async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>) -> AccountId {
     let owner = backend
-        .provision(&Did::new(format!("did:plc:acctowner-{handle}")))
+        .provision(&Did::from(format!("did:plc:acctowner-{handle}")))
         .await
         .expect("provision account owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new(format!("did:plc:acct-{handle}")),
+        Did::from(format!("did:plc:acct-{handle}")),
         handle.parse::<Handle>().expect("handle"),
         "Acme Studio".parse::<AccountName>().expect("account name"),
         Utc::now(),
@@ -170,7 +170,7 @@ async fn seed_board(backend: &MemBackend, account: &AccountId) -> (WorkflowId, C
 /// Seeds a committed commission owned by a directly-provisioned foreign user.
 async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -223,7 +223,7 @@ async fn placing_puts_the_card_on_a_board_and_one_commission_sits_on_many() {
     // The caller must be a member of the board's account: a card goes on a board
     // you belong to (DESIGN/Workflow — the account owns its positioning).
     let artist = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find")
         .expect("sign-in provisioned the artist")
@@ -300,7 +300,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
     let cid = CommissionId::new(id);
-    let grantee = UserId::new(Did::new("did:plc:grantee".to_string()));
+    let grantee = UserId::from(Did::from("did:plc:grantee".to_string()));
     let store = backend.commission_store();
 
     // Grant Presentation, then re-grant Total — the key replaces, not stacks.
@@ -322,7 +322,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     // Revoke — the key is gone immediately (revocation effective by construction).
     let revoke_body = json!({ "target_user_id": grantee.to_string() });
     let res = client
-        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .delete(format!("{base}/commissions/{id}/grants/{}", grantee))
         .json(&revoke_body)
         .send()
         .await
@@ -339,7 +339,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
 
     // A repeat revoke is an idempotent no-op — no duplicate changelog entry.
     let res = client
-        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .delete(format!("{base}/commissions/{id}/grants/{}", grantee))
         .json(&revoke_body)
         .send()
         .await
@@ -371,7 +371,7 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     let client = client();
     sign_in(&client, &base).await;
     let member = backend
-        .find_by_did(&Did::new("did:plc:member".to_string()))
+        .find_by_did(&Did::from("did:plc:member".to_string()))
         .await
         .expect("find")
         .expect("sign-in provisioned the member");
@@ -460,7 +460,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     sign_in(&client, &base).await;
     let (foreign, _owner) = seed_foreign_commission(&backend).await;
     let outsider = backend
-        .find_by_did(&Did::new("did:plc:outsider".to_string()))
+        .find_by_did(&Did::from("did:plc:outsider".to_string()))
         .await
         .expect("find")
         .expect("sign-in provisioned the outsider")
@@ -496,7 +496,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
 
     // Grant + revoke on a hidden commission are the same closed door. Their
     // bodies are kept: the actor-class check below compares against them.
-    let grantee = UserId::new(Did::new("did:plc:would-be-grantee".to_string()));
+    let grantee = UserId::from(Did::from("did:plc:would-be-grantee".to_string()));
     let grant = client
         .post(format!("{base}/commissions/{foreign}/grants"))
         .json(&json!({ "target_user_id": grantee.to_string(), "level": "total" }))
@@ -509,7 +509,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     assert_eq!(grant_problem["code"], "commission_not_found");
 
     let revoke = client
-        .delete(format!("{base}/commissions/{foreign}/grants/{}", *grantee))
+        .delete(format!("{base}/commissions/{foreign}/grants/{}", grantee))
         .json(&json!({ "target_user_id": grantee.to_string() }))
         .send()
         .await
@@ -550,7 +550,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     let grant_interned_body = grant_interned.text().await.expect("body");
 
     let revoke_interned = client
-        .delete(format!("{base}/commissions/{foreign}/grants/{}", *grantee))
+        .delete(format!("{base}/commissions/{foreign}/grants/{}", grantee))
         .json(&json!({ "target_user_id": interned_elsewhere }))
         .send()
         .await
@@ -571,7 +571,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     // commission-side twin of the account assertion in `account_scope_gate.rs`.
     assert!(
         backend
-            .find_by_did(&Did::new("did:plc:would-be-grantee".to_string()))
+            .find_by_did(&Did::from("did:plc:would-be-grantee".to_string()))
             .await
             .expect("find grantee")
             .is_none(),
@@ -613,7 +613,7 @@ async fn an_unknown_grant_level_is_422() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let grantee = UserId::new(Did::new("did:plc:level-probe".to_string()));
+    let grantee = UserId::from(Did::from("did:plc:level-probe".to_string()));
 
     for bad in ["private", "everything", ""] {
         let res = client
@@ -646,7 +646,7 @@ async fn unauthenticated_positioning_is_401() {
         .expect("POST placement unauth");
     common::assert_problem(place, 401, "not_authenticated").await;
 
-    let grantee = UserId::new(Did::new("did:plc:anon-probe".to_string()));
+    let grantee = UserId::from(Did::from("did:plc:anon-probe".to_string()));
     let grant = anon
         .post(format!("{base}/commissions/{id}/grants"))
         .json(&json!({ "target_user_id": grantee.to_string(), "level": "total" }))
@@ -656,7 +656,7 @@ async fn unauthenticated_positioning_is_401() {
     common::assert_problem(grant, 401, "not_authenticated").await;
 
     let revoke = anon
-        .delete(format!("{base}/commissions/{id}/grants/{}", *grantee))
+        .delete(format!("{base}/commissions/{id}/grants/{}", grantee))
         .json(&json!({ "target_user_id": grantee.to_string() }))
         .send()
         .await

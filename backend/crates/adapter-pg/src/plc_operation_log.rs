@@ -38,7 +38,7 @@ impl PlcOperationLog for PgPlcOperationLog {
         let operation: serde_json::Value = serde_json::from_str(&record.operation_json)?;
         sql::append(
             &self.pool,
-            record.did.as_str(),
+            record.did.as_ref(),
             &record.cid,
             &record.op_type,
             record.prev.as_deref(),
@@ -51,13 +51,13 @@ impl PlcOperationLog for PgPlcOperationLog {
 
     /// The `cid` of the DID's highest-`seq` (most recent) operation, or `None`.
     async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
-        Ok(sql::latest_cid(&self.pool, did.as_str()).await?)
+        Ok(sql::latest_cid(&self.pool, did.as_ref()).await?)
     }
 
     /// The DID's most recent operation as a full record, or `None`. `operation`
     /// is re-serialized from `jsonb` to the JSON text the record carries.
     async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
-        let row = sql::latest_op(&self.pool, did.as_str()).await?;
+        let row = sql::latest_op(&self.pool, did.as_ref()).await?;
 
         Ok(row.map(|row| PlcOperationRecord {
             did: did.clone(),

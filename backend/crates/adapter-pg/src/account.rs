@@ -67,7 +67,7 @@ fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
         deleted_at,
     } = fields;
     Ok(Account {
-        id: AccountId::new(Did::new(id)),
+        id: AccountId::new(Did::from(id)),
         handle: handle.parse::<Handle>()?,
         name: name.parse::<AccountName>()?,
         created_at,
@@ -170,10 +170,10 @@ where
 fn to_invitation(row: sql::AccountInvitationsRow) -> anyhow::Result<Invitation> {
     Ok(Invitation {
         id: InvitationId::new(row.id),
-        account: AccountId::new(Did::new(row.account_id)),
-        invited_user: UserId::new(Did::new(row.invited_user)),
+        account: AccountId::new(Did::from(row.account_id)),
+        invited_user: UserId::from(Did::from(row.invited_user)),
         role: Role::from_str(&row.role)?,
-        inviter: UserId::new(Did::new(row.inviter)),
+        inviter: UserId::from(Did::from(row.inviter)),
         state: InvitationState::try_from(row.state)?,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -216,7 +216,7 @@ impl PgAccountWrites<'_> {
     ) -> anyhow::Result<()> {
         // No-op if the membership is already gone.
         let Some(parent) =
-            sql::departure_membership(&mut *self.conn, account.as_str(), user.as_str()).await?
+            sql::departure_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?
         else {
             return Ok(());
         };
@@ -225,19 +225,19 @@ impl PgAccountWrites<'_> {
         sql::departure_rehome_children(
             &mut *self.conn,
             parent.as_deref(),
-            account.as_str(),
-            user.as_str(),
+            account.as_ref(),
+            user.as_ref(),
         )
         .await?;
 
-        sql::departure_delete_membership(&mut *self.conn, account.as_str(), user.as_str()).await?;
+        sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?;
 
         sql::departure_revoke_invitations(
             &mut *self.conn,
             InvitationState::Revoked.as_str(),
             Utc::now(),
-            account.as_str(),
-            user.as_str(),
+            account.as_ref(),
+            user.as_ref(),
             InvitationState::Pending.as_str(),
         )
         .await?;
@@ -254,7 +254,7 @@ impl PgAccountWrites<'_> {
 impl AccountReads for PgAccountWrites<'_> {
     /// [`AccountStore::find`] on the unit's connection.
     async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
-        sql::find(&mut *self.conn, id.as_str())
+        sql::find(&mut *self.conn, id.as_ref())
             .await?
             .map(to_account)
             .transpose()
@@ -263,7 +263,7 @@ impl AccountReads for PgAccountWrites<'_> {
     /// [`find`](Self::find) with `FOR NO KEY UPDATE`: concurrent writers wait
     /// for commit; inserts of child rows stay free.
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
-        sql::find_for_update(&mut *self.conn, id.as_str())
+        sql::find_for_update(&mut *self.conn, id.as_ref())
             .await?
             .map(to_account_locked)
             .transpose()
@@ -275,7 +275,7 @@ impl AccountReads for PgAccountWrites<'_> {
         user: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<Option<Role>> {
-        let role = sql::role_of(&mut *self.conn, user.as_str(), account.as_str()).await?;
+        let role = sql::role_of(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
     }
 }
@@ -285,14 +285,14 @@ impl AccountStore for PgAccountStore {
     /// Filters `deleted_at IS NULL`; a soft-deleted account reads as `None`.
     /// Re-validates the stored `name`; an `Err` on tampering, never a panic.
     async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
-        sql::find(&self.pool, id.as_str())
+        sql::find(&self.pool, id.as_ref())
             .await?
             .map(to_account)
             .transpose()
     }
 
     async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>> {
-        let role = sql::role_of(&self.pool, user.as_str(), account.as_str()).await?;
+        let role = sql::role_of(&self.pool, user.as_ref(), account.as_ref()).await?;
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
     }
 
@@ -306,8 +306,8 @@ impl AccountStore for PgAccountStore {
     ) -> anyhow::Result<Option<Invitation>> {
         sql::find_pending_invitation(
             &self.pool,
-            account.as_str(),
-            invited_user.as_str(),
+            account.as_ref(),
+            invited_user.as_ref(),
             InvitationState::Pending.as_str(),
         )
         .await?
@@ -330,7 +330,7 @@ impl AccountStore for PgAccountStore {
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         Ok(sql::find_did_by_handle(&self.pool, handle.as_str())
             .await?
-            .map(Did::new))
+            .map(Did::from))
     }
 
     /// Count of the account's `account_handle_changes` rows at or after `since`
@@ -340,7 +340,7 @@ impl AccountStore for PgAccountStore {
         account: &AccountId,
         since: DateTimeUtc,
     ) -> anyhow::Result<i64> {
-        Ok(sql::count_handle_changes_since(&self.pool, account.as_str(), since).await?)
+        Ok(sql::count_handle_changes_since(&self.pool, account.as_ref(), since).await?)
     }
 
     /// Whether `handle` was recently vacated by an account other than
@@ -352,7 +352,7 @@ impl AccountStore for PgAccountStore {
         excluding: Option<&AccountId>,
         since: DateTimeUtc,
     ) -> anyhow::Result<bool> {
-        let excluding = excluding.map(|account| account.as_str());
+        let excluding = excluding.map(|account| account.as_ref());
         Ok(sql::handle_reserved_for_other(&self.pool, handle.as_str(), since, excluding).await?)
     }
 
@@ -366,7 +366,7 @@ impl AccountStore for PgAccountStore {
         scope: ListingScope,
     ) -> anyhow::Result<Vec<AccountMembership>> {
         let honor_privacy = matches!(scope, ListingScope::PublicProfile);
-        sql::list_for_user(&self.pool, user.as_str(), honor_privacy)
+        sql::list_for_user(&self.pool, user.as_ref(), honor_privacy)
             .await?
             .into_iter()
             .map(|row| {
@@ -399,7 +399,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             uuid::Uuid::now_v7(),
             ActorKind::Account.as_str(),
-            Some(account.id.as_str()),
+            Some(account.id.as_ref()),
             ActorState::Active.as_str(),
             account.created_at,
         )
@@ -407,14 +407,14 @@ impl AccountWrites for PgAccountWrites<'_> {
         anyhow::ensure!(
             interned.kind == ActorKind::Account.as_str(),
             "account DID {} is already interned as a different actor kind ({})",
-            account.id.as_str(),
+            AsRef::<str>::as_ref(&*account.id),
             interned.kind
         );
 
         // Map a handle-uniqueness violation to HandleTaken (409); else opaque (500).
         let insert = sql::create_account(
             &mut *self.conn,
-            account.id.as_str(),
+            account.id.as_ref(),
             account.handle.as_str(),
             account.name.as_str(),
             account.created_at,
@@ -431,8 +431,8 @@ impl AccountWrites for PgAccountWrites<'_> {
 
         sql::create_owner_membership(
             &mut *self.conn,
-            owner.account_id.as_str(),
-            owner.user_id.as_str(),
+            owner.account_id.as_ref(),
+            owner.user_id.as_ref(),
             owner.role.as_str(),
         )
         .await?;
@@ -455,7 +455,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             new.as_str(),
             at,
-            account.as_str(),
+            account.as_ref(),
             old.as_str(),
         )
         .await;
@@ -471,14 +471,14 @@ impl AccountWrites for PgAccountWrites<'_> {
             anyhow::bail!(
                 "change_handle: account {} is not a live account still holding the expected \
                  handle; nothing changed (concurrent change or removal)",
-                account.as_str()
+                AsRef::<str>::as_ref(&**account)
             );
         }
 
         sql::change_handle_audit(
             &mut *self.conn,
             uuid::Uuid::now_v7(),
-            account.as_str(),
+            account.as_ref(),
             old.as_str(),
             new.as_str(),
             at,
@@ -493,8 +493,8 @@ impl AccountWrites for PgAccountWrites<'_> {
     async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
         sql::grant_role(
             &mut *self.conn,
-            member.account_id.as_str(),
-            member.user_id.as_str(),
+            member.account_id.as_ref(),
+            member.user_id.as_ref(),
             member.role.as_str(),
         )
         .await?;
@@ -521,10 +521,10 @@ impl AccountWrites for PgAccountWrites<'_> {
         sql::create_invitation(
             &mut *self.conn,
             *invitation.id,
-            invitation.account.as_str(),
-            invitation.invited_user.as_str(),
+            invitation.account.as_ref(),
+            invitation.invited_user.as_ref(),
             invitation.role.as_str(),
-            invitation.inviter.as_str(),
+            invitation.inviter.as_ref(),
             invitation.state.as_str(),
             invitation.created_at,
             invitation.updated_at,
@@ -533,16 +533,16 @@ impl AccountWrites for PgAccountWrites<'_> {
 
         let standing = sql::find_pending_invitation(
             &mut *self.conn,
-            invitation.account.as_str(),
-            invitation.invited_user.as_str(),
+            invitation.account.as_ref(),
+            invitation.invited_user.as_ref(),
             InvitationState::Pending.as_str(),
         )
         .await?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "invitation for account {} user {} is not pending immediately after issuing it",
-                invitation.account.as_str(),
-                invitation.invited_user.as_str()
+                AsRef::<str>::as_ref(&*invitation.account),
+                invitation.invited_user.as_ref()
             )
         })?;
         to_invitation(standing)
@@ -591,9 +591,9 @@ impl AccountWrites for PgAccountWrites<'_> {
 
         let seated = sql::accept_invitation_seat(
             &mut *self.conn,
-            invitation.account.as_str(),
-            invitation.invited_user.as_str(),
-            Some(invitation.inviter.as_str()),
+            invitation.account.as_ref(),
+            invitation.invited_user.as_ref(),
+            Some(invitation.inviter.as_ref()),
             invitation.role.as_str(),
             listed_on_profile,
         )
@@ -605,16 +605,16 @@ impl AccountWrites for PgAccountWrites<'_> {
             None => {
                 let existing = sql::role_of(
                     &mut *self.conn,
-                    invitation.invited_user.as_str(),
-                    invitation.account.as_str(),
+                    invitation.invited_user.as_ref(),
+                    invitation.account.as_ref(),
                 )
                 .await?
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "account_members row for account {} user {} vanished between the \
                          conflicting seat and the fallback read",
-                        invitation.account.as_str(),
-                        invitation.invited_user.as_str()
+                        AsRef::<str>::as_ref(&*invitation.account),
+                        invitation.invited_user.as_ref()
                     )
                 })?;
                 (Role::from_str(&existing)?, None)
@@ -643,17 +643,17 @@ impl AccountWrites for PgAccountWrites<'_> {
         let demoted = sql::transfer_demote_owner(
             &mut *self.conn,
             Role::Admin.as_str(),
-            account.as_str(),
-            old_owner.as_str(),
-            Some(new_owner.as_str()),
+            account.as_ref(),
+            old_owner.as_ref(),
+            Some(new_owner.as_ref()),
             Role::Owner.as_str(),
         )
         .await?;
         if demoted != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not the current Owner of account {}; nothing transferred",
-                old_owner.as_str(),
-                account.as_str()
+                old_owner.as_ref(),
+                AsRef::<str>::as_ref(&**account)
             );
         }
 
@@ -661,15 +661,15 @@ impl AccountWrites for PgAccountWrites<'_> {
         let promoted = sql::transfer_promote_heir(
             &mut *self.conn,
             Role::Owner.as_str(),
-            account.as_str(),
-            new_owner.as_str(),
+            account.as_ref(),
+            new_owner.as_ref(),
         )
         .await?;
         if promoted != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not a member of account {}; nothing transferred",
-                new_owner.as_str(),
-                account.as_str()
+                new_owner.as_ref(),
+                AsRef::<str>::as_ref(&**account)
             );
         }
 
@@ -681,7 +681,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// absent. A repeat soft-delete is a no-op.
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let now = Utc::now();
-        sql::soft_delete(&mut *self.conn, Some(now), now, account.as_str()).await?;
+        sql::soft_delete(&mut *self.conn, Some(now), now, account.as_ref()).await?;
         Ok(())
     }
 
@@ -690,9 +690,9 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// deliberately left in place (the PLC recovery window). A `DELETE` matching
     /// no row is a no-op.
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
-        sql::hard_delete_invitations(&mut *self.conn, account.as_str()).await?;
-        sql::hard_delete_memberships(&mut *self.conn, account.as_str()).await?;
-        sql::hard_delete_account(&mut *self.conn, account.as_str()).await?;
+        sql::hard_delete_invitations(&mut *self.conn, account.as_ref()).await?;
+        sql::hard_delete_memberships(&mut *self.conn, account.as_ref()).await?;
+        sql::hard_delete_account(&mut *self.conn, account.as_ref()).await?;
         Ok(())
     }
 }

@@ -166,14 +166,14 @@ async fn migration_backfills_one_identity_per_projection_row() {
     // the actor re-key (DD `57081857`) — one of the catch-up migrations above — so
     // the surrogate `account_id` this test seeded with no longer addresses it.
     let store = PgAccountStore::new(pool.clone());
-    let account_key = AccountId::new(Did::new(account_did.to_string()));
+    let account_key = AccountId::new(Did::from(account_did.to_string()));
     let found = store
         .find(&account_key)
         .await
         .expect("find")
         .expect("the backfilled account is readable");
     assert_eq!(
-        found.id.as_str(),
+        found.id.as_ref(),
         account_did,
         "the re-keyed row is addressed by the DID it was backfilled with"
     );
@@ -182,7 +182,7 @@ async fn migration_backfills_one_identity_per_projection_row() {
         .await
         .expect("resolve");
     assert_eq!(
-        resolved.map(|d| d.as_str().to_string()),
+        resolved.map(|d| d.as_ref().to_string()),
         Some(account_did.to_string())
     );
 }
@@ -304,7 +304,7 @@ async fn actor_identity_requires_a_did_for_user_and_account_kinds() {
 async fn provision_commits_both_rows_and_is_idempotent() {
     let (pool, _container) = fresh_pool().await;
     let db = PgDatabase::new(pool.clone());
-    let did = Did::new("did:plc:provision-me".to_string());
+    let did = Did::from("did:plc:provision-me".to_string());
 
     let mut uow = db.begin().await.unwrap();
     let first = uow.users().provision(&did).await.expect("provision");
@@ -316,13 +316,13 @@ async fn provision_commits_both_rows_and_is_idempotent() {
     // so the shared key between the two is the DID, not that id.
     let identity_did: String =
         sqlx::query_scalar("SELECT did FROM actor_identity WHERE did = $1 AND kind = 'user'")
-            .bind(did.as_str())
+            .bind(did.as_ref())
             .fetch_one(&pool)
             .await
             .expect("the user's identity was interned");
     assert_eq!(
         identity_did,
-        first.id.as_str(),
+        first.id.as_ref(),
         "the users row and its identity are keyed by the same DID"
     );
 
@@ -331,7 +331,7 @@ async fn provision_commits_both_rows_and_is_idempotent() {
         .await
         .expect("find")
         .expect("the provisioned user is readable");
-    assert_eq!(*found.id, did);
+    assert_eq!(*found.id.did(), did);
 
     // Idempotent: a repeat sign-in returns the same User and mints no second identity.
     let mut uow = db.begin().await.unwrap();
@@ -341,7 +341,7 @@ async fn provision_commits_both_rows_and_is_idempotent() {
     assert_eq!(second.created_at, first.created_at);
     let identity_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM actor_identity WHERE did = $1")
-            .bind(did.as_str())
+            .bind(did.as_ref())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -355,7 +355,7 @@ async fn provision_commits_both_rows_and_is_idempotent() {
 async fn dropping_the_unit_discards_both_the_user_and_its_identity() {
     let (pool, _container) = fresh_pool().await;
     let db = PgDatabase::new(pool.clone());
-    let did = Did::new("did:plc:rolled-back".to_string());
+    let did = Did::from("did:plc:rolled-back".to_string());
 
     {
         let mut uow = db.begin().await.unwrap();
@@ -369,7 +369,7 @@ async fn dropping_the_unit_discards_both_the_user_and_its_identity() {
         .unwrap();
     assert_eq!(users, 0, "no users row survives a dropped unit");
     let identities: i64 = sqlx::query_scalar("SELECT count(*) FROM actor_identity WHERE did = $1")
-        .bind(did.as_str())
+        .bind(did.as_ref())
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -391,7 +391,7 @@ async fn account_create_is_atomic_with_its_identity() {
     let mut uow = db.begin().await.unwrap();
     let owner = uow
         .users()
-        .provision(&Did::new("did:plc:acct-owner".to_string()))
+        .provision(&Did::from("did:plc:acct-owner".to_string()))
         .await
         .unwrap();
     uow.commit().await.unwrap();
@@ -399,7 +399,7 @@ async fn account_create_is_atomic_with_its_identity() {
     let account_did = "did:plc:atomic-account";
     let (account, membership) = Account::open(
         owner.id,
-        Did::new(account_did.to_string()),
+        Did::from(account_did.to_string()),
         "atomic.zurfur.app".parse::<Handle>().unwrap(),
         "Atomic Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -453,7 +453,7 @@ async fn handle_collision_discards_the_interned_identity() {
     let mut uow = db.begin().await.unwrap();
     let owner = uow
         .users()
-        .provision(&Did::new("did:plc:collide-owner".to_string()))
+        .provision(&Did::from("did:plc:collide-owner".to_string()))
         .await
         .unwrap();
     uow.commit().await.unwrap();
@@ -461,7 +461,7 @@ async fn handle_collision_discards_the_interned_identity() {
     let contested = "contested.zurfur.app".parse::<Handle>().unwrap();
     let (first, first_membership) = Account::open(
         owner.id.clone(),
-        Did::new("did:plc:first-claimant".to_string()),
+        Did::from("did:plc:first-claimant".to_string()),
         contested.clone(),
         "First Claimant".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -476,7 +476,7 @@ async fn handle_collision_discards_the_interned_identity() {
     let loser_did = "did:plc:second-claimant";
     let (second, second_membership) = Account::open(
         owner.id,
-        Did::new(loser_did.to_string()),
+        Did::from(loser_did.to_string()),
         contested,
         "Second Claimant".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -514,7 +514,7 @@ async fn handle_collision_discards_the_interned_identity() {
 #[tokio::test]
 async fn concurrent_provisions_of_one_did_converge_on_a_single_identity() {
     let (pool, _container) = fresh_pool().await;
-    let did = Did::new("did:plc:raced-signin".to_string());
+    let did = Did::from("did:plc:raced-signin".to_string());
 
     let provision = |db: PgDatabase| {
         let did = did.clone();
@@ -536,7 +536,7 @@ async fn concurrent_provisions_of_one_did_converge_on_a_single_identity() {
         .await
         .unwrap();
     let identities: i64 = sqlx::query_scalar("SELECT count(*) FROM actor_identity WHERE did = $1")
-        .bind(did.as_str())
+        .bind(did.as_ref())
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -560,7 +560,7 @@ async fn provisioning_an_accounts_did_is_a_typed_conflict() {
     let mut uow = db.begin().await.unwrap();
     let owner = uow
         .users()
-        .provision(&Did::new("did:plc:typed-conflict-owner".to_string()))
+        .provision(&Did::from("did:plc:typed-conflict-owner".to_string()))
         .await
         .unwrap();
     uow.commit().await.unwrap();
@@ -568,7 +568,7 @@ async fn provisioning_an_accounts_did_is_a_typed_conflict() {
     let account_did = "did:plc:typed-conflict-account";
     let (account, membership) = Account::open(
         owner.id,
-        Did::new(account_did.to_string()),
+        Did::from(account_did.to_string()),
         "typedconflict.zurfur.app".parse::<Handle>().unwrap(),
         "Typed Conflict".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -580,7 +580,7 @@ async fn provisioning_an_accounts_did_is_a_typed_conflict() {
     let mut uow = db.begin().await.unwrap();
     let conflict = uow
         .users()
-        .provision(&Did::new(account_did.to_string()))
+        .provision(&Did::from(account_did.to_string()))
         .await
         .expect_err("an account's DID cannot become a User");
     assert!(

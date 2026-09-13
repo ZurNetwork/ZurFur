@@ -50,9 +50,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -119,7 +119,7 @@ async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .tabs_of(CommissionId::new(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -154,7 +154,7 @@ async fn declare_seat(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -211,7 +211,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
     assert_eq!(seats.len(), 2, "a commission holds several Seats (AC1)");
     let first_seat = seats
         .iter()
-        .find(|s| *s.id == first)
+        .find(|s| uuid::Uuid::from(s.id) == first)
         .expect("the 201 id reappears as a seat");
     assert_eq!(first_seat.kind.as_str(), "Creator");
     assert_eq!(
@@ -225,7 +225,10 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
         "the link rides the vacant seat (AC2)"
     );
     assert!(first_seat.is_vacant(), "born vacant (AC3)");
-    let second_seat = seats.iter().find(|s| *s.id == second).expect("second seat");
+    let second_seat = seats
+        .iter()
+        .find(|s| uuid::Uuid::from(s.id) == second)
+        .expect("second seat");
     assert_eq!(second_seat.kind.as_str(), "Creator", "kinds repeat (AC1)");
     assert!(second_seat.prompt.is_none() && second_seat.link.is_none());
     assert!(second_seat.is_vacant());
@@ -239,7 +242,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
     assert!(
         elements
             .iter()
-            .all(|element| element.address.surface.as_str() == only_surface()),
+            .all(|element| element.address.surface.as_ref() == only_surface()),
         "each at the surface it was declared into"
     );
 
@@ -250,7 +253,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
         .expect("changelog");
     assert_eq!(entries.len(), 3);
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("signed in");

@@ -1,6 +1,6 @@
 {
   "path": "forks",
-  "charted": "2026-09-12",
+  "charted": "2026-09-13",
   "short": "/boardroom deliberation runs",
   "is": "The `/boardroom` skill's working directory — one numbered subfolder per multi-model deliberation run (each holds the brief, per-phase seat transcripts, the sealed Engineer ranking, and the judge's synthesis).",
   "conventions": [
@@ -21,6 +21,11 @@
     {
       "name": "001-a6-tombstone-seam/",
       "role": "one boardroom SCRUTINIZE run's working files (brief, seat transcripts, sealed ranking, verdict)",
+      "node": false
+    },
+    {
+      "name": "003-character-pds/",
+      "role": "boardroom fork 003 (SCRUTINIZE): does a public Character get its own PDS repo — brief, S0–S3 seat transcripts, sealed ranking, added options, S4 judge delta, debate.md, run.py + usage.json",
       "node": false
     }
   ],

@@ -64,7 +64,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -78,7 +78,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 /// old shape and then assert against the new one.
 async fn seed_pre_rekey_user(pool: &PgPool, did: &str) -> (uuid::Uuid, User) {
     let row_id = uuid::Uuid::now_v7();
-    let user = User::recognize(Did::new(did.to_string()), Utc::now());
+    let user = User::recognize(Did::from(did.to_string()), Utc::now());
     sqlx::query(
         "INSERT INTO actor_identity (id, kind, did, state, first_seen)
          VALUES ($1, 'user', $2, 'active', $3)",
@@ -189,9 +189,9 @@ async fn group_positions(
          ORDER BY position",
     )
     .bind(*commission)
-    .bind(*address.tab)
-    .bind(address.surface.as_str())
-    .bind(Band::default().as_str())
+    .bind(uuid::Uuid::from(address.tab))
+    .bind(address.surface.as_ref())
+    .bind(Band::default().as_ref())
     .fetch_all(pool)
     .await
     .expect("read group positions")
@@ -218,11 +218,11 @@ async fn creating_a_commission_mints_its_skeleton_tabs() {
     let names: Vec<&str> = composition
         .tabs
         .iter()
-        .map(|tab| tab.tab.as_str())
+        .map(|tab| tab.tab.as_ref())
         .collect();
     let declared: Vec<String> = declared_tabs()
         .iter()
-        .map(|tab| tab.as_str().to_owned())
+        .map(|tab| tab.as_ref().to_owned())
         .collect();
     assert_eq!(
         names, declared,
@@ -282,7 +282,7 @@ async fn add_element_appends_in_order_and_round_trips_its_payload() {
     assert_eq!(composition.elements[1].id, second_id);
     assert_eq!(composition.elements[1].position, 1);
     assert_eq!(
-        composition.elements[0].payload.as_value(),
+        composition.elements[0].payload.as_ref(),
         &body,
         "the payload round-trips as an equal JSON value"
     );
@@ -329,9 +329,9 @@ async fn a_cross_commission_tab_cite_is_unrepresentable_at_the_database() {
     )
     .bind(uuid::Uuid::now_v7())
     .bind(*mine.id)
-    .bind(*their_address.tab)
-    .bind(their_address.surface.as_str())
-    .bind(owner.id.as_str())
+    .bind(uuid::Uuid::from(their_address.tab))
+    .bind(their_address.surface.as_ref())
+    .bind(owner.id.as_ref())
     .execute(&pool)
     .await;
 
@@ -480,7 +480,7 @@ async fn add_element_refuses_a_real_surface_under_the_wrong_tab() {
 
     let wrongly_addressed = element_at(
         commission.id,
-        SurfaceAddress::new(TabId::new(other_tab), only_surface()),
+        SurfaceAddress::new(TabId::from(other_tab), only_surface()),
         &owner,
     );
     let err = add_elements(&pool, &[wrongly_addressed])
@@ -559,7 +559,7 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
     let seat = sqlx::query(
         "INSERT INTO commission_seat (id, commission_id, kind) VALUES ($1, $2, 'Creator')",
     )
-    .bind(*element_id)
+    .bind(uuid::Uuid::from(element_id))
     .bind(*theirs.id)
     .execute(&pool)
     .await;
@@ -569,7 +569,7 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
         "INSERT INTO commission_slot (element_id, commission_id, title)
          VALUES ($1, $2, 'Smuggled')",
     )
-    .bind(*element_id)
+    .bind(uuid::Uuid::from(element_id))
     .bind(*theirs.id)
     .execute(&pool)
     .await;
@@ -625,7 +625,11 @@ async fn positions_are_unique_within_the_group_and_renumber_on_removal() {
         .expect("add");
     assert_eq!(
         group_positions(&pool, commission.id, &address).await,
-        vec![(*first_id, 0), (*doomed_id, 1), (*last_id, 2)],
+        vec![
+            (uuid::Uuid::from(first_id), 0),
+            (uuid::Uuid::from(doomed_id), 1),
+            (uuid::Uuid::from(last_id), 2),
+        ],
     );
 
     // A duplicate position is unwritable, even going around the store.
@@ -636,9 +640,9 @@ async fn positions_are_unique_within_the_group_and_renumber_on_removal() {
     )
     .bind(uuid::Uuid::now_v7())
     .bind(*commission.id)
-    .bind(*address.tab)
-    .bind(address.surface.as_str())
-    .bind(owner.id.as_str())
+    .bind(uuid::Uuid::from(address.tab))
+    .bind(address.surface.as_ref())
+    .bind(owner.id.as_ref())
     .execute(&pool)
     .await;
     let err = collision.expect_err("a duplicate position must be refused");
@@ -656,7 +660,10 @@ async fn positions_are_unique_within_the_group_and_renumber_on_removal() {
         .expect("removal succeeds");
     assert_eq!(
         group_positions(&pool, commission.id, &address).await,
-        vec![(*first_id, 0), (*last_id, 1)],
+        vec![
+            (uuid::Uuid::from(first_id), 0),
+            (uuid::Uuid::from(last_id), 1)
+        ],
         "the survivors renumber contiguously from 0, order preserved"
     );
 }
@@ -690,7 +697,7 @@ async fn remove_element_blocks_on_the_tab_lock_the_add_path_takes() {
     // A rival transaction takes the very lock the add path takes, and holds it.
     let mut rival = pool.begin().await.expect("rival begins");
     sqlx::query("SELECT id FROM commission_tab WHERE id = $1 FOR UPDATE")
-        .bind(*address.tab)
+        .bind(uuid::Uuid::from(address.tab))
         .fetch_one(&mut *rival)
         .await
         .expect("the rival holds the tab lock");
@@ -743,7 +750,7 @@ async fn remove_refuses_absent_and_foreign_elements() {
     let their_element_id = theirs_element.id;
     add_elements(&pool, &[theirs_element]).await.expect("add");
 
-    let err = remove_element(&pool, mine.id, ElementId::new(uuid::Uuid::now_v7()))
+    let err = remove_element(&pool, mine.id, ElementId::from(uuid::Uuid::now_v7()))
         .await
         .expect_err("a fabricated element refuses");
     assert!(
@@ -887,11 +894,11 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
         let names: Vec<&str> = composition
             .tabs
             .iter()
-            .map(|tab| tab.tab.as_str())
+            .map(|tab| tab.tab.as_ref())
             .collect();
         let declared: Vec<String> = declared_tabs()
             .iter()
-            .map(|tab| tab.as_str().to_owned())
+            .map(|tab| tab.as_ref().to_owned())
             .collect();
         assert_eq!(names, declared, "the skeleton, backfilled");
         assert!(

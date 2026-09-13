@@ -50,9 +50,9 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     let addr = listener.local_addr().expect("local addr");
 
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "artist.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -119,7 +119,7 @@ async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
         .tabs_of(CommissionId::new(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -160,7 +160,7 @@ async fn declare_slots(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
@@ -211,7 +211,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     let (noted, bare) = (ids[0], ids[1]);
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -223,10 +223,11 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         .expect("load elements");
     assert_eq!(elements.len(), 2);
     assert_eq!(
-        *elements[0].id, noted,
+        uuid::Uuid::from(elements[0].id),
+        noted,
         "the 201 ids reappear in the composition, in request order"
     );
-    assert_eq!(*elements[1].id, bare);
+    assert_eq!(uuid::Uuid::from(elements[1].id), bare);
     for element in &elements {
         assert_eq!(
             element.element_type,
@@ -235,7 +236,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         );
         assert_eq!(element.created_by, me.id, "the envelope names the creator");
         assert_eq!(
-            element.payload.as_value(),
+            element.payload.as_ref(),
             &json!({}),
             "the carrying element's payload is empty — the Slot lives in the satellite"
         );
@@ -243,7 +244,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
 
     // The satellite half: trimmed title, notes present/absent as declared.
     let noted_slot = backend
-        .find_slot(ElementId::new(noted))
+        .find_slot(ElementId::from(noted))
         .await
         .expect("find slot")
         .expect("the declared slot has its satellite");
@@ -256,7 +257,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     assert_eq!(noted_slot.commission_id, CommissionId::new(id));
 
     let bare_slot = backend
-        .find_slot(ElementId::new(bare))
+        .find_slot(ElementId::from(bare))
         .await
         .expect("find slot")
         .expect("satellite exists");
@@ -354,7 +355,7 @@ async fn blank_notes_normalize_to_absent() {
     .await[0];
 
     let slot = backend
-        .find_slot(ElementId::new(element))
+        .find_slot(ElementId::from(element))
         .await
         .expect("find slot")
         .expect("satellite exists");

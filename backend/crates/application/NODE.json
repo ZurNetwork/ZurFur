@@ -122,6 +122,11 @@
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
       "governs": ""
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "error enums derive thiserror; strum for the NotFoundEntity/AccountEntity tables"
     }
   ],
   "notes": [

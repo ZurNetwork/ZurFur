@@ -31,13 +31,13 @@ fn handle_domain() -> HandleDomain {
 
 /// A runtime whose acting DID is `did` — the boards below are founded on it.
 fn fixture(did: &str) -> MemRuntime {
-    let acting = Did::new(did.to_string());
+    let acting = Did::from(did.to_string());
     test_support::runtime::mem(&acting).build()
 }
 
 /// Recognize a DID as a User (the `provision` seed), answering its id.
 async fn recognized(fixture: &MemRuntime, did: &str) -> UserId {
-    let did = Did::new(did.to_string());
+    let did = Did::from(did.to_string());
     fixture
         .backend
         .provision(&did)

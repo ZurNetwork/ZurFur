@@ -44,12 +44,12 @@ async fn me_shows_profile_then_serves_it_from_cache() {
     // for `fetch_count`/`set_unreachable` — no custom trait, just a swap of a
     // pub field on the built Runtime (justification: this test needs the
     // concrete adapter, not the `dyn ProfileSource` the fixture returns).
-    let profile = Profile::new(Did::new(did.to_string()), "alice.bsky.social")
+    let profile = Profile::new(Did::from(did.to_string()), "alice.bsky.social")
         .with_display_name("Alice")
         .with_avatar_url("https://pds.example/avatar/alice.jpg");
     let source = Arc::new(MemProfileSource::new(profile));
     let test_support::runtime::MemRuntime { mut runtime, .. } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .public_url(format!("http://{addr}"))
             .build();
     runtime.profile_source = source.clone();
@@ -128,10 +128,10 @@ async fn me_degrades_to_did_when_pds_unreachable_and_uncached() {
     // The PDS is down and nothing is cached: the page must still load. Same
     // post-build override as the test above — the fixture has no way to hand
     // back a pre-configured (unreachable) MemProfileSource.
-    let source = MemProfileSource::new(Profile::new(Did::new(did.to_string()), "bob.bsky.social"));
+    let source = MemProfileSource::new(Profile::new(Did::from(did.to_string()), "bob.bsky.social"));
     source.set_unreachable();
     let test_support::runtime::MemRuntime { mut runtime, .. } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .public_url(format!("http://{addr}"))
             .build();
     runtime.profile_source = Arc::new(source);

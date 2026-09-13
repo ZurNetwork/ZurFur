@@ -21,9 +21,9 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
     let test_support::runtime::MemRuntime {
         runtime,
         backend: _,
-    } = test_support::runtime::mem(&Did::new(did.to_string()))
+    } = test_support::runtime::mem(&Did::from(did.to_string()))
         .profile(Profile::new(
-            Did::new(did.to_string()),
+            Did::from(did.to_string()),
             "logoutalice.bsky.social",
         ))
         .public_url(format!("http://{addr}"))

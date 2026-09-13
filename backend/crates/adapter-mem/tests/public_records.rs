@@ -27,7 +27,7 @@ fn a_post() -> PublicRecord {
 #[tokio::test]
 async fn mem_satisfies_public_records_contract() {
     let store = MemPublicRecords::new();
-    let actor = Did::new("did:plc:memactor".to_string());
+    let actor = Did::from("did:plc:memactor".to_string());
     public_records_contract(&store, &actor).await;
 }
 
@@ -56,7 +56,7 @@ async fn blob_cid_is_content_addressed_and_stable() {
 #[tokio::test]
 async fn put_is_idempotent() {
     let store = MemPublicRecords::new();
-    let actor = Did::new("did:plc:memactor".to_string());
+    let actor = Did::from("did:plc:memactor".to_string());
     let record = a_post();
 
     let created = store.create_record(&actor, &record).await.unwrap();

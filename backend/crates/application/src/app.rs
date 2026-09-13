@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use domain::ports::{
     AccountStore, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter, FileStore,
-    ProfileCache, ProfileSource, UserStore, WorkflowStore,
+    ProfileCache, ProfileSource, UserStore, WorkflowStore, character::CharacterStore,
 };
 
 use crate::{account::Accounts, commission::Commissions, user::Users};
@@ -26,6 +26,7 @@ pub struct Ports {
     pub files: Arc<dyn FileStore>,
     pub workflows: Arc<dyn WorkflowStore>,
     pub columns: Arc<dyn ColumnStore>,
+    pub characters: Arc<dyn CharacterStore>,
 }
 
 /// The orchestrator, built once at composition: a namespace over [`Ports`]

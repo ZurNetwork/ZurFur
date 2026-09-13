@@ -53,7 +53,7 @@ async fn read_all(mut content: Box<dyn AsyncRead + Send + Unpin>) -> Vec<u8> {
 // metadata (filename, content type, byte size) carried through.
 #[tokio::test]
 async fn a_participant_uploads_then_downloads_the_exact_bytes() {
-    let owner_did = Did::new("did:plc:artist".to_string());
+    let owner_did = Did::from("did:plc:artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref sheet").await;
@@ -106,7 +106,7 @@ async fn a_participant_uploads_then_downloads_the_exact_bytes() {
 // renders a sentence without joins (Changelog DD's core-renderable rule).
 #[tokio::test]
 async fn upload_records_a_file_added_changelog_entry_with_byte_size() {
-    let owner_did = Did::new("did:plc:changelog-artist".to_string());
+    let owner_did = Did::from("did:plc:changelog-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
@@ -139,7 +139,7 @@ async fn upload_records_a_file_added_changelog_entry_with_byte_size() {
         .expect("read changelog");
     assert_eq!(entries.len(), 1, "the file_added entry, and only it");
     let entry = &entries[0];
-    assert_eq!(entry.kind.as_str(), "file_added");
+    assert_eq!(<&'static str>::from(entry.kind), "file_added");
     assert_eq!(entry.actor_id, Some(owner.id));
     assert_eq!(entry.payload["file_id"], uploaded.id.to_string());
     assert_eq!(entry.payload["filename"], "five.bin");
@@ -150,14 +150,14 @@ async fn upload_records_a_file_added_changelog_entry_with_byte_size() {
 // blob ever written, and nothing appended.
 #[tokio::test]
 async fn a_non_participant_upload_is_rejected_before_any_store_write() {
-    let owner_did = Did::new("did:plc:owner".to_string());
+    let owner_did = Did::from("did:plc:owner".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Private").await;
 
     let outsider = fixture
         .backend
-        .provision(&Did::new("did:plc:outsider".to_string()))
+        .provision(&Did::from("did:plc:outsider".to_string()))
         .await
         .expect("provision outsider");
 
@@ -194,7 +194,7 @@ async fn a_non_participant_upload_is_rejected_before_any_store_write() {
 // count the overage is deleted, not left orphaned.
 #[tokio::test]
 async fn an_over_cap_upload_is_rejected_and_its_blob_is_deleted() {
-    let owner_did = Did::new("did:plc:cap-artist".to_string());
+    let owner_did = Did::from("did:plc:cap-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
@@ -232,7 +232,7 @@ async fn an_over_cap_upload_is_rejected_and_its_blob_is_deleted() {
 // Empty: the use case answers `FileEmpty`, and its blob is deleted too.
 #[tokio::test]
 async fn an_empty_upload_is_rejected_and_its_blob_is_deleted() {
-    let owner_did = Did::new("did:plc:empty-artist".to_string());
+    let owner_did = Did::from("did:plc:empty-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
@@ -271,7 +271,7 @@ async fn an_empty_upload_is_rejected_and_its_blob_is_deleted() {
 // and no blob is ever written for it.
 #[tokio::test]
 async fn an_invalid_filename_is_rejected() {
-    let owner_did = Did::new("did:plc:filename-artist".to_string());
+    let owner_did = Did::from("did:plc:filename-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
@@ -309,7 +309,7 @@ async fn an_invalid_filename_is_rejected() {
 // Downloading a key nothing was ever stored under is `FileNotFound`.
 #[tokio::test]
 async fn downloading_an_unknown_key_is_file_not_found() {
-    let owner_did = Did::new("did:plc:downloader".to_string());
+    let owner_did = Did::from("did:plc:downloader".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
     let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;

@@ -57,7 +57,7 @@ impl Invitations<'_> {
             .filter(|r| r.can_grant(&role))
             .ok_or(AccountError::IncorrectRole)?;
         let mut uow = self.ports().database.begin().await?;
-        let target = uow.users().provision(&target_id).await?;
+        let target = uow.users().provision(target_id.did()).await?;
         if ports
             .accounts
             .role_of(&target.id, &account_id)

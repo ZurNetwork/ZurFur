@@ -47,8 +47,7 @@ impl Files<'_> {
         let result = ports
             .files
             .get(file_id)
-            .await
-            .map_err(CommissionError::Infrastructure)?
+            .await?
             .ok_or(CommissionError::FileBlobMissing)?;
 
         Ok(Output { result })
