@@ -98,7 +98,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// Reads the changelog as a JSON array (asserting the `200`).
@@ -125,7 +125,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -153,7 +153,7 @@ async fn the_owner_archives_and_the_record_survives() {
     assert_eq!(res.status(), 204, "the owner archives the commission");
 
     let stored = backend
-        .find_commission(domain::elements::commission::CommissionId::new(id))
+        .find_commission(domain::elements::commission::CommissionId::from(id))
         .await
         .expect("find")
         .expect("the record survives archiving");
@@ -212,7 +212,7 @@ async fn the_owner_unarchives_back_to_active() {
     assert_eq!(res.status(), 204, "the owner un-archives the commission");
 
     let stored = backend
-        .find_commission(domain::elements::commission::CommissionId::new(id))
+        .find_commission(domain::elements::commission::CommissionId::from(id))
         .await
         .expect("find")
         .expect("still present");
@@ -322,14 +322,14 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     common::assert_problem(res, 404, "commission_not_found").await;
 
     let stored = backend
-        .find_commission(domain::elements::commission::CommissionId::new(foreign))
+        .find_commission(domain::elements::commission::CommissionId::from(foreign))
         .await
         .expect("find")
         .expect("still present");
     assert!(stored.archived_at.is_none(), "the outsider changed nothing");
     assert!(
         backend
-            .changelog_entries(domain::elements::commission::CommissionId::new(foreign))
+            .changelog_entries(domain::elements::commission::CommissionId::from(foreign))
             .await
             .expect("entries")
             .is_empty(),

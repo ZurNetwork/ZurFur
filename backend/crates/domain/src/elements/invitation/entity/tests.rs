@@ -3,7 +3,7 @@ use crate::elements::did::Did;
 use chrono::{Duration, Utc};
 
 fn account() -> AccountId {
-    AccountId::new(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
+    AccountId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
 }
 
 fn user() -> UserId {

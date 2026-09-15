@@ -135,7 +135,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
             .expect("clear status");
         commissions
             .set_deadline(
-                &domain::elements::commission::CommissionId::new(uuid::Uuid::now_v7()),
+                &domain::elements::commission::CommissionId::from(uuid::Uuid::now_v7()),
                 Some(deadline),
             )
             .await

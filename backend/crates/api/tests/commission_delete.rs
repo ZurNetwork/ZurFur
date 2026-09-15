@@ -176,7 +176,7 @@ async fn owner_deletes_a_fact_free_commission_entirely() {
     );
 
     let res = client
-        .delete(format!("{base}/commissions/{}", *id))
+        .delete(format!("{base}/commissions/{}", id))
         .send()
         .await
         .expect("DELETE /commissions/{id}");
@@ -206,7 +206,7 @@ async fn a_non_participant_gets_the_uniform_404_and_deletes_nothing() {
     let id = seed_foreign_commission(&backend, "Not yours").await;
 
     let res = client
-        .delete(format!("{base}/commissions/{}", *id))
+        .delete(format!("{base}/commissions/{}", id))
         .send()
         .await
         .expect("DELETE /commissions/{id}");
@@ -241,7 +241,7 @@ async fn anonymous_cannot_delete_a_commission() {
     let id = seed_foreign_commission(&backend, "Still here").await;
 
     let res = client()
-        .delete(format!("{base}/commissions/{}", *id))
+        .delete(format!("{base}/commissions/{}", id))
         .send()
         .await
         .expect("DELETE /commissions/{id}");
@@ -478,7 +478,7 @@ async fn a_fact_bearing_commission_is_refused_and_pointed_at_archive() {
     let id = sign_in_and_create(&client, &base, &backend).await;
 
     let res = client
-        .delete(format!("{base}/commissions/{}", *id))
+        .delete(format!("{base}/commissions/{}", id))
         .send()
         .await
         .expect("DELETE /commissions/{id}");

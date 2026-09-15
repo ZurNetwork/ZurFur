@@ -102,10 +102,12 @@ async fn create_commission_with(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.iter()
-        .find(|c| c.title.as_str() == title)
-        .expect("the just-created commission is persisted")
-        .id
+    uuid::Uuid::from(
+        all.iter()
+            .find(|c| c.title.as_str() == title)
+            .expect("the just-created commission is persisted")
+            .id,
+    )
 }
 
 /// The single-commission convenience for tests that only make one.
@@ -182,7 +184,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         Utc::now(),
         None,
     );
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -376,7 +378,7 @@ async fn outsiders_cannot_add_markup() {
 
     assert!(
         backend
-            .changelog_entries(CommissionId::new(foreign))
+            .changelog_entries(CommissionId::from(foreign))
             .await
             .expect("entries")
             .is_empty(),
@@ -423,7 +425,7 @@ async fn adding_markup_changes_no_status() {
 
     // Snapshot every axis, and the changelog length, before the markup.
     let before = backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists");
@@ -443,7 +445,7 @@ async fn adding_markup_changes_no_status() {
 
     // Every status axis is exactly as it was.
     let after = backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists");

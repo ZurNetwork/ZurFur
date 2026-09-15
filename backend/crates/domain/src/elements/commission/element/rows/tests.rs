@@ -8,7 +8,7 @@ use crate::elements::did::Did;
 // verbatim, placeholder band — and no mode field to set.
 #[test]
 fn a_new_element_carries_its_address_and_payload() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let tab = TabId::mint();
     let surface = "content".parse::<SurfaceName>().expect("valid");
     let address = SurfaceAddress::new(tab, surface.clone());

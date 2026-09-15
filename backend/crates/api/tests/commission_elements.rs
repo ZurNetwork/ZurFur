@@ -114,7 +114,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's only tab id, introspected off the backend.
@@ -125,7 +125,7 @@ async fn create_commission(
 /// called out in [`api::routes`]'s element module docs rather than papered over.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
     uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
@@ -175,7 +175,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -194,7 +194,7 @@ async fn a_created_commission_is_born_with_its_skeleton_tabs() {
     let id = create_commission(&client, &base, &backend).await;
 
     let tabs = backend
-        .tabs_of(CommissionId::new(id))
+        .tabs_of(CommissionId::from(id))
         .await
         .expect("load tabs");
     let names: Vec<&str> = tabs.iter().map(|tab| tab.tab.as_ref()).collect();
@@ -206,7 +206,7 @@ async fn a_created_commission_is_born_with_its_skeleton_tabs() {
     );
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -241,7 +241,7 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
         .expect("signed in");
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2);
@@ -273,7 +273,7 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
     // Composition edits are NOT changelog events (the taxonomy is frozen;
     // ZMVP-87): the stream still holds only the creation entry.
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(
@@ -302,7 +302,7 @@ async fn an_omitted_payload_defaults_to_the_empty_object() {
     assert_eq!(res.status(), 201);
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements[0].payload.as_ref(), &json!({}));
@@ -332,7 +332,7 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
     assert_eq!(res.status(), 204, "removal answers 204 No Content");
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     let surviving: Vec<(uuid::Uuid, i32)> = elements
@@ -348,7 +348,7 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
     // Removal is likewise not a changelog event.
     assert_eq!(
         backend
-            .changelog_entries(CommissionId::new(id))
+            .changelog_entries(CommissionId::from(id))
             .await
             .expect("changelog")
             .len(),
@@ -384,7 +384,7 @@ async fn an_anonymous_caller_cannot_compose() {
 
     assert_eq!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .len(),
@@ -438,7 +438,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     // And the probe wrote nothing.
     assert!(
         backend
-            .elements_of(CommissionId::new(foreign))
+            .elements_of(CommissionId::from(foreign))
             .await
             .expect("load elements")
             .is_empty()
@@ -498,7 +498,7 @@ async fn an_undeclared_surface_is_a_422() {
 
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -523,7 +523,7 @@ async fn a_real_surface_under_the_wrong_tab_is_a_422() {
     // the surface below. The placeholder skeleton declares a single tab, so the
     // shape is seeded; ZMVP-171's real skeleton makes it an ordinary address.
     let other = backend.seed_tab(
-        CommissionId::new(id),
+        CommissionId::from(id),
         "other".parse().expect("valid tab name"),
     );
 
@@ -537,7 +537,7 @@ async fn a_real_surface_under_the_wrong_tab_is_a_422() {
 
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -574,7 +574,7 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
             .expect("find")
             .expect("provisioned");
         let element = NewElement::contributed(
-            CommissionId::new(foreign),
+            CommissionId::from(foreign),
             SurfaceAddress::new(
                 TabId::from(foreign_tab),
                 only_surface().parse().expect("declared"),
@@ -606,7 +606,7 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
 
     assert_eq!(
         backend
-            .elements_of(CommissionId::new(foreign))
+            .elements_of(CommissionId::from(foreign))
             .await
             .expect("load elements")
             .len(),

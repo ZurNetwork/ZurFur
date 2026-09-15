@@ -76,7 +76,7 @@ impl Workflow {
     pub fn new_column(&self, name: ColumnName, visibility: Visibility) -> Column {
         Column {
             id: ColumnId::from(uuid::Uuid::now_v7()),
-            workflow_id: self.id.clone(),
+            workflow_id: self.id,
             name,
             visibility,
             position: Position::between(None, None),

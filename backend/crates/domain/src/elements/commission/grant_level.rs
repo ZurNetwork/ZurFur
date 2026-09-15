@@ -34,14 +34,9 @@ impl std::fmt::Display for GrantLevel {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("Grant level parsing error")]
 pub struct GrantLevelError;
-impl std::fmt::Display for GrantLevelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Grant level parsing error")
-    }
-}
-impl std::error::Error for GrantLevelError {}
 impl FromStr for GrantLevel {
     type Err = GrantLevelError;
 

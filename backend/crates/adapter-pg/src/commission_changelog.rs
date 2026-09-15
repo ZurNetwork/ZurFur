@@ -31,7 +31,7 @@ impl ChangelogWrites for PgChangelogWrites<'_> {
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
         sql::append(
             &mut *self.conn,
-            *entry.commission_id,
+            uuid::Uuid::from(entry.commission_id),
             <&'static str>::from(entry.kind),
             entry.actor_id.as_ref().map(|actor| actor.as_ref()),
             &entry.payload,
@@ -62,7 +62,7 @@ impl ChangelogStore for PgChangelogStore {
     /// The commission's stream in order (`seq`). Each stored `kind` token is
     /// re-validated; an unknown token is an error, never a silent skip.
     async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
-        let rows = sql::entries(&self.pool, **commission).await?;
+        let rows = sql::entries(&self.pool, uuid::Uuid::from(*commission)).await?;
 
         rows.into_iter()
             .map(|row| {

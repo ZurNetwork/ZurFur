@@ -106,7 +106,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// Seeds a committed account with a distinct handle, returning its
@@ -156,7 +156,7 @@ async fn seed_board(backend: &MemBackend, account: &AccountId) -> (WorkflowId, C
         .expect("create the board");
     let column_name = "Open".parse::<ColumnName>().expect("column name");
     let column = workflow.new_column(column_name, workflow.visibility.clone());
-    let column_id = column.id.clone();
+    let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows()
         .set_indexes(&workflow)
@@ -175,7 +175,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -217,7 +217,7 @@ async fn placing_puts_the_card_on_a_board_and_one_commission_sits_on_many() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let cid = CommissionId::new(id);
+    let cid = CommissionId::from(id);
     let store = backend.commission_store();
 
     // The caller must be a member of the board's account: a card goes on a board
@@ -258,7 +258,7 @@ async fn placing_puts_the_card_on_a_board_and_one_commission_sits_on_many() {
                 .await
                 .unwrap()
                 .map(|found| found.id),
-            Some(column.clone()),
+            Some(*column),
             "the board that positioned it holds the card",
         );
         assert_eq!(
@@ -299,7 +299,7 @@ async fn grant_then_revoke_takes_effect_immediately_and_is_recorded() {
     let client = client();
     sign_in(&client, &base).await;
     let id = create_commission(&client, &base, &backend).await;
-    let cid = CommissionId::new(id);
+    let cid = CommissionId::from(id);
     let grantee = UserId::from(Did::from("did:plc:grantee".to_string()));
     let store = backend.commission_store();
 
@@ -379,7 +379,7 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     // A foreign owner's commission, an account the member belongs to, and a
     // Total grant + placement of the commission into that account.
     let (id, _owner_id) = seed_foreign_commission(&backend).await;
-    let cid = CommissionId::new(id);
+    let cid = CommissionId::from(id);
     let account = seed_account(&backend, "granted.zurfur.app", Some(member.id.clone())).await;
     let (_board, column) = seed_board(&backend, &account).await;
     {
@@ -525,7 +525,7 @@ async fn a_non_owner_gets_the_same_404_as_a_missing_commission() {
     let (outsider_board, _outsider_column) = seed_board(&backend, &account).await;
     assert!(
         store
-            .current_column_of_workflow(&CommissionId::new(foreign), &outsider_board)
+            .current_column_of_workflow(&CommissionId::from(foreign), &outsider_board)
             .await
             .unwrap()
             .is_none(),

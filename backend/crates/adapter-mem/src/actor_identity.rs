@@ -97,7 +97,10 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
         // Check-then-insert, so the error path never clobbers the stored row.
         if identities.contains_key(&identity.id) {
             // Mirror the pg PK: creating the same id twice is a caller bug.
-            anyhow::bail!("actor identity already exists: {}", *identity.id);
+            anyhow::bail!(
+                "actor identity already exists: {}",
+                uuid::Uuid::from(identity.id)
+            );
         }
         identities.insert(
             identity.id,
@@ -131,7 +134,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             return Ok(rebuild(*id, stored));
         }
         let minted = ActorIdentity {
-            id: ActorIdentityId::new(uuid::Uuid::now_v7()),
+            id: ActorIdentityId::from(uuid::Uuid::now_v7()),
             kind,
             did: Some(did.clone()),
             state: ActorState::Active,
@@ -161,9 +164,9 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
             .actor_identities
             .lock()
             .expect("MemBackend actor_identities mutex poisoned");
-        let stored = identities
-            .get_mut(id)
-            .ok_or_else(|| anyhow::anyhow!("actor identity not found: {}", **id))?;
+        let stored = identities.get_mut(id).ok_or_else(|| {
+            anyhow::anyhow!("actor identity not found: {}", uuid::Uuid::from(*id))
+        })?;
         stored.handle = handle.map(str::to_string);
         Ok(())
     }

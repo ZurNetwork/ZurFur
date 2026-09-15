@@ -4,7 +4,7 @@ use crate::elements::{account::AccountId, commission::Visibility, did::Did};
 // ---- columns -----------------------------------------------------------
 
 fn account() -> AccountId {
-    AccountId::new(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
+    AccountId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
 }
 
 fn empty_workflow() -> Workflow {
@@ -30,7 +30,7 @@ fn positions_ascend(workflow: &Workflow) -> bool {
 #[test]
 fn insert_places_the_column_on_this_board_at_the_index() {
     let mut workflow = empty_workflow();
-    let workflow_id = workflow.id.clone();
+    let workflow_id = workflow.id;
     workflow.push(column(&workflow, "Open")).expect("room");
     workflow.push(column(&workflow, "Done")).expect("room");
 
@@ -252,7 +252,7 @@ fn empty_column() -> Column {
 }
 
 fn commission() -> CommissionId {
-    CommissionId::new(uuid::Uuid::now_v7())
+    CommissionId::from(uuid::Uuid::now_v7())
 }
 
 fn cards(column: &Column) -> Vec<CommissionId> {

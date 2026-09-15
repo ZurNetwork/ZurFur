@@ -88,7 +88,9 @@ pub(super) async fn upload_file(
         Err(err) => return Err(Problem::from(err)),
     };
 
-    let body = UploadFileResponse { id: *result.id };
+    let body = UploadFileResponse {
+        id: uuid::Uuid::from(result.id),
+    };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 

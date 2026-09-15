@@ -40,8 +40,8 @@ async fn load_column(
     visibility: &str,
     position: &str,
 ) -> anyhow::Result<Column> {
-    let cards = column_sql::cards(pool, *id).await?;
-    let commissions = cards.into_iter().map(CommissionId::new).collect();
+    let cards = column_sql::cards(pool, uuid::Uuid::from(id)).await?;
+    let commissions = cards.into_iter().map(CommissionId::from).collect();
     let name = name
         .parse::<WorkflowName>()
         .map_err(|_| anyhow::anyhow!("unusable stored column name"))?;
@@ -59,14 +59,14 @@ async fn load_column(
 
 /// Load every column of a board, in board order, each with its cards.
 async fn load_columns(pool: &PgPool, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
-    let rows = workflow_sql::columns(pool, **workflow_id).await?;
+    let rows = workflow_sql::columns(pool, uuid::Uuid::from(*workflow_id)).await?;
 
     let mut columns = Vec::with_capacity(rows.len());
     for row in rows {
         let column = load_column(
             pool,
             ColumnId::from(row.id),
-            workflow_id.clone(),
+            *workflow_id,
             row.name,
             &row.visibility,
             &row.position,
@@ -79,7 +79,7 @@ async fn load_columns(pool: &PgPool, workflow_id: &WorkflowId) -> anyhow::Result
 
 /// Load one board whole — its own row, then its columns and their cards.
 async fn load_workflow(pool: &PgPool, id: &WorkflowId) -> anyhow::Result<Option<Workflow>> {
-    let Some(row) = workflow_sql::find(pool, **id).await? else {
+    let Some(row) = workflow_sql::find(pool, uuid::Uuid::from(*id)).await? else {
         return Ok(None);
     };
     let columns = load_columns(pool, id).await?;
@@ -89,9 +89,9 @@ async fn load_workflow(pool: &PgPool, id: &WorkflowId) -> anyhow::Result<Option<
         .map_err(|_| anyhow::anyhow!("unusable stored workflow name"))?;
 
     let workflow = Workflow::loaded(
-        id.clone(),
+        *id,
         name,
-        AccountId::new(Did::from(row.account_id)),
+        AccountId::from(Did::from(row.account_id)),
         to_visibility(&row.visibility)?,
         columns,
     )
@@ -121,7 +121,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
 
         workflow_sql::create(
             &mut *self.conn,
-            *workflow.id,
+            uuid::Uuid::from(workflow.id),
             account_id.as_ref(),
             name,
             workflow.visibility.as_str(),
@@ -134,7 +134,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
     /// Deletes a board and, by cascade, its columns and cards — never the
     /// commissions they pointed at. No-op on an absent board.
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
-        workflow_sql::delete(&mut *self.conn, **workflow_id).await?;
+        workflow_sql::delete(&mut *self.conn, uuid::Uuid::from(*workflow_id)).await?;
         Ok(())
     }
 
@@ -145,8 +145,8 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
         for column in workflow.iter() {
             workflow_sql::upsert_column(
                 &mut *self.conn,
-                *column.id,
-                *workflow.id,
+                uuid::Uuid::from(column.id),
+                uuid::Uuid::from(workflow.id),
                 &column.name,
                 column.visibility.as_str(),
                 column.position.as_ref(),
@@ -184,9 +184,9 @@ impl WorkflowStore for PgWorkflowStore {
         &self,
         workflow_id: &WorkflowId,
     ) -> anyhow::Result<Option<AccountId>> {
-        let did = workflow_sql::owning_account(&self.pool, **workflow_id).await?;
+        let did = workflow_sql::owning_account(&self.pool, uuid::Uuid::from(*workflow_id)).await?;
 
-        Ok(did.map(|did| AccountId::new(Did::from(did))))
+        Ok(did.map(|did| AccountId::from(Did::from(did))))
     }
 
     /// A board's columns in board order, each with its cards.
@@ -206,7 +206,7 @@ pub struct PgColumnWrites<'a> {
 impl ColumnWrites for PgColumnWrites<'_> {
     /// Deletes one column; card edges cascade. No-op on an absent column.
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
-        column_sql::delete(&mut *self.conn, **column_id).await?;
+        column_sql::delete(&mut *self.conn, uuid::Uuid::from(*column_id)).await?;
         Ok(())
     }
 
@@ -214,13 +214,19 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// card at its index. Both halves run on the open unit; the
     /// `(column_id, position)` unique constraint is DEFERRABLE, checked at COMMIT.
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
-        column_sql::clear_cards(&mut *self.conn, *column.id).await?;
+        column_sql::clear_cards(&mut *self.conn, uuid::Uuid::from(column.id)).await?;
 
         for (index, commission) in column.iter().enumerate() {
             let position = i32::try_from(index)
                 .map_err(|_| anyhow::anyhow!("column holds more cards than a position can hold"))?;
 
-            column_sql::add_card(&mut *self.conn, *column.id, **commission, position).await?;
+            column_sql::add_card(
+                &mut *self.conn,
+                uuid::Uuid::from(column.id),
+                uuid::Uuid::from(*commission),
+                position,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -228,7 +234,7 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// Renames one column; `(workflow_id, name)` is the store-level backstop
     /// for the board-level uniqueness check already made.
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
-        column_sql::rename(&mut *self.conn, *column.id, &column.name).await?;
+        column_sql::rename(&mut *self.conn, uuid::Uuid::from(column.id), &column.name).await?;
         Ok(())
     }
 }
@@ -250,13 +256,13 @@ impl PgColumnStore {
 impl ColumnStore for PgColumnStore {
     /// One column with its cards, or `None` if no such column exists.
     async fn find(&self, column_id: &ColumnId) -> anyhow::Result<Option<Column>> {
-        let Some(row) = column_sql::find(&self.pool, **column_id).await? else {
+        let Some(row) = column_sql::find(&self.pool, uuid::Uuid::from(*column_id)).await? else {
             return Ok(None);
         };
 
         let column = load_column(
             &self.pool,
-            column_id.clone(),
+            *column_id,
             WorkflowId::from(row.workflow_id),
             row.name,
             &row.visibility,
@@ -269,7 +275,7 @@ impl ColumnStore for PgColumnStore {
 
     /// Whether a column still holds any card — the gate on deleting one.
     async fn has_commissions(&self, column_id: &ColumnId) -> anyhow::Result<bool> {
-        column_sql::has_commissions(&self.pool, **column_id)
+        column_sql::has_commissions(&self.pool, uuid::Uuid::from(*column_id))
             .await
             .map_err(Into::into)
     }
@@ -283,8 +289,12 @@ impl ColumnStore for PgColumnStore {
         commission_id: &CommissionId,
     ) -> anyhow::Result<Option<Column>> {
         // Takes the first row rather than LIMIT 1, to not hide a genuine duplicate.
-        let rows =
-            column_sql::find_by_commission(&self.pool, **workflow_id, **commission_id).await?;
+        let rows = column_sql::find_by_commission(
+            &self.pool,
+            uuid::Uuid::from(*workflow_id),
+            uuid::Uuid::from(*commission_id),
+        )
+        .await?;
         let Some(row) = rows.into_iter().next() else {
             return Ok(None);
         };
@@ -305,18 +315,18 @@ impl ColumnStore for PgColumnStore {
     /// The account owning the board this column sits on, or `None` if no such
     /// column exists.
     async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>> {
-        let did = column_sql::owning_account(&self.pool, **column_id)
+        let did = column_sql::owning_account(&self.pool, uuid::Uuid::from(*column_id))
             .await?
             .into_iter()
             .next();
 
-        Ok(did.map(|did| AccountId::new(Did::from(did))))
+        Ok(did.map(|did| AccountId::from(Did::from(did))))
     }
 
     /// The whole board a column sits on. An absent column or board is an
     /// `Err` (same reasoning as [`owning_account_of`](Self::owning_account_of)).
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow> {
-        let row = column_sql::find(&self.pool, **column_id)
+        let row = column_sql::find(&self.pool, uuid::Uuid::from(*column_id))
             .await?
             .ok_or_else(|| anyhow::anyhow!("no such column"))?;
 

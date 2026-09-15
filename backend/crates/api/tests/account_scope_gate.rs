@@ -148,7 +148,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
     let account = seed_foreign_account(&backend, "did:plc:host", "host.zurfur.app").await;
 
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": "did:plc:whoever", "role": "member" }))
         .send()
         .await
@@ -290,5 +290,5 @@ async fn anonymous_read_of_account_public_data_still_succeeds() {
 /// Parse an account-id string (as returned by the API) back into an `AccountId` for
 /// backend introspection.
 fn account_id_from(id: &str) -> domain::elements::account::AccountId {
-    domain::elements::account::AccountId::new(Did::from(id.to_string()))
+    domain::elements::account::AccountId::from(Did::from(id.to_string()))
 }

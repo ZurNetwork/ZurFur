@@ -119,11 +119,11 @@ async fn owner_changes_handle_and_resolution_follows() {
     // `id` *is* the account's DID (AccountId wraps Did), so read it back through the
     // found account rather than a second, separate field.
     let account = backend
-        .find(&AccountId::new(Did::from(id.clone())))
+        .find(&AccountId::from(Did::from(id.clone())))
         .await
         .expect("find")
         .expect("account present");
-    let did = (*account.id).clone();
+    let did = account.id.did().clone();
 
     let res = change(&client, &base, &id, "after.zurfur.app").await;
     assert_eq!(res.status(), 200, "the Owner's change succeeds");
@@ -238,7 +238,7 @@ async fn only_the_owner_may_change_the_handle() {
         .expect("seat me as a member");
 
     common::assert_problem(
-        change(&client, &base, &account.id.to_string(), "hijack.zurfur.app").await,
+        change(&client, &base, account.id.as_ref(), "hijack.zurfur.app").await,
         403,
         "forbidden",
     )

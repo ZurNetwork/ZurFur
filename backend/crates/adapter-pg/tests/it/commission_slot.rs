@@ -311,7 +311,7 @@ async fn slots_cascade_away_with_their_commission() {
 
     // No delete port exists yet (ZMVP-66); exercise the schema's own cascade.
     sqlx::query("DELETE FROM commission WHERE id = $1")
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await
         .expect("delete commission");

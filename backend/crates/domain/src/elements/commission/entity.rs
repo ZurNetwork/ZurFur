@@ -73,7 +73,7 @@ impl Commission {
         deadline: Option<DateTimeUtc>,
     ) -> Self {
         Self {
-            id: CommissionId::new(uuid::Uuid::now_v7()),
+            id: CommissionId::from(uuid::Uuid::now_v7()),
             title,
             owner_id: owner,
             lifecycle_step: LifecycleStep::Draft,

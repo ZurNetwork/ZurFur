@@ -166,7 +166,7 @@ async fn migration_backfills_one_identity_per_projection_row() {
     // the actor re-key (DD `57081857`) — one of the catch-up migrations above — so
     // the surrogate `account_id` this test seeded with no longer addresses it.
     let store = PgAccountStore::new(pool.clone());
-    let account_key = AccountId::new(Did::from(account_did.to_string()));
+    let account_key = AccountId::from(Did::from(account_did.to_string()));
     let found = store
         .find(&account_key)
         .await

@@ -6,7 +6,7 @@ use crate::elements::user::UserId;
 use chrono::{Duration, Utc};
 
 fn commission() -> CommissionId {
-    CommissionId::new(uuid::Uuid::now_v7())
+    CommissionId::from(uuid::Uuid::now_v7())
 }
 
 fn seat() -> ElementId {

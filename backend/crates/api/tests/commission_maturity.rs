@@ -105,13 +105,13 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's persisted maturity posture, introspected off the backend.
 async fn stored_maturity(backend: &MemBackend, id: uuid::Uuid) -> Option<Maturity> {
     backend
-        .find_commission(domain::elements::commission::CommissionId::new(id))
+        .find_commission(domain::elements::commission::CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -142,7 +142,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -187,7 +187,7 @@ async fn maturity_can_be_set_at_creation() {
     assert_eq!(res.status(), 201, "creating a rated commission returns 201");
 
     let all = backend.all_commissions().await.expect("list commissions");
-    let id = *all.last().expect("a commission was persisted").id;
+    let id = uuid::Uuid::from(all.last().expect("a commission was persisted").id);
     assert_eq!(
         stored_maturity(&backend, id).await,
         Some(Maturity {

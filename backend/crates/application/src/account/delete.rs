@@ -52,10 +52,10 @@ impl<'a> Accounts<'a> {
             DeleteOutcome::Soft
         } else {
             uow.accounts().hard_delete(&account_id).await?;
-            if let Err(err) = ports.did_minter.tombstone(&account_id).await {
+            if let Err(err) = ports.did_minter.tombstone(account_id.did()).await {
                 tracing::warn!(
                     error = ?err,
-                    did = %AsRef::<str>::as_ref(&*account_id),
+                    did = %AsRef::<str>::as_ref(&account_id),
                     "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
                 )
             };

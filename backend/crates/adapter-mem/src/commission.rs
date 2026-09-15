@@ -915,7 +915,7 @@ impl CommissionWrites for MemCommissionWrites {
                 })
             })
             .collect();
-        lapsed.sort_by_key(|lapse| (lapse.deadline, *lapse.id));
+        lapsed.sort_by_key(|lapse| (lapse.deadline, uuid::Uuid::from(lapse.id)));
         Ok(lapsed)
     }
 }
@@ -1256,7 +1256,7 @@ impl CommissionStore for MemCommissionStore {
             .filter(|(_, stored)| &stored.owner_id == owner && stored.archived_at.is_none())
             .map(|(id, stored)| stored.rebuild(*id))
             .collect();
-        owned.sort_by_key(|commission| *commission.id);
+        owned.sort_by_key(|commission| uuid::Uuid::from(commission.id));
         Ok(owned)
     }
 }

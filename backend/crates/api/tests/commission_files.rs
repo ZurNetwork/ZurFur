@@ -111,10 +111,12 @@ async fn create_commission_titled(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.iter()
-        .find(|c| c.title.as_str() == title)
-        .expect("the just-created commission is persisted")
-        .id
+    uuid::Uuid::from(
+        all.iter()
+            .find(|c| c.title.as_str() == title)
+            .expect("the just-created commission is persisted")
+            .id,
+    )
 }
 
 /// The single-commission convenience for tests that only make one.
@@ -176,7 +178,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         Utc::now(),
         None,
     );
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -372,7 +374,7 @@ async fn a_non_participant_cannot_upload_or_retrieve() {
 
     assert!(
         backend
-            .changelog_entries(CommissionId::new(foreign))
+            .changelog_entries(CommissionId::from(foreign))
             .await
             .expect("entries")
             .is_empty(),

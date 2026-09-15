@@ -23,7 +23,7 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
     let state = ActorState::try_from(row.state.as_str())
         .with_context(|| format!("actor_identity {}: corrupted state", row.id))?;
     Ok(ActorIdentity {
-        id: ActorIdentityId::new(row.id),
+        id: ActorIdentityId::from(row.id),
         kind,
         did: row.did.map(Did::from),
         state,
@@ -59,7 +59,7 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         );
         sql::create(
             &mut *self.conn,
-            *identity.id,
+            uuid::Uuid::from(identity.id),
             identity.kind.as_str(),
             identity.state.as_str(),
             identity.first_seen,
@@ -95,8 +95,8 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         id: &ActorIdentityId,
         handle: Option<&str>,
     ) -> anyhow::Result<()> {
-        let affected = sql::cache_handle(&mut *self.conn, **id, handle).await?;
-        anyhow::ensure!(affected == 1, "actor identity not found: {}", **id);
+        let affected = sql::cache_handle(&mut *self.conn, uuid::Uuid::from(*id), handle).await?;
+        anyhow::ensure!(affected == 1, "actor identity not found: {}", *id);
         Ok(())
     }
 }
@@ -116,7 +116,7 @@ impl PgActorIdentityStore {
 #[async_trait]
 impl ActorIdentityStore for PgActorIdentityStore {
     async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
-        let row = sql::find(&self.pool, **id).await?;
+        let row = sql::find(&self.pool, uuid::Uuid::from(*id)).await?;
         row.map(rebuild).transpose()
     }
 

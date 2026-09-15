@@ -107,13 +107,13 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The persisted direction status of `id`, as its stable wire token.
 async fn stored_status(backend: &MemBackend, id: uuid::Uuid) -> Option<&'static str> {
     backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -142,7 +142,7 @@ async fn entries(
     id: uuid::Uuid,
 ) -> Vec<domain::elements::commission::ChangelogEntry> {
     backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("inspect entries")
 }
@@ -156,7 +156,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -335,7 +335,7 @@ async fn direction_status_composes_with_the_deadline_axis() {
     );
 
     let commission = backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find")
         .expect("exists");
@@ -355,7 +355,7 @@ async fn direction_status_composes_with_the_deadline_axis() {
         .expect("DELETE direction status");
     assert_eq!(res.status(), 204);
     let commission = backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find")
         .expect("exists");

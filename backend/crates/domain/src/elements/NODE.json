@@ -6,7 +6,7 @@
   "conventions": [
     "Each file owns its id type, value objects, and pure invariant logic.",
     "The serde-deriving id newtypes are `Did`, `UserId` and `AccountId` — the CLI identity file needs them.",
-    "A UUID-backed id's `FromStr` returns `id::IdError`; its `Display` impl pairs with that."
+    "Ids derive `FromStr` forwarding to the inner type's error (`uuid::Error` for Uuid-backed ids, `DidParseError` for Did-backed ids); `From`/`Into`/`AsRef`/`Display` likewise forward, with no `Deref` and no `new` wrapper. Every error type is a `thiserror` derive."
   ],
   "entry_points": [
     "commission.rs"
@@ -75,11 +75,6 @@
     {
       "name": "handle/",
       "role": "split of handle.rs; no information beyond its façade",
-      "node": false
-    },
-    {
-      "name": "id.rs",
-      "role": "IdError — shared parse-failure type every UUID-backed id newtype's FromStr returns",
       "node": false
     },
     {

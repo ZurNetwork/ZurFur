@@ -13,7 +13,7 @@ mod position;
 mod value;
 
 pub use entity::{Column, MAX_COLUMNS_PER_WORKFLOW, Workflow};
-pub use errors::{PositionError, WorkflowError};
+pub use errors::{PositionError, WorkflowError, WorkflowNameError};
 pub use id::{ColumnId, WorkflowId};
 pub use ordering::LexOrdering;
 pub use position::Position;

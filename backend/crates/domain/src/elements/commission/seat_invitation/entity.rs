@@ -46,7 +46,7 @@ impl SeatInvitation {
     ///     user::UserId,
     /// };
     ///
-    /// let commission = CommissionId::new(uuid::Uuid::now_v7());
+    /// let commission = CommissionId::from(uuid::Uuid::now_v7());
     /// let seat = ElementId::from(uuid::Uuid::now_v7());
     /// let invited = UserId::from(Did::from("did:plc:alice".to_string()));
     /// let inviter = UserId::from(Did::from("did:plc:bob".to_string()));
@@ -63,7 +63,7 @@ impl SeatInvitation {
         now: DateTimeUtc,
     ) -> SeatInvitation {
         SeatInvitation {
-            id: SeatInvitationId::new(uuid::Uuid::now_v7()),
+            id: SeatInvitationId::from(uuid::Uuid::now_v7()),
             commission,
             seat,
             invited_user,
@@ -89,7 +89,7 @@ impl SeatInvitation {
     /// };
     ///
     /// let mut invitation = SeatInvitation::issue(
-    ///     CommissionId::new(uuid::Uuid::now_v7()),
+    ///     CommissionId::from(uuid::Uuid::now_v7()),
     ///     ElementId::from(uuid::Uuid::now_v7()),
     ///     UserId::from(Did::from("did:plc:alice".to_string())),
     ///     UserId::from(Did::from("did:plc:bob".to_string())),

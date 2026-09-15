@@ -227,7 +227,8 @@ async fn create_persists_the_account_and_its_owner_membership() {
         .expect("the founded account is present");
     assert_eq!(found.id, account_id);
     assert_eq!(
-        *found.id, account_did,
+        *found.id.did(),
+        account_did,
         "the account's minted did round-trips"
     );
     assert_eq!(
@@ -1115,7 +1116,7 @@ async fn hard_delete_frees_the_handle_for_reuse() {
         .expect("the freed handle may be reclaimed by a new account");
     assert_eq!(
         find_did_by_handle(&pool, &handle).await,
-        Some((*a2.id).clone()),
+        Some(a2.id.did().clone()),
         "the handle now resolves to the new account"
     );
 }
@@ -1237,7 +1238,7 @@ async fn change_handle_repoints_resolution_and_records_the_change() {
     // handle→DID resolution followed: the new handle resolves, the old does not.
     assert_eq!(
         find_did_by_handle(&pool, &new).await,
-        Some((*account.id).clone()),
+        Some(account.id.did().clone()),
         "the new handle resolves to the account's DID"
     );
     assert!(
@@ -1467,7 +1468,7 @@ async fn hard_delete_severs_the_boards_while_the_commission_survives() {
         column
             .push(commission_id)
             .expect("the column takes the card");
-        let column_id = column.id.clone();
+        let column_id = column.id;
         workflow.insert(0, column.clone()).expect("board is empty");
         uow.workflows()
             .set_indexes(&workflow)
@@ -1565,7 +1566,7 @@ async fn quarantine_reserves_the_vacated_handle_to_the_leaving_account() {
 
     let window = Utc::now() - Duration::days(30);
     // Some OTHER account is barred from the vacated handle.
-    let stranger = AccountId::new(Did::from("did:plc:pgquar-stranger".to_string()));
+    let stranger = AccountId::from(Did::from("did:plc:pgquar-stranger".to_string()));
     assert!(
         reserved_for_other(&pool, &vacated, Some(&stranger), window).await,
         "the vacated handle is quarantined to its former holder — barred to others"

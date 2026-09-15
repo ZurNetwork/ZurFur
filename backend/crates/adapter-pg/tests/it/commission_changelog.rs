@@ -229,7 +229,7 @@ async fn entries_cascade_away_with_the_commission() {
     uow.commit().await.expect("commit");
 
     sqlx::query("DELETE FROM commission WHERE id = $1")
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await
         .expect("hard-delete the commission");
@@ -272,7 +272,7 @@ async fn is_participant_answers_the_owner_arm_only() {
     assert!(
         !store
             .is_participant(
-                &CommissionId::new(uuid::Uuid::now_v7()),
+                &CommissionId::from(uuid::Uuid::now_v7()),
                 &commission.owner_id
             )
             .await
@@ -354,7 +354,7 @@ async fn find_roundtrips_the_linked_channel() {
     // An unknown commission finds nothing.
     assert!(
         store
-            .find(&CommissionId::new(uuid::Uuid::now_v7()))
+            .find(&CommissionId::from(uuid::Uuid::now_v7()))
             .await
             .expect("find unknown")
             .is_none(),
@@ -435,7 +435,7 @@ async fn find_roundtrips_the_direction_status() {
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
         .set_direction_status(
-            &CommissionId::new(uuid::Uuid::now_v7()),
+            &CommissionId::from(uuid::Uuid::now_v7()),
             Some(DirectionStatus::WaitingForApproval),
         )
         .await

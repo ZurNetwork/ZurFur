@@ -86,7 +86,7 @@ async fn founded_account(runtime: &Runtime, path: &Path, handle: &str) -> Accoun
 /// did:plc nothing ever mints (`AccountId` is itself a DID, not a
 /// bare UUID paired with one).
 fn unknown_account_id() -> AccountId {
-    AccountId::new(Did::from(format!("did:plc:{}", Uuid::now_v7())))
+    AccountId::from(Did::from(format!("did:plc:{}", Uuid::now_v7())))
 }
 
 #[tokio::test]

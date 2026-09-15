@@ -640,7 +640,7 @@ impl MemBackend {
             .lock()
             .expect("MemBackend accounts mutex poisoned")
             .insert(
-                AccountId::new(did.clone()),
+                AccountId::from(did.clone()),
                 StoredAccount {
                     handle: handle.clone(),
                     name: "Tombstoned".parse::<AccountName>().expect("valid name"),
@@ -1069,7 +1069,7 @@ impl AccountStore for MemAccountStore {
             .lock()
             .expect("MemBackend accounts mutex poisoned");
         Ok(accounts.iter().find_map(|(id, stored)| {
-            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| (**id).clone())
+            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| id.did().clone())
         }))
     }
 
@@ -1220,20 +1220,20 @@ impl AccountWrites for MemAccountWrites {
                 .expect("MemBackend actor_identities mutex poisoned");
             let existing = identities
                 .values()
-                .find(|stored| stored.did.as_ref() == Some(&*account.id));
+                .find(|stored| stored.did.as_ref() == Some(account.id.did()));
             match existing {
                 Some(stored) => anyhow::ensure!(
                     stored.kind == ActorKind::Account,
                     "account DID {} is already interned as a different actor kind ({})",
-                    *account.id,
+                    account.id,
                     stored.kind.as_str()
                 ),
                 None => {
                     identities.insert(
-                        ActorIdentityId::new(uuid::Uuid::now_v7()),
+                        ActorIdentityId::from(uuid::Uuid::now_v7()),
                         StoredActorIdentity {
                             kind: ActorKind::Account,
-                            did: Some((*account.id).clone()),
+                            did: Some(account.id.did().clone()),
                             state: ActorState::Active,
                             handle: None,
                             first_seen: account.created_at,
@@ -1301,7 +1301,7 @@ impl AccountWrites for MemAccountWrites {
             anyhow::bail!(
                 "change_handle: account {} is not a live account still holding the expected \
                  handle; nothing changed (concurrent change or removal)",
-                **account
+                account
             );
         }
 
@@ -1441,7 +1441,7 @@ impl AccountWrites for MemAccountWrites {
                 _ => {
                     return Err(anyhow::anyhow!(
                         "invitation {} is no longer pending; no membership minted",
-                        *invitation.id
+                        invitation.id
                     ));
                 }
             }
@@ -1497,7 +1497,7 @@ impl AccountWrites for MemAccountWrites {
             return Err(anyhow::anyhow!(
                 "user {} is not the Owner of account {}; ownership not transferred",
                 old_owner.as_ref(),
-                **account
+                account
             ));
         }
 
@@ -1506,7 +1506,7 @@ impl AccountWrites for MemAccountWrites {
             return Err(anyhow::anyhow!(
                 "user {} is not a member of account {}; ownership not transferred",
                 new_owner.as_ref(),
-                **account
+                account
             ));
         }
 
@@ -1582,7 +1582,7 @@ impl AccountWrites for MemAccountWrites {
             let boards = workflows
                 .iter()
                 .filter(|(_, stored)| stored.account_id == *account)
-                .map(|(id, _)| id.clone())
+                .map(|(id, _)| *id)
                 .collect();
             workflows.retain(|_, stored| stored.account_id != *account);
             boards

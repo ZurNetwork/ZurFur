@@ -7,7 +7,7 @@ use crate::elements::{commission::TabId, did::Did};
 // A new Slot's envelope: fresh id, address, acting user, title, notes.
 #[test]
 fn a_new_slot_carries_title_and_optional_notes() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let address = SurfaceAddress::new(
         TabId::from(uuid::Uuid::now_v7()),
         "content".parse().unwrap(),

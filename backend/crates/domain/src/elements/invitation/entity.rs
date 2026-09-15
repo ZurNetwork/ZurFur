@@ -41,7 +41,7 @@ impl Invitation {
     ///     user::UserId,
     /// };
     ///
-    /// let account = AccountId::new(Did::from("did:plc:acme".to_string()));
+    /// let account = AccountId::from(Did::from("did:plc:acme".to_string()));
     /// let invited = UserId::from(Did::from("did:plc:alice".to_string()));
     /// let inviter = UserId::from(Did::from("did:plc:bob".to_string()));
     /// let invitation = Invitation::issue(account, invited, Role::Member, inviter, Utc::now());
@@ -57,7 +57,7 @@ impl Invitation {
         now: DateTimeUtc,
     ) -> Invitation {
         Invitation {
-            id: InvitationId::new(uuid::Uuid::now_v7()),
+            id: InvitationId::from(uuid::Uuid::now_v7()),
             account,
             invited_user,
             role,
@@ -81,7 +81,7 @@ impl Invitation {
     /// };
     ///
     /// let mut invitation = Invitation::issue(
-    ///     AccountId::new(Did::from("did:plc:acme".to_string())),
+    ///     AccountId::from(Did::from("did:plc:acme".to_string())),
     ///     UserId::from(Did::from("did:plc:alice".to_string())),
     ///     Role::Member,
     ///     UserId::from(Did::from("did:plc:bob".to_string())),

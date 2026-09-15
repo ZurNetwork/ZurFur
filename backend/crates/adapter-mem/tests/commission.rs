@@ -69,7 +69,7 @@ async fn an_unknown_commission_answers_false() {
     let mut uow = db.begin().await.expect("begin");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(&CommissionId::new(uuid::Uuid::now_v7()))
+        .commission_has_facts(&CommissionId::from(uuid::Uuid::now_v7()))
         .await
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
@@ -180,7 +180,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     );
     assert!(
         !uow.commissions()
-            .set_archived(&CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .set_archived(&CommissionId::from(uuid::Uuid::now_v7()), Some(Utc::now()))
             .await
             .expect("archive an unknown id"),
         "an absent commission matches nothing (existence is the caller's check)",

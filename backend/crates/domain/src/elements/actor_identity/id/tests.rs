@@ -16,5 +16,8 @@ fn mint_yields_distinct_ids() {
 #[test]
 fn id_rebuilds_from_stored_uuid() {
     let minted = ActorIdentity::mint(ActorKind::Account, Utc::now());
-    assert_eq!(ActorIdentityId::new(*minted.id), minted.id);
+    assert_eq!(
+        ActorIdentityId::from(uuid::Uuid::from(minted.id)),
+        minted.id
+    );
 }

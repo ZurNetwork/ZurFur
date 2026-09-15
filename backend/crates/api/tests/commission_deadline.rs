@@ -113,16 +113,18 @@ async fn create_commission(
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let title = body["title"].as_str().expect("body carries a title");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.iter()
-        .find(|c| c.title.as_str() == title)
-        .expect("the created commission was persisted")
-        .id
+    uuid::Uuid::from(
+        all.iter()
+            .find(|c| c.title.as_str() == title)
+            .expect("the created commission was persisted")
+            .id,
+    )
 }
 
 /// The persisted commission, rebuilt.
 async fn stored(backend: &MemBackend, id: uuid::Uuid) -> Commission {
     backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -172,7 +174,7 @@ async fn entries(
     id: uuid::Uuid,
 ) -> Vec<domain::elements::commission::ChangelogEntry> {
     backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("inspect entries")
 }
@@ -195,7 +197,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await

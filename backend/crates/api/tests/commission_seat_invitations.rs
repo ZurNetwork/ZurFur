@@ -102,7 +102,7 @@ async fn create_commission(
         .await
         .expect("list commissions")
         .iter()
-        .map(|c| *c.id)
+        .map(|c| uuid::Uuid::from(c.id))
         .collect();
     let res = client
         .post(format!("{base}/commissions"))
@@ -116,7 +116,7 @@ async fn create_commission(
         .await
         .expect("list commissions")
         .iter()
-        .map(|c| *c.id)
+        .map(|c| uuid::Uuid::from(c.id))
         .find(|id| !before.contains(id))
         .expect("exactly one new commission was persisted")
 }
@@ -126,7 +126,7 @@ async fn create_commission(
 /// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
     uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
@@ -185,7 +185,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .expect("the invitee was provisioned");
     let found = backend
         .commission_store()
-        .find_pending_seat_invitation(&CommissionId::new(id), &ElementId::from(seat), &invitee.id)
+        .find_pending_seat_invitation(&CommissionId::from(id), &ElementId::from(seat), &invitee.id)
         .await
         .expect("query")
         .expect("a pending offer was recorded");
@@ -333,7 +333,7 @@ async fn owner_revokes_a_pending_invitation() {
         backend
             .commission_store()
             .find_pending_seat_invitation(
-                &CommissionId::new(id),
+                &CommissionId::from(id),
                 &ElementId::from(seat),
                 &invitee.id
             )
@@ -388,7 +388,7 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let foreign = Commission::create(title, foreign_owner.id, Utc::now(), None);
-    let foreign_id = *foreign.id;
+    let foreign_id = uuid::Uuid::from(foreign.id);
     backend
         .create_commission(&foreign)
         .await
@@ -464,7 +464,11 @@ async fn revoking_another_commissions_pending_offer_is_a_no_op() {
         .expect("invitee was provisioned by the invite");
     let still_pending = backend
         .commission_store()
-        .find_pending_seat_invitation(&CommissionId::new(b), &ElementId::from(b_seat), &invitee.id)
+        .find_pending_seat_invitation(
+            &CommissionId::from(b),
+            &ElementId::from(b_seat),
+            &invitee.id,
+        )
         .await
         .expect("query");
     assert!(
