@@ -4,9 +4,10 @@ mod tests;
 /// The kind of act a changelog entry records — the frozen entry taxonomy.
 /// Variants whose emitter has not shipped yet are inert, never stored.
 ///
-/// Each variant persists as its [`as_str`](Self::as_str) token in
-/// `commission_changelog.kind` and resolves back through [`parse`](Self::parse),
-/// so the enum owns the vocabulary. Renaming a token is a migration.
+/// Each variant persists as its derived [`Display`](std::fmt::Display) token in
+/// `commission_changelog.kind` and resolves back through the derived
+/// [`FromStr`](std::str::FromStr), so the enum owns the vocabulary. Renaming a
+/// token is a migration.
 #[derive(
     Debug,
     Clone,

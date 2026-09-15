@@ -135,7 +135,7 @@ async fn stored_deadline_status(backend: &MemBackend, id: uuid::Uuid) -> Option<
     stored(backend, id)
         .await
         .deadline_status
-        .map(|s| s.as_str())
+        .map(<&'static str>::from)
 }
 
 /// PUT the deadline and return the response.
@@ -714,11 +714,11 @@ async fn the_axes_compose_freely() {
 
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.direction_status.map(|s| s.as_str()),
+        commission.direction_status.map(<&'static str>::from),
         Some("waiting_for_approval")
     );
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "the two axes hold values simultaneously — the passed deadline derives \
          Late on the deadline axis"
@@ -729,11 +729,14 @@ async fn the_axes_compose_freely() {
     assert_eq!(sweep(&backend, after_deadline).await, 1);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.direction_status.map(|s| s.as_str()),
+        commission.direction_status.map(<&'static str>::from),
         Some("waiting_for_approval"),
         "the sweep never moves the direction axis"
     );
-    assert_eq!(commission.deadline_status.map(|s| s.as_str()), Some("late"));
+    assert_eq!(
+        commission.deadline_status.map(<&'static str>::from),
+        Some("late")
+    );
     assert!(
         matches!(commission.lifecycle_step, LifecycleStep::Draft),
         "no system event moves the Lifecycle"
@@ -748,7 +751,7 @@ async fn the_axes_compose_freely() {
     assert_eq!(res.status(), 204);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "clearing the direction axis leaves the deadline axis alone"
     );
@@ -800,7 +803,7 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
         "the deadline never moved"
     );
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "the axis derives Late from the seeded past deadline — the non-participant \
          changed nothing (its stream below stays empty)"

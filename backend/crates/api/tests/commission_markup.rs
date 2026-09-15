@@ -450,8 +450,8 @@ async fn adding_markup_changes_no_status() {
         .expect("find commission")
         .expect("commission exists");
     assert_eq!(
-        after.lifecycle_step.as_str(),
-        before.lifecycle_step.as_str(),
+        <&'static str>::from(&after.lifecycle_step),
+        <&'static str>::from(&before.lifecycle_step),
         "markup never moves the Lifecycle"
     );
     assert_eq!(

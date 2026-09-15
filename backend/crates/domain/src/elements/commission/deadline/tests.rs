@@ -1,21 +1,22 @@
-use std::collections::BTreeSet;
+use strum::VariantArray;
 
 use super::*;
 
 // The deadline-status tokens round-trip and never collide.
 #[test]
 fn deadline_status_tokens_round_trip_and_never_collide() {
-    let mut seen = BTreeSet::new();
-    for status in DeadlineStatus::ALL {
-        let token = status.as_str();
-        assert!(seen.insert(token), "duplicate token {token:?}");
-        assert_eq!(
-            DeadlineStatus::try_from(token),
-            Ok(*status),
-            "token {token:?} must round-trip back to its value",
-        );
+    let tokens: Vec<&'static str> = DeadlineStatus::VARIANTS
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+    assert_eq!(tokens, ["delayed", "late"]);
+
+    for status in DeadlineStatus::VARIANTS {
+        let token = <&'static str>::from(status);
+        assert_eq!(status.to_string(), token);
+        assert_eq!(token.parse::<DeadlineStatus>(), Ok(*status));
+        assert_eq!(DeadlineStatus::try_from(token), Ok(*status));
     }
-    assert_eq!(DeadlineStatus::ALL.len(), 2, "exactly the two values");
 }
 
 // A token outside the vocabulary is refused; the axes never bleed.

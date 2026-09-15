@@ -6,7 +6,8 @@
   "conventions": [
     "Each file owns its id type, value objects, and pure invariant logic.",
     "The serde-deriving id newtypes are `Did`, `UserId` and `AccountId` — the CLI identity file needs them.",
-    "Ids derive `FromStr` forwarding to the inner type's error (`uuid::Error` for Uuid-backed ids, `DidParseError` for Did-backed ids); `From`/`Into`/`AsRef`/`Display` likewise forward, with no `Deref` and no `new` wrapper. Every error type is a `thiserror` derive."
+    "Ids derive `FromStr` forwarding to the inner type's error (`uuid::Error` for Uuid-backed ids, `DidParseError` for Did-backed ids); `From`/`Into`/`AsRef`/`Display` likewise forward, with no `Deref` and no `new` wrapper. Every error type is a `thiserror` derive.",
+    "Enum vocabularies derive strum (Display, EnumString, IntoStaticStr, VariantArray; serialize_all = snake_case), keep their typed Unknown* parse errors through parse_err_ty/parse_err_fn, and pin their literal token list in the sibling tests.rs; no hand-written ALL consts or as_str tables."
   ],
   "entry_points": [
     "commission.rs"

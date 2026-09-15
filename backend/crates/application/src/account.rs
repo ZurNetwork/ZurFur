@@ -70,7 +70,8 @@ impl<'a> From<&'a crate::App> for Accounts<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum AccountEntity {
     Account,
     User,
@@ -151,18 +152,6 @@ impl From<WorkflowError> for AccountError {
             WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
             WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
             v => AccountError::Infrastructure(v.into()),
-        }
-    }
-}
-
-impl std::fmt::Display for AccountEntity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Account => write!(f, "account"),
-            Self::User => write!(f, "user"),
-            Self::Column => write!(f, "column"),
-            Self::Workflow => write!(f, "workflow"),
-            Self::Commission => write!(f, "commission"),
         }
     }
 }
@@ -319,3 +308,6 @@ pub struct AccountPorts<'a> {
 }
 
 pub type AccountResult<T> = Result<T, AccountError>;
+
+#[cfg(test)]
+mod tests;

@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use super::{CommissionId, DeadlineStatusError, LifecycleStep};
 use crate::datetime::DateTimeUtc;
 
@@ -9,7 +7,18 @@ use crate::datetime::DateTimeUtc;
 ///
 /// [`Delayed`](Self::Delayed) is a manual Participant flag; [`Late`](Self::Late)
 /// is the system's word, never set by hand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = DeadlineStatusError, parse_err_fn = unknown_token)]
 pub enum DeadlineStatus {
     /// The work is slipping — delays, but not yet lateness.
     Delayed,
@@ -17,52 +26,23 @@ pub enum DeadlineStatus {
     Late,
 }
 
-impl DeadlineStatus {
-    /// Every value, in declaration order — the closed two-value vocabulary.
-    pub const ALL: &[DeadlineStatus] = &[Self::Delayed, Self::Late];
-
-    /// The stable, lowercase token written to `commission.deadline_status`.
-    /// Persisted — renaming a token is a migration.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Delayed => "delayed",
-            Self::Late => "late",
-        }
-    }
+/// The typed error for a token outside the vocabulary; strum hands it the original input.
+fn unknown_token(_token: &str) -> DeadlineStatusError {
+    DeadlineStatusError::InvalidValue
 }
 
-impl std::fmt::Display for DeadlineStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Delayed => write!(f, "delayed"),
-            Self::Late => write!(f, "late"),
-        }
-    }
-}
-
-impl TryFrom<&str> for DeadlineStatus {
-    type Error = DeadlineStatusError;
-
-    /// Resolve a stored token back to its value.
-    fn try_from(token: &str) -> Result<Self, Self::Error> {
-        Ok(match token {
-            "delayed" => Self::Delayed,
-            "late" => Self::Late,
-            _ => return Err(DeadlineStatusError::InvalidValue),
-        })
-    }
-}
-
-impl FromStr for DeadlineStatus {
-    type Err = DeadlineStatusError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "delayed" => Ok(Self::Delayed),
-            "late" => Ok(Self::Late),
-            _ => Err(DeadlineStatusError::InvalidValue),
-        }
-    }
+/// One commission the deadline sweep must log as Late: deadline passed,
+/// lifecycle not terminal, not yet logged (the sweep dedupes on the changelog).
+/// Carries what the `late` entry needs to render without joins. The sweep only
+/// logs; the state itself is derived by [`derive_deadline_status`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LapsedDeadline {
+    /// The commission to log Late.
+    pub id: CommissionId,
+    /// The deadline that was missed (named in the Late entry's payload).
+    pub deadline: DateTimeUtc,
+    /// The standing manual flag at scan time — what the Late entry supersedes.
+    pub status: Option<DeadlineStatus>,
 }
 
 /// The effective deadline-axis status at `now`. `Late` is derived, never
@@ -83,20 +63,6 @@ pub fn derive_deadline_status(
     } else {
         stored
     }
-}
-
-/// One commission the deadline sweep must log as Late: deadline passed,
-/// lifecycle not terminal, not yet logged (the sweep dedupes on the changelog).
-/// Carries what the `late` entry needs to render without joins. The sweep only
-/// logs; the state itself is derived by [`derive_deadline_status`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LapsedDeadline {
-    /// The commission to log Late.
-    pub id: CommissionId,
-    /// The deadline that was missed (named in the Late entry's payload).
-    pub deadline: DateTimeUtc,
-    /// The standing manual flag at scan time — what the Late entry supersedes.
-    pub status: Option<DeadlineStatus>,
 }
 
 #[cfg(test)]

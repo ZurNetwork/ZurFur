@@ -33,6 +33,7 @@ use domain::elements::{
 };
 use reqwest::redirect::Policy;
 use serde_json::json;
+use strum::VariantArray;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 mod common;
@@ -118,7 +119,7 @@ async fn stored_status(backend: &MemBackend, id: uuid::Uuid) -> Option<&'static 
         .expect("find commission")
         .expect("commission exists")
         .direction_status
-        .map(|s| s.as_str())
+        .map(<&'static str>::from)
 }
 
 /// PUT the direction status and return the response.
@@ -340,7 +341,7 @@ async fn direction_status_composes_with_the_deadline_axis() {
         .expect("find")
         .expect("exists");
     assert_eq!(
-        commission.direction_status.map(|s| s.as_str().to_owned()),
+        commission.direction_status.map(|s| s.to_string()),
         Some("waiting_for_approval".to_owned())
     );
     assert!(
@@ -500,14 +501,14 @@ async fn anonymous_callers_are_turned_away() {
 }
 
 // The three wire tokens and only they are accepted end to end — pinning the
-// vocabulary at the boundary (the enum owns it; DirectionStatus::ALL is the
-// closed set).
+// vocabulary at the boundary (the enum owns it; DirectionStatus::VARIANTS is
+// the closed set).
 #[tokio::test]
 async fn the_vocabulary_is_exactly_the_three_direction_values() {
     assert_eq!(
-        DirectionStatus::ALL
+        DirectionStatus::VARIANTS
             .iter()
-            .map(|s| s.as_str())
+            .map(|s| <&'static str>::from(*s))
             .collect::<Vec<_>>(),
         vec![
             "waiting_for_input",

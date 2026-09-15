@@ -79,15 +79,15 @@ impl UserWrites for PgUserWrites<'_> {
         let identity = actor_sql::intern(
             &mut *self.conn,
             candidate_id,
-            ActorKind::User.as_str(),
+            <&'static str>::from(ActorKind::User),
             // Always present: provision is a DID-bearing path.
             Some(did.as_ref()),
-            ActorState::Active.as_str(),
+            <&'static str>::from(ActorState::Active),
             now,
         )
         .await?;
         // Fails here with the real error rather than a bewildering FK failure at step 2.
-        let identity_is_a_user = identity.kind == ActorKind::User.as_str();
+        let identity_is_a_user = identity.kind == <&'static str>::from(ActorKind::User);
         if !identity_is_a_user {
             let conflict = DidBelongsToAnotherActor {
                 existing_kind: identity.kind,

@@ -14,6 +14,8 @@ rmp-serde = { workspace = true }
 async-trait = { workspace = true }
 domain = { path = "../domain/" }
 anyhow = { workspace = true }
+# strum: VARIANTS over the domain vocabularies
+strum = { workspace = true }
 # Mint the audit-row id for a handle change (UUIDv7), app-side like every other key.
 uuid = { workspace = true }
 # Parse a logged PLC operation's JSON text into native `jsonb` for the op-log table.

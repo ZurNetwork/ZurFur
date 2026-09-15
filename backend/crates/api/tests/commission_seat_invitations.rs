@@ -189,7 +189,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .await
         .expect("query")
         .expect("a pending offer was recorded");
-    assert_eq!(found.state.as_str(), "pending");
+    assert_eq!(<&'static str>::from(found.state), "pending");
     assert_eq!(uuid::Uuid::from(found.seat), seat);
 }
 

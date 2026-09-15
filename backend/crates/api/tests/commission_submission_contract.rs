@@ -186,8 +186,8 @@ async fn the_upload_endpoint_never_mutates_any_status() {
     // Every status axis is exactly as it was.
     let after = stored(&backend, id).await;
     assert_eq!(
-        after.lifecycle_step.as_str(),
-        before.lifecycle_step.as_str(),
+        <&'static str>::from(&after.lifecycle_step),
+        <&'static str>::from(&before.lifecycle_step),
         "an upload never moves the Lifecycle"
     );
     assert_eq!(

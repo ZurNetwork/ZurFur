@@ -6,8 +6,6 @@
 //! board, so it lives in `domain::elements::workflow`. What remains is
 //! [`GrantLevel`], the level of a commission-side key to see.
 
-use std::str::FromStr;
-
 /// The level a view grant confers — one of the three raw root modes, explicitly
 /// chosen at grant time with no default. A grant is issued to a **User**, never
 /// an account, and a user's effective view is the max of their own standing and
@@ -15,7 +13,18 @@ use std::str::FromStr;
 ///
 /// Not the [`Visibility`](super::Visibility) aliases: a grant speaks the
 /// underlying mode directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case", parse_err_ty = GrantLevelError, parse_err_fn = unknown_token)]
 pub enum GrantLevel {
     /// The narrowest key: the Presentation-mode projection.
     Presentation,
@@ -25,29 +34,13 @@ pub enum GrantLevel {
     Total,
 }
 
-impl std::fmt::Display for GrantLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Presentation => write!(f, "presentation"),
-            Self::Description => write!(f, "description"),
-            Self::Total => write!(f, "total"),
-        }
-    }
-}
 #[derive(Debug, thiserror::Error)]
 #[error("Grant level parsing error")]
 pub struct GrantLevelError;
-impl FromStr for GrantLevel {
-    type Err = GrantLevelError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "presentation" => Self::Presentation,
-            "description" => Self::Description,
-            "total" => Self::Total,
-            _ => Err(GrantLevelError)?,
-        })
-    }
+/// The typed error for a token outside the vocabulary; strum hands it the original input.
+fn unknown_token(_token: &str) -> GrantLevelError {
+    GrantLevelError
 }
 
 #[cfg(test)]

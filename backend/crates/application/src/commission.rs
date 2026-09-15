@@ -245,7 +245,7 @@ pub async fn sweep_deadlines(
                 ChangelogEntryKind::Late,
                 json!({
                     "deadline": lapse.deadline,
-                    "from": lapse.status.map(|s| s.as_str()),
+                    "from": lapse.status.map(<&'static str>::from),
                 }),
                 now,
             );

@@ -60,8 +60,8 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         sql::create(
             &mut *self.conn,
             uuid::Uuid::from(identity.id),
-            identity.kind.as_str(),
-            identity.state.as_str(),
+            <&'static str>::from(identity.kind),
+            <&'static str>::from(identity.state),
             identity.first_seen,
         )
         .await?;
@@ -80,10 +80,10 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         let row = sql::intern(
             &mut *self.conn,
             candidate,
-            kind.as_str(),
+            <&'static str>::from(kind),
             // Always present: intern is the DID-bearing path.
             Some(did.as_ref()),
-            ActorState::Active.as_str(),
+            <&'static str>::from(ActorState::Active),
             now,
         )
         .await?;

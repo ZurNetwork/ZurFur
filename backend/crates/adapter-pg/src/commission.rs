@@ -163,10 +163,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(commission.id),
             commission.title.as_str(),
             commission.owner_id.as_ref(),
-            commission.lifecycle_step.as_str(),
-            commission.visibility.as_str(),
+            <&'static str>::from(&commission.lifecycle_step),
+            <&'static str>::from(&commission.visibility),
             commission.deadline,
-            commission.maturity.map(|m| m.rating.as_str()),
+            commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
             commission.created_at,
         )
@@ -316,7 +316,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(invitation.seat),
             invitation.invited_user.as_ref(),
             invitation.inviter.as_ref(),
-            invitation.state.as_str(),
+            <&'static str>::from(invitation.state),
             invitation.created_at,
             invitation.updated_at,
         )
@@ -327,7 +327,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(invitation.commission),
             uuid::Uuid::from(invitation.seat),
             invitation.invited_user.as_ref(),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .ok_or_else(|| {
@@ -345,10 +345,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         sql::revoke_seat_invitation(
             &mut *self.conn,
-            InvitationState::Revoked.as_str(),
+            <&'static str>::from(InvitationState::Revoked),
             chrono::Utc::now(),
             uuid::Uuid::from(*id),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?;
         Ok(())
@@ -385,7 +385,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         sql::set_maturity(
             &mut *self.conn,
             uuid::Uuid::from(*id),
-            Some(maturity.rating.as_str()),
+            Some(<&'static str>::from(maturity.rating)),
             Some(maturity.graphic),
         )
         .await?;
@@ -478,7 +478,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         let affected = sql::set_direction_status(
             &mut *self.conn,
             uuid::Uuid::from(*id),
-            status.map(|s| s.as_str()),
+            status.map(<&'static str>::from),
         )
         .await?;
         Ok(affected > 0)
@@ -504,7 +504,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         let affected = sql::set_deadline_status(
             &mut *self.conn,
             uuid::Uuid::from(*id),
-            status.map(|s| s.as_str()),
+            status.map(<&'static str>::from),
         )
         .await?;
         Ok(affected > 0)
@@ -514,11 +514,14 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// before `now`, not already `late`, non-terminal lifecycle
     /// ([`LifecycleStep::is_terminal`]).
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        let terminal: Vec<String> = LifecycleStep::ALL
-            .iter()
-            .filter(|step| step.is_terminal())
-            .map(|step| step.as_str().to_owned())
-            .collect();
+        let terminal: Vec<String> = {
+            use strum::VariantArray;
+            LifecycleStep::VARIANTS
+                .iter()
+                .filter(|step| step.is_terminal())
+                .map(|step| step.to_string())
+                .collect()
+        };
         // Late is never persisted; dedup against the changelog's own last entry
         // since the latest deadline change, so each fresh miss is its own event.
         let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
@@ -561,7 +564,7 @@ fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatI
         seat: ElementId::from(row.seat_id),
         invited_user: UserId::from(Did::from(row.invited_user)),
         inviter: UserId::from(Did::from(row.inviter)),
-        state: InvitationState::try_from(row.state)?,
+        state: row.state.parse::<InvitationState>()?,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -986,7 +989,7 @@ impl CommissionStore for PgCommissionStore {
             uuid::Uuid::from(*commission),
             uuid::Uuid::from(*seat),
             user.as_ref(),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .map(to_seat_invitation)

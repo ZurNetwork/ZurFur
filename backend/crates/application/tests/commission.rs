@@ -76,7 +76,7 @@ async fn stored_deadline_status(
         .expect("find commission")
         .expect("commission exists")
         .deadline_status
-        .map(|s| s.as_str())
+        .map(<&'static str>::from)
 }
 
 /// The commission's changelog entries.

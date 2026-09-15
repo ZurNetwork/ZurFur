@@ -12,6 +12,7 @@ use axum::{
 use chrono::Utc;
 use domain::elements::commission::{CommissionId, DirectionStatus};
 use serde::Deserialize;
+use strum::VariantArray;
 
 use crate::{AppState, extract::CallingUser, problem::Problem};
 
@@ -34,9 +35,9 @@ pub(super) async fn set_direction_status(
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     let status = DirectionStatus::try_from(body.status.as_str()).map_err(|_| {
-        let vocabulary = DirectionStatus::ALL
+        let vocabulary = DirectionStatus::VARIANTS
             .iter()
-            .map(|status| status.as_str())
+            .map(<&'static str>::from)
             .collect::<Vec<_>>()
             .join(", ");
         Problem::invalid_request(format!(

@@ -29,3 +29,5 @@ sha2 = { workspace = true }
 tokio = { workspace = true }
 # The shared PublicRecords conformance suite, run against MemPublicRecords.
 test-support = { path = "../test-support" }
+# strum: VARIANTS over the domain vocabularies
+strum = { workspace = true }

@@ -124,7 +124,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
             uuid::Uuid::from(workflow.id),
             account_id.as_ref(),
             name.as_ref(),
-            workflow.visibility.as_str(),
+            <&'static str>::from(&workflow.visibility),
         )
         .await?;
 
@@ -148,7 +148,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
                 uuid::Uuid::from(column.id),
                 uuid::Uuid::from(workflow.id),
                 column.name.as_ref(),
-                column.visibility.as_str(),
+                <&'static str>::from(&column.visibility),
                 column.position.as_ref(),
             )
             .await?;

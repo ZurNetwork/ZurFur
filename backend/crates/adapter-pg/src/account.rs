@@ -174,7 +174,7 @@ fn to_invitation(row: sql::AccountInvitationsRow) -> anyhow::Result<Invitation> 
         invited_user: UserId::from(Did::from(row.invited_user)),
         role: Role::from_str(&row.role)?,
         inviter: UserId::from(Did::from(row.inviter)),
-        state: InvitationState::try_from(row.state)?,
+        state: row.state.parse::<InvitationState>()?,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -234,11 +234,11 @@ impl PgAccountWrites<'_> {
 
         sql::departure_revoke_invitations(
             &mut *self.conn,
-            InvitationState::Revoked.as_str(),
+            <&'static str>::from(InvitationState::Revoked),
             Utc::now(),
             account.as_ref(),
             user.as_ref(),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?;
 
@@ -308,7 +308,7 @@ impl AccountStore for PgAccountStore {
             &self.pool,
             account.as_ref(),
             invited_user.as_ref(),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .map(to_invitation)
@@ -398,14 +398,14 @@ impl AccountWrites for PgAccountWrites<'_> {
         let interned = actor_sql::intern(
             &mut *self.conn,
             uuid::Uuid::now_v7(),
-            ActorKind::Account.as_str(),
+            <&'static str>::from(ActorKind::Account),
             Some(account.id.as_ref()),
-            ActorState::Active.as_str(),
+            <&'static str>::from(ActorState::Active),
             account.created_at,
         )
         .await?;
         anyhow::ensure!(
-            interned.kind == ActorKind::Account.as_str(),
+            interned.kind == <&'static str>::from(ActorKind::Account),
             "account DID {} is already interned as a different actor kind ({})",
             AsRef::<str>::as_ref(&account.id),
             interned.kind
@@ -433,7 +433,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             owner.account_id.as_ref(),
             owner.user_id.as_ref(),
-            owner.role.as_str(),
+            <&'static str>::from(&owner.role),
         )
         .await?;
 
@@ -495,7 +495,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             member.account_id.as_ref(),
             member.user_id.as_ref(),
-            member.role.as_str(),
+            <&'static str>::from(&member.role),
         )
         .await?;
         Ok(())
@@ -523,9 +523,9 @@ impl AccountWrites for PgAccountWrites<'_> {
             uuid::Uuid::from(invitation.id),
             invitation.account.as_ref(),
             invitation.invited_user.as_ref(),
-            invitation.role.as_str(),
+            <&'static str>::from(&invitation.role),
             invitation.inviter.as_ref(),
-            invitation.state.as_str(),
+            <&'static str>::from(invitation.state),
             invitation.created_at,
             invitation.updated_at,
         )
@@ -535,7 +535,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             invitation.account.as_ref(),
             invitation.invited_user.as_ref(),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .ok_or_else(|| {
@@ -553,10 +553,10 @@ impl AccountWrites for PgAccountWrites<'_> {
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         sql::revoke_invitation(
             &mut *self.conn,
-            InvitationState::Revoked.as_str(),
+            <&'static str>::from(InvitationState::Revoked),
             Utc::now(),
             uuid::Uuid::from(*id),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?;
 
@@ -574,10 +574,10 @@ impl AccountWrites for PgAccountWrites<'_> {
     ) -> anyhow::Result<UserAccount> {
         let accepted = sql::accept_invitation_flip(
             &mut *self.conn,
-            InvitationState::Accepted.as_str(),
+            <&'static str>::from(InvitationState::Accepted),
             Utc::now(),
             uuid::Uuid::from(invitation.id),
-            InvitationState::Pending.as_str(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?;
 
@@ -594,7 +594,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             invitation.account.as_ref(),
             invitation.invited_user.as_ref(),
             Some(invitation.inviter.as_ref()),
-            invitation.role.as_str(),
+            <&'static str>::from(&invitation.role),
             listed_on_profile,
         )
         .await?;
@@ -642,11 +642,11 @@ impl AccountWrites for PgAccountWrites<'_> {
         // Only while old_owner is still Owner; zero rows means a race already moved it.
         let demoted = sql::transfer_demote_owner(
             &mut *self.conn,
-            Role::Admin.as_str(),
+            <&'static str>::from(&Role::Admin),
             account.as_ref(),
             old_owner.as_ref(),
             Some(new_owner.as_ref()),
-            Role::Owner.as_str(),
+            <&'static str>::from(&Role::Owner),
         )
         .await?;
         if demoted != 1 {
@@ -660,7 +660,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         // Only while new_owner is still a member; zero rows means they vanished mid-transfer.
         let promoted = sql::transfer_promote_heir(
             &mut *self.conn,
-            Role::Owner.as_str(),
+            <&'static str>::from(&Role::Owner),
             account.as_ref(),
             new_owner.as_ref(),
         )

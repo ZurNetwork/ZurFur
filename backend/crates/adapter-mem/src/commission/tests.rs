@@ -1290,6 +1290,7 @@ async fn commission_store_answers_participant_and_channel_reads() {
 #[tokio::test]
 async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
     use domain::elements::maturity::MaturityRating;
+    use strum::VariantArray;
 
     let backend = MemBackend::new();
     let database = backend.database();
@@ -1301,7 +1302,7 @@ async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
     let unrated = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(unrated.maturity, None, "born unrated (the invariant)");
 
-    for rating in MaturityRating::ALL {
+    for rating in MaturityRating::VARIANTS {
         for graphic in [true, false] {
             let posture = Maturity {
                 rating: *rating,

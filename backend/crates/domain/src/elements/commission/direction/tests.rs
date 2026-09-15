@@ -1,21 +1,29 @@
-use std::collections::BTreeSet;
+use strum::VariantArray;
 
 use super::*;
 
 // The direction-status tokens round-trip and never collide.
 #[test]
 fn direction_status_tokens_round_trip_and_never_collide() {
-    let mut seen = BTreeSet::new();
-    for status in DirectionStatus::ALL {
-        let token = status.as_str();
-        assert!(seen.insert(token), "duplicate token {token:?}");
-        assert_eq!(
-            DirectionStatus::try_from(token),
-            Ok(*status),
-            "token {token:?} must round-trip back to its value",
-        );
+    let tokens: Vec<&'static str> = DirectionStatus::VARIANTS
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+    assert_eq!(
+        tokens,
+        [
+            "waiting_for_input",
+            "waiting_for_approval",
+            "changes_requested"
+        ]
+    );
+
+    for status in DirectionStatus::VARIANTS {
+        let token = <&'static str>::from(status);
+        assert_eq!(status.to_string(), token);
+        assert_eq!(token.parse::<DirectionStatus>(), Ok(*status));
+        assert_eq!(DirectionStatus::try_from(token), Ok(*status));
     }
-    assert_eq!(DirectionStatus::ALL.len(), 3, "exactly the three values");
 }
 
 // A token outside the vocabulary is refused, not guessed at.

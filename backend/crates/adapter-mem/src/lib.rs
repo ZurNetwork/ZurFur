@@ -799,7 +799,7 @@ impl UserWrites for MemUserWrites {
         // silent reuse of that actor's identity id.
         if identity.kind != ActorKind::User {
             let conflict = DidBelongsToAnotherActor {
-                existing_kind: identity.kind.as_str().to_string(),
+                existing_kind: identity.kind.to_string(),
             };
             return Err(anyhow::Error::new(conflict));
         }
@@ -1226,7 +1226,7 @@ impl AccountWrites for MemAccountWrites {
                     stored.kind == ActorKind::Account,
                     "account DID {} is already interned as a different actor kind ({})",
                     account.id,
-                    stored.kind.as_str()
+                    stored.kind
                 ),
                 None => {
                     identities.insert(

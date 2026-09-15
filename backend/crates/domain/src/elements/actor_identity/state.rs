@@ -2,7 +2,23 @@ use super::UnknownActorState;
 
 /// An actor identity's liveness — a state on the immortal row, never a removal.
 /// Identity is permanent and FK-enforced; liveness is consulted per-read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(
+    serialize_all = "snake_case",
+    parse_err_ty = UnknownActorState,
+    parse_err_fn = unknown_actor_state
+)]
 pub enum ActorState {
     /// The normal case: the actor is live.
     Active,
@@ -12,29 +28,9 @@ pub enum ActorState {
     Tombstoned,
 }
 
-impl ActorState {
-    /// The stored spelling — exactly the values the schema's `CHECK` admits.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ActorState::Active => "active",
-            ActorState::Pulled => "pulled",
-            ActorState::Tombstoned => "tombstoned",
-        }
-    }
-}
-
-impl TryFrom<&str> for ActorState {
-    type Error = UnknownActorState;
-
-    /// Parse the stored spelling back; an error means a corrupted row.
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
-        match raw {
-            "active" => Ok(ActorState::Active),
-            "pulled" => Ok(ActorState::Pulled),
-            "tombstoned" => Ok(ActorState::Tombstoned),
-            other => Err(UnknownActorState(other.to_string())),
-        }
-    }
+/// The typed error for a token outside the vocabulary; strum hands it the original input.
+fn unknown_actor_state(token: &str) -> UnknownActorState {
+    UnknownActorState(token.into())
 }
 
 #[cfg(test)]
