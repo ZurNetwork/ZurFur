@@ -1,53 +1,34 @@
-use std::{ops::Deref, str::FromStr};
+use std::str::FromStr;
 
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use crate::elements::text::{NonEmptyString, NonEmptyStringError};
 
+/// A Character's name: trimmed, never blank.
+#[derive(
+    Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::AsRef, derive_more::FromStr,
+)]
+#[as_ref(str)]
+pub struct CharacterName(NonEmptyString);
+
+/// A Character's free-text description. Empty input means no description;
+/// whitespace-only input is refused like any other blank text.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CharacterName(String);
+pub struct CharacterDescription(Option<NonEmptyString>);
 
-impl FromStr for CharacterName {
-    type Err = StringBuilderViolation;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        StringBuilder::non_empty_from(s).build().map(CharacterName)
+impl CharacterDescription {
+    /// The description text, or `None` when there is none.
+    pub fn as_deref(&self) -> Option<&str> {
+        self.0.as_ref().map(|text| text.as_ref())
     }
 }
-
-impl Deref for CharacterName {
-    type Target = String;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for CharacterName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CharacterDescription(Option<String>);
 
 impl FromStr for CharacterDescription {
-    type Err = StringBuilderViolation;
+    type Err = NonEmptyStringError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() {
-            Ok(CharacterDescription(None))
-        } else {
-            StringBuilder::non_empty_from(s)
-                .build()
-                .map(|desc| CharacterDescription(Some(desc)))
+            return Ok(Self(None));
         }
-    }
-}
-
-impl Deref for CharacterDescription {
-    type Target = Option<String>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        s.parse::<NonEmptyString>().map(|text| Self(Some(text)))
     }
 }
 

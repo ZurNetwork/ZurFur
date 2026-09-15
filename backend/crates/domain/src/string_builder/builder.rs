@@ -12,6 +12,7 @@ impl StringBuilder {
         Self(Ok(raw.into()))
     }
 
+    /// Trim, then refuse empty: the two rules every free-text name shares.
     pub fn non_empty_from(raw: impl Into<String>) -> Self {
         StringBuilder::new(raw).trimmed().non_empty()
     }

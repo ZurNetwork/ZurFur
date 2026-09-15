@@ -134,7 +134,7 @@ async fn column_id(
     added
         .columns
         .into_iter()
-        .find(|column| column.name.as_str() == name)
+        .find(|column| column.name.as_ref() == name)
         .expect("the added column is on the board")
         .id
 }
@@ -203,7 +203,7 @@ async fn column_names(runtime: &Runtime, workflow_id: &WorkflowId) -> Vec<String
         .expect("reads the board")
         .expect("the board is stored")
         .iter()
-        .map(|column| column.name.as_str().to_owned())
+        .map(|column| column.name.as_ref().to_owned())
         .collect()
 }
 

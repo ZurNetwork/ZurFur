@@ -1,15 +1,11 @@
-use std::{ops::Deref, str::FromStr};
+use std::str::FromStr;
 
 use crate::string_builder::{StringBuilder, StringBuilderViolation};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A board's name: trimmed, never blank, at most 196 characters.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::AsRef)]
+#[as_ref(str)]
 pub struct WorkflowName(String);
-impl Deref for WorkflowName {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 impl FromStr for WorkflowName {
     type Err = super::WorkflowNameError;

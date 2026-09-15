@@ -138,6 +138,16 @@
       "node": false
     },
     {
+      "name": "text.rs",
+      "role": "text primitives — NonEmptyString, the trimmed never-blank string free-text names wrap",
+      "node": false
+    },
+    {
+      "name": "text/",
+      "role": "split of text.rs; no information beyond its façade",
+      "node": false
+    },
+    {
       "name": "user.rs",
       "role": "User — a recognized visitor",
       "node": false

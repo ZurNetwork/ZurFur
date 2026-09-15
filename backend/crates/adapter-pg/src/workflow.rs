@@ -123,7 +123,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
             &mut *self.conn,
             uuid::Uuid::from(workflow.id),
             account_id.as_ref(),
-            name,
+            name.as_ref(),
             workflow.visibility.as_str(),
         )
         .await?;
@@ -147,7 +147,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
                 &mut *self.conn,
                 uuid::Uuid::from(column.id),
                 uuid::Uuid::from(workflow.id),
-                &column.name,
+                column.name.as_ref(),
                 column.visibility.as_str(),
                 column.position.as_ref(),
             )
@@ -234,7 +234,12 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// Renames one column; `(workflow_id, name)` is the store-level backstop
     /// for the board-level uniqueness check already made.
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
-        column_sql::rename(&mut *self.conn, uuid::Uuid::from(column.id), &column.name).await?;
+        column_sql::rename(
+            &mut *self.conn,
+            uuid::Uuid::from(column.id),
+            column.name.as_ref(),
+        )
+        .await?;
         Ok(())
     }
 }
