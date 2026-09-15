@@ -95,7 +95,7 @@ async fn an_unknown_commission_answers_false() {
     let mut uow = db.begin().await.expect("begin");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(&CommissionId::new(uuid::Uuid::now_v7()))
+        .commission_has_facts(&CommissionId::from(uuid::Uuid::now_v7()))
         .await
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
@@ -137,7 +137,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM commission_changelog WHERE commission_id = $1",
         )
-        .bind(*id)
+        .bind(uuid::Uuid::from(id))
         .fetch_one(&pool)
         .await
         .expect("count changelog rows")
@@ -173,7 +173,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
 
     let row_count: i64 =
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM commission WHERE id = $1")
-            .bind(*id)
+            .bind(uuid::Uuid::from(id))
             .fetch_one(&pool)
             .await
             .expect("count commission rows");
@@ -287,7 +287,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     );
     assert!(
         !uow.commissions()
-            .set_archived(&CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .set_archived(&CommissionId::from(uuid::Uuid::now_v7()), Some(Utc::now()))
             .await
             .expect("archive an unknown id"),
         "an absent commission matches nothing (existence is the caller's check)",
@@ -421,7 +421,7 @@ async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order()
     );
 
     // Ordering is `ORDER BY id`, and commission ids are UUIDv7 — creation order.
-    let order: Vec<uuid::Uuid> = listed.iter().map(|id| **id).collect();
+    let order: Vec<uuid::Uuid> = listed.iter().map(|id| uuid::Uuid::from(*id)).collect();
     let mut expected = order.clone();
     expected.sort();
     assert_eq!(order, expected, "rows come back ascending by commission id");

@@ -108,7 +108,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's only tab id, introspected off the backend. There is no
@@ -116,7 +116,7 @@ async fn create_commission(
 /// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
     uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
@@ -165,7 +165,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -189,7 +189,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     // Zero Slots is a valid state (AC2).
     assert!(
         backend
-            .slots_of(CommissionId::new(id))
+            .slots_of(CommissionId::from(id))
             .await
             .expect("list slots")
             .is_empty(),
@@ -218,7 +218,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
 
     // The composition half: both slots ride ordinary elements, typed `slot`.
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2);
@@ -254,7 +254,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         Some("full plate, no cape"),
         "notes are trimmed and kept"
     );
-    assert_eq!(noted_slot.commission_id, CommissionId::new(id));
+    assert_eq!(noted_slot.commission_id, CommissionId::from(id));
 
     let bare_slot = backend
         .find_slot(ElementId::from(bare))
@@ -266,7 +266,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
 
     // Zero or more: the commission now counts exactly two (AC2).
     let slots = backend
-        .slots_of(CommissionId::new(id))
+        .slots_of(CommissionId::from(id))
         .await
         .expect("list slots");
     assert_eq!(slots.len(), 2, "the commission holds two declared Slots");
@@ -274,7 +274,7 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
     // Declaring Slots appends NO changelog entry (the taxonomy's seat_declared
     // is seat-specific; no Slot variant exists): only creation is in the stream.
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(
@@ -321,7 +321,7 @@ async fn a_blank_or_missing_title_is_rejected() {
 
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -329,7 +329,7 @@ async fn a_blank_or_missing_title_is_rejected() {
     );
     assert!(
         backend
-            .slots_of(CommissionId::new(id))
+            .slots_of(CommissionId::from(id))
             .await
             .expect("list slots")
             .is_empty()
@@ -403,7 +403,7 @@ async fn an_undeclared_surface_is_rejected_and_takes_the_batch_with_it() {
     common::assert_problem(res, 404, "tab_not_found").await;
 
     let slots = backend
-        .slots_of(CommissionId::new(id))
+        .slots_of(CommissionId::from(id))
         .await
         .expect("list slots");
     assert_eq!(
@@ -471,7 +471,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
 
     assert!(
         backend
-            .slots_of(CommissionId::new(foreign))
+            .slots_of(CommissionId::from(foreign))
             .await
             .expect("list slots")
             .is_empty(),

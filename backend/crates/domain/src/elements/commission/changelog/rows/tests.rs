@@ -4,7 +4,7 @@ use crate::elements::{commission::CommissionId, did::Did, user::UserId};
 // System vs event constructors set the actor arm explicitly.
 #[test]
 fn constructors_set_the_actor_arm() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let actor = UserId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())));
     let now = chrono::Utc::now();
 

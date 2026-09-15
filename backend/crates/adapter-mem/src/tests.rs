@@ -117,7 +117,7 @@ fn live_account(did_s: &str) -> Account {
         .filter(|c| c.is_ascii_alphanumeric())
         .collect();
     Account {
-        id: AccountId::new(did(did_s)),
+        id: AccountId::from(did(did_s)),
         handle: format!("{label}.example.com").parse::<Handle>().unwrap(),
         name: "Test Studio".parse::<AccountName>().unwrap(),
         created_at: now,
@@ -281,7 +281,7 @@ async fn change_handle_repoints_resolution_and_is_counted() {
 
     let account = live_account("did:plc:memchg");
     let (old, account_id) = (account.handle.clone(), account.id.clone());
-    let account_did = (*account_id).clone();
+    let account_did = account_id.did().clone();
     let owner = UserAccount {
         user_id: user_id(),
         account_id: account_id.clone(),
@@ -405,7 +405,7 @@ async fn mem_key_store_round_trips() {
 }
 
 fn account_id() -> AccountId {
-    AccountId::new(mint_did())
+    AccountId::from(mint_did())
 }
 
 // AC3 (store layer) — a freshly issued pending invitation round-trips: it is the
@@ -549,7 +549,7 @@ async fn find_unknown_invitation_returns_none() {
     let backend = MemBackend::new();
     let found = backend
         .account_store()
-        .find_invitation(&InvitationId::new(uuid::Uuid::now_v7()))
+        .find_invitation(&InvitationId::from(uuid::Uuid::now_v7()))
         .await
         .unwrap();
     assert!(found.is_none());

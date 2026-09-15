@@ -113,7 +113,7 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
     backend
         .grant_role(&UserAccount {
             user_id: heir.id.clone(),
-            account_id: domain::elements::account::AccountId::new(Did::from(account_id.clone())),
+            account_id: domain::elements::account::AccountId::from(Did::from(account_id.clone())),
             role: Role::Member,
             alias: None,
         })
@@ -132,7 +132,7 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
     assert_eq!(body["owner"].as_str(), Some("did:plc:heir"));
     assert_eq!(body["previous_owner"].as_str(), Some("did:plc:xferowner"));
 
-    let account = domain::elements::account::AccountId::new(Did::from(account_id));
+    let account = domain::elements::account::AccountId::from(Did::from(account_id));
     // AC: the named member is now the sole Owner; the prior Owner is now Admin.
     assert_eq!(
         backend
@@ -190,7 +190,7 @@ async fn only_the_owner_may_transfer() {
         .expect("seat me as a member");
 
     let res = client
-        .post(format!("{base}/accounts/{}/transfer", *account.id))
+        .post(format!("{base}/accounts/{}/transfer", account.id))
         .json(&json!({ "new_owner": "did:plc:host" }))
         .send()
         .await
@@ -281,7 +281,7 @@ async fn after_transfer_the_former_owner_can_leave() {
     sign_in(&client, &base).await;
 
     let account_id = found_account(&client, &base, "Exit Studio", "exit.zurfur.app").await;
-    let account = domain::elements::account::AccountId::new(Did::from(account_id.clone()));
+    let account = domain::elements::account::AccountId::from(Did::from(account_id.clone()));
 
     let heir = backend
         .provision(&Did::from("did:plc:successor".to_string()))

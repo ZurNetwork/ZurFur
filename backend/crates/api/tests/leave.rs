@@ -152,7 +152,7 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         .expect("seat me as a member");
 
     let res = client
-        .delete(format!("{base}/accounts/{}/members/me", *account.id))
+        .delete(format!("{base}/accounts/{}/members/me", account.id))
         .send()
         .await
         .expect("DELETE members/me");

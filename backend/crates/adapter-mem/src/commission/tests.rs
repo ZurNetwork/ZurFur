@@ -178,7 +178,7 @@ async fn changelog_appends_commit_and_roll_back_with_the_unit() {
     assert_eq!(entries[1].note.as_deref(), Some("traveling next week"));
     assert!(
         backend
-            .changelog_entries(CommissionId::new(uuid::Uuid::now_v7()))
+            .changelog_entries(CommissionId::from(uuid::Uuid::now_v7()))
             .await
             .unwrap()
             .is_empty(),
@@ -281,14 +281,14 @@ async fn deleting_an_absent_commission_is_a_no_op() {
 
     let mut uow = database.begin().await.unwrap();
     uow.commissions()
-        .delete(&CommissionId::new(uuid::Uuid::now_v7()))
+        .delete(&CommissionId::from(uuid::Uuid::now_v7()))
         .await
         .unwrap();
     uow.commit().await.unwrap();
 }
 
 fn account_id() -> AccountId {
-    AccountId::new(mint_did())
+    AccountId::from(mint_did())
 }
 
 /// A board owned by `account`, with one column on it, committed.
@@ -300,7 +300,7 @@ async fn board_with_a_column(backend: &MemBackend, account: &AccountId) -> (Work
     let mut workflow = uow.workflows().create(&name, account).await.unwrap();
     let column_name = "Open".parse::<ColumnName>().expect("a valid column name");
     let column = workflow.new_column(column_name, workflow.visibility.clone());
-    let column_id = column.id.clone();
+    let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows().set_indexes(&workflow).await.unwrap();
     uow.commit().await.unwrap();
@@ -405,7 +405,7 @@ async fn placement_is_a_card_stages_lifts_nothing_and_rolls_back() {
             .await
             .unwrap()
             .map(|found| found.id),
-        Some(column_id.clone()),
+        Some(column_id),
         "the board that positioned it now holds the card",
     );
     assert_eq!(
@@ -928,7 +928,7 @@ async fn load_composition_answers_none_for_an_unknown_commission() {
     assert!(
         backend
             .commission_store()
-            .load_composition(&CommissionId::new(uuid::Uuid::now_v7()))
+            .load_composition(&CommissionId::from(uuid::Uuid::now_v7()))
             .await
             .unwrap()
             .is_none()
@@ -1019,7 +1019,7 @@ async fn direction_status_sets_replaces_and_clears_through_the_unit() {
         .unwrap();
     uow.commissions()
         .set_direction_status(
-            &CommissionId::new(uuid::Uuid::now_v7()),
+            &CommissionId::from(uuid::Uuid::now_v7()),
             Some(DirectionStatus::WaitingForApproval),
         )
         .await
@@ -1079,7 +1079,7 @@ async fn deadline_and_status_set_and_clear_through_the_unit() {
         commissions.set_deadline(&id, None).await.unwrap();
         commissions.set_deadline_status(&id, None).await.unwrap();
         commissions
-            .set_deadline(&CommissionId::new(uuid::Uuid::now_v7()), Some(deadline))
+            .set_deadline(&CommissionId::from(uuid::Uuid::now_v7()), Some(deadline))
             .await
             .unwrap();
     }
@@ -1221,7 +1221,7 @@ async fn commission_store_answers_participant_and_channel_reads() {
     assert!(!store.is_participant(&id, &user_id()).await.unwrap());
     assert!(
         !store
-            .is_participant(&CommissionId::new(uuid::Uuid::now_v7()), &owner)
+            .is_participant(&CommissionId::from(uuid::Uuid::now_v7()), &owner)
             .await
             .unwrap()
     );
@@ -1357,7 +1357,7 @@ async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
     let mut uow = database.begin().await.unwrap();
     uow.commissions()
         .set_maturity(
-            &CommissionId::new(uuid::Uuid::now_v7()),
+            &CommissionId::from(uuid::Uuid::now_v7()),
             Maturity {
                 rating: MaturityRating::Adult,
                 graphic: false,
@@ -1789,7 +1789,7 @@ async fn declare_seat_lands_an_element_and_its_satellite_together() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(uuid::Uuid::now_v7()))
+            .seats(&CommissionId::from(uuid::Uuid::now_v7()))
             .await
             .unwrap()
             .is_empty()

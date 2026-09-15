@@ -68,8 +68,8 @@ impl Commissions<'_> {
             ChangelogEntryKind::MarkupAdded,
             actor_id.clone(),
             json!({
-                "markup_id": *id,
-                "file_id": *file_key,
+                "markup_id": *id.as_ref(),
+                "file_id": *file_key.as_ref(),
                 "markup": markup,
             }),
             now,

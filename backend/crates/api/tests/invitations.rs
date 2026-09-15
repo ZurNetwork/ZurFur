@@ -135,7 +135,7 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
         .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let pending = backend
         .find_pending_invitation(&account, &invitee.id)
         .await
@@ -171,7 +171,7 @@ async fn inviting_at_owner_is_refused() {
         .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -225,7 +225,7 @@ async fn re_inviting_a_pending_user_is_idempotent() {
         .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let pending = backend
         .find_pending_invitation(&account, &invitee.id)
         .await
@@ -276,7 +276,7 @@ async fn issuer_revokes_a_pending_invitation() {
         .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -323,7 +323,7 @@ async fn inviting_an_existing_member_is_a_conflict() {
         .provision(&Did::from(invitee_did.to_string()))
         .await
         .expect("provision the invitee");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -402,7 +402,7 @@ async fn invitee_declines_a_pending_invitation() {
     let res = client
         .post(format!(
             "{base}/accounts/{}/invitations/decline",
-            *account_id
+            account_id
         ))
         .send()
         .await
@@ -459,7 +459,7 @@ async fn declining_with_no_pending_invitation_is_not_found() {
     let res = client
         .post(format!(
             "{base}/accounts/{}/invitations/decline",
-            *account.id
+            account.id
         ))
         .send()
         .await
@@ -476,10 +476,7 @@ async fn invitee_accepts_and_becomes_a_member() {
     let client = client();
     sign_in(&client, &base).await;
     let res = client
-        .post(format!(
-            "{base}/accounts/{}/invitations/accept",
-            *account_id
-        ))
+        .post(format!("{base}/accounts/{}/invitations/accept", account_id))
         .json(&serde_json::json!({ "listed_on_profile": true }))
         .send()
         .await
@@ -510,7 +507,7 @@ async fn inviting_an_accounts_own_did_is_a_did_conflict() {
     let account_id = found_account(&client, &base, "Conflict Studio").await;
 
     let account = backend
-        .find(&AccountId::new(Did::from(account_id.clone())))
+        .find(&AccountId::from(Did::from(account_id.clone())))
         .await
         .expect("find")
         .expect("the founded account exists");
@@ -571,7 +568,7 @@ async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() 
         "did:plc:e2eprobe-stranger".to_string(), // neither
     ] {
         let res = client
-            .delete(format!("{base}/accounts/{}/invitations", *account_id))
+            .delete(format!("{base}/accounts/{}/invitations", account_id))
             .json(&serde_json::json!({ "user": target }))
             .send()
             .await
@@ -620,7 +617,7 @@ async fn a_soft_deleted_account_takes_no_new_invitations() {
     // only the account row is stamped — which is exactly why standing alone was
     // never a sufficient gate.
     let handle: Handle = "acme.zurfur.app".parse().expect("valid handle");
-    backend.seed_soft_deleted_account(&account_id, &handle);
+    backend.seed_soft_deleted_account(account_id.did(), &handle);
     assert!(
         backend.find(&account_id).await.expect("find").is_none(),
         "the account reads back as gone",
@@ -631,7 +628,7 @@ async fn a_soft_deleted_account_takes_no_new_invitations() {
 
     let newcomer_did = Did::from("did:plc:e2etombstone-newcomer".to_string());
     let res = client
-        .post(format!("{base}/accounts/{}/invitations", *account_id))
+        .post(format!("{base}/accounts/{}/invitations", account_id))
         .json(&serde_json::json!({ "user": newcomer_did.as_ref(), "role": "member" }))
         .send()
         .await
@@ -667,15 +664,12 @@ async fn a_soft_deleted_accounts_invitation_cannot_be_accepted() {
     let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let handle: Handle = "acme.zurfur.app".parse().expect("valid handle");
-    backend.seed_soft_deleted_account(&account_id, &handle);
+    backend.seed_soft_deleted_account(account_id.did(), &handle);
 
     let client = client();
     sign_in(&client, &base).await;
     let res = client
-        .post(format!(
-            "{base}/accounts/{}/invitations/accept",
-            *account_id
-        ))
+        .post(format!("{base}/accounts/{}/invitations/accept", account_id))
         .json(&serde_json::json!({ "listed_on_profile": true }))
         .send()
         .await

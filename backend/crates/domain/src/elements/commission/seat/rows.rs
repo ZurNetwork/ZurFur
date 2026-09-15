@@ -52,7 +52,7 @@ impl NewSeat {
     ///     user::UserId,
     /// };
     ///
-    /// let commission = CommissionId::new(uuid::Uuid::now_v7());
+    /// let commission = CommissionId::from(uuid::Uuid::now_v7());
     /// let address = SurfaceAddress::new(
     ///     TabId::from(uuid::Uuid::now_v7()),
     ///     "content".parse::<SurfaceName>().unwrap(),

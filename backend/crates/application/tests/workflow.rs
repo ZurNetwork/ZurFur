@@ -110,7 +110,7 @@ async fn add_column(
 ) -> Result<workflow::column::add::Output, AccountError> {
     let command = workflow::column::add::Command {
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
         column_name: name.parse().expect("a valid column name"),
         position,
     };
@@ -147,7 +147,7 @@ async fn delete_board(
 ) -> Result<workflow::delete::Output, AccountError> {
     let command = workflow::delete::Command {
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
     };
     let app = runtime.app();
     let accounts = app.accounts();
@@ -163,9 +163,9 @@ async fn rename_column(
     name: &str,
 ) -> Result<workflow::column::rename::Output, AccountError> {
     let command = workflow::column::rename::Command {
-        column_id: column_id.clone(),
+        column_id: *column_id,
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
         name: name.parse().expect("a valid column name"),
     };
     let app = runtime.app();
@@ -184,8 +184,8 @@ async fn reposition_column(
 ) -> Result<workflow::column::reposition::Output, AccountError> {
     let command = workflow::column::reposition::Command {
         actor_id: actor.clone(),
-        column_id: column_id.clone(),
-        workflow_id: workflow_id.clone(),
+        column_id: *column_id,
+        workflow_id: *workflow_id,
         to_index,
     };
     let app = runtime.app();
@@ -225,7 +225,7 @@ async fn remove_column(
     column_id: &ColumnId,
 ) -> Result<workflow::column::remove::Output, AccountError> {
     let command = workflow::column::remove::Command {
-        column_id: column_id.clone(),
+        column_id: *column_id,
         actor_id: actor.clone(),
     };
     let app = runtime.app();

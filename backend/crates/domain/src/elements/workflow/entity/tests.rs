@@ -3,7 +3,7 @@ use super::*;
 use crate::elements::did::Did;
 
 fn account() -> AccountId {
-    AccountId::new(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
+    AccountId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))
 }
 
 fn empty_workflow() -> Workflow {
@@ -39,24 +39,20 @@ fn empty_column() -> Column {
 }
 
 fn commission() -> CommissionId {
-    CommissionId::new(uuid::Uuid::now_v7())
+    CommissionId::from(uuid::Uuid::now_v7())
 }
 
 #[test]
 fn insert_gives_each_column_its_own_id_and_settings() {
     let mut workflow = empty_workflow();
-    let workflow_id = workflow.id.clone();
+    let workflow_id = workflow.id;
 
     let first = workflow.push(column(&workflow, "Open")).expect("room");
     assert_eq!(first.workflow_id, workflow_id);
     assert_eq!(first.visibility, Visibility::Private);
-    let first_id = first.id.clone();
+    let first_id = first.id;
 
-    let second_id = workflow
-        .push(column(&workflow, "Done"))
-        .expect("room")
-        .id
-        .clone();
+    let second_id = workflow.push(column(&workflow, "Done")).expect("room").id;
 
     assert_ne!(second_id, first_id);
 }
@@ -66,10 +62,10 @@ fn insert_gives_each_column_its_own_id_and_settings() {
 #[test]
 fn insert_keeps_the_columns_id_and_own_visibility() {
     let mut workflow = empty_workflow();
-    let workflow_id = workflow.id.clone();
+    let workflow_id = workflow.id;
     let name = "Showcase".parse().expect("a valid name");
     let column = workflow.new_column(name, Visibility::Public);
-    let id = column.id.clone();
+    let id = column.id;
 
     let placed = workflow.push(column).expect("room");
 
@@ -123,7 +119,7 @@ fn loaded_accepts_sorted_rows_and_refuses_out_of_order_keys() {
     let name = || built.name.clone();
 
     let loaded = Workflow::loaded(
-        built.id.clone(),
+        built.id,
         name(),
         built.account_id.clone(),
         Visibility::Private,
@@ -135,7 +131,7 @@ fn loaded_accepts_sorted_rows_and_refuses_out_of_order_keys() {
     let mut shuffled = rows;
     shuffled.swap(0, 2);
     let refused = Workflow::loaded(
-        built.id.clone(),
+        built.id,
         name(),
         built.account_id.clone(),
         Visibility::Private,
@@ -154,7 +150,7 @@ fn loaded_refuses_a_duplicate_column_name_and_a_full_board() {
     twice.push(duplicate);
 
     let refused = Workflow::loaded(
-        built.id.clone(),
+        built.id,
         built.name.clone(),
         built.account_id.clone(),
         Visibility::Private,
@@ -172,7 +168,7 @@ fn loaded_refuses_a_duplicate_column_name_and_a_full_board() {
         rows.push(column);
     }
     let refused = Workflow::loaded(
-        built.id.clone(),
+        built.id,
         built.name.clone(),
         built.account_id.clone(),
         Visibility::Private,
@@ -187,8 +183,8 @@ fn column_loaded_refuses_a_card_listed_twice() {
     let a = commission();
 
     let refused = Column::loaded(
-        template.id.clone(),
-        template.workflow_id.clone(),
+        template.id,
+        template.workflow_id,
         template.name.clone(),
         Visibility::Private,
         template.position.clone(),

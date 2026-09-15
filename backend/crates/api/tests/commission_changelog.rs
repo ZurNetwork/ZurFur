@@ -101,7 +101,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// Reads the changelog as a JSON array (asserting the `200`).
@@ -128,7 +128,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -321,7 +321,7 @@ async fn a_non_participant_cannot_write_into_a_hidden_commission() {
 
     assert!(
         backend
-            .changelog_entries(domain::elements::commission::CommissionId::new(foreign))
+            .changelog_entries(domain::elements::commission::CommissionId::from(foreign))
             .await
             .expect("inspect entries")
             .is_empty(),
@@ -542,7 +542,7 @@ async fn create_and_identify(
             .await
             .expect("list commissions")
             .iter()
-            .map(|commission| *commission.id)
+            .map(|commission| uuid::Uuid::from(commission.id))
             .collect()
     };
 

@@ -64,7 +64,10 @@ impl<'a> Accounts<'a> {
 
         ensure_handle_claimable(ports, &handle, handle_domain, Some(&account_id), now).await?;
 
-        ports.did_minter.update_handle(&account.id, &handle).await?;
+        ports
+            .did_minter
+            .update_handle(account.id.did(), &handle)
+            .await?;
 
         let mut uow = ports.database.begin().await?;
 

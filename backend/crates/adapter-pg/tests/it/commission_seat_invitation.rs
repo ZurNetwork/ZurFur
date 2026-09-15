@@ -319,7 +319,7 @@ async fn revoke_flips_state_and_clears_the_pending_offer() {
     );
     // The row itself survives as revoked history (the partial index only spans pending).
     let state: String = sqlx::query_scalar("SELECT state FROM commission_invitation WHERE id = $1")
-        .bind(*invitation_id)
+        .bind(uuid::Uuid::from(invitation_id))
         .fetch_one(&pool)
         .await
         .expect("row still present");

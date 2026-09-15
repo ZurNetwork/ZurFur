@@ -73,7 +73,7 @@ impl LexOrdering for Workflow {
         let after = self.columns.get(index).map(|sibling| &sibling.position);
         let position = Position::between(before, after);
 
-        element.workflow_id = self.id.clone();
+        element.workflow_id = self.id;
         element.position = position;
         self.columns.insert(index, element);
         Ok(&self.columns[index])

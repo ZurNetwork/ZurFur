@@ -22,7 +22,7 @@ impl Fact for StubFact {
 /// obligation is naming the commission the fact anchors to.
 #[test]
 fn a_fact_bearing_type_reports_its_commission_anchor() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let fact = StubFact {
         anchored_to: commission,
     };
@@ -34,7 +34,7 @@ fn a_fact_bearing_type_reports_its_commission_anchor() {
 /// adding a non-dispatchable method to [`Fact`] breaks this test's build.
 #[test]
 fn fact_is_object_safe() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let fact = StubFact {
         anchored_to: commission,
     };

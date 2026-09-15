@@ -67,7 +67,7 @@ fn build_account(fields: AccountFields) -> anyhow::Result<Account> {
         deleted_at,
     } = fields;
     Ok(Account {
-        id: AccountId::new(Did::from(id)),
+        id: AccountId::from(Did::from(id)),
         handle: handle.parse::<Handle>()?,
         name: name.parse::<AccountName>()?,
         created_at,
@@ -169,8 +169,8 @@ where
 /// stored `role`/`state` discriminants — an `Err` on row tampering, never a panic.
 fn to_invitation(row: sql::AccountInvitationsRow) -> anyhow::Result<Invitation> {
     Ok(Invitation {
-        id: InvitationId::new(row.id),
-        account: AccountId::new(Did::from(row.account_id)),
+        id: InvitationId::from(row.id),
+        account: AccountId::from(Did::from(row.account_id)),
         invited_user: UserId::from(Did::from(row.invited_user)),
         role: Role::from_str(&row.role)?,
         inviter: UserId::from(Did::from(row.inviter)),
@@ -318,7 +318,7 @@ impl AccountStore for PgAccountStore {
     /// The invitation for `id` in whatever state it holds, or `None`.
     /// Re-validates stored discriminants; an `Err` on tampering, never a panic.
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
-        sql::find_invitation(&self.pool, **id)
+        sql::find_invitation(&self.pool, uuid::Uuid::from(*id))
             .await?
             .map(to_invitation)
             .transpose()
@@ -407,7 +407,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         anyhow::ensure!(
             interned.kind == ActorKind::Account.as_str(),
             "account DID {} is already interned as a different actor kind ({})",
-            AsRef::<str>::as_ref(&*account.id),
+            AsRef::<str>::as_ref(&account.id),
             interned.kind
         );
 
@@ -471,7 +471,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             anyhow::bail!(
                 "change_handle: account {} is not a live account still holding the expected \
                  handle; nothing changed (concurrent change or removal)",
-                AsRef::<str>::as_ref(&**account)
+                AsRef::<str>::as_ref(account)
             );
         }
 
@@ -520,7 +520,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         sql::create_invitation(
             &mut *self.conn,
-            *invitation.id,
+            uuid::Uuid::from(invitation.id),
             invitation.account.as_ref(),
             invitation.invited_user.as_ref(),
             invitation.role.as_str(),
@@ -541,7 +541,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "invitation for account {} user {} is not pending immediately after issuing it",
-                AsRef::<str>::as_ref(&*invitation.account),
+                AsRef::<str>::as_ref(&invitation.account),
                 invitation.invited_user.as_ref()
             )
         })?;
@@ -555,7 +555,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             InvitationState::Revoked.as_str(),
             Utc::now(),
-            **id,
+            uuid::Uuid::from(*id),
             InvitationState::Pending.as_str(),
         )
         .await?;
@@ -576,7 +576,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             &mut *self.conn,
             InvitationState::Accepted.as_str(),
             Utc::now(),
-            *invitation.id,
+            uuid::Uuid::from(invitation.id),
             InvitationState::Pending.as_str(),
         )
         .await?;
@@ -585,7 +585,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         if accepted == 0 {
             return Err(anyhow::anyhow!(
                 "invitation {} is no longer pending; no membership minted",
-                *invitation.id
+                invitation.id
             ));
         }
 
@@ -613,7 +613,7 @@ impl AccountWrites for PgAccountWrites<'_> {
                     anyhow::anyhow!(
                         "account_members row for account {} user {} vanished between the \
                          conflicting seat and the fallback read",
-                        AsRef::<str>::as_ref(&*invitation.account),
+                        AsRef::<str>::as_ref(&invitation.account),
                         invitation.invited_user.as_ref()
                     )
                 })?;
@@ -653,7 +653,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             anyhow::bail!(
                 "transfer_ownership: user {} is not the current Owner of account {}; nothing transferred",
                 old_owner.as_ref(),
-                AsRef::<str>::as_ref(&**account)
+                AsRef::<str>::as_ref(account)
             );
         }
 
@@ -669,7 +669,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             anyhow::bail!(
                 "transfer_ownership: user {} is not a member of account {}; nothing transferred",
                 new_owner.as_ref(),
-                AsRef::<str>::as_ref(&**account)
+                AsRef::<str>::as_ref(account)
             );
         }
 

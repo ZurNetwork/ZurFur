@@ -112,7 +112,7 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
         .provision(&Did::from(did.to_string()))
         .await
         .expect("provision is idempotent — returns the signed-in User");
-    let account = AccountId::new(Did::from(account_id.to_string()));
+    let account = AccountId::from(Did::from(account_id.to_string()));
     let role = backend.role_of(&user.id, &account).await.expect("role_of");
     assert_eq!(
         role,
@@ -128,8 +128,8 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
         .expect("find")
         .expect("account is stored");
     assert_eq!(
-        *found.id,
-        Did::from(account_did.to_string()),
+        found.id.did(),
+        &Did::from(account_did.to_string()),
         "the founded account is stored under its minted did"
     );
     assert_eq!(
@@ -228,7 +228,7 @@ async fn owner_deletes_their_empty_account() {
     );
 
     // Empty → hard-deleted → gone.
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend.find(&account).await.expect("find").is_none(),
         "the deleted account is gone"
@@ -348,7 +348,7 @@ async fn a_non_owner_member_cannot_delete() {
         .expect("seat me as a non-Owner Admin");
 
     let res = client
-        .delete(format!("{base}/accounts/{}", *account.id))
+        .delete(format!("{base}/accounts/{}", account.id))
         .send()
         .await
         .expect("DELETE /accounts/{id}");
@@ -393,7 +393,7 @@ async fn owner_grants_a_role_and_seats_the_member() {
         .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision the grantee");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -429,7 +429,7 @@ async fn granting_owner_is_refused() {
         .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -461,7 +461,7 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
         .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -536,7 +536,7 @@ async fn anonymous_visitor_cannot_found_an_account() {
         "an unrecognized visitor cannot found an account"
     );
     // Nothing was minted or persisted as a side effect of the rejected request.
-    let never_minted = AccountId::new(Did::from(format!("did:plc:{}", Uuid::now_v7())));
+    let never_minted = AccountId::from(Did::from(format!("did:plc:{}", Uuid::now_v7())));
     let found = backend.find(&never_minted).await.expect("find");
     assert!(found.is_none());
 }
@@ -579,7 +579,7 @@ async fn owner_revokes_a_member_and_unseats_them() {
         "the response echoes the revoked member"
     );
 
-    let account = AccountId::new(Did::from(account_id.clone()));
+    let account = AccountId::from(Did::from(account_id.clone()));
     let member = backend
         .provision(&Did::from(member_did.to_string()))
         .await
@@ -631,7 +631,7 @@ async fn the_owner_cannot_be_revoked() {
         .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::from(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -968,7 +968,7 @@ async fn admin_cannot_demote_a_peer_admin() {
 
     // The actor tries to DEMOTE the peer Admin to Member — must be refused (403).
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": peer_did, "role": "member" }))
         .send()
         .await
@@ -998,7 +998,7 @@ async fn admin_can_grant_to_a_non_member() {
 
     let newcomer_did = "did:plc:e2enewcomer";
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": newcomer_did, "role": "member" }))
         .send()
         .await
@@ -1046,7 +1046,7 @@ async fn admin_can_re_role_a_member_below_them() {
         .expect("seat the member");
 
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": member_did, "role": "manager" }))
         .send()
         .await
@@ -1076,7 +1076,7 @@ async fn owner_can_re_role_an_admin() {
     sign_in(&client, &base).await;
     // The signed-in caller founds the account, so they are its Owner.
     let account_id = found_account(&client, &base, "Owned Studio").await;
-    let account = AccountId::new(Did::from(account_id.clone()));
+    let account = AccountId::from(Did::from(account_id.clone()));
 
     // Seat an Admin under the Owner.
     let admin_did = "did:plc:e2eadmin-grantee";

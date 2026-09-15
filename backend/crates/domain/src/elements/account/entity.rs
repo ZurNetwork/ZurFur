@@ -55,7 +55,7 @@ impl Account {
         now: DateTimeUtc,
     ) -> (Account, UserAccount) {
         let new_account = Account {
-            id: AccountId::new(did),
+            id: AccountId::from(did),
             handle,
             name,
             created_at: now,

@@ -94,7 +94,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's changelog entries (introspected off the backend).
@@ -103,7 +103,7 @@ async fn entries(
     id: uuid::Uuid,
 ) -> Vec<domain::elements::commission::ChangelogEntry> {
     backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("inspect entries")
 }
@@ -111,7 +111,7 @@ async fn entries(
 /// The persisted commission, freshly read.
 async fn stored(backend: &MemBackend, id: uuid::Uuid) -> domain::elements::commission::Commission {
     backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")

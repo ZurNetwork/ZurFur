@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr};
 
-use crate::{elements::id::IdError, string_builder::StringBuilder};
+use crate::string_builder::{StringBuilder, StringBuilderViolation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowName(String);
@@ -12,17 +12,27 @@ impl Deref for WorkflowName {
 }
 
 impl FromStr for WorkflowName {
-    type Err = IdError;
+    type Err = super::WorkflowNameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let result = StringBuilder::new(s)
+        StringBuilder::new(s)
             .trimmed()
             .non_empty()
             .max_chars(196)
             .build()
-            .map_err(|_| IdError::ParsingError)?;
-
-        Ok(Self(result))
+            .map(Self)
+            .map_err(|violation| match violation {
+                StringBuilderViolation::Empty => super::WorkflowNameError::Empty,
+                StringBuilderViolation::TooLong { len, .. } => super::WorkflowNameError::TooLong(len),
+                StringBuilderViolation::ControlCharacter => {
+                    // Unreachable: this chain never calls no_control.
+                    debug_assert!(
+                        false,
+                        "WorkflowName's FromStr chain never calls no_control; ControlCharacter is unreachable"
+                    );
+                    super::WorkflowNameError::Empty
+                }
+            })
     }
 }
 

@@ -108,7 +108,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's only tab id, introspected off the backend. There is no
@@ -116,7 +116,7 @@ async fn create_commission(
 /// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
     uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
@@ -159,7 +159,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -205,7 +205,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 
     let seats = backend
         .commission_store()
-        .seats(&CommissionId::new(id))
+        .seats(&CommissionId::from(id))
         .await
         .expect("seats");
     assert_eq!(seats.len(), 2, "a commission holds several Seats (AC1)");
@@ -235,7 +235,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 
     // The seat's element is in the composition, at the declared address.
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2, "seats ride ordinary elements");
@@ -248,7 +248,7 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 
     // The declarations are changelog-recorded: creation + two seat_declared.
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(entries.len(), 3);
@@ -291,7 +291,7 @@ async fn an_anonymous_caller_cannot_declare_a_seat() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty()
@@ -338,7 +338,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(foreign))
+            .seats(&CommissionId::from(foreign))
             .await
             .expect("seats")
             .is_empty(),
@@ -390,7 +390,7 @@ async fn address_gates_hold_for_seats() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty(),
@@ -431,14 +431,14 @@ async fn malformed_and_invalid_bodies_are_rejected() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty(),
         "no refused declaration landed"
     );
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(entries.len(), 1, "no refused declaration was recorded");

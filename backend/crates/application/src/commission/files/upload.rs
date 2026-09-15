@@ -72,7 +72,7 @@ impl Files<'_> {
             if let Err(err) = ports.files.delete(key).await {
                 tracing::warn!(
                     error = ?err,
-                    file_id = %*key,
+                    file_id = %key,
                     "failed to delete an over-cap upload's orphaned blob",
                 );
             }
@@ -82,7 +82,7 @@ impl Files<'_> {
             if let Err(err) = ports.files.delete(key).await {
                 tracing::warn!(
                     error = ?err,
-                    file_id = %*key,
+                    file_id = %key,
                     "failed to delete an empty upload's orphaned blob",
                 );
             }
@@ -94,7 +94,7 @@ impl Files<'_> {
             ChangelogEntryKind::FileAdded,
             actor_id.clone(),
             json!({
-                "file_id": *key,
+                "file_id": *key.as_ref(),
                 "filename": filename.as_str(),
                 "content_type": content_type,
                 "byte_size": written,

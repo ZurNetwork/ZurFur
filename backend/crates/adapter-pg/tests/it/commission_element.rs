@@ -188,7 +188,7 @@ async fn group_positions(
          WHERE commission_id = $1 AND tab_id = $2 AND surface = $3 AND band = $4
          ORDER BY position",
     )
-    .bind(*commission)
+    .bind(uuid::Uuid::from(commission))
     .bind(uuid::Uuid::from(address.tab))
     .bind(address.surface.as_ref())
     .bind(Band::default().as_ref())
@@ -328,7 +328,7 @@ async fn a_cross_commission_tab_cite_is_unrepresentable_at_the_database() {
          VALUES ($1, $2, $3, $4, 'note', 'total', 'body', 0, $5, now(), '{}'::jsonb)",
     )
     .bind(uuid::Uuid::now_v7())
-    .bind(*mine.id)
+    .bind(uuid::Uuid::from(mine.id))
     .bind(uuid::Uuid::from(their_address.tab))
     .bind(their_address.surface.as_ref())
     .bind(owner.id.as_ref())
@@ -473,7 +473,7 @@ async fn add_element_refuses_a_real_surface_under_the_wrong_tab() {
     let other_tab = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO commission_tab (id, commission_id, tab) VALUES ($1, $2, 'other')")
         .bind(other_tab)
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await
         .expect("plant a second tab row");
@@ -560,7 +560,7 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
         "INSERT INTO commission_seat (id, commission_id, kind) VALUES ($1, $2, 'Creator')",
     )
     .bind(uuid::Uuid::from(element_id))
-    .bind(*theirs.id)
+    .bind(uuid::Uuid::from(theirs.id))
     .execute(&pool)
     .await;
     assert_satellite_desync_refused(seat, "commission_seat");
@@ -570,7 +570,7 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
          VALUES ($1, $2, 'Smuggled')",
     )
     .bind(uuid::Uuid::from(element_id))
-    .bind(*theirs.id)
+    .bind(uuid::Uuid::from(theirs.id))
     .execute(&pool)
     .await;
     assert_satellite_desync_refused(slot, "commission_slot");
@@ -639,7 +639,7 @@ async fn positions_are_unique_within_the_group_and_renumber_on_removal() {
          VALUES ($1, $2, $3, $4, 'note', 'total', 'body', 0, $5, now(), '{}'::jsonb)",
     )
     .bind(uuid::Uuid::now_v7())
-    .bind(*commission.id)
+    .bind(uuid::Uuid::from(commission.id))
     .bind(uuid::Uuid::from(address.tab))
     .bind(address.surface.as_ref())
     .bind(owner.id.as_ref())
@@ -788,7 +788,7 @@ async fn load_composition_distinguishes_absent_from_empty() {
     let store = PgCommissionStore::new(pool.clone());
     assert!(
         store
-            .load_composition(&CommissionId::new(uuid::Uuid::now_v7()))
+            .load_composition(&CommissionId::from(uuid::Uuid::now_v7()))
             .await
             .expect("load")
             .is_none(),
@@ -878,7 +878,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
             .await
             .expect("seed pre-composition participant");
         }
-        seeded.push((CommissionId::new(id), visibility));
+        seeded.push((CommissionId::from(id), visibility));
     }
 
     // The world catches up: the remaining migrations (including the backfill) run.
@@ -916,7 +916,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
         let members: Vec<String> = sqlx::query_scalar(
             "SELECT user_id FROM commission_participant WHERE commission_id = $1",
         )
-        .bind(*id)
+        .bind(uuid::Uuid::from(id))
         .fetch_all(&pool)
         .await
         .expect("read the surviving membership");

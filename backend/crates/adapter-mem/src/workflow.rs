@@ -44,7 +44,7 @@ impl StoredColumn {
     fn rebuild(&self, id: ColumnId) -> anyhow::Result<Column> {
         Column::loaded(
             id,
-            self.workflow_id.clone(),
+            self.workflow_id,
             self.name.clone(),
             self.visibility.clone(),
             self.position.clone(),
@@ -64,7 +64,7 @@ fn columns_of(backend: &MemBackend, workflow_id: &WorkflowId) -> anyhow::Result<
     let mut found = columns
         .iter()
         .filter(|(_, stored): &(&ColumnId, &StoredColumn)| stored.workflow_id == *workflow_id)
-        .map(|(id, stored): (&ColumnId, &StoredColumn)| stored.rebuild(id.clone()))
+        .map(|(id, stored): (&ColumnId, &StoredColumn)| stored.rebuild(*id))
         .collect::<anyhow::Result<Vec<Column>>>()?;
 
     found.sort_by(|a, b| a.position.cmp(&b.position));
@@ -86,7 +86,7 @@ fn workflow_of(backend: &MemBackend, id: &WorkflowId) -> anyhow::Result<Option<W
 
     let columns = columns_of(backend, id)?;
     let workflow = Workflow::loaded(
-        id.clone(),
+        *id,
         stored.name,
         stored.account_id,
         stored.visibility,
@@ -121,7 +121,7 @@ impl WorkflowWrites for MemWorkflowWrites {
             .workflows
             .lock()
             .expect("MemBackend workflows mutex poisoned")
-            .insert(workflow.id.clone(), stored);
+            .insert(workflow.id, stored);
 
         Ok(workflow)
     }
@@ -160,7 +160,7 @@ impl WorkflowWrites for MemWorkflowWrites {
                 .unwrap_or_default();
 
             let stored = StoredColumn {
-                workflow_id: workflow.id.clone(),
+                workflow_id: workflow.id,
                 name: column.name.clone(),
                 visibility: column.visibility.clone(),
                 position: column.position.clone(),
@@ -168,7 +168,7 @@ impl WorkflowWrites for MemWorkflowWrites {
                 // preserves whatever the column already holds.
                 commissions: cards,
             };
-            columns.insert(column.id.clone(), stored);
+            columns.insert(column.id, stored);
         }
         Ok(())
     }
@@ -269,7 +269,7 @@ impl ColumnStore for MemColumnStore {
 
         columns
             .get(column_id)
-            .map(|stored: &StoredColumn| stored.rebuild(column_id.clone()))
+            .map(|stored: &StoredColumn| stored.rebuild(*column_id))
             .transpose()
     }
 
@@ -302,7 +302,7 @@ impl ColumnStore for MemColumnStore {
             .find(|(_, stored): &(&ColumnId, &StoredColumn)| {
                 stored.workflow_id == *workflow_id && stored.commissions.contains(commission_id)
             })
-            .map(|(id, stored): (&ColumnId, &StoredColumn)| stored.rebuild(id.clone()))
+            .map(|(id, stored): (&ColumnId, &StoredColumn)| stored.rebuild(*id))
             .transpose()
     }
 
@@ -315,7 +315,7 @@ impl ColumnStore for MemColumnStore {
             .lock()
             .expect("MemBackend columns mutex poisoned")
             .get(column_id)
-            .map(|stored| stored.workflow_id.clone());
+            .map(|stored| stored.workflow_id);
 
         let Some(workflow_id) = stored_workflow_id else {
             return Ok(None);
@@ -336,7 +336,7 @@ impl ColumnStore for MemColumnStore {
                 .expect("MemBackend columns mutex poisoned");
             columns
                 .get(column_id)
-                .map(|stored| stored.workflow_id.clone())
+                .map(|stored| stored.workflow_id)
                 .ok_or_else(|| anyhow::anyhow!("no such column"))?
         };
 

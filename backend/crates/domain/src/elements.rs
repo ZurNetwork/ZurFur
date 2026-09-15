@@ -15,7 +15,6 @@ pub mod character;
 pub mod commission;
 pub mod did;
 pub mod handle;
-pub mod id;
 pub mod invitation;
 pub mod markdown;
 pub mod maturity;

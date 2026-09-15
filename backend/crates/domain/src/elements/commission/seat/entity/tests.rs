@@ -8,7 +8,7 @@ use crate::elements::did::Did;
 // A declared seat's envelope, with no occupant field anywhere.
 #[test]
 fn a_new_seat_is_born_vacant_with_its_requirements() {
-    let commission = CommissionId::new(uuid::Uuid::now_v7());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
     let address = SurfaceAddress::new(
         crate::elements::commission::TabId::from(uuid::Uuid::now_v7()),
         "content".parse().unwrap(),
