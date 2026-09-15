@@ -22,6 +22,7 @@ pub mod plc_operation;
 pub mod profile;
 pub mod public_record;
 pub mod role;
+pub mod text;
 pub mod user;
 pub mod user_account;
 pub mod workflow;

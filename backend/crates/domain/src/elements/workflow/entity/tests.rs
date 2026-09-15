@@ -18,7 +18,7 @@ fn column(workflow: &Workflow, name: &str) -> Column {
 }
 
 fn names(workflow: &Workflow) -> Vec<&str> {
-    workflow.iter().map(|c| c.name.as_str()).collect()
+    workflow.iter().map(|c| c.name.as_ref()).collect()
 }
 
 fn positions_ascend(workflow: &Workflow) -> bool {
@@ -98,7 +98,7 @@ fn boards_and_columns_iterate_by_reference_and_by_value() {
 
     let mut seen = Vec::new();
     for column in &workflow {
-        seen.push(column.name.as_str());
+        seen.push(column.name.as_ref());
     }
     assert_eq!(seen, ["B"]);
 

@@ -19,7 +19,7 @@ fn column(workflow: &Workflow, name: &str) -> Column {
 }
 
 fn names(workflow: &Workflow) -> Vec<&str> {
-    workflow.iter().map(|c| c.name.as_str()).collect()
+    workflow.iter().map(|c| c.name.as_ref()).collect()
 }
 
 fn positions_ascend(workflow: &Workflow) -> bool {
@@ -38,7 +38,7 @@ fn insert_places_the_column_on_this_board_at_the_index() {
         .insert(1, column(&workflow, "Inking"))
         .expect("room in the middle");
 
-    assert_eq!(placed.name.as_str(), "Inking");
+    assert_eq!(placed.name.as_ref(), "Inking");
     assert_eq!(placed.workflow_id, workflow_id);
     assert_eq!(names(&workflow), ["Open", "Inking", "Done"]);
     assert!(positions_ascend(&workflow));
@@ -107,7 +107,7 @@ fn remove_element_hands_the_column_back_and_closes_the_gap() {
         .expect("on the board");
 
     assert_eq!(removed.id, inking.id);
-    assert_eq!(removed.name.as_str(), "Inking");
+    assert_eq!(removed.name.as_ref(), "Inking");
     assert_eq!(names(&workflow), ["Open", "Done"]);
     assert!(positions_ascend(&workflow));
 }
