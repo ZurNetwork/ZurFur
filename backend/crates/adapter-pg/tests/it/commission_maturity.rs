@@ -17,6 +17,7 @@ use domain::{
     },
     ports::{CommissionStore, Database},
 };
+use strum::VariantArray;
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -91,7 +92,7 @@ async fn set_maturity_round_trips_and_replaces() {
     let commission = seed_commission(&pool, "did:plc:rating-owner").await;
     let store = PgCommissionStore::new(pool.clone());
 
-    for rating in MaturityRating::ALL {
+    for rating in MaturityRating::VARIANTS {
         for graphic in [true, false] {
             let posture = Maturity {
                 rating: *rating,

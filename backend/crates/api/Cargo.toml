@@ -45,6 +45,8 @@ tokio-util = { workspace = true }
 # `TryStreamExt::map_err`, converting a multipart field's `MultipartError`
 # into `std::io::Error` ahead of `StreamReader` (ZMVP-205).
 futures-util = { workspace = true }
+# strum: VARIANTS over the domain vocabularies
+strum = { workspace = true }
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }

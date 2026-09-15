@@ -1,12 +1,27 @@
-use std::str::FromStr;
-
 use super::errors::UnknownRole;
 
 /// A member's rank inside one account. The derived [`Ord`] runs Owner < Admin <
 /// Manager < Member, so a lower position means higher authority and
 /// [`can_grant`](Role::can_grant) leans on it — **keep the variants in rank
 /// order**.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(
+    serialize_all = "snake_case",
+    ascii_case_insensitive,
+    parse_err_ty = UnknownRole,
+    parse_err_fn = unknown_token
+)]
 pub enum Role {
     /// The account's founder and highest authority; never has a parent.
     Owner,
@@ -18,41 +33,14 @@ pub enum Role {
     Member,
 }
 
-impl Role {
-    /// The stored discriminant [`FromStr`] parses back.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Admin => "admin",
-            Self::Manager => "manager",
-            Self::Member => "member",
-        }
-    }
+/// The typed error for a token outside the vocabulary; strum hands it the original input.
+fn unknown_token(token: &str) -> UnknownRole {
+    UnknownRole(token.into())
+}
 
+impl Role {
     pub fn is_administrative(&self) -> bool {
         matches!(self, Role::Owner | Role::Admin)
-    }
-}
-
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Role {
-    type Err = UnknownRole;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let role = match s.to_lowercase().as_str() {
-            "owner" => Role::Owner,
-            "admin" => Role::Admin,
-            "manager" => Role::Manager,
-            "member" => Role::Member,
-            _ => return Err(UnknownRole(s.into())),
-        };
-
-        Ok(role)
     }
 }
 

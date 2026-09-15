@@ -36,7 +36,7 @@ impl From<InvitationOutput> for InviteToSeatResponse {
             commission: invitation.commission_id.to_string(),
             id: invitation.invitation_id.to_string(),
             seat: invitation.seat_id.to_string(),
-            state: invitation.invitation_state.as_str(),
+            state: <&'static str>::from(invitation.invitation_state),
             user: invitation.invited_user_id.to_string(),
         }
     }
