@@ -76,7 +76,7 @@ impl std::error::Error for MeError {
 }
 
 /// Load the user behind [`MeQuery::user_id`] and resolve their profile
-/// read-through ([`Profile::resolve_through`]).
+/// read-through ([`crate::user::resolve_profile`]).
 impl Users<'_> {
     pub async fn me(
         &self,
@@ -90,7 +90,8 @@ impl Users<'_> {
             .find_by_did(query.user_id.did())
             .await?
             .ok_or(MeError::UnknownUser(query.user_id))?;
-        let profile = Profile::resolve_through(profile_cache, profile_source, user.id.did()).await;
+        let profile =
+            crate::user::resolve_profile(profile_cache, profile_source, user.id.did()).await;
         Ok(Output {
             id: user.id,
             profile: profile.map(MeProfile::from),
