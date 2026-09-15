@@ -26,7 +26,6 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::{DateTime, Utc};
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
@@ -34,65 +33,10 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect what was persisted (and drive the
-/// sweeper against the same shared store). `did` is the identity `sign_in` will
-/// authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller (optionally with a
 /// deadline) and returns its id — located by its (per-test unique) title,
@@ -220,9 +164,17 @@ fn after_past() -> DateTime<Utc> {
 // actor named.
 #[tokio::test]
 async fn a_participant_sets_the_deadline() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     let res = put_deadline(&client, &base, id, "2027-03-01T00:00:00Z").await;
@@ -248,9 +200,17 @@ async fn a_participant_sets_the_deadline() {
 // `deadline_extended`; pulling it earlier is a plain re-set (`deadline_set`).
 #[tokio::test]
 async fn extending_the_deadline_emits_deadline_extended() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -283,9 +243,17 @@ async fn extending_the_deadline_emits_deadline_extended() {
 // Clearing an already-clear deadline is an idempotent no-op.
 #[tokio::test]
 async fn clearing_the_deadline_wipes_the_axis() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -337,9 +305,17 @@ async fn clearing_the_deadline_wipes_the_axis() {
 // Re-setting the deadline already held is the set-side no-op: 204, no entry.
 #[tokio::test]
 async fn re_setting_the_same_deadline_appends_no_entry() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -362,9 +338,17 @@ async fn re_setting_the_same_deadline_appends_no_entry() {
 // entry); re-flagging is a no-op; the Participant clears their own flag.
 #[tokio::test]
 async fn a_participant_flags_the_commission_as_slipping() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -420,9 +404,17 @@ async fn a_participant_flags_the_commission_as_slipping() {
 // token outside the axis vocabulary is refused the same way.
 #[tokio::test]
 async fn late_cannot_be_set_by_hand() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -462,9 +454,17 @@ async fn late_cannot_be_set_by_hand() {
 // touches it.
 #[tokio::test]
 async fn a_deadlineless_commission_never_carries_deadline_statuses() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     let res = put_deadline_status(&client, &base, id, "delayed").await;
@@ -485,9 +485,17 @@ async fn a_deadlineless_commission_never_carries_deadline_statuses() {
 // entry — Late is already the system's standing word).
 #[tokio::test]
 async fn the_sweeper_marks_missed_deadlines_late() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let first = create_commission(
         &client,
         &base,
@@ -551,9 +559,17 @@ async fn the_sweeper_marks_missed_deadlines_late() {
 // the system entry records what it upgraded from.
 #[tokio::test]
 async fn a_standing_delayed_upgrades_to_late() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -604,9 +620,17 @@ async fn a_standing_delayed_upgrades_to_late() {
 // with a SECOND changelog entry — each miss is its own event.
 #[tokio::test]
 async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -647,9 +671,17 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
 // erased by hand.
 #[tokio::test]
 async fn the_systems_late_cannot_be_overridden_by_hand() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -692,9 +724,17 @@ async fn the_systems_late_cannot_be_overridden_by_hand() {
 // moves the Lifecycle — ZMVP-84's rule, re-asserted here).
 #[tokio::test]
 async fn the_axes_compose_freely() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -763,9 +803,19 @@ async fn the_axes_compose_freely() {
 // never a 403 (no existence oracle), and nothing changes.
 #[tokio::test]
 async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
-    let (base, backend) = spawn_app("did:plc:outsider").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:outsider".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:outsider".to_string()),
+                "artist.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
     let missing = uuid::Uuid::now_v7();
 
@@ -818,9 +868,17 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
 // deadline surfaces.
 #[tokio::test]
 async fn anonymous_callers_are_turned_away() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend, json!({ "title": "Ref" })).await;
 
     let anon = client();
@@ -856,9 +914,17 @@ async fn anonymous_callers_are_turned_away() {
 // nothing stored or appended.
 #[tokio::test]
 async fn a_malformed_deadline_body_is_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     for body in [

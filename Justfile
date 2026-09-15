@@ -202,7 +202,7 @@ check:
 gate:
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
-    cargo test --workspace --locked
+    INSTA_UPDATE=no cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
     just design-index-check
@@ -220,6 +220,7 @@ setup:
     @cp -n .env.example .env || true
     @echo "Installing tools..."
     cargo install just cargo-watch bacon
+    cargo install cargo-insta
     cargo install sqlx-cli --no-default-features --features postgres
     just nodes-install
     cd frontend/web && yarn install

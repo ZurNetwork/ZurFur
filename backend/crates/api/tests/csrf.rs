@@ -4,49 +4,23 @@
 //! and so can't be CSRF'd), and safe methods all pass. Layers on top of the session
 //! cookie's `SameSite=Lax`. Same in-process fakes as the other api e2e tests — no
 //! database (the guard runs before the auth-gated handlers, which 401 first).
-use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve};
 
 mod common;
 
-/// Boots the app with everything faked in-process; `public_url` is the app's own
-/// address, so it doubles as the one allowed first-party origin.
-async fn spawn_app() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-    let test_support::runtime::MemRuntime {
-        runtime,
-        backend: _,
-    } = test_support::runtime::mem(&Did::from("did:plc:test".to_string()))
-        .profile(Profile::new(
-            Did::from("did:plc:test".to_string()),
-            "t.bsky.social",
-        ))
-        .public_url(format!("http://{addr}"))
-        .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}")
-}
-
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
 #[tokio::test]
 async fn a_cross_origin_state_changing_request_is_blocked() {
-    let base = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:test".to_string())).profile(Profile::new(
+            Did::from("did:plc:test".to_string()),
+            "t.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let base = served.base_url;
     let res = client()
         .post(format!("{base}/accounts"))
         .header("origin", "http://evil.example")
@@ -60,7 +34,15 @@ async fn a_cross_origin_state_changing_request_is_blocked() {
 
 #[tokio::test]
 async fn a_same_origin_state_changing_request_passes_the_guard() {
-    let base = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:test".to_string())).profile(Profile::new(
+            Did::from("did:plc:test".to_string()),
+            "t.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let base = served.base_url;
     // Origin == our first-party origin (`public_url`): the guard passes, and the
     // handler then 401s the unauthenticated request — proving it got through.
     let res = client()
@@ -75,7 +57,15 @@ async fn a_same_origin_state_changing_request_passes_the_guard() {
 
 #[tokio::test]
 async fn a_request_with_no_origin_passes_the_guard() {
-    let base = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:test".to_string())).profile(Profile::new(
+            Did::from("did:plc:test".to_string()),
+            "t.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let base = served.base_url;
     // No Origin (a non-browser client carrying no ambient cookie) — can't be
     // CSRF'd, so the guard lets it through to the handler's 401.
     let res = client()
@@ -89,7 +79,15 @@ async fn a_request_with_no_origin_passes_the_guard() {
 
 #[tokio::test]
 async fn a_safe_method_is_never_blocked_by_origin() {
-    let base = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:test".to_string())).profile(Profile::new(
+            Did::from("did:plc:test".to_string()),
+            "t.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let base = served.base_url;
     // GET is safe; even a foreign Origin passes the CSRF layer. Anonymous /me is a
     // 401 (the session check), never a 403 cross_origin — proving the guard let the
     // safe method through.

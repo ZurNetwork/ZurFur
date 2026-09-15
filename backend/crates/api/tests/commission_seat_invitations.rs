@@ -21,71 +21,16 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, ElementId, SKELETON},
     did::Did,
     profile::Profile,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect what was persisted. `did` is the
-/// identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller and returns its id.
 ///
@@ -158,9 +103,17 @@ async fn declare_seat(
 // AC1 — the owner invites a User to a vacant seat and a pending offer is recorded.
 #[tokio::test]
 async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&client, &base, id, tab).await;
@@ -196,9 +149,17 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
 // AC2 — a Seat that is already occupied cannot be invited to (409 seat_filled).
 #[tokio::test]
 async fn inviting_to_a_filled_seat_is_a_conflict() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&client, &base, id, tab).await;
@@ -223,9 +184,17 @@ async fn inviting_to_a_filled_seat_is_a_conflict() {
 // (fabricated) is an element_not_found 404.
 #[tokio::test]
 async fn inviting_to_an_unknown_seat_is_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let res = client
@@ -241,9 +210,17 @@ async fn inviting_to_an_unknown_seat_is_not_found() {
 // (the seats read is commission-scoped, so it is no cross-commission oracle).
 #[tokio::test]
 async fn a_seat_from_another_commission_is_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let target = create_commission(&client, &base, &backend).await;
     // A second commission (mine), with a real seat of its own.
     let other = create_commission(&client, &base, &backend).await;
@@ -263,9 +240,17 @@ async fn a_seat_from_another_commission_is_not_found() {
 // existing offer is returned (200), never a second row.
 #[tokio::test]
 async fn re_inviting_a_pending_user_is_idempotent() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&client, &base, id, tab).await;
@@ -301,9 +286,17 @@ async fn re_inviting_a_pending_user_is_idempotent() {
 // The owner revokes a pending offer (200), and it is no longer pending.
 #[tokio::test]
 async fn owner_revokes_a_pending_invitation() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&client, &base, id, tab).await;
@@ -347,9 +340,17 @@ async fn owner_revokes_a_pending_invitation() {
 // Revoking with nothing pending (an unknown DID) is an idempotent 200 no-op.
 #[tokio::test]
 async fn revoking_with_nothing_pending_is_a_no_op() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&client, &base, id, tab).await;
@@ -372,9 +373,17 @@ async fn revoking_with_nothing_pending_is_a_no_op() {
 // participant, so require_owner's participant-but-not-owner arm is exercised.
 #[tokio::test]
 async fn a_participant_who_is_not_owner_cannot_invite() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let artist = backend
         .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
@@ -408,9 +417,17 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
 // Floor — an anonymous caller cannot invite: 401.
 #[tokio::test]
 async fn anonymous_visitor_cannot_invite() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let seat = declare_seat(&signed_in, &base, id, tab).await;
@@ -431,9 +448,17 @@ async fn anonymous_visitor_cannot_invite() {
 // the cross-commission id resolves to nothing — never someone else's offer).
 #[tokio::test]
 async fn revoking_another_commissions_pending_offer_is_a_no_op() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
 
     // Commission B holds the pending offer.
     let b = create_commission(&client, &base, &backend).await;

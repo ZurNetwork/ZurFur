@@ -163,4 +163,6 @@ impl std::fmt::Display for Handle {
 }
 
 #[cfg(test)]
+mod proptests;
+#[cfg(test)]
 mod tests;

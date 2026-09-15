@@ -9,72 +9,16 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionTitle},
     did::Did,
     profile::Profile,
 };
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 mod common;
 use common::assert_problem;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can seed commissions and introspect them. `did` is
-/// the identity `sign_in` authenticates as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "lister.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=lister.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
+use test_support::http::{client, serve, sign_in};
 
 // Owner-scoped listing: a commission owned by a DIFFERENT user never appears,
 // even though it exists in the same backend — the non-participant projection
@@ -83,9 +27,17 @@ async fn sign_in(client: &reqwest::Client, base: &str) {
 #[tokio::test]
 async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
     let did = "did:plc:owner-lister";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "lister.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "lister.bsky.social").await;
     let me = backend
         .find_by_did(&Did::from(did.to_string()))
         .await
@@ -172,9 +124,17 @@ async fn lists_only_commissions_the_caller_owns_in_deterministic_order() {
 #[tokio::test]
 async fn excludes_archived_commissions() {
     let did = "did:plc:archive-lister";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "lister.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "lister.bsky.social").await;
     let me = backend
         .find_by_did(&Did::from(did.to_string()))
         .await
@@ -221,7 +181,17 @@ async fn excludes_archived_commissions() {
 // redirect, since the frontend calls this endpoint.
 #[tokio::test]
 async fn anonymous_caller_is_turned_away_with_401() {
-    let (base, _backend) = spawn_app("did:plc:anon-lister").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:anon-lister".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:anon-lister".to_string()),
+                "lister.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     let res = client()
         .get(format!("{base}/commissions"))

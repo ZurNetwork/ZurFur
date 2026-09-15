@@ -2,7 +2,6 @@
 //! invitee-side accept and decline. Same in-process fakes as the other
 //! account e2e suites: no network, no database.
 use adapter_mem::MemBackend;
-use api::AppState;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
     did::Did,
@@ -13,63 +12,10 @@ use domain::elements::{
     user::UserId,
     user_account::UserAccount,
 };
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
-
-/// Boots the app with everything faked in-process, returning the base URL plus
-/// typed handles to the repos so a test can introspect them after the flow.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "owner.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Founds an account and returns its id — the shared first step of every test.
 async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> String {
@@ -101,9 +47,17 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
 #[tokio::test]
 async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
     let did = "did:plc:e2einviter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let invitee_did = "did:plc:e2einvitee";
@@ -153,9 +107,17 @@ async fn owner_invites_a_user_and_a_pending_invitation_is_recorded() {
 #[tokio::test]
 async fn inviting_at_owner_is_refused() {
     let did = "did:plc:e2einvowner";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let invitee_did = "did:plc:e2ewouldbeowner";
@@ -187,9 +149,17 @@ async fn inviting_at_owner_is_refused() {
 #[tokio::test]
 async fn re_inviting_a_pending_user_is_idempotent() {
     let did = "did:plc:e2ereinviter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let invitee_did = "did:plc:e2ereinvitee";
@@ -243,9 +213,17 @@ async fn re_inviting_a_pending_user_is_idempotent() {
 #[tokio::test]
 async fn issuer_revokes_a_pending_invitation() {
     let did = "did:plc:e2erevoker";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let invitee_did = "did:plc:e2erevinvitee";
@@ -292,9 +270,17 @@ async fn issuer_revokes_a_pending_invitation() {
 #[tokio::test]
 async fn inviting_an_existing_member_is_a_conflict() {
     let did = "did:plc:e2ememberinviter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     // Seat the invitee as a member first (a grant is how one joins, ZMVP-15).
@@ -337,7 +323,15 @@ async fn inviting_an_existing_member_is_a_conflict() {
 // An anonymous visitor cannot invite — turned away at 401 before any lookup.
 #[tokio::test]
 async fn anonymous_visitor_cannot_invite() {
-    let (base, _backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     let res = client()
         .post(format!("{base}/accounts/{}/invitations", Uuid::now_v7()))
@@ -394,11 +388,19 @@ async fn seed_pending_invite(
 #[tokio::test]
 async fn invitee_declines_a_pending_invitation() {
     let invitee_did = "did:plc:e2edecliner";
-    let (base, backend) = spawn_app(invitee_did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(invitee_did.to_string())).profile(Profile::new(
+            Did::from(invitee_did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
         .post(format!(
             "{base}/accounts/{}/invitations/decline",
@@ -436,7 +438,15 @@ async fn invitee_declines_a_pending_invitation() {
 #[tokio::test]
 async fn declining_with_no_pending_invitation_is_not_found() {
     let did = "did:plc:e2enopending";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     // An account exists, but the signed-in user holds no invitation to it.
     let owner = backend
         .provision(&Did::from("did:plc:seedowner".to_string()))
@@ -455,7 +465,7 @@ async fn declining_with_no_pending_invitation_is_not_found() {
         .expect("found the account");
 
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
         .post(format!(
             "{base}/accounts/{}/invitations/decline",
@@ -470,11 +480,19 @@ async fn declining_with_no_pending_invitation_is_not_found() {
 #[tokio::test]
 async fn invitee_accepts_and_becomes_a_member() {
     let invitee_did = "did:plc:e2eaccepter";
-    let (base, backend) = spawn_app(invitee_did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(invitee_did.to_string())).profile(Profile::new(
+            Did::from(invitee_did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
         .post(format!("{base}/accounts/{}/invitations/accept", account_id))
         .json(&serde_json::json!({ "listed_on_profile": true }))
@@ -501,9 +519,17 @@ async fn invitee_accepts_and_becomes_a_member() {
 #[tokio::test]
 async fn inviting_an_accounts_own_did_is_a_did_conflict() {
     let did = "did:plc:conflict-owner";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Conflict Studio").await;
 
     let account = backend
@@ -538,7 +564,17 @@ async fn inviting_an_accounts_own_did_is_a_did_conflict() {
 // byte-identically now.
 #[tokio::test]
 async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() {
-    let (base, backend) = spawn_app("did:plc:e2eprobe").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:e2eprobe".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:e2eprobe".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let (account_id, invited_id, _owner) =
         seed_pending_invite(&backend, "did:plc:e2eprobe-invited").await;
 
@@ -559,7 +595,7 @@ async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() 
         .expect("seat the member");
 
     let client = client();
-    sign_in(&client, &base).await; // did:plc:e2eprobe holds NO role here
+    sign_in(&client, &base, "owner.bsky.social").await; // did:plc:e2eprobe holds NO role here
 
     let mut answers = Vec::new();
     for target in [
@@ -609,7 +645,17 @@ async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() 
 // `23003138`).
 #[tokio::test]
 async fn a_soft_deleted_account_takes_no_new_invitations() {
-    let (base, backend) = spawn_app("did:plc:seedowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:seedowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:seedowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let (account_id, _invited, _owner) =
         seed_pending_invite(&backend, "did:plc:e2etombstone-invited").await;
 
@@ -624,7 +670,7 @@ async fn a_soft_deleted_account_takes_no_new_invitations() {
     );
 
     let client = client();
-    sign_in(&client, &base).await; // signed in as the account's Owner
+    sign_in(&client, &base, "owner.bsky.social").await; // signed in as the account's Owner
 
     let newcomer_did = Did::from("did:plc:e2etombstone-newcomer".to_string());
     let res = client
@@ -660,14 +706,22 @@ async fn a_soft_deleted_account_takes_no_new_invitations() {
 #[tokio::test]
 async fn a_soft_deleted_accounts_invitation_cannot_be_accepted() {
     let invitee_did = "did:plc:e2etombstone-accepter";
-    let (base, backend) = spawn_app(invitee_did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(invitee_did.to_string())).profile(Profile::new(
+            Did::from(invitee_did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let (account_id, invitee_id, _owner) = seed_pending_invite(&backend, invitee_did).await;
 
     let handle: Handle = "acme.zurfur.app".parse().expect("valid handle");
     backend.seed_soft_deleted_account(account_id.did(), &handle);
 
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
         .post(format!("{base}/accounts/{}/invitations/accept", account_id))
         .json(&serde_json::json!({ "listed_on_profile": true }))

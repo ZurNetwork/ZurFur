@@ -4,66 +4,8 @@
 //! it: `Session::cycle_id()` mints a fresh id on a successful sign-in while
 //! preserving the session's data. Same in-process fakes as the other sign-in e2e
 //! tests — no network, no database.
-use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
-
-/// Boots the app with everything faked in-process and an in-memory session store,
-/// returning the base URL. No route exercised here touches the database.
-async fn spawn_app(did: &str) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-    let test_support::runtime::MemRuntime {
-        runtime,
-        backend: _,
-    } = test_support::runtime::mem(&Did::from(did.to_string()))
-        .profile(Profile::new(
-            Did::from(did.to_string()),
-            "owner.bsky.social",
-        ))
-        .public_url(format!("http://{addr}"))
-        .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}")
-}
-
-/// A cookie-keeping client that does not auto-follow redirects, so each hop is
-/// asserted on its own (same harness as the sign-in e2e).
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Completes the two-step sign-in and returns the callback response, whose
-/// `Set-Cookie` carries the session id.
-async fn sign_in(client: &reqwest::Client, base: &str) -> reqwest::Response {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-    res
-}
+use test_support::http::{client, serve, sign_in};
 
 /// The session id this response sets via its `id` cookie (tower-sessions' default
 /// cookie name), if any.
@@ -75,16 +17,26 @@ fn session_id(res: &reqwest::Response) -> Option<String> {
 
 #[tokio::test]
 async fn sign_in_rotates_the_session_id() {
-    let base = spawn_app("did:plc:fixation").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:fixation".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:fixation".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let base = served.base_url;
     let client = client();
 
     // First sign-in establishes a session id that now exists in the store.
-    let first = sign_in(&client, &base).await;
+    let first = sign_in(&client, &base, "owner.bsky.social").await;
     let id_before = session_id(&first).expect("first sign-in sets a session id");
 
     // Signing in again carries that established, store-backed id into the privilege
     // change — exactly the id that a fixation attacker would have planted.
-    let second = sign_in(&client, &base).await;
+    let second = sign_in(&client, &base, "owner.bsky.social").await;
     let id_after = session_id(&second).expect("sign-in rotates, so it sets a new session id");
 
     // AC1: the pre-existing id does not survive the privilege change.

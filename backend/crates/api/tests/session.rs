@@ -13,8 +13,7 @@ use domain::{
     elements::{did::Did, profile::Profile},
     ports::Authenticator,
 };
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, sign_in};
 
 mod common;
 
@@ -68,25 +67,21 @@ fn alice_profile() -> Profile {
 /// Boots the app with everything faked in-process, using the given authenticator and
 /// profile source. Returns the base URL.
 async fn serve(auth: Arc<dyn Authenticator>, source: Arc<MemProfileSource>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
     // `auth`/`source` are supplied per-call (a `FailingAuthenticator`, or a
     // profile source poisoned via `set_unreachable`), so the shared fixture is
     // built for its config/pool/stores and then overridden with them.
-    let test_support::runtime::MemRuntime { mut runtime, .. } =
-        test_support::runtime::mem(&Did::from(DID.to_string()))
-            .public_url(format!("http://{addr}"))
-            .build();
-    runtime.auth = auth;
-    runtime.profile_source = source;
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}")
+    let served = test_support::http::serve(
+        test_support::runtime::mem(&Did::from(DID.to_string())),
+        move |rt| {
+            api::app(AppState {
+                auth,
+                profile_source: source,
+                ..rt
+            })
+        },
+    )
+    .await;
+    served.base_url
 }
 
 /// The default boot: an always-succeeding PDS that authenticates every visitor as
@@ -96,41 +91,13 @@ async fn serve_happy() -> String {
     serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await
 }
 
-/// A cookie-keeping client that does not auto-follow redirects, so each hop can be
-/// asserted on its own.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Run the OAuth handshake, leaving the client holding a live session cookie.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=alice.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin redirects to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback redirects on success");
-}
-
 // --- GET /me --------------------------------------------------------------------
 
 #[tokio::test]
 async fn me_returns_json_identity_for_a_live_session() {
     let base = serve_happy().await;
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "alice.bsky.social").await;
 
     let res = client
         .get(format!("{base}/me"))
@@ -159,7 +126,7 @@ async fn me_omits_the_profile_fields_when_the_pds_is_unreachable_and_uncached() 
     let auth = Arc::new(MemAuthenticator::new(Did::from(DID.to_string())));
     let base = serve(auth, Arc::new(source)).await;
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "alice.bsky.social").await;
 
     let res = client
         .get(format!("{base}/me"))
@@ -225,7 +192,7 @@ async fn me_200_carries_no_store_for_a_live_session() {
     // proxy (CWE-525).
     let base = serve_happy().await;
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "alice.bsky.social").await;
 
     let res = client
         .get(format!("{base}/me"))
