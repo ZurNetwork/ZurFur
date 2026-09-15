@@ -35,11 +35,8 @@
 //!
 //! Harness: the same in-process fakes as the account/sign-in e2e tests — no
 //! network, no database.
-use adapter_mem::MemBackend;
-use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 /// Persona A — the handle that signs in during these tests.
 const ALICE_DID: &str = "did:plc:alice";
@@ -52,58 +49,6 @@ const ALICE_HANDLE: &str = "alice.bsky.social";
 const BOB_DID: &str = "did:plc:bob";
 const BOB_HANDLE: &str = "bob.bsky.social";
 
-/// Boots the app with everything faked in-process, signing-in resolves to
-/// [`ALICE_DID`]. Returns the base URL plus the user repo so a test can seat a
-/// second persona directly. Mirrors `accounts.rs::spawn_app`.
-async fn spawn_app() -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
-            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects, so each hop is
-/// asserted on its own (same harness as the account/sign-in e2e).
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for persona A.
-async fn sign_in_as_alice(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(format!("handle={ALICE_HANDLE}"))
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
-
 /// The behavioral heart of cross-persona unlinkability: even when two personas share private state
 /// (here, co-membership of one account), the public identity surface reflects
 /// only the *caller's own* handle and never names the other persona. If a change
@@ -111,9 +56,15 @@ async fn sign_in_as_alice(client: &reqwest::Client, base: &str) {
 /// Users, this fails.
 #[tokio::test]
 async fn the_identity_surface_never_names_a_callers_other_persona() {
-    let (base, backend) = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
+            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE)),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in_as_alice(&client, &base).await;
+    sign_in(&client, &base, ALICE_HANDLE).await;
 
     // Found an account as A, then seat B in it — the worst case for correlation:
     // A and B now share a row in the private account_members table. Granting via
@@ -199,7 +150,13 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
 /// starts from an enumerable identity read.
 #[tokio::test]
 async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
-    let (base, _backend) = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
+            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE)),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let res = client()
         .get(format!("{base}/me"))
         .send()
@@ -229,7 +186,13 @@ async fn the_identity_surface_leaks_nothing_to_an_anonymous_viewer() {
 /// a route existing.
 #[tokio::test]
 async fn there_is_no_global_user_enumeration_endpoint() {
-    let (base, _backend) = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
+            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE)),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let c = client();
     for path in ["/users", "/profiles", "/members"] {
         let res = c
@@ -256,7 +219,13 @@ async fn there_is_no_global_user_enumeration_endpoint() {
 /// someone to read it); anything in the 2xx range is a leak.
 #[tokio::test]
 async fn the_own_accounts_listing_is_closed_to_anonymous_callers() {
-    let (base, _backend) = spawn_app().await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(ALICE_DID.to_string()))
+            .profile(Profile::new(Did::from(ALICE_DID.to_string()), ALICE_HANDLE)),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let res = client()
         .get(format!("{base}/accounts"))
         .send()

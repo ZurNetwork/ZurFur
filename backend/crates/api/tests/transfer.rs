@@ -7,8 +7,6 @@
 //! exercised here against the in-process fakes; the `parent` re-homing (rule 5) is the
 //! store's job and is proven against PostgreSQL in `adapter-pg`'s own tests (the mem
 //! fake doesn't model `parent`). DESIGN/Roles rule 8.
-use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
@@ -18,66 +16,11 @@ use domain::elements::{
     role::Role,
     user_account::UserAccount,
 };
-use reqwest::redirect::Policy;
 use serde_json::{Value, json};
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL plus the
-/// repo handles so a test can seed and introspect membership directly. The signed-in
-/// user (via [`sign_in`]) resolves to `did`.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "owner.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session for
-/// the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Founds an account for the signed-in Owner and returns its id.
 async fn found_account(client: &reqwest::Client, base: &str, name: &str, handle: &str) -> String {
@@ -94,9 +37,19 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str, handle:
 
 #[tokio::test]
 async fn owner_transfers_ownership_and_the_roles_swap() {
-    let (base, backend) = spawn_app("did:plc:xferowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:xferowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:xferowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let account_id = found_account(&client, &base, "Hand-Off Studio", "handoff.zurfur.app").await;
 
@@ -155,9 +108,19 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
 #[tokio::test]
 async fn only_the_owner_may_transfer() {
     // The signed-in user is a mere Member of an account someone else owns.
-    let (base, backend) = spawn_app("did:plc:notowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:notowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:notowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let me = backend
         .find_by_did(&Did::from("did:plc:notowner".to_string()))
@@ -200,9 +163,19 @@ async fn only_the_owner_may_transfer() {
 
 #[tokio::test]
 async fn cannot_transfer_to_a_non_member() {
-    let (base, backend) = spawn_app("did:plc:lonelyowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:lonelyowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:lonelyowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let account_id = found_account(&client, &base, "Solo Studio", "solo.zurfur.app").await;
 
@@ -223,9 +196,17 @@ async fn cannot_transfer_to_a_non_member() {
 
 #[tokio::test]
 async fn cannot_transfer_to_an_unknown_did() {
-    let (base, _backend) = spawn_app("did:plc:owner2").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:owner2".to_string())).profile(Profile::new(
+            Did::from("did:plc:owner2".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let account_id = found_account(&client, &base, "Studio Two", "two.zurfur.app").await;
 
@@ -241,9 +222,19 @@ async fn cannot_transfer_to_an_unknown_did() {
 
 #[tokio::test]
 async fn cannot_transfer_to_yourself() {
-    let (base, _backend) = spawn_app("did:plc:selfxfer").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:selfxfer".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:selfxfer".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let account_id = found_account(&client, &base, "Mine Studio", "mine.zurfur.app").await;
 
@@ -259,9 +250,19 @@ async fn cannot_transfer_to_yourself() {
 
 #[tokio::test]
 async fn transferring_on_a_missing_account_is_404() {
-    let (base, _backend) = spawn_app("did:plc:ghostowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:ghostowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:ghostowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let res = client
         .post(format!("{base}/accounts/{}/transfer", Uuid::now_v7()))
@@ -276,9 +277,19 @@ async fn transferring_on_a_missing_account_is_404() {
 async fn after_transfer_the_former_owner_can_leave() {
     // The ZMVP-21 enablement: a sole Owner can't leave, but after transferring they
     // are an Admin and may walk out.
-    let (base, backend) = spawn_app("did:plc:exitowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:exitowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:exitowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let account_id = found_account(&client, &base, "Exit Studio", "exit.zurfur.app").await;
     let account = domain::elements::account::AccountId::from(Did::from(account_id.clone()));

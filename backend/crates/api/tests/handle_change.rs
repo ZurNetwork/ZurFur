@@ -8,8 +8,6 @@
 //! and `find_did_by_handle(old)` stops — is asserted through the shared store the
 //! handler wrote. The `did:plc` `alsoKnownAs` re-point is a separate op,
 //! exercised in `adapter-atproto`'s own tests; here the mem minter stands in for it.
-use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
@@ -19,65 +17,11 @@ use domain::elements::{
     role::Role,
     user_account::UserAccount,
 };
-use reqwest::redirect::Policy;
 use serde_json::{Value, json};
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL plus the repo
-/// handles so a test can seed and introspect directly. The signed-in user (via
-/// [`sign_in`]) resolves to `did`.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "owner.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Founds an account for the signed-in Owner and returns its id.
 async fn found_account(client: &reqwest::Client, base: &str, name: &str, handle: &str) -> String {
@@ -110,9 +54,19 @@ fn handle(h: &str) -> Handle {
 // new handle resolves to the account's DID, the old handle stops resolving.
 #[tokio::test]
 async fn owner_changes_handle_and_resolution_follows() {
-    let (base, backend) = spawn_app("did:plc:changeowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:changeowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:changeowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Rename Studio", "before.zurfur.app").await;
 
     // The account's DID, captured before the change so we can assert resolution moves.
@@ -157,9 +111,19 @@ async fn owner_changes_handle_and_resolution_follows() {
 // changing to it succeeds (409) — but the account that left it may RECLAIM it.
 #[tokio::test]
 async fn vacated_handle_is_quarantined_and_reclaimable() {
-    let (base, _backend) = spawn_app("did:plc:quarowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:quarowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:quarowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // Account 1 vacates `taken.zurfur.app` → it is quarantined to account 1.
     let a1 = found_account(&client, &base, "First", "taken.zurfur.app").await;
@@ -202,9 +166,19 @@ async fn vacated_handle_is_quarantined_and_reclaimable() {
 // §2 — Owner-only: a mere member of the account cannot change its handle (403).
 #[tokio::test]
 async fn only_the_owner_may_change_the_handle() {
-    let (base, backend) = spawn_app("did:plc:memberonly").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:memberonly".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:memberonly".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // The signed-in user is only a Member of an account someone else owns.
     let me = backend
@@ -249,9 +223,19 @@ async fn only_the_owner_may_change_the_handle() {
 // the shared `Handle` gate: a reserved label / punycode / malformed target is 422.
 #[tokio::test]
 async fn rejects_an_invalid_handle() {
-    let (base, _backend) = spawn_app("did:plc:invalidowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:invalidowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:invalidowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Studio", "valid.zurfur.app").await;
 
     // A reserved label in the Zurfur namespace (ZMVP-45) — same gate as founding.
@@ -273,9 +257,19 @@ async fn rejects_an_invalid_handle() {
 // §4 backstop — changing to a handle a LIVE account already holds is a 409, not a 500.
 #[tokio::test]
 async fn rejects_a_taken_handle() {
-    let (base, backend) = spawn_app("did:plc:takenowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:takenowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:takenowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Mine", "mine.zurfur.app").await;
 
     // Seed another live account holding `theirs.zurfur.app`.
@@ -307,9 +301,19 @@ async fn rejects_a_taken_handle() {
 // the distinct `unsupported_handle` code until BYO re-binding ships.
 #[tokio::test]
 async fn rejects_a_byo_target() {
-    let (base, _backend) = spawn_app("did:plc:byoowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:byoowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:byoowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Studio", "onus.zurfur.app").await;
 
     common::assert_problem(
@@ -324,9 +328,19 @@ async fn rejects_a_byo_target() {
 // consuming a rate-limit slot or signing a redundant op.
 #[tokio::test]
 async fn rejects_the_current_handle() {
-    let (base, _backend) = spawn_app("did:plc:sameowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:sameowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:sameowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Studio", "same.zurfur.app").await;
 
     common::assert_problem(
@@ -341,9 +355,19 @@ async fn rejects_the_current_handle() {
 // change is refused with 429 `rate_limited`.
 #[tokio::test]
 async fn rate_limits_rapid_changes() {
-    let (base, _backend) = spawn_app("did:plc:rateowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:rateowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:rateowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let id = found_account(&client, &base, "Busy", "rate0.zurfur.app").await;
 
     // Ten changes (the ceiling) all succeed, to distinct fresh handles.
@@ -369,7 +393,17 @@ async fn rate_limits_rapid_changes() {
 // account is 404.
 #[tokio::test]
 async fn anonymous_is_unauthorized_and_missing_account_is_not_found() {
-    let (base, _backend) = spawn_app("did:plc:floorowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:floorowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:floorowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let anon = client();
 
     // No session → 401, even for a nonexistent account.
@@ -382,7 +416,7 @@ async fn anonymous_is_unauthorized_and_missing_account_is_not_found() {
 
     // Signed in, but the account doesn't exist → 404.
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     common::assert_problem(
         change(&client, &base, &Uuid::now_v7().to_string(), "x.zurfur.app").await,
         404,

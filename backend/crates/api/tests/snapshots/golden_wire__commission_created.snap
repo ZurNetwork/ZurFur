@@ -1,0 +1,14 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: created
+---
+{
+  "createdAt": "<TS>Z",
+  "id": "<VOLATILE>",
+  "lifecycle": "draft",
+  "maturity": {
+    "rating": "safe"
+  },
+  "title": "A golden ref sheet",
+  "visibility": "private"
+}

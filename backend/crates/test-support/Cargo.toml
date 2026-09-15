@@ -32,8 +32,10 @@ adapter-mem = { path = "../adapter-mem" }
 composition = { path = "../composition" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
-# Plain-HTTP XRPC against 127.0.0.1 — no TLS backend needed.
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# 0.13 + cookies so http::client() is the type the api tests use
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
+# the session layer the served app wraps in tests
+tower-sessions = { workspace = true }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.

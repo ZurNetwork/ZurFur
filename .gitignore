@@ -17,3 +17,7 @@ WORKSHEET.md
 
 # Claude Code project MCP config — local only, never committed (Engineer ruling 2026-09-11)
 .mcp.json
+
+# insta's unreviewed snapshots
+*.snap.new
+*.pending-snap

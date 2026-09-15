@@ -87,4 +87,6 @@ impl StringBuilder {
 }
 
 #[cfg(test)]
+mod proptests;
+#[cfg(test)]
 mod tests;

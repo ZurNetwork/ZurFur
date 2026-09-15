@@ -1,0 +1,10 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: created
+---
+{
+  "did": "<VOLATILE>",
+  "handle": "golden.zurfur.app",
+  "id": "<VOLATILE>",
+  "name": "Golden Studio"
+}

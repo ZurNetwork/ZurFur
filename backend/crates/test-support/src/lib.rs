@@ -8,6 +8,7 @@
 
 pub mod contract;
 mod fixture;
+pub mod http;
 mod pds;
 pub mod pg;
 mod plc_stub;

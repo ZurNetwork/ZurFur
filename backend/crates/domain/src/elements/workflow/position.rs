@@ -120,4 +120,6 @@ impl std::fmt::Display for Position {
 }
 
 #[cfg(test)]
+mod proptests;
+#[cfg(test)]
 mod tests;

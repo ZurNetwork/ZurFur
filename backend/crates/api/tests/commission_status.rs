@@ -23,7 +23,6 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, DirectionStatus},
@@ -31,65 +30,11 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
 use strum::VariantArray;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect what was persisted. `did` is the
-/// identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller (optionally with a
 /// deadline) and returns its id (introspected off the backend — the route
@@ -170,9 +115,17 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 // naming the actor and the from/to values (a sentence without joins).
 #[tokio::test]
 async fn a_participant_sets_each_direction_status() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     assert_eq!(
@@ -210,9 +163,17 @@ async fn a_participant_sets_each_direction_status() {
 // the commission never holds two direction values.
 #[tokio::test]
 async fn setting_a_direction_status_replaces_the_current_one() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     assert_eq!(
@@ -241,9 +202,17 @@ async fn setting_a_direction_status_replaces_the_current_one() {
 // already-clear status is an idempotent no-op that appends no noise entry.
 #[tokio::test]
 async fn a_participant_clears_the_direction_status() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     assert_eq!(
@@ -285,9 +254,17 @@ async fn a_participant_clears_the_direction_status() {
 // Re-setting the value already held is the set-side no-op: 204, no noise entry.
 #[tokio::test]
 async fn re_setting_the_same_status_appends_no_entry() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     assert_eq!(
@@ -317,9 +294,17 @@ async fn re_setting_the_same_status_appends_no_entry() {
 // (The deadline-axis values themselves — Delayed/Late — are ZMVP-86.)
 #[tokio::test]
 async fn direction_status_composes_with_the_deadline_axis() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -373,9 +358,17 @@ async fn direction_status_composes_with_the_deadline_axis() {
 // inherit this by construction.
 #[tokio::test]
 async fn a_content_event_never_moves_the_direction_status() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     assert_eq!(
@@ -404,9 +397,17 @@ async fn a_content_event_never_moves_the_direction_status() {
 // body, are each a 422 with nothing stored or appended.
 #[tokio::test]
 async fn an_unknown_status_token_is_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     let res = put_status(&client, &base, id, "on_fire").await;
@@ -433,9 +434,19 @@ async fn an_unknown_status_token_is_rejected() {
 // never a 403 (no existence oracle), and nothing changes.
 #[tokio::test]
 async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
-    let (base, backend) = spawn_app("did:plc:outsider").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:outsider".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:outsider".to_string()),
+                "artist.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
 
     let res = put_status(&client, &base, foreign, "waiting_for_input").await;
@@ -478,9 +489,17 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
 // The floor — anonymous callers are turned away with `401` on both methods.
 #[tokio::test]
 async fn anonymous_callers_are_turned_away() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend, json!({ "title": "Ref" })).await;
 
     let anon = client();

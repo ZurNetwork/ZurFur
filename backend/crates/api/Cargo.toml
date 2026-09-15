@@ -62,6 +62,4 @@ test-support = { path = "../test-support" }
 cli = { path = "../cli" }
 # Snapshot files for the wire-shape guards (golden_wire, contract_*, parity).
 insta = { workspace = true }
-# Shared fixtures across the per-route test files.
-rstest = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }

@@ -16,7 +16,6 @@
 //! Same in-process fakes as the other account e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
@@ -25,64 +24,10 @@ use domain::elements::{
     profile::Profile,
     role::Role,
 };
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can seed/introspect accounts and memberships directly.
-/// `did` is the identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "owner.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Founds an account through `POST /accounts` with the given session, returning its
 /// id — the caller becomes its Owner.
@@ -123,7 +68,15 @@ async fn seed_foreign_account(backend: &MemBackend, owner_did: &str, handle: &st
 // turned away at 401 `not_authenticated` (problem+json), read-only for the signed-out.
 #[tokio::test]
 async fn anonymous_cannot_make_an_account_scoped_write() {
-    let (base, _backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     // No sign-in: the cookie jar carries no session. A grant is an account-scoped write.
     let res = client()
@@ -140,9 +93,19 @@ async fn anonymous_cannot_make_an_account_scoped_write() {
 // nothing (they are still not a member afterward).
 #[tokio::test]
 async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
-    let (base, backend) = spawn_app("did:plc:stranger").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:stranger".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:stranger".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await; // signed in as did:plc:stranger
+    sign_in(&client, &base, "owner.bsky.social").await; // signed in as did:plc:stranger
 
     // An account owned by someone else; the signed-in stranger holds no role on it.
     let account = seed_foreign_account(&backend, "did:plc:host", "host.zurfur.app").await;
@@ -185,9 +148,17 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
 // account-scoped write: the gate is a floor, not a blanket deny.
 #[tokio::test]
 async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
-    let (base, backend) = spawn_app("did:plc:owner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:owner".to_string())).profile(Profile::new(
+            Did::from("did:plc:owner".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // The signed-in user founds the account and is its Owner — an Owner may grant.
     let account_id = found_account(&client, &base, "Acme Studio", "acme.zurfur.app").await;
@@ -221,9 +192,19 @@ async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
 // founding an account is not account-scoped, so the `AccountRole` gate is not applied.
 #[tokio::test]
 async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
-    let (base, backend) = spawn_app("did:plc:newcomer").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:newcomer".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:newcomer".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // The signed-in user holds no accounts yet.
     let me = backend
@@ -260,9 +241,17 @@ async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
 // retrofit can't accidentally gate discovery.
 #[tokio::test]
 async fn anonymous_read_of_account_public_data_still_succeeds() {
-    let (base, _backend) = spawn_app("did:plc:owner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:owner".to_string())).profile(Profile::new(
+            Did::from("did:plc:owner".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let owner_client = client();
-    sign_in(&owner_client, &base).await;
+    sign_in(&owner_client, &base, "owner.bsky.social").await;
 
     // Found an account so its handle → DID mapping exists in the store.
     found_account(&owner_client, &base, "Acme Studio", "acme.zurfur.app").await;

@@ -1,0 +1,8 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: body
+---
+{
+  "did": "<VOLATILE>",
+  "handle": "bare.bsky.social"
+}

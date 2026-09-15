@@ -44,9 +44,8 @@ use domain::ports::{
     AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionReads,
     CommissionRepo, CommissionWrites, Database, UnitOfWork, UserWrites, WorkflowWrites,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
 
@@ -54,38 +53,31 @@ mod common;
 /// interpose at the unit-of-work seam while reads keep hitting the same backend.
 /// `did` is the identity `sign_in` will authenticate as.
 async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Database>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
     // A throwaway runtime supplies config/pool/auth/profile_source/did_minter;
     // the store fields below are overridden onto the CALLER's backend (and a
     // possibly-interposed `database`) so the fact-bearing double in this file
     // (`FactBearingDatabase`) can wrap the same backend it reads through.
-    let test_support::runtime::MemRuntime { runtime, .. } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state = AppState {
-        files: backend.file_store(),
-        users: backend.user_store(),
-        profile_cache: backend.profile_cache(),
-        database,
-        accounts: backend.account_store(),
-        commissions: backend.commission_store(),
-        changelog: backend.changelog_store(),
-        ..runtime
-    };
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}")
+    let backend = backend.clone();
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "artist.bsky.social",
+        )),
+        move |rt| {
+            api::app(AppState {
+                files: backend.file_store(),
+                users: backend.user_store(),
+                profile_cache: backend.profile_cache(),
+                database,
+                accounts: backend.account_store(),
+                commissions: backend.commission_store(),
+                changelog: backend.changelog_store(),
+                ..rt
+            })
+        },
+    )
+    .await;
+    served.base_url
 }
 
 /// [`spawn_app_on`] over a fresh backend and its plain mem database.
@@ -95,41 +87,13 @@ async fn spawn_app(did: &str) -> (String, MemBackend) {
     (base, backend)
 }
 
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
-
 /// Signs in and creates one commission through the API, returning its id.
 async fn sign_in_and_create(
     client: &reqwest::Client,
     base: &str,
     backend: &MemBackend,
 ) -> CommissionId {
-    sign_in(client, base).await;
+    sign_in(client, base, "artist.bsky.social").await;
     let res = client
         .post(format!("{base}/commissions"))
         .json(&json!({ "title": "A ref sheet" }))
@@ -202,7 +166,7 @@ async fn owner_deletes_a_fact_free_commission_entirely() {
 async fn a_non_participant_gets_the_uniform_404_and_deletes_nothing() {
     let (base, backend) = spawn_app("did:plc:stranger").await;
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = seed_foreign_commission(&backend, "Not yours").await;
 
     let res = client
@@ -224,7 +188,7 @@ async fn a_non_participant_gets_the_uniform_404_and_deletes_nothing() {
 async fn an_absent_commission_answers_the_same_uniform_404() {
     let (base, _backend) = spawn_app("did:plc:artist").await;
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
 
     let res = client
         .delete(format!("{base}/commissions/{}", uuid::Uuid::now_v7()))

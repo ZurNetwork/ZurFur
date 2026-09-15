@@ -14,80 +14,32 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
-use api::AppState;
 use domain::elements::{
     commission::{LifecycleStep, Visibility},
     did::Did,
     profile::Profile,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect the commissions that were persisted.
-/// `did` is the identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::from(did.to_string()))
-            .profile(Profile::new(
-                Did::from(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 // AC1/AC2/AC3 — a signed-in User creates a commission by Title, becomes its owner,
 // and it is born in `Draft`. The route returns a bare `201`, so owner + lifecycle
 // are read back off the shared backend.
 #[tokio::test]
 async fn signed_in_user_creates_a_commission_and_owns_it() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
 
     let me = backend
         .find_by_did(&Did::from("did:plc:artist".to_string()))
@@ -126,9 +78,19 @@ async fn signed_in_user_creates_a_commission_and_owns_it() {
 // creating one is a user-scoped write, not gated on account membership (ZMVP-47).
 #[tokio::test]
 async fn a_user_with_no_account_can_create_a_commission() {
-    let (base, backend) = spawn_app("did:plc:newcomer").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:newcomer".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:newcomer".to_string()),
+                "artist.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     // The signed-in user founds no account first — they hold none.
 
     let res = client
@@ -153,7 +115,15 @@ async fn a_user_with_no_account_can_create_a_commission() {
 // away at 401 `not_authenticated` (problem+json), and nothing is persisted.
 #[tokio::test]
 async fn anonymous_cannot_create_a_commission() {
-    let (base, backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
 
     // No sign-in: the cookie jar carries no session.
     let res = client()
@@ -174,9 +144,17 @@ async fn anonymous_cannot_create_a_commission() {
 // `invalid_request` (the `CommissionTitle` gate), and nothing is persisted.
 #[tokio::test]
 async fn a_blank_title_is_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
 
     let res = client
         .post(format!("{base}/commissions"))

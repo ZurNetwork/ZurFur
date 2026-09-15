@@ -303,4 +303,6 @@ pub fn cid(signed_op_cbor: &[u8]) -> String {
 }
 
 #[cfg(test)]
+mod proptests;
+#[cfg(test)]
 mod tests;

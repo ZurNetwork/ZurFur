@@ -1,0 +1,10 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: body
+---
+{
+  "avatarUrl": "https://pds.example/a.jpg",
+  "did": "<VOLATILE>",
+  "displayName": "Golden",
+  "handle": "golden.bsky.social"
+}
