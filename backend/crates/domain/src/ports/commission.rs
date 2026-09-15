@@ -19,6 +19,8 @@ use crate::{
     },
 };
 
+pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
+
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
 /// non-transactional. The one canonical commission read port: later work extends
 /// it rather than growing siblings. Authorization is always the caller's, settled
@@ -112,54 +114,6 @@ pub trait CommissionStore: Send + Sync {
     /// [`CommissionId`], unpaginated.
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 }
-
-/// Error source of an element write whose tab does not exist in that commission
-/// — an absent tab id and one belonging to another commission, indistinguishably,
-/// so probing tab ids reveals nothing. Adapters return it so the route can
-/// `downcast_ref` and answer `404`.
-#[derive(Debug)]
-pub struct UnknownTab;
-
-impl std::fmt::Display for UnknownTab {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "tab not found in this commission")
-    }
-}
-
-impl std::error::Error for UnknownTab {}
-
-/// Error source of an element write whose surface the composition
-/// [`SKELETON`](crate::elements::commission::SKELETON) does not declare **in that
-/// tab** — the refusal is about the pair, not the surface alone. Surfaces are
-/// code-declared and global, so this leaks nothing and routes answer `422`.
-/// Adapters resolve the tab first, so an address wrong in both ways refuses as
-/// [`UnknownTab`].
-#[derive(Debug)]
-pub struct UnknownSurface;
-
-impl std::fmt::Display for UnknownSurface {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "no such declared surface")
-    }
-}
-
-impl std::error::Error for UnknownSurface {}
-
-/// Error source of [`CommissionWrites::remove_element`] when the element does not
-/// exist in that commission — an absent id and one belonging to another
-/// commission, indistinguishably. Adapters return it so the route can
-/// `downcast_ref` and answer `404`. There is no "cannot remove" sibling: every
-/// element is removable by construction.
-#[derive(Debug)]
-pub struct ElementNotFound;
-
-impl std::fmt::Display for ElementNotFound {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "element not found in this commission")
-    }
-}
-
-impl std::error::Error for ElementNotFound {}
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`). Authority

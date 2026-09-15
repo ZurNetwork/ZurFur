@@ -29,7 +29,7 @@
     },
     {
       "name": "tests/",
-      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion)",
+      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion); elements_do_not_import_ports.rs — dependency-direction guard (elements never depend on ports)",
       "node": false
     }
   ],

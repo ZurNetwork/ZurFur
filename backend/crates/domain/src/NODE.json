@@ -8,7 +8,7 @@
     "Time is injected, never read from the ambient clock."
   ],
   "entry_points": [
-    "ports/mod.rs (Database + UnitOfWork traits)"
+    "ports.rs (Database + UnitOfWork traits)"
   ],
   "fs": [
     {
@@ -32,13 +32,23 @@
       "node": false
     },
     {
+      "name": "ports.rs",
+      "role": "module index for ports/, re-exports the port traits flat",
+      "node": false
+    },
+    {
       "name": "ports/",
-      "role": "trait seams: mod.rs = Database/UnitOfWork/User/Account/Profile/Did/Key/Plc ports; actor_identity, changelog, commission, file re-exported flat",
+      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, changelog, commission, character, file, workflow, authenticator, public_records ports; errors.rs shared",
       "node": false
     },
     {
       "name": "string_builder.rs",
       "role": "StringBuilder: the one trimmed/capped-string gate every newtype validates through (ZMVP-113)",
+      "node": false
+    },
+    {
+      "name": "string_builder/",
+      "role": "split of string_builder.rs; no information beyond its façade",
       "node": false
     }
   ],
@@ -61,27 +71,27 @@
     {
       "page": 23003138,
       "title": "Account Deletion, Tombstoning & Handle Reuse",
-      "governs": "ports/mod.rs HandleTaken/soft_delete/hard_delete/tombstone"
+      "governs": "ports.rs HandleTaken/soft_delete/hard_delete/tombstone"
     },
     {
       "page": 24150017,
       "title": "Transactions as a capability",
-      "governs": "ports/mod.rs Database::begin/ProfileCache, ports/commission.rs; also lib.rs's profile.rs cache-fill exception"
+      "governs": "ports.rs Database::begin/ProfileCache, ports/commission.rs; also lib.rs's profile.rs cache-fill exception"
     },
     {
       "page": 24182820,
       "title": "Invitation Validity & Issuer Departure",
-      "governs": "ports/mod.rs revoke_role"
+      "governs": "ports.rs revoke_role"
     },
     {
       "page": 26607618,
       "title": "Handle Resolution for *.zurfur.app",
-      "governs": "ports/mod.rs find_did_by_handle"
+      "governs": "ports.rs find_did_by_handle"
     },
     {
       "page": 27852802,
       "title": "Account Handle Change Flow",
-      "governs": "ports/mod.rs count_handle_changes_since/handle_reserved_for_other/change_handle/update_handle"
+      "governs": "ports.rs count_handle_changes_since/handle_reserved_for_other/change_handle/update_handle"
     },
     {
       "page": 29130754,
@@ -96,7 +106,7 @@
     {
       "page": 34013187,
       "title": "Identities — the Actor Super-Table",
-      "governs": "ports/mod.rs UnitOfWork::actor_identities + HasDid marker, ports/actor_identity.rs"
+      "governs": "ports.rs UnitOfWork::actor_identities + HasDid marker, ports/actor_identity.rs"
     },
     {
       "page": 45514754,
@@ -106,12 +116,12 @@
     {
       "page": 54427650,
       "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
-      "governs": "ports/mod.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
+      "governs": "ports.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
     },
     {
       "page": 59310081,
       "title": "The Changelog as the Only Record",
-      "governs": "ports/mod.rs UnitOfWork::changelog, ports/changelog.rs x2"
+      "governs": "ports.rs UnitOfWork::changelog, ports/changelog.rs x2"
     }
   ],
   "notes": [
