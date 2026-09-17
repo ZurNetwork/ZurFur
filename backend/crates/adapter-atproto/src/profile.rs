@@ -36,6 +36,20 @@ impl AtprotoProfileSource {
             client: BasicClient::unauthenticated(),
         }
     }
+
+    /// Build the source resolving through the given options — tests point it at a local server.
+    pub fn with_resolver_options(options: jacquard::identity::resolver::ResolverOptions) -> Self {
+        use jacquard::client::credential_session::CredentialSession;
+        use jacquard::client::{Agent, MemorySessionStore};
+        use std::sync::Arc;
+
+        let resolver = jacquard::identity::PublicResolver::new(reqwest::Client::new(), options);
+        let store = MemorySessionStore::default();
+        let session = CredentialSession::new(Arc::new(store), Arc::new(resolver));
+        Self {
+            client: Agent::new(session),
+        }
+    }
 }
 
 #[async_trait]
