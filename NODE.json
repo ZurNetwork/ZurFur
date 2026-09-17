@@ -1,10 +1,10 @@
 {
   "path": ".",
-  "charted": "2026-09-13",
+  "charted": "2026-09-17",
   "short": "The Zurfur monorepo: Rust backend, SvelteKit frontend, contract, lexicons",
   "is": "Zurfur — an AT Protocol-native art-commission platform: a Rust ports-and-adapters backend, a SvelteKit frontend, and the protobuf contract + atproto lexicons that sit between them and the network.",
   "conventions": [
-    "All design lives in Confluence DESIGN (single source of truth; `docs/confluence-design-index.md` is the pointer index) — fetch before asserting; Jira ZMVP holds the ticket record.",
+    "All design lives in the design corpus ZurNetwork/zurfur-design at ~/code/zurfur-design (single source of truth; `docs/design-index.md` is the generated pointer index) — read the page before asserting; Jira ZMVP holds the ticket record.",
     "Private data (app-owned rows, Postgres) vs public data (user-owned records, the PDS) is THE boundary; no cross-store transactions.",
     "Generated code (backend `api/src/generated`, frontend `lib/server/api/generated`, `adapter-*/src/queries.rs`) is committed and drift-gated in CI — never hand-edit; `just gen-contract` / `just gen-queries` regenerate it, and a SQL comment change re-generates `queries.rs` too.",
     "`main` is protected; slice PRs into `feature/*`, squash to `main`."
@@ -69,7 +69,7 @@
     },
     {
       "name": "CLAUDE.md",
-      "role": "how to behave: Confluence-is-truth, roles, DoD, branch strategy",
+      "role": "how to behave: the-corpus-is-truth, roles, DoD, branch strategy",
       "node": false
     },
     {
@@ -119,7 +119,7 @@
     },
     {
       "name": "docs/",
-      "role": "confluence-design-index.md — pointer index into Confluence DESIGN, never content",
+      "role": "design-index.md — generated pointer index into the design corpus, never content",
       "node": true
     },
     {
@@ -166,10 +166,10 @@
     }
   ],
   "notes": [
-    "Doc comments exist in a vacuum: a `///`, `//!`, JSDoc or SQL-header comment states its fact plainly and never carries a DD number, Confluence id/URL, Jira key, PR number or \"per ruling\" pointer — those live in the nearest NODE.json under `refs`; documentation too big for its file (module essays, migration rationale) moves to that NODE.json's `notes` with a one-line summary left in place.",
+    "Doc comments exist in a vacuum: a `///`, `//!`, JSDoc or SQL-header comment states its fact plainly and never carries a DD number, design page id, Jira key, PR number or \"per ruling\" pointer — those live in the nearest NODE.json under `refs`; documentation too big for its file (module essays, migration rationale) moves to that NODE.json's `notes` with a one-line summary left in place.",
     "Reading this tree: to understand a path, load the chain of nodes from this root down to it (`nodes chain <path>`); each node states only what its ancestors haven't. Entries marked `node: false` are fully described by their `fs` line. `/familiarize` reads the tree (`nodes tree`, `nodes chain`); `/chart` rewrites it through the `nodes` tool. NODE.json is what/where; CLAUDE.md is how to behave.",
     "See also: CLAUDE.md.",
-    "See also: docs/confluence-design-index.md.",
+    "See also: docs/design-index.md.",
     "See also: memory `feedback_docs_functions_only_terse` (the docstring rule, 2026-08-29 + 2026-09-12)."
   ]
 }

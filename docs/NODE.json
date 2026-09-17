@@ -1,24 +1,19 @@
 {
   "path": "docs",
-  "charted": "2026-09-12",
-  "short": "Pointer index into Confluence DESIGN",
-  "is": "The local pointer index into Confluence DESIGN — titles, page IDs, and fetch coordinates only, never copied page content.",
+  "charted": "2026-09-17",
+  "short": "Generated pointer index into the design corpus",
+  "is": "The generated pointer index into the design corpus (ZurNetwork/zurfur-design) — page ids, statuses and titles only, never copied page content.",
   "conventions": [
-    "This is the index every `Refs` section resolves against, so it is the one place page ids belong in bulk — but still ids and titles only, never page bodies.",
-    "`/optimize-memory` and `/save-reference` maintain it; don't hand-append."
+    "This is the index every `refs` entry resolves against, so it is the one place design page ids belong in bulk — but still ids, statuses and titles, never page bodies.",
+    "Generated, never hand-edited: `just design-index` rewrites it from the corpus, `just design-index-check` (inside `just gate`) reports drift, and `just nodes-check` resolves every NODE.json ref against it."
   ],
   "entry_points": [
-    "docs/confluence-design-index.md"
+    "docs/design-index.md"
   ],
   "fs": [
     {
-      "name": "confluence-design-index.md",
-      "role": "local pointer index of every Confluence DESIGN page (titles + ids + fetch coordinates)",
-      "node": false
-    },
-    {
       "name": "design-index.md",
-      "role": "generated public pointer index into the design corpus (ZurNetwork/zurfur-design) — ids, statuses and titles only, via `just design-index`",
+      "role": "generated pointer index into the design corpus — one line per page (id, status, title), via `just design-index`",
       "node": false
     }
   ],
