@@ -15,6 +15,11 @@
       "name": "confluence-design-index.md",
       "role": "local pointer index of every Confluence DESIGN page (titles + ids + fetch coordinates)",
       "node": false
+    },
+    {
+      "name": "design-index.md",
+      "role": "generated public pointer index into the design corpus (ZurNetwork/zurfur-design) — ids, statuses and titles only, via `just design-index`",
+      "node": false
     }
   ],
   "refs": [],
