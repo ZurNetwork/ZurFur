@@ -129,6 +129,11 @@
       "page": 57081857,
       "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
       "governs": "the whole did-as-key model: `src/account.rs`, `src/queries.rs`, `migrations/20260907060908_rekey_actors_on_did.sql`, `20260902225852_create_commission_markup.sql`, `20260910185856_create_workflow_and_columns.sql`, and every `queries/**/*.sql` file that resolves an actor by DID; generated; the migration this decision drove; `account/find.sql`, `account/find_did_by_handle.sql`, `account/list_for_user.sql`, `account/handle_reserved_for_other.sql`, `commission/grant_view.sql`, `commission/view_grant.sql`, `commission/revoke_view.sql`, `user/find.sql`, `user/find_by_did.sql`, `workflow/delete.sql`"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "migrations/20260902225852_create_commission_markup.sql — commission_markup is REPLACED by commission_comment (anchor jsonb envelope, root+parent, composite FK onto commission_file); queries/commission/add_markup.sql + markups_for_file.sql become the comment/pin statements; commission_changelog.note and commission_slot.notes become comment_id FKs"
     }
   ],
   "notes": [

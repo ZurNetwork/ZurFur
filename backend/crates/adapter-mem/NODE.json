@@ -111,6 +111,11 @@
       "page": 59310081,
       "title": "The Changelog as the Only Record",
       "governs": "src/lib.rs + src/commission.rs: changelog is append-only and commits atomically with the write it records"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "the markups map becomes the comments map (staged/merged like every commission-owned map); tombstoned comments stay in the map, unreachable at read"
     }
   ],
   "notes": [

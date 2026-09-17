@@ -155,6 +155,11 @@
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
       "governs": "D6/D7: `elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "markup.rs (POST …/files/{file_id}/markup) and notes.rs are replaced by the comment routes: place a pin, comment, reply, edit, delete, read a thread (cursor), read the pins of a file entry; every create returns the id"
     }
   ],
   "notes": [

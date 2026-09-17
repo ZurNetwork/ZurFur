@@ -304,6 +304,11 @@
       "page": 62488577,
       "title": "Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board",
       "governs": "workflow.rs: columns and cards order by a fractional Position key (LexOrdering trait, jitter from the element's UUIDv7 tail), (position, id) total order, anchor-based placement, one card per board = MOVE; invariants live here, the store only backstops"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "commission/markup.rs (Markup, MarkupShape, MarkupKey, CommissionMarkup) is REPLACED by the Comment entity: CommentId, text (trim + non-empty + 2000), optional anchor (closed envelope, alpha vocabulary point {x,y} normalized 0–1), optional root+parent with the same-commission and parent.root == root invariants; changelog kinds MarkupAdded {comment_id,file_id,anchor}, CommentAdded, CommentEdited, CommentDeleted"
     }
   ],
   "notes": [
