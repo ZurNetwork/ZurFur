@@ -1,6 +1,6 @@
 # The Zurfur API contract
 
-**This directory is the authority over both tiers** (DD [40992770](https://zurnetwork.atlassian.net/wiki/spaces/DESIGN/pages/40992770)): the axum backend and the SvelteKit frontend are *generated from* these files, and neither may redefine what they declare. It is ports-and-adapters applied at the project level — the contract is a peer of both trees, owned by neither, hosted here.
+**This directory is the authority over both tiers** (DD 40992770): the axum backend and the SvelteKit frontend are *generated from* these files, and neither may redefine what they declare. It is ports-and-adapters applied at the project level — the contract is a peer of both trees, owned by neither, hosted here.
 
 **JSON over HTTP is the v1 transport. Nothing here implies gRPC.** The `service`/`rpc` blocks exist so `google.api.http` annotations have a home — they declare each endpoint's path and verb, checked against axum's real route table by `crates/api/tests/contract_routes.rs`. **Only messages are generated**; handlers stay hand-written but must return the generated types. Transports are adapters, plural by design: a second transport would consume these same files, unchanged.
 

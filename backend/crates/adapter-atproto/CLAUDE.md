@@ -2,10 +2,10 @@
 
 AT Protocol adapter: **user-owned** records on the user's **PDS**, addressed by **AT-URI via DID**. This is the *public* side of the data boundary (the private side is `adapter-pg`).
 
-## Settled invariants (fetch the DD before changing any of these)
+## Settled invariants (read the DD before changing any of these)
 - **`did:plc` everywhere** DIDs are minted (not `did:web`), and **the DID is the only actor identifier** — every actor, Characters included, mints one at creation; actor tables are keyed by `did NOT NULL`, no surrogate id (2026-08-30). → DD *DID:PLC vs DID:Web* (`4358151`); *Actor Addressing — DID as the Only Identifier* (`57081857`, supersedes-in-part `34013187` and `54427650`).
 - **No cross-store transactions.** Publishing an atproto record alongside private writes is a dual write — a separate, retryable step (outbox-style), never one unit of work.
 - What is user-owned (public PDS) vs app-owned (private pg) → DD *Data Boundaries* (`10354698`); who operates DIDs / platform authority → *Platform Authority* (`9207856`); blob/PDS split → *Blobs, PDS & Private Storage* (`10125341`).
 
 ## Memory check
-When a question arises about the public store, PDS records, DIDs/handles, or the data boundary, **check the relevant memories + the DDs above (fetch via `docs/confluence-design-index.md`) before asserting.** Confluence DESIGN is the source of truth; this file only points.
+When a question arises about the public store, PDS records, DIDs/handles, or the data boundary, **check the relevant memories + the DDs above (find them via `docs/design-index.md`, then read the page in the corpus) before asserting.** The design corpus is the source of truth; this file only points.

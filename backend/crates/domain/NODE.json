@@ -1,10 +1,10 @@
 {
   "path": "backend/crates/domain",
-  "charted": "2026-09-12",
+  "charted": "2026-09-17",
   "short": "The I/O-free domain core",
   "is": "Zurfur's I/O-free core — the platform's nouns and the trait seams every adapter implements; deliberately transitional, to split into per-namespace crates (identity, gallery, workflow, plugin).",
   "conventions": [
-    "Every element mirrors a DESIGN glossary page.",
+    "Every element mirrors a design glossary page (`entities/` in the corpus); the page pointer lives in this node's `refs`, never in a doc comment.",
     "Stub modules are allowed, and documented honestly as stubs.",
     "Errors surface as `anyhow::Result` with context."
   ],
@@ -51,7 +51,7 @@
     }
   ],
   "notes": [
-    "See also: DESIGN glossary pages.",
+    "See also: the design corpus glossary — `entities/` in ZurNetwork/zurfur-design, indexed by `docs/design-index.md`.",
     "See also: ZMVP-67 (tests/fact_contract.rs: the Fact contract's origin ticket)."
   ]
 }
