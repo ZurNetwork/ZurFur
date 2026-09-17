@@ -3,9 +3,8 @@
 **Status: BINDING — ratified by the Engineer 2026-07-27 after the full-document
 ratification read (ZMVP-28).** Every Engineer question is ruled (R1–R11); the one
 obligation still open is the Q1 spike, deferred by R8 until the first true enum enters
-the corpus. This satisfies DD
-[40992770](https://zurnetwork.atlassian.net/wiki/spaces/DESIGN/pages/40992770)'s hard
-ordering constraint: the versioning contract is DECIDED and `v1` may now be tagged.
+the corpus. This satisfies DD 40992770's hard ordering constraint: the versioning
+contract is DECIDED and `v1` may now be tagged.
 
 Research method, per the Engineer's standing directive (2026-07-25): every factual
 claim below was web-fetched from a primary source and carries its URL; nothing is

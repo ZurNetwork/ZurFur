@@ -48,13 +48,13 @@ All writes to the private store go through a transactional `UnitOfWork` pattern 
 
 ### Identity Rules
 
-- Visitor identity precedes the platform (ZMVP-9, DESIGN/User)
-- Account identity is platform-custodied (ZMVP-14, DESIGN/Account)  
-- Role granting follows strict rules where only Owners and Admins can grant roles (DESIGN/Roles)
+- Visitor identity precedes the platform (ZMVP-9, design page User `786439`)
+- Account identity is platform-custodied (ZMVP-14, design page Account `1966081`)
+- Role granting follows strict rules where only Owners and Admins can grant roles (design page Roles `2162692`)
 
 ### Domain-Driven Design
 
-- All domain elements are documented in the DESIGN wiki (linked in comments)
+- Every domain element has a glossary page in the design corpus; the pointer to it lives in this crate's `NODE.json` under `refs`, not in the doc comments
 - The domain layer is completely independent - no adapters can depend on it
 - The architecture allows for easy swapping of storage mechanisms via adapter pattern
 
