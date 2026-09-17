@@ -4,9 +4,12 @@ use domain::{
         commission::{CommissionId, ElementId, NewSlot, SlotTitle, SurfaceAddress, TabId},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, slots::Slots},
     ports::WithPorts,
 };
@@ -27,8 +30,14 @@ pub struct Output {
 }
 
 impl Slots<'_> {
-    pub async fn declare(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn declare(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             user_id,
             commission_id,
@@ -65,9 +74,7 @@ impl Slots<'_> {
             .collect();
 
         let slot_ids: Vec<ElementId> = slots.iter().map(|s| s.id).collect();
-        let mut uow = ports.database.begin().await?;
         uow.commissions().declare_slots(&slots).await?;
-        uow.commit().await?;
         Ok(Output { slot_ids })
     }
 }

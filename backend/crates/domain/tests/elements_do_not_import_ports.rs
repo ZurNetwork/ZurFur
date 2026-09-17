@@ -15,8 +15,7 @@ const FORBIDDEN: &str = "crate::ports";
 /// Paths allowed to contain [`FORBIDDEN`], as `<crate-relative path>`.
 ///
 /// Empty, and it should stay that way. If one ever lands here it carries its
-/// reason inline, as the sibling guard's exemptions do
-/// (`application/tests/unit_of_work_guard.rs`).
+/// reason inline.
 const EXEMPT: &[&str] = &[];
 
 /// The `elements` directory this guard scans, relative to this crate's

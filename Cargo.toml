@@ -4,12 +4,7 @@ resolver = "2"
 members = ["backend/crates/*"]
 
 
-exclude = [
-  "frontend",
-  "node_modules",
-  "dist",
-  ".next",
-]
+exclude = ["frontend", "node_modules", "dist", ".next"]
 
 [workspace.dependencies]
 # The extracted codegen library (was the in-tree `query-codegen` lib); the
@@ -89,7 +84,14 @@ thiserror = "2.0.20"
 # Derives for std traits on domain newtypes (Display, AsRef, Deref, From, Into,
 # FromStr forwarding). Its `Error` derive is deliberately NOT enabled: errors
 # are `thiserror`'s. Derives are always path-qualified at the use site.
-derive_more = { version = "2.1.1", features = ["display", "as_ref", "deref", "from", "into", "from_str"] }
+derive_more = { version = "2.1.1", features = [
+  "display",
+  "as_ref",
+  "deref",
+  "from",
+  "into",
+  "from_str",
+] }
 # Enum string tables (Display/EnumString/VariantNames). Exact-pinned on purpose:
 # its casing rules produce persisted tokens, and every enum pins them in a test.
 strum = { version = "0.28.0", features = ["derive"] }

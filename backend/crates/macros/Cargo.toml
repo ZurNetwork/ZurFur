@@ -1,0 +1,20 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The switch that makes this a procedural-macro crate: it is compiled for the
+# HOST and loaded by rustc, and it may export nothing but macros.
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+# Compile-FAIL tests: each `tests/ui/*.rs` must be rejected by rustc, and the
+# compiler's output must match the sibling `.stderr` file.
+trybuild = "1"

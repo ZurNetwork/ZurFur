@@ -1,21 +1,13 @@
-use crate::{account::Accounts, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::account::Accounts;
 
 pub mod column;
 pub mod create;
 pub mod delete;
 
+#[derive(WithPorts)]
 pub struct Workflows<'a> {
+    #[ports]
     pub accounts: &'a Accounts<'a>,
-}
-
-impl<'a> WithPorts<'a> for Workflows<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.accounts.ports()
-    }
-}
-
-impl<'a> Accounts<'a> {
-    pub fn workflows(&'a self) -> Workflows<'a> {
-        Workflows { accounts: self }
-    }
 }

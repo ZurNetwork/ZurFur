@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/domain/src",
-  "charted": "2026-09-12",
+  "charted": "2026-09-19",
   "short": "Elements, ports, the clock, the string builder",
   "is": "Four public modules: the nouns (elements), the seams (ports), the one clock type, and the shared string-validation builder.",
   "conventions": [
@@ -126,7 +126,7 @@
   ],
   "notes": [
     "Adapters: `adapter-pg` implements the private-store ports, `adapter-atproto` the public ones (`PublicRecords`, the real `DidMinter`), `adapter-mem` fakes both.",
-    "`UnitOfWork` vends exactly seven write ports: `accounts`, `commissions`, `changelog`, `users`, `actor_identities`, `workflows`, `columns`.",
+    "`UnitOfWork` vends exactly eight write ports: `accounts`, `commissions`, `changelog`, `users`, `actor_identities`, `workflows`, `columns`, `characters`. `ports::Unit<'a>` names `&'a mut dyn UnitOfWork`, the type a `#[unit]` parameter takes.",
     "Documented exceptions to the Unit of Work — pool-backed `&self` writes: `ProfileCache` (read-through cache fill), `FileStore` (blob bytes can't ride a Postgres transaction), and the api-side `session_store`/`auth_store`.",
     "Changelog entries are appended in the same unit as the domain write they record, and nothing is derived from them (59310081).",
     "`commission_element` carries a **composite** FK `(tab_id, commission_id) → commission_tab (id, commission_id)`, so an element citing another commission's tab is unwritable; `UnknownTab` is the friendly 404 half of that rule (45514754).",

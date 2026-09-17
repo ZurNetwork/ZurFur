@@ -4,9 +4,12 @@ use domain::{
         commission::{CommissionId, DeadlineStatus},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, deadline::status::Status},
     ports::WithPorts,
 };
@@ -22,7 +25,14 @@ impl Status<'_> {
     /// Flag the commission as slipping — the manual Participant act.
     /// `Delayed` is the only value a hand may set; asking for `Late` is a
     /// malformed request, not a permission problem. Re-flagging is a no-op.
-    pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
+    #[use_case]
+    pub async fn set(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -33,7 +43,7 @@ impl Status<'_> {
             DeadlineStatus::Late => return Err(CommissionError::InvalidStateRequested),
         }
 
-        super::apply(self.ports(), &commission_id, actor_id, Some(status), now).await?;
+        super::apply(ports, uow, &commission_id, actor_id, Some(status), now).await?;
         Ok(Output)
     }
 }

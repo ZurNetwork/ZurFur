@@ -1,18 +1,12 @@
-use crate::{account::Accounts, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::account::Accounts;
 
 pub mod grant;
 pub mod revoke;
-pub struct Roles<'a> {
-    accounts: &'a Accounts<'a>,
-}
 
-impl<'a> WithPorts<'a> for Roles<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.accounts.ports()
-    }
-}
-impl<'a> Accounts<'a> {
-    pub fn roles(&'a self) -> Roles<'a> {
-        Roles { accounts: self }
-    }
+#[derive(WithPorts)]
+pub struct Roles<'a> {
+    #[ports]
+    accounts: &'a Accounts<'a>,
 }

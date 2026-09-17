@@ -4,8 +4,12 @@ use domain::elements::{
     role::{Role, RoleAlias},
     user::UserId,
 };
+use macros::use_case;
 
-use crate::account::{AccountResult, Accounts};
+use crate::{
+    Ports,
+    account::{AccountResult, Accounts},
+};
 
 pub struct Query {
     pub user_id: UserId,
@@ -23,9 +27,8 @@ pub struct Output {
 }
 
 impl<'a> Accounts<'a> {
-    pub async fn list(&self, query: Query) -> AccountResult<Output> {
-        let ports = self.ports();
-
+    #[use_case]
+    pub async fn list(&self, #[ports] ports: &Ports, query: Query) -> AccountResult<Output> {
         Ok(Output {
             accounts: ports
                 .accounts

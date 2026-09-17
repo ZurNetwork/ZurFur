@@ -65,6 +65,8 @@ pub trait UnitOfWork: Send {
     async fn rollback(self: Box<Self>) -> anyhow::Result<()>;
 }
 
+pub type Unit<'a> = &'a mut dyn UnitOfWork;
+
 /// The bound a transaction body closure must satisfy: callable once with a
 /// borrowed [`UnitOfWork`] for any lifetime `'a`, yielding a `Send` future for
 /// that same `'a`. Routed through plain [`FnOnce`] rather than `AsyncFnOnce`,

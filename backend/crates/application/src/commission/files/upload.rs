@@ -6,11 +6,14 @@ use domain::{
         },
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, files::Files},
     ports::WithPorts,
 };
@@ -35,14 +38,16 @@ impl Files<'_> {
     /// effect. Authorizes before a byte of `content` is read, caps it at
     /// `max_upload_bytes`, and deletes the orphaned blob before refusing.
     /// Commits the [`CommissionFile`] link and its changelog entry atomically.
+    #[use_case]
     pub async fn upload(
         &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
         cmd: Command,
         content: impl AsyncRead + Send + Unpin,
         max_upload_bytes: u64,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
-        let ports = self.ports();
         let Command {
             actor_id,
             commission_id,
@@ -107,10 +112,8 @@ impl Files<'_> {
             uploaded_by: actor_id,
             created_at: now,
         };
-        let mut uow = self.ports().database.begin().await?;
         uow.commissions().add_file(&file).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
         Ok(Output { id: key })
     }
 }

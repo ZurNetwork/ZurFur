@@ -1,6 +1,11 @@
-use domain::elements::{account::AccountId, user::UserId};
+use domain::{
+    elements::{account::AccountId, user::UserId},
+    ports::Unit,
+};
+use macros::use_case;
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, require_live_account, role::Roles},
     ports::WithPorts,
 };
@@ -18,8 +23,13 @@ pub struct Output {
 }
 
 impl Roles<'_> {
-    pub async fn revoke(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn revoke(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             target_id,
@@ -55,10 +65,8 @@ impl Roles<'_> {
             return Err(AccountError::IncorrectRole);
         }
 
-        let mut uow = ports.database.begin().await?;
         uow.accounts().revoke_role(&target_id, &account_id).await?;
 
-        uow.commit().await?;
         Ok(Output {
             account_id,
             user_id: target_id,

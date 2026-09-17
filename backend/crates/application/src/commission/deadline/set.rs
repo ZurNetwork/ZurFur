@@ -4,10 +4,13 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, deadline::Deadline, require_participant},
     ports::WithPorts,
 };
@@ -23,8 +26,14 @@ impl Deadline<'_> {
     /// Set — or move — the commission's deadline, as a Participant. Re-setting
     /// the deadline already held is a no-op. A later deadline than the one held
     /// records as `DeadlineExtended`, anything else as `DeadlineSet`.
-    pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn set(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -51,7 +60,6 @@ impl Deadline<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
         let mut commissions = uow.commissions();
         let moved = commissions
             .set_deadline(&commission.id, Some(deadline))
@@ -60,7 +68,6 @@ impl Deadline<'_> {
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }

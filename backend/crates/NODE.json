@@ -1,14 +1,14 @@
 {
   "path": "backend/crates",
-  "charted": "2026-09-12",
-  "short": "The twelve workspace crates",
-  "is": "Twelve workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, and three support/codegen crates.",
+  "charted": "2026-09-19",
+  "short": "The thirteen workspace crates",
+  "is": "Thirteen workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, and one proc-macro crate serving the application layer.",
   "conventions": [
     "read/write split per aggregate — `*Store` is pool-backed and non-transactional, `*Writes` is reachable only on an open `UnitOfWork`.",
     "Closed-vocabulary enums implement std `Display`/`FromStr`, never bespoke `as_str`/`parse` pairs; id newtypes may derive serde, loaded entities never do.",
     "Codegen crates are libraries first so the runner binary and the staleness-gate test share one generation body.",
     "`test-support` dev-depends on `adapter-pg` while adapters dev-depend on `test-support` — a cargo dev-cycle, not a runtime edge.",
-    "`application` depends only on `domain` + `shared`, never an adapter or `composition`."
+    "`application` depends only on `domain` + `shared` + the compile-time `macros` crate, never an adapter or `composition`."
   ],
   "entry_points": [
     "each crate's src/lib.rs — the module-level docs are the real map"
@@ -36,7 +36,7 @@
     },
     {
       "name": "application/",
-      "role": "use cases — one plain async fn per use case + the shared transaction() orchestrator, called by every driver",
+      "role": "use cases — one `#[use_case]` method per use case on a per-entity namespace, called by every driver; transaction() stays for the actor-less sweep and test seeding",
       "node": true
     },
     {
@@ -57,6 +57,11 @@
     {
       "name": "domain/",
       "role": "I/O-free core: elements (the nouns), ports (trait seams), the injected clock, the string-validation builder",
+      "node": true
+    },
+    {
+      "name": "macros/",
+      "role": "proc-macro crate: `#[use_case]` (injection + the unit-of-work bracket) and `#[derive(WithPorts)]`, consumed by application",
       "node": true
     },
     {

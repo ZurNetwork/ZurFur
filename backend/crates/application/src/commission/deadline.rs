@@ -1,6 +1,7 @@
 use domain::datetime::DateTimeUtc;
+use macros::WithPorts;
 
-use crate::{commission::Commissions, ports::WithPorts};
+use crate::commission::Commissions;
 
 pub mod clear;
 pub mod set;
@@ -12,18 +13,8 @@ pub(super) struct DeadlineSetEventPayload {
     pub deadline: Option<DateTimeUtc>,
 }
 
+#[derive(WithPorts)]
 pub struct Deadline<'a> {
+    #[ports]
     commissions: &'a Commissions<'a>,
-}
-
-impl<'a> WithPorts<'a> for Deadline<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.commissions.ports()
-    }
-}
-
-impl<'a> Commissions<'a> {
-    pub fn deadline(&'a self) -> Deadline<'a> {
-        Deadline { commissions: self }
-    }
 }

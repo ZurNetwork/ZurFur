@@ -1,20 +1,12 @@
-use crate::{commission::Commissions, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::commission::Commissions;
 
 pub mod issue;
 pub mod revoke;
 
+#[derive(WithPorts)]
 pub struct Invitations<'a> {
+    #[ports]
     commissions: &'a Commissions<'a>,
-}
-
-impl<'a> WithPorts<'a> for Invitations<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.commissions.ports()
-    }
-}
-
-impl<'a> Commissions<'a> {
-    pub fn invitations(&'a self) -> Invitations<'a> {
-        Invitations { commissions: self }
-    }
 }

@@ -1,16 +1,19 @@
 {
   "path": "backend/crates/application",
-  "charted": "2026-09-12",
-  "short": "Use cases: one plain async fn each",
-  "is": "The application layer (DD 55836674): one plain async fn per use case, called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees plus the flat `user` module and the shared `transaction()` orchestrator.",
+  "charted": "2026-09-19",
+  "short": "Use cases: one #[use_case] method each",
+  "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, and the `transaction()` orchestrator for callers that are not use-case methods.",
   "conventions": [
-    "One plain `pub async fn run` per use case, no mediator.",
-    "Each use case is its own file exporting `Command` (or `Query`) + `Output` + `run`, so call sites read `commission::slots::declare::run(...)`; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module.",
-    "The module root file keeps the per-entity `Ports` struct of `&dyn` ports, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias.",
+    "One `#[use_case] pub async fn` per use case, a method on its namespace (`app.accounts().role().grant(cmd)`), no mediator.",
+    "Each use case is its own file exporting `Command` (or `Query`) + `Output` + the `impl Namespace<'_>` block holding the method; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module.",
+    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[unit] uow: Unit<'_>`, then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now`.",
+    "A write takes `#[unit]`: the generated wrapper opens the unit before the body, commits on `Ok`, rolls back on `Err`. A read takes `#[ports]` only. `clippy.toml` bans a hand-written `begin`/`commit`/`rollback` in this crate, tests included.",
+    "A namespace is a struct deriving `macros::WithPorts`: a root holds `#[ports(is_root = true)] ports: &'a Ports`, a facet holds `#[ports]` on a reference to its parent and gets its accessor on the parent for free.",
+    "The module root file keeps the namespace, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias.",
     "Runtime config + `now: DateTimeUtc` are plain params.",
     "Output DTOs carry domain VALUES, never entities.",
-    "Writes call `transaction()`; reads skip the unit of work; the dependency floor is witnessed by `tests/dep_guard.rs`.",
-    "A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now`."
+    "The dependency floor is witnessed by `tests/dep_guard.rs`.",
+    "A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now` — a free fn over `transaction()`, since `#[use_case]` needs `self`."
   ],
   "entry_points": [
     "src/lib.rs",
@@ -18,17 +21,23 @@
     "src/account.rs",
     "src/commission.rs",
     "src/user.rs",
+    "src/character.rs",
     "src/transaction.rs"
   ],
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+anyhow+tracing+serde_json+tokio(io-util, upload streaming); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util, upload streaming); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "node": false
+    },
+    {
+      "name": "clippy.toml",
+      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback — only the `#[use_case]` wrapper may call them",
       "node": false
     },
     {
       "name": "src/account.rs",
-      "role": "account module root — AccountError, AccountPorts, AccountResult, require_live_account",
+      "role": "account module root — the `Accounts` root namespace, AccountError, AccountResult, require_live_account, ensure_handle_claimable",
       "node": false
     },
     {
@@ -42,8 +51,18 @@
       "node": false
     },
     {
+      "name": "src/character.rs",
+      "role": "character module root — the `Characters` namespace, CharacterError, CharacterResult",
+      "node": false
+    },
+    {
+      "name": "src/character/",
+      "role": "create.rs (mints a DID, creates the Character) + delete.rs (`todo!()` stub)",
+      "node": false
+    },
+    {
       "name": "src/commission.rs",
-      "role": "commission module root — CommissionError, CommissionPorts, require_participant/require_owner, sweep_deadlines",
+      "role": "commission module root — the `Commissions` root namespace, CommissionError, require_participant/require_owner, sweep_deadlines",
       "node": false
     },
     {
@@ -52,23 +71,33 @@
       "node": true
     },
     {
+      "name": "src/common_error.rs",
+      "role": "CommonError + NotFoundEntity — the error vocabulary the per-module enums share; tests beside it in common_error/tests.rs",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
       "role": "crate doc + module declarations, re-exports App/Ports/MissingPort and transaction()",
       "node": false
     },
     {
       "name": "src/ports.rs",
-      "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace",
+      "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace; implemented by `#[derive(macros::WithPorts)]`",
       "node": false
     },
     {
       "name": "src/transaction.rs",
-      "role": "the one transaction() begin/commit/rollback orchestrator (DD 24150017); mod, not pub mod",
+      "role": "transaction() — the begin/commit/rollback orchestrator for callers that are not use-case methods: sweep_deadlines, composition::Runtime::transaction, test seeding (DD 24150017); mod, not pub mod",
       "node": false
     },
     {
       "name": "src/user.rs",
-      "role": "user module — MeQuery/MeResult/MeProfile/MeError, the flat me use case",
+      "role": "user module root — the `Users` root namespace, resolve_profile",
+      "node": false
+    },
+    {
+      "name": "src/user/",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError",
       "node": false
     },
     {
@@ -92,11 +121,6 @@
       "node": false
     },
     {
-      "name": "tests/unit_of_work_guard.rs",
-      "role": "pins that a closed unit of work cannot be written to after commit/rollback",
-      "node": false
-    },
-    {
       "name": "tests/user.rs",
       "role": "integration tests for the me use case",
       "node": false
@@ -115,13 +139,13 @@
     },
     {
       "page": 24150017,
-      "title": "Transactions as a capability",
-      "governs": "src/transaction.rs, tests/unit_of_work_guard.rs: the begin/commit/rollback orchestrator + the closed-unit guard"
+      "title": "Transactions as a capability — a compile-enforced Unit of Work in the private store",
+      "governs": "src/transaction.rs, clippy.toml + every #[unit] use case: a unit of work is opened only by the #[use_case] wrapper or transaction()"
     },
     {
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
-      "governs": ""
+      "governs": "the whole crate: use cases as namespace methods, Command/Query in and flat Output values out, the per-entity namespaces over one Ports bag"
     },
     {
       "page": 64290818,
@@ -130,14 +154,17 @@
     }
   ],
   "notes": [
-    "The composition root assembles ONE `Ports` bag (`app.rs`); `App` vends the per-entity namespaces `Accounts`/`Commissions`/`Users` with the ports already bound, and drivers pass only `now`. Every `Ports` entry is required, so `MissingPort` is currently unreachable — it is the home for the first port a driver profile may omit.",
-    "`transaction()` is the one `begin`/`commit`/`rollback` orchestrator: commits on `Ok`, rolls back on `Err`. It takes a bare `&dyn Database` so use cases, `composition::Runtime::transaction` and `api`'s deadline sweeper share it instead of each re-implementing commit/rollback. (DD 24150017)",
+    "The composition root assembles ONE `Ports` bag (`app.rs`); `App` vends the root namespaces `Accounts`/`Commissions`/`Users` with the ports already bound, and drivers pass only `now`. Every `Ports` entry is required, so `MissingPort` is currently unreachable — it is the home for the first port a driver profile may omit.",
+    "`transaction()` commits on `Ok` and rolls back on `Err` — the same bracket the `#[use_case]` wrapper inlines. It takes a bare `&dyn Database`, so `sweep_deadlines`, `composition::Runtime::transaction` and the test seeders share it; its three disallowed-method calls are the only ones left in `src/`, under an `#[allow]` with its reason. (DD 24150017)",
     "Its closure bound is `domain::ports::UnitOfWorkFn` plus explicit `F: Send`/`T: Send`, NOT std's `AsyncFnOnce` — higher-ranked `AsyncFnOnce` bounds do not hold the returned future `Send` (rust-lang/rust#110338).",
     "Each module's `From<anyhow::Error>` impl is the single place a typed store error becomes a use-case error; `?` is the only path a store error takes, so no call site can let a 404/409 degrade into a 500.",
     "Authorization posture across the crate: refusals never distinguish \"absent\" from \"forbidden\" for a caller with no standing. See the per-module NODE.json notes.",
     "See also: ZMVP-205 — the application-layer restructure that moved use cases below the HTTP layer (tests/dep_guard.rs, tests/user.rs, tests/account.rs, tests/commission.rs, tests/commission_files.rs).",
     "See also: memory `project_application_layer_convention`.",
     "See also: memory `project_transaction_unit_of_work`.",
-    "See also: memory `feedback_work_by_module`."
+    "See also: memory `feedback_work_by_module`.",
+    "Because the unit opens before the body, it spans everything the body does — including the external calls in `account/create` and `character/create` (DID mint), `account/change_handle` (DID-document update) and `commission/files/upload` (blob write), and the early-return paths that used to leave before `begin`.",
+    "Three use-case files carry no `#[use_case]` because they inject nothing: `account/facts/exist.rs` (stub), `character/delete.rs` (`todo!()`), `commission/status/direction/clear.rs` (delegates to `set`).",
+    "A use-case file whose namespace has no inherent `ports()` imports `crate::ports::WithPorts`: the `#[unit]` wrapper calls `self.ports()` by method syntax."
   ]
 }

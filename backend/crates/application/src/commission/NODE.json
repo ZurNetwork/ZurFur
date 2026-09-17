@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/commission",
-  "charted": "2026-09-12",
+  "charted": "2026-09-19",
   "short": "Commission use cases",
-  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `run` file per action; the module root `../commission.rs` holds `CommissionError`, `CommissionPorts`, `CommissionResult` and the system-actor `sweep_deadlines`.",
+  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError`, `CommissionResult` and the system-actor `sweep_deadlines`.",
   "conventions": [],
   "entry_points": [
     "../commission.rs"
@@ -25,7 +25,7 @@
     },
     {
       "name": "deadline.rs + deadline/{set,clear}.rs + deadline/status/{set,clear}.rs",
-      "role": "set/clear the deadline; set/clear the manual Delayed flag",
+      "role": "set/clear the deadline; set/clear the manual Delayed flag — `deadline/status.rs::apply` is the shared body, run on the caller's injected unit",
       "node": false
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "files.rs + files/{upload,download}.rs",
-      "role": "streaming upload (auth before read, capped, blob written pre-tx) and gated download",
+      "role": "streaming upload (auth before read, capped, blob written before its row, orphan deleted on refusal) and gated download",
       "node": false
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "status.rs + status/direction/{set,clear}.rs",
-      "role": "set/clear the direction-status override",
+      "role": "set/clear the direction-status override; `clear` delegates to `set` and carries no `#[use_case]`",
       "node": false
     },
     {
@@ -114,6 +114,11 @@
       "page": 59310081,
       "title": "The Changelog as the Only Record — Plugin Appends, Render-First Readability & the Eventlog as a Frontend Surface",
       "governs": "changelog"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "markup.rs and notes.rs are REPLACED by the comment use cases: a pin = a root Comment with a point anchor, replies carry root+parent (same commission, parent.root == root — a domain invariant), thread read by root cursor-paginated, edit author-only, delete = tombstone via the one shared read path; changelog payloads carry comment ids never text; kinds markup_added/comment_added/comment_edited/comment_deleted"
     }
   ],
   "notes": [

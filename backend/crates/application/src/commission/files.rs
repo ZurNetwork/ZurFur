@@ -4,23 +4,15 @@
 //! Streaming seam: the port speaks [`tokio::io::AsyncRead`], never a buffered
 //! `Vec<u8>` or a driver type.
 
-use crate::{commission::Commissions, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::commission::Commissions;
 
 pub mod download;
 pub mod upload;
 
+#[derive(WithPorts)]
 pub struct Files<'a> {
+    #[ports]
     pub commissions: &'a Commissions<'a>,
-}
-
-impl<'a> WithPorts<'a> for Files<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.commissions.ports()
-    }
-}
-
-impl<'a> Commissions<'a> {
-    pub fn files(&'a self) -> Files<'a> {
-        Files { commissions: self }
-    }
 }

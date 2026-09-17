@@ -1,6 +1,11 @@
-use domain::elements::{account::AccountId, role::Role, user::UserId};
+use domain::{
+    elements::{account::AccountId, role::Role, user::UserId},
+    ports::Unit,
+};
+use macros::use_case;
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
     ports::WithPorts,
 };
@@ -11,6 +16,7 @@ pub struct Command {
     pub account_id: AccountId,
     pub listed_on_profile: bool,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub account_id: AccountId,
@@ -22,8 +28,13 @@ impl Invitations<'_> {
     /// Accepts the caller's own pending invitation, seating them at the offered
     /// role. Answers `AccountNotFound` for a dead account and
     /// `NoPendingInvitation` when no live offer names them.
-    pub async fn accept(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn accept(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             target_id,
             account_id,
@@ -36,14 +47,11 @@ impl Invitations<'_> {
             .await?
             .ok_or(AccountError::NoPendingInvitation)?;
 
-        let mut uow = ports.database.begin().await?;
-
         let result = uow
             .accounts()
             .accept_invitation(invitation, listed_on_profile)
             .await?;
 
-        uow.commit().await?;
         Ok(Output {
             account_id: result.account_id,
             role: result.role,

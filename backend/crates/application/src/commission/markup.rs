@@ -12,10 +12,15 @@ use domain::{
         },
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
-use crate::commission::{CommissionError, CommissionResult, Commissions};
+use crate::{
+    Ports,
+    commission::{CommissionError, CommissionResult, Commissions},
+};
 
 /// The annotating Participant, the commission, the file entry and the
 /// annotation. [`markup`](Self::markup) arrives decoded but not validated —
@@ -38,8 +43,14 @@ pub struct Output {
 /// proves the target is a file entry of this commission — a key from another
 /// one is [`FileNotFound`](CommissionError::FileNotFound), never an oracle.
 impl Commissions<'_> {
-    pub async fn markup(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn markup(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -83,10 +94,8 @@ impl Commissions<'_> {
             created_at: now,
         };
 
-        let mut uow = self.ports().database.begin().await?;
         uow.commissions().add_markup(&markup).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
 
         Ok(Output { id })
     }

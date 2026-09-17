@@ -5,9 +5,12 @@ use domain::{
         invitation::InvitationState,
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
     ports::WithPorts,
 };
@@ -32,8 +35,14 @@ pub struct InvitationOutput {
 }
 
 impl Invitations<'_> {
-    pub async fn issue(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn issue(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             target_id,
@@ -42,7 +51,6 @@ impl Invitations<'_> {
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
-        let mut uow = self.ports().database.begin().await?;
         let target_user = uow.users().provision(target_id.did()).await?;
         let seats = ports.commissions.seats(&commission.id).await?;
 
@@ -110,7 +118,6 @@ impl Invitations<'_> {
                 invited_user_id: target_user.id,
             }),
         };
-        uow.commit().await?;
         Ok(output)
     }
 }

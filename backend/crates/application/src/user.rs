@@ -2,6 +2,7 @@
 
 use domain::elements::{did::Did, profile::Profile};
 use domain::ports::{ProfileCache, ProfileSource};
+use macros::WithPorts;
 
 pub mod me;
 
@@ -30,8 +31,9 @@ pub(crate) async fn resolve_profile(
 }
 
 /// User use cases, with the ports already bound.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, WithPorts)]
 pub struct Users<'a> {
+    #[ports(is_root = true)]
     ports: &'a crate::Ports,
 }
 

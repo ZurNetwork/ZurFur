@@ -1,10 +1,15 @@
-use domain::elements::{
-    account::AccountId,
-    user::UserId,
-    workflow::{Workflow, WorkflowName},
+use domain::{
+    elements::{
+        account::AccountId,
+        user::UserId,
+        workflow::{Workflow, WorkflowName},
+    },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, require_live_account, workflow::Workflows},
     ports::WithPorts,
 };
@@ -19,8 +24,13 @@ pub struct Output {
 }
 
 impl Workflows<'_> {
-    pub async fn create(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn create(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             actor_id,
             account_id,
@@ -37,11 +47,7 @@ impl Workflows<'_> {
             .filter(|role| role.is_administrative())
             .ok_or(AccountError::IncorrectRole)?;
 
-        let mut uow = self.ports().database.begin().await?;
-
         let workflow = uow.workflows().create(&workflow_name, &account_id).await?;
-
-        uow.commit().await?;
 
         Ok(Output { workflow })
     }

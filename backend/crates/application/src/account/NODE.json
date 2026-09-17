@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/account",
-  "charted": "2026-09-12",
+  "charted": "2026-09-19",
   "short": "Account use cases",
-  "is": "Account use cases — founding, renaming, deleting an Account and the membership lifecycle (invitations, roles, leaving, ownership transfer, listing), one Command/Query + Output + `run` file per action; the module root `../account.rs` holds `AccountError`, `AccountPorts`, `AccountResult`.",
+  "is": "Account use cases — founding, renaming, deleting an Account and the membership lifecycle (invitations, roles, leaving, ownership transfer, listing), one Command/Query + Output + `#[use_case]` method file per action; the module root `../account.rs` holds the `Accounts` namespace, `AccountError`, `AccountResult`.",
   "conventions": [],
   "entry_points": [
     "../account.rs"
@@ -105,6 +105,6 @@
     "`require_live_account` (in `../account.rs`) is the shared liveness gate: existence is settled BEFORE standing, because `role_of` reads the membership table with no tombstone predicate. An unknown id and a soft-deleted account get the same answer. (DD 23003138)",
     "Ordering rule, uniform across `invitation/revoke`, `role/grant` and `workflow/column/commission/set_in_column`: the actor's own standing is settled before the target is looked up or provisioned. `provision` is a WRITE keyed to a caller-named DID, and the refusals below it are distinguishable on the wire — probing first leaks membership and actor class.",
     "Two rails put a commission card on a board: PULL (the commission is publicly visible) or PUSH (the actor's OWN standing or OWN view grant). View keys are per-User, so membership of the owning account lifts nothing. Failure is the commission not-found, never `IncorrectRole`. (DD 29130754)",
-    "`account/facts/exist.rs` is a stub that always answers false; it feeds `delete`'s soft-vs-hard branch, and `delete` carries the open `FIXME` for it."
+    "`account/facts/exist.rs` is a stub that always answers false and injects nothing, so it carries no `#[use_case]`; it feeds `delete`'s soft-vs-hard branch, and `delete` carries the open `FIXME` for it."
   ]
 }

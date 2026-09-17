@@ -5,10 +5,11 @@ use domain::{
         user::UserId,
     },
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, changelog::Changelog},
-    ports::WithPorts,
 };
 pub struct Query {
     pub actor_id: UserId,
@@ -31,8 +32,8 @@ impl Changelog<'_> {
     /// Reads the commission's changelog in stream order, ascending `seq`.
     /// Participant-only: everyone else gets `NotAMember`, which the drivers
     /// render byte-identically to an absent commission's `404`.
-    pub async fn read(&self, query: Query) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn read(&self, #[ports] ports: &Ports, query: Query) -> CommissionResult<Output> {
         let Query {
             actor_id,
             commission_id,

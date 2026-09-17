@@ -5,8 +5,9 @@ use domain::{
     },
     ports::{ProfileCache, ProfileSource},
 };
+use macros::use_case;
 
-use crate::user::Users;
+use crate::{Ports, user::Users};
 
 /// The caller whose identity to report; how `user_id` was established is the
 /// driver's business.
@@ -78,13 +79,14 @@ impl std::error::Error for MeError {
 /// Load the user behind [`MeQuery::user_id`] and resolve their profile
 /// read-through ([`crate::user::resolve_profile`]).
 impl Users<'_> {
+    #[use_case]
     pub async fn me(
         &self,
+        #[ports] ports: &Ports,
         query: MeQuery,
         profile_cache: &dyn ProfileCache,
         profile_source: &dyn ProfileSource,
     ) -> Result<Output, MeError> {
-        let ports = self.ports();
         let user = ports
             .users
             .find_by_did(query.user_id.did())

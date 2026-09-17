@@ -18,11 +18,11 @@ use domain::{
         DidMinter, ElementNotFound, FileStore, UnitOfWork, UnknownSurface, UnknownTab, UserStore,
     },
 };
+use macros::WithPorts;
 use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
-    ports::WithPorts,
     transaction,
 };
 pub mod archive;
@@ -44,8 +44,9 @@ pub mod view;
 
 /// Commission use cases, with the ports already bound. A namespace, not a
 /// mediator: one `impl Commissions<'_>` block per use-case file.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, WithPorts)]
 pub struct Commissions<'a> {
+    #[ports(is_root = true)]
     ports: &'a crate::Ports,
 }
 
@@ -74,12 +75,6 @@ impl<'a> From<&'a crate::App> for Commissions<'a> {
     /// Binds the namespace to the app's ports.
     fn from(app: &'a crate::App) -> Self {
         Self::try_from(app.ports()).expect("composition root supplies the blob store")
-    }
-}
-
-impl<'a> WithPorts<'a> for Commissions<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.ports
     }
 }
 

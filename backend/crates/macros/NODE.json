@@ -1,0 +1,54 @@
+{
+  "path": "backend/crates/macros",
+  "charted": "2026-09-18",
+  "short": "Proc macros for the application layer",
+  "is": "The workspace's one proc-macro crate: `#[use_case]` (dependency injection + the unit-of-work bracket around a use-case method) and `#[derive(WithPorts)]` (the ports-bag plumbing of a use-case namespace), both consumed only by `application`.",
+  "conventions": [
+    "One file per macro under `src/`, each exposing a `pub(crate) fn expand_*(…) -> syn::Result<TokenStream>`; `lib.rs` holds only the `#[proc_macro_*]` entry points and turns an `Err` into `compile_error!`.",
+    "Emitted code names its targets as `crate::…` (`crate::ports::WithPorts`, `crate::Ports`), so both macros only expand correctly inside `application`.",
+    "Bad input is a spanned `syn::Error` on the offending token, never a panic."
+  ],
+  "entry_points": [
+    "src/lib.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "proc-macro = true; deps proc-macro2 + quote + syn(full); dev-dep trybuild (no tests/ui yet)",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "the two entry points: `#[use_case]` attribute, `#[derive(WithPorts)]` with its `#[ports]` helper attribute",
+      "node": false
+    },
+    {
+      "name": "src/use_case.rs",
+      "role": "splits an async `&self` method into `<name>_inner_injected` (the body, all params) and a same-named wrapper without the `#[ports]`/`#[unit]` params; with `#[unit]` the wrapper begins a unit, commits on `Ok`, rolls back on `Err`",
+      "node": false
+    },
+    {
+      "name": "src/with_ports.rs",
+      "role": "derives `WithPorts` from the single `#[ports]` field: a child (`&'a Parent<'a>`) delegates to its parent and the parent gains a lowercased accessor building the child; `#[ports(is_root = true)]` returns the field itself and emits no accessor",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability — a compile-enforced Unit of Work in the private store",
+      "governs": "src/use_case.rs: the generated wrapper is the begin/commit/rollback bracket of a use case"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer — Use Cases, DTOs and Ports",
+      "governs": "src/use_case.rs + src/with_ports.rs: the shape of a use-case method and of the namespaces that carry the Ports bag"
+    }
+  ],
+  "notes": [
+    "The wrapper's own `begin`/`commit`/`rollback` calls carry `#[allow(clippy::disallowed_methods)]`; `application/clippy.toml` bans those three methods everywhere else in that crate.",
+    "A `#[use_case]` must inject at least one of `#[ports]`/`#[unit]` and needs a `self` receiver, so free functions and bodies that touch neither stay plain fns.",
+    "The inner fn keeps the outer fn's visibility and attributes.",
+    "The derive's child form builds the struct from the parent field alone, so a child namespace cannot carry extra fields; a root can."
+  ]
+}

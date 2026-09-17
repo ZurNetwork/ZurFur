@@ -4,10 +4,13 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, deadline::Deadline, require_participant},
     ports::WithPorts,
 };
@@ -22,8 +25,14 @@ pub struct Output;
 impl Deadline<'_> {
     /// Clear the commission's deadline, as a Participant — the lever out of a
     /// Late standing. Clearing an already-absent deadline is a no-op.
-    pub async fn clear(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn clear(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -42,14 +51,12 @@ impl Deadline<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
         let mut commissions = uow.commissions();
         let moved = commissions.set_deadline(&commission.id, None).await?;
         drop(commissions);
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }

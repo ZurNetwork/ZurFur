@@ -7,10 +7,13 @@ use domain::{
         },
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, require_owner, seats::Seats},
     ports::WithPorts,
 };
@@ -28,8 +31,14 @@ pub struct Output {
 }
 
 impl Seats<'_> {
-    pub async fn declare(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn declare(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -62,10 +71,8 @@ impl Seats<'_> {
             now,
         );
 
-        let mut uow = self.ports().database.begin().await?;
         uow.commissions().declare_seat(&seat).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
         Ok(Output { seat_id })
     }
 }

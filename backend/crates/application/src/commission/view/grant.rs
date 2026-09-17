@@ -4,10 +4,13 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, GrantLevel, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, view::View},
     common_error::{CommonError, NotFoundEntity},
     ports::WithPorts,
@@ -25,8 +28,14 @@ impl View<'_> {
     /// Issues the target User a view grant at `level`, replacing any key they
     /// already hold, and records the issuance. Owner-only; every other caller
     /// gets the closed door's `CommissionNotFound`.
-    pub async fn grant(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn grant(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             target_user_id,
@@ -43,7 +52,6 @@ impl View<'_> {
             .filter(|c| c.is_owned_by(&actor_id))
             .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
-        let mut uow = self.ports().database.begin().await?;
         let target_user = uow.users().provision(target_user_id.did()).await?;
 
         let entry = NewChangelogEntry::event(
@@ -62,7 +70,6 @@ impl View<'_> {
             .grant_view(&commission.id, &target_user.id, level)
             .await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
 
         Ok(Output)
     }
