@@ -4,10 +4,15 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
-use crate::commission::{CommissionResult, Commissions, require_owner};
+use crate::{
+    Ports,
+    commission::{CommissionResult, Commissions, require_owner},
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -21,8 +26,14 @@ impl Commissions<'_> {
     /// Return the commission to the active views. Owner-only through
     /// `require_owner`; un-archiving a commission that is not archived is a
     /// no-op.
-    pub async fn unarchive(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn unarchive(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -37,7 +48,6 @@ impl Commissions<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
         let mut commissions = uow.commissions();
         // `None` clears the stamp; setting it here would archive on the
         // un-archive path.
@@ -46,7 +56,6 @@ impl Commissions<'_> {
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output {
             commission_id: commission.id,
         })

@@ -1,20 +1,12 @@
-use crate::{commission::status::Status, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::commission::status::Status;
 
 pub mod clear;
 pub mod set;
 
+#[derive(WithPorts)]
 pub struct Direction<'a> {
+    #[ports]
     status: &'a Status<'a>,
-}
-
-impl<'a> WithPorts<'a> for Direction<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.status.ports()
-    }
-}
-
-impl<'a> Status<'a> {
-    pub fn direction(&'a self) -> Direction<'a> {
-        Direction { status: self }
-    }
 }

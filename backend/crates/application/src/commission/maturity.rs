@@ -1,19 +1,11 @@
-use crate::{commission::Commissions, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::commission::Commissions;
 
 pub mod set;
 
+#[derive(WithPorts)]
 pub struct Maturity<'a> {
+    #[ports]
     commissions: &'a Commissions<'a>,
-}
-
-impl<'a> WithPorts<'a> for Maturity<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.commissions.ports()
-    }
-}
-
-impl<'a> Commissions<'a> {
-    pub fn maturity(&'a self) -> Maturity<'a> {
-        Maturity { commissions: self }
-    }
 }

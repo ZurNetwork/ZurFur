@@ -1,0 +1,6 @@
+
+disallowed-methods = [
+    { path = "domain::ports::Database::begin", reason = "only a `#[use_case]` wrapper opens units of work" },
+    { path = "domain::ports::UnitOfWork::commit", reason = "only a `#[use_case]` wrapper opens units of work. To commit, return `Ok` from the use case" },
+    { path = "domain::ports::UnitOfWork::rollback", reason = "only a `#[use_case]` wrapper opens units of work. To rollback, return `Err` from the use case" },
+]

@@ -1,10 +1,15 @@
-use domain::elements::{
-    commission::CommissionId,
-    maturity::{self, MaturityRating},
-    user::UserId,
+use domain::{
+    elements::{
+        commission::CommissionId,
+        maturity::{self, MaturityRating},
+        user::UserId,
+    },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, maturity::Maturity, require_owner},
     ports::WithPorts,
 };
@@ -18,8 +23,13 @@ pub struct Command {
 pub struct Output;
 
 impl Maturity<'_> {
-    pub async fn run(&self, cmd: Command) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn run(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -32,11 +42,9 @@ impl Maturity<'_> {
             graphic,
             rating: maturity_rating,
         };
-        let mut uow = self.ports().database.begin().await?;
         uow.commissions()
             .set_maturity(&commission.id, maturity)
             .await?;
-        uow.commit().await?;
         Ok(Output)
     }
 }

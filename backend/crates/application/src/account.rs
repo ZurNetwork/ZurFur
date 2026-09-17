@@ -8,9 +8,8 @@ use domain::{
     },
     ports::{AccountStore, Database, DidBelongsToAnotherActor, DidMinter, HandleTaken, UserStore},
 };
+use macros::WithPorts;
 use shared::settings::HANDLE_QUARANTINE_WINDOW;
-
-use crate::ports::WithPorts;
 
 pub mod change_handle;
 pub mod create;
@@ -22,29 +21,18 @@ pub mod list;
 pub mod role;
 pub mod transfer_ownership;
 pub mod workflow;
-/// Account use cases, with the ports already bound. A namespace, not a
-/// mediator: one `impl Accounts<'_>` block per use-case file.
-#[derive(Clone, Copy)]
+
+#[derive(Clone, Copy, WithPorts)]
 pub struct Accounts<'a> {
+    #[ports(is_root = true)]
     ports: &'a crate::Ports,
     did_minter: &'a dyn DidMinter,
-}
-
-impl<'a> WithPorts<'a> for Accounts<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.ports
-    }
 }
 
 impl<'a> Accounts<'a> {
     /// Bind the namespace to resolved dependencies.
     pub fn new(ports: &'a crate::Ports, did_minter: &'a dyn DidMinter) -> Self {
         Self { ports, did_minter }
-    }
-
-    /// The bag this namespace was built over.
-    pub fn ports(&self) -> &'a crate::Ports {
-        self.ports
     }
 
     /// The did:plc minter.

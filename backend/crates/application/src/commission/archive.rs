@@ -4,10 +4,15 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
-use crate::commission::{CommissionResult, Commissions, require_owner};
+use crate::{
+    Ports,
+    commission::{CommissionResult, Commissions, require_owner},
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -20,8 +25,14 @@ impl Commissions<'_> {
     /// survives. Owner-only through `require_owner`, so a non-participant
     /// gets the uniform not-found. Archiving an already-archived commission is
     /// a no-op; the flag write and its entry land in one unit of work.
-    pub async fn archive(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Outcome> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn archive(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Outcome> {
         let Command {
             actor_id,
             commission_id,
@@ -36,14 +47,12 @@ impl Commissions<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
         let mut commissions = uow.commissions();
         let moved = commissions.set_archived(&commission.id, Some(now)).await?;
         drop(commissions);
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Outcome)
     }
 }

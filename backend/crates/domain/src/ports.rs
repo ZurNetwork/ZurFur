@@ -33,6 +33,6 @@ pub use file::FileStore;
 pub use identity::{DidMinter, DidOperations, KeyStore, PlcOperationLog};
 pub use profile::{ProfileCache, ProfileSource};
 pub use public_records::PublicRecords;
-pub use unit_of_work::{Database, UnitOfWork, UnitOfWorkFn};
+pub use unit_of_work::{Database, Unit, UnitOfWork, UnitOfWorkFn};
 pub use user::{UserStore, UserWrites};
 pub use workflow::{ColumnStore, ColumnWrites, WorkflowStore, WorkflowWrites};

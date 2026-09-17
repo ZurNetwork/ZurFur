@@ -1,6 +1,14 @@
-use domain::elements::{account::AccountId, role::Role, user::UserId};
+use domain::{
+    elements::{account::AccountId, role::Role, user::UserId},
+    ports::Unit,
+};
+use macros::use_case;
 
-use crate::account::{AccountError, AccountResult, Accounts, facts, require_live_account};
+use crate::{
+    Ports,
+    account::{AccountError, AccountResult, Accounts, facts, require_live_account},
+    ports::WithPorts,
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -24,8 +32,13 @@ pub struct Output {
 }
 
 impl<'a> Accounts<'a> {
-    pub async fn delete(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn delete(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             actor_id,
@@ -46,7 +59,6 @@ impl<'a> Accounts<'a> {
             account_id: account_id.clone(),
         };
 
-        let mut uow = ports.database.begin().await?;
         let outcome = if self.facts().exist(existing_facts).await?.has_facts {
             uow.accounts().soft_delete(&account_id).await?;
             DeleteOutcome::Soft
@@ -61,7 +73,6 @@ impl<'a> Accounts<'a> {
             };
             DeleteOutcome::Hard
         };
-        uow.commit().await?;
         Ok(Output { outcome })
     }
 }

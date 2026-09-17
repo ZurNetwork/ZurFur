@@ -7,7 +7,9 @@ use domain::{
         maturity::Maturity,
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::commission::{CommissionResult, Commissions};
@@ -23,7 +25,13 @@ pub struct Output {
 }
 
 impl Commissions<'_> {
-    pub async fn create(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
+    #[use_case]
+    pub async fn create(
+        &self,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             title,
@@ -41,10 +49,8 @@ impl Commissions<'_> {
             now,
         );
 
-        let mut uow = self.ports().database.begin().await?;
         uow.commissions().create(&commission).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
 
         Ok(Output { id: commission.id })
     }

@@ -1,17 +1,16 @@
 pub mod create;
 pub mod delete;
 
-use crate::{common_error::CommonError, ports::WithPorts};
+use macros::WithPorts;
 
+use crate::common_error::CommonError;
+
+#[derive(WithPorts)]
 pub struct Characters<'a> {
+    #[ports(is_root = true)]
     pub ports: &'a crate::Ports,
 }
 
-impl<'a> WithPorts<'a> for Characters<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.ports
-    }
-}
 impl<'a> Characters<'a> {
     /// Bind the namespace to resolved dependencies.
     pub fn new(ports: &'a crate::Ports) -> Self {

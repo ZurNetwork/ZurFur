@@ -5,9 +5,12 @@ use domain::{
         handle::{Handle, HandleDomain},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     account::{AccountError, ensure_handle_claimable},
     character::{CharacterResult, Characters},
     common_error::CommonError,
@@ -27,13 +30,15 @@ pub struct Output {
 }
 
 impl Characters<'_> {
+    #[use_case]
     pub async fn create(
         &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
         cmd: Command,
         handle_domain: &HandleDomain,
         now: DateTimeUtc,
     ) -> CharacterResult<Output> {
-        let ports = self.ports();
         let Command {
             actor_id,
             attributes,
@@ -57,11 +62,9 @@ impl Characters<'_> {
             None => (ports.did_minter.mint_handleless().await?, Presence::Private),
         };
 
-        let mut uow = ports.database.begin().await?;
         let character = Character::create(actor_id, presence, did, attributes, now);
         let character = uow.characters().create(character).await?;
 
-        uow.commit().await?;
         Ok(Output {
             character: character.id,
         })

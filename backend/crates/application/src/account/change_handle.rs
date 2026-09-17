@@ -6,11 +6,17 @@ use domain::{
         role::Role,
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW};
 
-use crate::account::{
-    AccountError, AccountResult, Accounts, ensure_handle_claimable, require_live_account,
+use crate::{
+    Ports,
+    account::{
+        AccountError, AccountResult, Accounts, ensure_handle_claimable, require_live_account,
+    },
+    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,8 +32,11 @@ pub struct Output {
     pub name: AccountName,
 }
 impl<'a> Accounts<'a> {
+    #[use_case]
     pub async fn change_handle(
         &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
         cmd: Command,
         handle_domain: &HandleDomain,
         now: DateTimeUtc,
@@ -40,7 +49,6 @@ impl<'a> Accounts<'a> {
         if !handle.is_in_namespace(handle_domain) {
             return Err(AccountError::UnsupportedHandle);
         };
-        let ports = self.ports();
         let account = require_live_account(ports, &account_id).await?;
 
         if account.handle == handle {
@@ -69,13 +77,10 @@ impl<'a> Accounts<'a> {
             .update_handle(account.id.did(), &handle)
             .await?;
 
-        let mut uow = ports.database.begin().await?;
-
         uow.accounts()
             .change_handle(&account_id, &account.handle, &handle, now)
             .await?;
 
-        uow.commit().await?;
         Ok(Output {
             id: account.id,
             handle,

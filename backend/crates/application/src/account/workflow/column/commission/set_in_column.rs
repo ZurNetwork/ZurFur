@@ -1,8 +1,12 @@
-use domain::elements::{
-    commission::{CommissionId, Visibility},
-    user::UserId,
-    workflow::{ColumnId, LexOrdering, WorkflowError},
+use domain::{
+    elements::{
+        commission::{CommissionId, Visibility},
+        user::UserId,
+        workflow::{ColumnId, LexOrdering, WorkflowError},
+    },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
     Ports,
@@ -39,8 +43,13 @@ async fn has_own_view(
 }
 
 impl Commissions<'_> {
-    pub async fn insert_in_column(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn insert_in_column(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             actor_id,
             column_id,
@@ -100,9 +109,7 @@ impl Commissions<'_> {
                 AccountError::Infrastructure(anyhow::anyhow!("the board refused the card: {other}"))
             }
         })?;
-        let mut uow = ports.database.begin().await?;
         uow.columns().set_commissions(&column).await?;
-        uow.commit().await?;
 
         let commissions = column.into_iter().collect();
         Ok(Output { commissions })

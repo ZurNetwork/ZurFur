@@ -1,19 +1,11 @@
-use crate::{account::Accounts, ports::WithPorts};
+use macros::WithPorts;
+
+use crate::account::Accounts;
 
 pub mod exist;
 
+#[derive(WithPorts)]
 pub struct Facts<'a> {
+    #[ports]
     accounts: &'a Accounts<'a>,
-}
-
-impl<'a> WithPorts<'a> for Facts<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.accounts.ports()
-    }
-}
-
-impl<'a> Accounts<'a> {
-    pub fn facts(&'a self) -> Facts<'a> {
-        Facts { accounts: self }
-    }
 }

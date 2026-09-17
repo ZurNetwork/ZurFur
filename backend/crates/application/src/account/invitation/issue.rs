@@ -6,9 +6,12 @@ use domain::{
         role::Role,
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
     ports::WithPorts,
 };
@@ -41,8 +44,14 @@ impl Invitations<'_> {
     /// the same user is returned as-is rather than duplicated. The actor must
     /// hold a role that outranks the offered one — anything less is
     /// `IncorrectRole`, and an invitee who is already seated `AlreadyMember`.
-    pub async fn issue(&self, cmd: Command, now: DateTimeUtc) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn issue(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             target_id,
@@ -56,7 +65,6 @@ impl Invitations<'_> {
             .await?
             .filter(|r| r.can_grant(&role))
             .ok_or(AccountError::IncorrectRole)?;
-        let mut uow = self.ports().database.begin().await?;
         let target = uow.users().provision(target_id.did()).await?;
         if ports
             .accounts
@@ -72,7 +80,6 @@ impl Invitations<'_> {
             .find_pending_invitation(&account_id, &target.id)
             .await?
         {
-            uow.commit().await?;
             return Ok(Output {
                 account_id,
                 invitation_id: existing_invitation.id,
@@ -86,7 +93,6 @@ impl Invitations<'_> {
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 
         let stored = uow.accounts().create_invitation(&invitation).await?;
-        uow.commit().await?;
 
         let outcome = if invitation.id == stored.id {
             InviteOutcome::Minted

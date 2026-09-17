@@ -1,6 +1,14 @@
-use domain::elements::{account::AccountId, role::Role, user::UserId};
+use domain::{
+    elements::{account::AccountId, role::Role, user::UserId},
+    ports::Unit,
+};
+use macros::use_case;
 
-use crate::account::{AccountError, AccountResult, Accounts};
+use crate::{
+    Ports,
+    account::{AccountError, AccountResult, Accounts},
+    ports::WithPorts,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -11,8 +19,13 @@ pub struct Command {
 pub struct Output;
 
 impl<'a> Accounts<'a> {
-    pub async fn leave(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn leave(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             leaving_user_id,
@@ -28,9 +41,7 @@ impl<'a> Accounts<'a> {
             None => return Err(AccountError::NotAMember),
         };
 
-        let mut uow = ports.database.begin().await?;
         uow.accounts().leave(&leaving_user_id, &account_id).await?;
-        uow.commit().await?;
         Ok(Output)
     }
 }

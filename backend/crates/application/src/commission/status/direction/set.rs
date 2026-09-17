@@ -4,10 +4,13 @@ use domain::{
         commission::{ChangelogEntryKind, CommissionId, DirectionStatus, NewChangelogEntry},
         user::UserId,
     },
+    ports::Unit,
 };
+use macros::use_case;
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, require_participant, status::direction::Direction},
     ports::WithPorts,
 };
@@ -20,8 +23,14 @@ pub struct Command {
 pub struct Output;
 
 impl Direction<'_> {
-    pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn set(
+        &self,
+        #[ports] ports: &Ports,
+        #[unit] uow: Unit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             user_id,
             commission_id,
@@ -46,7 +55,6 @@ impl Direction<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
         let mut commissions = uow.commissions();
         let moved = commissions
             .set_direction_status(&commission.id, direction)
@@ -55,7 +63,6 @@ impl Direction<'_> {
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }
