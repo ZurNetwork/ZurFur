@@ -15,8 +15,11 @@
 # letter runs and fuzzy-matches "words" inside them (first hit: `IZ` ->
 # `IS` in commission_pb.ts). The directory is @generated and drift-checked
 # by CI's contract job -- spelling lint on it is meaningless. Skip it.
+# docs/design-index.md is generated from the design corpus
+# (ZurNetwork/zurfur-design) by `just design-index`; a spelling lint on
+# titles we don't author is meaningless. Skip it too.
 [files]
-extend-exclude = ["frontend/web/src/lib/server/api/generated/"]
+extend-exclude = ["frontend/web/src/lib/server/api/generated/", "docs/design-index.md"]
 
 [default.extend-identifiers]
 # "the kind and state CHECKs" (adapter-pg/tests/it/actor_identity.rs) --
