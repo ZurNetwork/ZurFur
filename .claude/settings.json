@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "deny": [
+      "mcp__*__createConfluence*",
+      "mcp__*__updateConfluence*",
+      "mcp__*__getConfluence*",
+      "mcp__*__searchConfluence*",
+      "mcp__*__getPagesInConfluenceSpace*",
+      "mcp__*__createConfluenceFooterComment*",
+      "mcp__*__createConfluenceInlineComment*"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

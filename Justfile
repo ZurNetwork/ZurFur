@@ -147,10 +147,10 @@ nodes *ARGS:
     nodes "$@"
 
 # Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
-# every ref against the DESIGN pointer index (a SUPERSEDED entry warns). Part of
+# every ref against the design pointer index (a SUPERSEDED entry warns). Part of
 # `just gate`; CI runs it as the `nodes` job.
 nodes-check:
-    nodes check --ref-index docs/confluence-design-index.md
+    nodes check --ref-index docs/design-index.md
 
 # Download the pinned `nodes` release binary into ~/.cargo/bin (checksum-verified;
 # falls back to `cargo install --git` when no prebuilt archive fits this machine).
