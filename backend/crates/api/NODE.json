@@ -130,7 +130,7 @@
     {
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
-      "governs": "dev-deps insta (shape-guard snapshots: golden_wire, contract_*, parity) and rstest (shared fixtures)"
+      "governs": "dev-dep insta (shape-guard snapshots: golden_wire only — 5 .snap under tests/snapshots, INSTA_UPDATE=no in just gate); the per-file spawn_app/client/sign_in helpers were lifted into test_support::http (2026-09-15); rstest approved then dropped unused"
     }
   ],
   "notes": [

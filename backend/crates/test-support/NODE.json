@@ -16,7 +16,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs",
       "node": false
     },
     {
@@ -27,6 +27,11 @@
     {
       "name": "src/fixture.rs",
       "role": "FixtureAccount / ActingCredential (PDS session JWT)",
+      "node": false
+    },
+    {
+      "name": "src/http.rs",
+      "role": "serve / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, session layer, router passed as a closure so test-support never depends on api)",
       "node": false
     },
     {

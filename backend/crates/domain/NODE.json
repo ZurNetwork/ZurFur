@@ -52,7 +52,7 @@
     {
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
-      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests"
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Position/Handle/StringBuilder properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
     }
   ],
   "notes": [
