@@ -1,0 +1,131 @@
+## decisions/
+- 2490393 decided — User Reviews & Comments
+- 3014657 decided — Deletion of Commissions
+- 4358151 decided — DID:PLC vs DID:Web
+- 4882433 decided — Character Ownership Model
+- 6422530 decided — Payments & Billing Model
+- 6848513 proposed — External Chat Tracking
+- 8978501 proposed — Portfolio Live vs Static
+- 19431425 decided — Authenticators
+- 21594113 decided — User-Profiles, the Handle Swap & Content Maturity
+- 23003138 decided — Account Deletion, Tombstoning & Handle Reuse
+- 23101442 decided — Notification Service, Fan-out-on-Read & the Seen Cursor
+- 23592962 decided — API Response Shape & Error Model (RFC 9457)
+- 24150017 decided — Transactions as a capability — a compile-enforced Unit of Work in the private store
+- 24182787 decided — Collection as a Generic Referenceable Membership Primitive
+- 24182820 decided — Invitation Validity & Issuer Departure
+- 24543244 decided — Auth Surfaces, the Plugin Trust Boundary & CSRF
+- 24870914 decided — The Account Handle
+- 26050561 decided — Confusable Handles & the Punycode Policy
+- 26247170 decided — User as Actor & On-Demand Accounts
+- 26607618 decided — Handle Resolution for *.zurfur.app — HTTPS well-known (DNS-reversible)
+- 26804226 decided — did:plc Identity Custody, Minting & Credible Exit
+- 27852802 decided — Account Handle Change Flow
+- 28049410 decided — Golem as User — Identity, Registration & the Act-As Boundary
+- 28114957 decided — Ask-for-Art — the Commissioner-First Flow
+- 28246028 decided — Commission Surfaces — the Commission as a Tree of Typed Surfaces
+- 28311564 decided — Referenceable, Slot & Seat — Typed Positions & the Application Handshake
+- 28409880 decided — Commission Tree Storage — Adjacency Rows, Integer Position, Whole-Tree Load
+- 29130754 decided — Commission Ownership Separation — View Grants & Account Placement
+- 29425666 decided — Commission Structural Authority — the Commission Admin Role
+- 29458433 decided — Commission Trees & Relationships — Hierarchical Derivation & Semantic Edges
+- 29458464 decided — Plugin Forms — Golems & Portals
+- 29622283 decided — The AT Protocol Boundary Contract — Class A / Class B & the Public-Node Test
+- 29622321 decided — Seals — Attestations as Labels & Peer Grants
+- 29622362 decided — Asks as Tags — Status Tags & Tag Ownership Domains
+- 29687820 decided — Publish Consent & OAuth Scopes — Identity-Only Sign-In, Scopes at First Use
+- 29818896 decided — The Lexicon Registry — Publish-Late, Additive-Only
+- 29884417 decided — Friendship & Double-Sided Relationships
+- 29949954 decided — Gallery Posts, the Product Snapshot & Index-Side Tagging
+- 29982722 decided — Maturity Vocabulary — Adopting atproto Self-Labels
+- 30015490 decided — Semantic Edges — The Initial Catalog
+- 30048258 decided — Invoices — Manual Settlement at MVP
+- 30277634 decided — Seat Visibility Ceilings — Golem Scopes Made Explicit
+- 30343170 decided — Inventory Closures — Deletion Ripples, Blob Store, Markup & Deferrals
+- 30408706 decided — Phases — Work Stages & Client Approval
+- 30408741 decided — The Changelog — Structured Comms, Notes & the Linked Channel
+- 30441473 decided — EXP & Levels — Source Catalog, Multipliers & the Deadline Stake
+- 30572545 decided — Design Principles — The Non-Toxic Path
+- 30572573 decided — Comments — The Replyable Trait
+- 30572603 decided — Plugin Security — Scopes, Keys, Limits & the Trust Ladder
+- 30605313 decided — Notifications — Two Intakes, Rules, One Table
+- 30769154 decided — Blocks — Social Severance, Business Stands
+- 32112642 decided — The Linked Channel — Pointer Custody & Chat-Tracking Placement
+- 32178178 decided — The Eventlog — the Derived Timeline & Source Streams
+- 34013187 decided — Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban
+- 39944194 decided — Frontend Stack — Server-Only Effect & the Runes Seam
+- 40992770 decided — The API Contract — Protobuf as the Independent IDL
+- 42762241 decided — Surface Tree on the Wire — Projected Shape, oneof Discriminants & the Depth Cap
+- 45514754 decided — Commission Composition — Surfaces as Extension Points, Flat Elements and Tabs
+- 54427650 decided — Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership
+- 55836674 decided — The Application Layer — Use Cases, DTOs and Ports
+- 57081857 decided — Actor Addressing — DID as the Only Identifier, Everywhere
+- 59310081 decided — The Changelog as the Only Record — Plugin Appends, Render-First Readability & the Eventlog as a Frontend Surface
+- 62488577 decided — Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board
+- 64290818 decided — Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules
+- 65110018 decided — Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)
+
+## entities/
+- 786439 current — User
+- 1933322 current — Achievement
+- 1966081 current — Account
+- 2162692 current — Roles
+- 2949165 current — Tags
+- 3047451 current — Plugin
+- 3244063 current — First-party plugins
+- 3276807 current — Commission
+- 5668866 current — Character
+- 5931025 current — Slots
+- 8912899 current — Collections
+- 8978433 current — Portfolio
+- 8978492 current — Post
+- 9895957 current — Workflow
+- 10190849 current — Gallery
+- 10453000 current — Lens
+- 12451841 current — Golem
+- 30507036 current — Seat
+- 30507068 current — Phase
+- 30507094 current — Invoice
+- 30507120 current — Changelog
+- 30507148 current — Seal
+- 30605402 current — Friendship
+- 30769256 current — Application
+- 40894479 current — Plugin — Authority & Scopes
+- 40960023 current — Portal
+- 41189377 current — Plugin — Listing Lifecycle
+- 41189413 current — Plugin — API Stability & Versioning
+- 41222145 current — Plugin — Security Model
+
+## data-layer/
+- 9207856 current — Platform Authority
+- 9994275 current — Blob
+- 9994298 current — Where does Data live?
+- 10125333 current — The Index
+- 10125341 current — Blobs, PDS & Private Storage
+- 10354698 current — Data Boundaries
+- 10354710 current — Lexicon
+
+## project/
+- 98422 current — Design
+- 589826 current — Project MVP
+- 786450 current — Project Philosophy
+- 9895947 current — Product
+- 9994307 current — Blocking Gaps for v1
+- 11763713 current — Domains and Applications
+- 37519361 current — Code Style — Semantic Rulings (Rust)
+
+## superseded/
+- 2490388 SUPERSEDED — Design decision
+- 3670017 SUPERSEDED — MVP & Roadmap (merged → Project MVP)
+- 8978453 SUPERSEDED — Where should Portfolios, Batches, Commissions and Collections live?
+- 9207877 SUPERSEDED — The Index & Data Boundaries (moved → Data Layer)
+- 9863207 SUPERSEDED — Arrangement (folded into Workflow)
+- 9961473 SUPERSEDED — Batch
+- 26935298 SUPERSEDED — Zurfur Public Presence & PDS — Identity-Only for v1
+- 28409858 SUPERSEDED — Provider
+- 30507178 SUPERSEDED — Comment (superseded → Post)
+- 33947651 SUPERSEDED — Private-store query layer — Diesel vs SeaORM (census-informed)
+- 34308097 SUPERSEDED — Query census — 2026-07-10 (HEAD 236dd0f)
+- 46596098 SUPERSEDED — The Dialect — ZesTTY Adoption: Committed Twins, the Result Seam and the Tag Pin
+- 47939586 SUPERSEDED — The Rust Frontend — Leptos, Two Binaries and the Contract Leaf Crate
+
