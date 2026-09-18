@@ -174,6 +174,33 @@ design-index-check *ARGS:
 design-index-check-test:
     sh scripts/design-index-check.test.sh
 
+# Run every Claude Code hook script's test suite (scripts/hooks/*.test.sh —
+# fixture-driven, no live Claude session needed). Part of `just gate`; CI
+# runs it in the `hooks` job.
+hooks-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for t in scripts/hooks/*.test.sh; do
+        echo "--- $t ---"
+        sh "$t" || status=1
+    done
+    exit "$status"
+
+# Forward to the design corpus's recall eval harness (private, Python
+# stdlib) at $ZURFUR_DESIGN_DIR/eval/run.py — see that repo for subcommands
+# (lint, smoke, pilot, matrix). Fails with a clear message if the corpus
+# checkout has no eval/ yet.
+eval *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    runner="$ZURFUR_DESIGN_DIR/eval/run.py"
+    if [ ! -f "$runner" ]; then
+        echo "just eval: $runner not found — the design corpus checkout at \$ZURFUR_DESIGN_DIR has no eval/ harness yet" >&2
+        exit 1
+    fi
+    python3 "$runner" "$@"
+
 # --- Worktrees (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
@@ -207,6 +234,7 @@ gate:
     typos
     just design-index-check
     just nodes-check
+    just hooks-test
     buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint

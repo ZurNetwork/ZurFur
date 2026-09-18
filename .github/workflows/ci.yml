@@ -142,6 +142,16 @@ jobs:
       - run: just nodes-install
       - run: just nodes-check
 
+  hooks:
+    name: hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      # Fixture-driven; needs no live Claude session, no `nodes`/`jq` install
+      # beyond what design-refs.sh's own tests stub or skip.
+      - run: just hooks-test
+
   web:
     name: web
     runs-on: ubuntu-latest
