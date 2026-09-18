@@ -8,6 +8,11 @@ set positional-arguments := true
 # NODE.json files and the tool's schema move in lockstep on this pin.
 NODES_VERSION := "v0.2.1"
 
+# The design corpus (github.com/ZurNetwork/zurfur-design — private; the single
+# source of truth for Zurfur's glossary, decisions, scope and architecture),
+# checked out as a sibling of this repo. Override for a different checkout.
+export ZURFUR_DESIGN_DIR := env("ZURFUR_DESIGN_DIR", env("HOME") / "code" / "zurfur-design")
+
 default:
     @just --list
 
@@ -142,15 +147,32 @@ nodes *ARGS:
     nodes "$@"
 
 # Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
-# every ref against the DESIGN pointer index (a SUPERSEDED entry warns). Part of
+# every ref against the design pointer index (a SUPERSEDED entry warns). Part of
 # `just gate`; CI runs it as the `nodes` job.
 nodes-check:
-    nodes check --ref-index docs/confluence-design-index.md
+    nodes check --ref-index docs/design-index.md
 
 # Download the pinned `nodes` release binary into ~/.cargo/bin (checksum-verified;
 # falls back to `cargo install --git` when no prebuilt archive fits this machine).
 nodes-install:
     sh scripts/nodes-install.sh {{NODES_VERSION}}
+
+# --- The design corpus (ZurNetwork/zurfur-design) ---
+
+# Regenerate the public pointer index from the design corpus at $ZURFUR_DESIGN_DIR.
+design-index:
+    cargo run -q --manifest-path "$ZURFUR_DESIGN_DIR/Cargo.toml" -p design -- index --root "$ZURFUR_DESIGN_DIR" > docs/design-index.md
+
+# Check the committed pointer index against the corpus. Part of `just gate`;
+# CI runs it in the `nodes` job. See scripts/design-index-check.sh for the
+# ruled drift semantics (migration/DECISIONS.md "Drift check", plan P6).
+design-index-check *ARGS:
+    sh scripts/design-index-check.sh "$@"
+
+# Unit tests for design-index-check.sh's own drift classification (fixture-
+# driven; never compiles the real design crate). CI runs it in the `nodes` job.
+design-index-check-test:
+    sh scripts/design-index-check.test.sh
 
 # --- Worktrees (parallel branches) ---
 
@@ -183,6 +205,7 @@ gate:
     cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
+    just design-index-check
     just nodes-check
     buf lint contract
     yarn --cwd frontend/web run check

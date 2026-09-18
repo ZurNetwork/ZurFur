@@ -131,6 +131,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: extractions/setup-just@v3
+      # The design corpus (ZurNetwork/zurfur-design) is a private sibling repo,
+      # never checked out here — $ZURFUR_DESIGN_DIR stays absent in CI, so this
+      # prints a skip notice rather than failing (see scripts/design-index-check.sh).
+      - run: just design-index-check-test
+      - run: just design-index-check
       # The pinned release binary (NODES_VERSION in the Justfile), then the
       # same check `just gate` runs: every NODE.json against the schema, the
       # tree and the DESIGN pointer index.

@@ -6,9 +6,9 @@ platform in Rust; ports & adapters: `domain`, `adapter-pg`,
 
 ## Semantic style (binding for new Rust code)
 
-Canonical source: Confluence DESIGN page 37519361, "Code Style — Semantic
-Rulings (Rust)" (pointer: repo CLAUDE.md, "Code style" section). Formatting
-is rustfmt's job — these are shape rules:
+Canonical source: design page 37519361, "Code Style — Semantic Rulings
+(Rust)", in the design corpus (pointer: repo CLAUDE.md, "Code style"
+section). Formatting is rustfmt's job — these are shape rules:
 
 - **Newtypes** for domain-meaningful primitives (ids, names, handles, seats,
   kinds); a bare `u64`/`String` shouldn't cross an API surface. Generated
