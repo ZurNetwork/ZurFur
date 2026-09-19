@@ -56,6 +56,26 @@
       "node": false
     },
     {
+      "name": "pins.sh",
+      "role": "SubagentStart / SessionStart(compact|resume) hook — re-states ../../.claude/pins.md (+ the untracked user-level pins file) to a subagent or after compaction",
+      "node": false
+    },
+    {
+      "name": "pins.test.sh",
+      "role": "fixture-driven tests for pins.sh, plus shape checks on the tracked ../../.claude/pins.md",
+      "node": false
+    },
+    {
+      "name": "stat-fail-stub.sh",
+      "role": "test double for a `stat` that always fails, driven by pins.test.sh via ZURFUR_STAT_BIN to prove the local-pins-file ownership check fails closed",
+      "node": false
+    },
+    {
+      "name": "stat-foreign-owner-stub.sh",
+      "role": "test double for a `stat` that always reports a foreign uid, driven by pins.test.sh via ZURFUR_STAT_BIN",
+      "node": false
+    },
+    {
       "name": "uow-status.test.sh",
       "role": "fixture-driven tests for ../uow-status.sh",
       "node": false
