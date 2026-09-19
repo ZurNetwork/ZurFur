@@ -16,8 +16,43 @@
   ],
   "fs": [
     {
+      "name": "design-refs.jq",
+      "role": "jq filter: buckets a node chain's refs into governs-this-file vs. other-pages-cited for design-refs.sh",
+      "node": false
+    },
+    {
+      "name": "design-refs.sh",
+      "role": "PreToolUse hook (Read|Edit|Write|MultiEdit) — injects the design-corpus refs for the touched file's node chain",
+      "node": false
+    },
+    {
+      "name": "design-refs.test.sh",
+      "role": "fixture-driven tests for design-refs.sh, using nodes-stub.sh",
+      "node": false
+    },
+    {
+      "name": "jq-broken-stub.sh",
+      "role": "test double for a jq that exits 2 on every call, driven by design-refs.test.sh via ZURFUR_JQ_BIN",
+      "node": false
+    },
+    {
+      "name": "jq-partial-stub.sh",
+      "role": "test double for a jq that writes a truncated fragment then exits 1, driven by design-refs.test.sh via ZURFUR_JQ_BIN",
+      "node": false
+    },
+    {
+      "name": "jq-slow-stub.sh",
+      "role": "test double for a jq that sleeps on its final call, driven by design-refs.test.sh via ZURFUR_JQ_BIN to test SIGTERM cleanup",
+      "node": false
+    },
+    {
       "name": "lib.sh",
-      "role": "shared hooks_are_off/neutralize/cap_bytes/safe_state_dir/bounded_append helpers, sourced by every hook script",
+      "role": "shared hooks_are_off/neutralize/cap_bytes/safe_state_dir/bounded_append/utf8_safe_head helpers, sourced by every hook script",
+      "node": false
+    },
+    {
+      "name": "nodes-stub.sh",
+      "role": "test double for the `nodes` binary, driven by design-refs.test.sh via ZURFUR_NODES_BIN",
       "node": false
     },
     {
