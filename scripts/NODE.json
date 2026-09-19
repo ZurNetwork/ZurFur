@@ -12,6 +12,11 @@
   ],
   "fs": [
     {
+      "name": "hooks/",
+      "role": "the SessionStart/PreToolUse hook scripts wired in .claude/settings.json, and their tests",
+      "node": true
+    },
+    {
       "name": "jj-push.sh",
       "role": "pre-push gate for jj — fmt + lint before code leaves the machine",
       "node": false

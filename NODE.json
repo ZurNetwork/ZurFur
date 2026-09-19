@@ -24,7 +24,7 @@
     },
     {
       "name": ".claude/",
-      "role": "repo-local Claude settings: the NODE.json fmt hook (settings.json → scripts/nodes-fmt-hook.sh) and the tracked project memory",
+      "role": "repo-local Claude settings: hook wiring (settings.json), the tracked project memory, and pins.md (standing facts re-stated by scripts/hooks/pins.sh)",
       "node": false
     },
     {

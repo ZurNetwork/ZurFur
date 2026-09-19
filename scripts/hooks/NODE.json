@@ -1,0 +1,86 @@
+{
+  "path": "scripts/hooks",
+  "charted": "2026-09-18",
+  "short": "Claude Code hook scripts: session/tool-call context injection",
+  "is": "The Claude Code hook scripts wired in .claude/settings.json (PreToolUse/SessionStart) that inject factual, deterministic context into a session — as distinct from scripts/*.sh, which back `just` dev-loop recipes.",
+  "conventions": [
+    "POSIX sh + jq + awk only — no `sed` (aliased to `sd` on some dev machines), no python3/perl; always exit 0, never fail the event that triggered them.",
+    "Injected text is factual statements only, never imperatives — command-shaped injected context can trip prompt-injection defenses.",
+    "scripts/hooks/lib.sh's hooks_are_off is the shared kill switch (ZURFUR_HOOKS_OFF containing the hook's name or `all`; an untracked .claude/hooks.off file) sourced by every hook.",
+    "scripts/hooks/lib.sh's utf8_safe_head backs a byte truncation off to a valid UTF-8 boundary via `iconv -c` (POSIX-specified, best-effort — falls back to a plain cut if absent); every hard byte cap goes through it, never a bare `head -c`.",
+    "Every *.sh here has a *.test.sh beside it; `just hooks-test` runs them all. Test fixtures use jq/awk only, matching the hooks' own runtime dependencies."
+  ],
+  "entry_points": [
+    "../../.claude/settings.json (SessionStart, PreToolUse wiring)",
+    "../../Justfile (hooks-test recipe)"
+  ],
+  "fs": [
+    {
+      "name": "design-refs.jq",
+      "role": "jq filter: buckets a node chain's refs into governs-this-file vs. other-pages-cited for design-refs.sh",
+      "node": false
+    },
+    {
+      "name": "design-refs.sh",
+      "role": "PreToolUse hook (Read|Edit|Write|MultiEdit) — injects the design-corpus refs for the touched file's node chain",
+      "node": false
+    },
+    {
+      "name": "design-refs.test.sh",
+      "role": "fixture-driven tests for design-refs.sh, using nodes-stub.sh",
+      "node": false
+    },
+    {
+      "name": "jq-broken-stub.sh",
+      "role": "test double for a jq that exits 2 on every call, driven by design-refs.test.sh via ZURFUR_JQ_BIN",
+      "node": false
+    },
+    {
+      "name": "jq-partial-stub.sh",
+      "role": "test double for a jq that writes a truncated fragment then exits 1, driven by design-refs.test.sh via ZURFUR_JQ_BIN",
+      "node": false
+    },
+    {
+      "name": "jq-slow-stub.sh",
+      "role": "test double for a jq that sleeps on its final call, driven by design-refs.test.sh via ZURFUR_JQ_BIN to test SIGTERM cleanup",
+      "node": false
+    },
+    {
+      "name": "lib.sh",
+      "role": "shared hooks_are_off/neutralize/cap_bytes/safe_state_dir/bounded_append/utf8_safe_head helpers, sourced by every hook script",
+      "node": false
+    },
+    {
+      "name": "nodes-stub.sh",
+      "role": "test double for the `nodes` binary, driven by design-refs.test.sh via ZURFUR_NODES_BIN",
+      "node": false
+    },
+    {
+      "name": "pins.sh",
+      "role": "SubagentStart / SessionStart(compact|resume) hook — re-states ../../.claude/pins.md (+ the untracked user-level pins file) to a subagent or after compaction",
+      "node": false
+    },
+    {
+      "name": "pins.test.sh",
+      "role": "fixture-driven tests for pins.sh, plus shape checks on the tracked ../../.claude/pins.md",
+      "node": false
+    },
+    {
+      "name": "stat-fail-stub.sh",
+      "role": "test double for a `stat` that always fails, driven by pins.test.sh via ZURFUR_STAT_BIN to prove the local-pins-file ownership check fails closed",
+      "node": false
+    },
+    {
+      "name": "stat-foreign-owner-stub.sh",
+      "role": "test double for a `stat` that always reports a foreign uid, driven by pins.test.sh via ZURFUR_STAT_BIN",
+      "node": false
+    },
+    {
+      "name": "uow-status.test.sh",
+      "role": "fixture-driven tests for ../uow-status.sh",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": []
+}
