@@ -283,3 +283,31 @@ pub struct CreateCommissionRequest {
     #[prost(message, optional, tag = "3")]
     pub maturity: ::core::option::Option<Maturity>,
 }
+/// `GET /api/v1/users/{actor}` — whose profile to read.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetUserProfileRequest {
+    /// An at-identifier: the person's DID (`did:plc:…`) or their handle
+    /// (`alice.bsky.social`). Either form names the same person; the response
+    /// always answers with the DID.
+    #[prost(string, tag = "1")]
+    pub actor: ::prost::alloc::string::String,
+}
+/// A person's public profile. Needs no session, and the person needs no
+/// Zurfur sign-up — any resolvable at-identifier answers.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetUserProfileResponse {
+    /// The person's atproto DID — always present, whichever form `actor` took.
+    #[prost(string, tag = "1")]
+    pub did: ::prost::alloc::string::String,
+    /// The person's handle, when their profile resolved. `optional` = explicit
+    /// presence: absent (key omitted) when the PDS was unreachable and nothing
+    /// was cached — absence means "not resolved", never anything more.
+    #[prost(string, optional, tag = "2")]
+    pub handle: ::core::option::Option<::prost::alloc::string::String>,
+    /// Display name from the resolved profile, if any.
+    #[prost(string, optional, tag = "3")]
+    pub display_name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Avatar URL from the resolved profile, if any.
+    #[prost(string, optional, tag = "4")]
+    pub avatar_url: ::core::option::Option<::prost::alloc::string::String>,
+}
