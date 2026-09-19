@@ -8,4 +8,5 @@ mod errors;
 mod value;
 
 pub use errors::DidParseError;
+pub use value::DeleteOutcome;
 pub use value::Did;

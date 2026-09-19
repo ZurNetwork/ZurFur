@@ -1,5 +1,8 @@
+pub mod claim;
 pub mod create;
 pub mod delete;
+pub mod transfer;
+pub mod visibility;
 
 use macros::WithPorts;
 
@@ -22,6 +25,8 @@ impl<'a> Characters<'a> {
 pub enum CharacterError {
     #[error(transparent)]
     Common(#[from] CommonError),
+    #[error("Incorrect role")]
+    IncorrectRole,
 }
 
 impl From<anyhow::Error> for CharacterError {

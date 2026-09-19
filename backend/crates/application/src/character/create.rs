@@ -62,7 +62,8 @@ impl Characters<'_> {
             None => (ports.did_minter.mint_handleless().await?, Presence::Private),
         };
 
-        let character = Character::create(actor_id, presence, did, attributes, now);
+        let owners = vec![actor_id];
+        let character = Character::create(owners, presence, did, attributes, now);
         let character = uow.characters().create(character).await?;
 
         Ok(Output {

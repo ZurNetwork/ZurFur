@@ -1,5 +1,9 @@
 use domain::{
-    elements::{account::AccountId, role::Role, user::UserId},
+    elements::{
+        account::{AccountId, DeleteOutcome},
+        role::Role,
+        user::UserId,
+    },
     ports::Unit,
 };
 use macros::use_case;
@@ -14,19 +18,7 @@ pub struct Command {
     pub actor_id: UserId,
     pub account_id: AccountId,
 }
-pub enum DeleteOutcome {
-    Soft,
-    Hard,
-}
 
-impl std::fmt::Display for DeleteOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Soft => write!(f, "soft"),
-            Self::Hard => write!(f, "hard"),
-        }
-    }
-}
 pub struct Output {
     pub outcome: DeleteOutcome,
 }
@@ -61,7 +53,7 @@ impl<'a> Accounts<'a> {
 
         let outcome = if self.facts().exist(existing_facts).await?.has_facts {
             uow.accounts().soft_delete(&account_id).await?;
-            DeleteOutcome::Soft
+            DeleteOutcome::Tombstoned
         } else {
             uow.accounts().hard_delete(&account_id).await?;
             if let Err(err) = ports.did_minter.tombstone(account_id.did()).await {

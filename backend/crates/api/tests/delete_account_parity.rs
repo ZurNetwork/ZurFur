@@ -19,7 +19,7 @@ fn account_delete_renders_exactly_like_delete_accounts() {
     // can be neither copied into both nor named with `{:?}` — its `Display` is
     // the spelling under test anyway.
     let pairs = [
-        [DeleteOutcome::Soft, DeleteOutcome::Soft],
+        [DeleteOutcome::Tombstoned, DeleteOutcome::Tombstoned],
         [DeleteOutcome::Hard, DeleteOutcome::Hard],
     ];
     for [rendered_http, rendered_terminal] in pairs {

@@ -7,6 +7,7 @@
 
 mod attributes;
 mod entity;
+mod facts;
 mod id;
 mod presence;
 
@@ -14,5 +15,7 @@ pub use attributes::{
     CharacterAttributes, CharacterDescription, CharacterName, DynamicCharacterAttribute,
 };
 pub use entity::Character;
+pub use entity::DeleteOutcome;
+pub use facts::CharacterFacts;
 pub use id::CharacterId;
 pub use presence::Presence;

@@ -50,3 +50,9 @@ impl FromStr for Did {
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    Tombstoned,
+    Hard,
+}

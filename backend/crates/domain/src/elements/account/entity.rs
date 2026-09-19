@@ -4,6 +4,7 @@ use crate::{
 };
 
 use super::{AccountId, AccountName};
+pub use crate::elements::did::DeleteOutcome;
 
 /// A founded account: its [`AccountId`], a [`Handle`], a validated
 /// [`AccountName`], and lifecycle timestamps. Build one with [`Account::open`],

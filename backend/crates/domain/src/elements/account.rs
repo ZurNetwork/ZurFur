@@ -12,6 +12,7 @@ mod rows;
 mod value;
 
 pub use entity::Account;
+pub use entity::DeleteOutcome;
 pub use errors::AccountNameError;
 pub use id::AccountId;
 pub use rows::{AccountMembership, AccountProfile, ListingScope};

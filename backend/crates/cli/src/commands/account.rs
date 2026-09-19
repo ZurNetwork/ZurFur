@@ -77,7 +77,7 @@ pub struct Deleted {
 impl From<account::delete::Output> for Deleted {
     fn from(deleted: account::delete::Output) -> Self {
         let outcome = match deleted.outcome {
-            DeleteOutcome::Soft => "soft",
+            DeleteOutcome::Tombstoned => "soft",
             DeleteOutcome::Hard => "hard",
         };
         Deleted {
