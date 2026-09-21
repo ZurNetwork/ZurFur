@@ -3,6 +3,10 @@
   "charted": "2026-09-12",
   "short": "Route groups, one policy zone each",
   "is": "Route groups split along the DESIGN subdomain→namespace→router seam, each an independently mounted policy zone.",
+  "type": "code",
+  "categories": [
+    "source"
+  ],
   "conventions": [
     "Each module exposes exactly one `*_router()`; adding a domain = a new module + one line in `app()`.",
     "This split is the intermediate step toward per-domain crates — extraction should be a move, not a redesign.",

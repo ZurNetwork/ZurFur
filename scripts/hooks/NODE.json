@@ -3,6 +3,10 @@
   "charted": "2026-09-18",
   "short": "Claude Code hook scripts: session/tool-call context injection",
   "is": "The Claude Code hook scripts wired in .claude/settings.json (PreToolUse/SessionStart) that inject factual, deterministic context into a session — as distinct from scripts/*.sh, which back `just` dev-loop recipes.",
+  "type": "code",
+  "categories": [
+    "tooling"
+  ],
   "conventions": [
     "POSIX sh + jq + awk only — no `sed` (aliased to `sd` on some dev machines), no python3/perl; always exit 0, never fail the event that triggered them.",
     "Injected text is factual statements only, never imperatives — command-shaped injected context can trip prompt-injection defenses.",

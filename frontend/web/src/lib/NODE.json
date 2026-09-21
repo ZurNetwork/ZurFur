@@ -3,6 +3,11 @@
   "charted": "2026-09-12",
   "short": "Shared library, cut by the runes seam",
   "is": "The shared library, cut by the seam: `api`/`types`/`components`/`testing` are Effect-free and browser-safe; `server/` is the Effect half.",
+  "type": "code",
+  "categories": [
+    "source",
+    "ui"
+  ],
   "conventions": [
     "`$lib/api/*` is the vocabulary that crosses the seam — plain interfaces + `as const` maps.",
     "A rule stated once lives in the shared module both sides import (`handle-format.ts` backs both the Schema field and the brand validator).",

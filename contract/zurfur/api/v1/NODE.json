@@ -3,6 +3,10 @@
   "charted": "2026-09-12",
   "short": "The v1 proto corpus (session, account, commission, problem)",
   "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, error), welded to `/api/v1`.",
+  "type": "code",
+  "categories": [
+    "schema"
+  ],
   "conventions": [
     "Every file opens with a plain-language orientation header (no cross-repo pointers — see Refs below for what each header used to cite).",
     "`service`/`rpc` blocks only declare routes for the descriptor test; only messages are generated.",

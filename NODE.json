@@ -3,6 +3,13 @@
   "charted": "2026-09-17",
   "short": "The Zurfur monorepo: Rust backend, SvelteKit frontend, contract, lexicons",
   "is": "Zurfur — an AT Protocol-native art-commission platform: a Rust ports-and-adapters backend, a SvelteKit frontend, and the protobuf contract + atproto lexicons that sit between them and the network.",
+  "type": "code",
+  "categories": [
+    "project",
+    "source",
+    "ui",
+    "schema"
+  ],
   "conventions": [
     "All design lives in the design corpus ZurNetwork/zurfur-design at ~/code/zurfur-design (single source of truth; `docs/design-index.md` is the generated pointer index) — read the page before asserting; Jira ZMVP holds the ticket record.",
     "Private data (app-owned rows, Postgres) vs public data (user-owned records, the PDS) is THE boundary; no cross-store transactions.",

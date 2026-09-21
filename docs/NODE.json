@@ -3,6 +3,13 @@
   "charted": "2026-09-17",
   "short": "Generated pointer index into the design corpus",
   "is": "The generated pointer index into the design corpus (ZurNetwork/zurfur-design) — page ids, statuses and titles only, never copied page content.",
+  "type": "document",
+  "categories": [
+    "docs",
+    "index",
+    "generated",
+    "design"
+  ],
   "conventions": [
     "This is the index every `refs` entry resolves against, so it is the one place design page ids belong in bulk — but still ids, statuses and titles, never page bodies.",
     "Generated, never hand-edited: `just design-index` rewrites it from the corpus, `just design-index-check` (inside `just gate`) reports drift, and `just nodes-check` resolves every NODE.json ref against it."
