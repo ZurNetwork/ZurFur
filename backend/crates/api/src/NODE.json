@@ -3,6 +3,11 @@
   "charted": "2026-09-12",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
+  "type": "code",
+  "categories": [
+    "source",
+    "generated"
+  ],
   "conventions": [
     "Handlers translate HTTP ↔ use-case Commands/Outputs only; no domain logic here.",
     "The sweeper is the only place the system (not a participant) acts on a commission."

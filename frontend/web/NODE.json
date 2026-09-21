@@ -3,6 +3,11 @@
   "charted": "2026-09-12",
   "short": "The SvelteKit 2 / Svelte 5 app",
   "is": "A SvelteKit 2 / Svelte 5 app in forced runes mode, node adapter, talking to axum only from the server side, with a yarn-driven check/lint/test/build gate mirrored by `just check-all`.",
+  "type": "code",
+  "categories": [
+    "ui",
+    "source"
+  ],
   "conventions": [
     "Two vitest projects split by filename — `*.svelte.spec.ts` runs in real Chromium (`src/lib/server/**` excluded), every other `*.spec.ts` in node; `expect.requireAssertions` on.",
     "Specs sit next to code but drop the `+` for routes (`page.server.spec.ts`). eslint IS the rulebook enforcer: `effect` imports banned outside `src/lib/server/**` and `*.server.ts`; production code may not throw, mention `null`, or use type assertions (brand mints under `src/lib/types/**` are the one exemption; `src/lib/testing/**` is spec-only).",

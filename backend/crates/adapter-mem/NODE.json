@@ -3,6 +3,11 @@
   "charted": "2026-09-12",
   "short": "In-process fakes of every port",
   "is": "In-process fakes of every domain port (private + public store) so core development and most tests need neither a database nor a PDS, reproducing each contract — including transactional rollback — without the operational reality.",
+  "type": "code",
+  "categories": [
+    "tests",
+    "source"
+  ],
   "conventions": [
     "Fidelity, not realism — reproduce the contract a handler depends on (idempotent recognition, soft-delete invisibility, cache hits); skip TTLs and real keypairs; call out intentional divergence on the item.",
     "One shared `MemBackend` owns the maps, read stores read `&self`, and `MemDatabase::begin` takes two independent deep copies (base + staged); `MemUnitOfWork::commit` diffs key-by-key and merges only this unit's changes back — not a wholesale replace; drop without commit discards both (rollback).",
