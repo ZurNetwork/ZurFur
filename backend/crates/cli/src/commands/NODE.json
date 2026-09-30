@@ -4,8 +4,8 @@
   "short": "One module per CLI namespace",
   "is": "One module per domain namespace exposing a `clap::Subcommand` enum plus `run(&Runtime, op) -> Result<Value, CliError>`; the root dispatch in `lib.rs` routes to it.",
   "type": "code",
-  "categories": [
-    "source"
+  "tags": [
+    "category:source"
   ],
   "conventions": [],
   "entry_points": [

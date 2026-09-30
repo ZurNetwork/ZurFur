@@ -4,8 +4,8 @@
   "short": "Below the seam: runtime, port, programs, forms",
   "is": "Everything below the seam: one ManagedRuntime, one `ZurfurApi` port, outcome-returning programs per domain, one Schema module per form.",
   "type": "code",
-  "categories": [
-    "source"
+  "tags": [
+    "category:source"
   ],
   "conventions": [
     "Programs return an OUTCOME UNION (data or a renderable Problem), not a raw Effect — loads/actions `runApi(program)` and branch.",

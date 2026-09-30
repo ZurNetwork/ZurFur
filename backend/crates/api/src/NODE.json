@@ -4,9 +4,9 @@
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
-  "categories": [
-    "source",
-    "generated"
+  "tags": [
+    "category:source",
+    "category:generated"
   ],
   "conventions": [
     "Handlers translate HTTP ↔ use-case Commands/Outputs only; no domain logic here.",
