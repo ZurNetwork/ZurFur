@@ -4,8 +4,8 @@
   "short": "The zurfur terminal driver (clap)",
   "is": "The `zurfur` terminal driving adapter: one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.",
   "type": "code",
-  "categories": [
-    "source"
+  "tags": [
+    "category:source"
   ],
   "conventions": [
     "Stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`.",

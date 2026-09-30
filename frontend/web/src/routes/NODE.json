@@ -4,9 +4,9 @@
   "short": "The SvelteKit route tree",
   "is": "The route tree: a root layout that resolves whoami once per render, a public home and `/login`, and an auth-gated `(session)` group.",
   "type": "code",
-  "categories": [
-    "ui",
-    "source"
+  "tags": [
+    "category:ui",
+    "category:source"
   ],
   "conventions": [
     "Loads and actions are the seam's consumers — `runApi(program)` then branch; never `Effect` in a route file.",
