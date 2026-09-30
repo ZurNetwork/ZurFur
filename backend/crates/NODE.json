@@ -1,8 +1,8 @@
 {
   "path": "backend/crates",
   "charted": "2026-09-12",
-  "short": "The twelve workspace crates",
-  "is": "Twelve workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, and three support/codegen crates.",
+  "short": "The thirteen workspace crates",
+  "is": "Thirteen workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
   "tags": [
     "category:source"
@@ -41,6 +41,11 @@
     {
       "name": "application/",
       "role": "use cases — one plain async fn per use case + the shared transaction() orchestrator, called by every driver",
+      "node": true
+    },
+    {
+      "name": "atta/",
+      "role": "Atta, the host-agnostic black-box engine — a file (or its contents) in, an output out; no workspace deps",
       "node": true
     },
     {

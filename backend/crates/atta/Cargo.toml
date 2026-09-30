@@ -1,0 +1,9 @@
+[package]
+publish = false
+name = "atta"
+version = "0.1.0"
+edition = "2024"
+
+# Host-agnostic: never depends on another workspace crate or names a Zurfur
+# type. It lives in this workspace only until it is split into its own library.
+[dependencies]
