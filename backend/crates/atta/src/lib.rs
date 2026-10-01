@@ -1,4 +1,6 @@
-//! Atta: a black-box engine. A file, or a file's contents, goes in; an
-//! output comes out.
+//! Atta: the engine for a tree of typed files. It resolves the tree,
+//! enforces its structural rules, routes each operation to the handler for
+//! a node's type, and renders files.
 //!
-//! It knows nothing about the application that embeds it.
+//! Types and content are opaque to it. It knows nothing about the
+//! application that embeds it.
