@@ -64,6 +64,7 @@
 - 62488577 decided — Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board
 - 64290818 decided — Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules
 - 65110018 decided — Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)
+- 2026091901 decided — Character Deletion — Facts, the Tombstone & Keeper Consent for Slotting
 - 2026093001 decided — The Den — a Tree of Typed Files, Peer Views and Atta
 
 ## entities/

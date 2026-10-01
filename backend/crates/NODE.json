@@ -50,7 +50,7 @@
     },
     {
       "name": "atta/",
-      "role": "Atta, the host-agnostic black-box engine — a file (or its contents) in, an output out; no workspace deps",
+      "role": "Atta, the host-agnostic engine for the Den — resolves the tree, enforces its structure, routes operations to type handlers, renders; no workspace deps",
       "node": true
     },
     {
