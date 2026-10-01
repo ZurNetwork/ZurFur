@@ -1,0 +1,5 @@
+error: a `#[use_case]` takes at most one `#[ports]` parameter
+ --> tests/ui/duplicate_ports.rs:7:45
+  |
+7 |     async fn run(&self, #[ports] first: u8, #[ports] second: u8) {}
+  |                                             ^^^^^^^^

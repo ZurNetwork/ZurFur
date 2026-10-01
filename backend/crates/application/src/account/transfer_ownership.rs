@@ -1,13 +1,10 @@
-use domain::{
-    elements::{account::AccountId, role::Role, user::UserId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, Accounts, require_live_account},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +25,7 @@ impl Accounts<'_> {
     pub async fn transfer_ownership(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -56,6 +53,7 @@ impl Accounts<'_> {
             .await?
             .ok_or(AccountError::NotAMember)?;
 
+        let uow = uow.open().await?;
         uow.accounts()
             .transfer_ownership(&actor_id, &target_id, &account_id)
             .await?;

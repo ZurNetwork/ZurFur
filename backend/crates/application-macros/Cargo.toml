@@ -1,5 +1,5 @@
 [package]
-name = "macros"
+name = "application-macros"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -10,11 +10,11 @@ publish = false
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "1"
-quote = "1"
-syn = { version = "2", features = ["full"] }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
 
 [dev-dependencies]
 # Compile-FAIL tests: each `tests/ui/*.rs` must be rejected by rustc, and the
 # compiler's output must match the sibling `.stderr` file.
-trybuild = "1"
+trybuild = { workspace = true }

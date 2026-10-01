@@ -1,18 +1,15 @@
-use domain::{
-    elements::{
-        user::UserId,
-        workflow::{ColumnId, ColumnName, WorkflowError, WorkflowId},
-    },
-    ports::Unit,
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{
+    user::UserId,
+    workflow::{ColumnId, ColumnName, WorkflowError, WorkflowId},
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +27,7 @@ impl Columns<'_> {
     pub async fn rename(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -68,6 +65,7 @@ impl Columns<'_> {
                 )),
             })?;
 
+        let uow = uow.open().await?;
         uow.columns().rename(column).await?;
 
         Ok(Output)

@@ -82,3 +82,16 @@ fn visibility_mode_tokens_round_trip_and_order_by_openness() {
         "declaration order IS the openness ladder — the min clamp depends on it"
     );
 }
+
+// The persisted tokens, pinned literally and in openness order.
+#[test]
+fn visibility_mode_tokens_are_pinned_literally() {
+    let expected_tokens = ["total", "presentation", "description"];
+
+    let tokens: Vec<&'static str> = VisibilityMode::VARIANTS
+        .iter()
+        .map(|mode| <&'static str>::from(*mode))
+        .collect();
+
+    assert_eq!(tokens, expected_tokens);
+}

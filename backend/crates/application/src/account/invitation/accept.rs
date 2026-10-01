@@ -1,13 +1,10 @@
-use domain::{
-    elements::{account::AccountId, role::Role, user::UserId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +29,7 @@ impl Invitations<'_> {
     pub async fn accept(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -47,6 +44,7 @@ impl Invitations<'_> {
             .await?
             .ok_or(AccountError::NoPendingInvitation)?;
 
+        let uow = uow.open().await?;
         let result = uow
             .accounts()
             .accept_invitation(invitation, listed_on_profile)

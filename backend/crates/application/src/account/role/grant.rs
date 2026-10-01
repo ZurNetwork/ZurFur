@@ -1,13 +1,10 @@
-use domain::{
-    elements::{account::AccountId, role::Role, user::UserId, user_account::UserAccount},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{account::AccountId, role::Role, user::UserId, user_account::UserAccount};
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, require_live_account, role::Roles},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +25,7 @@ impl Roles<'_> {
     pub async fn grant(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -60,6 +57,7 @@ impl Roles<'_> {
 
         // Provisioning is a write: an unauthorized grant must not leave a User
         // row behind for the DID it named.
+        let uow = uow.open().await?;
         let target = uow.users().provision(target_id.did()).await?;
 
         let member = UserAccount {

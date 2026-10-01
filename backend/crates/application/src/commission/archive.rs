@@ -1,12 +1,12 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use serde_json::json;
 
 use crate::{
@@ -29,7 +29,7 @@ impl Commissions<'_> {
     pub async fn archive(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Outcome> {
@@ -47,6 +47,7 @@ impl Commissions<'_> {
             now,
         );
 
+        let uow = uow.open().await?;
         let mut commissions = uow.commissions();
         let moved = commissions.set_archived(&commission.id, Some(now)).await?;
         drop(commissions);

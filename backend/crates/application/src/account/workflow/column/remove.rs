@@ -1,15 +1,12 @@
-use domain::{
-    elements::{role::Role, user::UserId, workflow::ColumnId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{role::Role, user::UserId, workflow::ColumnId};
 
 use crate::{
     Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +22,7 @@ impl Columns<'_> {
     pub async fn remove(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -51,6 +48,7 @@ impl Columns<'_> {
             return Err(AccountError::ContainsCommissions);
         }
 
+        let uow = uow.open().await?;
         uow.columns().delete(&column_id).await?;
         Ok(Output)
     }

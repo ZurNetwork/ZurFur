@@ -4,7 +4,7 @@
 //! Streaming seam: the port speaks [`tokio::io::AsyncRead`], never a buffered
 //! `Vec<u8>` or a driver type.
 
-use macros::WithPorts;
+use crate::ports::WithPorts;
 
 use crate::commission::Commissions;
 

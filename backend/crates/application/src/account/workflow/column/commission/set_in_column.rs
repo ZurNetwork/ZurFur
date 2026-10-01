@@ -1,12 +1,10 @@
-use domain::{
-    elements::{
-        commission::{CommissionId, Visibility},
-        user::UserId,
-        workflow::{ColumnId, LexOrdering, WorkflowError},
-    },
-    ports::Unit,
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{
+    commission::{CommissionId, Visibility},
+    user::UserId,
+    workflow::{ColumnId, LexOrdering, WorkflowError},
 };
-use macros::use_case;
 
 use crate::{
     Ports,
@@ -47,7 +45,7 @@ impl Commissions<'_> {
     pub async fn insert_in_column(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -109,6 +107,7 @@ impl Commissions<'_> {
                 AccountError::Infrastructure(anyhow::anyhow!("the board refused the card: {other}"))
             }
         })?;
+        let uow = uow.open().await?;
         uow.columns().set_commissions(&column).await?;
 
         let commissions = column.into_iter().collect();

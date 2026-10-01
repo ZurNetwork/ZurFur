@@ -1,17 +1,16 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{CommissionId, ElementId, NewSlot, SlotTitle, SurfaceAddress, TabId},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, slots::Slots},
-    ports::WithPorts,
 };
 
 pub struct SlotBody {
@@ -34,7 +33,7 @@ impl Slots<'_> {
     pub async fn declare(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -74,6 +73,7 @@ impl Slots<'_> {
             .collect();
 
         let slot_ids: Vec<ElementId> = slots.iter().map(|s| s.id).collect();
+        let uow = uow.open().await?;
         uow.commissions().declare_slots(&slots).await?;
         Ok(Output { slot_ids })
     }

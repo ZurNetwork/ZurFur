@@ -92,9 +92,15 @@ derive_more = { version = "2.1.1", features = [
   "into",
   "from_str",
 ] }
-# Enum string tables (Display/EnumString/VariantNames). Exact-pinned on purpose:
+# Enum string tables (Display/EnumString/VariantArray). Exact-pinned on purpose:
 # its casing rules produce persisted tokens, and every enum pins them in a test.
-strum = { version = "0.28.0", features = ["derive"] }
+strum = { version = "=0.28.0", features = ["derive"] }
+# The proc-macro stack of `application-macros`: token plumbing, quasi-quoting
+# and the item parser; `trybuild` drives its compile-fail tests.
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
+syn = { version = "2.0.117", features = ["full"] }
+trybuild = "1.0.121"
 # --- test-only: property tests, snapshot shape guards, mock HTTP, fixtures ---
 proptest = "1.11.0"
 insta = { version = "1.48.0", features = ["json", "redactions"] }

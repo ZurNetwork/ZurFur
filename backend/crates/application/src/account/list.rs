@@ -1,10 +1,10 @@
+use crate::use_case;
 use domain::elements::{
     account::{AccountId, AccountName, ListingScope},
     handle::Handle,
     role::{Role, RoleAlias},
     user::UserId,
 };
-use macros::use_case;
 
 use crate::{
     Ports,

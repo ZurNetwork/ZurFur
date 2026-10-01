@@ -5,6 +5,8 @@
 //! contract — streaming, authorization order, and the reject-then-delete
 //! cleanup a buffered test can't see through the HTTP layer.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use std::io::Cursor;
 
 use application::{

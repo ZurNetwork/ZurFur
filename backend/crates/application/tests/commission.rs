@@ -3,6 +3,8 @@
 //! lock. The timer and the advisory-lock leader election that wrap it stay
 //! in `api` and are tested there.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use application::commission::{SweepResult, sweep_deadlines};
 use application::transaction;
 use chrono::{DateTime, Utc};

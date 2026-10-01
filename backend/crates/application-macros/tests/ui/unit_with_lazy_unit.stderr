@@ -1,0 +1,5 @@
+error: `#[unit]` and `#[lazy_unit]` cannot be combined; a use case opens its unit either before the body or on demand
+ --> tests/ui/unit_with_lazy_unit.rs:7:25
+  |
+7 |     async fn run(&self, #[unit] eager: u8, #[lazy_unit] lazy: u8) {}
+  |                         ^^^^^^^

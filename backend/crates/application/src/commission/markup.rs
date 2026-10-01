@@ -3,6 +3,8 @@
 //! changelog entry is the timeline fact and carries enough payload to render
 //! without a join. Append-only — the write port exposes no edit or delete.
 
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -12,9 +14,7 @@ use domain::{
         },
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use serde_json::json;
 
 use crate::{
@@ -47,7 +47,7 @@ impl Commissions<'_> {
     pub async fn markup(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -94,6 +94,7 @@ impl Commissions<'_> {
             created_at: now,
         };
 
+        let uow = uow.open().await?;
         uow.commissions().add_markup(&markup).await?;
         uow.changelog().append(&entry).await?;
 

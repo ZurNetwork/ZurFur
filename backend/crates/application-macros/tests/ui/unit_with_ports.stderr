@@ -1,0 +1,5 @@
+error: a `#[unit]` use case cannot also inject `#[ports]`; use `#[lazy_unit]` so pool reads run before the unit opens
+ --> tests/ui/unit_with_ports.rs:7:25
+  |
+7 |     async fn run(&self, #[unit] uow: u8, #[ports] ports: u8) {}
+  |                         ^^^^^^^

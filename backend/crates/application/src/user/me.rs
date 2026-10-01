@@ -1,3 +1,4 @@
+use crate::use_case;
 use domain::{
     elements::{
         profile::{DisplayHandle, Profile},
@@ -5,7 +6,6 @@ use domain::{
     },
     ports::{ProfileCache, ProfileSource},
 };
-use macros::use_case;
 
 use crate::{Ports, user::Users};
 

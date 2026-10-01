@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -5,16 +7,13 @@ use domain::{
         handle::{Handle, HandleDomain},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{AccountError, ensure_handle_claimable},
     character::{CharacterResult, Characters},
     common_error::CommonError,
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +33,7 @@ impl Characters<'_> {
     pub async fn create(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         handle_domain: &HandleDomain,
         now: DateTimeUtc,
@@ -63,6 +62,7 @@ impl Characters<'_> {
         };
 
         let character = Character::create(actor_id, presence, did, attributes, now);
+        let uow = uow.open().await?;
         let character = uow.characters().create(character).await?;
 
         Ok(Output {

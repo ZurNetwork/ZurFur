@@ -1,19 +1,16 @@
-use domain::{
-    elements::{
-        commission::CommissionId,
-        user::UserId,
-        workflow::{LexOrdering, WorkflowId},
-    },
-    ports::Unit,
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{
+    commission::CommissionId,
+    user::UserId,
+    workflow::{LexOrdering, WorkflowId},
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::Workflows,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +32,7 @@ impl Workflows<'_> {
     pub async fn remove(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -68,6 +65,7 @@ impl Workflows<'_> {
             .remove_element(commission_id)
             .map_err(|_| AccountError::NotFound(AccountEntity::Commission))?;
 
+        let uow = uow.open().await?;
         uow.columns().set_commissions(&column).await?;
 
         // The column has done its job; hand its cards over rather than copy them.

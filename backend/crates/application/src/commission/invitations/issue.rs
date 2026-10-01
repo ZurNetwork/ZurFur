@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -5,14 +7,11 @@ use domain::{
         invitation::InvitationState,
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -39,7 +38,7 @@ impl Invitations<'_> {
     pub async fn issue(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -51,7 +50,6 @@ impl Invitations<'_> {
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
-        let target_user = uow.users().provision(target_id.did()).await?;
         let seats = ports.commissions.seats(&commission.id).await?;
 
         // Two distinct answers, deliberately not folded into one: an absent
@@ -66,18 +64,20 @@ impl Invitations<'_> {
 
         if let Some(invitation) = ports
             .commissions
-            .find_pending_seat_invitation(&commission.id, &seat.id, &target_user.id)
+            .find_pending_seat_invitation(&commission.id, &seat.id, &target_id)
             .await?
         {
             return Ok(Output::PreExisting(InvitationOutput {
                 commission_id: commission.id,
                 invitation_id: invitation.id,
                 invitation_state: invitation.state,
-                invited_user_id: target_user.id,
+                invited_user_id: target_id,
                 seat_id: seat.id,
             }));
         }
 
+        let uow = uow.open().await?;
+        let target_user = uow.users().provision(target_id.did()).await?;
         let invitation = SeatInvitation::issue(
             commission.id,
             seat.id,

@@ -9,11 +9,16 @@ fn zurfur() -> Command {
     let mut cmd = Command::cargo_bin("zurfur").expect("the zurfur binary is built");
     // The binary loads no `.env` itself (ZMVP-203 F1), so clearing the
     // inherited variables is enough to keep the developer's stack out of a
-    // harness run.
-    cmd.env_remove("DATABASE_URL")
-        .env_remove("ZURFUR_DID_KEY_ROOT_KEY")
-        .env_remove("ZURFUR_CLI_HOME")
-        .env("RUST_LOG", "off");
+    // harness run. `just` loads `.env`, so EVERY inherited `ZURFUR_*` goes;
+    // a test that needs one sets it after calling this.
+    let inherited_zurfur_vars: Vec<_> = std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| name.to_string_lossy().starts_with("ZURFUR_"))
+        .collect();
+    for name in inherited_zurfur_vars {
+        cmd.env_remove(name);
+    }
+    cmd.env_remove("DATABASE_URL").env("RUST_LOG", "off");
     cmd
 }
 

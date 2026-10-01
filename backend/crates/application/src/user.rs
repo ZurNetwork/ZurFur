@@ -1,8 +1,8 @@
 //! Use cases about the acting User.
 
+use crate::ports::WithPorts;
 use domain::elements::{did::Did, profile::Profile};
 use domain::ports::{ProfileCache, ProfileSource};
-use macros::WithPorts;
 
 pub mod me;
 

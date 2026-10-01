@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -5,14 +7,11 @@ use domain::{
         handle::{Handle, HandleDomain},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{AccountResult, Accounts, ensure_handle_claimable},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -30,7 +29,7 @@ impl Accounts<'_> {
     #[use_case]
     pub async fn create(
         &self,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         #[ports] ports: &Ports,
         cmd: Command,
         handle_domain: &HandleDomain,
@@ -46,6 +45,7 @@ impl Accounts<'_> {
         let did = ports.did_minter.mint(&handle).await?;
 
         let (account, owner) = Account::open(actor_id, did, handle, name, now);
+        let uow = uow.open().await?;
         uow.accounts().create(&account, &owner).await?;
         Ok(Output {
             account_id: account.id,

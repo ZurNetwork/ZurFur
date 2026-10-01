@@ -1,14 +1,13 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{account::AccountId, user::UserId},
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, invitation::Invitations},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +23,7 @@ impl Invitations<'_> {
     pub async fn decline(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> AccountResult<Output> {
@@ -44,6 +43,7 @@ impl Invitations<'_> {
                 "The invitation could not be declined, as it is no longer pending"
             ))
         })?;
+        let uow = uow.open().await?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
         Ok(Output)
     }

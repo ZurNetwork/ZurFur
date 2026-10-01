@@ -61,10 +61,12 @@ pub trait UnitOfWork: Send {
     async fn commit(self: Box<Self>) -> anyhow::Result<()>;
 
     /// Abort the unit explicitly. Dropping the handle rolls back just the same;
-    /// this exists for the legacy `transaction()` wrapper.
+    /// this lets a caller settle the unit without waiting for the drop.
     async fn rollback(self: Box<Self>) -> anyhow::Result<()>;
 }
 
+/// A borrowed open [`UnitOfWork`]: what a write path receives to reach the
+/// transaction's repos.
 pub type Unit<'a> = &'a mut dyn UnitOfWork;
 
 /// The bound a transaction body closure must satisfy: callable once with a

@@ -116,7 +116,7 @@ pub fn load(path: &Path) -> Result<Option<Identity>, CliError> {
             ),
         ));
     }
-    // Untrusted text: enters the domain through `Did`'s parsing door, never `Did::new`.
+    // Untrusted text: enters the domain through `Did`'s `FromStr`, never `Did::from`.
     identity.did.parse::<Did>().map_err(|e| {
         CliError::domain(
             "identity_corrupt",

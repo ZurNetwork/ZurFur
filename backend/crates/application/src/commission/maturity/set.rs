@@ -1,17 +1,14 @@
-use domain::{
-    elements::{
-        commission::CommissionId,
-        maturity::{self, MaturityRating},
-        user::UserId,
-    },
-    ports::Unit,
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{
+    commission::CommissionId,
+    maturity::{self, MaturityRating},
+    user::UserId,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     commission::{CommissionResult, maturity::Maturity, require_owner},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -27,7 +24,7 @@ impl Maturity<'_> {
     pub async fn run(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> CommissionResult<Output> {
         let Command {
@@ -42,6 +39,7 @@ impl Maturity<'_> {
             graphic,
             rating: maturity_rating,
         };
+        let uow = uow.open().await?;
         uow.commissions()
             .set_maturity(&commission.id, maturity)
             .await?;

@@ -1,13 +1,10 @@
-use domain::{
-    elements::{account::AccountId, user::UserId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{account::AccountId, user::UserId};
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, require_live_account, role::Roles},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +24,7 @@ impl Roles<'_> {
     pub async fn revoke(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -65,6 +62,7 @@ impl Roles<'_> {
             return Err(AccountError::IncorrectRole);
         }
 
+        let uow = uow.open().await?;
         uow.accounts().revoke_role(&target_id, &account_id).await?;
 
         Ok(Output {

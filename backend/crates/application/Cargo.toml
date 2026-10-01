@@ -22,13 +22,14 @@ strum = { workspace = true }
 tracing = { workspace = true }
 # Changelog entry payloads are `serde_json::Value` (the domain's own type).
 serde_json = { workspace = true }
+# `rt` for the task-local that guards against nested units of work.
 # `commission::files::upload`'s streaming seam: `AsyncRead`/`AsyncReadExt::take`
 # over the caller-supplied content (ZMVP-88/205) — the neutral vocabulary that
 # keeps this crate ignorant of axum's multipart types. Hand-pinned at the same
 # version as `workspace.dependencies.tokio` (see `domain/Cargo.toml`'s note —
 # `workspace = true` cannot itself drop `default-features` here).
-tokio = { version = "1.49.0", default-features = false, features = ["io-util"] }
-macros = { path = "../macros" }
+tokio = { version = "1.49.0", default-features = false, features = ["io-util", "rt"] }
+application-macros = { path = "../application-macros" }
 
 [dev-dependencies]
 # The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks
@@ -39,7 +40,7 @@ uuid = { workspace = true }
 # The tests' `now` + a hand-rolled failing port double.
 chrono = { workspace = true }
 async-trait = { workspace = true }
-# Names `composition::Runtime` so a commission test can build a `CommissionPorts`
-# straight off the in-memory fixture's port fields — already in the dev graph
+# Names `composition::Runtime` so the integration tests can build an `App` over
+# the in-memory fixture — already in the dev graph
 # transitively via `test-support` (see the dep-guard's cyclic-dev-graph note).
 composition = { path = "../composition" }

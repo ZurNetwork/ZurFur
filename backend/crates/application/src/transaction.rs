@@ -1,5 +1,5 @@
-//! The one `begin`/`commit`/`rollback` orchestrator for the private store.
-//! The use case owns its transaction boundary.
+//! The `begin`/`commit`/`rollback` door for callers that are not use-case
+//! methods: sweeps, composition and test seeding.
 
 use domain::ports::{Database, UnitOfWorkFn};
 

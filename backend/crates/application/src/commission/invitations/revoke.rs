@@ -1,17 +1,16 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{CommissionId, element::SeatId},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -31,7 +30,7 @@ impl Invitations<'_> {
     pub async fn revoke(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -62,6 +61,7 @@ impl Invitations<'_> {
         invitation
             .revoke(now)
             .map_err(|_| CommissionError::InvalidStateRequested)?;
+        let uow = uow.open().await?;
         uow.commissions()
             .revoke_seat_invitation(&invitation.id)
             .await?;

@@ -1,3 +1,4 @@
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -5,7 +6,6 @@ use domain::{
         user::UserId,
     },
 };
-use macros::use_case;
 
 use crate::{
     Ports,

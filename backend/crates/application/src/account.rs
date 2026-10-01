@@ -1,4 +1,5 @@
 //! Use cases about [`Account`]s.
+use crate::ports::WithPorts;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -6,9 +7,8 @@ use domain::{
         handle::{Handle, HandleDomain},
         workflow::WorkflowError,
     },
-    ports::{AccountStore, Database, DidBelongsToAnotherActor, DidMinter, HandleTaken, UserStore},
+    ports::{DidBelongsToAnotherActor, DidMinter, HandleTaken},
 };
-use macros::WithPorts;
 use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
 pub mod change_handle;
@@ -283,16 +283,6 @@ pub(crate) async fn ensure_handle_claimable(
         }
     }
     Ok(())
-}
-
-/// The ports the account use cases reach: reads off [`AccountStore`] and
-/// [`UserStore`], identity off [`DidMinter`], writes through a unit of work
-/// vended by [`Database`].
-pub struct AccountPorts<'a> {
-    pub accounts: &'a dyn AccountStore,
-    pub users: &'a dyn UserStore,
-    pub did_minter: &'a dyn DidMinter,
-    pub database: &'a dyn Database,
 }
 
 pub type AccountResult<T> = Result<T, AccountError>;

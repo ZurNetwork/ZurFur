@@ -12,6 +12,7 @@ pub mod http;
 mod pds;
 pub mod pg;
 mod plc_stub;
+pub mod recording;
 pub mod runtime;
 
 pub use fixture::{ActingCredential, FixtureAccount};

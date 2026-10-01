@@ -1,15 +1,12 @@
-use domain::{
-    elements::{user::UserId, workflow::WorkflowId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{user::UserId, workflow::WorkflowId};
 
 use crate::{
     Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::Workflows,
     },
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -23,7 +20,7 @@ impl Workflows<'_> {
     pub async fn delete(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -47,6 +44,7 @@ impl Workflows<'_> {
             .filter(|role| role.is_administrative())
             .ok_or(AccountError::IncorrectRole)?;
 
+        let uow = uow.open().await?;
         uow.workflows().delete(&workflow_id).await?;
 
         Ok(Output)

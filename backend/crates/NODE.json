@@ -12,7 +12,7 @@
     "Closed-vocabulary enums implement std `Display`/`FromStr`, never bespoke `as_str`/`parse` pairs; id newtypes may derive serde, loaded entities never do.",
     "Codegen crates are libraries first so the runner binary and the staleness-gate test share one generation body.",
     "`test-support` dev-depends on `adapter-pg` while adapters dev-depend on `test-support` — a cargo dev-cycle, not a runtime edge.",
-    "`application` depends only on `domain` + `shared` + the compile-time `macros` crate, never an adapter or `composition`."
+    "`application` depends only on `domain` + `shared` + the compile-time `application-macros` crate, never an adapter or `composition`."
   ],
   "entry_points": [
     "each crate's src/lib.rs — the module-level docs are the real map"
@@ -36,6 +36,11 @@
     {
       "name": "api/",
       "role": "HTTP driver: axum router, RFC 9457 problem shape, generated wire contract, background sweeper",
+      "node": true
+    },
+    {
+      "name": "application-macros/",
+      "role": "proc-macro crate: `#[use_case]` (injection + the unit-of-work bracket) and `#[derive(WithPorts)]`, consumed by application",
       "node": true
     },
     {
@@ -66,11 +71,6 @@
     {
       "name": "domain/",
       "role": "I/O-free core: elements (the nouns), ports (trait seams), the injected clock, the string-validation builder",
-      "node": true
-    },
-    {
-      "name": "macros/",
-      "role": "proc-macro crate: `#[use_case]` (injection + the unit-of-work bracket) and `#[derive(WithPorts)]`, consumed by application",
       "node": true
     },
     {

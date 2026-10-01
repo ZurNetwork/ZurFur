@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -7,15 +9,12 @@ use domain::{
         },
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use serde_json::json;
 
 use crate::{
     Ports,
     commission::{CommissionResult, require_owner, seats::Seats},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -35,7 +34,7 @@ impl Seats<'_> {
     pub async fn declare(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -71,6 +70,7 @@ impl Seats<'_> {
             now,
         );
 
+        let uow = uow.open().await?;
         uow.commissions().declare_seat(&seat).await?;
         uow.changelog().append(&entry).await?;
         Ok(Output { seat_id })

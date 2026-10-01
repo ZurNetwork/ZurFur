@@ -10,14 +10,17 @@
   "conventions": [
     "One `#[use_case] pub async fn` per use case, a method on its namespace (`app.accounts().role().grant(cmd)`), no mediator.",
     "Each use case is its own file exporting `Command` (or `Query`) + `Output` + the `impl Namespace<'_>` block holding the method; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module.",
-    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[unit] uow: Unit<'_>`, then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now`.",
-    "A write takes `#[unit]`: the generated wrapper opens the unit before the body, commits on `Ok`, rolls back on `Err`. A read takes `#[ports]` only. `clippy.toml` bans a hand-written `begin`/`commit`/`rollback` in this crate, tests included.",
-    "A namespace is a struct deriving `macros::WithPorts`: a root holds `#[ports(is_root = true)] ports: &'a Ports`, a facet holds `#[ports]` on a reference to its parent and gets its accessor on the parent for free.",
+    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[lazy_unit] uow: &mut LazyUnit<'_>` (or `#[unit] uow: Unit<'_>`), then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now`.",
+    "A write takes `#[lazy_unit]`: the body does its `ports` reads and external calls first, then `let uow = uow.open().await?;` right before its first write; the wrapper commits on `Ok` and rolls back on `Err` only if the unit was opened. `#[unit]` (opened before the body) is legal only where the body cannot read through the pool, and the macro refuses it beside `#[ports]`. A read takes `#[ports]` only. `clippy.toml` bans a hand-written `begin`/`commit`/`rollback` in this crate, tests included; the sanctioned doors are the wrapper, `LazyUnit` and `transaction()`.",
+    "A namespace is a struct deriving `WithPorts` (re-exported from `crate::ports`): a root holds `#[ports(is_root = true)] ports: &'a Ports`, a facet holds `#[ports]` on a reference to its parent and gets its accessor on the parent for free.",
     "The module root file keeps the namespace, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias.",
     "Runtime config + `now: DateTimeUtc` are plain params.",
     "Output DTOs carry domain VALUES, never entities.",
     "The dependency floor is witnessed by `tests/dep_guard.rs`.",
-    "A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now` — a free fn over `transaction()`, since `#[use_case]` needs `self`."
+    "A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now` — a free fn over `transaction()`, since `#[use_case]` needs `self`.",
+    "Only `lib.rs` and `ports.rs` name the macros crate: `crate::use_case` and `crate::ports::WithPorts` are what the rest of the crate imports.",
+    "A unit never opens inside another use case's unit, nor after a use case it called opened and settled its own (pure delegation stays legal); debug builds assert it (`lazy_unit.rs`).",
+    "A Query use case never writes: the macro rejects a `Query`-typed parameter beside `#[unit]`/`#[lazy_unit]`. `application::transaction` is disallowed in this package's clippy.toml; only `sweep_deadlines` and test seeding allow it, each with a reason."
   ],
   "entry_points": [
     "src/lib.rs",
@@ -26,17 +29,18 @@
     "src/commission.rs",
     "src/user.rs",
     "src/character.rs",
-    "src/transaction.rs"
+    "src/transaction.rs",
+    "src/lazy_unit.rs"
   ],
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util, upload streaming); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
       "node": false
     },
     {
       "name": "clippy.toml",
-      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback — only the `#[use_case]` wrapper may call them",
+      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them",
       "node": false
     },
     {
@@ -80,13 +84,18 @@
       "node": false
     },
     {
+      "name": "src/lazy_unit.rs",
+      "role": "`LazyUnit` — the `#[lazy_unit]` injection: begins on `open()`, settles (commit/rollback) only if opened — and the task-local nested-unit guard; tests beside it in lazy_unit/tests.rs",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
-      "role": "crate doc + module declarations, re-exports App/Ports/MissingPort and transaction()",
+      "role": "crate doc + module declarations, re-exports App/Ports/MissingPort, transaction(), `use_case` and `LazyUnit` (crate-private)",
       "node": false
     },
     {
       "name": "src/ports.rs",
-      "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace; implemented by `#[derive(macros::WithPorts)]`",
+      "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace — and the `WithPorts` derive re-exported beside it",
       "node": false
     },
     {
@@ -125,6 +134,11 @@
       "node": false
     },
     {
+      "name": "tests/unit_order.rs",
+      "role": "call-order proofs: DID mint, DID-document update and blob write run before the unit opens (test-support's recording doubles)",
+      "node": false
+    },
+    {
       "name": "tests/user.rs",
       "role": "integration tests for the me use case",
       "node": false
@@ -144,7 +158,7 @@
     {
       "page": 24150017,
       "title": "Transactions as a capability — a compile-enforced Unit of Work in the private store",
-      "governs": "src/transaction.rs, clippy.toml + every #[unit] use case: a unit of work is opened only by the #[use_case] wrapper or transaction()"
+      "governs": "src/transaction.rs, clippy.toml + every unit-holding use case: a unit of work is opened only by the #[use_case] wrapper, LazyUnit or transaction()"
     },
     {
       "page": 55836674,
@@ -159,7 +173,7 @@
   ],
   "notes": [
     "The composition root assembles ONE `Ports` bag (`app.rs`); `App` vends the root namespaces `Accounts`/`Commissions`/`Users` with the ports already bound, and drivers pass only `now`. Every `Ports` entry is required, so `MissingPort` is currently unreachable — it is the home for the first port a driver profile may omit.",
-    "`transaction()` commits on `Ok` and rolls back on `Err` — the same bracket the `#[use_case]` wrapper inlines. It takes a bare `&dyn Database`, so `sweep_deadlines`, `composition::Runtime::transaction` and the test seeders share it; its three disallowed-method calls are the only ones left in `src/`, under an `#[allow]` with its reason. (DD 24150017)",
+    "`transaction()` commits on `Ok` and rolls back on `Err` — the same bracket the `#[use_case]` wrapper inlines. It takes a bare `&dyn Database`, so `sweep_deadlines`, `composition::Runtime::transaction` and the test seeders share it; its three disallowed-method calls, and `LazyUnit`'s, are the only ones left in `src/`, each under an `#[allow]` with its reason. (DD 24150017)",
     "Its closure bound is `domain::ports::UnitOfWorkFn` plus explicit `F: Send`/`T: Send`, NOT std's `AsyncFnOnce` — higher-ranked `AsyncFnOnce` bounds do not hold the returned future `Send` (rust-lang/rust#110338).",
     "Each module's `From<anyhow::Error>` impl is the single place a typed store error becomes a use-case error; `?` is the only path a store error takes, so no call site can let a 404/409 degrade into a 500.",
     "Authorization posture across the crate: refusals never distinguish \"absent\" from \"forbidden\" for a caller with no standing. See the per-module NODE.json notes.",
@@ -167,8 +181,6 @@
     "See also: memory `project_application_layer_convention`.",
     "See also: memory `project_transaction_unit_of_work`.",
     "See also: memory `feedback_work_by_module`.",
-    "Because the unit opens before the body, it spans everything the body does — including the external calls in `account/create` and `character/create` (DID mint), `account/change_handle` (DID-document update) and `commission/files/upload` (blob write), and the early-return paths that used to leave before `begin`.",
-    "Three use-case files carry no `#[use_case]` because they inject nothing: `account/facts/exist.rs` (stub), `character/delete.rs` (`todo!()`), `commission/status/direction/clear.rs` (delegates to `set`).",
-    "A use-case file whose namespace has no inherent `ports()` imports `crate::ports::WithPorts`: the `#[unit]` wrapper calls `self.ports()` by method syntax."
+    "`account/delete` tombstones the DID after its first write, so its unit spans that call. `commission/invitations/issue` re-reads the pending invitation through the pool after creating it, to learn whether a concurrent one won; that read cannot move before the open."
   ]
 }

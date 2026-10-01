@@ -6,6 +6,8 @@
 //! caller-named-account-vs-board reconciliation, and the order that keeps a
 //! non-member from reading board state off an error.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use application::account::{self, AccountEntity, AccountError, workflow};
 use application::transaction;
 use chrono::Utc;

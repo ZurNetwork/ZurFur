@@ -1,5 +1,5 @@
+use crate::use_case;
 use domain::elements::{commission::Commission, user::UserId};
-use macros::use_case;
 
 use crate::{
     Ports,

@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs, async-trait for the recording wrappers",
       "node": false
     },
     {
@@ -57,6 +57,11 @@
     {
       "name": "src/plc_stub.rs",
       "role": "in-process stub PLC directory on loopback, reached via docker host-gateway",
+      "node": false
+    },
+    {
+      "name": "src/recording.rs",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter and FileStore — tests read the order of begin/commit/rollback and external calls",
       "node": false
     },
     {

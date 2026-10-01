@@ -12,9 +12,16 @@ fn ws() -> impl Strategy<Value = String> {
     .prop_map(|chars| chars.into_iter().collect())
 }
 
+/// Arbitrary text that also draws control characters, which `any::<String>()`
+/// (regex `\PC*`) never yields.
+fn text_with_controls() -> impl Strategy<Value = String> {
+    let controls = prop::sample::select(vec!['\0', '\t', '\n', '\r', '\u{7f}', '\u{85}']);
+    prop::collection::vec(prop_oneof![any::<char>(), controls], 0..16).prop_map(String::from_iter)
+}
+
 proptest! {
     #[test]
-    fn trimmed_is_std_trim_and_idempotent(s in any::<String>()) {
+    fn trimmed_is_std_trim_and_idempotent(s in text_with_controls()) {
         let once = StringBuilder::new(s.clone()).trimmed().build();
         let twice = StringBuilder::new(s.clone()).trimmed().trimmed().build();
         prop_assert_eq!(once.clone(), Ok(s.trim().to_owned()));
@@ -51,7 +58,7 @@ proptest! {
 
     #[test]
     fn control_rules(
-        s in any::<String>(),
+        s in text_with_controls(),
         allowed in prop::collection::vec(
             prop::sample::select(vec!['\n', '\t', '\r', '\0']),
             0..3,

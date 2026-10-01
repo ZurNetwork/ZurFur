@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -6,9 +8,7 @@ use domain::{
         role::Role,
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW};
 
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
     account::{
         AccountError, AccountResult, Accounts, ensure_handle_claimable, require_live_account,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +35,7 @@ impl<'a> Accounts<'a> {
     pub async fn change_handle(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         handle_domain: &HandleDomain,
         now: DateTimeUtc,
@@ -77,6 +76,7 @@ impl<'a> Accounts<'a> {
             .update_handle(account.id.did(), &handle)
             .await?;
 
+        let uow = uow.open().await?;
         uow.accounts()
             .change_handle(&account_id, &account.handle, &handle, now)
             .await?;

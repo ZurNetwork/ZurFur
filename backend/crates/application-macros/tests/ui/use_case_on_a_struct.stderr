@@ -1,0 +1,5 @@
+error: expected `fn`
+ --> tests/ui/use_case_on_a_struct.rs:4:1
+  |
+4 | struct Probe;
+  | ^^^^^^

@@ -1,0 +1,5 @@
+error: a `#[use_case]` takes at most one `#[lazy_unit]` parameter
+ --> tests/ui/duplicate_lazy_unit.rs:7:49
+  |
+7 |     async fn run(&self, #[lazy_unit] first: u8, #[lazy_unit] second: u8) {}
+  |                                                 ^^^^^^^^^^^^

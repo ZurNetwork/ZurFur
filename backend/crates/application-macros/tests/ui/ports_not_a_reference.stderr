@@ -1,0 +1,5 @@
+error: the `#[ports]` field must be a reference to the parent
+ --> tests/ui/ports_not_a_reference.rs:6:12
+  |
+6 |     ports: u8,
+  |            ^^

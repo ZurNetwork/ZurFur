@@ -4,6 +4,7 @@
 //! lapsed deadline. Its wall-clock timer and leader election live in `api`, so
 //! the policy stays deterministic at an injected instant.
 
+use crate::ports::WithPorts;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -14,11 +15,9 @@ use domain::{
         user::UserId,
     },
     ports::{
-        AccountStore, ChangelogStore, CommissionStore, Database, DidBelongsToAnotherActor,
-        DidMinter, ElementNotFound, FileStore, UnitOfWork, UnknownSurface, UnknownTab, UserStore,
+        Database, DidBelongsToAnotherActor, ElementNotFound, UnitOfWork, UnknownSurface, UnknownTab,
     },
 };
-use macros::WithPorts;
 use serde_json::json;
 
 use crate::{
@@ -78,16 +77,6 @@ impl<'a> From<&'a crate::App> for Commissions<'a> {
     }
 }
 
-pub struct CommissionPorts<'a> {
-    pub commissions: &'a dyn CommissionStore,
-    pub changelog: &'a dyn ChangelogStore,
-    pub users: &'a dyn UserStore,
-    pub accounts: &'a dyn AccountStore,
-    pub did_minter: &'a dyn DidMinter,
-    pub database: &'a dyn Database,
-    pub files: &'a dyn FileStore,
-}
-
 pub type CommissionResult<T> = Result<T, CommissionError>;
 
 /// Why a commission use case could not answer. `Display` stays terse and never
@@ -109,7 +98,7 @@ pub enum CommissionError {
     /// The uploaded filename failed
     /// [`FileName`](domain::elements::commission::FileName)'s validation gate.
     #[error("Invalid file name")]
-    InvalidFileName(FileNameError),
+    InvalidFileName(#[source] FileNameError),
     /// The uploaded content exceeded the configured upload cap.
     #[error("File too large")]
     FileTooLarge,
@@ -142,7 +131,7 @@ pub enum CommissionError {
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
     /// numeric gate.
     #[error("Invalid markup")]
-    InvalidMarkup(MarkupError),
+    InvalidMarkup(#[source] MarkupError),
     #[error("Incorrect content")]
     IncorrectContent,
 }
@@ -227,6 +216,10 @@ pub struct SweepResult {
 /// and append a system `Late` changelog entry for each, the whole pass in one
 /// unit of work. A commission already Late is never re-marked; one without a
 /// deadline is never returned by the scan.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the sweep is a system job, not a use-case method"
+)]
 pub async fn sweep_deadlines(
     database: &dyn Database,
     now: DateTimeUtc,
@@ -253,3 +246,6 @@ pub async fn sweep_deadlines(
 
     Ok(SweepResult { marked_late })
 }
+
+#[cfg(test)]
+mod tests;

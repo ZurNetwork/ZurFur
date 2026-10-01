@@ -9,8 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// The substring this guard forbids outside comments.
-const FORBIDDEN: &str = "crate::ports";
+/// The path segment this guard forbids outside comments.
+const FORBIDDEN: &str = "ports";
 
 /// Paths allowed to contain [`FORBIDDEN`], as `<crate-relative path>`.
 ///
@@ -18,10 +18,14 @@ const FORBIDDEN: &str = "crate::ports";
 /// reason inline.
 const EXEMPT: &[&str] = &[];
 
-/// The `elements` directory this guard scans, relative to this crate's
-/// `CARGO_MANIFEST_DIR` (`backend/crates/domain`).
-fn scanned_src_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/elements")
+/// The files this guard scans: the `elements.rs` façade and every leaf under
+/// `src/elements/`, relative to this crate's `CARGO_MANIFEST_DIR`.
+fn scanned_files() -> Vec<PathBuf> {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let facade = src.join("elements.rs");
+    let mut files = rust_files(&src.join("elements"));
+    files.push(facade);
+    files
 }
 
 /// Every `*.rs` file under `dir`, recursively.
@@ -51,7 +55,30 @@ fn crate_relative(path: &Path) -> String {
     }
 }
 
-/// Every `crate::ports` reference outside a comment line, as `file:line`.
+/// Whether a code line names the `ports` module as a path segment: `crate::ports`,
+/// `self::ports`, `super::ports`, an alias (`ports as p`), the grouped
+/// `use crate::{x, ports}` / `{ports::Y}` and a wrapped `    ports,` all count;
+/// `supports::`, `ports_len` and `let ports = …` do not.
+fn references_ports(line: &str) -> bool {
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    line.match_indices(FORBIDDEN).any(|(start, word)| {
+        let before_text = line[..start].trim_end();
+        let before = line[..start].chars().next_back();
+        let after = &line[start + word.len()..];
+        let rest = after.trim_start();
+        let word_start = !before.is_some_and(is_word_char);
+        let in_use_group =
+            before_text.is_empty() || before_text.ends_with('{') || before_text.ends_with(',');
+        let ends_group_item =
+            rest.starts_with('}') || rest.starts_with(',') || rest.starts_with("as ");
+        let path_end = after.starts_with("::")
+            || (before == Some(':') && !after.starts_with(is_word_char))
+            || (in_use_group && ends_group_item);
+        word_start && path_end
+    })
+}
+
+/// Every `ports` path reference outside a comment line, as `file:line`.
 fn offenders(files: &[PathBuf]) -> Vec<String> {
     let mut hits = Vec::new();
     for file in files {
@@ -67,7 +94,7 @@ fn offenders(files: &[PathBuf]) -> Vec<String> {
             if trimmed.starts_with("//") {
                 continue;
             }
-            if line.contains(FORBIDDEN) {
+            if references_ports(line) {
                 hits.push(format!("{relative}:{}", index + 1));
             }
         }
@@ -77,16 +104,23 @@ fn offenders(files: &[PathBuf]) -> Vec<String> {
 
 #[test]
 fn scan_finds_element_files() {
-    let files = rust_files(&scanned_src_dir());
+    let files = scanned_files();
+    let facade_scanned = files
+        .iter()
+        .any(|path| path.ends_with("src/elements.rs") && path.is_file());
     assert!(
-        !files.is_empty(),
-        "guard scanned zero files under src/elements — check the path"
+        facade_scanned,
+        "guard does not scan the src/elements.rs façade — check the path"
+    );
+    assert!(
+        files.len() > 1,
+        "guard scanned no files under src/elements — check the path"
     );
 }
 
 #[test]
 fn elements_never_reference_ports() {
-    let files = rust_files(&scanned_src_dir());
+    let files = scanned_files();
     let offenders = offenders(&files);
     assert!(
         offenders.is_empty(),
@@ -94,4 +128,27 @@ fn elements_never_reference_ports() {
          reverse:\n  {}",
         offenders.join("\n  ")
     );
+}
+
+#[test]
+fn detector_flags_every_import_shape() {
+    assert!(references_ports("use crate::ports::Database;"));
+    assert!(references_ports("use crate::{elements::x, ports::Y};"));
+    assert!(references_ports("    ports::Y,"));
+    assert!(references_ports("use super::ports::Y;"));
+    assert!(references_ports("use self::inner::ports::Y;"));
+    assert!(references_ports("use crate::ports;"));
+    assert!(references_ports("use crate::ports as p;"));
+    assert!(references_ports("use crate::{ports};"));
+    assert!(references_ports("use crate::{elements::x, ports};"));
+    assert!(references_ports("use crate::{ports as p, elements::x};"));
+    assert!(references_ports("    ports,"));
+}
+
+#[test]
+fn detector_ignores_lookalikes() {
+    assert!(!references_ports("use crate::supports::Y;"));
+    assert!(!references_ports("let ports_len = 3;"));
+    assert!(!references_ports("let ports = Vec::new();"));
+    assert!(!references_ports("fn transports() {}"));
 }

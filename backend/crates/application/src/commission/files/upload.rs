@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -6,16 +8,13 @@ use domain::{
         },
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, files::Files},
-    ports::WithPorts,
 };
 
 /// The acting Participant, the target commission, and the wire-optional
@@ -42,7 +41,7 @@ impl Files<'_> {
     pub async fn upload(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         content: impl AsyncRead + Send + Unpin,
         max_upload_bytes: u64,
@@ -112,6 +111,7 @@ impl Files<'_> {
             uploaded_by: actor_id,
             created_at: now,
         };
+        let uow = uow.open().await?;
         uow.commissions().add_file(&file).await?;
         uow.changelog().append(&entry).await?;
         Ok(Output { id: key })

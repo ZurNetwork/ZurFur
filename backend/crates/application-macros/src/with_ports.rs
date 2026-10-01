@@ -1,5 +1,7 @@
 use syn::{Data, DeriveInput, Fields};
 
+/// Expands `#[derive(WithPorts)]`: the `WithPorts` impl, plus a snake_case
+/// accessor on the parent that builds the child.
 pub(crate) fn expand_with_ports(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let Data::Struct(data) = &input.data else {
         return Err(unsupported(input));
@@ -9,9 +11,8 @@ pub(crate) fn expand_with_ports(input: &syn::DeriveInput) -> syn::Result<proc_ma
     };
 
     let implementer = &input.ident;
-    let name = quote::format_ident!("{}", implementer.to_string().to_ascii_lowercase());
+    let name = quote::format_ident!("{}", snake_case(&implementer.to_string()));
 
-    let mut field_names = Vec::new();
     let mut parent_field: Option<syn::Field> = None;
     let mut is_root = false;
     for field in &fields.named {
@@ -43,7 +44,6 @@ pub(crate) fn expand_with_ports(input: &syn::DeriveInput) -> syn::Result<proc_ma
                 ));
             }
             parent_field = Some(field.clone());
-            field_names.push(field.ident.as_ref().unwrap().to_string());
         }
     }
     if parent_field.is_none() {
@@ -97,3 +97,24 @@ pub(crate) fn expand_with_ports(input: &syn::DeriveInput) -> syn::Result<proc_ma
 fn unsupported(input: &DeriveInput) -> syn::Error {
     syn::Error::new_spanned(input, "Only structs are supported")
 }
+
+/// `ViewGrants` -> `view_grants`: an underscore before each interior capital.
+/// An acronym run splits per letter (`URLs` -> `u_r_ls`); namespace names are
+/// plain CamelCase, so the simple rule suffices.
+fn snake_case(camel: &str) -> String {
+    let mut snake = String::with_capacity(camel.len() + 4);
+    for (index, character) in camel.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                snake.push('_');
+            }
+            snake.push(character.to_ascii_lowercase());
+        } else {
+            snake.push(character);
+        }
+    }
+    snake
+}
+
+#[cfg(test)]
+mod tests;

@@ -235,11 +235,11 @@ name = "application"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "application-macros",
  "async-trait",
  "chrono",
  "composition",
  "domain",
- "macros",
  "serde_json",
  "shared",
  "strum",
@@ -248,6 +248,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "application-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "trybuild",
 ]
 
 [[package]]
@@ -3253,16 +3263,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "trybuild",
-]
-
-[[package]]
 name = "maitake-sync"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5751,6 +5751,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "async-trait",
  "atrium-crypto",
  "axum",
  "chrono",

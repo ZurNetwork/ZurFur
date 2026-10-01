@@ -1,17 +1,16 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{CommissionId, DeadlineStatus},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, deadline::status::Status},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -29,7 +28,7 @@ impl Status<'_> {
     pub async fn set(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {

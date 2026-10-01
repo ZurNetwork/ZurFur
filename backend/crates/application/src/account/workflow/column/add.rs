@@ -1,21 +1,18 @@
-use domain::{
-    elements::{
-        role::Role,
-        user::UserId,
-        workflow::{
-            Column, ColumnName, LexOrdering, MAX_COLUMNS_PER_WORKFLOW, WorkflowError, WorkflowId,
-        },
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{
+    role::Role,
+    user::UserId,
+    workflow::{
+        Column, ColumnName, LexOrdering, MAX_COLUMNS_PER_WORKFLOW, WorkflowError, WorkflowId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +32,7 @@ impl Columns<'_> {
     pub async fn add(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -83,6 +80,7 @@ impl Columns<'_> {
                 )),
             })?;
 
+        let uow = uow.open().await?;
         uow.workflows().set_indexes(&workflow).await?;
 
         let columns = workflow.iter().cloned().collect();

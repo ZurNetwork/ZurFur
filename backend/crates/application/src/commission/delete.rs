@@ -1,8 +1,6 @@
-use domain::{
-    elements::{commission::CommissionId, user::UserId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{commission::CommissionId, user::UserId};
 
 use crate::{
     Ports,
@@ -31,7 +29,7 @@ impl Commissions<'_> {
     pub async fn delete(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> CommissionResult<Output> {
         let Command {
@@ -47,6 +45,7 @@ impl Commissions<'_> {
 
         // One unit, closed on BOTH branches: the fact gate and the delete it
         // guards must share a transaction, or there is a TOCTOU window.
+        let uow = uow.open().await?;
         let has_facts = uow
             .commissions()
             .commission_has_facts(&commission.id)

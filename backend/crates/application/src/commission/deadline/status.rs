@@ -1,14 +1,14 @@
+use crate::ports::WithPorts;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{ChangelogEntryKind, CommissionId, DeadlineStatus, NewChangelogEntry},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::WithPorts;
 use serde_json::json;
 
+use crate::LazyUnit;
 use crate::commission::{
     CommissionError, CommissionResult, deadline::Deadline, deadline::DeadlineSetEventPayload,
     require_participant,
@@ -23,7 +23,7 @@ pub mod set;
 /// that has a deadline. Keyed on a real transition, so a no-op records nothing.
 async fn apply(
     ports: &crate::Ports,
-    uow: Unit<'_>,
+    uow: &mut LazyUnit<'_>,
     commission_id: &CommissionId,
     actor_id: UserId,
     to: Option<DeadlineStatus>,
@@ -55,6 +55,7 @@ async fn apply(
         now,
     );
 
+    let uow = uow.open().await?;
     let mut commissions = uow.commissions();
     let moved = commissions.set_deadline_status(&commission.id, to).await?;
     drop(commissions);

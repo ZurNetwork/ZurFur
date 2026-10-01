@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -6,14 +8,11 @@ use domain::{
         role::Role,
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +47,7 @@ impl Invitations<'_> {
     pub async fn issue(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> AccountResult<Output> {
@@ -65,10 +64,9 @@ impl Invitations<'_> {
             .await?
             .filter(|r| r.can_grant(&role))
             .ok_or(AccountError::IncorrectRole)?;
-        let target = uow.users().provision(target_id.did()).await?;
         if ports
             .accounts
-            .role_of(&target.id, &account_id)
+            .role_of(&target_id, &account_id)
             .await?
             .is_some()
         {
@@ -77,7 +75,7 @@ impl Invitations<'_> {
 
         if let Some(existing_invitation) = ports
             .accounts
-            .find_pending_invitation(&account_id, &target.id)
+            .find_pending_invitation(&account_id, &target_id)
             .await?
         {
             return Ok(Output {
@@ -86,10 +84,12 @@ impl Invitations<'_> {
                 outcome: InviteOutcome::AlreadyPending,
                 role: existing_invitation.role,
                 state: existing_invitation.state,
-                target_id: target.id,
+                target_id,
             });
         }
 
+        let uow = uow.open().await?;
+        let target = uow.users().provision(target_id.did()).await?;
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 
         let stored = uow.accounts().create_invitation(&invitation).await?;

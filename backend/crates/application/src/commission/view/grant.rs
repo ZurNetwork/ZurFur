@@ -1,19 +1,18 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{ChangelogEntryKind, CommissionId, GrantLevel, NewChangelogEntry},
         user::UserId,
     },
-    ports::Unit,
 };
-use macros::use_case;
 use serde_json::json;
 
 use crate::{
     Ports,
     commission::{CommissionResult, view::View},
     common_error::{CommonError, NotFoundEntity},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -32,7 +31,7 @@ impl View<'_> {
     pub async fn grant(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -52,6 +51,7 @@ impl View<'_> {
             .filter(|c| c.is_owned_by(&actor_id))
             .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
+        let uow = uow.open().await?;
         let target_user = uow.users().provision(target_user_id.did()).await?;
 
         let entry = NewChangelogEntry::event(

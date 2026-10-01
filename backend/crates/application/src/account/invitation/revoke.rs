@@ -1,13 +1,10 @@
-use domain::{
-    elements::{account::AccountId, user::UserId},
-    ports::Unit,
-};
-use macros::use_case;
+use crate::LazyUnit;
+use crate::use_case;
+use domain::elements::{account::AccountId, user::UserId};
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, invitation::Invitations},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +25,7 @@ impl Invitations<'_> {
     pub async fn revoke(
         &self,
         #[ports] ports: &Ports,
-        #[unit] uow: Unit<'_>,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
     ) -> AccountResult<Output> {
         let Command {
@@ -67,6 +64,7 @@ impl Invitations<'_> {
             return Err(AccountError::NotAMember);
         }
 
+        let uow = uow.open().await?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
         Ok(Output)
     }

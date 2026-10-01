@@ -1,0 +1,7 @@
+error: Only structs are supported
+ --> tests/ui/derive_on_enum.rs:4:1
+  |
+4 | / enum Probe {
+5 | |     Only,
+6 | | }
+  | |_^

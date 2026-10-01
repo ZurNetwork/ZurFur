@@ -1,6 +1,8 @@
 //! `Accounts::create` over the in-memory fakes: the one implementation every
 //! driver calls, exercised branch by branch below the HTTP layer.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use std::sync::Arc;
 
 use application::account::{self, AccountError};

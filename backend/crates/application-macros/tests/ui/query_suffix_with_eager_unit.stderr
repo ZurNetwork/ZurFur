@@ -1,0 +1,5 @@
+error: a Query use case never writes, so it cannot inject a unit
+ --> tests/ui/query_suffix_with_eager_unit.rs:8:25
+  |
+8 |     async fn run(&self, #[unit] uow: u8, query: MeQuery) {}
+  |                         ^^^^^^^
