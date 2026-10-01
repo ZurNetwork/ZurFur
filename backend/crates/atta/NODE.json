@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/atta",
-  "charted": "2026-09-30",
-  "short": "Atta — black-box engine: a file in, an output out",
-  "is": "Atta, a host-agnostic black-box engine: it takes a file, or a file's contents, and produces an output. It knows none of Zurfur's types, and lives in this workspace as a crate only until it is split into its own library.",
+  "charted": "2026-10-01",
+  "short": "Atta — the engine for the Den: resolve, route, render",
+  "is": "Atta, the host-agnostic engine for the Den: it resolves the tree, enforces its structural rules, routes each operation to the handler registered for a node type, and renders files. Types and content are opaque to it; the host plugs in storage, standing and types through traits Atta defines. It lives in this workspace as a crate only until it is split into its own library.",
   "type": "code",
   "tags": [
     "category:source",
@@ -10,7 +10,8 @@
   ],
   "conventions": [
     "Never depends on another workspace crate and never names a Zurfur type — host-agnostic by construction, so it can be split out unchanged.",
-    "Its definition is deliberately minimal — a file in, an output out; grow it only as real needs appear, never ahead of them."
+    "Its role is fixed: resolve, enforce structure, route changes, render. How it does that grows only as real needs appear, never ahead of them.",
+    "Nothing reads a node except through Atta; a node is served only after its payload hash verifies."
   ],
   "entry_points": [
     "src/lib.rs"
@@ -27,9 +28,14 @@
       "node": false
     }
   ],
-  "refs": [],
+  "refs": [
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade"
+    }
+  ],
   "notes": [
-    "Design: DD 2026093001 \"The Workspace — a Tree of Typed Files, Peer Views and Atta\". It is proposed and not yet in docs/design-index.md (zurfur-design PR #43). Add it under `refs` once decided.",
     "Name: Atta is the leafcutter-ant genus."
   ]
 }
