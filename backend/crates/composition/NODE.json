@@ -36,7 +36,7 @@
     },
     {
       "name": "src/ports.rs",
-      "role": "From<&Runtime> impls building application's per-module Ports bags (AccountPorts, CommissionPorts)",
+      "role": "From<&Runtime> impls building application's `Ports` bag and `App`",
       "node": false
     },
     {

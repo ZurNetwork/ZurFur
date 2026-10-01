@@ -1,6 +1,11 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{account::AccountId, role::Role, user::UserId};
 
-use crate::account::{AccountError, AccountResult, Accounts, require_live_account};
+use crate::{
+    Ports,
+    account::{AccountError, AccountResult, Accounts, require_live_account},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -16,8 +21,13 @@ pub struct Output {
 }
 
 impl Accounts<'_> {
-    pub async fn transfer_ownership(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn transfer_ownership(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             actor_id,
@@ -43,11 +53,10 @@ impl Accounts<'_> {
             .await?
             .ok_or(AccountError::NotAMember)?;
 
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.accounts()
             .transfer_ownership(&actor_id, &target_id, &account_id)
             .await?;
-        uow.commit().await?;
         Ok(Output {
             account_id,
             owner_id: target_id,

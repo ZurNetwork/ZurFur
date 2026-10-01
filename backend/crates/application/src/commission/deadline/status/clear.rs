@@ -1,11 +1,13 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{commission::CommissionId, user::UserId},
 };
 
 use crate::{
+    Ports,
     commission::{CommissionResult, deadline::status::Status},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -18,12 +20,19 @@ impl Status<'_> {
     /// Clear the deadline-axis status — the Participant taking their own
     /// slipping flag back down. A standing `Late` is refused; the lever out of
     /// Late is clearing the deadline. Clearing an already-clear axis is a no-op.
-    pub async fn clear(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
+    #[use_case]
+    pub async fn clear(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
         } = cmd;
-        super::apply(self.ports(), &commission_id, actor_id, None, now).await?;
+        super::apply(ports, uow, &commission_id, actor_id, None, now).await?;
         Ok(Output)
     }
 }

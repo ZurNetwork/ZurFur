@@ -1,8 +1,8 @@
 {
   "path": "backend/crates",
-  "charted": "2026-09-12",
-  "short": "The thirteen workspace crates",
-  "is": "Thirteen workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, and one host-agnostic engine (atta) that knows no Zurfur type.",
+  "charted": "2026-10-01",
+  "short": "The fourteen workspace crates",
+  "is": "Fourteen workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
   "tags": [
     "category:source"
@@ -12,7 +12,7 @@
     "Closed-vocabulary enums implement std `Display`/`FromStr`, never bespoke `as_str`/`parse` pairs; id newtypes may derive serde, loaded entities never do.",
     "Codegen crates are libraries first so the runner binary and the staleness-gate test share one generation body.",
     "`test-support` dev-depends on `adapter-pg` while adapters dev-depend on `test-support` — a cargo dev-cycle, not a runtime edge.",
-    "`application` depends only on `domain` + `shared`, never an adapter or `composition`."
+    "`application` depends only on `domain` + `shared` + the compile-time `application-macros` crate, never an adapter or `composition`."
   ],
   "entry_points": [
     "each crate's src/lib.rs — the module-level docs are the real map"
@@ -39,8 +39,13 @@
       "node": true
     },
     {
+      "name": "application-macros/",
+      "role": "proc-macro crate: `#[use_case]` (injection + the unit-of-work bracket) and `#[derive(WithPorts)]`, consumed by application",
+      "node": true
+    },
+    {
       "name": "application/",
-      "role": "use cases — one plain async fn per use case + the shared transaction() orchestrator, called by every driver",
+      "role": "use cases — one `#[use_case]` method per use case on a per-entity namespace, called by every driver; transaction() stays for the actor-less sweep and test seeding",
       "node": true
     },
     {

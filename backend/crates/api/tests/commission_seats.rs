@@ -26,7 +26,6 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{ChangelogEntryKind, Commission, CommissionId, CommissionTitle, SKELETON},
@@ -34,64 +33,10 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect what was persisted. `did` is the
-/// identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(
-                Did::new(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live
-/// session for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller and returns its id
 /// (introspected off the backend — the route returns a bare `201`).
@@ -108,7 +53,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's only tab id, introspected off the backend. There is no
@@ -116,10 +61,10 @@ async fn create_commission(
 /// a future feature; tests read it from the store instead.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -154,12 +99,12 @@ async fn declare_seat(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -173,9 +118,17 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 // declaration appends the seat_declared changelog entry atomically.
 #[tokio::test]
 async fn the_owner_declares_seats_with_kinds_repeating_freely() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -205,13 +158,13 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 
     let seats = backend
         .commission_store()
-        .seats(&CommissionId::new(id))
+        .seats(&CommissionId::from(id))
         .await
         .expect("seats");
     assert_eq!(seats.len(), 2, "a commission holds several Seats (AC1)");
     let first_seat = seats
         .iter()
-        .find(|s| *s.id == first)
+        .find(|s| uuid::Uuid::from(s.id) == first)
         .expect("the 201 id reappears as a seat");
     assert_eq!(first_seat.kind.as_str(), "Creator");
     assert_eq!(
@@ -225,32 +178,35 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
         "the link rides the vacant seat (AC2)"
     );
     assert!(first_seat.is_vacant(), "born vacant (AC3)");
-    let second_seat = seats.iter().find(|s| *s.id == second).expect("second seat");
+    let second_seat = seats
+        .iter()
+        .find(|s| uuid::Uuid::from(s.id) == second)
+        .expect("second seat");
     assert_eq!(second_seat.kind.as_str(), "Creator", "kinds repeat (AC1)");
     assert!(second_seat.prompt.is_none() && second_seat.link.is_none());
     assert!(second_seat.is_vacant());
 
     // The seat's element is in the composition, at the declared address.
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2, "seats ride ordinary elements");
     assert!(
         elements
             .iter()
-            .all(|element| element.address.surface.as_str() == only_surface()),
+            .all(|element| element.address.surface.as_ref() == only_surface()),
         "each at the surface it was declared into"
     );
 
     // The declarations are changelog-recorded: creation + two seat_declared.
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(entries.len(), 3);
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("signed in");
@@ -271,9 +227,17 @@ async fn the_owner_declares_seats_with_kinds_repeating_freely() {
 // Floor — anonymous callers can't declare seats: 401, and nothing lands.
 #[tokio::test]
 async fn an_anonymous_caller_cannot_declare_a_seat() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -288,7 +252,7 @@ async fn an_anonymous_caller_cannot_declare_a_seat() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty()
@@ -300,9 +264,17 @@ async fn an_anonymous_caller_cannot_declare_a_seat() {
 // the answer for a commission that does not exist at all. Never a 403.
 #[tokio::test]
 async fn a_non_participant_gets_the_uniform_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
     let foreign_tab = tab_of(&backend, foreign).await;
 
@@ -335,7 +307,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(foreign))
+            .seats(&CommissionId::from(foreign))
             .await
             .expect("seats")
             .is_empty(),
@@ -349,9 +321,17 @@ async fn a_non_participant_gets_the_uniform_not_found() {
 // component-parent arm any more: an element is never anything's parent.
 #[tokio::test]
 async fn address_gates_hold_for_seats() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -387,7 +367,7 @@ async fn address_gates_hold_for_seats() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty(),
@@ -399,9 +379,17 @@ async fn address_gates_hold_for_seats() {
 // or link are each a 422, and nothing lands.
 #[tokio::test]
 async fn malformed_and_invalid_bodies_are_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -428,14 +416,14 @@ async fn malformed_and_invalid_bodies_are_rejected() {
     assert!(
         backend
             .commission_store()
-            .seats(&CommissionId::new(id))
+            .seats(&CommissionId::from(id))
             .await
             .expect("seats")
             .is_empty(),
         "no refused declaration landed"
     );
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(entries.len(), 1, "no refused declaration was recorded");
@@ -451,9 +439,17 @@ async fn malformed_and_invalid_bodies_are_rejected() {
 #[tokio::test]
 #[ignore = "ZMVP-76 AC4 is distributed: needs the ZMVP-75 projection (post-rebase arm) — do not count as green"]
 async fn a_vacant_seat_under_a_description_surface_is_the_published_ask() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let owner_client = client();
-    sign_in(&owner_client, &base).await;
+    sign_in(&owner_client, &base, "artist.bsky.social").await;
     let id = create_commission(&owner_client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     declare_seat(

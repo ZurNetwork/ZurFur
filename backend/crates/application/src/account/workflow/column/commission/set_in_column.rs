@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{
     commission::{CommissionId, Visibility},
     user::UserId,
@@ -39,8 +41,13 @@ async fn has_own_view(
 }
 
 impl Commissions<'_> {
-    pub async fn insert_in_column(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn insert_in_column(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             actor_id,
             column_id,
@@ -100,9 +107,8 @@ impl Commissions<'_> {
                 AccountError::Infrastructure(anyhow::anyhow!("the board refused the card: {other}"))
             }
         })?;
-        let mut uow = ports.database.begin().await?;
+        let uow = uow.open().await?;
         uow.columns().set_commissions(&column).await?;
-        uow.commit().await?;
 
         let commissions = column.into_iter().collect();
         Ok(Output { commissions })

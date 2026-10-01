@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -8,8 +10,8 @@ use domain::{
 };
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -32,8 +34,14 @@ pub struct InvitationOutput {
 }
 
 impl Invitations<'_> {
-    pub async fn issue(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn issue(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             target_id,
@@ -42,8 +50,6 @@ impl Invitations<'_> {
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
-        let mut uow = self.ports().database.begin().await?;
-        let target_user = uow.users().provision(&target_id).await?;
         let seats = ports.commissions.seats(&commission.id).await?;
 
         // Two distinct answers, deliberately not folded into one: an absent
@@ -58,18 +64,20 @@ impl Invitations<'_> {
 
         if let Some(invitation) = ports
             .commissions
-            .find_pending_seat_invitation(&commission.id, &seat.id, &target_user.id)
+            .find_pending_seat_invitation(&commission.id, &seat.id, &target_id)
             .await?
         {
             return Ok(Output::PreExisting(InvitationOutput {
                 commission_id: commission.id,
                 invitation_id: invitation.id,
                 invitation_state: invitation.state,
-                invited_user_id: target_user.id,
+                invited_user_id: target_id,
                 seat_id: seat.id,
             }));
         }
 
+        let uow = uow.open().await?;
+        let target_user = uow.users().provision(target_id.did()).await?;
         let invitation = SeatInvitation::issue(
             commission.id,
             seat.id,
@@ -110,7 +118,6 @@ impl Invitations<'_> {
                 invited_user_id: target_user.id,
             }),
         };
-        uow.commit().await?;
         Ok(output)
     }
 }

@@ -23,9 +23,9 @@ fn rebuild(row: ActorIdentityRow) -> anyhow::Result<ActorIdentity> {
     let state = ActorState::try_from(row.state.as_str())
         .with_context(|| format!("actor_identity {}: corrupted state", row.id))?;
     Ok(ActorIdentity {
-        id: ActorIdentityId::new(row.id),
+        id: ActorIdentityId::from(row.id),
         kind,
-        did: row.did.map(Did::new),
+        did: row.did.map(Did::from),
         state,
         handle: row.handle,
         first_seen: row.first_seen,
@@ -59,9 +59,9 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         );
         sql::create(
             &mut *self.conn,
-            *identity.id,
-            identity.kind.as_str(),
-            identity.state.as_str(),
+            uuid::Uuid::from(identity.id),
+            <&'static str>::from(identity.kind),
+            <&'static str>::from(identity.state),
             identity.first_seen,
         )
         .await?;
@@ -80,10 +80,10 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         let row = sql::intern(
             &mut *self.conn,
             candidate,
-            kind.as_str(),
+            <&'static str>::from(kind),
             // Always present: intern is the DID-bearing path.
-            Some(did.as_str()),
-            ActorState::Active.as_str(),
+            Some(did.as_ref()),
+            <&'static str>::from(ActorState::Active),
             now,
         )
         .await?;
@@ -95,8 +95,8 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         id: &ActorIdentityId,
         handle: Option<&str>,
     ) -> anyhow::Result<()> {
-        let affected = sql::cache_handle(&mut *self.conn, **id, handle).await?;
-        anyhow::ensure!(affected == 1, "actor identity not found: {}", **id);
+        let affected = sql::cache_handle(&mut *self.conn, uuid::Uuid::from(*id), handle).await?;
+        anyhow::ensure!(affected == 1, "actor identity not found: {}", *id);
         Ok(())
     }
 }
@@ -116,12 +116,12 @@ impl PgActorIdentityStore {
 #[async_trait]
 impl ActorIdentityStore for PgActorIdentityStore {
     async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
-        let row = sql::find(&self.pool, **id).await?;
+        let row = sql::find(&self.pool, uuid::Uuid::from(*id)).await?;
         row.map(rebuild).transpose()
     }
 
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
-        let row = sql::find_by_did(&self.pool, did.as_str()).await?;
+        let row = sql::find_by_did(&self.pool, did.as_ref()).await?;
         row.map(rebuild).transpose()
     }
 }

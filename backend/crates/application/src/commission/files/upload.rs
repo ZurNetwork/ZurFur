@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -11,8 +13,8 @@ use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, files::Files},
-    ports::WithPorts,
 };
 
 /// The acting Participant, the target commission, and the wire-optional
@@ -35,14 +37,16 @@ impl Files<'_> {
     /// effect. Authorizes before a byte of `content` is read, caps it at
     /// `max_upload_bytes`, and deletes the orphaned blob before refusing.
     /// Commits the [`CommissionFile`] link and its changelog entry atomically.
+    #[use_case]
     pub async fn upload(
         &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         content: impl AsyncRead + Send + Unpin,
         max_upload_bytes: u64,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
-        let ports = self.ports();
         let Command {
             actor_id,
             commission_id,
@@ -66,14 +70,13 @@ impl Files<'_> {
         let written = ports
             .files
             .put(key, &filename, &content_type, &mut capped)
-            .await
-            .map_err(CommissionError::Infrastructure)?;
+            .await?;
 
         if written > max_upload_bytes {
             if let Err(err) = ports.files.delete(key).await {
                 tracing::warn!(
                     error = ?err,
-                    file_id = %*key,
+                    file_id = %key,
                     "failed to delete an over-cap upload's orphaned blob",
                 );
             }
@@ -83,7 +86,7 @@ impl Files<'_> {
             if let Err(err) = ports.files.delete(key).await {
                 tracing::warn!(
                     error = ?err,
-                    file_id = %*key,
+                    file_id = %key,
                     "failed to delete an empty upload's orphaned blob",
                 );
             }
@@ -95,7 +98,7 @@ impl Files<'_> {
             ChangelogEntryKind::FileAdded,
             actor_id.clone(),
             json!({
-                "file_id": *key,
+                "file_id": *key.as_ref(),
                 "filename": filename.as_str(),
                 "content_type": content_type,
                 "byte_size": written,
@@ -108,10 +111,9 @@ impl Files<'_> {
             uploaded_by: actor_id,
             created_at: now,
         };
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.commissions().add_file(&file).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
         Ok(Output { id: key })
     }
 }

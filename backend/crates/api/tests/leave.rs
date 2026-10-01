@@ -4,8 +4,6 @@
 //! role-tree re-homing and invitation revocation are the store's job and are proven
 //! against PostgreSQL in `adapter-pg`'s own tests (the mem fake doesn't model
 //! `parent`). Same in-process fakes as the other account e2e tests.
-use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountName},
@@ -15,67 +13,27 @@ use domain::elements::{
     role::Role,
     user_account::UserAccount,
 };
-use reqwest::redirect::Policy;
 use serde_json::{Value, json};
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
 
-/// Boots the app with everything faked in-process; returns the base URL plus the
-/// repo handles so a test can seed and introspect membership directly.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
-
 #[tokio::test]
 async fn the_owner_cannot_leave_their_own_account() {
-    let (base, _backend) = spawn_app("did:plc:leaveowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:leaveowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:leaveowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // Founding makes the signed-in user the Owner.
     let res = client
@@ -98,9 +56,19 @@ async fn the_owner_cannot_leave_their_own_account() {
 
 #[tokio::test]
 async fn leaving_an_account_you_are_not_a_member_of_is_404() {
-    let (base, _backend) = spawn_app("did:plc:leavestranger").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:leavestranger".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:leavestranger".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let res = client
         .delete(format!("{base}/accounts/{}/members/me", Uuid::now_v7()))
@@ -112,24 +80,32 @@ async fn leaving_an_account_you_are_not_a_member_of_is_404() {
 
 #[tokio::test]
 async fn a_member_leaves_and_is_no_longer_a_member() {
-    let (base, backend) = spawn_app("did:plc:leaver").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:leaver".to_string())).profile(Profile::new(
+            Did::from("did:plc:leaver".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // The signed-in user is provisioned by sign-in; seat them as a *Member* of an
     // account someone else owns, so leaving isn't blocked by the Owner rule.
     let me = backend
-        .find_by_did(&Did::new("did:plc:leaver".to_string()))
+        .find_by_did(&Did::from("did:plc:leaver".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let host = backend
-        .provision(&Did::new("did:plc:host".to_string()))
+        .provision(&Did::from("did:plc:host".to_string()))
         .await
         .expect("provision host");
     let (account, owner_membership) = Account::open(
         host.id,
-        Did::new("did:plc:hostacct".to_string()),
+        Did::from("did:plc:hostacct".to_string()),
         "host.zurfur.app".parse::<Handle>().unwrap(),
         "Host Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -149,7 +125,7 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         .expect("seat me as a member");
 
     let res = client
-        .delete(format!("{base}/accounts/{}/members/me", *account.id))
+        .delete(format!("{base}/accounts/{}/members/me", account.id))
         .send()
         .await
         .expect("DELETE members/me");

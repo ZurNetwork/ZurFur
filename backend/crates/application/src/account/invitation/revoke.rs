@@ -1,8 +1,10 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{account::AccountId, user::UserId};
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, invitation::Invitations},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,8 +21,13 @@ impl Invitations<'_> {
     /// hold a role that outranks the offered one; anything less is `NotAMember`.
     /// Answers `AlreadyMember` when the target already holds a role, and
     /// `NoPendingInvitation` when no live offer exists.
-    pub async fn revoke(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn revoke(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             actor_id,
@@ -57,9 +64,8 @@ impl Invitations<'_> {
             return Err(AccountError::NotAMember);
         }
 
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
-        uow.commit().await?;
         Ok(Output)
     }
 }

@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -8,8 +10,8 @@ use domain::{
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, require_participant, status::direction::Direction},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -20,8 +22,14 @@ pub struct Command {
 pub struct Output;
 
 impl Direction<'_> {
-    pub async fn set(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn set(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             user_id,
             commission_id,
@@ -46,7 +54,7 @@ impl Direction<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
+        let uow = uow.open().await?;
         let mut commissions = uow.commissions();
         let moved = commissions
             .set_direction_status(&commission.id, direction)
@@ -55,7 +63,6 @@ impl Direction<'_> {
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }

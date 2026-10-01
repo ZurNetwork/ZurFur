@@ -1,14 +1,15 @@
 //! Use cases about [`Account`]s.
-
+use crate::ports::WithPorts;
 use domain::{
+    datetime::DateTimeUtc,
     elements::{
         account::{Account, AccountId},
+        handle::{Handle, HandleDomain},
         workflow::WorkflowError,
     },
-    ports::{AccountStore, Database, DidBelongsToAnotherActor, DidMinter, HandleTaken, UserStore},
+    ports::{DidBelongsToAnotherActor, DidMinter, HandleTaken},
 };
-
-use crate::ports::WithPorts;
+use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
 pub mod change_handle;
 pub mod create;
@@ -20,29 +21,18 @@ pub mod list;
 pub mod role;
 pub mod transfer_ownership;
 pub mod workflow;
-/// Account use cases, with the ports already bound. A namespace, not a
-/// mediator: one `impl Accounts<'_>` block per use-case file.
-#[derive(Clone, Copy)]
+
+#[derive(Clone, Copy, WithPorts)]
 pub struct Accounts<'a> {
+    #[ports(is_root = true)]
     ports: &'a crate::Ports,
     did_minter: &'a dyn DidMinter,
-}
-
-impl<'a> WithPorts<'a> for Accounts<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.ports
-    }
 }
 
 impl<'a> Accounts<'a> {
     /// Bind the namespace to resolved dependencies.
     pub fn new(ports: &'a crate::Ports, did_minter: &'a dyn DidMinter) -> Self {
         Self { ports, did_minter }
-    }
-
-    /// The bag this namespace was built over.
-    pub fn ports(&self) -> &'a crate::Ports {
-        self.ports
     }
 
     /// The did:plc minter.
@@ -68,7 +58,8 @@ impl<'a> From<&'a crate::App> for Accounts<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum AccountEntity {
     Account,
     User,
@@ -149,18 +140,6 @@ impl From<WorkflowError> for AccountError {
             WorkflowError::DuplicateColumnName => AccountError::DuplicateName,
             WorkflowError::IndexOutOfRange(index) => AccountError::IndexOutOfRange(index),
             v => AccountError::Infrastructure(v.into()),
-        }
-    }
-}
-
-impl std::fmt::Display for AccountEntity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Account => write!(f, "account"),
-            Self::User => write!(f, "user"),
-            Self::Column => write!(f, "column"),
-            Self::Workflow => write!(f, "workflow"),
-            Self::Commission => write!(f, "commission"),
         }
     }
 }
@@ -276,14 +255,37 @@ pub(crate) async fn require_live_account(
         .ok_or(AccountError::NotFound(AccountEntity::Account))
 }
 
-/// The ports the account use cases reach: reads off [`AccountStore`] and
-/// [`UserStore`], identity off [`DidMinter`], writes through a unit of work
-/// vended by [`Database`].
-pub struct AccountPorts<'a> {
-    pub accounts: &'a dyn AccountStore,
-    pub users: &'a dyn UserStore,
-    pub did_minter: &'a dyn DidMinter,
-    pub database: &'a dyn Database,
+/// The one handle-claim gate: refuse with `HandleTaken` when a live account
+/// already holds `handle`, or when, inside the Zurfur namespace, another
+/// account vacated it within the quarantine window. `exempt` names the account
+/// whose own vacated handle does not count against it.
+// TODO(Engineer): Characters claim through this gate too once their handle
+// namespace is ruled. A namespace shared with Accounts needs a taken-check that
+// spans both actor kinds, not `AccountStore` alone.
+pub(crate) async fn ensure_handle_claimable(
+    ports: &crate::Ports,
+    handle: &Handle,
+    handle_domain: &HandleDomain,
+    exempt: Option<&AccountId>,
+    now: DateTimeUtc,
+) -> AccountResult<()> {
+    if ports.accounts.find_did_by_handle(handle).await?.is_some() {
+        return Err(AccountError::HandleTaken);
+    }
+
+    if handle.is_in_namespace(handle_domain) {
+        let quarantined = ports
+            .accounts
+            .handle_reserved_for_other(handle, exempt, now - HANDLE_QUARANTINE_WINDOW)
+            .await?;
+        if quarantined {
+            return Err(AccountError::HandleTaken);
+        }
+    }
+    Ok(())
 }
 
 pub type AccountResult<T> = Result<T, AccountError>;
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,5 @@
+error: Only structs are supported
+ --> tests/ui/derive_on_tuple_struct.rs:4:1
+  |
+4 | struct Probe<'a>(#[ports] &'a u8);
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

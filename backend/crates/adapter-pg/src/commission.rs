@@ -8,7 +8,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
+            Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
             CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
             ElementPayload, ElementRow, ElementType, FileKey, GrantLevel, LapsedDeadline,
             LifecycleStep, Markup, MarkupKey, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
@@ -93,12 +93,18 @@ impl PgCommissionWrites<'_> {
         commission: &CommissionId,
         tab: &TabId,
     ) -> anyhow::Result<Option<TabRow>> {
-        let Some(row) = sql::require_tab(&mut *self.conn, **tab, **commission).await? else {
+        let Some(row) = sql::require_tab(
+            &mut *self.conn,
+            uuid::Uuid::from(*tab),
+            uuid::Uuid::from(*commission),
+        )
+        .await?
+        else {
             return Ok(None);
         };
         let located = TabRow {
-            id: TabId::new(row.id),
-            tab: TabName::try_from(row.tab)?,
+            id: TabId::from(row.id),
+            tab: row.tab.parse::<TabName>()?,
             mode: to_mode(&row.mode)?,
         };
         Ok(Some(located))
@@ -129,17 +135,17 @@ impl PgCommissionWrites<'_> {
 
         sql::add_element(
             &mut *self.conn,
-            *element.id,
-            *element.commission_id,
-            *element.address.tab,
-            element.address.surface.as_str(),
-            element.element_type.as_str(),
-            VisibilityMode::default().as_str(),
-            element.band.as_str(),
-            element.created_by.as_str(),
+            uuid::Uuid::from(element.id),
+            uuid::Uuid::from(element.commission_id),
+            uuid::Uuid::from(element.address.tab),
+            element.address.surface.as_ref(),
+            element.element_type.as_ref(),
+            <&'static str>::from(VisibilityMode::default()),
+            element.band.as_ref(),
+            element.created_by.as_ref(),
             element.created_at,
             // The only place an element's payload is unwrapped for the jsonb bind.
-            element.payload.as_value(),
+            element.payload.as_ref(),
         )
         .await?;
         Ok(())
@@ -154,13 +160,13 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
         sql::create_commission(
             &mut *self.conn,
-            *commission.id,
+            uuid::Uuid::from(commission.id),
             commission.title.as_str(),
-            commission.owner_id.as_str(),
-            commission.lifecycle_step.as_str(),
-            commission.visibility.as_str(),
+            commission.owner_id.as_ref(),
+            <&'static str>::from(&commission.lifecycle_step),
+            <&'static str>::from(&commission.visibility),
             commission.deadline,
-            commission.maturity.map(|m| m.rating.as_str()),
+            commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
             commission.created_at,
         )
@@ -169,18 +175,18 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         for tab in declared_tabs() {
             sql::create_tab(
                 &mut *self.conn,
-                *TabId::mint(),
-                *commission.id,
-                tab.as_str(),
-                VisibilityMode::default().as_str(),
+                uuid::Uuid::from(TabId::mint()),
+                uuid::Uuid::from(commission.id),
+                tab.as_ref(),
+                <&'static str>::from(VisibilityMode::default()),
             )
             .await?;
         }
 
         sql::add_participant(
             &mut *self.conn,
-            *commission.id,
-            commission.owner_id.as_str(),
+            uuid::Uuid::from(commission.id),
+            commission.owner_id.as_ref(),
             commission.created_at,
         )
         .await?;
@@ -202,23 +208,32 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         commission: &CommissionId,
         element: &ElementId,
     ) -> anyhow::Result<()> {
-        let Some(group) =
-            sql::remove_element_gate(&mut *self.conn, **element, **commission).await?
+        let Some(group) = sql::remove_element_gate(
+            &mut *self.conn,
+            uuid::Uuid::from(*element),
+            uuid::Uuid::from(*commission),
+        )
+        .await?
         else {
             return Err(ElementNotFound.into());
         };
         // Locks the same tab row the add path locks, serializing the two orderings.
-        self.require_tab(commission, &TabId::new(group.tab_id))
+        self.require_tab(commission, &TabId::from(group.tab_id))
             .await?;
 
-        let deleted = sql::remove_element_delete(&mut *self.conn, **element, **commission).await?;
+        let deleted = sql::remove_element_delete(
+            &mut *self.conn,
+            uuid::Uuid::from(*element),
+            uuid::Uuid::from(*commission),
+        )
+        .await?;
         if deleted != 1 {
             return Err(ElementNotFound.into());
         }
 
         sql::remove_element_renumber(
             &mut *self.conn,
-            **commission,
+            uuid::Uuid::from(*commission),
             group.tab_id,
             &group.surface,
             &group.band,
@@ -232,9 +247,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
         sql::add_file(
             &mut *self.conn,
-            *file.id,
-            *file.commission_id,
-            file.uploaded_by.as_str(),
+            uuid::Uuid::from(file.id),
+            uuid::Uuid::from(file.commission_id),
+            file.uploaded_by.as_ref(),
             file.created_at,
         )
         .await?;
@@ -248,10 +263,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         let shape = serde_json::to_value(&markup.markup.shape)?;
         sql::add_markup(
             &mut *self.conn,
-            *markup.id,
-            *markup.commission_id,
-            *markup.file_id,
-            markup.added_by.as_str(),
+            uuid::Uuid::from(markup.id),
+            uuid::Uuid::from(markup.commission_id),
+            uuid::Uuid::from(markup.file_id),
+            markup.added_by.as_ref(),
             &shape,
             markup.markup.text.as_deref(),
             markup.created_at,
@@ -277,8 +292,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
             sql::declare_slot_satellite(
                 &mut *self.conn,
-                *slot.id,
-                *slot.commission_id,
+                uuid::Uuid::from(slot.id),
+                uuid::Uuid::from(slot.commission_id),
                 slot.title.as_str(),
                 slot.notes.as_deref(),
             )
@@ -296,12 +311,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     ) -> anyhow::Result<SeatInvitation> {
         sql::create_seat_invitation(
             &mut *self.conn,
-            *invitation.id,
-            *invitation.commission,
-            *invitation.seat,
-            invitation.invited_user.as_str(),
-            invitation.inviter.as_str(),
-            invitation.state.as_str(),
+            uuid::Uuid::from(invitation.id),
+            uuid::Uuid::from(invitation.commission),
+            uuid::Uuid::from(invitation.seat),
+            invitation.invited_user.as_ref(),
+            invitation.inviter.as_ref(),
+            <&'static str>::from(invitation.state),
             invitation.created_at,
             invitation.updated_at,
         )
@@ -309,17 +324,17 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
         let standing = sql::find_pending_seat_invitation(
             &mut *self.conn,
-            *invitation.commission,
-            *invitation.seat,
-            invitation.invited_user.as_str(),
-            InvitationState::Pending.as_str(),
+            uuid::Uuid::from(invitation.commission),
+            uuid::Uuid::from(invitation.seat),
+            invitation.invited_user.as_ref(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "seat invitation for seat {} user {} is not pending immediately after issuing it",
-                *invitation.seat,
-                invitation.invited_user.as_str()
+                invitation.seat,
+                invitation.invited_user.as_ref()
             )
         })?;
         to_seat_invitation(standing)
@@ -330,10 +345,10 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         sql::revoke_seat_invitation(
             &mut *self.conn,
-            InvitationState::Revoked.as_str(),
+            <&'static str>::from(InvitationState::Revoked),
             chrono::Utc::now(),
-            **id,
-            InvitationState::Pending.as_str(),
+            uuid::Uuid::from(*id),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?;
         Ok(())
@@ -348,7 +363,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Deletes the commission row on the open transaction. Child rows cascade via
     /// `ON DELETE CASCADE`; an absent commission is a no-op.
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
-        sql::delete(&mut *self.conn, **id).await?;
+        sql::delete(&mut *self.conn, uuid::Uuid::from(*id)).await?;
         Ok(())
     }
 
@@ -359,7 +374,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: &CommissionId,
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
-        let affected = sql::set_archived(&mut *self.conn, **id, archived_at).await?;
+        let affected =
+            sql::set_archived(&mut *self.conn, uuid::Uuid::from(*id), archived_at).await?;
         Ok(affected > 0)
     }
 
@@ -368,8 +384,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         sql::set_maturity(
             &mut *self.conn,
-            **id,
-            Some(maturity.rating.as_str()),
+            uuid::Uuid::from(*id),
+            Some(<&'static str>::from(maturity.rating)),
             Some(maturity.graphic),
         )
         .await?;
@@ -392,8 +408,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
         sql::declare_seat_satellite(
             &mut *self.conn,
-            *seat.id,
-            *seat.commission_id,
+            uuid::Uuid::from(seat.id),
+            uuid::Uuid::from(seat.commission_id),
             seat.kind.as_str(),
             seat.prompt.as_ref().map(|p| p.as_str()),
             seat.link.as_ref().map(|l| l.as_str()),
@@ -409,9 +425,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: &CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool> {
-        let affected =
-            sql::set_linked_channel(&mut *self.conn, **id, channel.map(ChannelPointer::as_str))
-                .await?;
+        let affected = sql::set_linked_channel(
+            &mut *self.conn,
+            uuid::Uuid::from(*id),
+            channel.map(ChannelPointer::as_str),
+        )
+        .await?;
         Ok(affected > 0)
     }
 
@@ -425,8 +444,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     ) -> anyhow::Result<()> {
         sql::grant_view(
             &mut *self.conn,
-            **commission,
-            to_user.as_str(),
+            uuid::Uuid::from(*commission),
+            to_user.as_ref(),
             &level.to_string(),
         )
         .await?;
@@ -440,7 +459,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         commission: &CommissionId,
         to_user: &UserId,
     ) -> anyhow::Result<bool> {
-        let affected = sql::revoke_view(&mut *self.conn, **commission, to_user.as_str()).await?;
+        let affected = sql::revoke_view(
+            &mut *self.conn,
+            uuid::Uuid::from(*commission),
+            to_user.as_ref(),
+        )
+        .await?;
         Ok(affected > 0)
     }
 
@@ -451,8 +475,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: &CommissionId,
         status: Option<DirectionStatus>,
     ) -> anyhow::Result<bool> {
-        let affected =
-            sql::set_direction_status(&mut *self.conn, **id, status.map(|s| s.as_str())).await?;
+        let affected = sql::set_direction_status(
+            &mut *self.conn,
+            uuid::Uuid::from(*id),
+            status.map(<&'static str>::from),
+        )
+        .await?;
         Ok(affected > 0)
     }
 
@@ -462,7 +490,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: &CommissionId,
         deadline: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
-        let affected = sql::set_deadline(&mut *self.conn, **id, deadline).await?;
+        let affected = sql::set_deadline(&mut *self.conn, uuid::Uuid::from(*id), deadline).await?;
         Ok(affected > 0)
     }
 
@@ -473,8 +501,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         id: &CommissionId,
         status: Option<DeadlineStatus>,
     ) -> anyhow::Result<bool> {
-        let affected =
-            sql::set_deadline_status(&mut *self.conn, **id, status.map(|s| s.as_str())).await?;
+        let affected = sql::set_deadline_status(
+            &mut *self.conn,
+            uuid::Uuid::from(*id),
+            status.map(<&'static str>::from),
+        )
+        .await?;
         Ok(affected > 0)
     }
 
@@ -482,11 +514,14 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// before `now`, not already `late`, non-terminal lifecycle
     /// ([`LifecycleStep::is_terminal`]).
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        let terminal: Vec<String> = LifecycleStep::ALL
-            .iter()
-            .filter(|step| step.is_terminal())
-            .map(|step| step.as_str().to_owned())
-            .collect();
+        let terminal: Vec<String> = {
+            use strum::VariantArray;
+            LifecycleStep::VARIANTS
+                .iter()
+                .filter(|step| step.is_terminal())
+                .map(|step| step.to_string())
+                .collect()
+        };
         // Late is never persisted; dedup against the changelog's own last entry
         // since the latest deadline change, so each fresh miss is its own event.
         let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
@@ -494,7 +529,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         rows.into_iter()
             .map(|row| {
                 Ok(LapsedDeadline {
-                    id: CommissionId::new(row.id),
+                    id: CommissionId::from(row.id),
                     deadline: row.deadline,
                     status: row
                         .deadline_status
@@ -514,7 +549,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 /// Re-validates a stored `mode` token into [`VisibilityMode`]; the one gate
 /// every composition read passes through.
 fn to_mode(token: &str) -> anyhow::Result<VisibilityMode> {
-    VisibilityMode::parse(token)
+    token
+        .parse::<VisibilityMode>()
+        .ok()
         .ok_or_else(|| anyhow::anyhow!("unknown visibility mode token {token:?}"))
 }
 
@@ -522,12 +559,12 @@ fn to_mode(token: &str) -> anyhow::Result<VisibilityMode> {
 /// `state` discriminant.
 fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatInvitation> {
     Ok(SeatInvitation {
-        id: SeatInvitationId::new(row.id),
-        commission: CommissionId::new(row.commission_id),
-        seat: ElementId::new(row.seat_id),
-        invited_user: UserId::new(Did::new(row.invited_user)),
-        inviter: UserId::new(Did::new(row.inviter)),
-        state: InvitationState::try_from(row.state)?,
+        id: SeatInvitationId::from(row.id),
+        commission: CommissionId::from(row.commission_id),
+        seat: ElementId::from(row.seat_id),
+        invited_user: UserId::from(Did::from(row.invited_user)),
+        inviter: UserId::from(Did::from(row.inviter)),
+        state: row.state.parse::<InvitationState>()?,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -674,7 +711,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     let commission = Commission {
         id,
         title: CommissionTitle::try_from(fields.title)?,
-        owner_id: UserId::new(Did::new(fields.owner_id)),
+        owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
         visibility: Visibility::try_from(fields.visibility.as_str())
             .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", fields.visibility))?,
@@ -705,7 +742,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
 impl CommissionReads for PgCommissionWrites<'_> {
     /// [`CommissionStore::find`] on the unit's connection.
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        let Some(row) = sql::find(&mut *self.conn, **id).await? else {
+        let Some(row) = sql::find(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
         };
         to_commission(*id, row.into()).map(Some)
@@ -714,7 +751,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
     /// [`find`](Self::find) with `FOR NO KEY UPDATE`; concurrent writers of this
     /// commission wait, but inserts of child rows stay free.
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        let Some(row) = sql::find_for_update(&mut *self.conn, **id).await? else {
+        let Some(row) = sql::find_for_update(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
         };
         to_commission(*id, row.into()).map(Some)
@@ -726,7 +763,12 @@ impl CommissionReads for PgCommissionWrites<'_> {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<bool> {
-        Ok(sql::is_participant(&mut *self.conn, **commission, user.as_str()).await?)
+        Ok(sql::is_participant(
+            &mut *self.conn,
+            uuid::Uuid::from(*commission),
+            user.as_ref(),
+        )
+        .await?)
     }
 
     /// The tab's row, locked for the rest of the unit — the same statement
@@ -744,7 +786,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 impl CommissionStore for PgCommissionStore {
     /// Rebuilds the [`Commission`] via `to_commission`; `None` if absent.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        let Some(row) = sql::find(&self.pool, **id).await? else {
+        let Some(row) = sql::find(&self.pool, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
         };
         to_commission(*id, row.into()).map(Some)
@@ -770,9 +812,12 @@ impl CommissionStore for PgCommissionStore {
         commission: &CommissionId,
         column_id: &ColumnId,
     ) -> anyhow::Result<Option<u8>> {
-        let Some(position) =
-            crate::queries::column::position_in_column(&self.pool, **column_id, **commission)
-                .await?
+        let Some(position) = crate::queries::column::position_in_column(
+            &self.pool,
+            uuid::Uuid::from(*column_id),
+            uuid::Uuid::from(*commission),
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -789,7 +834,9 @@ impl CommissionStore for PgCommissionStore {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>> {
-        let Some(level) = sql::view_grant(&self.pool, **commission, user.as_str()).await? else {
+        let Some(level) =
+            sql::view_grant(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?
+        else {
             return Ok(None);
         };
         level
@@ -806,7 +853,7 @@ impl CommissionStore for PgCommissionStore {
         &self,
         id: &CommissionId,
     ) -> anyhow::Result<Option<CommissionComposition>> {
-        let tab_rows = sql::load_tabs(&self.pool, **id).await?;
+        let tab_rows = sql::load_tabs(&self.pool, uuid::Uuid::from(*id)).await?;
         if tab_rows.is_empty() {
             return Ok(None);
         }
@@ -815,36 +862,36 @@ impl CommissionStore for PgCommissionStore {
             .map(|row| {
                 let mode = to_mode(&row.mode)?;
                 Ok(TabRow {
-                    id: TabId::new(row.id),
-                    tab: row.tab.try_into()?,
+                    id: TabId::from(row.id),
+                    tab: row.tab.parse::<TabName>()?,
                     mode,
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        let surface_modes = sql::load_surface_modes(&self.pool, **id)
+        let surface_modes = sql::load_surface_modes(&self.pool, uuid::Uuid::from(*id))
             .await?
             .into_iter()
-            .map(|row| Ok((SurfaceName::try_from(row.surface)?, to_mode(&row.mode)?)))
+            .map(|row| Ok((row.surface.parse::<SurfaceName>()?, to_mode(&row.mode)?)))
             .collect::<anyhow::Result<_>>()?;
 
-        let elements = sql::load_elements(&self.pool, **id)
+        let elements = sql::load_elements(&self.pool, uuid::Uuid::from(*id))
             .await?
             .into_iter()
             .map(|row| {
                 let mode = to_mode(&row.mode)?;
                 let address = SurfaceAddress::new(
-                    TabId::new(row.tab_id),
-                    SurfaceName::try_from(row.surface)?,
+                    TabId::from(row.tab_id),
+                    row.surface.parse::<SurfaceName>()?,
                 );
                 Ok(ElementRow {
-                    id: ElementId::new(row.id),
+                    id: ElementId::from(row.id),
                     address,
-                    element_type: row.element_type.try_into()?,
+                    element_type: row.element_type.parse::<ElementType>()?,
                     mode,
-                    band: row.band.try_into()?,
+                    band: row.band.parse::<Band>()?,
                     position: row.position,
-                    created_by: UserId::new(Did::new(row.created_by)),
+                    created_by: UserId::from(Did::from(row.created_by)),
                     created_at: row.created_at,
                     // Wrapped on the way out of the row, so nothing downstream
                     // ever holds the raw, serializable value.
@@ -869,7 +916,7 @@ impl CommissionStore for PgCommissionStore {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<bool> {
-        Ok(sql::is_participant(&self.pool, **commission, user.as_str()).await?)
+        Ok(sql::is_participant(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?)
     }
 
     /// The file-entry link `key` names within `commission` — scoped by both id and
@@ -880,12 +927,17 @@ impl CommissionStore for PgCommissionStore {
         commission: &CommissionId,
         key: FileKey,
     ) -> anyhow::Result<Option<CommissionFile>> {
-        let row = sql::find_file(&self.pool, *key, **commission).await?;
+        let row = sql::find_file(
+            &self.pool,
+            uuid::Uuid::from(key),
+            uuid::Uuid::from(*commission),
+        )
+        .await?;
 
         Ok(row.map(|row| CommissionFile {
-            id: FileKey::new(row.id),
-            commission_id: CommissionId::new(row.commission_id),
-            uploaded_by: UserId::new(Did::new(row.uploaded_by)),
+            id: FileKey::from(row.id),
+            commission_id: CommissionId::from(row.commission_id),
+            uploaded_by: UserId::from(Did::from(row.uploaded_by)),
             created_at: row.created_at,
         }))
     }
@@ -898,7 +950,12 @@ impl CommissionStore for PgCommissionStore {
         commission: &CommissionId,
         file: FileKey,
     ) -> anyhow::Result<Vec<CommissionMarkup>> {
-        let rows = sql::markups_for_file(&self.pool, **commission, *file).await?;
+        let rows = sql::markups_for_file(
+            &self.pool,
+            uuid::Uuid::from(*commission),
+            uuid::Uuid::from(file),
+        )
+        .await?;
 
         rows.into_iter()
             .map(|row| {
@@ -908,10 +965,10 @@ impl CommissionStore for PgCommissionStore {
                 };
 
                 Ok(CommissionMarkup {
-                    id: MarkupKey::new(row.id),
-                    commission_id: CommissionId::new(row.commission_id),
-                    file_id: FileKey::new(row.file_id),
-                    added_by: UserId::new(Did::new(row.added_by)),
+                    id: MarkupKey::from(row.id),
+                    commission_id: CommissionId::from(row.commission_id),
+                    file_id: FileKey::from(row.file_id),
+                    added_by: UserId::from(Did::from(row.added_by)),
                     markup,
                     created_at: row.created_at,
                 })
@@ -929,10 +986,10 @@ impl CommissionStore for PgCommissionStore {
     ) -> anyhow::Result<Option<SeatInvitation>> {
         sql::find_pending_seat_invitation(
             &self.pool,
-            **commission,
-            **seat,
-            user.as_str(),
-            InvitationState::Pending.as_str(),
+            uuid::Uuid::from(*commission),
+            uuid::Uuid::from(*seat),
+            user.as_ref(),
+            <&'static str>::from(InvitationState::Pending),
         )
         .await?
         .map(to_seat_invitation)
@@ -942,15 +999,15 @@ impl CommissionStore for PgCommissionStore {
     /// The commission's seat satellites in declaration order (element ids are
     /// UUIDv7). Each row re-validated through its domain gate.
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
-        let rows = sql::seats(&self.pool, **commission).await?;
+        let rows = sql::seats(&self.pool, uuid::Uuid::from(*commission)).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(Seat {
-                    id: ElementId::new(row.id),
+                    id: ElementId::from(row.id),
                     kind: SeatKind::try_from(row.kind)?,
                     prompt: row.prompt.map(SeatPrompt::try_from).transpose()?,
                     link: row.link.map(SeatLink::try_from).transpose()?,
-                    occupant: row.occupant.map(|did| UserId::new(Did::new(did))),
+                    occupant: row.occupant.map(|did| UserId::from(Did::from(did))),
                 })
             })
             .collect()
@@ -959,11 +1016,11 @@ impl CommissionStore for PgCommissionStore {
     /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
     /// id, each re-validated through `to_commission`.
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        sql::list_owned_by(&self.pool, owner.as_str())
+        sql::list_owned_by(&self.pool, owner.as_ref())
             .await?
             .into_iter()
             .map(|row| {
-                let id = CommissionId::new(row.id);
+                let id = CommissionId::from(row.id);
                 to_commission(id, row.into())
             })
             .collect()

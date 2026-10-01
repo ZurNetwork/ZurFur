@@ -1,0 +1,5 @@
+error: a parameter takes one injection marker
+ --> tests/ui/two_markers_on_one_param.rs:7:34
+  |
+7 |     async fn run(&self, #[ports] #[unit] both: u8) {}
+  |                                  ^^^^^^^

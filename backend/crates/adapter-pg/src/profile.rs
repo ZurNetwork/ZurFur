@@ -6,7 +6,10 @@
 
 use chrono::{Duration, Utc};
 use domain::{
-    elements::{did::Did, profile::Profile},
+    elements::{
+        did::Did,
+        profile::{DisplayHandle, Profile},
+    },
     ports::ProfileCache,
 };
 use sqlx::PgPool;
@@ -36,11 +39,11 @@ impl ProfileCache for PgProfileCache {
     /// predicate, so a stale entry returns `None` (a miss) and the caller refetches.
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>> {
         let cutoff = Utc::now() - self.ttl;
-        let row = sql::get(&self.pool, did.as_str(), cutoff).await?;
+        let row = sql::get(&self.pool, did.as_ref(), cutoff).await?;
 
         Ok(row.map(|row| Profile {
-            did: Did::new(row.did),
-            handle: row.handle,
+            did: Did::from(row.did),
+            handle: DisplayHandle::from(row.handle),
             display_name: row.display_name,
             avatar_url: row.avatar_url,
         }))
@@ -53,8 +56,8 @@ impl ProfileCache for PgProfileCache {
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         sql::put(
             &self.pool,
-            profile.did.as_str(),
-            &profile.handle,
+            profile.did.as_ref(),
+            profile.handle.as_ref(),
             profile.display_name.as_deref(),
             profile.avatar_url.as_deref(),
             Utc::now(),

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use adapter_pg::PgPool;
 use base64::Engine as _;
+use domain::ports::character::CharacterStore;
 use domain::ports::{
     AccountStore, Authenticator, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter,
     FileStore, ProfileCache, ProfileSource, UnitOfWorkFn, UserStore, WorkflowStore,
@@ -54,6 +55,8 @@ pub struct Runtime {
     /// because a column carries its own id and visibility; their order lives on
     /// the workflow.
     pub columns: Arc<dyn ColumnStore>,
+    /// Reads arrive with the Character slice; the port declares none yet.
+    pub characters: Arc<dyn CharacterStore>,
     /// The private blob store behind a commission file entry. Pool-backed and
     /// outside the unit of work — bytes cannot ride a transaction, so an
     /// orphan on rollback is accepted.
@@ -146,6 +149,7 @@ impl Runtime {
             changelog: Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
             workflows: Arc::new(adapter_pg::PgWorkflowStore::new(pool.clone())),
             columns: Arc::new(adapter_pg::PgColumnStore::new(pool.clone())),
+            characters: Arc::new(adapter_pg::PgCharacterStore),
             files: Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
             database: Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
             pool,

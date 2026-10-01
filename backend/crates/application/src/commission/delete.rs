@@ -1,6 +1,12 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{commission::CommissionId, user::UserId};
 
-use crate::commission::{CommissionError, CommissionResult, Commissions};
+use crate::{
+    Ports,
+    commission::{CommissionResult, Commissions},
+    common_error::{CommonError, NotFoundEntity},
+};
 
 pub enum Outcome {
     Deleted,
@@ -19,8 +25,13 @@ impl Commissions<'_> {
     /// every other caller gets the closed door's `CommissionNotFound`. A
     /// fact-bearing commission is untouched and reported as
     /// [`Outcome::HasFacts`].
-    pub async fn delete(&self, cmd: Command) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn delete(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -30,11 +41,11 @@ impl Commissions<'_> {
             .find(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommissionError::CommissionNotFound)?;
+            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
         // One unit, closed on BOTH branches: the fact gate and the delete it
         // guards must share a transaction, or there is a TOCTOU window.
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         let has_facts = uow
             .commissions()
             .commission_has_facts(&commission.id)
@@ -42,7 +53,6 @@ impl Commissions<'_> {
         if !has_facts {
             uow.commissions().delete(&commission.id).await?;
         }
-        uow.commit().await?;
 
         let outcome = if has_facts {
             Outcome::HasFacts

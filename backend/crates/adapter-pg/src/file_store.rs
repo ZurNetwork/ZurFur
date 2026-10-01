@@ -44,7 +44,7 @@ impl FileStore for PgFileStore {
         let byte_size = bytes.len() as i64;
         sql::put(
             &self.pool,
-            *key,
+            uuid::Uuid::from(key),
             filename.as_str(),
             content_type,
             byte_size,
@@ -58,7 +58,7 @@ impl FileStore for PgFileStore {
     /// come back wrapped in a [`std::io::Cursor`]. Re-validates the stored
     /// `filename`; an `Err` on tampering, never a panic.
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>> {
-        let Some(row) = sql::get(&self.pool, *key).await? else {
+        let Some(row) = sql::get(&self.pool, uuid::Uuid::from(key)).await? else {
             return Ok(None);
         };
 
@@ -74,7 +74,7 @@ impl FileStore for PgFileStore {
 
     /// Removes the bytes under `key`. Idempotent: an absent key is a no-op.
     async fn delete(&self, key: FileKey) -> anyhow::Result<()> {
-        sql::delete(&self.pool, *key).await?;
+        sql::delete(&self.pool, uuid::Uuid::from(key)).await?;
         Ok(())
     }
 }

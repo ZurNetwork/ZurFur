@@ -30,7 +30,6 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{
@@ -41,64 +40,10 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect the composition that was persisted.
-/// `did` is the identity `sign_in` will authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(
-                Did::new(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller and returns its id.
 async fn create_commission(
@@ -114,7 +59,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's only tab id, introspected off the backend.
@@ -125,10 +70,10 @@ async fn create_commission(
 /// called out in [`api::routes`]'s element module docs rather than papered over.
 async fn tab_of(backend: &MemBackend, commission: uuid::Uuid) -> uuid::Uuid {
     let tabs = backend
-        .tabs_of(CommissionId::new(commission))
+        .tabs_of(CommissionId::from(commission))
         .await
         .expect("load tabs");
-    *tabs.first().expect("every commission has its tabs").id
+    uuid::Uuid::from(tabs.first().expect("every commission has its tabs").id)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -170,12 +115,12 @@ async fn add_element(
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -188,20 +133,25 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 // at all, because they are code-declared skeleton rather than data.
 #[tokio::test]
 async fn a_created_commission_is_born_with_its_skeleton_tabs() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let tabs = backend
-        .tabs_of(CommissionId::new(id))
+        .tabs_of(CommissionId::from(id))
         .await
         .expect("load tabs");
-    let names: Vec<&str> = tabs.iter().map(|tab| tab.tab.as_str()).collect();
-    let declared: Vec<String> = declared_tabs()
-        .iter()
-        .map(|tab| tab.as_str().to_owned())
-        .collect();
+    let names: Vec<&str> = tabs.iter().map(|tab| tab.tab.as_ref()).collect();
+    let declared: Vec<String> = declared_tabs().iter().map(|tab| tab.to_string()).collect();
     assert_eq!(names, declared, "exactly the code-declared skeleton");
     assert!(
         tabs.iter().all(|tab| tab.mode == VisibilityMode::Total),
@@ -209,7 +159,7 @@ async fn a_created_commission_is_born_with_its_skeleton_tabs() {
     );
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -223,9 +173,17 @@ async fn a_created_commission_is_born_with_its_skeleton_tabs() {
 // numbers, booleans, in-payload nulls).
 #[tokio::test]
 async fn the_owner_contributes_elements_that_append_and_round_trip() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -238,22 +196,22 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
     let second = add_element(&client, &base, id, tab, &json!({})).await;
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("signed in");
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     assert_eq!(elements.len(), 2);
-    assert_eq!(*elements[0].id, first, "append order");
+    assert_eq!(uuid::Uuid::from(elements[0].id), first, "append order");
     assert_eq!(elements[0].position, 0);
-    assert_eq!(*elements[1].id, second);
+    assert_eq!(uuid::Uuid::from(elements[1].id), second);
     assert_eq!(elements[1].position, 1);
     assert_eq!(
-        elements[0].payload.as_value(),
+        elements[0].payload.as_ref(),
         &payload,
         "the payload round-trips unmodified"
     );
@@ -264,15 +222,19 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
             "every element is born Total"
         );
         assert_eq!(element.created_by, me.id, "the envelope names the creator");
-        assert_eq!(element.address.surface.as_str(), only_surface());
-        assert_eq!(*element.address.tab, tab, "addressed by tab id");
+        assert_eq!(element.address.surface.as_ref(), only_surface());
+        assert_eq!(
+            uuid::Uuid::from(element.address.tab),
+            tab,
+            "addressed by tab id"
+        );
         assert_eq!(element.element_type, "note".parse::<ElementType>().unwrap());
     }
 
     // Composition edits are NOT changelog events (the taxonomy is frozen;
     // ZMVP-87): the stream still holds only the creation entry.
     let entries = backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
     assert_eq!(
@@ -286,9 +248,17 @@ async fn the_owner_contributes_elements_that_append_and_round_trip() {
 // payload (the untyped v1 default), not an error.
 #[tokio::test]
 async fn an_omitted_payload_defaults_to_the_empty_object() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -301,10 +271,10 @@ async fn an_omitted_payload_defaults_to_the_empty_object() {
     assert_eq!(res.status(), 201);
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
-    assert_eq!(elements[0].payload.as_value(), &json!({}));
+    assert_eq!(elements[0].payload.as_ref(), &json!({}));
 }
 
 // Remove — the owner removes an element with a 204, the ordering group
@@ -313,9 +283,17 @@ async fn an_omitted_payload_defaults_to_the_empty_object() {
 // id addresses one.
 #[tokio::test]
 async fn the_owner_removes_an_element_and_the_group_renumbers() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -331,12 +309,12 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
     assert_eq!(res.status(), 204, "removal answers 204 No Content");
 
     let elements = backend
-        .elements_of(CommissionId::new(id))
+        .elements_of(CommissionId::from(id))
         .await
         .expect("load elements");
     let surviving: Vec<(uuid::Uuid, i32)> = elements
         .iter()
-        .map(|element| (*element.id, element.position))
+        .map(|element| (uuid::Uuid::from(element.id), element.position))
         .collect();
     assert_eq!(
         surviving,
@@ -347,7 +325,7 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
     // Removal is likewise not a changelog event.
     assert_eq!(
         backend
-            .changelog_entries(CommissionId::new(id))
+            .changelog_entries(CommissionId::from(id))
             .await
             .expect("changelog")
             .len(),
@@ -359,9 +337,17 @@ async fn the_owner_removes_an_element_and_the_group_renumbers() {
 // changes.
 #[tokio::test]
 async fn an_anonymous_caller_cannot_compose() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
     let element = add_element(&signed_in, &base, id, tab, &json!({})).await;
@@ -383,7 +369,7 @@ async fn an_anonymous_caller_cannot_compose() {
 
     assert_eq!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .len(),
@@ -398,9 +384,17 @@ async fn an_anonymous_caller_cannot_compose() {
 // would confirm there is something to be forbidden from.
 #[tokio::test]
 async fn a_non_participant_gets_the_uniform_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
     let foreign_tab = tab_of(&backend, foreign).await;
     let body = json!({ "tab": foreign_tab, "surface": only_surface(), "type": "note" });
@@ -437,7 +431,7 @@ async fn a_non_participant_gets_the_uniform_not_found() {
     // And the probe wrote nothing.
     assert!(
         backend
-            .elements_of(CommissionId::new(foreign))
+            .elements_of(CommissionId::from(foreign))
             .await
             .expect("load elements")
             .is_empty()
@@ -450,9 +444,17 @@ async fn a_non_participant_gets_the_uniform_not_found() {
 // cross-commission oracle.
 #[tokio::test]
 async fn an_unknown_or_foreign_tab_is_tab_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let fabricated = uuid::Uuid::now_v7();
@@ -481,9 +483,17 @@ async fn an_unknown_or_foreign_tab_is_tab_not_found() {
 // only make an honest client's mistake harder to diagnose.
 #[tokio::test]
 async fn an_undeclared_surface_is_a_422() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 
@@ -497,7 +507,7 @@ async fn an_undeclared_surface_is_a_422() {
 
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -513,22 +523,30 @@ async fn an_undeclared_surface_is_a_422() {
 // describe.
 #[tokio::test]
 async fn a_real_surface_under_the_wrong_tab_is_a_422() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     // A real tab of this commission whose name the skeleton does not pair with
     // the surface below. The placeholder skeleton declares a single tab, so the
     // shape is seeded; ZMVP-171's real skeleton makes it an ordinary address.
     let other = backend.seed_tab(
-        CommissionId::new(id),
+        CommissionId::from(id),
         "other".parse().expect("valid tab name"),
     );
 
     let res = client
         .post(format!("{base}/commissions/{id}/elements"))
-        .json(&json!({ "tab": *other, "surface": only_surface(), "type": "note" }))
+        .json(&json!({ "tab": uuid::Uuid::from(other), "surface": only_surface(), "type": "note" }))
         .send()
         .await
         .expect("POST a wrongly addressed pair");
@@ -536,7 +554,7 @@ async fn a_real_surface_under_the_wrong_tab_is_a_422() {
 
     assert!(
         backend
-            .elements_of(CommissionId::new(id))
+            .elements_of(CommissionId::from(id))
             .await
             .expect("load elements")
             .is_empty(),
@@ -548,9 +566,17 @@ async fn a_real_surface_under_the_wrong_tab_is_a_422() {
 // belonging to another commission) is element_not_found, indistinguishably.
 #[tokio::test]
 async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let fabricated = uuid::Uuid::now_v7();
@@ -568,14 +594,14 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
         use domain::elements::commission::{NewElement, SurfaceAddress, TabId};
         use domain::ports::UnitOfWork;
         let owner = backend
-            .find_by_did(&Did::new("did:plc:someone-else".to_string()))
+            .find_by_did(&Did::from("did:plc:someone-else".to_string()))
             .await
             .expect("find")
             .expect("provisioned");
         let element = NewElement::contributed(
-            CommissionId::new(foreign),
+            CommissionId::from(foreign),
             SurfaceAddress::new(
-                TabId::new(foreign_tab),
+                TabId::from(foreign_tab),
                 only_surface().parse().expect("declared"),
             ),
             "note".parse().expect("valid type"),
@@ -583,7 +609,7 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
             owner.id,
             Utc::now(),
         );
-        let element_id = *element.id;
+        let element_id = uuid::Uuid::from(element.id);
         let database = backend.database();
         let mut uow = database.begin().await.expect("begin");
         UnitOfWork::commissions(&mut *uow)
@@ -605,7 +631,7 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
 
     assert_eq!(
         backend
-            .elements_of(CommissionId::new(foreign))
+            .elements_of(CommissionId::from(foreign))
             .await
             .expect("load elements")
             .len(),
@@ -617,9 +643,17 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
 // Floor — a malformed body (no tab, no surface, no type) is a 422.
 #[tokio::test]
 async fn a_malformed_body_is_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
     let tab = tab_of(&backend, id).await;
 

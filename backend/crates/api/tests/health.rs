@@ -24,6 +24,7 @@ async fn health_is_green_against_fresh_postgres() {
         commissions: backend.commission_store(),
         workflows: backend.workflow_store(),
         columns: backend.column_store(),
+        characters: Arc::new(adapter_mem::MemCharacterStore),
         changelog: backend.changelog_store(),
         files: backend.file_store(),
         database: backend.database(),
@@ -45,14 +46,14 @@ async fn health_is_green_against_fresh_postgres() {
         pool,
         // /health touches neither the PDS nor the repo; the mem adapters keep both
         // out of the test.
-        auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::new(
+        auth: Arc::new(adapter_mem::MemAuthenticator::new(Did::from(
             "did:plc:test".to_string(),
         ))),
         users: backend.user_store(),
         // /health touches neither; mem fakes keep the profile ports out of the test.
         profile_source: Arc::new(adapter_mem::MemProfileSource::new(Profile {
-            did: Did::new("did:plc:test".to_string()),
-            handle: "test.bsky.social".to_string(),
+            did: Did::from("did:plc:test".to_string()),
+            handle: "test.bsky.social".to_string().into(),
             display_name: None,
             avatar_url: None,
         })),

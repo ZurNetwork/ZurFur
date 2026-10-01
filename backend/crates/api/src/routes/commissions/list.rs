@@ -16,22 +16,18 @@ use crate::{AppState, extract::CallingUser, problem::Problem};
 /// Renders a domain commission into the contract's envelope.
 pub(super) fn wire_commission(commission: domain::elements::commission::Commission) -> Commission {
     let maturity = commission.maturity.map(|maturity| Maturity {
-        rating: maturity.rating.as_str().to_owned(),
+        rating: maturity.rating.to_string(),
         graphic: maturity.graphic,
     });
     Commission {
         id: commission.id.to_string(),
         title: commission.title.as_str().to_owned(),
-        lifecycle: commission.lifecycle_step.as_str().to_owned(),
-        visibility: commission.visibility.as_str().to_owned(),
+        lifecycle: commission.lifecycle_step.to_string(),
+        visibility: commission.visibility.to_string(),
         deadline: commission.deadline.map(wire_timestamp),
         maturity,
-        direction_status: commission
-            .direction_status
-            .map(|status| status.as_str().to_owned()),
-        deadline_status: commission
-            .deadline_status
-            .map(|status| status.as_str().to_owned()),
+        direction_status: commission.direction_status.map(|status| status.to_string()),
+        deadline_status: commission.deadline_status.map(|status| status.to_string()),
         linked_channel: commission
             .linked_channel
             .as_ref()

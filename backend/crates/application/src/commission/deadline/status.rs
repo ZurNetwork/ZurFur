@@ -1,3 +1,4 @@
+use crate::ports::WithPorts;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -7,12 +8,10 @@ use domain::{
 };
 use serde_json::json;
 
-use crate::{
-    commission::{
-        CommissionError, CommissionResult, deadline::Deadline, deadline::DeadlineSetEventPayload,
-        require_participant,
-    },
-    ports::WithPorts,
+use crate::LazyUnit;
+use crate::commission::{
+    CommissionError, CommissionResult, deadline::Deadline, deadline::DeadlineSetEventPayload,
+    require_participant,
 };
 
 pub mod clear;
@@ -24,6 +23,7 @@ pub mod set;
 /// that has a deadline. Keyed on a real transition, so a no-op records nothing.
 async fn apply(
     ports: &crate::Ports,
+    uow: &mut LazyUnit<'_>,
     commission_id: &CommissionId,
     actor_id: UserId,
     to: Option<DeadlineStatus>,
@@ -55,29 +55,18 @@ async fn apply(
         now,
     );
 
-    let mut uow = ports.database.begin().await?;
+    let uow = uow.open().await?;
     let mut commissions = uow.commissions();
     let moved = commissions.set_deadline_status(&commission.id, to).await?;
     drop(commissions);
     if moved {
         uow.changelog().append(&entry).await?;
     }
-    uow.commit().await?;
     Ok(())
 }
 
+#[derive(WithPorts)]
 pub struct Status<'a> {
+    #[ports]
     pub deadline: &'a Deadline<'a>,
-}
-
-impl<'a> WithPorts<'a> for Status<'a> {
-    fn ports(&self) -> &'a crate::Ports {
-        self.deadline.ports()
-    }
-}
-
-impl<'a> Deadline<'a> {
-    pub fn status(&'a self) -> Status<'a> {
-        Status { deadline: self }
-    }
 }

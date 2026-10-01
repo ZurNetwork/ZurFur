@@ -17,6 +17,7 @@ use domain::{
     },
     ports::{CommissionStore, Database},
 };
+use strum::VariantArray;
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -32,7 +33,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -91,7 +92,7 @@ async fn set_maturity_round_trips_and_replaces() {
     let commission = seed_commission(&pool, "did:plc:rating-owner").await;
     let store = PgCommissionStore::new(pool.clone());
 
-    for rating in MaturityRating::ALL {
+    for rating in MaturityRating::VARIANTS {
         for graphic in [true, false] {
             let posture = Maturity {
                 rating: *rating,
@@ -157,7 +158,7 @@ async fn a_half_set_posture_is_unrepresentable() {
     let commission = seed_commission(&pool, "did:plc:check-owner").await;
 
     let rating_only = sqlx::query("UPDATE commission SET maturity = 'safe' WHERE id = $1")
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await;
     assert!(
@@ -169,7 +170,7 @@ async fn a_half_set_posture_is_unrepresentable() {
     );
 
     let graphic_only = sqlx::query("UPDATE commission SET graphic = true WHERE id = $1")
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await;
     assert!(
@@ -188,7 +189,7 @@ async fn a_tampered_maturity_token_surfaces_as_an_error() {
     let store = PgCommissionStore::new(pool.clone());
 
     sqlx::query("UPDATE commission SET maturity = 'explicit', graphic = false WHERE id = $1")
-        .bind(*commission.id)
+        .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await
         .expect("tamper the row (the superseded vocabulary passes no CHECK — only the enum)");

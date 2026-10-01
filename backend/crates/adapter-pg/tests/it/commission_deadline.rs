@@ -35,7 +35,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -135,7 +135,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
             .expect("clear status");
         commissions
             .set_deadline(
-                &domain::elements::commission::CommissionId::new(uuid::Uuid::now_v7()),
+                &domain::elements::commission::CommissionId::from(uuid::Uuid::now_v7()),
                 Some(deadline),
             )
             .await

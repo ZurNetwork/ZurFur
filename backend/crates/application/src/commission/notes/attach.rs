@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -8,8 +10,8 @@ use domain::{
 };
 
 use crate::{
+    Ports,
     commission::{CommissionError, CommissionResult, notes::Notes},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -19,8 +21,14 @@ pub struct Command {
 }
 pub struct Output;
 impl Notes<'_> {
-    pub async fn attach(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn attach(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -41,9 +49,8 @@ impl Notes<'_> {
             .map_err(|_| CommissionError::IncorrectContent)?;
 
         let entry = NewChangelogEntry::note(commission_id, actor_id, text, now);
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
         Ok(Output)
     }
 }

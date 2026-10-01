@@ -1,5 +1,5 @@
-//! The one `begin`/`commit`/`rollback` orchestrator for the private store.
-//! The use case owns its transaction boundary.
+//! The `begin`/`commit`/`rollback` door for callers that are not use-case
+//! methods: sweeps, composition and test seeding.
 
 use domain::ports::{Database, UnitOfWorkFn};
 
@@ -7,6 +7,10 @@ use domain::ports::{Database, UnitOfWorkFn};
 /// [`UnitOfWork`](domain::ports::UnitOfWork) via [`Database::begin`], hands it
 /// to `f`, then commits on `Ok` and rolls back on `Err`. Strictly
 /// intra-Postgres; never a cross-store dual write.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one hand-written bracket, for callers that are not use-case methods"
+)]
 pub async fn transaction<T, F>(db: &dyn Database, f: F) -> anyhow::Result<T>
 where
     F: for<'a> UnitOfWorkFn<'a, T> + Send,

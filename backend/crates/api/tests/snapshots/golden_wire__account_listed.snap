@@ -1,0 +1,15 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: body
+---
+{
+  "accounts": [
+    {
+      "did": "<VOLATILE>",
+      "handle": "golden.zurfur.app",
+      "id": "<VOLATILE>",
+      "name": "Golden Studio",
+      "role": "owner"
+    }
+  ]
+}

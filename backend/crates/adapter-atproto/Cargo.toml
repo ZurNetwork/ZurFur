@@ -58,3 +58,7 @@ k256 = { version = "0.13", features = ["ecdsa"] }
 # The throwaway PDS rig + the shared PublicRecords conformance suite (ZMVP-105).
 test-support = { path = "../test-support" }
 chrono = { workspace = true }
+# Property tests for PLC op encoding/signing determinism.
+proptest = { workspace = true }
+# Mock HTTP for the directory and PDS clients (replaces the raw TcpListener mock).
+wiremock = { workspace = true }

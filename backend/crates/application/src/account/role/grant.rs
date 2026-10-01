@@ -1,8 +1,10 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{account::AccountId, role::Role, user::UserId, user_account::UserAccount};
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, require_live_account, role::Roles},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,8 +21,13 @@ pub struct Output {
     pub user_id: UserId,
 }
 impl Roles<'_> {
-    pub async fn grant(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn grant(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             target_id,
@@ -50,8 +57,8 @@ impl Roles<'_> {
 
         // Provisioning is a write: an unauthorized grant must not leave a User
         // row behind for the DID it named.
-        let mut uow = self.ports().database.begin().await?;
-        let target = uow.users().provision(&target_id).await?;
+        let uow = uow.open().await?;
+        let target = uow.users().provision(target_id.did()).await?;
 
         let member = UserAccount {
             user_id: target.id.clone(),
@@ -61,8 +68,6 @@ impl Roles<'_> {
         };
 
         uow.accounts().grant_role(&member).await?;
-
-        uow.commit().await?;
         Ok(Output {
             account_id,
             role,

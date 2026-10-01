@@ -20,7 +20,7 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::{AppState, Config};
+use api::Config;
 use chrono::Utc;
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle},
@@ -28,9 +28,8 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
 
@@ -39,59 +38,6 @@ mod common;
 /// just drift when the constant moves — it already did once, 25→50 MiB). The
 /// size-cap test overrides it with a tiny value.
 const DEFAULT_MAX_UPLOAD: u64 = Config::DEFAULT_MAX_UPLOAD_BYTES;
-
-/// Boots the app with everything faked in-process, at the given upload cap; returns
-/// the base URL and the [`MemBackend`] for introspection. `did` is the identity
-/// `sign_in` authenticates as.
-async fn spawn_app(did: &str, max_upload_bytes: u64) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(
-                Did::new(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .max_upload_bytes(max_upload_bytes)
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303);
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303);
-}
 
 /// Creates a commission over HTTP as the signed-in caller and returns its id,
 /// resolved by its (unique) title — the route returns a bare `201`, and
@@ -111,10 +57,12 @@ async fn create_commission_titled(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.iter()
-        .find(|c| c.title.as_str() == title)
-        .expect("the just-created commission is persisted")
-        .id
+    uuid::Uuid::from(
+        all.iter()
+            .find(|c| c.title.as_str() == title)
+            .expect("the just-created commission is persisted")
+            .id,
+    )
 }
 
 /// The single-commission convenience for tests that only make one.
@@ -167,7 +115,7 @@ async fn read_changelog(
 /// Seeds a committed commission owned by someone other than the signed-in caller.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let commission = Commission::create(
@@ -176,7 +124,7 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         Utc::now(),
         None,
     );
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -189,9 +137,19 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 // the uploader, and the upload returns the new file id.
 #[tokio::test]
 async fn a_participant_uploads_a_file_as_a_changelog_event() {
-    let (base, backend) = spawn_app("did:plc:artist", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let res = upload(
@@ -211,7 +169,7 @@ async fn a_participant_uploads_a_file_as_a_changelog_event() {
     );
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("provisioned");
@@ -222,7 +180,7 @@ async fn a_participant_uploads_a_file_as_a_changelog_event() {
     assert_eq!(entry["kind"], "file_added");
     assert_eq!(
         entry["actor_id"],
-        json!(*me.id),
+        json!(me.id.to_string()),
         "the uploader is the actor"
     );
     assert_eq!(entry["payload"]["filename"], "sketch.png");
@@ -239,9 +197,19 @@ async fn a_participant_uploads_a_file_as_a_changelog_event() {
 // (Content-Disposition: attachment + X-Content-Type-Options: nosniff).
 #[tokio::test]
 async fn a_participant_retrieves_the_file_with_hardened_headers() {
-    let (base, backend) = spawn_app("did:plc:artist", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let content = b"the file contents".to_vec();
@@ -301,9 +269,19 @@ async fn a_participant_retrieves_the_file_with_hardened_headers() {
 // attachment with nosniff, byte-for-byte: it can never execute in the app origin.
 #[tokio::test]
 async fn a_stored_svg_is_served_inert_not_executed() {
-    let (base, backend) = spawn_app("did:plc:artist", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     let svg =
@@ -345,9 +323,19 @@ async fn a_stored_svg_is_served_inert_not_executed() {
 // oracle), and nothing is appended.
 #[tokio::test]
 async fn a_non_participant_cannot_upload_or_retrieve() {
-    let (base, backend) = spawn_app("did:plc:outsider", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:outsider".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:outsider".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
 
     let res = upload(
@@ -372,7 +360,7 @@ async fn a_non_participant_cannot_upload_or_retrieve() {
 
     assert!(
         backend
-            .changelog_entries(CommissionId::new(foreign))
+            .changelog_entries(CommissionId::from(foreign))
             .await
             .expect("entries")
             .is_empty(),
@@ -386,9 +374,19 @@ async fn a_non_participant_cannot_upload_or_retrieve() {
 // existence oracle.
 #[tokio::test]
 async fn a_file_is_invisible_across_commissions() {
-    let (base, backend) = spawn_app("did:plc:artist", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let mine = create_commission_titled(&client, &base, &backend, "Mine").await;
     let other = create_commission_titled(&client, &base, &backend, "Other").await;
 
@@ -430,9 +428,19 @@ async fn a_file_is_invisible_across_commissions() {
 // AC3 floor — anonymous callers are turned away 401 on both surfaces.
 #[tokio::test]
 async fn anonymous_callers_are_turned_away() {
-    let (base, backend) = spawn_app("did:plc:artist", DEFAULT_MAX_UPLOAD).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed = client();
-    sign_in(&signed, &base).await;
+    sign_in(&signed, &base, "artist.bsky.social").await;
     let id = create_commission(&signed, &base, &backend).await;
 
     let anon = client();
@@ -454,9 +462,19 @@ async fn anonymous_callers_are_turned_away() {
 // path-separator filename is 422 (a header/path-injection vector), appending nothing.
 #[tokio::test]
 async fn upload_is_capped_and_validated() {
-    let (base, backend) = spawn_app("did:plc:artist", 1024).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(1024),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend).await;
 
     // Over the 1024-byte cap (but under the framework body limit) → 413.

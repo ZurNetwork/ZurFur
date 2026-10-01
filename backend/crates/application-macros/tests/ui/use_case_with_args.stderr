@@ -1,0 +1,5 @@
+error: unexpected token
+ --> tests/ui/use_case_with_args.rs:6:16
+  |
+6 |     #[use_case(unit)]
+  |                ^^^^

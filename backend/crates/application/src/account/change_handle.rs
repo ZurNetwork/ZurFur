@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -7,9 +9,14 @@ use domain::{
         user::UserId,
     },
 };
-use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW, HANDLE_QUARANTINE_WINDOW};
+use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW};
 
-use crate::account::{AccountError, AccountResult, Accounts, require_live_account};
+use crate::{
+    Ports,
+    account::{
+        AccountError, AccountResult, Accounts, ensure_handle_claimable, require_live_account,
+    },
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -24,8 +31,11 @@ pub struct Output {
     pub name: AccountName,
 }
 impl<'a> Accounts<'a> {
+    #[use_case]
     pub async fn change_handle(
         &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         handle_domain: &HandleDomain,
         now: DateTimeUtc,
@@ -38,7 +48,6 @@ impl<'a> Accounts<'a> {
         if !handle.is_in_namespace(handle_domain) {
             return Err(AccountError::UnsupportedHandle);
         };
-        let ports = self.ports();
         let account = require_live_account(ports, &account_id).await?;
 
         if account.handle == handle {
@@ -60,27 +69,18 @@ impl<'a> Accounts<'a> {
             return Err(AccountError::RenamedTooRecently);
         };
 
-        if ports.accounts.find_did_by_handle(&handle).await?.is_some() {
-            return Err(AccountError::HandleTaken);
-        }
+        ensure_handle_claimable(ports, &handle, handle_domain, Some(&account_id), now).await?;
 
-        if ports
-            .accounts
-            .handle_reserved_for_other(&handle, Some(&account_id), now - HANDLE_QUARANTINE_WINDOW)
-            .await?
-        {
-            return Err(AccountError::HandleTaken);
-        };
+        ports
+            .did_minter
+            .update_handle(account.id.did(), &handle)
+            .await?;
 
-        ports.did_minter.update_handle(&account.id, &handle).await?;
-
-        let mut uow = ports.database.begin().await?;
-
+        let uow = uow.open().await?;
         uow.accounts()
             .change_handle(&account_id, &account.handle, &handle, now)
             .await?;
 
-        uow.commit().await?;
         Ok(Output {
             id: account.id,
             handle,

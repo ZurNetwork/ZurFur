@@ -1,0 +1,5 @@
+error: `#[use_case]` needs access to `self` for injection
+ --> tests/ui/no_self.rs:7:14
+  |
+7 |     async fn run() {}
+  |              ^^^

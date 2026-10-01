@@ -3,7 +3,6 @@
 //! the creating User its Owner. An anonymous visitor is turned away. Same in-process
 //! fakes as the sign-in e2e — no network, no database.
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
@@ -13,68 +12,25 @@ use domain::elements::{
     role::Role,
     user_account::UserAccount,
 };
-use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
 
 mod common;
 
-/// Boots the app with everything faked in-process and returns the base URL plus
-/// typed handles to the repos, so a test can introspect them after the flow.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(Did::new(did.to_string()), "owner.bsky.social"))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects, so each hop is
-/// asserted on its own (same harness as the sign-in e2e).
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=owner.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
-
 #[tokio::test]
 async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
     let did = "did:plc:e2eowner";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // Found the account — founding requires a name and a handle.
     let res = client
@@ -106,10 +62,10 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
 
     // The creating User is the Owner of the founded account (the heart of ZMVP-14).
     let user = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision is idempotent — returns the signed-in User");
-    let account = AccountId::new(Did::new(account_id.to_string()));
+    let account = AccountId::from(Did::from(account_id.to_string()));
     let role = backend.role_of(&user.id, &account).await.expect("role_of");
     assert_eq!(
         role,
@@ -125,8 +81,8 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
         .expect("find")
         .expect("account is stored");
     assert_eq!(
-        *found.id,
-        Did::new(account_did.to_string()),
+        found.id.did(),
+        &Did::from(account_did.to_string()),
         "the founded account is stored under its minted did"
     );
     assert_eq!(
@@ -139,9 +95,17 @@ async fn signed_in_visitor_founds_an_account_and_becomes_its_owner() {
 #[tokio::test]
 async fn founding_requires_a_name() {
     let did = "did:plc:e2enoname";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // A blank name is understood but unusable — rejected with 422. The handle is
     // valid, so it is the name that fails (name is checked before the mint).
@@ -202,9 +166,17 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
 #[tokio::test]
 async fn owner_deletes_their_empty_account() {
     let did = "did:plc:e2edeleter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let res = client
@@ -225,7 +197,7 @@ async fn owner_deletes_their_empty_account() {
     );
 
     // Empty → hard-deleted → gone.
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend.find(&account).await.expect("find").is_none(),
         "the deleted account is gone"
@@ -237,9 +209,17 @@ async fn owner_deletes_their_empty_account() {
 #[tokio::test]
 async fn deleting_an_empty_account_frees_its_handle() {
     let did = "did:plc:e2erefound";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     // Founds `acme.zurfur.app` (handle derived from the first word of the name).
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
@@ -270,9 +250,17 @@ async fn deleting_an_empty_account_frees_its_handle() {
 #[tokio::test]
 async fn deleting_an_unknown_account_is_404() {
     let did = "did:plc:e2edelmissing";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let missing = Uuid::now_v7();
     let res = client
@@ -288,7 +276,15 @@ async fn deleting_an_unknown_account_is_404() {
 #[tokio::test]
 async fn deleting_requires_a_signed_in_user() {
     let did = "did:plc:e2edelanon";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client(); // deliberately not signed in
 
     let some_id = Uuid::now_v7();
@@ -310,22 +306,32 @@ async fn deleting_requires_a_signed_in_user() {
 // another user and the signed-in caller is seated as a non-Owner member via the backend.
 #[tokio::test]
 async fn a_non_owner_member_cannot_delete() {
-    let (base, backend) = spawn_app("did:plc:deleter-nonowner").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:deleter-nonowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:deleter-nonowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:deleter-nonowner".to_string()))
+        .find_by_did(&Did::from("did:plc:deleter-nonowner".to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let owner = backend
-        .provision(&Did::new("did:plc:realowner".to_string()))
+        .provision(&Did::from("did:plc:realowner".to_string()))
         .await
         .expect("provision owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new("did:plc:ownedacct".to_string()),
+        Did::from("did:plc:ownedacct".to_string()),
         "owned.zurfur.app".parse::<Handle>().unwrap(),
         "Not Yours".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -345,7 +351,7 @@ async fn a_non_owner_member_cannot_delete() {
         .expect("seat me as a non-Owner Admin");
 
     let res = client
-        .delete(format!("{base}/accounts/{}", *account.id))
+        .delete(format!("{base}/accounts/{}", account.id))
         .send()
         .await
         .expect("DELETE /accounts/{id}");
@@ -364,9 +370,17 @@ async fn a_non_owner_member_cannot_delete() {
 #[tokio::test]
 async fn owner_grants_a_role_and_seats_the_member() {
     let did = "did:plc:e2egranter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let grantee_did = "did:plc:e2egrantee";
@@ -387,10 +401,10 @@ async fn owner_grants_a_role_and_seats_the_member() {
     // The grantee is now an Admin of the account. Provisioning their DID is
     // idempotent — it returns the very User the grant recognized.
     let grantee = backend
-        .provision(&Did::new(grantee_did.to_string()))
+        .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision the grantee");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -407,9 +421,17 @@ async fn owner_grants_a_role_and_seats_the_member() {
 #[tokio::test]
 async fn granting_owner_is_refused() {
     let did = "did:plc:e2enoowner";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let grantee_did = "did:plc:e2ewouldbeowner";
@@ -423,10 +445,10 @@ async fn granting_owner_is_refused() {
 
     // Nothing was seated for the would-be owner.
     let grantee = backend
-        .provision(&Did::new(grantee_did.to_string()))
+        .provision(&Did::from(grantee_did.to_string()))
         .await
         .expect("provision");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -440,9 +462,17 @@ async fn granting_owner_is_refused() {
 #[tokio::test]
 async fn the_owner_cannot_be_demoted_by_a_grant() {
     let did = "did:plc:e2eownerkeep";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     // The signed-in Owner targets their own DID — the only Owner in this account.
@@ -455,10 +485,10 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
     assert_eq!(res.status(), 403, "the Owner cannot be demoted by a grant");
 
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -468,9 +498,17 @@ async fn the_owner_cannot_be_demoted_by_a_grant() {
 #[tokio::test]
 async fn granting_an_unknown_role_is_rejected() {
     let did = "did:plc:e2ebadrole";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let res = client
@@ -487,9 +525,17 @@ async fn granting_an_unknown_role_is_rejected() {
 #[tokio::test]
 async fn granting_on_a_missing_account_is_not_found() {
     let did = "did:plc:e2enoacct";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let missing = Uuid::now_v7();
     let res = client
@@ -505,7 +551,15 @@ async fn granting_on_a_missing_account_is_not_found() {
 // (Independent of task ②.)
 #[tokio::test]
 async fn anonymous_visitor_cannot_grant_a_role() {
-    let (base, _backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     let res = client()
         .post(format!("{base}/accounts/{}/members", Uuid::now_v7()))
@@ -518,7 +572,15 @@ async fn anonymous_visitor_cannot_grant_a_role() {
 
 #[tokio::test]
 async fn anonymous_visitor_cannot_found_an_account() {
-    let (base, backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
 
     // No sign-in: the cookie jar carries no session.
     let res = client()
@@ -533,7 +595,7 @@ async fn anonymous_visitor_cannot_found_an_account() {
         "an unrecognized visitor cannot found an account"
     );
     // Nothing was minted or persisted as a side effect of the rejected request.
-    let never_minted = AccountId::new(Did::new(format!("did:plc:{}", Uuid::now_v7())));
+    let never_minted = AccountId::from(Did::from(format!("did:plc:{}", Uuid::now_v7())));
     let found = backend.find(&never_minted).await.expect("find");
     assert!(found.is_none());
 }
@@ -555,9 +617,17 @@ async fn grant_role(client: &reqwest::Client, base: &str, account_id: &str, did:
 #[tokio::test]
 async fn owner_revokes_a_member_and_unseats_them() {
     let did = "did:plc:e2erevoker";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let member_did = "did:plc:e2erevokee";
@@ -576,9 +646,9 @@ async fn owner_revokes_a_member_and_unseats_them() {
         "the response echoes the revoked member"
     );
 
-    let account = AccountId::new(Did::new(account_id.clone()));
+    let account = AccountId::from(Did::from(account_id.clone()));
     let member = backend
-        .provision(&Did::new(member_did.to_string()))
+        .provision(&Did::from(member_did.to_string()))
         .await
         .expect("provision the member");
     let role = backend
@@ -589,7 +659,7 @@ async fn owner_revokes_a_member_and_unseats_them() {
 
     // The Owner is unaffected by revoking someone else.
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
     let owner_role = backend.role_of(&owner.id, &account).await.expect("role_of");
@@ -610,9 +680,17 @@ async fn owner_revokes_a_member_and_unseats_them() {
 #[tokio::test]
 async fn the_owner_cannot_be_revoked() {
     let did = "did:plc:e2eownersafe";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     // The Owner targets their own DID.
@@ -625,10 +703,10 @@ async fn the_owner_cannot_be_revoked() {
     assert_eq!(res.status(), 403, "an Owner cannot be revoked here");
 
     let owner = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision the owner");
-    let account = AccountId::new(Did::new(account_id));
+    let account = AccountId::from(Did::from(account_id));
     let role = backend.role_of(&owner.id, &account).await.expect("role_of");
     assert_eq!(role, Some(Role::Owner), "the Owner keeps their role");
 }
@@ -638,9 +716,17 @@ async fn the_owner_cannot_be_revoked() {
 #[tokio::test]
 async fn revoking_a_non_member_is_not_found() {
     let did = "did:plc:e2erevnonmember";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let res = client
@@ -656,9 +742,17 @@ async fn revoking_a_non_member_is_not_found() {
 #[tokio::test]
 async fn revoking_on_a_missing_account_is_not_found() {
     let did = "did:plc:e2erevnoacct";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let missing = Uuid::now_v7();
     let res = client
@@ -673,7 +767,15 @@ async fn revoking_on_a_missing_account_is_not_found() {
 // An anonymous visitor cannot revoke — turned away at 401 before any lookup.
 #[tokio::test]
 async fn anonymous_visitor_cannot_revoke_a_role() {
-    let (base, _backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     let res = client()
         .delete(format!("{base}/accounts/{}/members", Uuid::now_v7()))
@@ -690,9 +792,17 @@ async fn anonymous_visitor_cannot_revoke_a_role() {
 #[tokio::test]
 async fn founding_rejects_a_punycode_handle() {
     let did = "did:plc:e2epuny";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let res = client
         .post(format!("{base}/accounts"))
@@ -708,9 +818,17 @@ async fn founding_rejects_a_punycode_handle() {
 #[tokio::test]
 async fn founding_rejects_a_reserved_handle() {
     let did = "did:plc:e2ereserved";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let res = client
         .post(format!("{base}/accounts"))
@@ -728,9 +846,17 @@ async fn founding_rejects_a_reserved_handle() {
 #[tokio::test]
 async fn founding_rejects_a_duplicate_handle() {
     let did = "did:plc:e2edup";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // First claim of `taken.zurfur.app` succeeds — it takes the first mem DID.
     let res = client
@@ -782,12 +908,20 @@ async fn founding_rejects_a_duplicate_handle() {
 #[tokio::test]
 async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
     let did = "did:plc:e2etombstone";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
 
     // Seed a tombstoned account holding `gone.zurfur.app` (no soft-delete write path
     // exists yet, so insert it directly — the mem mirror of an UPDATE deleted_at).
     let reserved = "gone.zurfur.app".parse::<Handle>().unwrap();
-    backend.seed_soft_deleted_account(&Did::new("did:plc:tombstoned".to_string()), &reserved);
+    backend.seed_soft_deleted_account(&Did::from("did:plc:tombstoned".to_string()), &reserved);
 
     // The resolver does not serve a tombstoned handle.
     let res = client()
@@ -800,7 +934,7 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
 
     // ...but founding over it is a clean 409 (the store backstop), not a 500.
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
         .post(format!("{base}/accounts"))
         .json(&serde_json::json!({ "name": "Reclaimer", "handle": "gone.zurfur.app" }))
@@ -815,9 +949,17 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
 #[tokio::test]
 async fn wellknown_resolves_a_zurfur_handle_to_its_did() {
     let did = "did:plc:e2eresolve";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // Found an account under `alice.zurfur.app` and capture its minted DID.
     let res = client
@@ -854,7 +996,15 @@ async fn wellknown_resolves_a_zurfur_handle_to_its_did() {
 // An unknown handle under the Zurfur namespace resolves to 404 (no such account).
 #[tokio::test]
 async fn wellknown_unknown_handle_is_404() {
-    let (base, _backend) = spawn_app("did:plc:nobody").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:nobody".to_string())).profile(Profile::new(
+            Did::from("did:plc:nobody".to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
 
     let res = client()
         .get(format!("{base}/.well-known/atproto-did"))
@@ -871,9 +1021,17 @@ async fn wellknown_unknown_handle_is_404() {
 #[tokio::test]
 async fn wellknown_does_not_serve_a_foreign_host() {
     let did = "did:plc:e2ebyo";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     // Found an account under a brought (BYO) domain.
     let res = client
@@ -904,17 +1062,17 @@ async fn wellknown_does_not_serve_a_foreign_host() {
 /// fixed owner/handle here never collide across tests.
 async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &str) -> Account {
     let me = backend
-        .find_by_did(&Did::new(my_did.to_string()))
+        .find_by_did(&Did::from(my_did.to_string()))
         .await
         .expect("find me")
         .expect("sign-in provisioned me");
     let owner = backend
-        .provision(&Did::new("did:plc:rankowner".to_string()))
+        .provision(&Did::from("did:plc:rankowner".to_string()))
         .await
         .expect("provision owner");
     let (account, owner_membership) = Account::open(
         owner.id,
-        Did::new("did:plc:rankacct".to_string()),
+        Did::from("did:plc:rankacct".to_string()),
         "ranked.zurfur.app".parse::<Handle>().unwrap(),
         "Ranked Studio".parse::<AccountName>().unwrap(),
         Utc::now(),
@@ -942,15 +1100,23 @@ async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &st
 #[tokio::test]
 async fn admin_cannot_demote_a_peer_admin() {
     let did = "did:plc:e2eadmin-actor";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
 
     // A peer Admin — the same rank as the actor.
     let peer_did = "did:plc:e2epeer-admin";
     let peer = backend
-        .provision(&Did::new(peer_did.to_string()))
+        .provision(&Did::from(peer_did.to_string()))
         .await
         .expect("provision peer");
     backend
@@ -965,7 +1131,7 @@ async fn admin_cannot_demote_a_peer_admin() {
 
     // The actor tries to DEMOTE the peer Admin to Member — must be refused (403).
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": peer_did, "role": "member" }))
         .send()
         .await
@@ -988,14 +1154,22 @@ async fn admin_cannot_demote_a_peer_admin() {
 #[tokio::test]
 async fn admin_can_grant_to_a_non_member() {
     let did = "did:plc:e2eadmin-granter";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
 
     let newcomer_did = "did:plc:e2enewcomer";
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": newcomer_did, "role": "member" }))
         .send()
         .await
@@ -1003,7 +1177,7 @@ async fn admin_can_grant_to_a_non_member() {
     assert_eq!(res.status(), 200, "an Admin seats a brand-new member");
 
     let newcomer = backend
-        .provision(&Did::new(newcomer_did.to_string()))
+        .provision(&Did::from(newcomer_did.to_string()))
         .await
         .expect("provision newcomer");
     assert_eq!(
@@ -1021,15 +1195,23 @@ async fn admin_can_grant_to_a_non_member() {
 #[tokio::test]
 async fn admin_can_re_role_a_member_below_them() {
     let did = "did:plc:e2eadmin-reroler";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
 
     // Seat a Member — a rank below the Admin actor.
     let member_did = "did:plc:e2emember";
     let member = backend
-        .provision(&Did::new(member_did.to_string()))
+        .provision(&Did::from(member_did.to_string()))
         .await
         .expect("provision member");
     backend
@@ -1043,7 +1225,7 @@ async fn admin_can_re_role_a_member_below_them() {
         .expect("seat the member");
 
     let res = client
-        .post(format!("{base}/accounts/{}/members", *account.id))
+        .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": member_did, "role": "manager" }))
         .send()
         .await
@@ -1068,17 +1250,25 @@ async fn admin_can_re_role_a_member_below_them() {
 #[tokio::test]
 async fn owner_can_re_role_an_admin() {
     let did = "did:plc:e2eowner-reroler";
-    let (base, backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
     // The signed-in caller founds the account, so they are its Owner.
     let account_id = found_account(&client, &base, "Owned Studio").await;
-    let account = AccountId::new(Did::new(account_id.clone()));
+    let account = AccountId::from(Did::from(account_id.clone()));
 
     // Seat an Admin under the Owner.
     let admin_did = "did:plc:e2eadmin-grantee";
     let admin = backend
-        .provision(&Did::new(admin_did.to_string()))
+        .provision(&Did::from(admin_did.to_string()))
         .await
         .expect("provision admin");
     backend
@@ -1115,9 +1305,17 @@ async fn owner_can_re_role_an_admin() {
 #[tokio::test]
 async fn create_account_rejects_unknown_request_fields() {
     let did = "did:plc:strictreq";
-    let (base, _backend) = spawn_app(did).await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, _backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "owner.bsky.social").await;
 
     let res = client
         .post(format!("{base}/accounts"))

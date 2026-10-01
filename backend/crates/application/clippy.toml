@@ -1,0 +1,6 @@
+disallowed-methods = [
+    { path = "domain::ports::Database::begin", reason = "only a `#[use_case]` wrapper, `LazyUnit` or `application::transaction()` opens units of work" },
+    { path = "domain::ports::UnitOfWork::commit", reason = "only a `#[use_case]` wrapper, `LazyUnit` or `application::transaction()` settles units of work. To commit, return `Ok` from the use case" },
+    { path = "domain::ports::UnitOfWork::rollback", reason = "only a `#[use_case]` wrapper, `LazyUnit` or `application::transaction()` settles units of work. To rollback, return `Err` from the use case" },
+    { path = "application::transaction", reason = "a use case never opens its own unit; `transaction()` is for `sweep_deadlines` and test seeding, with an `#[allow]` and a reason" },
+]

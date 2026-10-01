@@ -5,23 +5,14 @@
 //! data meant to survive both their creator and account deletion. Only the id
 //! type exists so far.
 
-use std::str::FromStr;
+mod attributes;
+mod entity;
+mod id;
+mod presence;
 
-use crate::elements::{did::Did, id::IdError};
-
-/// The identity of a Character: its own [`Did`]. Every actor mints a DID and
-/// the DID IS the key, Characters included — there is no separate private id.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CharacterId(Did);
-
-impl FromStr for CharacterId {
-    type Err = IdError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let id = s
-            .parse::<Did>()
-            .map(Self)
-            .map_err(|_| IdError::ParsingError)?;
-        Ok(id)
-    }
-}
+pub use attributes::{
+    CharacterAttributes, CharacterDescription, CharacterName, DynamicCharacterAttribute,
+};
+pub use entity::Character;
+pub use id::CharacterId;
+pub use presence::Presence;

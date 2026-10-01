@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -8,8 +10,9 @@ use domain::{
 use serde_json::json;
 
 use crate::{
-    commission::{CommissionError, CommissionResult, view::View},
-    ports::WithPorts,
+    Ports,
+    commission::{CommissionResult, view::View},
+    common_error::{CommonError, NotFoundEntity},
 };
 
 pub struct Command {
@@ -23,8 +26,14 @@ impl View<'_> {
     /// Revokes the target User's view grant, hard-deleting the key. Owner-only;
     /// every other caller gets the closed door's `CommissionNotFound`. Revoking
     /// a key nobody holds succeeds and records nothing.
-    pub async fn revoke(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn revoke(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             target_user_id,
@@ -37,10 +46,10 @@ impl View<'_> {
             .find(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommissionError::CommissionNotFound)?;
+            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
 
-        let mut uow = self.ports().database.begin().await?;
-        let target_user = uow.users().provision(&target_user_id).await?;
+        let uow = uow.open().await?;
+        let target_user = uow.users().provision(target_user_id.did()).await?;
 
         let entry = NewChangelogEntry::event(
             commission.id,
@@ -63,7 +72,6 @@ impl View<'_> {
         if revoked {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }

@@ -20,9 +20,9 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
 
     // Hold a handle to the shared backend so we can introspect it after the flow.
     let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
+        test_support::runtime::mem(&Did::from(did.to_string()))
             .profile(Profile::new(
-                Did::new(did.to_string()),
+                Did::from(did.to_string()),
                 "e2ealice.bsky.social",
             ))
             .public_url(format!("http://{addr}"))
@@ -83,7 +83,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
 
     // Exactly one User exists for that DID after a successful sign-in.
     let provisioned = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
 
@@ -98,7 +98,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
     assert_eq!(res.status(), 303);
 
     let again = backend
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision (repeat)");
     assert_eq!(

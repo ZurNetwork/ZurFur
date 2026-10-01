@@ -1,11 +1,13 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{account::AccountId, user::UserId},
 };
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, invitation::Invitations},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,8 +19,14 @@ pub struct Command {
 pub struct Output;
 
 impl Invitations<'_> {
-    pub async fn decline(&self, cmd: Command, now: DateTimeUtc) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn decline(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             actor_id,
@@ -35,9 +43,8 @@ impl Invitations<'_> {
                 "The invitation could not be declined, as it is no longer pending"
             ))
         })?;
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
-        uow.commit().await?;
         Ok(Output)
     }
 }

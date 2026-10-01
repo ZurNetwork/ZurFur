@@ -26,7 +26,6 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::{DateTime, Utc};
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
@@ -34,65 +33,10 @@ use domain::elements::{
     profile::Profile,
     user::User,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use test_support::http::{client, serve, sign_in};
 
 mod common;
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] so a test can introspect what was persisted (and drive the
-/// sweeper against the same shared store). `did` is the identity `sign_in` will
-/// authenticate as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(
-                Did::new(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session
-/// for the app's configured DID.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303, "signin should redirect to the PDS");
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303, "callback should redirect on success");
-}
 
 /// Creates a commission over HTTP as the signed-in caller (optionally with a
 /// deadline) and returns its id — located by its (per-test unique) title,
@@ -113,16 +57,18 @@ async fn create_commission(
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let title = body["title"].as_str().expect("body carries a title");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.iter()
-        .find(|c| c.title.as_str() == title)
-        .expect("the created commission was persisted")
-        .id
+    uuid::Uuid::from(
+        all.iter()
+            .find(|c| c.title.as_str() == title)
+            .expect("the created commission was persisted")
+            .id,
+    )
 }
 
 /// The persisted commission, rebuilt.
 async fn stored(backend: &MemBackend, id: uuid::Uuid) -> Commission {
     backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -133,7 +79,7 @@ async fn stored_deadline_status(backend: &MemBackend, id: uuid::Uuid) -> Option<
     stored(backend, id)
         .await
         .deadline_status
-        .map(|s| s.as_str())
+        .map(<&'static str>::from)
 }
 
 /// PUT the deadline and return the response.
@@ -172,7 +118,7 @@ async fn entries(
     id: uuid::Uuid,
 ) -> Vec<domain::elements::commission::ChangelogEntry> {
     backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("inspect entries")
 }
@@ -190,12 +136,12 @@ async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
     let owner: User = backend
-        .provision(&Did::new("did:plc:someone-else".to_string()))
+        .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
     let commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
-    let id = *commission.id;
+    let id = uuid::Uuid::from(commission.id);
     backend
         .create_commission(&commission)
         .await
@@ -218,9 +164,17 @@ fn after_past() -> DateTime<Utc> {
 // actor named.
 #[tokio::test]
 async fn a_participant_sets_the_deadline() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     let res = put_deadline(&client, &base, id, "2027-03-01T00:00:00Z").await;
@@ -236,7 +190,7 @@ async fn a_participant_sets_the_deadline() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + deadline set");
     let set = &log[1];
-    assert_eq!(set.kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(set.kind), "deadline_set");
     assert!(set.actor_id.is_some(), "an explicit set names its actor");
     assert!(set.payload["from"].is_null(), "born without a deadline");
     assert_eq!(set.payload["to"], "2027-03-01T00:00:00Z");
@@ -246,9 +200,17 @@ async fn a_participant_sets_the_deadline() {
 // `deadline_extended`; pulling it earlier is a plain re-set (`deadline_set`).
 #[tokio::test]
 async fn extending_the_deadline_emits_deadline_extended() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -261,7 +223,7 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(res.status(), 204);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + extension");
-    assert_eq!(log[1].kind.as_str(), "deadline_extended");
+    assert_eq!(<&'static str>::from(log[1].kind), "deadline_extended");
     assert_eq!(log[1].payload["from"], "2027-03-01T00:00:00Z");
     assert_eq!(log[1].payload["to"], "2027-06-01T00:00:00Z");
 
@@ -270,7 +232,7 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(res.status(), 204);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3);
-    assert_eq!(log[2].kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(log[2].kind), "deadline_set");
     assert_eq!(log[2].payload["from"], "2027-06-01T00:00:00Z");
     assert_eq!(log[2].payload["to"], "2027-04-01T00:00:00Z");
 }
@@ -281,9 +243,17 @@ async fn extending_the_deadline_emits_deadline_extended() {
 // Clearing an already-clear deadline is an idempotent no-op.
 #[tokio::test]
 async fn clearing_the_deadline_wipes_the_axis() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -318,7 +288,7 @@ async fn clearing_the_deadline_wipes_the_axis() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + delayed flag + deadline cleared");
     let clear = &log[2];
-    assert_eq!(clear.kind.as_str(), "deadline_set");
+    assert_eq!(<&'static str>::from(clear.kind), "deadline_set");
     assert_eq!(clear.payload["from"], "2027-03-01T00:00:00Z");
     assert!(clear.payload["to"].is_null(), "a clear records to: null");
 
@@ -335,9 +305,17 @@ async fn clearing_the_deadline_wipes_the_axis() {
 // Re-setting the deadline already held is the set-side no-op: 204, no entry.
 #[tokio::test]
 async fn re_setting_the_same_deadline_appends_no_entry() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -360,9 +338,17 @@ async fn re_setting_the_same_deadline_appends_no_entry() {
 // entry); re-flagging is a no-op; the Participant clears their own flag.
 #[tokio::test]
 async fn a_participant_flags_the_commission_as_slipping() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -378,7 +364,7 @@ async fn a_participant_flags_the_commission_as_slipping() {
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 2, "creation + delayed flag");
     let delayed = &log[1];
-    assert_eq!(delayed.kind.as_str(), "delayed");
+    assert_eq!(<&'static str>::from(delayed.kind), "delayed");
     assert!(
         delayed.actor_id.is_some(),
         "Delayed is a manual Participant act, never a system entry"
@@ -400,7 +386,7 @@ async fn a_participant_flags_the_commission_as_slipping() {
     assert_eq!(stored_deadline_status(&backend, id).await, None);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + flag + clear");
-    assert_eq!(log[2].kind.as_str(), "delayed");
+    assert_eq!(<&'static str>::from(log[2].kind), "delayed");
     assert_eq!(log[2].payload["from"], "delayed");
     assert!(log[2].payload["to"].is_null());
 
@@ -418,9 +404,17 @@ async fn a_participant_flags_the_commission_as_slipping() {
 // token outside the axis vocabulary is refused the same way.
 #[tokio::test]
 async fn late_cannot_be_set_by_hand() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -460,9 +454,17 @@ async fn late_cannot_be_set_by_hand() {
 // touches it.
 #[tokio::test]
 async fn a_deadlineless_commission_never_carries_deadline_statuses() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     let res = put_deadline_status(&client, &base, id, "delayed").await;
@@ -483,9 +485,17 @@ async fn a_deadlineless_commission_never_carries_deadline_statuses() {
 // entry — Late is already the system's standing word).
 #[tokio::test]
 async fn the_sweeper_marks_missed_deadlines_late() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let first = create_commission(
         &client,
         &base,
@@ -524,7 +534,7 @@ async fn the_sweeper_marks_missed_deadlines_late() {
     let log = entries(&backend, first).await;
     assert_eq!(log.len(), 2, "creation + the system Late entry");
     let late = &log[1];
-    assert_eq!(late.kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(late.kind), "late");
     assert_eq!(late.actor_id, None, "the system entry carries no actor");
     assert_eq!(
         late.payload["deadline"], "2020-01-01T00:00:00Z",
@@ -549,9 +559,17 @@ async fn the_sweeper_marks_missed_deadlines_late() {
 // the system entry records what it upgraded from.
 #[tokio::test]
 async fn a_standing_delayed_upgrades_to_late() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -589,7 +607,7 @@ async fn a_standing_delayed_upgrades_to_late() {
         4,
         "creation + delayed flag + deadline move + system Late"
     );
-    assert_eq!(log[3].kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(log[3].kind), "late");
     assert_eq!(log[3].actor_id, None);
     assert_eq!(
         log[3].payload["from"], "delayed",
@@ -602,9 +620,17 @@ async fn a_standing_delayed_upgrades_to_late() {
 // with a SECOND changelog entry — each miss is its own event.
 #[tokio::test]
 async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -625,7 +651,7 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
     );
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 3, "creation + Late + extension");
-    assert_eq!(log[2].kind.as_str(), "deadline_extended");
+    assert_eq!(<&'static str>::from(log[2].kind), "deadline_extended");
 
     // The new deadline is missed too: the deadline_extended entry re-arms the
     // log, so a NEW Late entry lands (each miss is its own event). Asserted on
@@ -635,7 +661,7 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
     assert_eq!(sweep(&backend, far_future).await, 1);
     let log = entries(&backend, id).await;
     assert_eq!(log.len(), 4, "each miss is its own event");
-    assert_eq!(log[3].kind.as_str(), "late");
+    assert_eq!(<&'static str>::from(log[3].kind), "late");
     assert_eq!(log[3].payload["deadline"], "2099-01-01T00:00:00Z");
 }
 
@@ -645,9 +671,17 @@ async fn extending_past_late_clears_it_and_a_second_miss_relogs() {
 // erased by hand.
 #[tokio::test]
 async fn the_systems_late_cannot_be_overridden_by_hand() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -690,9 +724,17 @@ async fn the_systems_late_cannot_be_overridden_by_hand() {
 // moves the Lifecycle — ZMVP-84's rule, re-asserted here).
 #[tokio::test]
 async fn the_axes_compose_freely() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(
         &client,
         &base,
@@ -712,11 +754,11 @@ async fn the_axes_compose_freely() {
 
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.direction_status.map(|s| s.as_str()),
+        commission.direction_status.map(<&'static str>::from),
         Some("waiting_for_approval")
     );
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "the two axes hold values simultaneously — the passed deadline derives \
          Late on the deadline axis"
@@ -727,11 +769,14 @@ async fn the_axes_compose_freely() {
     assert_eq!(sweep(&backend, after_deadline).await, 1);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.direction_status.map(|s| s.as_str()),
+        commission.direction_status.map(<&'static str>::from),
         Some("waiting_for_approval"),
         "the sweep never moves the direction axis"
     );
-    assert_eq!(commission.deadline_status.map(|s| s.as_str()), Some("late"));
+    assert_eq!(
+        commission.deadline_status.map(<&'static str>::from),
+        Some("late")
+    );
     assert!(
         matches!(commission.lifecycle_step, LifecycleStep::Draft),
         "no system event moves the Lifecycle"
@@ -746,7 +791,7 @@ async fn the_axes_compose_freely() {
     assert_eq!(res.status(), 204);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "clearing the direction axis leaves the deadline axis alone"
     );
@@ -758,9 +803,19 @@ async fn the_axes_compose_freely() {
 // never a 403 (no existence oracle), and nothing changes.
 #[tokio::test]
 async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
-    let (base, backend) = spawn_app("did:plc:outsider").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:outsider".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:outsider".to_string()),
+                "artist.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let foreign = seed_foreign_commission(&backend).await;
     let missing = uuid::Uuid::now_v7();
 
@@ -798,7 +853,7 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
         "the deadline never moved"
     );
     assert_eq!(
-        commission.deadline_status.map(|s| s.as_str()),
+        commission.deadline_status.map(<&'static str>::from),
         Some("late"),
         "the axis derives Late from the seeded past deadline — the non-participant \
          changed nothing (its stream below stays empty)"
@@ -813,9 +868,17 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
 // deadline surfaces.
 #[tokio::test]
 async fn anonymous_callers_are_turned_away() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let signed_in = client();
-    sign_in(&signed_in, &base).await;
+    sign_in(&signed_in, &base, "artist.bsky.social").await;
     let id = create_commission(&signed_in, &base, &backend, json!({ "title": "Ref" })).await;
 
     let anon = client();
@@ -851,9 +914,17 @@ async fn anonymous_callers_are_turned_away() {
 // nothing stored or appended.
 #[tokio::test]
 async fn a_malformed_deadline_body_is_rejected() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref" })).await;
 
     for body in [

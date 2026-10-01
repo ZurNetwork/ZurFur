@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{
     commission::CommissionId,
     user::UserId,
@@ -5,10 +7,10 @@ use domain::elements::{
 };
 
 use crate::{
+    Ports,
     account::{
         AccountEntity, AccountError, AccountResult, require_live_account, workflow::Workflows,
     },
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,8 +28,13 @@ pub struct Output {
 
 impl Workflows<'_> {
     /// Takes a commission off the board: out of whichever column holds it.
-    pub async fn remove(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn remove(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -58,9 +65,8 @@ impl Workflows<'_> {
             .remove_element(commission_id)
             .map_err(|_| AccountError::NotFound(AccountEntity::Commission))?;
 
-        let mut uow = ports.database.begin().await?;
+        let uow = uow.open().await?;
         uow.columns().set_commissions(&column).await?;
-        uow.commit().await?;
 
         // The column has done its job; hand its cards over rather than copy them.
         let commissions = column.into_iter().collect();

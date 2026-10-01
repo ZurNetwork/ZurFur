@@ -20,7 +20,7 @@ use domain::elements::{
 async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:factless-owner".to_string()))
+        .provision(&Did::from("did:plc:factless-owner".to_string()))
         .await
         .expect("provision owner");
     let title = "A ref sheet"
@@ -69,7 +69,7 @@ async fn an_unknown_commission_answers_false() {
     let mut uow = db.begin().await.expect("begin");
     let has_facts = uow
         .commissions()
-        .commission_has_facts(&CommissionId::new(uuid::Uuid::now_v7()))
+        .commission_has_facts(&CommissionId::from(uuid::Uuid::now_v7()))
         .await
         .expect("has_facts for an unknown id");
     assert!(!has_facts);
@@ -85,7 +85,7 @@ async fn an_unknown_commission_answers_false() {
 async fn set_archived_round_trips_and_reports_transitions() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:archiving-owner".to_string()))
+        .provision(&Did::from("did:plc:archiving-owner".to_string()))
         .await
         .expect("provision owner");
     let commission = Commission::create(
@@ -180,7 +180,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
     );
     assert!(
         !uow.commissions()
-            .set_archived(&CommissionId::new(uuid::Uuid::now_v7()), Some(Utc::now()))
+            .set_archived(&CommissionId::from(uuid::Uuid::now_v7()), Some(Utc::now()))
             .await
             .expect("archive an unknown id"),
         "an absent commission matches nothing (existence is the caller's check)",
@@ -195,7 +195,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
 async fn a_dropped_unit_of_work_discards_the_archive() {
     let backend = MemBackend::new();
     let owner = backend
-        .provision(&Did::new("did:plc:rollback-owner".to_string()))
+        .provision(&Did::from("did:plc:rollback-owner".to_string()))
         .await
         .expect("provision owner");
     let commission = Commission::create(

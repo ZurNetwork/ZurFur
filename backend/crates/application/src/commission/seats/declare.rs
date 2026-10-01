@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -11,8 +13,8 @@ use domain::{
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, require_owner, seats::Seats},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -28,8 +30,14 @@ pub struct Output {
 }
 
 impl Seats<'_> {
-    pub async fn declare(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn declare(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -57,15 +65,14 @@ impl Seats<'_> {
             actor_id,
             json!({
                 "kind": seat.kind.as_str(),
-                "seat": *seat_id
+                "seat": seat_id.to_string()
             }),
             now,
         );
 
-        let mut uow = self.ports().database.begin().await?;
+        let uow = uow.open().await?;
         uow.commissions().declare_seat(&seat).await?;
         uow.changelog().append(&entry).await?;
-        uow.commit().await?;
         Ok(Output { seat_id })
     }
 }

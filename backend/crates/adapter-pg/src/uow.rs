@@ -5,6 +5,7 @@
 //! bare-pool write is unrepresentable.
 
 use async_trait::async_trait;
+use domain::ports::character::CharacterWrites;
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionRepo, Database,
     UnitOfWork, UserWrites, WorkflowWrites,
@@ -14,6 +15,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use crate::PgCommissionWrites;
 use crate::account::PgAccountWrites;
 use crate::actor_identity::PgActorIdentityWrites;
+use crate::character::PgCharacterWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
 use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
@@ -90,6 +92,12 @@ impl UnitOfWork for PgUnitOfWork {
     /// The column write surface over this transaction.
     fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
         Box::new(PgColumnWrites { conn: &mut self.tx })
+    }
+
+    /// The character write surface over this transaction. Stubbed — no
+    /// storage lands until the Character slice.
+    fn characters(&mut self) -> Box<dyn CharacterWrites + '_> {
+        Box::new(PgCharacterWrites)
     }
 
     /// Commits the unit, consuming the handle so it can't be reused.

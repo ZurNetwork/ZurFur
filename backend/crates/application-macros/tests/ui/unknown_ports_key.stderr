@@ -1,0 +1,5 @@
+error: expected `is_root = true`
+ --> tests/ui/unknown_ports_key.rs:5:13
+  |
+5 |     #[ports(root = true)]
+  |             ^^^^

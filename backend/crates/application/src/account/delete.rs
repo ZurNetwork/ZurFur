@@ -1,6 +1,11 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::elements::{account::AccountId, role::Role, user::UserId};
 
-use crate::account::{AccountError, AccountResult, Accounts, facts, require_live_account};
+use crate::{
+    Ports,
+    account::{AccountError, AccountResult, Accounts, facts, require_live_account},
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -24,8 +29,13 @@ pub struct Output {
 }
 
 impl<'a> Accounts<'a> {
-    pub async fn delete(&self, cmd: Command) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn delete(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             actor_id,
@@ -46,22 +56,23 @@ impl<'a> Accounts<'a> {
             account_id: account_id.clone(),
         };
 
-        let mut uow = ports.database.begin().await?;
-        let outcome = if self.facts().exist(existing_facts).await?.has_facts {
+        let has_facts = self.facts().exist(existing_facts).await?.has_facts;
+
+        let uow = uow.open().await?;
+        let outcome = if has_facts {
             uow.accounts().soft_delete(&account_id).await?;
             DeleteOutcome::Soft
         } else {
             uow.accounts().hard_delete(&account_id).await?;
-            if let Err(err) = ports.did_minter.tombstone(&account_id).await {
+            if let Err(err) = ports.did_minter.tombstone(account_id.did()).await {
                 tracing::warn!(
                     error = ?err,
-                    did = %account_id.as_str(),
+                    did = %AsRef::<str>::as_ref(&account_id),
                     "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
                 )
             };
             DeleteOutcome::Hard
         };
-        uow.commit().await?;
         Ok(Output { outcome })
     }
 }

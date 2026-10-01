@@ -1,6 +1,8 @@
 //! `Accounts::create` over the in-memory fakes: the one implementation every
 //! driver calls, exercised branch by branch below the HTTP layer.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use std::sync::Arc;
 
 use application::account::{self, AccountError};
@@ -39,7 +41,7 @@ async fn recognized(database: &dyn Database, did: &Did) -> User {
 
 #[tokio::test]
 async fn founding_persists_the_account_and_seats_the_founder_as_owner() {
-    let did = Did::new("did:plc:app-founder".to_string());
+    let did = Did::from("did:plc:app-founder".to_string());
     let fixture = test_support::runtime::mem(&did).build();
     let runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;
@@ -79,7 +81,7 @@ async fn founding_persists_the_account_and_seats_the_founder_as_owner() {
 
 #[tokio::test]
 async fn a_live_handle_is_taken() {
-    let did = Did::new("did:plc:app-taken".to_string());
+    let did = Did::from("did:plc:app-taken".to_string());
     let fixture = test_support::runtime::mem(&did).build();
     let runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;
@@ -120,6 +122,10 @@ impl DidMinter for BrokenMinter {
         anyhow::bail!("directory unreachable")
     }
 
+    async fn mint_handleless(&self) -> anyhow::Result<Did> {
+        anyhow::bail!("directory unreachable")
+    }
+
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         anyhow::bail!("directory unreachable")
     }
@@ -131,7 +137,7 @@ impl DidMinter for BrokenMinter {
 
 #[tokio::test]
 async fn a_mint_failure_persists_nothing() {
-    let did = Did::new("did:plc:app-mintfail".to_string());
+    let did = Did::from("did:plc:app-mintfail".to_string());
     let fixture = test_support::runtime::mem(&did).build();
     let mut runtime = fixture.runtime;
     let user = recognized(&*runtime.database, &did).await;

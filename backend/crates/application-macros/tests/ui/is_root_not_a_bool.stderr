@@ -1,0 +1,5 @@
+error: expected boolean literal
+ --> tests/ui/is_root_not_a_bool.rs:5:23
+  |
+5 |     #[ports(is_root = "yes")]
+  |                       ^^^^^

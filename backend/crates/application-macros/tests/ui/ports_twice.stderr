@@ -1,0 +1,5 @@
+error: `#[ports]` may only be used once in `WithPorts`. Previous parent: first
+ --> tests/ui/ports_twice.rs:8:5
+  |
+8 |     second: &'a u8,
+  |     ^^^^^^

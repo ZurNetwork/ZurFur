@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -8,8 +10,8 @@ use domain::{
 use serde_json::json;
 
 use crate::{
+    Ports,
     commission::{CommissionResult, deadline::Deadline, require_participant},
-    ports::WithPorts,
 };
 
 pub struct Command {
@@ -22,8 +24,14 @@ pub struct Output;
 impl Deadline<'_> {
     /// Clear the commission's deadline, as a Participant — the lever out of a
     /// Late standing. Clearing an already-absent deadline is a no-op.
-    pub async fn clear(&self, cmd: Command, now: DateTimeUtc) -> CommissionResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn clear(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> CommissionResult<Output> {
         let Command {
             actor_id,
             commission_id,
@@ -42,14 +50,13 @@ impl Deadline<'_> {
             now,
         );
 
-        let mut uow = ports.database.begin().await?;
+        let uow = uow.open().await?;
         let mut commissions = uow.commissions();
         let moved = commissions.set_deadline(&commission.id, None).await?;
         drop(commissions);
         if moved {
             uow.changelog().append(&entry).await?;
         }
-        uow.commit().await?;
         Ok(Output)
     }
 }

@@ -1,3 +1,5 @@
+use crate::LazyUnit;
+use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -9,8 +11,8 @@ use domain::{
 };
 
 use crate::{
+    Ports,
     account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
-    ports::WithPorts,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,8 +43,14 @@ impl Invitations<'_> {
     /// the same user is returned as-is rather than duplicated. The actor must
     /// hold a role that outranks the offered one — anything less is
     /// `IncorrectRole`, and an invitee who is already seated `AlreadyMember`.
-    pub async fn issue(&self, cmd: Command, now: DateTimeUtc) -> AccountResult<Output> {
-        let ports = self.ports();
+    #[use_case]
+    pub async fn issue(
+        &self,
+        #[ports] ports: &Ports,
+        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        cmd: Command,
+        now: DateTimeUtc,
+    ) -> AccountResult<Output> {
         let Command {
             account_id,
             target_id,
@@ -56,11 +64,9 @@ impl Invitations<'_> {
             .await?
             .filter(|r| r.can_grant(&role))
             .ok_or(AccountError::IncorrectRole)?;
-        let mut uow = self.ports().database.begin().await?;
-        let target = uow.users().provision(&target_id).await?;
         if ports
             .accounts
-            .role_of(&target.id, &account_id)
+            .role_of(&target_id, &account_id)
             .await?
             .is_some()
         {
@@ -69,24 +75,24 @@ impl Invitations<'_> {
 
         if let Some(existing_invitation) = ports
             .accounts
-            .find_pending_invitation(&account_id, &target.id)
+            .find_pending_invitation(&account_id, &target_id)
             .await?
         {
-            uow.commit().await?;
             return Ok(Output {
                 account_id,
                 invitation_id: existing_invitation.id,
                 outcome: InviteOutcome::AlreadyPending,
                 role: existing_invitation.role,
                 state: existing_invitation.state,
-                target_id: target.id,
+                target_id,
             });
         }
 
+        let uow = uow.open().await?;
+        let target = uow.users().provision(target_id.did()).await?;
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 
         let stored = uow.accounts().create_invitation(&invitation).await?;
-        uow.commit().await?;
 
         let outcome = if invitation.id == stored.id {
             InviteOutcome::Minted

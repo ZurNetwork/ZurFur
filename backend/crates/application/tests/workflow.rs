@@ -6,6 +6,8 @@
 //! caller-named-account-vs-board reconciliation, and the order that keeps a
 //! non-member from reading board state off an error.
 
+#![allow(clippy::disallowed_methods, reason = "test seeding")]
+
 use application::account::{self, AccountEntity, AccountError, workflow};
 use application::transaction;
 use chrono::Utc;
@@ -31,13 +33,13 @@ fn handle_domain() -> HandleDomain {
 
 /// A runtime whose acting DID is `did` — the boards below are founded on it.
 fn fixture(did: &str) -> MemRuntime {
-    let acting = Did::new(did.to_string());
+    let acting = Did::from(did.to_string());
     test_support::runtime::mem(&acting).build()
 }
 
 /// Recognize a DID as a User (the `provision` seed), answering its id.
 async fn recognized(fixture: &MemRuntime, did: &str) -> UserId {
-    let did = Did::new(did.to_string());
+    let did = Did::from(did.to_string());
     fixture
         .backend
         .provision(&did)
@@ -110,7 +112,7 @@ async fn add_column(
 ) -> Result<workflow::column::add::Output, AccountError> {
     let command = workflow::column::add::Command {
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
         column_name: name.parse().expect("a valid column name"),
         position,
     };
@@ -134,7 +136,7 @@ async fn column_id(
     added
         .columns
         .into_iter()
-        .find(|column| column.name.as_str() == name)
+        .find(|column| column.name.as_ref() == name)
         .expect("the added column is on the board")
         .id
 }
@@ -147,7 +149,7 @@ async fn delete_board(
 ) -> Result<workflow::delete::Output, AccountError> {
     let command = workflow::delete::Command {
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
     };
     let app = runtime.app();
     let accounts = app.accounts();
@@ -163,9 +165,9 @@ async fn rename_column(
     name: &str,
 ) -> Result<workflow::column::rename::Output, AccountError> {
     let command = workflow::column::rename::Command {
-        column_id: column_id.clone(),
+        column_id: *column_id,
         actor_id: actor.clone(),
-        workflow_id: workflow_id.clone(),
+        workflow_id: *workflow_id,
         name: name.parse().expect("a valid column name"),
     };
     let app = runtime.app();
@@ -184,8 +186,8 @@ async fn reposition_column(
 ) -> Result<workflow::column::reposition::Output, AccountError> {
     let command = workflow::column::reposition::Command {
         actor_id: actor.clone(),
-        column_id: column_id.clone(),
-        workflow_id: workflow_id.clone(),
+        column_id: *column_id,
+        workflow_id: *workflow_id,
         to_index,
     };
     let app = runtime.app();
@@ -203,7 +205,7 @@ async fn column_names(runtime: &Runtime, workflow_id: &WorkflowId) -> Vec<String
         .expect("reads the board")
         .expect("the board is stored")
         .iter()
-        .map(|column| column.name.as_str().to_owned())
+        .map(|column| column.name.as_ref().to_owned())
         .collect()
 }
 
@@ -225,7 +227,7 @@ async fn remove_column(
     column_id: &ColumnId,
 ) -> Result<workflow::column::remove::Output, AccountError> {
     let command = workflow::column::remove::Command {
-        column_id: column_id.clone(),
+        column_id: *column_id,
         actor_id: actor.clone(),
     };
     let app = runtime.app();

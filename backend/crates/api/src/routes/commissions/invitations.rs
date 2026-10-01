@@ -36,7 +36,7 @@ impl From<InvitationOutput> for InviteToSeatResponse {
             commission: invitation.commission_id.to_string(),
             id: invitation.invitation_id.to_string(),
             seat: invitation.seat_id.to_string(),
-            state: invitation.invitation_state.as_str(),
+            state: <&'static str>::from(invitation.invitation_state),
             user: invitation.invited_user_id.to_string(),
         }
     }
@@ -81,7 +81,7 @@ pub(super) async fn invite_to_seat(
             .user
             .parse::<UserId>()
             .map_err(|_| Problem::invalid_request("Invalid target user DID"))?,
-        seat_id: SeatId::new(body.seat),
+        seat_id: SeatId::from(body.seat),
     };
 
     let issued = state
@@ -133,7 +133,7 @@ pub(super) async fn revoke_seat_invitation(
             .parse::<UserId>()
             .map_err(|_| Problem::invalid_request("Invalid request"))?,
         actor_id,
-        seat_id: SeatId::new(body.seat),
+        seat_id: SeatId::from(body.seat),
     };
 
     let output = state
@@ -153,38 +153,4 @@ pub(super) async fn revoke_seat_invitation(
 }
 
 #[cfg(test)]
-mod tests {
-    //! Pins the two response bodies' wire shapes.
-
-    use super::*;
-
-    #[test]
-    fn invite_to_seat_response_serializes_every_field_as_a_string() {
-        let body = InviteToSeatResponse {
-            commission: "commission-id".to_string(),
-            id: "offer-id".to_string(),
-            seat: "seat-id".to_string(),
-            state: "pending",
-            user: "did:plc:invitee".to_string(),
-        };
-
-        assert_eq!(
-            serde_json::to_string(&body).unwrap(),
-            r#"{"commission":"commission-id","id":"offer-id","seat":"seat-id","state":"pending","user":"did:plc:invitee"}"#
-        );
-    }
-
-    #[test]
-    fn revoke_seat_invitation_response_serializes_every_field_as_a_string() {
-        let body = RevokeSeatInvitationResponse {
-            commission: "commission-id".to_string(),
-            seat: "seat-id".to_string(),
-            user: "did:plc:invitee".to_string(),
-        };
-
-        assert_eq!(
-            serde_json::to_string(&body).unwrap(),
-            r#"{"commission":"commission-id","seat":"seat-id","user":"did:plc:invitee"}"#
-        );
-    }
-}
+mod tests;

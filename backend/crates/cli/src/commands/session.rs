@@ -45,7 +45,7 @@ impl From<me::Output> for Whoami {
         match me.profile {
             Some(profile) => Whoami {
                 did,
-                handle: Some(profile.handle),
+                handle: Some(profile.handle.to_string()),
                 display_name: profile.display_name,
                 avatar_url: profile.avatar_url,
             },

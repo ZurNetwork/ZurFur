@@ -1,0 +1,5 @@
+error: a `#[use_case]` takes plainly named parameters
+ --> tests/ui/non_plain_pattern.rs:7:25
+  |
+7 |     async fn run(&self, (first, second): (u8, u8)) {}
+  |                         ^^^^^^^^^^^^^^^

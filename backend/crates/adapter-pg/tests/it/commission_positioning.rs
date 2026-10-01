@@ -31,7 +31,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
     let mut uow = db.begin().await.expect("begin");
     let user = uow
         .users()
-        .provision(&Did::new(did.to_string()))
+        .provision(&Did::from(did.to_string()))
         .await
         .expect("provision");
     uow.commit().await.expect("commit");
@@ -64,7 +64,7 @@ async fn seed_account(pool: &PgPool, owner_did: &str, handle: &str) -> AccountId
     let owner = provision(pool, owner_did).await;
     let (account, membership) = Account::open(
         owner.id.clone(),
-        Did::new(format!("did:plc:acct-{handle}")),
+        Did::from(format!("did:plc:acct-{handle}")),
         handle.parse::<Handle>().expect("handle"),
         "PG Studio".parse::<AccountName>().expect("name"),
         Utc::now(),
@@ -92,7 +92,7 @@ async fn seed_board(pool: &PgPool, account: &AccountId, name: &str) -> (Workflow
         .expect("create the board");
     let column_name = "Open".parse::<ColumnName>().expect("column name");
     let column = workflow.new_column(column_name, workflow.visibility.clone());
-    let column_id = column.id.clone();
+    let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows()
         .set_indexes(&workflow)
@@ -159,7 +159,7 @@ async fn a_commission_sits_on_many_accounts_boards_at_once() {
                 .await
                 .unwrap()
                 .map(|found| found.id),
-            Some(column.clone()),
+            Some(*column),
             "the board that positioned it holds the card",
         );
         assert_eq!(

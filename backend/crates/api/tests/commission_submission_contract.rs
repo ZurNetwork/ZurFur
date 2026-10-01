@@ -16,67 +16,14 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
-use api::AppState;
 use chrono::Utc;
 use domain::elements::{
     commission::{CommissionId, DeadlineStatus, DirectionStatus},
     did::Did,
     profile::Profile,
 };
-use reqwest::redirect::Policy;
 use serde_json::json;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
-
-/// Boots the app with everything faked in-process; returns the base URL and the
-/// [`MemBackend`] for introspection. `did` is the identity `sign_in` authenticates as.
-async fn spawn_app(did: &str) -> (String, MemBackend) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
-    let addr = listener.local_addr().expect("local addr");
-
-    let test_support::runtime::MemRuntime { runtime, backend } =
-        test_support::runtime::mem(&Did::new(did.to_string()))
-            .profile(Profile::new(
-                Did::new(did.to_string()),
-                "artist.bsky.social",
-            ))
-            .public_url(format!("http://{addr}"))
-            .build();
-    let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), backend)
-}
-
-/// A cookie-keeping client that does not auto-follow redirects.
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds")
-}
-
-/// Drives the two-step sign-in so the client's cookie jar carries a live session.
-async fn sign_in(client: &reqwest::Client, base: &str) {
-    let res = client
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=artist.bsky.social")
-        .send()
-        .await
-        .expect("POST /signin");
-    assert_eq!(res.status(), 303);
-    let res = client
-        .get(format!("{base}/signin-callback?code=test"))
-        .send()
-        .await
-        .expect("GET /signin-callback");
-    assert_eq!(res.status(), 303);
-}
+use test_support::http::{client, serve, sign_in};
 
 /// Creates a commission over HTTP (with the given body) and returns its id
 /// (introspected off the backend — the route returns a bare `201`).
@@ -94,7 +41,7 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let all = backend.all_commissions().await.expect("list commissions");
-    *all.last().expect("a commission was persisted").id
+    uuid::Uuid::from(all.last().expect("a commission was persisted").id)
 }
 
 /// The commission's changelog entries (introspected off the backend).
@@ -103,7 +50,7 @@ async fn entries(
     id: uuid::Uuid,
 ) -> Vec<domain::elements::commission::ChangelogEntry> {
     backend
-        .changelog_entries(CommissionId::new(id))
+        .changelog_entries(CommissionId::from(id))
         .await
         .expect("inspect entries")
 }
@@ -111,7 +58,7 @@ async fn entries(
 /// The persisted commission, freshly read.
 async fn stored(backend: &MemBackend, id: uuid::Uuid) -> domain::elements::commission::Commission {
     backend
-        .find_commission(CommissionId::new(id))
+        .find_commission(CommissionId::from(id))
         .await
         .expect("find commission")
         .expect("commission exists")
@@ -126,9 +73,17 @@ async fn stored(backend: &MemBackend, id: uuid::Uuid) -> domain::elements::commi
 // changelog entry is the `file_added` itself, whose payload carries no status.
 #[tokio::test]
 async fn the_upload_endpoint_never_mutates_any_status() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
 
     // A deadline already in the past, so a sweep can put a real value on the
     // deadline axis.
@@ -186,8 +141,8 @@ async fn the_upload_endpoint_never_mutates_any_status() {
     // Every status axis is exactly as it was.
     let after = stored(&backend, id).await;
     assert_eq!(
-        after.lifecycle_step.as_str(),
-        before.lifecycle_step.as_str(),
+        <&'static str>::from(&after.lifecycle_step),
+        <&'static str>::from(&before.lifecycle_step),
         "an upload never moves the Lifecycle"
     );
     assert_eq!(
@@ -213,7 +168,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         "the upload appends exactly its own entry, nothing else"
     );
     let uploaded = log.last().expect("the new entry");
-    assert_eq!(uploaded.kind.as_str(), "file_added");
+    assert_eq!(<&'static str>::from(uploaded.kind), "file_added");
     // Sorted before comparing: serde_json's Map iteration order is
     // feature-dependent (`preserve_order`), and the contract pins the key SET.
     let mut payload_keys: Vec<&str> = uploaded
@@ -232,7 +187,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
     assert!(
         !log.iter()
             .skip(log_before)
-            .any(|e| e.kind.as_str() == "status_changed"),
+            .any(|e| <&'static str>::from(e.kind) == "status_changed"),
         "no status_changed entry rode along with the upload"
     );
 }
@@ -243,9 +198,17 @@ async fn the_upload_endpoint_never_mutates_any_status() {
 // future submission form orchestrates.
 #[tokio::test]
 async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
-    let (base, backend) = spawn_app("did:plc:artist").await;
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
     let client = client();
-    sign_in(&client, &base).await;
+    sign_in(&client, &base, "artist.bsky.social").await;
     let id = create_commission(&client, &base, &backend, json!({ "title": "Ref sheet" })).await;
 
     // Call 1 — the upload.
@@ -280,7 +243,7 @@ async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
     // Each call produced its own entry: creation, then file_added, then
     // status_changed — three distinct records, never a merged one.
     let log = entries(&backend, id).await;
-    let kinds: Vec<&str> = log.iter().map(|e| e.kind.as_str()).collect();
+    let kinds: Vec<&str> = log.iter().map(|e| <&'static str>::from(e.kind)).collect();
     assert_eq!(
         kinds,
         ["created", "file_added", "status_changed"],
@@ -288,7 +251,7 @@ async fn upload_and_status_set_are_two_calls_with_their_own_entries() {
     );
 
     let me = backend
-        .find_by_did(&Did::new("did:plc:artist".to_string()))
+        .find_by_did(&Did::from("did:plc:artist".to_string()))
         .await
         .expect("find me")
         .expect("provisioned");
