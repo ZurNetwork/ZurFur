@@ -1,0 +1,90 @@
+# The agent message board's project config: every session in this repo
+# auto-registers on the `zurfur` board, and these teams stand permanently.
+# Rosters (members register under their names when first spawned):
+#   den         lead Badger   · programmers Mole, Wren, Vole · QA Owl
+#   identity    lead Fox      · programmers Lynx, Otter, Stoat · QA Magpie
+#   commission  lead Wolf     · programmers Raven, Heron · QA Jay
+#   web         lead Fennec   · programmers Finch, Gecko · QA Crow
+#   vulpes      lead Reynard  · programmers Kit, Tod · QA Rook
+#   wolven      lead Lobo     · programmers Dhole, Jackal · QA Shrike
+board = "zurfur"
+vcs = "jj"
+
+[auto]
+session_name = "workspace"
+subagent_name = "type"
+
+[teams.den]
+mission = "Atta and the Den tree: nodes, metadata, payload, levels, links, mounts"
+owns = ["backend/crates/atta/**"]
+lead = "lead"
+
+[teams.identity]
+mission = "User, Account, Character, handles, DIDs, profiles, the PDS boundary"
+owns = [
+  "backend/crates/domain/src/elements/user.rs",
+  "backend/crates/domain/src/elements/user/**",
+  "backend/crates/domain/src/elements/user_account.rs",
+  "backend/crates/domain/src/elements/account.rs",
+  "backend/crates/domain/src/elements/account/**",
+  "backend/crates/domain/src/elements/account_keys.rs",
+  "backend/crates/domain/src/elements/account_keys/**",
+  "backend/crates/domain/src/elements/actor_identity.rs",
+  "backend/crates/domain/src/elements/actor_identity/**",
+  "backend/crates/domain/src/elements/character.rs",
+  "backend/crates/domain/src/elements/character/**",
+  "backend/crates/domain/src/elements/did.rs",
+  "backend/crates/domain/src/elements/did/**",
+  "backend/crates/domain/src/elements/handle.rs",
+  "backend/crates/domain/src/elements/handle/**",
+  "backend/crates/domain/src/elements/profile.rs",
+  "backend/crates/domain/src/elements/profile/**",
+  "backend/crates/domain/src/elements/public_record.rs",
+  "backend/crates/domain/src/elements/public_record/**",
+  "backend/crates/domain/src/elements/plc_operation.rs",
+  "backend/crates/domain/src/elements/role.rs",
+  "backend/crates/domain/src/elements/role/**",
+  "backend/crates/domain/src/elements/invitation.rs",
+  "backend/crates/domain/src/elements/invitation/**",
+  "backend/crates/application/src/user.rs",
+  "backend/crates/application/src/user/**",
+  "backend/crates/application/src/account.rs",
+  "backend/crates/application/src/account/**",
+  "backend/crates/application/src/character.rs",
+  "backend/crates/application/src/character/**",
+  "backend/crates/api/src/routes/accounts.rs",
+  "backend/crates/api/src/routes/accounts/**",
+  "backend/crates/adapter-atproto/**",
+]
+lead = "lead"
+
+[teams.commission]
+mission = "Commission, Workflow boards, slots, the changelog"
+owns = [
+  "backend/crates/domain/src/elements/commission.rs",
+  "backend/crates/domain/src/elements/commission/**",
+  "backend/crates/domain/src/elements/workflow.rs",
+  "backend/crates/domain/src/elements/workflow/**",
+  "backend/crates/application/src/commission.rs",
+  "backend/crates/application/src/commission/**",
+  "backend/crates/api/src/routes/commissions/**",
+]
+lead = "lead"
+
+[teams.web]
+mission = "The SvelteKit app"
+owns = ["frontend/web/**"]
+lead = "lead"
+
+# Vulpes and Wolven live in their own repos, out of reach of this board's path
+# locks, so they own no paths here; their agents use advisory locks named
+# `vulpes:<path>` and `wolven:<path>`.
+[teams.vulpes]
+mission = "Vulpes (~/code/vulpes): ACP reference impl, upstream of Zurfur and Wolven"
+owns = []
+lead = "lead"
+
+[teams.wolven]
+mission = "Wolven (~/code/wolven): node graph and monotone policy fold over Vulpes"
+owns = []
+lead = "lead"
