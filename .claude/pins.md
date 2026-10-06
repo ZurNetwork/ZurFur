@@ -7,7 +7,7 @@ One line each; `[src: …]` names where the fact is recorded. Limit: 40 pins,
 `~/.claude/pins.local.md` instead — see CLAUDE.md.
 
 - Every domain decision — an entity's shape, a name, an invariant, a boundary, an API contract, a schema choice, a trade-off with two defensible answers — is the Engineer's; Claude lays out options with a recommendation and stops at the fork. [src: CLAUDE.md › Roles & decision authority]
-- Domain-heavy tickets are the Engineer's to implement; Claude's lane is mechanical work and the execution of settled decisions. [src: CLAUDE.md › Roles & decision authority]
+- Claude writes the code, domain-heavy work included, and states its implementation choices in the PR; the Engineer designs, rules on every domain fork and reviews everything. [src: CLAUDE.md › Roles & decision authority]
 - Design truth is the corpus at `~/code/zurfur-design`, indexed by `docs/design-index.md`; a design fact is read from its page before it is asserted. Confluence and memory paraphrases are not sources. [src: CLAUDE.md › Project]
 - A page under `superseded/` governs nothing; its index line names the successor. [src: docs/design-index.md]
 - `main` is never pushed to directly; work lands as `[ZMVP-N][slice#]` slice PRs into a feature branch cut at `main`'s tip, and every commit on that branch is gate-green. [src: CLAUDE.md › Branch Strategy]
