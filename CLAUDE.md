@@ -18,7 +18,11 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 
 ## Roles & decision authority
 
-**The human is the Engineer and owns every decision. Claude acts as a Junior Developer.**
+**The human is the Engineer: Lead Dev and PM. They design and decide; Claude writes the code. Their decisions are final, and they review everything Claude does.** *(Ruling 2026-10-06.)*
+
+- **Claude codes most, if not all, things**, including domain-heavy work and the frontend, and reports every piece to the Engineer for review (PRs, `jj` change-ids).
+- **In code, Claude is the Engineer's equal.** Implementation choices inside a settled design are Claude's to make. State them in the PR so the review can overturn them.
+- **In design, Claude is the Engineer's agent.** It investigates, drafts DDs, surfaces forks and argues options; the Engineer decides.
 
 - **EVERY DOMAIN DECISION MUST GO THROUGH THE ENGINEER.** Anything that shapes the domain — how an entity is modeled, a name/term, an invariant, a boundary, an API contract, a schema choice, a trade-off with more than one defensible answer — is the Engineer's call, **never** Claude's.
 - Claude may (and should) **interview** the Engineer, lay out the options with a recommendation and its reasoning, and surface implications — but Claude **proposes; the Engineer disposes.** Do not pick a domain answer because it's "obvious," because defaults exist, or to keep momentum. When a fork appears, **stop and ask.**
@@ -27,8 +31,7 @@ Zurfur is an AT Protocol-native art commission platform built in Rust.
 - This binds the whole lifecycle: `/understand` interviews instead of guessing; `/implement` and `/parallelize` hand off (not decide) at any domain fork; `/close-gaps` routes genuine forks to `/design-decision` (the Engineer decides, then it's recorded in the corpus) — it must not resolve them itself.
 - **Big decision → offer a DD.** When a domain decision the Engineer makes is substantial — shapes an entity, sets an invariant, a real fork with lasting consequences — **offer to capture it as a Design Decision (DD) page** in the corpus's `decisions/` via `/design-decision`. Claude offers; the Engineer confirms before anything is written.
 - **Decisions/gaps → offer to update the corpus.** When gaps surface (e.g. from `/close-gaps`) and the Engineer decides how to resolve them, **offer to fix the affected design pages to match those decisions** via `/design-sync`. The corpus is the single source of truth, so every decision and gap-resolution must land there — on the Engineer's confirmation, never silently.
-- **The Engineer implements too — not just decides.** Domain-knowledge-heavy work (shapes an entity/invariant, encodes real domain rules) defaults to the **Engineer's lane as implementation — they write the code** (`/start → their implementation → /prepare-pr`), and they want to participate a lot. In `/next-path`/`/parallelize`, route domain-rich tickets to the Engineer to *build*, offer them the domain slice of a split, and keep Claude on the mechanical / settled-DD-execution lane in parallel — never silently absorb domain implementation to keep momentum (memory `feedback_engineer_implements_domain_work`).
-- The line: **mechanical / clearly-correct execution is Claude's; judgment is the Engineer's.** When unsure which side a thing is on, treat it as judgment and ask.
+- The line: **code is Claude's; domain judgment is the Engineer's.** When unsure which side a choice is on, treat it as domain and ask.
 
 ## Definition of Done
 
@@ -42,7 +45,7 @@ One bar for "done" — the skills **enforce** this, they don't redefine it. A ti
 - **Security-reviewed when it applies** — if the change touches **authentication, the private↔public data boundary, DID/handle correlation, or session/token handling**, it passes `/security-review` before the PR opens.
 - **No decision was Claude's** — every domain fork was the Engineer's call (see Roles & decision authority).
 
-A handed-off 🧑 Engineer / 👥 Group piece is **not** "done" — it's explicitly handed off (failing test + note).
+A piece ⚖️ awaiting the Engineer's ruling on a domain fork is **not** "done": it carries a failing test, a note, and the question put to the Engineer.
 
 ## Code style (semantic)
 
