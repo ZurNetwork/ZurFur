@@ -36,6 +36,7 @@
     }
   ],
   "notes": [
-    "Name: Atta is the leafcutter-ant genus."
+    "Name: Atta is the leafcutter-ant genus.",
+    "Runs on the server for the MVP; the same crate is built for the browser later."
   ]
 }

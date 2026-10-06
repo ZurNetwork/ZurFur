@@ -1,9 +1,7 @@
 {
-  "uow": "trw07",
+  "uow": "2d0b3",
   "logbook": null,
-  "_logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece.",
-  "updated": "2026-09-10T00:00:00-06:00",
-  "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
+  "updated": "2026-10-06T00:00:00-06:00",
   "tickets": [
     {
       "key": "ZMVP-166",
@@ -52,13 +50,13 @@
     {
       "key": "ZMVP-153",
       "summary": "A user creates and deletes a Commission from the browser; the flat commission composition renders",
-      "phase": "remodeled-ready-to-build",
-      "next_action": "RE-MODELED 2026-08-04 — DD 45514754 (Commission Composition — flat extension points) supersedes-in-part DD 42762241: flat Elements-into-Surfaces + Tabs, min(tab, element), no recursion. ZMVP-163 rebodied flat (still security-nature → Opus; blocked by new storage ticket commission_tab/commission_element). Renderer premise now a flat skeleton walk (simpler — recursion was the hard part); AC2/AC4 rescoped. Build order: storage ticket → ZMVP-163 → this ticket's ZurfurApi slice → Engineer UI lane via /worksheet-tutorial. Epic ZMVP-149 exit = zero-curl walkthrough (unchanged). Propagation 2026-08-04: DD page + 3 supersession banners + 15-page /design-sync + Jira sweep + index + memory — see agents' reports.",
+      "phase": "deferred — tickets stopped 2026-09-19",
+      "next_action": "Never started. The Den (DD 2026093001) amends 45514754, so re-ground before resuming.",
       "pr": null,
       "branch": null,
       "worktree": null,
       "snapshot": ".understand/20260727-233430_ZMVP-153_commission-browser-tree.md",
-      "updated": "2026-07-27T23:59:00-06:00"
+      "updated": "2026-10-06T00:00:00-06:00"
     },
     {
       "key": "ZMVP-196",
@@ -74,11 +72,11 @@
     {
       "key": "ZMVP-163",
       "summary": "flat composition wire + GET /commissions/{id} — projection, corpus, route",
-      "phase": "built-gate-green-awaiting-engineer-review",
-      "next_action": "Built 2026-08-08 by the Designer (Opus) in jj workspace ~/code/zurfur-backend: slices myuvqtzovyru + uqpvoqxpwswr. Gate green (670 tests, buf breaking additive). NOT pushed. 6 pre-merge Engineer forks + 2 findings (ZMVP-74 ownership gap; UUIDv7 timestamp note). /security-review owed pre-PR. MUST LAND BEFORE the contract leaf-crate extraction (DD 47939586). Briefing: .understand/20260808-ZMVP-163_flat-composition-wire-and-get.md",
+      "phase": "deferred — tickets stopped 2026-09-19",
+      "next_action": "Built 2026-08-08 in jj workspace ~/code/zurfur-backend (bookmark feature/zmvp-163-flat-composition-wire, change uqpvoqxp); no PR. The Den (DD 2026093001) amends 45514754: re-check before resuming. /security-review still owed.",
       "branch": "jj changes in workspace backend",
       "worktree": "~/code/zurfur-backend",
-      "updated": "2026-08-08T20:30:00-06:00"
+      "updated": "2026-10-06T00:00:00-06:00"
     },
     {
       "key": "ZMVP-200",
@@ -135,28 +133,26 @@
     {
       "key": "ZMVP-204",
       "summary": "cli: login",
-      "phase": "ruled-ready-to-build",
-      "next_action": "Blocked by ZMVP-205 (application layer first). RULED 2026-08-24: option C (trusted-driver pick) — login --handle resolves an EXISTING User, never provisions; no OAuth in the CLI until a PDS-write ticket (post-v1) re-opens option A. Build after #188 merges (stack on feature/zmvp-203-cli-identity); /security-review confirms no write path from login.",
+      "phase": "deferred — tickets stopped 2026-09-19",
+      "next_action": "Plan approved 2026-09-10 and parked; its blocker (ZMVP-205) merged 2026-09-12.",
       "pr": null,
       "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-08-24T19:00:00-06:00",
-      "next": "Blocked by ZMVP-205 (application layer first). RULED 2026-08-24: option C — login --handle resolves an EXISTING User, never provisions. Stack on main now (boilerplate all merged 2026-08-25); /security-review confirms no write path from login."
+      "updated": "2026-10-06T00:00:00-06:00"
     },
     {
       "key": "ZMVP-205",
       "summary": "application layer landing zone",
-      "phase": "slices-1/2/4/5/6-pr-open; slice 9-20 squash-merged into handle-domain (#196); slice 21-30 pr-open",
-      "next_action": "RULED 2026-08-24: new `application` crate, plain async fn use cases + domain error enums; api = routing only; cli calls the same fns. Blueprint = me + create_account. FIRST in the epic — blocks 204 and all 41 operation commands. Engineer builds (worksheet-tutorial offered); Claude sweeps per module after.",
-      "pr": "#191 → #192 → #193 → #194 → #195 → #197",
-      "branch": "feature/zmvp-205-workflow-boards (tip) → feature/zmvp-205-handle-domain",
+      "phase": "merged-done",
+      "next_action": "Merged to main 2026-09-11/12.",
+      "pr": "#191, #192, #193, #194, #195, #197 (#196 into the handle-domain branch)",
+      "branch": null,
       "worktree": null,
       "snapshot": null,
       "uow": "sh3ll",
-      "updated": "2026-09-10T00:00:00-06:00",
-      "next": "2026-09-10: #196 [9-20] (DID re-key + both drivers onto application) squash-merged INTO feature/zmvp-205-handle-domain 2026-09-08. New tip slice PR #197 → handle-domain: Workflow boards (domain/pg/mem/application/api/cli/composition — placement tables retired), the terse-docs sweep + `DidOperations` port, and the Copilot round for #190–#195 applied at the tip (threads replied; #193 key-order finding declined — serde_json Map is a BTreeMap, sorted keys). Copilot requested. Merge order 190 → 191 → 192 → 193 → 194 → 195 → #197 (each retargets on merge), then feature→main rubber-stamp. WIP note: `account/workflow/column/remove.rs` returns Ok(Output) where a todo!() stood — a placeholder, not an implementation. Chore PRs #180 (NODE.md tree) and #184 (54427650 quick-facts) CLOSED as superseded by this chain / DD 57081857; #183 (ledger) CLOSED, folded into this ledger. Boardroom fork 001 (tombstone seam) pushed as chore PR #198 → main. Still owed: Jira edits from the 08-27 brief; HandleDomain strictness ruling; ZMVP-74 ownership gap."
+      "updated": "2026-10-06T00:00:00-06:00"
     },
     {
       "key": "ZMVP-206",
@@ -173,12 +169,11 @@
     },
     {
       "key": "ZMVP-207",
-      "phase": "pr-open",
-      "branch": "feature/zmvp-207-shared-mem-runtime",
-      "next": "PR #190 open 2026-08-25 (→ main), Copilot requested, Jira In Review. #191 stacks on it.",
-      "pr": "https://github.com/ZurNetwork/ZurFur/pull/190 (→ main; bottom of the ZMVP-205 stack)",
-      "next_action": "PR #190 open, CI green, one Copilot thread (mem fixture doc) fixed at the tip of the stack (#197). Merges first; the stack retargets.",
-      "updated": "2026-09-10T00:00:00-06:00"
+      "phase": "merged-done",
+      "branch": null,
+      "pr": "#190",
+      "next_action": "#190 merged to main 2026-09-11.",
+      "updated": "2026-10-06T00:00:00-06:00"
     },
     {
       "key": "ZMVP-198",
@@ -190,8 +185,54 @@
       "worktree": null,
       "snapshot": null,
       "updated": "2026-08-23T00:00:00-06:00"
+    },
+    {
+      "key": "atta-node-types",
+      "summary": "Atta's node types: Key, Level, NodeName, Hash, Metadata, Payload and the Node trait (DD 2026093001 D23–D27)",
+      "phase": "engineer-building",
+      "owner": "Engineer",
+      "next_action": "Uncommitted in the default workspace (change ywryypxk on main). cid joined the workspace dependencies 2026-10-06 and it builds. Corpus #45 changes D25: the Class B MAC binds the node's key and type.",
+      "pr": null,
+      "branch": null,
+      "worktree": "~/code/zurfur (default workspace)",
+      "updated": "2026-10-06T00:00:00-06:00"
+    },
+    {
+      "key": "den-review-round",
+      "summary": "The six Copilot threads on corpus #43 (The Den), fixed",
+      "phase": "pr-open",
+      "next_action": "zurfur-design #45, Copilot requested; the Engineer merges.",
+      "pr": "https://github.com/ZurNetwork/zurfur-design/pull/45",
+      "branch": "fix/den-review-round",
+      "worktree": null,
+      "updated": "2026-10-06T00:00:00-06:00"
+    },
+    {
+      "key": "user-page-profile-route",
+      "summary": "GET /api/v1/users/{actor}: the public user profile",
+      "phase": "slice-1-local",
+      "next_action": "Slice [1] (contract) rebased onto main fef0ee6 locally on 2026-10-01; origin lags; no PR. The anonymous resolve path needs SSRF controls (jacquard has none).",
+      "pr": null,
+      "branch": "feature/user-page-profile-route",
+      "worktree": null,
+      "updated": "2026-10-06T00:00:00-06:00"
+    },
+    {
+      "key": "character-claims-usecases",
+      "summary": "Character claim (issue/withdraw), transfer and publicize/depublicize use cases; character facts in the domain",
+      "phase": "wip-local",
+      "next_action": "WIP rebased onto main fef0ee6 locally on 2026-10-01; origin lags; no PR.",
+      "pr": null,
+      "branch": "feature/character-claims-usecases",
+      "worktree": null,
+      "updated": "2026-10-06T00:00:00-06:00"
     }
   ],
   "_dd_47939586_note": "2026-08-08 DD 47939586 (frontend→Rust/Leptos) was REVERTED by the Engineer 2026-08-09 — the frontend stays plain SvelteKit + TypeScript (DD 39944194); ZesTTY/the Dialect is also retired. Epic 'The Rust Side' (ZMVP-184 + 185-195) closed Won't Do; Dialect epic 175-183 stays Won't Do (ZesTTY dropped). ZMVP-163 (below) is UNAFFECTED — flat-composition backend work, stands on its own; the contract leaf-crate extraction that was to follow it is cancelled. See memory [[project_frontend_stack_history]].",
-  "units": {}
+  "units": {},
+  "unit_note": "2026-10-06 refresh. Tickets stopped 2026-09-19: no new ZMVP keys; new entries use descriptive keys that match their bookmarks. Units trw07 and sh3ll are closed out below (merged, or deferred by the stop).",
+  "_history_trw07_sh3ll": {
+    "unit_note": "Sequencing per collision analysis: 152 infra (ZurfurApi port slice) lands FIRST; 153 infra rebases on it. 153 build blocked on DD(D1); its D3 corpus declarations can proceed. Prior carry-overs: DD 39944194 rows verify; ultmslqs (Engineer's, local). || Unit sh3ll (2026-08-24, epic ZMVP-199 The Shell): 200→201→202→203 stacked on jj, Claude's boilerplate slice; 204 blocked on ruling; 205 + the 41 operation commands = Engineer's lane. Board transcripts forks/002-the-shell/.",
+    "logbook_note": "Frontend-enablement unit (Engineer-steered 2026-07-27): ZMVP-152 ∥ ZMVP-153 under epic ZMVP-149. LANE RULING: Engineer implements the UI; Claude implements infrastructure (memory feedback_engineer_implements_domain_work). Rulings 2026-07-27: F1 = accounts detail derives from the listing (no GetAccount rpc; 152 stays pure frontend); F2/F3/F4 accepted (stub-only soft evidence w/ pointer comment; unknown outcome renders conservative 'removed; may still exist'; unknown role + non-Owner = no delete affordance, fail closed); D3 = DELETE/archive/unarchive enter the corpus (3 rpcs); D2 = 409 commission_has_facts surfaces the Archive choice explicitly; D1 (tree wire shape) → /design-decision in flight. #154 (redirect:'manual' test) rides as a Claude piece."
+  }
 }
