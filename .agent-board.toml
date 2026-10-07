@@ -7,6 +7,7 @@
 #   web         lead Fennec   · programmers Finch, Gecko · QA Crow
 #   vulpes      lead Reynard  · programmers Kit, Tod · QA Rook
 #   wolven      lead Lobo     · programmers Dhole, Jackal · QA Shrike
+#   posts       lead Bowerbird · programmers Kestrel, Ibis, Puffin · QA Kea
 board = "zurfur"
 vcs = "jj"
 
@@ -80,6 +81,26 @@ lead = "lead"
 [teams.web]
 mission = "The SvelteKit app"
 owns = ["frontend/web/**"]
+lead = "lead"
+
+[teams.posts]
+mission = "Posts, /post and /blob, and the Gallery"
+owns = [
+  "backend/crates/domain/src/elements/blob.rs",
+  "backend/crates/domain/src/elements/blob/**",
+  "backend/crates/domain/src/elements/post.rs",
+  "backend/crates/domain/src/elements/post/**",
+  "backend/crates/domain/src/elements/gallery.rs",
+  "backend/crates/domain/src/elements/gallery/**",
+  "backend/crates/application/src/post.rs",
+  "backend/crates/application/src/post/**",
+  "backend/crates/application/src/gallery.rs",
+  "backend/crates/application/src/gallery/**",
+  "backend/crates/api/src/routes/posts.rs",
+  "backend/crates/api/src/routes/posts/**",
+  "backend/crates/api/src/routes/gallery.rs",
+  "backend/crates/api/src/routes/gallery/**",
+]
 lead = "lead"
 
 # Vulpes and Wolven live in their own repos, out of reach of this board's path
