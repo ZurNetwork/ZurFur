@@ -51,9 +51,10 @@ export interface RewriteApiRequestInput {
  * whole header would leak those unrelated cookies straight to axum. We parse
  * defensively: pairs are `;`-separated with optional surrounding whitespace, and
  * a value may itself contain `=` (e.g. base64 padding), so each pair is split on
- * its FIRST `=` only.
+ * its FIRST `=` only. Exported so the session cache hook recognizes a
+ * signed-in request by the same cookie this rewrite forwards.
  */
-function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
+export function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
 	if (incomingCookie === undefined) {
 		return undefined;
 	}
