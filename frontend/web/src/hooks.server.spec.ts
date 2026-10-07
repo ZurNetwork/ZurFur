@@ -1,8 +1,59 @@
-import type { RequestEvent } from '@sveltejs/kit';
-import { describe, expect, it } from 'vitest';
-import { handle } from './hooks.server';
+import type { HandleFetch, RequestEvent } from '@sveltejs/kit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+// SvelteKit's real server-side `event.fetch`, reached through its internals on
+// purpose: which cookies it re-attaches is source-only behaviour, so a kit bump
+// that changes `create_fetch` must break this spec loudly.
+// @ts-expect-error -- kit internal, untyped
+import { create_fetch } from '../node_modules/@sveltejs/kit/src/runtime/server/fetch.js';
+// @ts-expect-error -- kit internal, untyped
+import { get_cookies } from '../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
+import { handle, handleFetch } from './hooks.server';
 
 type HandleInput = Parameters<typeof handle>[0];
+
+/** The app's origin; the API upstream (`127.0.0.1:8081`) shares its hostname, as in dev. */
+const APP_ORIGIN = 'http://127.0.0.1:8080';
+
+/** The visitor's whole cookie jar: the session cookie among unrelated ones. */
+const VISITOR_COOKIE = 'foo=bar; zurfur.sid=abc; other=secret';
+
+/** A `handleFetch` that passes every request on as it is: kit's own behaviour, unhooked. */
+const passThrough: HandleFetch = ({ request, fetch }) => fetch(request);
+
+/** `event.fetch` as SvelteKit builds it for a visitor carrying `VISITOR_COOKIE`. */
+function eventFetch(hook: HandleFetch): typeof fetch {
+	const url = new URL(`${APP_ORIGIN}/`);
+	const request = new Request(url, { headers: { cookie: VISITOR_COOKIE } });
+	/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- kit internals are untyped */
+	const { get_cookie_header, set_internal, set_trailing_slash } = get_cookies(request, url);
+	set_trailing_slash('never');
+	return create_fetch({
+		event: { url, request },
+		options: { hooks: { handleFetch: hook } },
+		manifest: { assets: new Set(), _: { server_assets: {} }, mimeTypes: {} },
+		state: { depth: 0 },
+		get_cookie_header,
+		set_internal
+	});
+	/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+}
+
+/** Fetch `target` through `hook`; resolves to the request that left the server. */
+async function requestLeaving(hook: HandleFetch, target: string): Promise<Request> {
+	const sent: Request[] = [];
+	vi.stubGlobal('fetch', (request: Request) => {
+		sent.push(request);
+		return Promise.resolve(new Response('{}'));
+	});
+	await eventFetch(hook)(target);
+	const [leaving] = sent;
+	if (leaving === undefined) throw new Error('no request left the server');
+	return leaving;
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 describe('handle', () => {
 	it('stamps a signed-in response private, no-store', async () => {
@@ -16,5 +67,29 @@ describe('handle', () => {
 		const response = await handle(input);
 
 		expect(response.headers.get('cache-control')).toBe('private, no-store');
+	});
+});
+
+describe('handleFetch under SvelteKit’s server fetch', () => {
+	// Control: proves the harness reproduces kit's re-attach, so the cases below
+	// pass because of handleFetch and not because kit stopped doing it.
+	it('kit re-attaches the whole jar to an unhooked request on the app’s hostname', async () => {
+		const leaving = await requestLeaving(passThrough, 'http://127.0.0.1:8081/me');
+
+		expect(leaving.headers.get('cookie')).toBe(VISITOR_COOKIE);
+	});
+
+	it('sends only zurfur.sid with an /api/v1 call', async () => {
+		const leaving = await requestLeaving(handleFetch, '/api/v1/me');
+
+		expect(leaving.url).toBe('http://127.0.0.1:8081/me');
+		expect(leaving.headers.get('cookie')).toBe('zurfur.sid=abc');
+	});
+
+	it('sends no cookie with a cross-origin request on the app’s hostname', async () => {
+		const leaving = await requestLeaving(handleFetch, 'http://127.0.0.1:8081/me');
+
+		expect(leaving.url).toBe('http://127.0.0.1:8081/me');
+		expect(leaving.headers.get('cookie')).toBeNull();
 	});
 });

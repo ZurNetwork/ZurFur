@@ -33,7 +33,7 @@
     },
     {
       "name": "hooks.server.spec.ts",
-      "role": "wiring spec — the exported handle stamps a signed-in response private, no-store",
+      "role": "specs for both hooks — handle stamps a signed-in response private, no-store; handleFetch, driven through SvelteKit's real server fetch (kit internals, on purpose), sends only zurfur.sid upstream",
       "node": false
     },
     {
