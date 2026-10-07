@@ -66,6 +66,7 @@
 - 65110018 decided — Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)
 - 2026091901 decided — Character Deletion — Facts, the Tombstone & Keeper Consent for Slotting
 - 2026093001 decided — The Den — a Tree of Typed Files, Peer Views and Atta
+- 2026100701 decided — My Den — Rulings from the First Slice's Design Study
 
 ## entities/
 - 786439 current — User
