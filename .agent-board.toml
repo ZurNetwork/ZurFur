@@ -16,7 +16,13 @@ subagent_name = "type"
 
 [teams.den]
 mission = "Atta and the Den tree: nodes, metadata, payload, levels, links, mounts"
-owns = ["backend/crates/atta/**"]
+owns = [
+  "backend/crates/atta/**",
+  "backend/crates/application/src/den.rs",
+  "backend/crates/application/src/den/**",
+  "backend/crates/api/src/routes/den.rs",
+  "backend/crates/api/src/routes/den/**",
+]
 lead = "lead"
 
 [teams.identity]
