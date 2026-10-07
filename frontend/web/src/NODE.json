@@ -13,7 +13,8 @@
     "Generated protobuf types never cross the seam — they decode server-side and map to hand-written plain interfaces in `lib/api/`.",
     "One-channel forms: values, field errors AND the backend Problem all ride the superform `message`.",
     "Absence is `T | undefined` — no `Option`, no `null`.",
-    "Domain strings are branded (`AccountId`, `Did`, `Handle`)."
+    "Domain strings are branded (`AccountId`, `Did`, `Handle`).",
+    "Every response to a signed-in request (one carrying the `zurfur.sid` cookie `handleFetch` forwards) leaves `Cache-Control: private, no-store`, set by the root `handle` hook — pages, 404/error pages and form-action JSON alike; no page can weaken it. Anonymous responses are untouched."
   ],
   "entry_points": [
     "hooks.server.ts",
@@ -31,8 +32,13 @@
       "node": false
     },
     {
+      "name": "hooks.server.spec.ts",
+      "role": "wiring spec — the exported handle stamps a signed-in response private, no-store",
+      "node": false
+    },
+    {
       "name": "hooks.server.ts",
-      "role": "handleFetch — points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
+      "role": "handle — every signed-in response leaves Cache-Control: private, no-store (lib/server/session-cache.ts); handleFetch — points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
       "node": false
     },
     {

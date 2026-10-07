@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, api-proxy)",
+      "role": "node-project specs beside each program module (accounts, session, api-proxy, session-cache)",
       "node": false
     },
     {
@@ -31,7 +31,7 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest used by hooks.server.ts (no $env, unit-tests standalone)",
+      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-cache.ts (no $env, unit-tests standalone)",
       "node": false
     },
     {
@@ -47,6 +47,11 @@
     {
       "name": "runtime.ts",
       "role": "THE SEAM — process-wide ManagedRuntime; runApi is the only Effect→Promise crossing",
+      "node": false
+    },
+    {
+      "name": "session-cache.ts",
+      "role": "pure sessionNoStore handle hook used by hooks.server.ts: marks every response to a request carrying the session cookie Cache-Control: private, no-store",
       "node": false
     },
     {

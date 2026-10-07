@@ -1,7 +1,8 @@
-import type { HandleFetch } from '@sveltejs/kit';
+import type { Handle, HandleFetch } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
+import { sessionNoStore } from '$lib/server/session-cache';
 
 /**
  * PROD GUARD: mock mode must be UNREACHABLE in a real server, checked at
@@ -47,3 +48,6 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 
 	return fetch(proxied);
 };
+
+/** Signed-in responses are never stored: each leaves with `private, no-store`. */
+export const handle: Handle = sessionNoStore;
