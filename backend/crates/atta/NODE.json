@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/atta",
-  "charted": "2026-10-01",
+  "charted": "2026-10-07",
   "short": "Atta — the engine for the Den: resolve, route, render",
-  "is": "Atta, the host-agnostic engine for the Den: it resolves the tree, enforces its structural rules, routes each operation to the handler registered for a node type, and renders files. Types and content are opaque to it; the host plugs in storage, standing and types through traits Atta defines. It lives in this workspace as a crate only until it is split into its own library.",
+  "is": "Atta, the host-agnostic engine for the Den: it resolves the tree, enforces its structural rules, asks the host about each node through one object-safe trait Atta defines, and renders files. Types and content are opaque to it; the host answers per type with an exhaustive match in application, never a runtime registry. It lives in this workspace as a crate only until it is split into its own library.",
   "type": "code",
   "tags": [
     "category:source",
@@ -10,8 +10,10 @@
   ],
   "conventions": [
     "Never depends on another workspace crate and never names a Zurfur type — host-agnostic by construction, so it can be split out unchanged.",
+    "Used by application only; the API never imports it.",
     "Its role is fixed: resolve, enforce structure, route changes, render. How it does that grows only as real needs appear, never ahead of them.",
-    "Nothing reads a node except through Atta; a node is served only after its payload hash verifies."
+    "Nothing reads a node except through Atta; a payload is served only after its hash verifies, and until that check exists no payload is served at all.",
+    "Fails closed: one uniform not-found, no stored level means Private, and a mount whose target is not directly under a top-level directory is refused."
   ],
   "entry_points": [
     "src/lib.rs"
@@ -33,6 +35,11 @@
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
       "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens"
     }
   ],
   "notes": [
