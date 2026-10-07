@@ -78,13 +78,10 @@ export function extractSessionCookie(incomingCookie: string | undefined): string
 
 /**
  * Rewrite a same-origin `/api/v1/*` request to the axum upstream (prefix stripped,
- * query preserved, method/body/headers preserved, session cookie forwarded), or
- * return the request untouched when it is cross-origin or not under `/api`.
- *
- * This function only governs what it ADDS to a rewritten API request: it forwards
- * exactly the `zurfur.sid` session cookie to the upstream, and nothing else. A
- * cross-origin or non-`/api` request is a passthrough — returned as-is, keeping
- * whatever cookies it already carried; this function neither adds nor strips them.
+ * query preserved, method/body/headers preserved, only `zurfur.sid` forwarded).
+ * A cross-origin request passes through with credentials omitted, so SvelteKit
+ * adds no cookies to it; a same-origin non-`/api` request is returned as-is.
+ * Neither passthrough has its own headers added to or stripped.
  */
 export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	const { request, eventOrigin, incomingCookie, apiUpstream } = input;
@@ -92,10 +89,12 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	const requestUrl = new URL(request.url);
 
 	// Cross-origin fetches (a CDN, a third-party API) are never ours to rewrite,
-	// and must never receive the session cookie — hand them back untouched.
+	// and must never receive the session cookie. `credentials: 'omit'` keeps
+	// SvelteKit from attaching the visitor's cookie jar to one whose hostname is
+	// the app's or a subdomain of it.
 	const isSameOrigin = requestUrl.origin === eventOrigin;
 	if (!isSameOrigin) {
-		return request;
+		return new Request(request, { credentials: 'omit' });
 	}
 
 	// Only `/api` exactly or a path under `/api/` is an API call. `/apifoo` is a
@@ -118,7 +117,10 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	// solely from the incoming request: delete first so a stray cookie on the
 	// outgoing request can't leak, then forward only the `zurfur.sid` pair — never
 	// the caller's other host-scoped cookies — and only when it is actually present.
-	const rewritten = new Request(upstreamUrl, request);
+	// `credentials: 'omit'` stops SvelteKit's server fetch from re-attaching the
+	// whole incoming cookie jar when the upstream's hostname matches the app's
+	// (both 127.0.0.1 in dev); the explicit header below still goes out.
+	const rewritten = new Request(new Request(upstreamUrl, request), { credentials: 'omit' });
 	rewritten.headers.delete('cookie');
 	const sessionCookie = extractSessionCookie(incomingCookie);
 	if (sessionCookie !== undefined) {

@@ -88,6 +88,18 @@ describe('rewriteApiRequest', () => {
 		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=abc123');
 	});
 
+	it("marks the rewritten request credentials: 'omit'", () => {
+		// SvelteKit's server fetch skips re-attaching the cookie jar only for
+		// `credentials: 'omit'`; the explicit zurfur.sid header still goes out.
+		const request = sameOriginRequest('/api/v1/me');
+		const incomingCookie = 'zurfur.sid=abc123';
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.credentials).toBe('omit');
+		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=abc123');
+	});
+
 	it('forwards NO cookie header when the incoming header has cookies but no zurfur.sid', () => {
 		const request = sameOriginRequest('/api/v1/me');
 		const incomingCookie = 'foo=bar; other=baz';
@@ -173,10 +185,14 @@ describe('rewriteApiRequest', () => {
 		expect(result.url).toBe(`${eventOrigin}/api/v1foo`);
 	});
 
-	it('leaves a cross-origin /api/v1 request untouched and forwards NO cookie', () => {
+	it('passes a cross-origin /api/v1 request through with NO cookie and credentials omitted', () => {
 		// A fetch to some other host that happens to have an /api path must never be
-		// rewritten to our upstream, and must NEVER receive our session cookie.
-		const request = new Request('https://cdn.example.com/api/thing');
+		// rewritten to our upstream, and must NEVER receive our session cookie —
+		// not even from SvelteKit, which attaches the visitor's jar to a host on the
+		// app's hostname unless credentials are omitted.
+		const request = new Request('https://cdn.example.com/api/thing', {
+			headers: { 'x-custom': 'kept' }
+		});
 
 		const result = rewriteApiRequest({
 			request,
@@ -185,8 +201,9 @@ describe('rewriteApiRequest', () => {
 			apiUpstream
 		});
 
-		expect(result).toBe(request);
 		expect(result.url).toBe('https://cdn.example.com/api/thing');
+		expect(result.credentials).toBe('omit');
+		expect(result.headers.get('x-custom')).toBe('kept');
 		expect(result.headers.get('cookie')).toBeNull();
 	});
 });
