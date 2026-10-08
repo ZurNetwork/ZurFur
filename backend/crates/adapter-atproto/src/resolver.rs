@@ -7,5 +7,7 @@ mod document;
 mod fetch;
 mod handle;
 mod limits;
+#[cfg(test)]
+pub(crate) mod log_recorder;
 
 pub use client::AtprotoIdentityResolver;

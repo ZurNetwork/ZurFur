@@ -7,11 +7,12 @@
 use application::user::me::{self, MeError, MeQuery};
 use axum::{
     Form, Json, Router,
-    extract::{Query, State},
+    extract::{Query, State, rejection::FormRejection},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use domain::ports::UnitOfWork;
+use domain::elements::handle::AtHandle;
+use domain::ports::{AccountMismatch, UnitOfWork};
 use serde::Deserialize;
 use tower_sessions::Session;
 
@@ -47,22 +48,38 @@ struct CallbackQuery {
     error: Option<String>,
 }
 
-/// `POST /signin` (form body) — resolves the handle via the Authenticator and
-/// redirects the browser to the PDS authorization URL.
+/// `POST /signin` (form body) — trims what the visitor typed, parses it as a
+/// handle, and redirects the browser to the PDS authorization URL the
+/// Authenticator returns.
 ///
 /// - `303` → PDS authorize URL
-/// - `422 invalid_request` — unknown or malformed handle
+/// - `422 invalid_request` — a body that is not a form carrying `handle`, not a
+///   handle (a URL or a DID included), or a handle that could not begin
+///   sign-in; one identical body for every cause
 async fn signin(
     State(state): State<AppState>,
-    Form(f): Form<SigninForm>,
+    form: Result<Form<SigninForm>, FormRejection>,
 ) -> Result<Redirect, Problem> {
-    // Steady message on failure — the underlying error can be noisy/internal.
-    let url = state.auth.start(&f.handle).await.map_err(|_| {
-        Problem::invalid_request(
-            "That handle could not be used to sign in. Check it and try again.",
-        )
-    })?;
+    // An unreadable body is refused like every other cause, never with axum's own text.
+    let Form(form) = form.map_err(|_| signin_refused())?;
+    // The handle type is strict; trimming what a person typed happens here.
+    let handle = form
+        .handle
+        .trim()
+        .parse::<AtHandle>()
+        .map_err(|_| signin_refused())?;
+    let url = state
+        .auth
+        .start(&handle)
+        .await
+        .map_err(|_| signin_refused())?;
     Ok(Redirect::to(&url))
+}
+
+/// The one answer a failed `POST /signin` gets, whatever failed: an anonymous
+/// visitor learns nothing about why.
+fn signin_refused() -> Problem {
+    Problem::invalid_request("That handle could not be used to sign in. Check it and try again.")
 }
 
 /// `GET /signin-callback` — completes sign-in: exchanges `code` for a DID,
@@ -70,7 +87,9 @@ async fn signin(
 /// the User's id in the session.
 ///
 /// - `303 /` — success (`Set-Cookie` on the response)
-/// - `303 /login?error=denied|invalid_callback|exchange_failed` — failure modes
+/// - `303 /login?error=denied|invalid_callback|exchange_failed|account_mismatch`
+///   — failure modes; `account_mismatch` when the visitor signed in to a
+///   different account than the handle they typed
 /// - `500 internal_error` — provisioning or session-write failure
 async fn signin_callback(
     State(state): State<AppState>,
@@ -85,8 +104,10 @@ async fn signin_callback(
         return Redirect::to("/login?error=invalid_callback").into_response();
     };
 
-    let Ok(did) = state.auth.complete(code, q.state, q.iss).await else {
-        return Redirect::to("/login?error=exchange_failed").into_response();
+    let completed = state.auth.complete(code, q.state, q.iss).await;
+    let did = match completed {
+        Ok(did) => did,
+        Err(error) => return Redirect::to(callback_failure_location(&error)).into_response(),
     };
 
     // Mint-or-return: recognizes rather than registers (idempotent, one DID = one User).
@@ -113,6 +134,16 @@ async fn signin_callback(
         .into_response();
     }
     Redirect::to("/").into_response()
+}
+
+/// Where a failed code exchange sends the visitor: its own code for the wrong
+/// account, the generic one for everything else.
+fn callback_failure_location(error: &anyhow::Error) -> &'static str {
+    if error.is::<AccountMismatch>() {
+        "/login?error=account_mismatch"
+    } else {
+        "/login?error=exchange_failed"
+    }
 }
 
 /// `GET /me` — the JSON whoami: resolves the session to a User, no PDS round trip.

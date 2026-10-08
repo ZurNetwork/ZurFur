@@ -49,6 +49,13 @@ pub enum PublicRecordsError {
     Unexpected(#[source] anyhow::Error),
 }
 
+/// Error source of an [`Authenticator::complete`](super::Authenticator::complete)
+/// whose visitor signed in as an account other than the one the typed handle
+/// named. The route downcasts it to its own callback error code.
+#[derive(Debug, thiserror::Error)]
+#[error("signed in as a different account than the handle named")]
+pub struct AccountMismatch;
+
 /// Why an [`IdentityResolver`](super::IdentityResolver) lookup failed. The
 /// message is terse and never echoes the handle or DID asked about; a cause
 /// rides `source()`. Only [`ResolveError::Unavailable`] is worth retrying.
