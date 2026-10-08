@@ -8,6 +8,8 @@
 #   vulpes      lead Reynard  · programmers Kit, Tod · QA Rook
 #   wolven      lead Lobo     · programmers Dhole, Jackal · QA Shrike
 #   posts       lead Bowerbird · programmers Kestrel, Ibis, Puffin · QA Kea
+#   moderation  lead Meerkat  · programmers Mastiff, Goose, Alpaca · QA Lapwing
+#   plugin      lead Octopus  · programmers Hermit, Remora, Cuttle · QA Mantis
 board = "zurfur"
 vcs = "jj"
 
@@ -100,6 +102,44 @@ owns = [
   "backend/crates/api/src/routes/posts/**",
   "backend/crates/api/src/routes/gallery.rs",
   "backend/crates/api/src/routes/gallery/**",
+]
+lead = "lead"
+
+# Standing rule (the Engineer, 2026-10-08): every intervention is a named, audited
+# moderator action, and nobody edits the database by hand.
+[teams.moderation]
+mission = "Platform safety: moderator actions, reports, scanning, kill switches, blocks"
+owns = [
+  "backend/crates/domain/src/elements/moderation.rs",
+  "backend/crates/domain/src/elements/moderation/**",
+  "backend/crates/domain/src/elements/report.rs",
+  "backend/crates/domain/src/elements/report/**",
+  "backend/crates/domain/src/elements/block.rs",
+  "backend/crates/domain/src/elements/block/**",
+  "backend/crates/application/src/moderation.rs",
+  "backend/crates/application/src/moderation/**",
+  "backend/crates/api/src/routes/moderation.rs",
+  "backend/crates/api/src/routes/moderation/**",
+]
+lead = "lead"
+
+# The plugin team: beta work (installable plugins ship after the alpha), chartered
+# early so its ground is claimed; no plugin code exists yet.
+[teams.plugin]
+mission = "Plugins: Golems, Portals, the plugin API, plugin security and listings"
+owns = [
+  "backend/crates/plugin/**",
+  "backend/crates/plugin-api/**",
+  "backend/crates/domain/src/elements/plugin.rs",
+  "backend/crates/domain/src/elements/plugin/**",
+  "backend/crates/domain/src/elements/golem.rs",
+  "backend/crates/domain/src/elements/golem/**",
+  "backend/crates/domain/src/elements/portal.rs",
+  "backend/crates/domain/src/elements/portal/**",
+  "backend/crates/application/src/plugin.rs",
+  "backend/crates/application/src/plugin/**",
+  "backend/crates/api/src/routes/plugins.rs",
+  "backend/crates/api/src/routes/plugins/**",
 ]
 lead = "lead"
 
