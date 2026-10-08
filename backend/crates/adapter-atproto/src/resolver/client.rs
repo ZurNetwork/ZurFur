@@ -1,7 +1,7 @@
 //! [`AtprotoIdentityResolver`]: the port's both-ways rules over the system DNS
 //! and the guarded client.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -60,19 +60,40 @@ impl AtprotoIdentityResolver {
         Ok((did, document))
     }
 
-    /// The handle `did`'s document claims, when that handle names `did` back.
-    /// A claim that fails the check is `None`, unless the check could not finish.
-    async fn confirmed_handle(&self, did: &Did) -> Result<Option<AtHandle>, ResolveError> {
+    /// `did`'s checked document and [`resolve_did`](IdentityResolver::resolve_did)'s
+    /// answer from it, in one pass under the port-call deadline: one fetch
+    /// for a caller that needs both, such as the profile read.
+    pub(crate) async fn resolve_did_with_document(
+        &self,
+        did: &Did,
+    ) -> Result<(ResolvedDocument, Option<AtHandle>), ResolveError> {
+        self.within_deadline(self.document_and_handle(did)).await
+    }
+
+    /// The longest one port call may run; a caller chaining more requests on
+    /// a resolver answer bounds its whole chain by it.
+    pub(crate) fn port_call_deadline(&self) -> Duration {
+        self.deadlines.port_call
+    }
+
+    /// `did`'s document, and the handle it claims when that handle names `did`
+    /// back. A claim that fails the check is `None`, unless the check could
+    /// not finish.
+    async fn document_and_handle(
+        &self,
+        did: &Did,
+    ) -> Result<(ResolvedDocument, Option<AtHandle>), ResolveError> {
         let document = self.document(did).await?;
         let Claim::Handle(claimed) = document.claim() else {
-            return Ok(None);
+            return Ok((document, None));
         };
-        match self.did_named_by(&claimed).await {
-            Ok(named) if named == *did => Ok(Some(claimed)),
-            Ok(_) => Ok(None),
-            Err(ResolveError::Unavailable(cause)) => Err(ResolveError::Unavailable(cause)),
-            Err(_) => Ok(None),
-        }
+        let handle = match self.did_named_by(&claimed).await {
+            Ok(named) if named == *did => Some(claimed),
+            Ok(_) => None,
+            Err(ResolveError::Unavailable(cause)) => return Err(ResolveError::Unavailable(cause)),
+            Err(_) => None,
+        };
+        Ok((document, handle))
     }
 
     /// Run one port call under the port-call deadline, logging a failure by
@@ -99,7 +120,8 @@ impl IdentityResolver for AtprotoIdentityResolver {
     }
 
     async fn resolve_did(&self, did: &Did) -> Result<Option<AtHandle>, ResolveError> {
-        self.within_deadline(self.confirmed_handle(did)).await
+        let (_document, handle) = self.resolve_did_with_document(did).await?;
+        Ok(handle)
     }
 }
 
@@ -122,9 +144,15 @@ impl AtprotoIdentityResolver {
     }
 
     /// The resolver over `http` and a scripted `txt`, with the production
-    /// deadlines: the seam the sign-in tests build on.
+    /// deadlines: the seam the sign-in and profile tests build on.
     pub(crate) fn scripted(http: GuardedHttp, txt: Arc<dyn TxtLookup>) -> Self {
         Self::over(http, txt, Deadlines::default())
+    }
+
+    /// This resolver with its port-call deadline shortened to `deadline`.
+    pub(crate) fn with_port_call_deadline(mut self, deadline: Duration) -> Self {
+        self.deadlines.port_call = deadline;
+        self
     }
 }
 
