@@ -49,6 +49,42 @@ pub enum PublicRecordsError {
     Unexpected(#[source] anyhow::Error),
 }
 
+/// Why an [`IdentityResolver`](super::IdentityResolver) lookup failed. The
+/// message is terse and never echoes the handle or DID asked about; a cause
+/// rides `source()`. Only [`ResolveError::Unavailable`] is worth retrying.
+#[derive(thiserror::Error)]
+pub enum ResolveError {
+    /// Nothing names a DID: no record, an unknown or tombstoned DID, a document
+    /// that is malformed or names another DID, or an identifier not resolved here.
+    #[error("identity not found")]
+    NotFound,
+    /// The handle names a DID whose document does not claim the handle back.
+    #[error("handle not confirmed by its DID")]
+    NotConfirmed,
+    /// A host broke a fetch rule: a forbidden address, plain http, another
+    /// port, a redirect, a bad certificate, or an oversized body.
+    #[error("identity lookup refused")]
+    Refused(#[source] anyhow::Error),
+    /// DNS or a host did not answer in time, answered with a server error, or a
+    /// deadline ran out.
+    #[error("identity lookup unavailable")]
+    Unavailable(#[source] anyhow::Error),
+}
+
+/// Hand-written so it prints the variant only: a cause can name the handle or
+/// host, and reaches a log only when a caller reads `source()` on purpose.
+impl std::fmt::Debug for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let variant = match self {
+            Self::NotFound => "NotFound",
+            Self::NotConfirmed => "NotConfirmed",
+            Self::Refused(_) => "Refused",
+            Self::Unavailable(_) => "Unavailable",
+        };
+        f.write_str(variant)
+    }
+}
+
 /// Error source of an element write whose tab does not exist in that commission
 /// — an absent tab id and one belonging to another commission, indistinguishably,
 /// so probing tab ids reveals nothing. Adapters return it so the route can
@@ -75,3 +111,6 @@ pub struct UnknownSurface;
 #[derive(Debug, thiserror::Error)]
 #[error("element not found in this commission")]
 pub struct ElementNotFound;
+
+#[cfg(test)]
+mod tests;

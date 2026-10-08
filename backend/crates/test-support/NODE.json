@@ -40,6 +40,11 @@
       "node": false
     },
     {
+      "name": "src/identity_resolver_contract.rs",
+      "role": "the generic IdentityResolver conformance suite over a runner-staged world (StagedIdentities); mem now, the atproto resolver next",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
       "role": "crate docs + usage recipe; pins the ZURFUR_PDS_IMAGE literal",
       "node": false

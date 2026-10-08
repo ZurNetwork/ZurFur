@@ -1,8 +1,10 @@
 use super::HANDLE_MAX_LEN;
 use super::LABEL_MAX_LEN;
 
-/// Why a string was rejected as a [`Handle`] — one variant per failure class,
-/// each rendering a human message via [`Display`](std::fmt::Display).
+/// Why a string was rejected as a [`Handle`] or an [`AtHandle`](super::AtHandle)
+/// — one variant per failure class, each rendering a human message via
+/// [`Display`](std::fmt::Display). Both parsers share the syntax variants; the
+/// last two are claim rules only a `Handle` applies.
 ///
 /// ```
 /// use domain::elements::handle::{Handle, HandleError};
@@ -40,10 +42,12 @@ pub enum HandleError {
     /// The rightmost segment is a reserved TLD (e.g. `.local`); carries it.
     #[error("`.{0}` is a reserved top-level domain and cannot be a handle")]
     ReservedTld(String),
-    /// Some label begins with `xn--`. Rejected in both namespaces.
+    /// A label begins with `xn--`. Only a [`Handle`] refuses it, in both
+    /// namespaces; an `AtHandle` accepts it.
     #[error("punycode (`xn--`) handle labels are not allowed")]
     PunycodeLabel,
     /// The leftmost label of a `*.zurfur.app` handle is reserved; carries it.
+    /// Only a [`Handle`] refuses it.
     #[error("`{0}` is a reserved label in the .zurfur.app namespace")]
     ReservedLabel(String),
 }
