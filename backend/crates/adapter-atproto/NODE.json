@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-atproto",
-  "charted": "2026-09-12",
+  "charted": "2026-10-08",
   "short": "Public boundary: the AT Protocol adapter (OAuth, PDS, did:plc)",
   "is": "The public data boundary: the only crate that knows the AT Protocol — OAuth sign-in, PDS record/blob writes, public profile reads, and real did:plc minting with key custody — quarantining jacquard behind domain port traits.",
   "type": "code",
@@ -12,7 +12,8 @@
     "Uses `PgPool` as a plain DB client injected by `composition`; its queries run against adapter-pg's migrations.",
     "OAuth at-rest secrets (DPoP key, tokens, PKCE verifier) are envelope-encrypted under the same custody root key as adapter-pg's `key_vault`.",
     "`auth_store` is one of the five documented Unit-of-Work exemptions.",
-    "Genesis signatures are atproto-canonical ECDSA-SHA256 low-S via atrium-crypto — never hand-rolled."
+    "Genesis signatures are atproto-canonical ECDSA-SHA256 low-S via atrium-crypto — never hand-rolled.",
+    "Every fetch to a host a visitor, a handle or a DID document names goes through `guarded_http::GuardedHttp`; only `guarded_http/client.rs`, `plc_directory.rs` and `public_records.rs` (operator-configured hosts) may name reqwest, only this crate's manifest may list it (never renamed), and `tests/network_door.rs` fails the build otherwise — it also forbids jacquard's bare-reqwest sessions and resolvers, the named transport-weakening calls (TLS, proxy, address pinning, any redirect policy but `Policy::none()`), and any caller of `AtprotoPublicRecords` outside its own file and the façade, until its transport is settled with the hosted-repos design decision (endpoint from operator config only)."
   ],
   "entry_points": [
     "src/lib.rs"
@@ -25,7 +26,7 @@
     },
     {
       "name": "Cargo.toml",
-      "role": "jacquard/jacquard-oauth, atrium-crypto, DAG-CBOR/sha2 for PLC, reqwest+rustls, sqlx for the auth store",
+      "role": "jacquard/jacquard-oauth, atrium-crypto, DAG-CBOR/sha2 for PLC, reqwest+rustls (the guarded client's transport), hickory-resolver 0.26 (its DNS), sqlx for the auth store",
       "node": false
     },
     {
@@ -35,16 +36,21 @@
     },
     {
       "name": "src/",
-      "role": "lib.rs (AtprotoAuthenticator), did_minter (Real/Stub), plc + plc_directory (genesis op, hashing, submission), profile, public_records, auth_store, secret_vault, @generated queries.rs",
+      "role": "lib.rs (AtprotoAuthenticator), guarded_http (the guarded web client: URL policy, address table, DNS filter, GuardedHttp), did_minter (Real/Stub), plc + plc_directory (genesis op, hashing, submission), profile, public_records, auth_store, secret_vault, @generated queries.rs",
       "node": false
     },
     {
       "name": "tests/",
-      "role": "auth_store round-trip, public_records against the throwaway PDS + conformance suite, wipe_replay",
+      "role": "auth_store round-trip, public_records against the throwaway PDS + conformance suite, wipe_replay, network_door (the source scan keeping the known doors around GuardedHttp shut)",
       "node": false
     }
   ],
   "refs": [
+    {
+      "page": 589826,
+      "title": "Project MVP",
+      "governs": "src/guarded_http*: the security-first 'https-only PDS redirect' item — every identity fetch is https on 443 to a public domain host"
+    },
     {
       "page": 4358151,
       "title": "DID:PLC vs DID:Web",
@@ -73,7 +79,7 @@
     {
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
-      "governs": "dev-deps proptest (PLC signing determinism) and wiremock (directory/PDS client mocks replacing the raw TcpListener mock)"
+      "governs": "dev-deps proptest (PLC signing determinism), wiremock (directory/PDS/guarded-client mocks) and tokio-rustls (an untrusted-certificate TLS server for the guarded client); hickory-resolver 0.26 as the guarded client's DNS client (supplies DNS, dictates nothing); jacquard with default features off (no hickory 0.24)"
     }
   ],
   "notes": [
@@ -82,6 +88,9 @@
     "Op ordering: `mint` writes custody + the genesis op BEFORE submitting; `tombstone` and `update_handle` submit BEFORE recording, so a failed submit never advances the local chain.",
     "`plc.rs` is pinned to the published vector `did:plc:ewvi7nxzyoun6zhxrhs64oiz`; it is the tripwire for the whole DAG-CBOR → sha256 → base32/24 pipeline.",
     "This crate's half of the `codegen_current` staleness gate lives over in adapter-pg's `tests/it/`, not here.",
+    "Guarded web client (`src/guarded_http/`): `policy.rs` = `PublicHttpsUrl` (https, port 443, no userinfo, a domain host of 2+ labels outside the local/reserved TLDs; IP literals refused in every spelling); `address.rs` = the address table (`PublicAddress`: IPv4 deny-list, IPv6 allow-list `2000::/3` with mapped/NAT64 unwrapped); `dns.rs` = `FilteringDns` (fully qualified lookups, 5 s outer timeout, any forbidden answer refuses the name) over one hickory `SystemDns`; `client.rs` = `GuardedHttp` (reqwest 0.12 with the filter as its resolver, no redirects, https-only, no proxy, no decompression, 10 s total timeout, 512 KiB cap with crate-private `send_capped`). Errors split into `Refused` / `NotFound` / `Unavailable` (`errors.rs`). Design record: `.understand/20261008-hardened-resolver-design.md`.",
+    "Interim (until the identity resolver replaces them): the OAuth client is `OAuthClient::new_from_resolver(JacquardResolver<GuardedHttp>)` and the profile source an `Agent` over the same, both still on jacquard's default `ResolverOptions` (Bluesky handle fallback included). Dev and production share the strict policy, so a plain-http or local PDS is unreachable.",
+    "Test seam, `#[cfg(test)]` only (never a feature): `GuardedHttp::relaxed` (loopback, http, any port), `GuardedHttp::scripted` (strict policy over `guarded_http/scripted.rs`'s scripted DNS), `GuardedHttp::upstream` (strict policy and DNS filter, then plaintext to a mock with `Host` kept).",
     "See also: `CLAUDE.md` here."
   ]
 }
