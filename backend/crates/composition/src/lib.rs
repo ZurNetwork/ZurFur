@@ -1,11 +1,13 @@
 //! The composition root shared by every driving adapter (`api`, `cli`): the
 //! figment-loaded [`Config`], the boot-time custody guard
-//! [`ensure_custody_hardened`], and [`Runtime`] — the bag of `Arc<dyn Port>`s
+//! [`ensure_custody_hardened`], the [`logging`] filter every driver installs,
+//! and [`Runtime`] — the bag of `Arc<dyn Port>`s
 //! wired by [`Runtime::connect`]. HTTP-free by construction
 //! (`tests/no_http_deps.rs`); migrations, background tasks, sessions and
 //! cookies are the driver's.
 
 mod config;
+pub mod logging;
 pub mod ports;
 pub(crate) mod runtime;
 

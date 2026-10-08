@@ -3,8 +3,10 @@
 //! Every fetch to a host a visitor, a handle or a DID document names must go
 //! through `GuardedHttp`. This scan fails the build if the non-test source of
 //! a runtime crate names a client that skips it: reqwest outside the three
-//! files allowed it, one of jacquard's convenience clients and DNS switches, or
-//! a call that weakens the transport. It also reads each runtime crate's
+//! files allowed it, jacquard's own resolver, `ResolverOptions` named anywhere
+//! but the sign-in bridge (and built there only as a full literal), one of
+//! jacquard's convenience clients and DNS switches, or a call that weakens the
+//! transport. It also reads each runtime crate's
 //! manifest (no renamed reqwest, reqwest only in adapter-atproto) and checks
 //! that unit-test files are only ever compiled under `#[cfg(test)]`. It sees
 //! only the doors it names: hyper, raw sockets or an unnamed jacquard path
@@ -45,17 +47,24 @@ const PUBLIC_RECORDS_ALLOWED: &[&str] = &[
     "adapter-atproto/src/lib.rs",
 ];
 
+/// The one file that may name jacquard's `ResolverOptions` at all, and may build
+/// it only as a struct literal naming every field: the sign-in bridge's
+/// no-fallback options. A line scan cannot follow a type across lines, so
+/// outside the bridge the name alone is refused, and inside it the bridge's own
+/// test checks the options it serves.
+const RESOLVER_OPTIONS_FILE: &str = "adapter-atproto/src/authenticator/jacquard_bridge.rs";
+
 /// Tokens forbidden in every scanned file, the guarded client's own included:
-/// jacquard's clients and sessions hard-wired to a bare reqwest, its
-/// convenience constructors that pick their own transport or Google's DNS, the
-/// Bluesky fallback host, and the named ways to weaken TLS or to reopen a
-/// proxy, a redirect or a pinned address past the DNS filter.
+/// jacquard's resolver, clients and sessions (each hard-wired to a bare reqwest
+/// or able to reach Bluesky), its convenience constructors that pick their own
+/// transport or Google's DNS, the Bluesky fallback host, and the named ways to
+/// weaken TLS or to reopen a proxy, a redirect or a pinned address past the DNS filter.
 const FORBIDDEN_EVERYWHERE: &[&str] = &[
+    "JacquardResolver",
     "BasicClient",
     "PublicResolver",
     "MemoryCredentialSession",
     "UnauthenticatedSession",
-    "JacquardResolver::default",
     "OAuthClient::new(",
     "with_default_config",
     "with_memory_store",
@@ -181,9 +190,34 @@ fn forbidden_on_line(relative: &str, line: &str) -> Vec<&'static str> {
     if line.contains(".redirect(") && !line.contains("Policy::none()") {
         found.push(".redirect(");
     }
+    found.extend(resolver_options_on_line(relative, line));
     let public_records_allowed = PUBLIC_RECORDS_ALLOWED.contains(&relative);
     if !public_records_allowed && line.contains("AtprotoPublicRecords") {
         found.push("AtprotoPublicRecords");
+    }
+    found
+}
+
+/// How `line` reaches jacquard's `ResolverOptions` other than through the
+/// bridge's full literal: any associated constructor or default (whose
+/// fallbacks are on), the name anywhere outside the bridge, or, in the bridge,
+/// a `..` update from a default.
+fn resolver_options_on_line(relative: &str, line: &str) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    let in_bridge = relative == RESOLVER_OPTIONS_FILE;
+    if line.contains("ResolverOptions::") || line.contains("ResolverOptions>::") {
+        found.push("ResolverOptions::");
+    }
+    if line.contains("ResolverOptions") && line.to_ascii_lowercase().contains("default") {
+        found.push("ResolverOptions default");
+    }
+    if line.contains("ResolverOptions") && !in_bridge {
+        found.push("ResolverOptions outside the bridge");
+    }
+    let update_from_default =
+        line.trim_start().starts_with("..") && line.to_ascii_lowercase().contains("default");
+    if in_bridge && update_from_default {
+        found.push("ResolverOptions ..update");
     }
     found
 }
@@ -378,6 +412,16 @@ fn detector_flags_each_door() {
         "let x: jacquard::client::MemoryCredentialSession = Default::default();",
         "let u = jacquard::client::UnauthenticatedSession::new_public();",
         "let r = jacquard::identity::JacquardResolver::default();",
+        "let r: JacquardResolver<_> = Default::default();",
+        "let r = <JacquardResolver<_>>::default();",
+        "let r = JacquardResolver::<GuardedHttp>::default();",
+        "let resolver = JacquardResolver::new(http, options);",
+        "type Oauth = OAuthClient<JacquardResolver<GuardedHttp>, Store>;",
+        "let options = ResolverOptions::default();",
+        "let options = ResolverOptions::new().build();",
+        "let options = <ResolverOptions>::default();",
+        "let options: ResolverOptions = Default::default();",
+        "let options = ResolverOptions { ..Default::default() };",
         "Arc::new(OAuthClient::new(store, data, http))",
         "OAuthClient::with_default_config(store)",
         "OAuthClient::with_memory_store()",
@@ -521,4 +565,60 @@ fn the_public_records_allowlist_is_exactly_two_files() {
     ];
 
     assert_eq!(PUBLIC_RECORDS_ALLOWED, expected);
+}
+
+#[test]
+fn the_bridge_may_build_resolver_options_only_as_a_full_literal() {
+    let literal = [
+        "use jacquard::identity::resolver::{PlcSource, ResolverOptions};",
+        "    options: ResolverOptions,",
+        "fn no_fallbacks() -> ResolverOptions {",
+        "    ResolverOptions {",
+        "        public_fallback_for_handle: false,",
+        "    fn options(&self) -> &ResolverOptions {",
+    ];
+    let elsewhere = "adapter-atproto/src/authenticator.rs";
+
+    let in_bridge: Vec<&str> = literal
+        .iter()
+        .flat_map(|line| forbidden_on_line(RESOLVER_OPTIONS_FILE, line))
+        .collect();
+    let literal_elsewhere = forbidden_on_line(elsewhere, "    ResolverOptions {");
+    // Defaults whose type is inferred across lines or through a generic: no
+    // one line names both the type and a default, and none is a literal.
+    let default_by_inference_elsewhere: Vec<&str> = [
+        "    let fallback_enabled_resolver_options: ResolverOptions =",
+        "        Default::default();",
+        "    let options = fallback_options::<ResolverOptions>();",
+    ]
+    .iter()
+    .flat_map(|line| forbidden_on_line(elsewhere, line))
+    .collect();
+    let update_in_bridge = forbidden_on_line(RESOLVER_OPTIONS_FILE, "        ..Default::default()");
+    let update_from_self = forbidden_on_line(RESOLVER_OPTIONS_FILE, "            ..self");
+    let default_in_bridge = forbidden_on_line(
+        RESOLVER_OPTIONS_FILE,
+        "    let options = ResolverOptions::default();",
+    );
+
+    let nothing: Vec<&str> = Vec::new();
+    assert_eq!(in_bridge, nothing);
+    assert_eq!(
+        literal_elsewhere,
+        vec!["ResolverOptions outside the bridge"]
+    );
+    assert_eq!(
+        default_by_inference_elsewhere,
+        vec![
+            "ResolverOptions outside the bridge",
+            "ResolverOptions outside the bridge"
+        ]
+    );
+    assert_eq!(update_in_bridge, vec!["ResolverOptions ..update"]);
+    assert_eq!(update_from_self, nothing);
+    assert!(!default_in_bridge.is_empty());
+    assert_eq!(
+        RESOLVER_OPTIONS_FILE,
+        "adapter-atproto/src/authenticator/jacquard_bridge.rs"
+    );
 }

@@ -13,6 +13,7 @@ use composition::{Config, ConnectError, Runtime};
 pub mod commands;
 mod confirm;
 pub mod identity;
+mod logging;
 mod output;
 pub mod principal;
 mod problem;
@@ -71,15 +72,12 @@ pub enum BackendCommand {
 }
 
 /// Boot `tracing` to **stderr** under `RUST_LOG` (default `warn`), so stdout
-/// stays the data channel. Idempotent per process; a second call is ignored.
+/// stays the data channel, never logging the DNS client's own events.
+/// Idempotent per process; a second call is ignored.
 pub fn init_tracing() {
-    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .try_init();
+    let _ = logging::subscriber(filter, std::io::stderr).try_init();
 }
 
 /// Run the parsed command line end to end: commands needing the backend boot

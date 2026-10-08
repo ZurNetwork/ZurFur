@@ -48,6 +48,11 @@
       "node": false
     },
     {
+      "name": "src/logging.rs",
+      "role": "the CLI subscriber init_tracing installs: RUST_LOG (default warn) to stderr, composition::logging's DNS-client filter on top (operator commands build the same resolver)",
+      "node": false
+    },
+    {
       "name": "src/main.rs",
       "role": "entry point — parse Cli, init tracing to stderr, run with ctrl-c racing to Interrupted exit class",
       "node": false

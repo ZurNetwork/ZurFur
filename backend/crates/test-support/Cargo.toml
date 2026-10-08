@@ -36,6 +36,8 @@ sqlx = { workspace = true }
 uuid = { workspace = true }
 # 0.13 + cookies so http::client() is the type the api tests use
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
+# `log_capture`: a writer a driver's log test reads its own subscriber back from.
+tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random

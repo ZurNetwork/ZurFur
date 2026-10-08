@@ -116,9 +116,11 @@ async fn resolve_did_doc_never_fetches_a_did_web_with_a_path() {
     assert!(requests.is_empty(), "no request was made");
 }
 
-#[test]
-fn options_turn_every_fallback_off() {
-    let options = no_fallbacks();
+#[tokio::test]
+async fn the_options_the_bridge_serves_turn_every_fallback_off() {
+    let server = MockServer::start().await;
+    let bridge = bridge(&server);
+    let options = bridge.options();
     assert!(options.handle_order.is_empty(), "no handle steps");
     assert!(options.did_order.is_empty(), "no document steps");
     assert!(options.pds_fallback.is_none(), "no PDS fallback");

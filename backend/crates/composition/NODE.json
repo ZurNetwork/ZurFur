@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, base64, fluent-uri",
+      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64, fluent-uri",
       "node": false
     },
     {
@@ -31,7 +31,12 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "crate doc + re-exports of Config and Runtime; runtime is pub(crate), ports is pub",
+      "role": "crate doc + re-exports of Config and Runtime; runtime is pub(crate), ports and logging are pub",
+      "node": false
+    },
+    {
+      "name": "src/logging.rs",
+      "role": "the log filter both drivers (api, cli) layer on their subscriber: every event from hickory's crates dropped whatever RUST_LOG says (hickory logs a queried handle's domain at error); is_loggable_target + without_dns_client",
       "node": false
     },
     {

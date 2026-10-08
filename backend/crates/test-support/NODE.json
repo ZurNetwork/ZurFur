@@ -50,6 +50,11 @@
       "node": false
     },
     {
+      "name": "src/log_capture.rs",
+      "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from",
+      "node": false
+    },
+    {
       "name": "src/pds.rs",
       "role": "ThrowawayPds::boot — container lifecycle, teardown on drop",
       "node": false
