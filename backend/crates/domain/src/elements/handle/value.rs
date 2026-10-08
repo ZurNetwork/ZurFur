@@ -2,9 +2,8 @@ use std::str::FromStr;
 
 use super::HandleDomain;
 use super::HandleError;
-use super::reserved::{
-    HANDLE_MAX_LEN, LABEL_MAX_LEN, RESERVED_LABELS, RESERVED_TLDS, ZURFUR_NAMESPACE_SUFFIX,
-};
+use super::reserved::{RESERVED_LABELS, RESERVED_TLDS, ZURFUR_NAMESPACE_SUFFIX};
+use super::syntax;
 
 /// A validated, normalized atproto-style Account handle. The stored value is
 /// always lowercase, trimmed, and has no trailing dot.
@@ -34,7 +33,7 @@ impl FromStr for Handle {
     type Err = HandleError;
 
     /// Validate and wrap a handle, enforcing every rule in one pass: normalize
-    /// (trim, lowercase, strip one trailing dot), then check length, segment
+    /// (trim, lowercase ASCII, strip one trailing dot), then check length, segment
     /// count and shape, charset, the `xn--` reject, the TLD rules, and — in the
     /// Zurfur namespace only, apex included — the reserved leftmost label.
     ///
@@ -48,45 +47,16 @@ impl FromStr for Handle {
     /// assert_eq!("zurfur.app".parse::<Handle>(), Err(HandleError::ReservedLabel("zurfur".into())));
     /// ```
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        // 1. NORMALIZE: trim, lowercase, strip a single trailing dot (FQDN root).
-        let lowered = raw.trim().to_lowercase();
+        // 1. NORMALIZE: trim, lowercase ASCII only (the spec's `A-Z` to `a-z`, so
+        //    a non-ASCII letter stays foreign and fails the charset), strip a
+        //    single trailing dot (FQDN root).
+        let lowered = raw.trim().to_ascii_lowercase();
         let normalized = lowered.strip_suffix('.').unwrap_or(&lowered).to_owned();
 
-        // 2. Overall length.
-        if normalized.is_empty() {
-            return Err(HandleError::Empty);
-        }
-        let len = normalized.chars().count();
-        if len > HANDLE_MAX_LEN {
-            return Err(HandleError::TooLong(len));
-        }
-
-        // 3. Segments: at least two, none empty.
-        let labels: Vec<&str> = normalized.split('.').collect();
-        if labels.len() < 2 {
-            return Err(HandleError::TooFewSegments);
-        }
-        if labels.iter().any(|label| label.is_empty()) {
-            return Err(HandleError::EmptySegment);
-        }
-
-        // 4. Per-label charset / length / hyphen-edge (every label, before any
-        //    punycode rejection — so a malformed label reports its real fault).
-        for label in &labels {
-            let label_len = label.chars().count();
-            if label_len > LABEL_MAX_LEN {
-                return Err(HandleError::SegmentTooLong(label_len));
-            }
-            if label.starts_with('-') || label.ends_with('-') {
-                return Err(HandleError::HyphenEdge);
-            }
-            if let Some(bad) = label
-                .chars()
-                .find(|&c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
-            {
-                return Err(HandleError::InvalidChar(bad));
-            }
-        }
+        // 2–4. Length, segments, and each label's length, hyphen edges and
+        //      charset — the syntax every handle shares, checked before the
+        //      punycode reject so a malformed label reports its real fault.
+        let labels = syntax::split_labels(&normalized)?;
 
         // 5. Punycode reject (ZMVP-48): any label beginning with `xn--`. The form
         //    is already lowercased, so a plain prefix check is case-insensitive.
@@ -94,16 +64,8 @@ impl FromStr for Handle {
             return Err(HandleError::PunycodeLabel);
         }
 
-        // 6. The rightmost (top-level) segment must not start with a digit.
-        let tld = *labels.last().expect("at least two labels checked above");
-        if tld.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            return Err(HandleError::TldLeadingDigit);
-        }
-
-        // 7. Reserved TLDs.
-        if RESERVED_TLDS.contains(&tld) {
-            return Err(HandleError::ReservedTld(tld.to_owned()));
-        }
+        // 6–7. The rightmost (top-level) segment: no leading digit, not reserved.
+        syntax::check_top_level(&labels, RESERVED_TLDS)?;
 
         // 8. Reserved labels — the Zurfur namespace only (ZMVP-45), leftmost label.
         // The bare platform apex `zurfur.app` has no label in front of it, so it

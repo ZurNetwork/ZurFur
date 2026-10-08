@@ -11,6 +11,7 @@ mod actor_identity;
 mod character;
 mod commission;
 mod file_store;
+mod identity_resolver;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
@@ -19,6 +20,7 @@ pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
+pub use identity_resolver::MemIdentityResolver;
 pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
 use workflow::{StoredColumn, StoredWorkflow};

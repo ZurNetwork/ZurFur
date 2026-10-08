@@ -88,6 +88,18 @@ fn rejects_out_of_charset_bytes() {
 }
 
 #[test]
+fn lowercases_ascii_only() {
+    // U+212A KELVIN SIGN lowercases to an ASCII `k` under Unicode rules; the
+    // spec lowercases ASCII only, so it stays a foreign character and fails.
+    let kelvin_sign = '\u{212A}';
+    let raw = format!("{kelvin_sign}itty.zurfur.app");
+    assert_eq!(
+        raw.parse::<Handle>(),
+        Err(HandleError::InvalidChar(kelvin_sign))
+    );
+}
+
+#[test]
 fn rejects_a_digit_leading_tld() {
     assert_eq!(
         "alice.123".parse::<Handle>(),
