@@ -10,7 +10,7 @@ pub(super) const ZURFUR_NAMESPACE_SUFFIX: &str = ".zurfur.app";
 /// Top-level domains the atproto handle spec disallows: reserved or
 /// non-resolvable names that must fail resolution. An [`AtHandle`](super::AtHandle)
 /// refuses these.
-pub(super) const DISALLOWED_TLDS: &[&str] = &[
+pub(super) const DISALLOWED_TLDS: [&str; 8] = [
     "alt",
     "arpa",
     "example",
@@ -21,19 +21,21 @@ pub(super) const DISALLOWED_TLDS: &[&str] = &[
     "onion",
 ];
 
-/// Top-level domains a claimed [`Handle`](super::Handle) refuses: the spec's
-/// [`DISALLOWED_TLDS`] plus `test`, which real-world handles must not use.
-pub(super) const RESERVED_TLDS: &[&str] = &[
-    "alt",
-    "arpa",
-    "example",
-    "internal",
-    "invalid",
-    "local",
-    "localhost",
-    "onion",
-    "test",
-];
+/// Top-level domains no real-world handle or identity host uses: the spec's
+/// disallowed eight plus `test`. A claimed [`Handle`](super::Handle) refuses
+/// these, and so does every identity lookup and fetch.
+pub const RESERVED_TLDS: [&str; 9] = with_test(DISALLOWED_TLDS);
+
+/// `disallowed` followed by `test`; derived, so the two lists cannot drift.
+const fn with_test(disallowed: [&'static str; 8]) -> [&'static str; 9] {
+    let mut reserved = ["test"; 9];
+    let mut index = 0;
+    while index < disallowed.len() {
+        reserved[index] = disallowed[index];
+        index += 1;
+    }
+    reserved
+}
 
 /// Labels Zurfur withholds from its own `*.zurfur.app` namespace. Checked
 /// against the leftmost label only; a BYO domain is never gated by this set.

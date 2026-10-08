@@ -13,6 +13,7 @@ impl From<&Runtime> for Ports {
             changelog: state.changelog.clone(),
             profile_source: state.profile_source.clone(),
             profile_cache: state.profile_cache.clone(),
+            identity_resolver: state.identity_resolver.clone(),
             did_minter: state.did_minter.clone(),
             files: state.files.clone(),
             workflows: state.workflows.clone(),

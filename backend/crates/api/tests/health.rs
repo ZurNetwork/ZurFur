@@ -58,6 +58,8 @@ async fn health_is_green_against_fresh_postgres() {
             avatar_url: None,
         })),
         profile_cache: backend.profile_cache(),
+        // /health resolves no identity; an empty in-memory world keeps DNS out.
+        identity_resolver: Arc::new(adapter_mem::MemIdentityResolver::new()),
     };
     let app = api::app(state);
     tokio::spawn(async move {

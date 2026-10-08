@@ -8,7 +8,8 @@ use base64::Engine as _;
 use domain::ports::character::CharacterStore;
 use domain::ports::{
     AccountStore, Authenticator, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter,
-    FileStore, ProfileCache, ProfileSource, UnitOfWorkFn, UserStore, WorkflowStore,
+    FileStore, IdentityResolver, ProfileCache, ProfileSource, UnitOfWorkFn, UserStore,
+    WorkflowStore,
 };
 use fluent_uri::Uri;
 
@@ -27,6 +28,9 @@ pub struct Runtime {
     /// The OAuth handshake with a visitor's PDS: `start` yields the
     /// authorization URL, `complete` exchanges the callback for a DID.
     pub auth: Arc<dyn Authenticator>,
+    /// Handle ↔ DID lookups for actors Zurfur does not own, confirmed both
+    /// ways. The one resolver behind sign-in and the profile read as well.
+    pub identity_resolver: Arc<dyn IdentityResolver>,
     /// User reads by id or DID. `provision` is a write and lives on the
     /// [`UnitOfWork`](domain::ports::UnitOfWork).
     pub users: Arc<dyn UserStore>,
@@ -95,8 +99,9 @@ impl Runtime {
     /// pg-backed store.
     ///
     /// Fails if the pool cannot connect, `public_url` or the root key will not
-    /// parse, or [`ensure_custody_hardened`] refuses the configuration; the
-    /// error messages never echo the secrets themselves.
+    /// parse, [`ensure_custody_hardened`] refuses the configuration, or the
+    /// system DNS configuration cannot be read; the error messages never echo
+    /// the secrets themselves.
     pub async fn connect(config: Config) -> Result<Self, ConnectError> {
         let pool = adapter_pg::connect(&config.database_url)
             .await
@@ -130,15 +135,20 @@ impl Runtime {
             key_store, op_log, directory,
         ));
 
+        let identity_resolver = Arc::new(adapter_atproto::AtprotoIdentityResolver::new()?);
         let runtime = Runtime {
             config,
             auth: Arc::new(adapter_atproto::AtprotoAuthenticator::new(
                 redirect_uri,
                 pool.clone(),
                 oauth_vault,
+                identity_resolver.clone(),
             )),
             users: Arc::new(adapter_pg::PgUserStore::new(pool.clone())),
-            profile_source: Arc::new(adapter_atproto::AtprotoProfileSource::new()),
+            profile_source: Arc::new(adapter_atproto::AtprotoProfileSource::new(
+                identity_resolver.clone(),
+            )),
+            identity_resolver,
             profile_cache: Arc::new(adapter_pg::PgProfileCache::new(
                 pool.clone(),
                 std::time::Duration::from_secs(60 * 60),
@@ -164,8 +174,8 @@ impl Runtime {
 pub enum ConnectError {
     /// The Postgres pool could not connect to [`Config::database_url`].
     Database(adapter_pg::SqlxError),
-    /// The configuration is unusable: bad `public_url` or root key, or the
-    /// custody guard refused it.
+    /// The configuration is unusable: bad `public_url` or root key, the
+    /// custody guard refused it, or the system DNS configuration is unreadable.
     Setup(anyhow::Error),
 }
 

@@ -27,14 +27,6 @@ ignore = [
     # lacking native atomics; not a direct dependency of ours.
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill unmaintained; transitive via jacquard -> postcard -> heapless 0.7; no upstream fix available; not a direct dependency." },
 
-    # Transitive: jacquard -> hickory-resolver -> hickory-proto 0.24.4. Real
-    # DoS advisory (O(n^2) name-compression CPU blowup on crafted DNS
-    # responses); fixed upstream in hickory-proto >=0.26.1, but the version
-    # is set by jacquard's own Cargo.toml, not ours. SECURITY-RELEVANT --
-    # hickory sits in the DNS/DID-resolution path; flagged for the Engineer,
-    # not silently accepted.
-    { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.24.4 DoS (O(n^2) name compression); transitive via jacquard -> hickory-resolver; fix exists upstream (>=0.26.1) but needs a jacquard version bump we don't control. Flagged for the Engineer -- DNS/DID-resolution-adjacent." },
-
     # Transitive: jacquard / jacquard-oauth -> jose-jwk -> rsa 0.9.10. The
     # advisory itself states no safe upgrade exists yet (RustCrypto/RSA#626
     # still open upstream). Used for JOSE/JWK RSA key handling.

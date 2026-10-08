@@ -41,7 +41,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, ProfileCache, ProfileSource, UserStore), Runtime::connect wiring pg+atproto adapters, transaction convenience",
+      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore), Runtime::connect wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), transaction convenience",
       "node": false
     },
     {

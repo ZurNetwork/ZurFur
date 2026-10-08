@@ -65,7 +65,7 @@ impl FromStr for Handle {
         }
 
         // 6–7. The rightmost (top-level) segment: no leading digit, not reserved.
-        syntax::check_top_level(&labels, RESERVED_TLDS)?;
+        syntax::check_top_level(&labels, &RESERVED_TLDS)?;
 
         // 8. Reserved labels — the Zurfur namespace only (ZMVP-45), leftmost label.
         // The bare platform apex `zurfur.app` has no label in front of it, so it

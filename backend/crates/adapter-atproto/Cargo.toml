@@ -8,7 +8,13 @@ edition = "2024"
 domain = { path = "../domain" }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
-jacquard = { version = "0.12.0", features = ["loopback", "derive"] }
+# Default features off: jacquard's `dns` feature (hickory 0.24, never wanted) and
+# the unused API families stay out of the build.
+jacquard = { version = "0.12.0", default-features = false, features = [
+  "api_bluesky",
+  "loopback",
+  "derive",
+] }
 jacquard-oauth = { version = "0.12.0" }
 jacquard-common = { version = "0.12.0" }
 fluent-uri = { version = "0.4.1", features = ["std"] }
@@ -32,6 +38,9 @@ data-encoding = { workspace = true }
 # base64url (no pad) for the operation signature.
 base64 = { workspace = true }
 tracing = { workspace = true }
+# The guarded client's typed errors and newtype derives.
+thiserror = { workspace = true }
+derive_more = { workspace = true }
 # Persists OAuth state (the ClientAuthStore impl) to the private boundary. This
 # crate uses the pool as a plain DB client; api injects it from adapter-pg.
 sqlx = { workspace = true }
@@ -42,15 +51,23 @@ serde_json = { workspace = true }
 # of adapter-pg's key_vault (same AEAD, same root key). See `secret_vault`.
 chacha20poly1305 = { workspace = true }
 zeroize = { workspace = true }
-# Supplies the concrete HttpClient for the resolver and the TLS backend jacquard
-# leaves to the consumer (jacquard-common enables only json/charset on reqwest).
+# The guarded client's transport (and the TLS backend jacquard leaves to the
+# consumer: jacquard-common enables only json/charset on reqwest). Only
+# `guarded_http/client.rs` and the two operator-host clients may name it; the
+# `network_door` guard test enforces that.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# The guarded client's DNS: system configuration, fully qualified lookups,
+# every answer checked against the address table.
+hickory-resolver = { workspace = true }
+# The guarded client's one parsed URL (the type its policy admits and it dials).
+url = { workspace = true }
+# Outer timeouts on DNS lookups and fetches.
+tokio = { workspace = true }
 
 [dev-dependencies]
 # Boots a throwaway Postgres so the store round-trips against the real migration.
 # adapter-pg (test-only) supplies connect + migrate; this is not a runtime edge.
 adapter-pg = { path = "../adapter-pg" }
-tokio = { workspace = true }
 # The in-memory KeyStore fake, so RealDidMinter unit-tests need no database.
 adapter-mem = { path = "../adapter-mem" }
 # Assert the genesis signature is low-S (Signature::normalize_s) in tests.
@@ -62,3 +79,6 @@ chrono = { workspace = true }
 proptest = { workspace = true }
 # Mock HTTP for the directory and PDS clients (replaces the raw TcpListener mock).
 wiremock = { workspace = true }
+# A TLS test server with an untrusted certificate, for the guarded client's
+# certificate-refusal test.
+tokio-rustls = { workspace = true }

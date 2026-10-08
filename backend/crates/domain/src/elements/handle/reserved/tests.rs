@@ -17,7 +17,16 @@ fn disallowed_tlds_are_the_handle_specs_eight() {
 
 #[test]
 fn reserved_tlds_are_the_disallowed_tlds_plus_test() {
-    let mut disallowed_plus_test = DISALLOWED_TLDS.to_vec();
-    disallowed_plus_test.push("test");
-    assert_eq!(RESERVED_TLDS, disallowed_plus_test);
+    let spec_list_plus_test = [
+        "alt",
+        "arpa",
+        "example",
+        "internal",
+        "invalid",
+        "local",
+        "localhost",
+        "onion",
+        "test",
+    ];
+    assert_eq!(RESERVED_TLDS, spec_list_plus_test);
 }

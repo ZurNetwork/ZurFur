@@ -9,46 +9,56 @@ use domain::{
     ports::ProfileSource,
 };
 use jacquard::api::app_bsky::actor::profile::Profile as BskyProfile;
-use jacquard::client::{AgentSessionExt, BasicClient};
+use jacquard::client::credential_session::{CredentialSession, SessionKey};
+use jacquard::client::{Agent, AgentSessionExt, AtpSession, MemorySessionStore};
 use jacquard::common::types::collection::RecordError;
 use jacquard::common::types::string::{AtUri, Did as AtDid, Handle};
 use jacquard::common::xrpc::XrpcError;
+use jacquard::identity::{JacquardResolver, resolver::ResolverOptions};
 use jacquard::prelude::IdentityResolver;
 use smol_str::SmolStr;
+use std::sync::Arc;
+
+use crate::guarded_http::GuardedHttp;
+use crate::resolver::AtprotoIdentityResolver;
+
+/// The unauthenticated jacquard agent the source reads through, every request
+/// over [`GuardedHttp`].
+type ProfileAgent = Agent<
+    CredentialSession<MemorySessionStore<SessionKey, AtpSession>, JacquardResolver<GuardedHttp>>,
+>;
 
 /// The real [`ProfileSource`]: resolves the DID document for handle and PDS
 /// endpoint, then reads `app.bsky.actor.profile` from that PDS — no appview, no
 /// CDN. Unauthenticated; nothing here touches a token.
 pub struct AtprotoProfileSource {
-    client: BasicClient,
-}
-
-impl Default for AtprotoProfileSource {
-    fn default() -> Self {
-        Self::new()
-    }
+    client: ProfileAgent,
 }
 
 impl AtprotoProfileSource {
-    /// Build the source with a fresh unauthenticated jacquard client.
-    pub fn new() -> Self {
-        Self {
-            client: BasicClient::unauthenticated(),
-        }
+    /// Build the source with a fresh unauthenticated jacquard client over
+    /// `resolver`'s guarded web client.
+    pub fn new(resolver: Arc<AtprotoIdentityResolver>) -> Self {
+        let http = resolver.http().clone();
+        Self::over(http, ResolverOptions::default())
     }
 
-    /// Build the source resolving through the given options — tests point it at a local server.
-    pub fn with_resolver_options(options: jacquard::identity::resolver::ResolverOptions) -> Self {
-        use jacquard::client::credential_session::CredentialSession;
-        use jacquard::client::{Agent, MemorySessionStore};
-        use std::sync::Arc;
-
-        let resolver = jacquard::identity::PublicResolver::new(reqwest::Client::new(), options);
+    /// The source reading through `http`, resolving with `options`.
+    fn over(http: GuardedHttp, options: ResolverOptions) -> Self {
+        let resolver = JacquardResolver::new(http, options);
         let store = MemorySessionStore::default();
         let session = CredentialSession::new(Arc::new(store), Arc::new(resolver));
         Self {
             client: Agent::new(session),
         }
+    }
+
+    /// The source over the relaxed test client, resolving with `options`, so a
+    /// test can point it at a local plain-http server.
+    #[cfg(test)]
+    fn with_resolver_options(options: ResolverOptions) -> Self {
+        let http = GuardedHttp::relaxed(crate::guarded_http::Timeouts::default());
+        Self::over(http, options)
     }
 }
 
