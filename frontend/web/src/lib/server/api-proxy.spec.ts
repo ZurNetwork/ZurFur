@@ -88,6 +88,17 @@ describe('rewriteApiRequest', () => {
 		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=abc123');
 	});
 
+	it('never forwards the browser-binding cookie: the callback reaches the backend without SvelteKit', () => {
+		// Caddy proxies /signin-callback to axum verbatim, so the binding cookie's
+		// one legitimate trip to the backend never passes through this rewrite.
+		const request = sameOriginRequest('/api/v1/me');
+		const incomingCookie = 'zurfur.signin=tok; __Host-zurfur.signin=tok2; zurfur.sid=abc123';
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.headers.get('cookie')).toBe('zurfur.sid=abc123');
+	});
+
 	it("marks the rewritten request credentials: 'omit'", () => {
 		// SvelteKit's server fetch skips re-attaching the cookie jar only for
 		// `credentials: 'omit'`; the explicit zurfur.sid header still goes out.

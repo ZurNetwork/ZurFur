@@ -179,11 +179,12 @@ async fn hits(server: &MockServer, host: &str, route: &str) -> usize {
         .count()
 }
 
-/// The form fields of the PAR request `server` received.
+/// The form fields of the latest PAR request `server` received.
 async fn par_fields(server: &MockServer) -> HashMap<String, String> {
     let requests = server.received_requests().await.unwrap_or_default();
     let par = requests
         .iter()
+        .rev()
         .find(|request| request.url.path() == "/oauth/par")
         .expect("a PAR request was sent");
     url::form_urlencoded::parse(&par.body)
@@ -198,6 +199,7 @@ struct World {
     server: MockServer,
     authenticator: AtprotoAuthenticator,
     store: AtprotoAuthStore,
+    pool: PgPool,
     _db: test_support::pg::TestDb,
 }
 
@@ -231,30 +233,40 @@ async fn world(authorize: &str, claimed: &str) -> World {
     let store = AtprotoAuthStore::new(pool.clone(), vault());
     let redirect_uri =
         Uri::parse("http://127.0.0.1:3000/signin-callback".to_owned()).expect("a redirect URI");
-    let authenticator = AtprotoAuthenticator::new(redirect_uri, pool, vault(), resolver);
+    let authenticator = AtprotoAuthenticator::new(redirect_uri, pool.clone(), vault(), resolver);
     World {
         server,
         authenticator,
         store,
+        pool,
         _db: db,
     }
 }
 
-/// Start sign-in for [`HANDLE`] and return the `state` the PAR carried.
-async fn started(world: &World) -> String {
-    world
+/// Start sign-in for [`HANDLE`] and return the `state` the PAR carried and
+/// the browser token the browser was given.
+async fn started(world: &World) -> (String, BrowserBinding) {
+    let signin = world
         .authenticator
         .start(&handle(HANDLE))
         .await
         .expect("sign-in starts");
-    par_fields(&world.server).await["state"].clone()
+    let state = par_fields(&world.server).await["state"].clone();
+    (state, signin.browser_binding)
 }
 
-/// Complete the callback for `state`, as the PDS would redirect it back.
-async fn completed(world: &World, state: &str) -> anyhow::Result<Did> {
+/// Complete the callback for `state`, as the PDS would redirect it back to a
+/// browser holding `binding`.
+async fn completed(world: &World, state: &str, binding: &BrowserBinding) -> anyhow::Result<Did> {
+    let presented = Some(binding.clone());
     world
         .authenticator
-        .complete("code".into(), Some(state.to_owned()), Some(ISSUER.into()))
+        .complete(
+            "code".into(),
+            Some(state.to_owned()),
+            Some(ISSUER.into()),
+            presented,
+        )
         .await
 }
 
@@ -288,7 +300,7 @@ async fn start_binds_the_resolved_did_and_hints_the_typed_handle() {
         "the auth request binds the resolved DID"
     );
 
-    let url = url::Url::parse(&url).expect("an authorization URL");
+    let url = url::Url::parse(&url.authorization_url).expect("an authorization URL");
     let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
     assert_eq!(url.as_str().split('?').next(), Some(AUTHORIZE));
     assert_eq!(query["request_uri"], REQUEST_URI);
@@ -350,9 +362,9 @@ async fn start_gives_up_at_its_deadline() {
 async fn the_bound_account_completes() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &alice()).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
 
-    let did = completed(&world, &state)
+    let did = completed(&world, &state, &binding)
         .await
         .expect("the bound account signs in");
 
@@ -363,9 +375,9 @@ async fn the_bound_account_completes() {
 async fn another_account_is_revoked_deleted_and_refused() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &mallory()).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
 
-    let result = completed(&world, &state).await;
+    let result = completed(&world, &state, &binding).await;
 
     let error = result.expect_err("another account is refused");
     assert!(
@@ -386,7 +398,7 @@ async fn another_account_is_revoked_deleted_and_refused() {
 async fn a_failed_revocation_still_deletes_the_mismatched_session() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &mallory()).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
     // The authorization server vanishes once the callback is through: its two
     // metadata fetches (the callback's own, the issuer check's) answer, and
     // logout's cannot, so the session must be deleted without a revocation.
@@ -403,7 +415,7 @@ async fn a_failed_revocation_still_deletes_the_mismatched_session() {
     let gone = ResponseTemplate::new(500);
     mount_with(&world.server, metadata_route, gone, true).await;
 
-    let result = completed(&world, &state).await;
+    let result = completed(&world, &state, &binding).await;
 
     let error = result.expect_err("another account is refused");
     assert!(error.is::<AccountMismatch>());
@@ -422,7 +434,7 @@ async fn a_failed_revocation_still_deletes_the_mismatched_session() {
 async fn an_auth_request_without_a_bound_did_fails_closed() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &alice()).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
     let mut unbound = world
         .store
         .get_auth_req_info(&state)
@@ -435,13 +447,16 @@ async fn an_auth_request_without_a_bound_did_fails_closed() {
         .delete_auth_req_info(&state)
         .await
         .expect("delete");
+    // Re-saved bound to the same browser, so the browser check passes and the
+    // missing DID is what refuses it.
+    let browser_hash = token_hash(binding.as_ref());
     world
         .store
-        .save_auth_req_info(&unbound)
+        .save_bound_auth_request(&unbound, &browser_hash)
         .await
         .expect("save");
 
-    let result = completed(&world, &state).await;
+    let result = completed(&world, &state, &binding).await;
 
     let error = result.expect_err("an unbound request is refused");
     assert!(!error.is::<AccountMismatch>());
@@ -460,7 +475,8 @@ async fn an_unknown_state_exchanges_nothing() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &alice()).await;
 
-    let result = completed(&world, "never-issued").await;
+    let unissued = BrowserBinding::from("never-issued".to_owned());
+    let result = completed(&world, "never-issued", &unissued).await;
 
     assert!(result.is_err());
     assert_eq!(hits(&world.server, AUTH, "/oauth/token").await, 0);
@@ -471,9 +487,9 @@ async fn the_issuer_check_refuses_a_did_web_with_a_path() {
     let world = world(AUTHORIZE, HANDLE).await;
     let with_path = Did::from("did:web:auth.example.com:users:mallory".to_owned());
     serve_token(&world.server, &with_path).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
 
-    let result = completed(&world, &state).await;
+    let result = completed(&world, &state, &binding).await;
 
     let error = result.expect_err("the issuer check refuses it");
     assert!(
@@ -502,9 +518,9 @@ async fn the_issuer_check_refuses_a_mini_doc() {
     });
     serve_document(&world.server, &minimal, mini_doc).await;
     serve_token(&world.server, &minimal).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
 
-    let result = completed(&world, &state).await;
+    let result = completed(&world, &state, &binding).await;
 
     let error = result.expect_err("a mini-doc never passes the issuer check");
     assert!(
@@ -573,7 +589,7 @@ async fn metadata_then(server: &MockServer, later: ResponseTemplate) {
 async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &mallory()).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
     // The authorization server answers the callback, then stalls logout's
     // metadata fetch: the stall must neither strand the row nor change the answer.
     let stalled = ResponseTemplate::new(200)
@@ -586,7 +602,12 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
 
     let begun = std::time::Instant::now();
     let result = authenticator
-        .complete("code".into(), Some(state.clone()), Some(ISSUER.into()))
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
         .await;
 
     let error = result.expect_err("another account is refused");
@@ -606,7 +627,7 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
 #[tokio::test]
 async fn the_complete_deadline_cuts_off_the_callback_and_discards_its_session() {
     let world = world(AUTHORIZE, HANDLE).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
     // A token exchange that answers only after the deadline, and a session
     // already saved under this sign-in's state, as if the callback had got that far.
     let slow = ResponseTemplate::new(200).set_delay(Duration::from_secs(5));
@@ -619,7 +640,12 @@ async fn the_complete_deadline_cuts_off_the_callback_and_discards_its_session() 
 
     let begun = std::time::Instant::now();
     let result = authenticator
-        .complete("code".into(), Some(state.clone()), Some(ISSUER.into()))
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
         .await;
 
     let error = result.expect_err("a callback past its deadline fails");
@@ -642,7 +668,7 @@ async fn the_complete_deadline_cuts_off_the_callback_and_discards_its_session() 
 #[tokio::test]
 async fn a_dropped_callback_request_still_cleans_up() {
     let world = world(AUTHORIZE, HANDLE).await;
-    let state = started(&world).await;
+    let (state, binding) = started(&world).await;
     // The token exchange for another account answers after the request is gone.
     let tokens = json!({
         "access_token": "access",
@@ -656,10 +682,12 @@ async fn a_dropped_callback_request_still_cleans_up() {
         .set_delay(Duration::from_millis(500));
     mount(&world.server, "POST", AUTH, "/oauth/token", slow_tokens).await;
 
-    let callback =
-        world
-            .authenticator
-            .complete("code".into(), Some(state.clone()), Some(ISSUER.into()));
+    let callback = world.authenticator.complete(
+        "code".into(),
+        Some(state.clone()),
+        Some(ISSUER.into()),
+        Some(binding.clone()),
+    );
     let dropped = tokio::time::timeout(Duration::from_millis(100), callback).await;
     assert!(dropped.is_err(), "the request went away mid-callback");
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -680,13 +708,13 @@ async fn sign_in_logs_only_the_failure_class_at_info() {
     let refused_endpoint = world("http://auth.example.com/oauth/authorize", HANDLE).await;
     let mismatched = world(AUTHORIZE, HANDLE).await;
     serve_token(&mismatched.server, &mallory()).await;
-    let state = started(&mismatched).await;
+    let (state, binding) = started(&mismatched).await;
 
     let ((), events) = record_events(async {
         let typed = handle(HANDLE);
         let _ = unconfirmed.authenticator.start(&typed).await;
         let _ = refused_endpoint.authenticator.start(&typed).await;
-        let _ = completed(&mismatched, &state).await;
+        let _ = completed(&mismatched, &state, &binding).await;
     })
     .await;
 
@@ -737,8 +765,8 @@ async fn a_failure_cause_reaches_the_debug_line_only() {
 async fn a_replayed_callback_is_refused_and_leaves_the_live_session() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &alice()).await;
-    let state = started(&world).await;
-    completed(&world, &state)
+    let (state, binding) = started(&world).await;
+    completed(&world, &state, &binding)
         .await
         .expect("the first callback signs in");
     let live = world
@@ -749,7 +777,7 @@ async fn a_replayed_callback_is_refused_and_leaves_the_live_session() {
     assert!(live.is_some(), "the sign-in stored its session");
 
     // A reload, the back button, or anyone who saw the callback URL.
-    let replay = completed(&world, &state).await;
+    let replay = completed(&world, &state, &binding).await;
 
     assert!(replay.is_err(), "a state is single-use");
     let still_live = world
@@ -758,4 +786,343 @@ async fn a_replayed_callback_is_refused_and_leaves_the_live_session() {
         .await
         .expect("the store answers");
     assert!(still_live.is_some(), "the replay deleted nothing");
+}
+
+// ---- the browser binding ---------------------------------------------------
+
+/// Complete the callback for `state` from a browser presenting `presented`.
+async fn completed_presenting(
+    world: &World,
+    state: &str,
+    presented: Option<BrowserBinding>,
+) -> anyhow::Result<Did> {
+    world
+        .authenticator
+        .complete(
+            "code".into(),
+            Some(state.to_owned()),
+            Some(ISSUER.into()),
+            presented,
+        )
+        .await
+}
+
+/// Whether `state`'s auth request is still stored.
+async fn still_pending(world: &World, state: &str) -> bool {
+    let request = world.store.get_auth_req_info(state).await.expect("answers");
+    request.is_some()
+}
+
+#[tokio::test]
+async fn only_a_hash_of_the_browser_token_is_stored() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+
+    let stored: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT browser_binding FROM atproto_oauth.auth_request WHERE state = $1",
+    )
+    .bind(&state)
+    .fetch_one(&world.pool)
+    .await
+    .expect("the request row");
+
+    let token = binding.as_ref();
+    assert!(token.len() >= 43, "at least 256 bits, base64url");
+    let expected_hash = Sha256::digest(token.as_bytes()).to_vec();
+    assert_eq!(stored, Some(expected_hash), "the hash, never the token");
+}
+
+#[tokio::test]
+async fn a_callback_from_a_browser_without_the_cookie_is_refused() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, _binding) = started(&world).await;
+
+    let result = completed_presenting(&world, &state, None).await;
+
+    assert!(result.is_err(), "no cookie, no sign-in");
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "no code exchanged"
+    );
+    assert!(
+        !still_pending(&world, &state).await,
+        "the refused request is deleted"
+    );
+}
+
+#[tokio::test]
+async fn a_callback_carrying_another_sign_ins_cookie_is_refused() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    // The attacker's sign-in, approved at their PDS but never finished...
+    let (attackers_state, _attackers_binding) = started(&world).await;
+    // ...opened in a victim's browser, which holds a cookie from its own sign-in.
+    let (_victims_state, victims_binding) = started(&world).await;
+
+    let result = completed_presenting(&world, &attackers_state, Some(victims_binding)).await;
+
+    assert!(result.is_err(), "another sign-in's cookie does not fit");
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "no code exchanged"
+    );
+}
+
+#[tokio::test]
+async fn a_callback_with_a_wrong_token_is_refused() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let mut forged = binding.as_ref().to_owned();
+    let flipped = if forged.ends_with('A') { 'B' } else { 'A' };
+    forged.pop();
+    forged.push(flipped);
+
+    let result = completed_presenting(&world, &state, Some(BrowserBinding::from(forged))).await;
+
+    assert!(result.is_err(), "a token one character off is refused");
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "no code exchanged"
+    );
+    assert!(
+        !still_pending(&world, &state).await,
+        "the refused request is deleted"
+    );
+}
+
+#[tokio::test]
+async fn an_expired_sign_in_is_refused_even_with_its_own_cookie() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let aged = "UPDATE atproto_oauth.auth_request SET created_at = now() - interval '11 minutes' WHERE state = $1";
+    sqlx::query(aged)
+        .bind(&state)
+        .execute(&world.pool)
+        .await
+        .expect("aged");
+
+    let result = completed(&world, &state, &binding).await;
+
+    assert!(result.is_err(), "past its lifetime the sign-in is gone");
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "no code exchanged"
+    );
+}
+
+#[tokio::test]
+async fn the_cookie_lives_exactly_as_long_as_the_sign_in() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let signin = world
+        .authenticator
+        .start(&handle(HANDLE))
+        .await
+        .expect("sign-in starts");
+    assert_eq!(signin.lifetime, SIGNIN_LIFETIME);
+    assert!(SIGNIN_LIFETIME <= Duration::from_secs(10 * 60));
+}
+
+#[test]
+fn hashes_match_only_on_every_byte() {
+    let hash = token_hash("token");
+    assert!(hashes_match(&hash, &hash));
+    let mut last_byte_off = hash;
+    last_byte_off[31] ^= 1;
+    assert!(!hashes_match(&hash, &last_byte_off));
+    assert!(
+        !hashes_match(&hash, &hash[..31]),
+        "a short value never matches"
+    );
+    assert!(!hashes_match(&hash, &[]), "an empty value never matches");
+}
+
+#[test]
+fn every_browser_token_is_fresh() {
+    let first = new_browser_token();
+    let second = new_browser_token();
+    assert_ne!(first, second);
+    assert_eq!(first.len(), 43, "32 bytes, base64url without padding");
+}
+
+// ---- the claim -------------------------------------------------------------
+
+/// Hold `state`'s request row the way a winning callback's claim does while its
+/// statement is in flight: the binding cleared, not yet committed.
+async fn claim_in_flight(world: &World, state: &str) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut claim = world.pool.begin().await.expect("a transaction");
+    let clear = "UPDATE atproto_oauth.auth_request SET browser_binding = NULL WHERE state = $1";
+    sqlx::query(clear)
+        .bind(state)
+        .execute(&mut *claim)
+        .await
+        .expect("the claim holds the row");
+    claim
+}
+
+/// The sign-in failure behind a refused `complete`.
+fn failure_of(error: &anyhow::Error) -> Option<&SigninFailure> {
+    error.downcast_ref::<SigninFailure>()
+}
+
+#[tokio::test]
+async fn exactly_one_of_two_racing_claims_wins() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    let bound = token_hash(binding.as_ref());
+
+    let stale = world
+        .store
+        .claim_browser_binding(&state, &[0u8; 32])
+        .await
+        .expect("the store answers");
+    let (first, second) = tokio::join!(
+        world.store.claim_browser_binding(&state, &bound),
+        world.store.claim_browser_binding(&state, &bound),
+    );
+
+    assert!(!stale, "a hash that isn't the binding claims nothing");
+    let claims = [
+        first.expect("the store answers"),
+        second.expect("the store answers"),
+    ];
+    let won = claims.iter().filter(|claimed| **claimed).count();
+    assert_eq!(won, 1, "exactly one claim wins");
+}
+
+#[tokio::test]
+async fn a_callback_that_loses_the_claim_exchanges_nothing_and_leaves_the_winner_alone() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let winners = saved_session(&alice(), &state);
+    world.store.upsert_session(winners).await.expect("saved");
+    let winning_claim = claim_in_flight(&world, &state).await;
+
+    // The loser reads the live binding, then waits on the row until the
+    // winner's claim commits.
+    let commit_later = async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        winning_claim
+            .commit()
+            .await
+            .expect("the winner's claim commits");
+    };
+    let (losing, ()) = tokio::join!(completed(&world, &state, &binding), commit_later);
+
+    let error = losing.expect_err("the loser is refused");
+    assert!(
+        matches!(failure_of(&error), Some(SigninFailure::Claimed)),
+        "refused as already claimed: {error:?}"
+    );
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "the loser exchanged no code"
+    );
+    assert!(
+        still_pending(&world, &state).await,
+        "the request is left to the winner"
+    );
+    let session = world
+        .store
+        .get_session(&at_did(&alice()), &state)
+        .await
+        .expect("the store answers");
+    assert!(session.is_some(), "the winner's session survives the loser");
+}
+
+#[tokio::test]
+async fn a_callback_after_the_claim_is_refused_and_leaves_the_request_to_the_claimer() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let claimed = world
+        .store
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()))
+        .await
+        .expect("the store answers");
+    assert!(claimed, "the first callback claims the sign-in");
+
+    let with_the_cookie = completed(&world, &state, &binding).await;
+    let without_a_cookie = completed_presenting(&world, &state, None).await;
+
+    for refused in [with_the_cookie, without_a_cookie] {
+        let error = refused.expect_err("a claimed sign-in is the claimer's");
+        assert!(
+            matches!(failure_of(&error), Some(SigninFailure::Claimed)),
+            "refused as already claimed: {error:?}"
+        );
+    }
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        0,
+        "no code exchanged"
+    );
+    assert!(
+        still_pending(&world, &state).await,
+        "the request is left to the claimer"
+    );
+}
+
+#[test]
+fn a_row_reads_as_bound_claimed_or_gone() {
+    let hash = vec![7u8; 32];
+    assert_eq!(
+        StoredBinding::from(Some(Some(hash.clone()))),
+        StoredBinding::Bound(hash)
+    );
+    assert_eq!(StoredBinding::from(Some(None)), StoredBinding::Claimed);
+    assert_eq!(StoredBinding::from(None), StoredBinding::Gone);
+}
+
+#[tokio::test]
+async fn a_callback_stalled_before_its_claim_deletes_nothing_at_its_deadline() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    let winners = saved_session(&alice(), &state);
+    world.store.upsert_session(winners).await.expect("saved");
+    // The winner holds the row mid-claim, so this callback stalls on its own
+    // claim until its deadline passes.
+    let winning_claim = claim_in_flight(&world, &state).await;
+    let authenticator = world
+        .authenticator
+        .with_deadlines(Duration::from_millis(300), Duration::from_secs(5));
+
+    let begun = std::time::Instant::now();
+    let result = authenticator
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
+        .await;
+    let elapsed = begun.elapsed();
+    winning_claim
+        .rollback()
+        .await
+        .expect("the winner's claim lets go");
+
+    let error = result.expect_err("a callback past its deadline fails");
+    assert!(
+        matches!(failure_of(&error), Some(SigninFailure::Deadline)),
+        "cut off by its deadline: {error:?}"
+    );
+    assert!(elapsed < Duration::from_secs(2), "the deadline cut it off");
+    let session = world
+        .store
+        .get_session(&at_did(&alice()), &state)
+        .await
+        .expect("the store answers");
+    assert!(
+        session.is_some(),
+        "an attempt that never claimed deletes nothing"
+    );
 }

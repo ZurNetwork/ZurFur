@@ -38,7 +38,7 @@
     },
     {
       "name": "session.rs",
-      "role": "browser sign-in: POST /signin, GET /signin-callback, GET /me, POST /logout",
+      "role": "browser sign-in: POST /signin (sets the browser-binding cookie), GET /signin-callback (hands that cookie to complete, always clears it), GET /me, POST /logout",
       "node": false
     },
     {

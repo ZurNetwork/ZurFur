@@ -14,6 +14,29 @@ use serde::{Serialize, de::DeserializeOwned};
 use sqlx::PgPool;
 use zeroize::Zeroizing;
 
+/// What the store holds for a sign-in's browser binding.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum StoredBinding {
+    /// A live request, still bound to this token hash.
+    Bound(Vec<u8>),
+    /// A live request without a binding: a callback has claimed it. Requests
+    /// are saved bound, so one saved without fails closed the same way.
+    Claimed,
+    /// No request younger than the sign-in's lifetime.
+    Gone,
+}
+
+/// The row `get_browser_binding` reads: no row, a cleared binding, or a hash.
+impl From<Option<Option<Vec<u8>>>> for StoredBinding {
+    fn from(row: Option<Option<Vec<u8>>>) -> Self {
+        match row {
+            None => Self::Gone,
+            Some(None) => Self::Claimed,
+            Some(Some(hash)) => Self::Bound(hash),
+        }
+    }
+}
+
 /// Postgres-backed [`ClientAuthStore`]: durable storage for atproto OAuth state
 /// in two row families — `client_session` (token set + DPoP key, keyed by DID +
 /// session id) and `auth_request` (in-flight PKCE/DPoP state, keyed by `state`).
@@ -29,6 +52,50 @@ impl AtprotoAuthStore {
     /// vault seals every stored blob at rest.
     pub fn new(pool: PgPool, vault: SecretVault) -> Self {
         Self { pool, vault }
+    }
+
+    /// Save `request` together with the hash of the browser token that binds
+    /// it, in one statement.
+    pub(crate) async fn save_bound_auth_request(
+        &self,
+        request: &AuthRequestData,
+        browser_binding: &[u8],
+    ) -> Result<(), SessionStoreError> {
+        let state = AsRef::<str>::as_ref(&request.state);
+        let aad = Self::auth_request_aad(state);
+        let data = self.encode(&aad, request)?;
+        sql::save_bound_auth_request(&self.pool, state, &data, Some(browser_binding))
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    /// The browser binding of `state`'s auth request, when that request is
+    /// younger than `lifetime`: still bound to a token hash, or already claimed.
+    pub(crate) async fn browser_binding(
+        &self,
+        state: &str,
+        lifetime: std::time::Duration,
+    ) -> Result<StoredBinding, SessionStoreError> {
+        let lifetime_seconds = i32::try_from(lifetime.as_secs()).unwrap_or(i32::MAX);
+        let row = sql::get_browser_binding(&self.pool, state, lifetime_seconds)
+            .await
+            .map_err(backend)?;
+        Ok(StoredBinding::from(row))
+    }
+
+    /// Consume the browser binding of `state`'s auth request if it is still
+    /// `browser_binding`: `true` for the one caller whose statement cleared it,
+    /// `false` once another has (or the request is gone).
+    pub(crate) async fn claim_browser_binding(
+        &self,
+        state: &str,
+        browser_binding: &[u8],
+    ) -> Result<bool, SessionStoreError> {
+        let consumed = sql::claim_browser_binding(&self.pool, state, browser_binding)
+            .await
+            .map_err(backend)?;
+        Ok(consumed == 1)
     }
 
     /// Delete every session stored under `session_id`, whatever its account:

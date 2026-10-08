@@ -36,13 +36,42 @@ async function runLoad(
 	return (await load(event)) as { callbackError: string | undefined; form: LoginForm };
 }
 
-async function signinAction(fetch: typeof globalThis.fetch, handle: string | null) {
+/** One `cookies.set` call the action made. */
+interface SetCookieCall {
+	name: string;
+	value: string;
+	options: Record<string, unknown>;
+}
+
+/** A `cookies` stand-in that records every `set`. */
+function recordingCookies(): { cookies: unknown; sets: SetCookieCall[] } {
+	const sets: SetCookieCall[] = [];
+	const cookies = {
+		set: (name: string, value: string, options: Record<string, unknown>) => {
+			sets.push({ name, value, options });
+		}
+	};
+	return { cookies, sets };
+}
+
+async function signinAction(
+	fetch: typeof globalThis.fetch,
+	handle: string | null,
+	cookies: unknown = recordingCookies().cookies
+) {
 	const body = new URLSearchParams(handle === null ? {} : { handle });
 	const request = new Request('http://localhost/login', { method: 'POST', body });
-	return (await signinDefaultAction({ request, fetch } as unknown as ActionEvent)) as {
+	return (await signinDefaultAction({ request, fetch, cookies } as unknown as ActionEvent)) as {
 		status: number;
 		data: { form: LoginForm };
 	};
+}
+
+/** The backend's 303 to `location`, setting the browser-binding cookie `setCookie`. */
+function signinRedirect(location: string, setCookie: string): Response {
+	const headers = new Headers({ location });
+	headers.append('set-cookie', setCookie);
+	return new Response(null, { status: 303, headers });
 }
 
 describe('/login load', () => {
@@ -97,9 +126,8 @@ describe('/login signin action', () => {
 
 	it('accepts a punycode (xn--) handle at sign-in — auth-time, not claim-time (Engineer ruling)', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=idn';
-		const { fetch } = fetchStub(
-			() => new Response(null, { status: 303, headers: { location: authorizeUrl } })
-		);
+		const setCookie = 'zurfur.signin=tok; HttpOnly; SameSite=Lax; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
 		const redirect = await expectRedirect(() => signinAction(fetch, 'xn--sneaky.example'));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe(authorizeUrl);
@@ -116,12 +144,34 @@ describe('/login signin action', () => {
 
 	it('relays the PDS authorize URL as a 303 navigation, trimming the handle first', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
-		const { fetch } = fetchStub(
-			() => new Response(null, { status: 303, headers: { location: authorizeUrl } })
-		);
+		const setCookie = 'zurfur.signin=tok; HttpOnly; SameSite=Lax; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
 		const redirect = await expectRedirect(() => signinAction(fetch, '  alice.test  '));
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe(authorizeUrl);
+	});
+
+	it('sets the browser-binding cookie on the browser, narrow and short-lived', async () => {
+		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const setCookie =
+			'__Host-zurfur.signin=tok; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
+		const { cookies, sets } = recordingCookies();
+		await expectRedirect(() => signinAction(fetch, 'alice.test', cookies));
+		expect(sets).toEqual([
+			{
+				name: '__Host-zurfur.signin',
+				value: 'tok',
+				options: { path: '/', httpOnly: true, sameSite: 'lax', secure: true, maxAge: 600 }
+			}
+		]);
+	});
+
+	it('sets no cookie when the backend refuses the handle', async () => {
+		const { fetch } = fetchStub(() => problemResponse(422, 'invalid_request'));
+		const { cookies, sets } = recordingCookies();
+		await signinAction(fetch, 'valid.example', cookies);
+		expect(sets).toEqual([]);
 	});
 
 	it('hands a backend problem to the page as the form message', async () => {

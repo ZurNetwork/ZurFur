@@ -39,6 +39,13 @@ pub enum Environment {
     PROD,
 }
 
+impl Environment {
+    /// Whether this environment serves HTTPS, so its cookies are `Secure`.
+    pub fn secure_cookies(&self) -> bool {
+        matches!(self, Self::STG | Self::PROD)
+    }
+}
+
 /// The fully-resolved runtime configuration, produced by [`Config::load`] and
 /// handed to [`Runtime::connect`](crate::Runtime::connect). Every field is
 /// required at boot except [`http_addr`](Config::http_addr) and

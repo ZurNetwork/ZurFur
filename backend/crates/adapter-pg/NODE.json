@@ -40,7 +40,7 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (43 files, latest indexes atproto_oauth.client_session by session_id for the failed sign-in cleanup), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (44 files, latest adds atproto_oauth.auth_request.browser_binding, the hash binding a sign-in to its browser), embedded and run on boot and by every test template",
       "node": false
     },
     {
