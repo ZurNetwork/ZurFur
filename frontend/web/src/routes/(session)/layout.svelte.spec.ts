@@ -39,8 +39,8 @@ const session = {
 
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderLayout() {
-	return render(Layout, { data: { session }, children });
+function renderLayout(denServed = true) {
+	return render(Layout, { data: { session, denServed }, children });
 }
 
 afterEach(() => {
@@ -113,6 +113,19 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await page.viewport(320, 640);
 		renderLayout();
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+	});
+
+	it('keeps Sign out and Accounts reachable at 320 px on the everyday stack (no drawer)', async () => {
+		await page.viewport(320, 640);
+		renderLayout(false);
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		await expect.element(page.getByTestId('open-drawer')).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('banner').getByRole('button', { name: 'Sign out' }))
+			.toBeVisible();
+		await expect.element(page.getByTestId('accounts-link')).toBeVisible();
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 	});
 });

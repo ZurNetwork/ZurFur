@@ -10,13 +10,15 @@
 
 	/**
 	 * The frame's top row. On a desktop: the brand, the path, the section
-	 * links, who is signed in and Sign out. On a phone: the drawer's ☰ and the
-	 * back link to the parent; the rest moves into the drawer.
+	 * links, who is signed in and Sign out. On a phone with a `drawer`: the
+	 * drawer's ☰ and the back link to the parent, the rest moving into the
+	 * drawer; without one, everything stays in the row.
 	 */
 	let {
 		session,
 		trail,
 		section,
+		drawer,
 		drawerOpen,
 		drawerId,
 		onOpenDrawer
@@ -24,6 +26,7 @@
 		session: Session;
 		trail: Trail;
 		section: FrameSection;
+		drawer: boolean;
 		drawerOpen: boolean;
 		drawerId: string;
 		onOpenDrawer: () => void;
@@ -31,28 +34,30 @@
 </script>
 
 <header class="top-bar">
-	<span class="phone-only">
-		<IconButton
-			icon="menu"
-			label="Open navigation"
-			expanded={drawerOpen}
-			controls={drawerId}
-			onclick={onOpenDrawer}
-			testid="open-drawer"
-		/>
-	</span>
-	<a class="top-bar__brand desktop-only" href={resolve('/')}>zurfur</a>
+	{#if drawer}
+		<span class="phone-only">
+			<IconButton
+				icon="menu"
+				label="Open navigation"
+				expanded={drawerOpen}
+				controls={drawerId}
+				onclick={onOpenDrawer}
+				testid="open-drawer"
+			/>
+		</span>
+	{/if}
+	<a class="top-bar__brand" class:desktop-only={drawer} href={resolve('/')}>zurfur</a>
 	<div class="top-bar__path">
 		<PathBar {trail} />
 	</div>
-	<nav class="top-bar__links desktop-only" aria-label="Sections">
+	<nav class="top-bar__links" class:desktop-only={drawer} aria-label="Sections">
 		<a
 			href={resolve('/accounts')}
 			aria-current={section === 'accounts' ? 'page' : undefined}
 			data-testid="accounts-link">Accounts</a
 		>
 	</nav>
-	<div class="top-bar__session desktop-only">
+	<div class="top-bar__session" class:desktop-only={drawer}>
 		<Avatar {session} />
 		<SignOut />
 	</div>
