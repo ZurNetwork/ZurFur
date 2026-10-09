@@ -74,25 +74,27 @@ export async function loadFolder(
 	}
 }
 
-/** Fetch the page after `folder`'s loaded ones, through its "More" link, and append it. */
+/**
+ * Fetch the page after `folder`'s loaded ones, through its "More" link, and
+ * append it. Answers whether it was appended (not dropped as stale, nor failed).
+ */
 export async function loadMore(
 	memory: TreeMemory,
 	folder: DenHref,
 	more: DenHref,
 	preload?: Preload
-): Promise<void> {
+): Promise<boolean> {
 	const generation = memory.generation;
 	memory.moreState(folder, 'loading');
 	const fetched = await fetchListing(more, preload);
-	if (memory.generation !== generation) return;
+	if (memory.generation !== generation) return false;
 	switch (fetched.fetched) {
 		case 'listing':
-			memory.appended(folder, fetched.entries, fetched.more, more);
-			return;
+			return memory.appended(folder, fetched.entries, fetched.more, more);
 		case 'failed':
 			memory.moreState(folder, 'failed');
-			return;
+			return false;
 		case 'redirected':
-			return;
+			return false;
 	}
 }

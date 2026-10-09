@@ -76,7 +76,10 @@
 		if (state === undefined || state.state === 'failed') await loadFolder(memory, folder, preload);
 	}
 
-	/** Fetch the next page under "More…", then move focus to its first new row. */
+	/**
+	 * Fetch the next page under "More…", then move focus to its first new row.
+	 * A page the pane appended first is dropped here, and focus stays put.
+	 */
 	async function more(folder: DenHref, href: DenHref): Promise<void> {
 		const childOf = (row: HTMLElement) => row.dataset.treeParent === folder;
 		const before = new Set(
@@ -84,7 +87,8 @@
 				.filter(childOf)
 				.map((row) => row.dataset.treeKey)
 		);
-		await loadMore(memory, folder, href, preload);
+		const appended = await loadMore(memory, folder, href, preload);
+		if (!appended) return;
 		await tick();
 		const first = rows().find(
 			(row) => childOf(row) && !before.has(row.dataset.treeKey) && row.dataset.treeKind !== 'more'
@@ -92,12 +96,28 @@
 		first?.focus();
 	}
 
+	/**
+	 * Fetch a failed folder again. Its "Retry" row gives way to the loading
+	 * rows, so focus waits on the folder, and returns to "Retry" if it fails again.
+	 */
+	async function retry(folder: DenHref): Promise<void> {
+		const focusWasInside = treeElement?.contains(document.activeElement) ?? false;
+		const loading = loadFolder(memory, folder, preload);
+		await tick();
+		if (!focusWasInside) return;
+		const folderRow = rowFor(folder);
+		folderRow?.focus();
+		await loading;
+		await tick();
+		if (document.activeElement === folderRow) rowFor(`${folder}#failed`)?.focus();
+	}
+
 	/** A "More…" or "Retry" row was activated. */
 	function activate(node: TreeNode): void {
 		if (node.item === 'more' && node.state !== 'loading') {
 			void more(node.folder, node.href);
 		} else if (node.item === 'failed') {
-			void loadFolder(memory, node.folder, preload);
+			void retry(node.folder);
 		}
 	}
 

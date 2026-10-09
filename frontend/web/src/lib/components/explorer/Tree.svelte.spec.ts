@@ -70,19 +70,37 @@ function pageWith(href: DenHref, entries: readonly DenEntry[], more?: DenHref): 
 	};
 }
 
+/** When set, the fake preload waits for this before answering. */
+let held: Promise<void> | undefined;
+
 /** SvelteKit's preloadData, faked over {@link listings}. */
-const fakePreload: Preload = (href: string) => {
+const fakePreload: Preload = async (href: string) => {
 	preloaded.push(href);
 	const listing = listings.get(href);
+	await held;
 	if (listing === undefined || listing === 'fail') {
-		return Promise.resolve({ type: 'loaded' as const, status: 500, data: {} });
+		return { type: 'loaded' as const, status: 500, data: {} };
 	}
-	return Promise.resolve({
+	return {
 		type: 'loaded' as const,
 		status: 200,
 		data: { den: pageWith(denHref(href), listing) }
-	});
+	};
 };
+
+/** Hold the fake preload's answers until the returned function is called. */
+function holdPreloads(): () => void {
+	let release: () => void = () => undefined;
+	held = new Promise((done) => {
+		release = done;
+	});
+	return () => {
+		release();
+	};
+}
+
+/** A button outside the tree, standing in for the pane, removed after each test. */
+let outside: HTMLButtonElement | undefined;
 
 /**
  * Links followed during a test: a click that reaches the document unhandled
@@ -102,11 +120,14 @@ beforeEach(() => {
 	listings.clear();
 	preloaded = [];
 	followed = [];
+	held = undefined;
 	document.addEventListener('click', stopNavigation);
 });
 
 afterEach(() => {
 	document.removeEventListener('click', stopNavigation);
+	outside?.remove();
+	outside = undefined;
 });
 
 /** A memory holding the root's listing (and, open, `commissions`), with `current` open. */
@@ -349,6 +370,37 @@ describe('Tree: loading', () => {
 		await expect.element(item('Ember')).toBeInTheDocument();
 	});
 
+	it('keeps focus on the folder while a retry loads, never dropping it to the page', async () => {
+		listings.set('/den/characters', 'fail');
+		renderTree();
+		item('characters').element().focus();
+		await userEvent.keyboard('{ArrowRight}');
+		const retry = item("Couldn't load. Retry.");
+		await expect.element(retry).toBeInTheDocument();
+
+		listings.set('/den/characters', [ember]);
+		retry.element().focus();
+		await userEvent.keyboard('{Enter}');
+
+		await expect.element(item('Ember')).toBeInTheDocument();
+		await expect.element(item('characters')).toHaveFocus();
+	});
+
+	it('puts focus back on "Retry" when the retry fails again', async () => {
+		listings.set('/den/characters', 'fail');
+		renderTree();
+		item('characters').element().focus();
+		await userEvent.keyboard('{ArrowRight}');
+		const retry = item("Couldn't load. Retry.");
+		await expect.element(retry).toBeInTheDocument();
+
+		retry.element().focus();
+		await userEvent.keyboard('{Enter}');
+
+		await expect.poll(() => preloaded).toEqual(['/den/characters', '/den/characters']);
+		await expect.element(item("Couldn't load. Retry.")).toHaveFocus();
+	});
+
 	it('gives the "More…" row its level and place too', async () => {
 		renderTree({ rootMore: denHref('/den?pageToken=p1.4') });
 		const more = item('More…');
@@ -377,5 +429,27 @@ describe('Tree: loading', () => {
 
 		await expect.element(item('zeta')).toBeInTheDocument();
 		await expect.element(item('More…')).not.toBeInTheDocument();
+	});
+
+	it('leaves focus alone when its "More…" lands after the pane already appended that page', async () => {
+		const pageTwo = denHref('/den?pageToken=p1.4');
+		const zeta = entry('/den/zeta', 'zeta');
+		listings.set(pageTwo, [zeta]);
+		const release = holdPreloads();
+		const memory = renderTree({ rootMore: pageTwo });
+		item('More…').element().focus();
+		await userEvent.keyboard('{Enter}');
+		await expect.poll(() => preloaded).toEqual([pageTwo]);
+
+		memory.appended(ROOT, [zeta], undefined, pageTwo);
+		outside = document.createElement('button');
+		outside.textContent = 'In the pane';
+		document.body.append(outside);
+		outside.focus();
+		release();
+		await expect.element(item('zeta')).toBeInTheDocument();
+		await new Promise((settle) => setTimeout(settle, 50));
+
+		expect(document.activeElement).toBe(outside);
 	});
 });

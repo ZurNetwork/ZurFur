@@ -76,6 +76,7 @@
 		font-weight: var(--text-weight-medium);
 		text-decoration: none;
 		line-height: 1.2;
+		white-space: nowrap;
 		transition: background-color var(--duration-fast) ease;
 	}
 
