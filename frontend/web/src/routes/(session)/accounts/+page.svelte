@@ -52,7 +52,8 @@
 	<ul>
 		{#each data.accounts as account (account.id)}
 			<li>
-				<a href={resolve('/(session)/accounts/[id]', { id: account.id })}>{account.handle}</a> -> {account.name}
+				<a href={resolve('/(session)/accounts/[id]', { id: account.id })}>{account.handle}</a> ->
+				<bdi>{account.name}</bdi>
 				as {account.role}
 			</li>
 		{/each}

@@ -7,6 +7,10 @@ import type { AccountMembership } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
+import type { Trail } from '$lib/api/trail';
+
+/** The frame's path on this page; the page itself doesn't render it. */
+const trail: Trail = [{ step: 'named', label: 'Accounts', href: '/accounts' }];
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
@@ -36,11 +40,11 @@ const notFoundProblem: Problem = {
 };
 
 function accountData(account: AccountMembership) {
-	return { session: alice, account };
+	return { session: alice, account, trail };
 }
 
 function problemData(problem: Problem) {
-	return { session: alice, problem };
+	return { session: alice, problem, trail };
 }
 
 describe('/accounts/[id] page', () => {

@@ -21,7 +21,7 @@
 {#if data.problem}
 	<ProblemNote problem={data.problem} />
 {:else}
-	{data.account.handle} -> {data.account.name} as {data.account.role}
+	{data.account.handle} -> <bdi>{data.account.name}</bdi> as {data.account.role}
 	{#if data.account.role === 'owner'}
 		<form method="post" action="?/delete">
 			<!-- Error OUTSIDE the label (a label's subtree becomes the input's

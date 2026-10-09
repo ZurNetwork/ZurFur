@@ -1,16 +1,17 @@
 <script lang="ts">
+	import '@fontsource-variable/inter';
+	import '@fontsource-variable/jetbrains-mono';
+	import '$lib/styles/tokens.css';
+	import '$lib/styles/base.css';
 	import favicon from '$lib/assets/favicon.svg';
-	import SessionHeader from '$lib/components/SessionHeader.svelte';
-	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 
-	let { data, children }: { data: LayoutData; children: Snippet } = $props();
+	/** The root: tokens, base styles, self-hosted fonts and the favicon. Each group brings its own layout. */
+	let { children }: { children: Snippet } = $props();
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
-
-<SessionHeader session={data.session} />
 
 {@render children()}

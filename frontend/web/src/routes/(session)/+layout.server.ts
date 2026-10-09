@@ -3,17 +3,14 @@ import type { LayoutServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
 
 /**
- * The session gate: every route in the `(session)` group requires
- * a signed-in visitor; anonymous visits bounce to `/login`. Future session
- * routes (`/accounts`, `/commissions`, …) join the group instead of
- * re-implementing the check. UX only — the backend still 401s on its own.
- * PRECISION: this gates page LOADS; SvelteKit runs form-action POSTs before
- * layout loads, so an action inside the group executes without this check —
- * the backend's own 401 (surfacing as the action's `{problem}`) is the guard
- * there.
+ * Hands the frame the signed-in visitor. The sign-in gate itself is the
+ * server `handle` hook (`lib/server/session-gate.ts`), which refuses every
+ * `(session)` load, data request and action without a session before any of
+ * them runs; the redirect here only narrows the type and never fires. The
+ * backend still checks the session on every call.
  */
 export const load: LayoutServerLoad = async ({ parent }) => {
 	const { session } = await parent();
 	if (session === undefined) redirect(HttpStatus.SeeOther, '/login');
-	return {};
+	return { session };
 };

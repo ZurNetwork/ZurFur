@@ -8,6 +8,7 @@ import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 import { createAccountForm } from '$lib/server/forms/create-account';
 import { problemMessage } from '$lib/server/forms/problem-message';
+import type { Trail } from '$lib/api/trail';
 
 /**
  * Every outcome a completed delete can carry back via `?deleted=` — keyed as
@@ -30,18 +31,22 @@ const DELETE_OUTCOMES = { soft: 'soft', hard: 'hard', unknown: 'unknown' } as co
  */
 const DELETE_OUTCOME_BY_PARAM = new Map<string, DeleteOutcome>(Object.entries(DELETE_OUTCOMES));
 
+/** The path bar on the listing: just "Accounts". */
+const ACCOUNTS_TRAIL: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
+
 /**
  * The caller's account listing, plus the `?deleted=` flash a completed delete
  * redirects back with — narrowed against {@link DeleteOutcome} so the page
  * renders from the declared vocabulary, not from raw query text — and a
- * pristine {@link createAccountForm} superform for the create form below it.
+ * pristine {@link createAccountForm} superform for the create form below it,
+ * and the frame's path.
  */
 export const load: PageServerLoad = async ({ fetch, url }) => {
 	const outcome = await runApi(fetch, accountsOutcome);
 	const form = await superValidate(effect(createAccountForm));
 	const deleted = DELETE_OUTCOME_BY_PARAM.get(url.searchParams.get('deleted') ?? '');
 
-	return { ...outcome, deleted, form };
+	return { ...outcome, deleted, form, trail: ACCOUNTS_TRAIL };
 };
 
 // `satisfies` (not an `Actions` annotation) so the concrete action keys

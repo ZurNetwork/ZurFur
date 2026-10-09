@@ -5,12 +5,13 @@ import { actions, load } from './+page.server';
 import type { AccountMembership } from '$lib/api/account';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import type { Problem } from '$lib/api/problem';
+import type { Trail } from '$lib/api/trail';
 
 type LoadEvent = Parameters<typeof load>[0];
 type DeleteEvent = Parameters<(typeof actions)['delete']>[0];
 
 /** `load`'s actual return, pinned past the generated type's `MaybeWithVoid` noise. */
-type DetailLoadData = { account: AccountMembership } | { problem: Problem };
+type DetailLoadData = ({ account: AccountMembership } | { problem: Problem }) & { trail: Trail };
 
 const aliceStudio: AccountMembership = {
 	id: accountId('acct-alice'),
@@ -56,13 +57,22 @@ describe('/accounts/[id] load', () => {
 	it("derives the account from the caller's own listing (⚠️ F1 — no GET /accounts/{id})", async () => {
 		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
 		const result = await runLoad(loadEvent(fetch, 'acct-alice'));
-		expect(result).toEqual({ account: aliceStudio });
+		expect(result).toMatchObject({ account: aliceStudio });
+	});
+
+	it('hands the frame the path "Accounts / <handle>", with Accounts linked', async () => {
+		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
+		const result = await runLoad(loadEvent(fetch, 'acct-alice'));
+		expect(result.trail).toEqual([
+			{ step: 'named', label: 'Accounts', href: '/accounts' },
+			{ step: 'named', label: 'alice.zurfur.app', href: undefined }
+		]);
 	});
 
 	it('answers the derived account_not_found problem for an id the caller holds no role in', async () => {
 		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
 		const result = await runLoad(loadEvent(fetch, 'acct-nobody-holds-a-role-in'));
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			problem: {
 				type: 'urn:zurfur:error:account-not-found',
 				code: 'account_not_found',

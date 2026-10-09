@@ -52,7 +52,7 @@
     },
     {
       "name": "package.json",
-      "role": "yarn scripts (dev/build/check/lint/test) + pinned deps: svelte 5, kit 2, effect, sveltekit-superforms, @bufbuild/protobuf",
+      "role": "yarn scripts (dev/build/check/lint/test) + pinned deps: svelte 5, kit 2, effect, sveltekit-superforms, @bufbuild/protobuf; the UI and mono fonts as @fontsource-variable packages, bundled so they're self-hosted",
       "node": false
     },
     {
@@ -77,7 +77,7 @@
     },
     {
       "name": "vite.config.ts",
-      "role": "the ONLY svelte config: adapter-node, runes:true, 127.0.0.1:5174 strictPort for Caddy, the two vitest projects",
+      "role": "the ONLY svelte config: adapter-node, runes:true, 127.0.0.1:5174 strictPort for Caddy, the two vitest projects (the browser project's own server drops strictPort, so parallel workspaces' suites don't clash on a port)",
       "node": false
     },
     {

@@ -1,4 +1,6 @@
+import { isHttpError } from '@sveltejs/kit';
 import { describe, expect, it } from 'vitest';
+import { errorCopy } from '$lib/components/explorer/error-copy';
 import { fetchStub } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
@@ -45,9 +47,19 @@ describe('/logout action', () => {
 		expect(deleted).toEqual(['zurfur.sid']);
 	});
 
-	it('fails loudly when the backend does not end the session', async () => {
+	it('fails loudly when the backend answers sign-out with a 500', async () => {
 		const { event, deleted } = logoutEvent(() => new Response('boom', { status: 500 }));
 		await expect(logoutAction(event)).rejects.toMatchObject({ status: 502 });
 		expect(deleted).toEqual([]);
+	});
+
+	it('carries no message of its own: the error page picks the words from the route', async () => {
+		const { event } = logoutEvent(() => new Response('boom', { status: 500 }));
+		const failure: unknown = await logoutAction(event).catch((thrown: unknown) => thrown);
+		expect(isHttpError(failure, 502)).toBe(true);
+		if (isHttpError(failure)) expect(failure.body.message).not.toContain('Sign-out');
+		expect(errorCopy(502, '/(session)/logout').message).toBe(
+			'Sign-out did not complete. Try again.'
+		);
 	});
 });
