@@ -41,6 +41,62 @@ const RULEBOOK_FILES = [
 	'src/**/*.svelte.js'
 ];
 
+/** Every app source file the import rules govern. */
+const SOURCE_FILES = [
+	'src/**/*.ts',
+	'src/**/*.js',
+	'src/**/*.svelte',
+	'src/**/*.svelte.ts',
+	'src/**/*.svelte.js'
+];
+
+/** Below the runes seam: where Effect may live. */
+const SERVER_SIDE = ['src/lib/server/**', 'src/**/*.server.ts', 'src/**/*.server.spec.ts'];
+
+/** Specs and their harnesses. */
+const SPECS = ['src/**/*.spec.ts', 'src/lib/testing/**'];
+
+/** The only modules that mint a DenHref: the Den path builder, and the bare root route's fallback. */
+const DEN_HREF_MINTERS = [
+	'src/lib/server/den/den-path.ts',
+	'src/lib/components/explorer/den-root.ts'
+];
+
+/** Effect is server-only, below the runes seam. */
+const EFFECT_IMPORTS = [
+	{
+		name: 'effect',
+		message:
+			'Effect is server-only (DD 39944194) — move this under src/lib/server/** or a *.server.ts.'
+	}
+];
+
+/** Effect's subpaths and companions are server-only too. */
+const EFFECT_PATTERNS = [
+	{
+		group: ['effect/*', '@effect/*'],
+		message: 'Effect is server-only (DD 39944194).'
+	}
+];
+
+/**
+ * A DenHref is a link the Den path builder built and checked; minting one
+ * anywhere else would let a link skip the builder's refusals.
+ */
+const DEN_HREF_IMPORT = {
+	name: '$lib/types/brand',
+	importNames: ['denHref'],
+	message:
+		'Only the Den path builder (src/lib/server/den/den-path.ts) mints a DenHref — build Den links there.'
+};
+
+/** The same ban for every other spelling of the brand module: relative paths included. */
+const DEN_HREF_PATTERN = {
+	group: ['**/types/brand', '$lib/types/brand'],
+	importNames: ['denHref'],
+	message: DEN_HREF_IMPORT.message
+};
+
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	js.configs.recommended,
@@ -150,6 +206,12 @@ export default defineConfig(
 						'error(status, message) takes only a literal message (or none): it ships in the page source, so it must never carry a path, an id or other data.'
 				},
 				{
+					// A dynamic import would reach the brand module past the DenHref import ban.
+					selector: 'ImportExpression[source.value=/types\\u002Fbrand$/]',
+					message:
+						'Import the brand module statically, so the rule that only the Den path builder mints a DenHref can see it.'
+				},
+				{
 					selector:
 						"ImportDeclaration[source.value='@sveltejs/kit'] ImportSpecifier[imported.name='error'][local.name!='error']",
 					message:
@@ -175,34 +237,34 @@ export default defineConfig(
 	{
 		// DD 39944194 containment: Effect exists only below the runes seam —
 		// src/lib/server/** and *.server.ts. Everything above the seam receives
-		// plain data and never sees a fiber.
-		files: [
-			'src/**/*.ts',
-			'src/**/*.js',
-			'src/**/*.svelte',
-			'src/**/*.svelte.ts',
-			'src/**/*.svelte.js'
-		],
-		ignores: ['src/lib/server/**', 'src/**/*.server.ts', 'src/**/*.server.spec.ts'],
+		// plain data and never sees a fiber. And only the Den path builder mints
+		// a DenHref (see DEN_HREF_IMPORT).
+		files: SOURCE_FILES,
+		ignores: [...SERVER_SIDE, ...DEN_HREF_MINTERS, ...SPECS],
 		rules: {
 			'no-restricted-imports': [
 				'error',
 				{
-					paths: [
-						{
-							name: 'effect',
-							message:
-								'Effect is server-only (DD 39944194) — move this under src/lib/server/** or a *.server.ts.'
-						}
-					],
-					patterns: [
-						{
-							group: ['effect/*', '@effect/*'],
-							message: 'Effect is server-only (DD 39944194).'
-						}
-					]
+					paths: [...EFFECT_IMPORTS, DEN_HREF_IMPORT],
+					patterns: [...EFFECT_PATTERNS, DEN_HREF_PATTERN]
 				}
 			]
+		}
+	},
+	{
+		// Above the seam, the DenHref minters and the specs keep only the Effect ban.
+		files: [...DEN_HREF_MINTERS, ...SPECS],
+		ignores: SERVER_SIDE,
+		rules: {
+			'no-restricted-imports': ['error', { paths: EFFECT_IMPORTS, patterns: EFFECT_PATTERNS }]
+		}
+	},
+	{
+		// Below the seam, only the Den path builder mints a DenHref.
+		files: SERVER_SIDE,
+		ignores: [...DEN_HREF_MINTERS, ...SPECS],
+		rules: {
+			'no-restricted-imports': ['error', { paths: [DEN_HREF_IMPORT], patterns: [DEN_HREF_PATTERN] }]
 		}
 	},
 	{

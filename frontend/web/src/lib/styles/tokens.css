@@ -106,7 +106,6 @@
 	--duration-fast: 120ms;
 	--duration-normal: 200ms;
 	--duration-skeleton: 1.4s;
-	--delay-busy: 300ms;
 
 	/* Layout: the Explorer shell. */
 	--topbar-height: 3rem;

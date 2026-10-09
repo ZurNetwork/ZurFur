@@ -2,7 +2,7 @@
   "path": "frontend/web/src/lib/server/api",
   "charted": "2026-09-12",
   "short": "The ZurfurApi port, errors, generated messages",
-  "is": "The backend boundary: one `ZurfurApi` service (a live HTTP Layer, a mock in-memory Layer for `yarn dev`, and an in-memory test Layer), a tagged error union, and the protobuf-es messages generated from `contract/`.",
+  "is": "The backend boundary: one `ZurfurApi` service (a live HTTP Layer, a mock in-memory Layer for `yarn dev`, and an in-memory test Layer), a tagged error union, the Den read's port shape, and the protobuf-es messages generated from `contract/`.",
   "type": "code",
   "tags": [
     "category:source",
@@ -25,8 +25,18 @@
       "node": false
     },
     {
+      "name": "den-mock.ts",
+      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); 25-entry pages, `p1.<offset>` tokens",
+      "node": false
+    },
+    {
+      "name": "den-read.ts",
+      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock produces it now, the live decode later",
+      "node": false
+    },
+    {
       "name": "errors.ts",
-      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, …)",
+      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed, DenNotConnected)",
       "node": false
     },
     {
@@ -41,7 +51,7 @@
     },
     {
       "name": "zurfur-api.ts",
-      "role": "the port: every backend call as one service, decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest",
+      "role": "the port: every backend call as one service (Den reads denRoot/denNode answer DenNotConnected live until den.proto is wired), decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts",
       "node": false
     }
   ],

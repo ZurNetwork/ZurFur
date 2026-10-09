@@ -2,7 +2,7 @@
   "path": "frontend/web/src/routes/(session)",
   "charted": "2026-09-12",
   "short": "The signed-in area behind the session gate",
-  "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame, containing the account screens and the logout action; its errors render inside the frame.",
+  "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame (the My Den tree beside the pane), containing My Den (`den/`), the account screens and the logout action; its errors render inside the frame.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -32,12 +32,17 @@
     },
     {
       "name": "+layout.svelte",
-      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`, the drawer closed after each navigation; the sidebar stays empty until My Den's tree arrives",
+      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`; the My Den tree and the View options in the sidebar, fed by the frame's tree memory (never stored; started over on a flag flip, and on a form action's success, which the page that ran it reports, keeping `~` open); after each navigation the drawer closes and any open folder the tree lacks is fetched",
       "node": false
     },
     {
       "name": "accounts/",
       "role": "listing + create action; [id]/ detail with typed-handle delete confirmation",
+      "node": false
+    },
+    {
+      "name": "den/",
+      "role": "My Den: `[...path]` serves /den and every Den path below it; on the everyday stack (no Den served) it is the ordinary 404 with no Den call (a signed-in visitor makes only the usual /me call). +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
       "node": false
     },
     {
@@ -61,7 +66,18 @@
       "node": false
     }
   ],
-  "refs": [],
+  "refs": [
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "`den/` and the frame's tree: one node shape rendered, never decided, by the web"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "`den/`: the uniform not-found, cards, the includeDeleted flag, content not shown yet"
+    }
+  ],
   "notes": [
     "See also: internal ruling \"F1\" — no `GetAccount` rpc in v1, account detail derives from the caller's own account listing (cited in `accounts/[id]/+page.server.ts`); not yet a recorded DD, ask the Engineer if this should become one."
   ]

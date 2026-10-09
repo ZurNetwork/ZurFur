@@ -4,6 +4,7 @@ import type { FetchFunction } from '$lib/api/client';
 import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
 import { RequestFetch, ZurfurApi, ZurfurApiLive } from './zurfur-api';
 import type { ZurfurApiError } from './errors';
+import { segmentPath } from '../path-builder';
 
 /** Run a program against the LIVE layer over a stubbed fetch. */
 function runLive<A, E>(fetch: FetchFunction, program: Effect.Effect<A, E, ZurfurApi>): Promise<A> {
@@ -249,5 +250,65 @@ describe('ZurfurApi.deleteAccount (live)', () => {
 		const { fetch } = fetchStub(() => Response.json({ outcome: 'quarantined' }));
 		const outcome = await runLive(fetch, deleteAccount('acct-1'));
 		expect(outcome).toBe('unknown');
+	});
+});
+
+describe('ZurfurApi.deleteAccount (live): the path builder guards the id', () => {
+	it.each([
+		['an empty id', ''],
+		['a dot segment', '.'],
+		['a dot-dot segment', '..'],
+		['a slash that would reach another endpoint', '../me'],
+		['a backslash', 'a\\b'],
+		['a query', 'acct?x=1'],
+		['a fragment', 'acct#x'],
+		['a space', 'acct 1'],
+		['non-ASCII', 'é']
+	])('refuses %s without ever calling fetch, as account_not_found', async (_, id) => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		const failure = await runLive(fetch, failureOf(deleteAccount(id)));
+		expect(calls).toEqual([]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('account_not_found');
+	});
+
+	it('escapes a % so the backend’s one decode gives back the literal id, never a slash', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		await runLive(fetch, deleteAccount('a%2Fb'));
+		expect(calls).toEqual(['/api/v1/accounts/a%252Fb']);
+	});
+
+	it('sends the id %2e%2e escaped, so it can never climb', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		await runLive(fetch, deleteAccount('%2e%2e'));
+		expect(calls).toEqual(['/api/v1/accounts/%252e%252e']);
+	});
+
+	it('sends a DID id as one plain segment', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		await runLive(fetch, deleteAccount('did:plc:mockalicestudioaaaaaaaa'));
+		expect(calls).toEqual(['/api/v1/accounts/did:plc:mockalicestudioaaaaaaaa']);
+	});
+
+	it('sends a UUID id as one plain segment', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({ outcome: 'hard' }));
+		await runLive(fetch, deleteAccount('0192d00d-0b16-7000-8000-0000000b16b1'));
+		expect(calls).toEqual(['/api/v1/accounts/0192d00d-0b16-7000-8000-0000000b16b1']);
+	});
+});
+
+describe('ZurfurApi den reads (live, before the Den contract is wired)', () => {
+	const plain = { includeDeleted: false, pageToken: undefined };
+	const denRoot = Effect.flatMap(ZurfurApi, (api) => api.denRoot(plain));
+	const commissions = segmentPath(['commissions']) ?? [];
+	const denNode = Effect.flatMap(ZurfurApi, (api) => api.denNode(commissions, plain));
+
+	it('answers DenNotConnected for the root and for a node, without calling the backend', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({}));
+		const rootFailure = await runLive(fetch, failureOf(denRoot));
+		const nodeFailure = await runLive(fetch, failureOf(denNode));
+		expect(rootFailure._tag).toBe('DenNotConnected');
+		expect(nodeFailure._tag).toBe('DenNotConnected');
+		expect(calls).toEqual([]);
 	});
 });

@@ -1,4 +1,3 @@
-import { resolve } from '$app/paths';
 import { accountOutcome, deleteAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
@@ -17,13 +16,14 @@ import type { Trail } from '$lib/api/trail';
  * 200 + problem body, not `error(404)` — the problem seam stays uniform and
  * keeps the backend's detail copy; an honest 404
  * status waits for a machine consumer that reads one. The frame's path
- * reads "Accounts / <handle>".
+ * reads "Accounts / <handle>" (an absolute link: a load's `resolve()` may be
+ * relative to the page it renders).
  */
 export const load: PageServerLoad = async ({ params, fetch }) => {
 	const outcome = await runApi(fetch, accountOutcome(params.id));
 	const label = 'account' in outcome ? outcome.account.handle : 'Account';
 	const trail: Trail = [
-		{ step: 'named', label: 'Accounts', href: resolve('/accounts') },
+		{ step: 'named', label: 'Accounts', href: '/accounts' },
 		{ step: 'named', label, href: undefined }
 	];
 	return { ...outcome, trail };

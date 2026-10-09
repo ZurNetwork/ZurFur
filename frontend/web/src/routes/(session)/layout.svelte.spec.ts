@@ -7,21 +7,36 @@ import { createRawSnippet } from 'svelte';
 import { did, handleFromTrusted } from '$lib/types/brand';
 
 /** The callbacks the layout registered with `afterNavigate`, to fire as a navigation would. */
-const nav = vi.hoisted(() => ({ callbacks: [] as (() => void)[] }));
+interface Nav {
+	callbacks: (() => void)[];
+	preloaded: string[];
+	den: unknown;
+}
+const nav = vi.hoisted((): Nav => ({ callbacks: [], preloaded: [], den: undefined }));
 
 vi.mock('$app/navigation', () => ({
-	afterNavigate: (callback: () => void) => {
-		nav.callbacks.push(callback);
+	afterNavigate: (callback: (navigation: { type: string }) => void) => {
+		nav.callbacks.push(() => {
+			callback({ type: 'link' });
+		});
+	},
+	goto: () => Promise.resolve(),
+	preloadData: (href: string) => {
+		nav.preloaded.push(href);
+		return Promise.resolve({ type: 'loaded', status: 500, data: {} });
 	}
 }));
 
 vi.mock('$app/state', () => ({
 	page: {
-		data: {
-			trail: [
-				{ step: 'named', label: 'Accounts', href: '/accounts' },
-				{ step: 'named', label: 'alice-studio.zurfur.app', href: undefined }
-			]
+		get data() {
+			return {
+				trail: [
+					{ step: 'named', label: 'Accounts', href: '/accounts' },
+					{ step: 'named', label: 'alice-studio.zurfur.app', href: undefined }
+				],
+				den: nav.den
+			};
 		},
 		route: { id: '/(session)/accounts/[id]' },
 		status: 200
@@ -45,6 +60,8 @@ function renderLayout(denServed = true) {
 
 afterEach(() => {
 	nav.callbacks.length = 0;
+	nav.preloaded.length = 0;
+	nav.den = undefined;
 });
 
 describe('(session) layout: the frame around every signed-in page', () => {
@@ -127,5 +144,41 @@ describe('(session) layout: the frame around every signed-in page', () => {
 			.toBeVisible();
 		await expect.element(page.getByTestId('accounts-link')).toBeVisible();
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+	});
+
+	it('fetches every folder above the open item that the tree lacks, after an in-app navigation', async () => {
+		const crumb = (href: string, name: string) => ({ href, name });
+		nav.den = {
+			kind: 'denPage',
+			outcome: {
+				outcome: 'page',
+				page: {
+					view: 'card',
+					node: { view: 'card', name: 'Deep', type: 'x', mounted: false },
+					crumbs: [crumb('/den', 'Alice'), crumb('/den/commissions', 'commissions')]
+				},
+				flagLinks: { on: '/den/commissions/c9', off: '/den/commissions/c9' }
+			},
+			rootHref: '/den',
+			includeDeleted: false,
+			continued: false,
+			ancestors: [],
+			title: 'My Den · Zurfur',
+			trail: []
+		};
+		renderLayout(true);
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		for (const callback of nav.callbacks) callback();
+
+		await expect.poll(() => [...nav.preloaded].sort()).toEqual(['/den', '/den/commissions']);
+	});
+
+	it('fetches nothing on the everyday stack', async () => {
+		nav.den = undefined;
+		renderLayout(false);
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+		for (const callback of nav.callbacks) callback();
+		expect(nav.preloaded).toEqual([]);
 	});
 });

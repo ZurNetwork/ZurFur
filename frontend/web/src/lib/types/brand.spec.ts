@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountId, did, handle, handleFromTrusted } from './brand';
+import { accountId, did, handle, handleFromTrusted, pathSegment, pageToken } from './brand';
 import { HANDLE_MAX_LEN } from './handle-format';
 
 describe('handle (the validated mint)', () => {
@@ -33,5 +33,35 @@ describe('the trusted nominal casts', () => {
 		);
 		expect(did('did:plc:alice')).toBe('did:plc:alice');
 		expect(handleFromTrusted('alice.zurfur.app')).toBe('alice.zurfur.app');
+	});
+});
+
+describe('pathSegment (validated mint)', () => {
+	it.each([
+		'accounts',
+		'did:plc:abc234',
+		'01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90',
+		'a.b_c~d%2e',
+		'...'
+	])('accepts %s', (piece) => {
+		expect(pathSegment(piece)).toBe(piece);
+	});
+
+	it.each(['', '.', '..', 'a/b', 'a\\b', 'a b', 'a?b', 'a#b', 'été', '‥', 'a'.repeat(2049)])(
+		'refuses %j',
+		(piece) => {
+			expect(pathSegment(piece)).toBeUndefined();
+		}
+	);
+});
+
+describe('pageToken (validated mint)', () => {
+	it('accepts visible ASCII up to 512 characters', () => {
+		expect(pageToken('p1.25')).toBe('p1.25');
+		expect(pageToken('a'.repeat(512))).toHaveLength(512);
+	});
+
+	it.each(['', 'a b', 'a\u0000b', 'é', 'a'.repeat(513)])('refuses %j', (raw) => {
+		expect(pageToken(raw)).toBeUndefined();
 	});
 });
