@@ -8,15 +8,25 @@ type HandleInput = Parameters<typeof sessionGate>[0];
 /** The signed-in visitor `/me` describes. */
 const ALICE = { did: 'did:plc:alice', handle: 'alice.zurfur.app' };
 
-/** Run the gate for a request to `address` on `routeId`, with `/me` answering `me()`. */
+/** Run the gate for a GET to `address` on `routeId`, with `/me` answering `me()`. */
 async function gate(routeId: string | null, address: string, me: () => Response) {
+	return gateWith(routeId, address, 'GET', me);
+}
+
+/** Run the gate for a `method` request to `address` on `routeId`, with `/me` answering `me()`. */
+async function gateWith(
+	routeId: string | null,
+	address: string,
+	method: string,
+	me: () => Response
+) {
 	const { fetch, calls } = fetchStub(me);
 	const resolved = vi.fn(() => Promise.resolve(new Response('<p>private</p>')));
 	const locals: App.Locals = {};
 	const event = {
 		route: { id: routeId },
 		url: new URL(address, 'http://127.0.0.1:5174'),
-		request: new Request(new URL(address, 'http://127.0.0.1:5174')),
+		request: new Request(new URL(address, 'http://127.0.0.1:5174'), { method }),
 		fetch,
 		locals
 	} as unknown as RequestEvent;
@@ -53,6 +63,25 @@ describe('sessionGate', () => {
 		const { outcome } = await gate('/(session)/accounts', '/accounts', () => {
 			throw new TypeError('fetch failed');
 		});
+		expect(isRedirect(outcome)).toBe(true);
+	});
+
+	it('lets the sign-out action through without a session, so it can always clear the cookie', async () => {
+		const { outcome, resolved, calls } = await gateWith(
+			'/(session)/logout',
+			'/logout',
+			'POST',
+			() => {
+				throw new TypeError('fetch failed');
+			}
+		);
+		expect(outcome).toBeInstanceOf(Response);
+		expect(resolved).toHaveBeenCalledOnce();
+		expect(calls).toEqual([]);
+	});
+
+	it('still gates a plain GET of the sign-out route', async () => {
+		const { outcome } = await gate('/(session)/logout', '/logout', anonymous);
 		expect(isRedirect(outcome)).toBe(true);
 	});
 

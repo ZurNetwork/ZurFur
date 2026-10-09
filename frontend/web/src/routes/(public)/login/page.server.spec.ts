@@ -21,10 +21,11 @@ const alice: Session = {
 	avatarUrl: undefined
 };
 
-function loadEvent(session: Session | undefined, search = ''): LoadEvent {
+function loadEvent(session: Session | undefined, search = '', sessionCookie?: string): LoadEvent {
 	const event = {
 		parent: () => Promise.resolve({ session }),
-		url: new URL(`http://localhost/login${search}`)
+		url: new URL(`http://localhost/login${search}`),
+		cookies: { get: (name: string) => (name === 'zurfur.sid' ? sessionCookie : undefined) }
 	};
 	return event as unknown as LoadEvent;
 }
@@ -32,8 +33,12 @@ function loadEvent(session: Session | undefined, search = ''): LoadEvent {
 /** `load` types its return as possibly-void (it may throw a redirect); pin the data shape. */
 async function runLoad(
 	event: LoadEvent
-): Promise<{ callbackError: string | undefined; form: LoginForm }> {
-	return (await load(event)) as { callbackError: string | undefined; form: LoginForm };
+): Promise<{ callbackError: string | undefined; form: LoginForm; signoutUnconfirmed: boolean }> {
+	return (await load(event)) as {
+		callbackError: string | undefined;
+		form: LoginForm;
+		signoutUnconfirmed: boolean;
+	};
 }
 
 async function signinAction(fetch: typeof globalThis.fetch, handle: string | null) {
@@ -55,6 +60,23 @@ describe('/login load', () => {
 		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		expect(result.form.posted).toBe(false);
 		expect(result.form.message).toBeUndefined();
+	});
+
+	it('reads an unconfirmed sign-out from the address', async () => {
+		const result = await runLoad(loadEvent(undefined, '?signout=unconfirmed'));
+		expect(result.signoutUnconfirmed).toBe(true);
+	});
+
+	it('shows the notice only when the request carries no session cookie', async () => {
+		const withCookie = await runLoad(loadEvent(undefined, '?signout=unconfirmed', 'still-live'));
+		const withoutCookie = await runLoad(loadEvent(undefined, '?signout=unconfirmed'));
+		expect(withCookie.signoutUnconfirmed).toBe(false);
+		expect(withoutCookie.signoutUnconfirmed).toBe(true);
+	});
+
+	it('reads no sign-out notice from any other value', async () => {
+		const result = await runLoad(loadEvent(undefined, '?signout=yes'));
+		expect(result.signoutUnconfirmed).toBe(false);
 	});
 
 	it('maps a known ?error code to its message', async () => {
