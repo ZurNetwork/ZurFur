@@ -12,7 +12,8 @@
     "The sign-in gate is the server `handle` hook (`lib/server/session-gate.ts`): no `(session)` load, data request (whatever loads it asks to skip) or form action runs without a session. The group layout's redirect only narrows the type. The backend still checks the session on every call.",
     "New signed-in routes JOIN this group rather than re-implementing the check.",
     "Detail pages derive from the caller's own listing — there is no fetch-by-id rpc in v1; destructive actions require typed confirmation (WCAG 3.3.4).",
-    "Each page's load returns `trail` (App.PageData) for the frame's path bar; the frame itself reads nothing from the backend."
+    "Each page's load returns `trail` (App.PageData) for the frame's path bar; the frame itself reads nothing from the backend.",
+    "The sidebar, the drawer and every way into My Den appear only when the root layout's `denServed` is true (the mock today); the everyday stack shows the top bar and the pane only."
   ],
   "entry_points": [
     "+layout.server.ts (the gate)",

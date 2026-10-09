@@ -40,6 +40,11 @@
       "node": true
     },
     {
+      "name": "den-served.ts",
+      "role": "denServed(): whether this run can show a Den — the mock only, for now; fails closed (false) on the everyday stack, so the frame shows no sidebar, tree or My Den links there",
+      "node": false
+    },
+    {
       "name": "error-log.ts",
       "role": "pure logUnexpectedError (hooks.server.ts's handleError): logs route template + status only, returns a fixed message",
       "node": false
