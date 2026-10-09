@@ -1,0 +1,172 @@
+/*
+ * Element defaults, the focus ring, the `.visually-hidden` helper and the one
+ * phone breakpoint. Read only tokens from tokens.css.
+ *
+ * The breakpoint (48rem) lives only in this file: a custom property can't sit
+ * inside a media query, so the shell reads the switch this file sets
+ * (`--shell-columns`) and the `.desktop-only` / `.phone-only` helpers.
+ */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-family: var(--font-ui);
+	font-size: var(--text-md);
+	line-height: var(--text-line-height);
+	font-weight: var(--text-weight-regular);
+}
+
+h1,
+h2,
+h3 {
+	margin: 0 0 var(--space-3);
+	line-height: 1.25;
+	font-weight: var(--text-weight-bold);
+}
+
+h1 {
+	font-size: var(--text-xl);
+}
+
+h2 {
+	font-size: var(--text-lg);
+}
+
+p {
+	margin: 0 0 var(--space-3);
+}
+
+a {
+	color: var(--color-accent);
+	text-underline-offset: 0.15em;
+}
+
+code,
+kbd,
+samp {
+	font-family: var(--font-mono);
+	font-size: 0.95em;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+button {
+	cursor: pointer;
+}
+
+/* A text box's edge marks where it is, so it keeps 3:1 against its surroundings. */
+input,
+select,
+textarea {
+	background: var(--color-surface-raised);
+	border: var(--border-width) solid var(--color-text-muted);
+	border-radius: var(--radius-md);
+	padding: var(--space-1) var(--space-2);
+	min-height: var(--space-9);
+}
+
+input[aria-invalid='true'] {
+	border-color: var(--color-danger);
+}
+
+label {
+	display: inline-flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	margin: 0 var(--space-3) var(--space-3) 0;
+	font-size: var(--text-sm);
+	color: var(--color-text-muted);
+}
+
+form button:not([class]) {
+	background: var(--color-surface-raised);
+	border: var(--border-width) solid var(--color-border);
+	border-radius: var(--radius-md);
+	padding: var(--space-1) var(--space-3);
+	min-height: var(--space-9);
+}
+
+form button:not([class]):hover {
+	background: var(--color-hover);
+}
+
+:focus-visible {
+	outline: var(--focus-ring-width) solid var(--color-focus);
+	outline-offset: 2px;
+}
+
+::selection {
+	background: var(--color-selected);
+}
+
+/* Visible only to assistive technology. */
+.visually-hidden {
+	position: absolute !important;
+	width: 1px !important;
+	height: 1px !important;
+	padding: 0 !important;
+	margin: -1px !important;
+	overflow: hidden !important;
+	clip: rect(0 0 0 0) !important;
+	clip-path: inset(50%) !important;
+	white-space: nowrap !important;
+	border: 0 !important;
+}
+
+/* The shell's grid: the sidebar column beside the pane. */
+:root {
+	--shell-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+
+/*
+ * The phone breakpoint: 48rem and narrower. Both helpers only ever hide, so an
+ * element keeps its own `display` on the side where it shows.
+ */
+@media (max-width: 48rem) {
+	:root {
+		--shell-columns: minmax(0, 1fr);
+	}
+
+	.desktop-only {
+		display: none !important;
+	}
+}
+
+@media not all and (max-width: 48rem) {
+	.phone-only {
+		display: none !important;
+	}
+}
+
+/* Under forced colours, borders and the focus ring stay visible. */
+@media (forced-colors: active) {
+	:focus-visible {
+		outline: var(--focus-ring-width) solid CanvasText;
+	}
+
+	input,
+	select,
+	textarea,
+	button {
+		border: 1px solid CanvasText;
+	}
+}

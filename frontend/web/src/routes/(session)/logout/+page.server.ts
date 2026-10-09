@@ -19,11 +19,13 @@ export const actions = {
 	 * browser's response — the SSR proxy rewrites the host, so SvelteKit will
 	 * not pass the backend's `set-cookie` through on its own. Name-driven
 	 * (from the backend's own headers) rather than hardcoding `zurfur.sid`.
+	 * A failed sign-out is a bare 502: the error page picks its words from the
+	 * route ("Sign-out did not complete"), so no message rides the page.
 	 */
 	default: async ({ fetch, cookies }) => {
 		const outcome = await runApi(fetch, signoutOutcome);
 		if ('failedStatus' in outcome) {
-			error(HttpStatus.BadGateway, 'Sign-out did not complete. Try again.');
+			error(HttpStatus.BadGateway);
 		}
 		for (const clearedName of outcome.clearedCookies) {
 			cookies.delete(clearedName, { path: '/' });

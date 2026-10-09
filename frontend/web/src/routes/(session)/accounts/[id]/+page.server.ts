@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 import { accountOutcome, deleteAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
 import { fail, redirect } from '@sveltejs/kit';
@@ -7,6 +8,7 @@ import { FORBIDDEN_PROBLEM, renderableStatus } from '$lib/api/problem';
 import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 import { deleteAccountForm } from '$lib/server/forms/delete-account';
+import type { Trail } from '$lib/api/trail';
 
 /**
  * The account detail, derived from the caller's own listing (there is no
@@ -14,10 +16,17 @@ import { deleteAccountForm } from '$lib/server/forms/delete-account';
  * not-found problem the backend would mint, rendered in-page. Deliberately a
  * 200 + problem body, not `error(404)` — the problem seam stays uniform and
  * keeps the backend's detail copy; an honest 404
- * status waits for a machine consumer that reads one.
+ * status waits for a machine consumer that reads one. The frame's path
+ * reads "Accounts / <handle>".
  */
 export const load: PageServerLoad = async ({ params, fetch }) => {
-	return await runApi(fetch, accountOutcome(params.id));
+	const outcome = await runApi(fetch, accountOutcome(params.id));
+	const label = 'account' in outcome ? outcome.account.handle : 'Account';
+	const trail: Trail = [
+		{ step: 'named', label: 'Accounts', href: resolve('/accounts') },
+		{ step: 'named', label, href: undefined }
+	];
+	return { ...outcome, trail };
 };
 
 export const actions = {

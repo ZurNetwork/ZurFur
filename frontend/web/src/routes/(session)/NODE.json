@@ -2,16 +2,17 @@
   "path": "frontend/web/src/routes/(session)",
   "charted": "2026-09-12",
   "short": "The signed-in area behind the session gate",
-  "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login`, containing the account screens and the logout action.",
+  "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame, containing the account screens and the logout action; its errors render inside the frame.",
   "type": "code",
   "tags": [
     "category:ui",
     "category:source"
   ],
   "conventions": [
-    "The gate is UX ONLY and covers page LOADS — form-action POSTs run before layout loads, so the backend's own 401 is the real guard for actions.",
+    "The sign-in gate is the server `handle` hook (`lib/server/session-gate.ts`): no `(session)` load, data request (whatever loads it asks to skip) or form action runs without a session. The group layout's redirect only narrows the type. The backend still checks the session on every call.",
     "New signed-in routes JOIN this group rather than re-implementing the check.",
-    "Detail pages derive from the caller's own listing — there is no fetch-by-id rpc in v1; destructive actions require typed confirmation (WCAG 3.3.4)."
+    "Detail pages derive from the caller's own listing — there is no fetch-by-id rpc in v1; destructive actions require typed confirmation (WCAG 3.3.4).",
+    "Each page's load returns `trail` (App.PageData) for the frame's path bar; the frame itself reads nothing from the backend."
   ],
   "entry_points": [
     "+layout.server.ts (the gate)",
@@ -19,8 +20,18 @@
   ],
   "fs": [
     {
+      "name": "+error.svelte",
+      "role": "errors inside the frame, by status and route alone (ErrorView) — a failed sign-out says so; the error's message is never read",
+      "node": false
+    },
+    {
       "name": "+layout.server.ts",
-      "role": "the session gate: redirect to /login when anonymous",
+      "role": "hands the frame the session (the hook already refused anyone without one; the redirect here only narrows the type)",
+      "node": false
+    },
+    {
+      "name": "+layout.svelte",
+      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`, the drawer closed after each navigation; the sidebar stays empty until My Den's tree arrives",
       "node": false
     },
     {
@@ -29,8 +40,18 @@
       "node": false
     },
     {
+      "name": "error.svelte.spec.ts",
+      "role": "proves the in-frame error page never shows the error's message and that a failed sign-out says so ($app/state mocked)",
+      "node": false
+    },
+    {
       "name": "layout.server.spec.ts",
-      "role": "spec for the gate — anonymous redirects, signed-in passes through",
+      "role": "spec for the gate — anonymous redirects, signed-in passes the session through",
+      "node": false
+    },
+    {
+      "name": "layout.svelte.spec.ts",
+      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts in the drawer, no sideways scroll at 320 px",
       "node": false
     },
     {

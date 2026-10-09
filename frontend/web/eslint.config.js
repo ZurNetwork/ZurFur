@@ -140,6 +140,20 @@ export default defineConfig(
 				{
 					selector: 'TSNullKeyword',
 					message: 'Never `| null` in our types — model absence as `T | undefined` (DD 39944194).'
+				},
+				{
+					// An expected error's message skips handleError and rides the page
+					// source and its JSON: only a fixed literal (or none) may go there.
+					selector:
+						"CallExpression[callee.name='error'][arguments.length>1]:not([arguments.1.type='Literal'])",
+					message:
+						'error(status, message) takes only a literal message (or none): it ships in the page source, so it must never carry a path, an id or other data.'
+				},
+				{
+					selector:
+						"ImportDeclaration[source.value='@sveltejs/kit'] ImportSpecifier[imported.name='error'][local.name!='error']",
+					message:
+						"Import SvelteKit's error() as `error`: the literal-message rule keys on that name."
 				}
 			]
 		}

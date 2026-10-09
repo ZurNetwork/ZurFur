@@ -10,7 +10,7 @@ export { ATPROTO_HANDLE } from '$lib/types/handle-format';
  * not a Zurfur handle being claimed (the claim
  * gate lives on `create-account.ts`). Field-level messages ride the
  * superform's `errors`; a backend `Problem` rides the same form's `message`
- * — see the action in `routes/login/+page.server.ts`.
+ * — see the action in `routes/(public)/login/+page.server.ts`.
  */
 export const loginForm = Schema.Struct({
 	handle: handleField('Please insert your handle')
