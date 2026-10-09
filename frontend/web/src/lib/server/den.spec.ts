@@ -100,6 +100,7 @@ describe('denPage: refused addresses', () => {
 			const { layer, seen } = listingPort();
 			const data = pageData(await run(layer, address));
 			expect(data.outcome).toEqual({ outcome: 'notFound' });
+			expect(data.address).toBeUndefined();
 			expect(seen).toEqual([]);
 		}
 	);
@@ -140,6 +141,13 @@ describe('denPage: reading and mapping', () => {
 			off: '/den/commissions'
 		});
 		expect(data.continued).toBe(true);
+		expect(data.address).toBe('/den/commissions?includeDeleted=true&pageToken=p1.0');
+	});
+
+	it('says which address it answers, built by the path builder, dropping parameters off its allowlist', async () => {
+		const { layer } = listingPort();
+		const data = pageData(await run(layer, '/den/commissions?retry=3&pageToken=p1.0'));
+		expect(data.address).toBe('/den/commissions?pageToken=p1.0');
 	});
 
 	it('shows an entry whose path the builder refuses as a card, never as a link', async () => {
@@ -251,6 +259,28 @@ describe('denPage: ancestors', () => {
 		expect(
 			ancestorQueries.every((query) => query.pageToken === undefined && query.includeDeleted)
 		).toBe(true);
+	});
+
+	it('on a full page load of a later root page, also reads the root’s first page', async () => {
+		const { layer, seen } = listingPort([folder(['accounts'], 'accounts')], 'p1.50');
+		const data = pageData(await run(layer, '/den?pageToken=p1.25', true));
+
+		expect(seen.map((read) => read.query.pageToken).toSorted()).toEqual(['p1.25', undefined]);
+		expect(data.continued).toBe(true);
+		expect(data.ancestors).toEqual([
+			{
+				folder: '/den',
+				entries: [expect.objectContaining({ href: '/den/accounts' })],
+				more: '/den?pageToken=p1.50'
+			}
+		]);
+	});
+
+	it('on a full page load of the root’s first page, reads the root once', async () => {
+		const { layer, seen } = listingPort();
+		const data = pageData(await run(layer, '/den', true));
+		expect(seen).toHaveLength(1);
+		expect(data.ancestors).toEqual([]);
 	});
 
 	it('on an in-app navigation, reads only the node', async () => {

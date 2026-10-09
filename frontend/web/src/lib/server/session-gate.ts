@@ -9,12 +9,25 @@ const SESSION_GROUP = '/(session)';
 /** The sign-out action's route: it reads nothing, so it runs without a session. */
 const SIGN_OUT_ROUTE = '/(session)/logout';
 
+/** Whether the request names an action (SvelteKit's `?/name` form) rather than the default one. */
+function namesAnAction(url: URL): boolean {
+	return [...url.searchParams.keys()].some((key) => key.startsWith('/'));
+}
+
 /**
- * Whether this request is the sign-out action, which must run even when the
- * backend can't confirm a session, so it can always clear the browser's.
+ * Whether this request is the sign-out action itself — a POST to the default
+ * action, not a named one and not a data request for that route's loads —
+ * which must run even when the backend can't confirm a session, so it can
+ * always clear the browser's. Actions run before layout loads, so nothing
+ * else on the route may slip through with it.
  */
 function isSignOutAction(event: RequestEvent): boolean {
-	return event.route.id === SIGN_OUT_ROUTE && event.request.method === 'POST';
+	return (
+		event.route.id === SIGN_OUT_ROUTE &&
+		event.request.method === 'POST' &&
+		!event.isDataRequest &&
+		!namesAnAction(event.url)
+	);
 }
 
 /** Whether `routeId` belongs to the signed-in group. */

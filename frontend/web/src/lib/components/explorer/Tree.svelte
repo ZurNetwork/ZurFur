@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import type { DenHref } from '$lib/types/brand';
-	import { loadFolder, loadMore, type Preload } from './tree-loader';
+	import { loadFolder, loadMore, type Attempt, type Preload } from './tree-loader';
 	import type { TreeMemory } from './tree-memory.svelte';
 	import { treeModel, visibleKeys, type TreeCurrent, type TreeNode } from './tree-model';
 	import TreeBranch from './TreeBranch.svelte';
@@ -73,31 +73,63 @@
 		}
 		memory.expanded.add(folder);
 		const state = memory.folders.get(folder);
-		if (state === undefined || state.state === 'failed') await loadFolder(memory, folder, preload);
+		if (state === undefined) await loadFolder(memory, folder, { preload });
+		else if (state.state === 'failed')
+			await loadFolder(memory, folder, { preload, attempt: 'retry' });
 	}
 
-	/** Fetch the next page under "More…", then move focus to its first new row. */
-	async function more(folder: DenHref, href: DenHref): Promise<void> {
+	/** Whether focus is still in the tree, or nowhere (its row went away), so a result may move it. */
+	function focusIsInTree(): boolean {
+		const active = document.activeElement ?? undefined;
+		return (
+			active === undefined || active === document.body || (treeElement?.contains(active) ?? false)
+		);
+	}
+
+	/**
+	 * Fetch the next page under "More…", then move focus to its first new row
+	 * if focus hasn't left the tree. A page the pane appended first is
+	 * dropped here, and focus stays put.
+	 */
+	async function more(folder: DenHref, href: DenHref, attempt: Attempt): Promise<void> {
 		const childOf = (row: HTMLElement) => row.dataset.treeParent === folder;
 		const before = new Set(
 			rows()
 				.filter(childOf)
 				.map((row) => row.dataset.treeKey)
 		);
-		await loadMore(memory, folder, href, preload);
+		const appended = await loadMore(memory, folder, href, { preload, attempt });
+		if (!appended) return;
 		await tick();
+		if (!focusIsInTree()) return;
 		const first = rows().find(
 			(row) => childOf(row) && !before.has(row.dataset.treeKey) && row.dataset.treeKind !== 'more'
 		);
 		first?.focus();
 	}
 
+	/**
+	 * Fetch a failed folder again. Its "Retry" row gives way to the loading
+	 * rows, so focus waits on the folder, and returns to "Retry" if it fails again.
+	 */
+	async function retry(folder: DenHref): Promise<void> {
+		const focusWasInside = treeElement?.contains(document.activeElement) ?? false;
+		const loading = loadFolder(memory, folder, { preload, attempt: 'retry' });
+		await tick();
+		if (!focusWasInside) return;
+		const folderRow = rowFor(folder);
+		folderRow?.focus();
+		await loading;
+		await tick();
+		if (document.activeElement === folderRow) rowFor(`${folder}#failed`)?.focus();
+	}
+
 	/** A "More…" or "Retry" row was activated. */
 	function activate(node: TreeNode): void {
 		if (node.item === 'more' && node.state !== 'loading') {
-			void more(node.folder, node.href);
+			void more(node.folder, node.href, node.state === 'failed' ? 'retry' : 'first');
 		} else if (node.item === 'failed') {
-			void loadFolder(memory, node.folder, preload);
+			void retry(node.folder);
 		}
 	}
 

@@ -14,7 +14,7 @@
     "New shared UI goes in `components/`.",
     "Components name a token, never a raw colour or a palette custom property; core components use the design language's names exactly (`ui/`), and the frame's compositions live in `explorer/`.",
     "Icons are inline SVG path data copied from Lucide (ISC) into `components/ui/icons.ts`, always `aria-hidden` beside words.",
-    "A `DenHref` is minted only by the Den path builder (`server/den/den-path.ts`) and the bare-root fallback (`components/explorer/den-root.ts`) — eslint's `no-restricted-imports` enforces it; components render Den links, never build them."
+    "A `DenHref` is minted only by the Den path builder (`server/den/den-path.ts`) and the bare-root fallback (`components/explorer/den-root.ts`) — eslint enforces it for every spelling of the brand module (any relative path, any extension, and dynamic `import()`); components render Den links, never build them."
   ],
   "entry_points": [
     "api/ (the seam vocabulary)",

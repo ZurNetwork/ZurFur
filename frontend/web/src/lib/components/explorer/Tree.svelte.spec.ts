@@ -41,8 +41,12 @@ const someCard: DenEntry = {
 };
 const ember = entry('/den/characters/ember', 'Ember', { mounted: true });
 
-/** What the fake preload answers for each link: a listing, or a failure. */
-const listings = new Map<string, readonly DenEntry[] | 'fail'>();
+/**
+ * What the fake preload answers for each link: a listing; a failure the
+ * server answered; or `offline`, a fetch that failed, which SvelteKit
+ * answers with the current page (here the root's listing).
+ */
+const listings = new Map<string, readonly DenEntry[] | 'fail' | 'offline'>();
 
 /** Every link the fake preload was asked for. */
 let preloaded: string[] = [];
@@ -51,6 +55,7 @@ let preloaded: string[] = [];
 function pageWith(href: DenHref, entries: readonly DenEntry[], more?: DenHref): DenPageData {
 	return {
 		kind: 'denPage',
+		address: href,
 		outcome: {
 			outcome: 'page',
 			page: {
@@ -70,19 +75,46 @@ function pageWith(href: DenHref, entries: readonly DenEntry[], more?: DenHref): 
 	};
 }
 
-/** SvelteKit's preloadData, faked over {@link listings}. */
-const fakePreload: Preload = (href: string) => {
+/** When set, the fake preload waits for this before answering. */
+let held: Promise<void> | undefined;
+
+/** The root's listing, which every rendered tree starts from. */
+const rootEntries = (): readonly DenEntry[] => [accounts, characters, commissions, notes, posts];
+
+/** SvelteKit's preloadData, faked over {@link listings}; the server ignores a retry's extra parameter. */
+const fakePreload: Preload = async (href: string) => {
 	preloaded.push(href);
-	const listing = listings.get(href);
-	if (listing === undefined || listing === 'fail') {
-		return Promise.resolve({ type: 'loaded' as const, status: 500, data: {} });
+	const url = new URL(href, 'http://den.invalid');
+	url.searchParams.delete('retry');
+	const address = `${url.pathname}${url.search}`;
+	const listing = listings.get(address);
+	await held;
+	if (listing === 'offline') {
+		return { type: 'loaded' as const, status: 200, data: { den: pageWith(ROOT, rootEntries()) } };
 	}
-	return Promise.resolve({
+	if (listing === undefined || listing === 'fail') {
+		return { type: 'loaded' as const, status: 500, data: {} };
+	}
+	return {
 		type: 'loaded' as const,
 		status: 200,
-		data: { den: pageWith(denHref(href), listing) }
-	});
+		data: { den: pageWith(denHref(address), listing) }
+	};
 };
+
+/** Hold the fake preload's answers until the returned function is called. */
+function holdPreloads(): () => void {
+	let release: () => void = () => undefined;
+	held = new Promise((done) => {
+		release = done;
+	});
+	return () => {
+		release();
+	};
+}
+
+/** A button outside the tree, standing in for the pane, removed after each test. */
+let outside: HTMLButtonElement | undefined;
 
 /**
  * Links followed during a test: a click that reaches the document unhandled
@@ -102,11 +134,14 @@ beforeEach(() => {
 	listings.clear();
 	preloaded = [];
 	followed = [];
+	held = undefined;
 	document.addEventListener('click', stopNavigation);
 });
 
 afterEach(() => {
 	document.removeEventListener('click', stopNavigation);
+	outside?.remove();
+	outside = undefined;
 });
 
 /** A memory holding the root's listing (and, open, `commissions`), with `current` open. */
@@ -114,7 +149,7 @@ function renderTree(
 	options: { current?: OpenEntry; commissionsOpen?: boolean; rootMore?: DenHref } = {}
 ) {
 	const memory = new TreeMemory(did('did:plc:alice'));
-	memory.loaded(ROOT, [accounts, characters, commissions, notes, posts], options.rootMore);
+	memory.loaded(ROOT, rootEntries(), options.rootMore);
 	memory.expanded.add(ROOT);
 	memory.rootHref = ROOT;
 	if (options.commissionsOpen === true) {
@@ -349,6 +384,69 @@ describe('Tree: loading', () => {
 		await expect.element(item('Ember')).toBeInTheDocument();
 	});
 
+	it('keeps focus on the folder while a retry loads, never dropping it to the page', async () => {
+		listings.set('/den/characters', 'fail');
+		renderTree();
+		item('characters').element().focus();
+		await userEvent.keyboard('{ArrowRight}');
+		const retry = item("Couldn't load. Retry.");
+		await expect.element(retry).toBeInTheDocument();
+
+		listings.set('/den/characters', [ember]);
+		retry.element().focus();
+		await userEvent.keyboard('{Enter}');
+
+		await expect.element(item('Ember')).toBeInTheDocument();
+		await expect.element(item('characters')).toHaveFocus();
+	});
+
+	it('puts focus back on "Retry" when the retry fails again', async () => {
+		listings.set('/den/characters', 'fail');
+		renderTree();
+		item('characters').element().focus();
+		await userEvent.keyboard('{ArrowRight}');
+		const retry = item("Couldn't load. Retry.");
+		await expect.element(retry).toBeInTheDocument();
+
+		retry.element().focus();
+		await userEvent.keyboard('{Enter}');
+
+		await expect.poll(() => preloaded).toHaveLength(2);
+		await expect.element(item("Couldn't load. Retry.")).toHaveFocus();
+	});
+
+	it('shows "Couldn’t load. Retry." when a folder’s fetch fails, never the current page’s rows', async () => {
+		listings.set('/den/characters', 'offline');
+		renderTree();
+		item('characters').element().focus();
+
+		await userEvent.keyboard('{ArrowRight}');
+
+		await expect.element(item("Couldn't load. Retry.")).toBeInTheDocument();
+		const keys = [
+			...page.getByTestId('tree').element().querySelectorAll<HTMLElement>('[data-tree-key]')
+		].map((row) => row.dataset.treeKey);
+		expect(keys.filter((key) => key === '/den/accounts')).toHaveLength(1);
+	});
+
+	it('retries through a fresh preload, so SvelteKit’s cached failure isn’t replayed', async () => {
+		listings.set('/den/characters', 'fail');
+		renderTree();
+		item('characters').element().focus();
+		await userEvent.keyboard('{ArrowRight}');
+		const retry = item("Couldn't load. Retry.");
+		await expect.element(retry).toBeInTheDocument();
+
+		listings.set('/den/characters', [ember]);
+		retry.element().focus();
+		await userEvent.keyboard('{Enter}');
+
+		await expect.element(item('Ember')).toBeInTheDocument();
+		expect(preloaded[0]).toBe('/den/characters');
+		expect(preloaded[1]).not.toBe('/den/characters');
+		expect(preloaded[1]?.startsWith('/den/characters?')).toBe(true);
+	});
+
 	it('gives the "More…" row its level and place too', async () => {
 		renderTree({ rootMore: denHref('/den?pageToken=p1.4') });
 		const more = item('More…');
@@ -377,5 +475,61 @@ describe('Tree: loading', () => {
 
 		await expect.element(item('zeta')).toBeInTheDocument();
 		await expect.element(item('More…')).not.toBeInTheDocument();
+	});
+
+	it('shows "Couldn’t load more. Retry." when "More…" fails, never appending the current page again', async () => {
+		const pageTwo = denHref('/den?pageToken=p1.4');
+		listings.set(pageTwo, 'offline');
+		renderTree({ rootMore: pageTwo });
+		item('More…').element().focus();
+
+		await userEvent.keyboard('{Enter}');
+
+		await expect.element(item("Couldn't load more. Retry.")).toBeInTheDocument();
+		expect(
+			page.getByTestId('tree').element().querySelectorAll('[data-tree-key="/den/accounts"]')
+		).toHaveLength(1);
+	});
+
+	it('leaves focus alone when its "More…" lands after focus left the tree', async () => {
+		const pageTwo = denHref('/den?pageToken=p1.4');
+		listings.set(pageTwo, [entry('/den/zeta', 'zeta')]);
+		const release = holdPreloads();
+		renderTree({ rootMore: pageTwo });
+		item('More…').element().focus();
+		await userEvent.keyboard('{Enter}');
+		await expect.poll(() => preloaded).toEqual([pageTwo]);
+
+		outside = document.createElement('button');
+		outside.textContent = 'In the pane';
+		document.body.append(outside);
+		outside.focus();
+		release();
+		await expect.element(item('zeta')).toBeInTheDocument();
+		await new Promise((settle) => setTimeout(settle, 50));
+
+		expect(document.activeElement).toBe(outside);
+	});
+
+	it('leaves focus alone when its "More…" lands after the pane already appended that page', async () => {
+		const pageTwo = denHref('/den?pageToken=p1.4');
+		const zeta = entry('/den/zeta', 'zeta');
+		listings.set(pageTwo, [zeta]);
+		const release = holdPreloads();
+		const memory = renderTree({ rootMore: pageTwo });
+		item('More…').element().focus();
+		await userEvent.keyboard('{Enter}');
+		await expect.poll(() => preloaded).toEqual([pageTwo]);
+
+		memory.appended(ROOT, [zeta], undefined, pageTwo);
+		outside = document.createElement('button');
+		outside.textContent = 'In the pane';
+		document.body.append(outside);
+		outside.focus();
+		release();
+		await expect.element(item('zeta')).toBeInTheDocument();
+		await new Promise((settle) => setTimeout(settle, 50));
+
+		expect(document.activeElement).toBe(outside);
 	});
 });

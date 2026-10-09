@@ -18,7 +18,8 @@ async function gateWith(
 	routeId: string | null,
 	address: string,
 	method: string,
-	me: () => Response
+	me: () => Response,
+	isDataRequest = false
 ) {
 	const { fetch, calls } = fetchStub(me);
 	const resolved = vi.fn(() => Promise.resolve(new Response('<p>private</p>')));
@@ -28,7 +29,8 @@ async function gateWith(
 		url: new URL(address, 'http://127.0.0.1:5174'),
 		request: new Request(new URL(address, 'http://127.0.0.1:5174'), { method }),
 		fetch,
-		locals
+		locals,
+		isDataRequest
 	} as unknown as RequestEvent;
 	const input: HandleInput = { event, resolve: resolved };
 	const outcome: unknown = await Promise.resolve()
@@ -78,6 +80,29 @@ describe('sessionGate', () => {
 		expect(outcome).toBeInstanceOf(Response);
 		expect(resolved).toHaveBeenCalledOnce();
 		expect(calls).toEqual([]);
+	});
+
+	it('still gates a data request posted to the sign-out route (only the action itself passes)', async () => {
+		const { outcome, resolved } = await gateWith(
+			'/(session)/logout',
+			'/logout/__data.json?x-sveltekit-invalidated=001',
+			'POST',
+			anonymous,
+			true
+		);
+		expect(isRedirect(outcome)).toBe(true);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
+	it('still gates a named action posted to the sign-out route (only the default action passes)', async () => {
+		const { outcome, resolved } = await gateWith(
+			'/(session)/logout',
+			'/logout?/other',
+			'POST',
+			anonymous
+		);
+		expect(isRedirect(outcome)).toBe(true);
+		expect(resolved).not.toHaveBeenCalled();
 	});
 
 	it('still gates a plain GET of the sign-out route', async () => {
