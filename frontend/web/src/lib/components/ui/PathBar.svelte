@@ -23,6 +23,7 @@
 						><PathStepLabel {step} /></span
 					>
 				{:else}
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- trail links are resolved by their producers (resolve() or the Den path builder) -->
 					<a href={step.href}><PathStepLabel {step} /></a>
 				{/if}
 			</li>
@@ -32,6 +33,7 @@
 
 {#if parent !== undefined && parentHref !== undefined}
 	<nav class="path-bar path-bar--back phone-only" aria-label="Back" data-testid="path-bar-back">
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- trail links are resolved by their producers (resolve() or the Den path builder) -->
 		<a href={parentHref}><Icon name="chevron-left" /><PathStepLabel step={parent} /></a>
 	</nav>
 {/if}

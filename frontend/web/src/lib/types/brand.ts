@@ -25,6 +25,7 @@
  */
 
 import { ATPROTO_HANDLE, HANDLE_MAX_LEN, isPunycodeLabeled } from './handle-format';
+import { isSegment } from './segment-format';
 
 declare const brand: unique symbol;
 
@@ -89,4 +90,62 @@ export function handle(input: string): Handle | undefined {
 	if (!ATPROTO_HANDLE.test(trimmed)) return undefined;
 	if (isPunycodeLabeled(trimmed)) return undefined;
 	return trimmed as Handle;
+}
+
+/** One piece of a path the web builds — allowlisted ASCII, never `.` or `..` ({@link pathSegment}). */
+export type PathSegment = Brand<string, 'PathSegment'>;
+
+/**
+ * Validated mint from UNTRUSTED input: `piece` as a {@link PathSegment} when
+ * it follows the segment rule in `segment-format.ts`, else `undefined`.
+ */
+export function pathSegment(piece: string): PathSegment | undefined {
+	return isSegment(piece) ? (piece as PathSegment) : undefined;
+}
+
+/** A link into My Den, built by the server's Den path builder and nowhere else. */
+export type DenHref = Brand<string, 'DenHref'>;
+
+/**
+ * Nominal cast for a link the Den path builder just built and checked. Only
+ * that builder may call it; an eslint rule keeps every other module from
+ * importing it.
+ */
+export function denHref(value: string): DenHref {
+	return value as DenHref;
+}
+
+/** A Den node's display name: text to show, never HTML and never a key. */
+export type DenName = Brand<string, 'DenName'>;
+
+/** Nominal cast for a name off a Den read (trusted decode boundary). */
+export function denName(value: string): DenName {
+	return value as DenName;
+}
+
+/** A Den node's provisional type name, such as `commission`: opaque, it only picks a marker. */
+export type DenType = Brand<string, 'DenType'>;
+
+/** Nominal cast for a type name off a Den read (trusted decode boundary). */
+export function denType(value: string): DenType {
+	return value as DenType;
+}
+
+/** An opaque position in a Den listing, sent back to fetch the next page. */
+export type PageToken = Brand<string, 'PageToken'>;
+
+/** The longest page token the web passes on; a longer one is dropped. */
+const PAGE_TOKEN_MAX_LEN = 512;
+
+/** Visible ASCII only: a page token is opaque, but never holds spaces or control characters. */
+const PAGE_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
+
+/**
+ * Validated mint from UNTRUSTED input (an address's query, or a listing's
+ * next-page field): 1 to 512 visible ASCII characters, else `undefined`.
+ * The token stays opaque: nothing here reads what it means.
+ */
+export function pageToken(raw: string): PageToken | undefined {
+	if (raw.length === 0 || raw.length > PAGE_TOKEN_MAX_LEN) return undefined;
+	return PAGE_TOKEN_PATTERN.test(raw) ? (raw as PageToken) : undefined;
 }

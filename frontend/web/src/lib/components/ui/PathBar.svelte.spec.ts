@@ -1,14 +1,14 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { resolve } from '$app/paths';
+import { denHref } from '$lib/types/brand';
 import type { Trail } from '$lib/api/trail';
 import PathBar from './PathBar.svelte';
 
 /** `~ / accounts / Alice's Studio`, linked down to the parent. */
 const deepTrail: Trail = [
-	{ step: 'root', href: resolve('/') },
-	{ step: 'named', label: 'accounts', href: resolve('/accounts') },
+	{ step: 'root', href: denHref('/den') },
+	{ step: 'named', label: 'accounts', href: '/accounts' },
 	{ step: 'named', label: "Alice's Studio", href: undefined }
 ];
 
@@ -54,7 +54,7 @@ describe('PathBar', () => {
 
 	it('isolates a right-to-left name so it cannot reorder the bar', async () => {
 		const rtl: Trail = [
-			{ step: 'root', href: resolve('/') },
+			{ step: 'root', href: denHref('/den') },
 			{ step: 'named', label: 'طلب رسم', href: undefined }
 		];
 		render(PathBar, { trail: rtl });
@@ -62,5 +62,15 @@ describe('PathBar', () => {
 		const name = page.getByTestId('path-bar').getByText('طلب رسم');
 		await expect.element(name).toBeInTheDocument();
 		expect(name.element().tagName).toBe('BDI');
+	});
+});
+
+describe('TrailStep links', () => {
+	it('take only a Den link or a fixed section page, never an off-site address', () => {
+		const offsite: Trail = [
+			// @ts-expect-error -- a protocol-relative address must not type-check as a path step's link
+			{ step: 'named', label: 'x', href: '//evil.example/' }
+		];
+		expect(offsite).toHaveLength(1);
 	});
 });

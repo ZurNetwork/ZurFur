@@ -118,4 +118,15 @@ describe('AppShell', () => {
 		expect(page.getByTestId('accounts-link').element().closest('.desktop-only')).toBeNull();
 		expect(page.getByTestId('session-handle').element().closest('.desktop-only')).toBeNull();
 	});
+
+	it('links to My Den in the top bar only where a Den is served', async () => {
+		renderShell(true);
+		await expect.element(page.getByTestId('den-link')).toHaveAttribute('href', '/den');
+	});
+
+	it('has no My Den link on the everyday stack', async () => {
+		renderShell(false);
+		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
+		await expect.element(page.getByTestId('den-link')).not.toBeInTheDocument();
+	});
 });
