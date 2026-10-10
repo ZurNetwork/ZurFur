@@ -10,6 +10,7 @@
 #   posts       lead Bowerbird · programmers Kestrel, Ibis, Puffin · QA Kea
 #   moderation  lead Meerkat  · programmers Mastiff, Goose, Alpaca · QA Lapwing
 #   plugin      lead Octopus  · programmers Hermit, Remora, Cuttle · QA Mantis
+#   internal    lead Beaver   · programmers Weaver, Pika, Coati · QA Hoopoe
 board = "zurfur"
 vcs = "jj"
 
@@ -140,6 +141,27 @@ owns = [
   "backend/crates/application/src/plugin/**",
   "backend/crates/api/src/routes/plugins.rs",
   "backend/crates/api/src/routes/plugins/**",
+]
+lead = "lead"
+
+# The internal team (the Engineer, 2026-10-10) makes the other teams' work easier:
+# communication, way of working, CI/CD, and coding tools of its own making. It works
+# by project, not by release (each project is a page under `.understand/internal/`),
+# and appears in no release plan. It finds the most effective and efficient way for
+# the teams to work: it reads the leads' retrospectives and the QA logs
+# (`.understand/retros/`) and the board, and decides process refinements from
+# them. Outside this repo it uses advisory locks: `skills:<path>` (~/.claude/skills), `board:<path>`
+# (~/code/ai/agent-message-board), `nodes:<path>` (~/code/nodes) and `kit:<path>`
+# (~/code/ai/orchestration-kit).
+[teams.internal]
+mission = "Make the other teams' work easier: comms, way of working, CI/CD, tools"
+owns = [
+  ".github/**",
+  "scripts/**",
+  "Justfile",
+  "CLAUDE.md",
+  ".agent-board.toml",
+  ".claude/settings.json",
 ]
 lead = "lead"
 
