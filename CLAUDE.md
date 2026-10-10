@@ -65,7 +65,10 @@ just db-shell              # psql into the running database
 just migrate-add <name>    # Create a migration file in adapter-pg
 just db-reset              # Drop the DB volume, bring up fresh PostgreSQL
 just test                  # cargo test --workspace (integration tests need a container runtime socket, not `just up`)
-just setup                 # First-time setup: copy .env, install tools
+just setup                 # First-time setup: copy .env, install tools (typos, cargo-deny at CI's versions)
+just gate                  # The full local mirror of CI (see "Which local gate when")
+just gate-light            # The light gate for restacks and fix rounds
+just tools-check           # Warn when local typos/cargo-deny/buf/rustc differ from CI's pins
 ```
 
 Building and running directly:
@@ -111,6 +114,7 @@ Config is figment in `api`: `backend/config/{profile}.toml` then `ZURFUR_*` env 
 - `main` — stable; **never push directly to `main`**; one `[ZMVP-N]` squash commit per ticket.
 - `feature/*` / `bug/*` — one ticket each: the **integration branch**, created **exactly at `main`'s tip, nothing else on it**. Work lands on it as **bite-sized slice PRs** (slice branch → PR **into the feature branch**, line-reviewed + Copilot there, squash-merged). The feature branch gets its PR to `main` **only when the ticket is ready — every slice merged**; that PR is a **rubber-stamp squash**, no line re-review (the slices already had it). (Engineer ruling 2026-07-14; prototype: ZMVP-122 / slice PRs #127 + #122–#126.) CI runs on PRs into `feature/**` by design — name slice branches `feature/…` so *their* children also trigger it.
 - **The working-state contract lives on the feature branch (and `main`)**: every commit *on the integration branch* is gate-green (fmt, clippy, full test suite) — incomplete is fine, broken never. Slice branches may hold work-in-progress that doesn't stand alone; the enforcement seam is the merge: a slice PR's CI runs against the merge preview (feature + slice), so green slice CI ⇒ the feature branch stays working after the merge.
+- **Which local gate when.** `just gate` (the full suite) before a slice's first push for review and before handing it to QA: that run is the evidence QA and the Engineer read. On restacks and fix rounds, `just gate-light` is enough: fmt, clippy, typos, `just design-index-check` (CI can't run it; the corpus is private), the tests of the crates the change touches, and the web checks when `frontend/` or `contract/` changed. CI re-runs the full suite on every push, and its run on the merge preview stays the enforcement seam. `jj push` always runs fmt + clippy. To wait for CI and Copilot, run `scripts/pr-wait.sh <PR>` once in the background instead of polling.
 - Stacked slice PRs: after a slice squash-merges into the feature branch, the next slice rebases onto it (jj) and force-pushes — mechanical restack of Claude's own slice chain, distinct from the Engineer-owned cross-branch restacks.
 
 ### Parallel work — jj workspaces & units of work

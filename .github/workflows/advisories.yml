@@ -1,0 +1,28 @@
+name: Advisories
+
+# The daily security-advisory check on main. PR CI blocks on advisories only
+# when a PR changes Cargo.lock, so a newly published advisory against a
+# dependency main already ships surfaces here, as a failed run. GitHub notifies
+# the account that last edited this schedule.
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        with:
+          arguments: --locked --all-features
+          command: check
+          command-arguments: advisories

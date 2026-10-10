@@ -8,6 +8,15 @@ set positional-arguments := true
 # NODE.json files and the tool's schema move in lockstep on this pin.
 NODES_VERSION := "v0.6.0"
 
+# The tool versions CI runs, so the local gate agrees with it. `just setup`
+# installs typos and cargo-deny at these; `just tools-check` warns when this
+# machine differs and fails when .github/workflows disagrees. The workflows
+# pin the same versions (typos and cargo-deny through their actions' SHAs);
+# bump both sides in one change. Rust is pinned in rust-toolchain.toml.
+export TYPOS_VERSION := "1.51.1"
+export CARGO_DENY_VERSION := "0.20.2"
+export BUF_VERSION := "1.72.0"
+
 # The design corpus (github.com/ZurNetwork/zurfur-design — private; the single
 # source of truth for Zurfur's glossary, decisions, scope and architecture),
 # checked out as a sibling of this repo. Override for a different checkout.
@@ -187,6 +196,31 @@ hooks-test:
     done
     exit "$status"
 
+# Fixture tests for the CI path classifier, gate-light and pr-wait (the
+# design-index check's own tests run under `design-index-check-test`). CI
+# runs it in the `hooks` job.
+scripts-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for t in scripts/ci-paths.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh; do
+        echo "--- $t ---"
+        sh "$t" || status=1
+    done
+    exit "$status"
+
+# Compare this machine's typos, cargo-deny, buf and rustc with CI's versions
+# (warns), and check every workflow pins its actions by SHA at the Justfile's
+# versions (fails). `--pins-only` skips the local half; CI runs that.
+tools-check *ARGS:
+    sh scripts/tools-check.sh "$@"
+
+# Parse the TOML files CI's `changes` job counts as docs-only (those present
+# of .agent-board.toml and NODE.toml), so a broken one still fails CI. Needs
+# python3 >= 3.11 (tomllib).
+toml-check:
+    python3 -c 'import os, sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:] if os.path.exists(f)]' .agent-board.toml NODE.toml
+
 # Forward to the design corpus's recall eval harness (private, Python
 # stdlib) at $ZURFUR_DESIGN_DIR/eval/run.py — see that repo for subcommands
 # (lint, smoke, pilot, matrix). Fails with a clear message if the corpus
@@ -222,11 +256,14 @@ check:
 # `cargo test` (the contract_current test); regenerate both tiers with
 # `just gen-contract` before pushing a corpus change.
 # -- sequential and fail-fast, so a red step stops the run before the next one
-# starts. Needs `cargo install cargo-deny` / `cargo install typos-cli` once, and
-# a one-time `yarn --cwd frontend/web playwright install chromium` for the
-# browser-mode component tests, and the `buf` CLI for the contract lint
-# (https://buf.build/docs/installation — a single Go binary).
+# starts. Needs `just setup` once (typos and cargo-deny at CI's versions), a
+# one-time `yarn --cwd frontend/web playwright install chromium` for the
+# browser-mode component tests, and the `buf` CLI at BUF_VERSION for the
+# contract lint (https://buf.build/docs/installation — a single Go binary).
+# Run it before a slice's first push for review and before handing it to QA;
+# restacks and fix rounds may use `just gate-light`.
 gate:
+    just tools-check
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
     INSTA_UPDATE=no cargo test --workspace --locked
@@ -235,11 +272,21 @@ gate:
     just design-index-check
     just nodes-check
     just hooks-test
+    just scripts-test
+    just toml-check
     buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test
     yarn --cwd frontend/web run build
+
+# The light gate for restacks and fix rounds: fmt, clippy, typos and the
+# design-index check, plus the tests of the crates the change touches and the
+# web checks when frontend/ or contract/ changed. CI runs the full suite on
+# every push; see scripts/gate-light.sh for how the change is read.
+# `just gate-light --plan` prints the steps without running them.
+gate-light *ARGS:
+    bash scripts/gate-light.sh "$@"
 
 # --- Setup ---
 
@@ -250,6 +297,9 @@ setup:
     cargo install just cargo-watch bacon
     cargo install cargo-insta
     cargo install sqlx-cli --no-default-features --features postgres
+    cargo install --locked typos-cli --version {{TYPOS_VERSION}}
+    cargo install --locked cargo-deny --version {{CARGO_DENY_VERSION}}
+    @echo "Install buf {{BUF_VERSION}}: https://buf.build/docs/installation"
     just nodes-install
     cd frontend/web && yarn install
     @echo ""
