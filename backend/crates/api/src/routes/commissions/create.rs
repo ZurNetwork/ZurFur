@@ -11,43 +11,43 @@ use axum::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::CommissionTitle,
+    commission::{Commission, CommissionTitle},
     maturity::{Maturity, MaturityRating},
 };
 
-use super::{from_wire_timestamp, list::wire_commission};
-use crate::generated::{Commission, CreateCommissionRequest, CreateCommissionResponse};
+use super::{from_wire_timestamp, wire_timestamp};
+use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
 use crate::{AppState, extract::CallingUser, problem::Problem};
 
-/// The created resource, in the create response's envelope. Both messages
-/// carry the same ten fields, so the create body is the listing row moved
-/// across — one projection `wire_commission`, never two that can drift
-/// (`golden_wire` asserts the two render identically).
+/// Renders a domain maturity posture as the contract's wire message.
+impl From<Maturity> for crate::generated::Maturity {
+    fn from(maturity: Maturity) -> Self {
+        Self {
+            rating: maturity.rating.to_string(),
+            graphic: maturity.graphic,
+        }
+    }
+}
+
+/// Renders a domain commission as the create response's created resource.
 impl From<Commission> for CreateCommissionResponse {
     fn from(commission: Commission) -> Self {
-        let Commission {
-            id,
-            title,
-            lifecycle,
-            visibility,
-            deadline,
-            maturity,
-            direction_status,
-            deadline_status,
-            linked_channel,
-            created_at,
-        } = commission;
+        let maturity = commission.maturity.map(crate::generated::Maturity::from);
+        let linked_channel = commission
+            .linked_channel
+            .as_ref()
+            .map(|channel| channel.as_str().to_owned());
         CreateCommissionResponse {
-            id,
-            title,
-            lifecycle,
-            visibility,
-            deadline,
+            id: commission.id.to_string(),
+            title: commission.title.as_str().to_owned(),
+            lifecycle: commission.lifecycle_step.to_string(),
+            visibility: commission.visibility.to_string(),
+            deadline: commission.deadline.map(wire_timestamp),
             maturity,
-            direction_status,
-            deadline_status,
+            direction_status: commission.direction_status.map(|status| status.to_string()),
+            deadline_status: commission.deadline_status.map(|status| status.to_string()),
             linked_channel,
-            created_at,
+            created_at: Some(wire_timestamp(commission.created_at)),
         }
     }
 }
@@ -115,7 +115,7 @@ pub(super) async fn create_commission(
             Problem::internal_error("The commission was created but could not be read back.")
         })?;
 
-    let body = CreateCommissionResponse::from(wire_commission(commission));
+    let body = CreateCommissionResponse::from(commission);
     let response = (StatusCode::CREATED, Json(body)).into_response();
     Ok(response)
 }

@@ -1,4 +1,4 @@
-// The Reason's v1 surface: listing and creating Commissions, owner-POV only.
+// The Reason's v1 surface: creating Commissions.
 //
 // Only messages are generated; the service block declares routes only.
 // Every vocabulary here is a STRING with the known values documented (R8)
@@ -22,22 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/commission.proto.
  */
 export const file_zurfur_api_v1_commission: GenFile = /*@__PURE__*/
-  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEiGAoWTGlzdENvbW1pc3Npb25zUmVxdWVzdCKfAwoYQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIbCg5saW5rZWRfY2hhbm5lbBgJIAEoCUgEiAEBEi4KCmNyZWF0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgsKCV9kZWFkbGluZUILCglfbWF0dXJpdHlCEwoRX2RpcmVjdGlvbl9zdGF0dXNCEgoQX2RlYWRsaW5lX3N0YXR1c0IRCg9fbGlua2VkX2NoYW5uZWwiKwoITWF0dXJpdHkSDgoGcmF0aW5nGAEgASgJEg8KB2dyYXBoaWMYAiABKAgikQMKCkNvbW1pc3Npb24SCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbCJJChdMaXN0Q29tbWlzc2lvbnNSZXNwb25zZRIuCgtjb21taXNzaW9ucxgBIAMoCzIZLnp1cmZ1ci5hcGkudjEuQ29tbWlzc2lvbiKlAQoXQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QSDQoFdGl0bGUYASABKAkSMQoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYAyABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQFCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eTKYAgoRQ29tbWlzc2lvblNlcnZpY2USfQoPTGlzdENvbW1pc3Npb25zEiUuenVyZnVyLmFwaS52MS5MaXN0Q29tbWlzc2lvbnNSZXF1ZXN0GiYuenVyZnVyLmFwaS52MS5MaXN0Q29tbWlzc2lvbnNSZXNwb25zZSIbgtPkkwIVEhMvYXBpL3YxL2NvbW1pc3Npb25zEoMBChBDcmVhdGVDb21taXNzaW9uEiYuenVyZnVyLmFwaS52MS5DcmVhdGVDb21taXNzaW9uUmVxdWVzdBonLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlIh6C0+STAhg6ASoiEy9hcGkvdjEvY29tbWlzc2lvbnNiBnByb3RvMw", [file_google_api_annotations, file_google_protobuf_timestamp]);
-
-/**
- * `GET /api/v1/commissions` takes no input; the session is the argument.
- *
- * @generated from message zurfur.api.v1.ListCommissionsRequest
- */
-export type ListCommissionsRequest = Message<"zurfur.api.v1.ListCommissionsRequest"> & {
-};
-
-/**
- * Describes the message zurfur.api.v1.ListCommissionsRequest.
- * Use `create(ListCommissionsRequestSchema)` to create a new message.
- */
-export const ListCommissionsRequestSchema: GenMessage<ListCommissionsRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 0);
+  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEinwMKGENyZWF0ZUNvbW1pc3Npb25SZXNwb25zZRIKCgJpZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIRCglsaWZlY3ljbGUYAyABKAkSEgoKdmlzaWJpbGl0eRgEIAEoCRIxCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgGIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBARIdChBkaXJlY3Rpb25fc3RhdHVzGAcgASgJSAKIAQESHAoPZGVhZGxpbmVfc3RhdHVzGAggASgJSAOIAQESGwoObGlua2VkX2NoYW5uZWwYCSABKAlIBIgBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsIisKCE1hdHVyaXR5Eg4KBnJhdGluZxgBIAEoCRIPCgdncmFwaGljGAIgASgIIqUBChdDcmVhdGVDb21taXNzaW9uUmVxdWVzdBINCgV0aXRsZRgBIAEoCRIxCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgDIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBAUILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5MpkBChFDb21taXNzaW9uU2VydmljZRKDAQoQQ3JlYXRlQ29tbWlzc2lvbhImLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QaJy56dXJmdXIuYXBpLnYxLkNyZWF0ZUNvbW1pc3Npb25SZXNwb25zZSIegtPkkwIYOgEqIhMvYXBpL3YxL2NvbW1pc3Npb25zYgZwcm90bzM", [file_google_api_annotations, file_google_protobuf_timestamp]);
 
 /**
  * `POST /api/v1/commissions` succeeds `201` with the created commission —
@@ -45,111 +30,12 @@ export const ListCommissionsRequestSchema: GenMessage<ListCommissionsRequest> = 
  * account (success bodies are bare resources, never wrapped). Minted at
  * `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
  * unable to navigate to what it just made — a client can only act on what
- * it is actually given. Field semantics are documented on `Commission`;
- * this is a dedicated message so the create response can evolve
- * independently of the listing row.
+ * it is actually given. The content tree is deliberately absent, and so is
+ * `owner`: the caller is the owner.
  *
  * @generated from message zurfur.api.v1.CreateCommissionResponse
  */
 export type CreateCommissionResponse = Message<"zurfur.api.v1.CreateCommissionResponse"> & {
-  /**
-   * @generated from field: string id = 1;
-   */
-  id: string;
-
-  /**
-   * @generated from field: string title = 2;
-   */
-  title: string;
-
-  /**
-   * @generated from field: string lifecycle = 3;
-   */
-  lifecycle: string;
-
-  /**
-   * @generated from field: string visibility = 4;
-   */
-  visibility: string;
-
-  /**
-   * @generated from field: optional google.protobuf.Timestamp deadline = 5;
-   */
-  deadline?: Timestamp | undefined;
-
-  /**
-   * @generated from field: optional zurfur.api.v1.Maturity maturity = 6;
-   */
-  maturity?: Maturity | undefined;
-
-  /**
-   * @generated from field: optional string direction_status = 7;
-   */
-  directionStatus?: string | undefined;
-
-  /**
-   * @generated from field: optional string deadline_status = 8;
-   */
-  deadlineStatus?: string | undefined;
-
-  /**
-   * @generated from field: optional string linked_channel = 9;
-   */
-  linkedChannel?: string | undefined;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp created_at = 10;
-   */
-  createdAt?: Timestamp | undefined;
-};
-
-/**
- * Describes the message zurfur.api.v1.CreateCommissionResponse.
- * Use `create(CreateCommissionResponseSchema)` to create a new message.
- */
-export const CreateCommissionResponseSchema: GenMessage<CreateCommissionResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 1);
-
-/**
- * A commission's maturity posture: the atproto self-label rating axis plus
- * the orthogonal graphic flag.
- *
- * @generated from message zurfur.api.v1.Maturity
- */
-export type Maturity = Message<"zurfur.api.v1.Maturity"> & {
-  /**
-   * Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
-   * `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
-   *
-   * @generated from field: string rating = 1;
-   */
-  rating: string;
-
-  /**
-   * The orthogonal graphic-content flag.
-   *
-   * @generated from field: bool graphic = 2;
-   */
-  graphic: boolean;
-};
-
-/**
- * Describes the message zurfur.api.v1.Maturity.
- * Use `create(MaturitySchema)` to create a new message.
- */
-export const MaturitySchema: GenMessage<Maturity> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 2);
-
-/**
- * One row of `GET /api/v1/commissions` — the envelope a listing renders.
- * The content tree is deliberately absent (the future single-commission
- * surface's job); `owner` is omitted because this endpoint is owner-POV only.
- * This is the FIRST place a Commission is serialized anywhere in the API —
- * the precedent later commission surfaces inherit.
- *
- * @generated from message zurfur.api.v1.Commission
- */
-export type Commission = Message<"zurfur.api.v1.Commission"> & {
   /**
    * Opaque commission id (R6).
    *
@@ -224,33 +110,41 @@ export type Commission = Message<"zurfur.api.v1.Commission"> & {
 };
 
 /**
- * Describes the message zurfur.api.v1.Commission.
- * Use `create(CommissionSchema)` to create a new message.
+ * Describes the message zurfur.api.v1.CreateCommissionResponse.
+ * Use `create(CreateCommissionResponseSchema)` to create a new message.
  */
-export const CommissionSchema: GenMessage<Commission> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 3);
+export const CreateCommissionResponseSchema: GenMessage<CreateCommissionResponse> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 0);
 
 /**
- * `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
+ * A commission's maturity posture: the atproto self-label rating axis plus
+ * the orthogonal graphic flag.
  *
- * @generated from message zurfur.api.v1.ListCommissionsResponse
+ * @generated from message zurfur.api.v1.Maturity
  */
-export type ListCommissionsResponse = Message<"zurfur.api.v1.ListCommissionsResponse"> & {
+export type Maturity = Message<"zurfur.api.v1.Maturity"> & {
   /**
-   * The caller's owned, ACTIVE commissions (archived excluded), ascending by
-   * creation. Order is served — never derived from ids (R6).
+   * Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
+   * `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
    *
-   * @generated from field: repeated zurfur.api.v1.Commission commissions = 1;
+   * @generated from field: string rating = 1;
    */
-  commissions: Commission[];
+  rating: string;
+
+  /**
+   * The orthogonal graphic-content flag.
+   *
+   * @generated from field: bool graphic = 2;
+   */
+  graphic: boolean;
 };
 
 /**
- * Describes the message zurfur.api.v1.ListCommissionsResponse.
- * Use `create(ListCommissionsResponseSchema)` to create a new message.
+ * Describes the message zurfur.api.v1.Maturity.
+ * Use `create(MaturitySchema)` to create a new message.
  */
-export const ListCommissionsResponseSchema: GenMessage<ListCommissionsResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 4);
+export const MaturitySchema: GenMessage<Maturity> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 1);
 
 /**
  * `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
@@ -285,7 +179,7 @@ export type CreateCommissionRequest = Message<"zurfur.api.v1.CreateCommissionReq
  * Use `create(CreateCommissionRequestSchema)` to create a new message.
  */
 export const CreateCommissionRequestSchema: GenMessage<CreateCommissionRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 5);
+  messageDesc(file_zurfur_api_v1_commission, 2);
 
 /**
  * The commissions service. Session-gated; Problems per problem.proto.
@@ -293,17 +187,6 @@ export const CreateCommissionRequestSchema: GenMessage<CreateCommissionRequest> 
  * @generated from service zurfur.api.v1.CommissionService
  */
 export const CommissionService: GenService<{
-  /**
-   * The caller's owned commissions, owner-POV only — a separate, later
-   * surface covers the non-participant projection.
-   *
-   * @generated from rpc zurfur.api.v1.CommissionService.ListCommissions
-   */
-  listCommissions: {
-    methodKind: "unary";
-    input: typeof ListCommissionsRequestSchema;
-    output: typeof ListCommissionsResponseSchema;
-  },
   /**
    * Create a commission. `201` + the created commission, so the caller can
    * navigate straight to what it made — consistent with CreateAccount.

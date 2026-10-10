@@ -40,7 +40,7 @@
     {
       "page": 3014657,
       "title": "Deletion of Commissions",
-      "governs": "`routes/commissions/delete.rs`/`archive.rs`, `tests/commission_delete.rs`, `tests/commission_listing.rs`"
+      "governs": "`routes/commissions/delete.rs`/`archive.rs`, `tests/commission_delete.rs`"
     },
     {
       "page": 6848513,

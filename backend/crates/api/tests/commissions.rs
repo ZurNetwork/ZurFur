@@ -10,7 +10,9 @@
 //! - **AC4** — a User with **no Account** can create one (a user-scoped write; not
 //!   gated on account membership: Users are first-class actors that need no Account);
 //! - and the floors: an **anonymous** caller cannot create a commission (`401`), and
-//!   a **blank title** is rejected (`422`, the `CommissionTitle` gate).
+//!   a **blank title** is rejected (`422`, the `CommissionTitle` gate);
+//! - and the owner's commission list is **retired**: `GET /commissions` is no
+//!   longer served, even to an owner who has commissions.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -167,5 +169,47 @@ async fn a_blank_title_is_rejected() {
     assert!(
         backend.all_commissions().await.expect("list").is_empty(),
         "a blank-title create persists nothing",
+    );
+}
+
+// The owner's commission list is retired: the path still takes `POST`, so a
+// `GET` from a signed-in owner is `405` and carries none of their commissions.
+#[tokio::test]
+async fn the_owners_commission_list_is_retired() {
+    let did = Did::from("did:plc:artist".to_string());
+    let profile = Profile::new(did.clone(), "artist.bsky.social");
+    let runtime = test_support::runtime::mem(&did).profile(profile);
+    let served = serve(runtime, api::app).await;
+    let base = served.base_url;
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+
+    let title = "A ref sheet";
+    let create_body = json!({ "title": title });
+    let created: serde_json::Value = client
+        .post(format!("{base}/commissions"))
+        .json(&create_body)
+        .send()
+        .await
+        .expect("POST /commissions")
+        .json()
+        .await
+        .expect("created json");
+    let id = created["id"].as_str().expect("created id").to_owned();
+
+    let res = client
+        .get(format!("{base}/commissions"))
+        .send()
+        .await
+        .expect("GET /commissions");
+    assert_eq!(res.status(), 405, "the owner's list is no longer served");
+    let body = res.text().await.expect("body");
+    assert!(
+        !body.contains(&id),
+        "a retired list carries no commission id: {body}"
+    );
+    assert!(
+        !body.contains(title),
+        "a retired list carries no commission title: {body}"
     );
 }

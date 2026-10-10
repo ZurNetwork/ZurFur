@@ -176,59 +176,15 @@ pub struct DeleteAccountRequest {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
 }
-/// `GET /api/v1/commissions` takes no input; the session is the argument.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ListCommissionsRequest {}
 /// `POST /api/v1/commissions` succeeds `201` with the created commission —
 /// the bare resource, flat, exactly as CreateAccountResponse renders its
 /// account (success bodies are bare resources, never wrapped). Minted at
 /// `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
 /// unable to navigate to what it just made — a client can only act on what
-/// it is actually given. Field semantics are documented on `Commission`;
-/// this is a dedicated message so the create response can evolve
-/// independently of the listing row.
+/// it is actually given. The content tree is deliberately absent, and so is
+/// `owner`: the caller is the owner.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateCommissionResponse {
-    #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub lifecycle: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub visibility: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "5")]
-    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
-    #[prost(message, optional, tag = "6")]
-    pub maturity: ::core::option::Option<Maturity>,
-    #[prost(string, optional, tag = "7")]
-    pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "8")]
-    pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "9")]
-    pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "10")]
-    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
-}
-/// A commission's maturity posture: the atproto self-label rating axis plus
-/// the orthogonal graphic flag.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Maturity {
-    /// Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
-    /// `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
-    #[prost(string, tag = "1")]
-    pub rating: ::prost::alloc::string::String,
-    /// The orthogonal graphic-content flag.
-    #[prost(bool, tag = "2")]
-    pub graphic: bool,
-}
-/// One row of `GET /api/v1/commissions` — the envelope a listing renders.
-/// The content tree is deliberately absent (the future single-commission
-/// surface's job); `owner` is omitted because this endpoint is owner-POV only.
-/// This is the FIRST place a Commission is serialized anywhere in the API —
-/// the precedent later commission surfaces inherit.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Commission {
     /// Opaque commission id (R6).
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
@@ -262,13 +218,17 @@ pub struct Commission {
     #[prost(message, optional, tag = "10")]
     pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
-/// `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ListCommissionsResponse {
-    /// The caller's owned, ACTIVE commissions (archived excluded), ascending by
-    /// creation. Order is served — never derived from ids (R6).
-    #[prost(message, repeated, tag = "1")]
-    pub commissions: ::prost::alloc::vec::Vec<Commission>,
+/// A commission's maturity posture: the atproto self-label rating axis plus
+/// the orthogonal graphic flag.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Maturity {
+    /// Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
+    /// `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
+    #[prost(string, tag = "1")]
+    pub rating: ::prost::alloc::string::String,
+    /// The orthogonal graphic-content flag.
+    #[prost(bool, tag = "2")]
+    pub graphic: bool,
 }
 /// `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

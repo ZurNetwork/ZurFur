@@ -49,7 +49,7 @@
     },
     {
       "name": "list.rs",
-      "role": "list Commissions (owner point of view)",
+      "role": "list Commissions (owner point of view); its only caller is create's read-back of the row it just made",
       "node": false
     },
     {
