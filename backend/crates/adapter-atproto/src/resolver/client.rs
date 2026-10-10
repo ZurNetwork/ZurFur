@@ -1,7 +1,7 @@
 //! [`AtprotoIdentityResolver`]: the port's both-ways rules over the system DNS
 //! and the guarded client.
 
-use std::{error::Error, fmt, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use domain::ports::{IdentityResolver, ResolveError};
 
 use super::document::{Claim, ResolvedDocument};
 use super::limits::Deadlines;
-use crate::guarded_http::{GuardedHttp, SystemDns, TxtLookup, causes};
+use crate::guarded_http::{Causes, GuardedHttp, SystemDns, TxtLookup};
 
 /// The real [`IdentityResolver`]: DNS TXT and the HTTPS well-known file for
 /// handles, its own fetch for DID documents, and both directions checked. No
@@ -110,22 +110,6 @@ fn log_failure(error: &ResolveError) {
     tracing::debug!(cause = %Causes(error), "identity lookup failure cause");
 }
 
-/// An error's causes, joined with `: `, an `io::Error`'s payload included.
-struct Causes<'a>(&'a ResolveError);
-
-impl fmt::Display for Causes<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let error: &(dyn Error + 'static) = self.0;
-        for (index, cause) in causes(error).skip(1).enumerate() {
-            if index > 0 {
-                f.write_str(": ")?;
-            }
-            write!(f, "{cause}")?;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 impl AtprotoIdentityResolver {
     /// The resolver over `http` and a scripted `txt`, with test `deadlines`.
@@ -135,6 +119,12 @@ impl AtprotoIdentityResolver {
             txt,
             deadlines,
         }
+    }
+
+    /// The resolver over `http` and a scripted `txt`, with the production
+    /// deadlines: the seam the sign-in tests build on.
+    pub(crate) fn scripted(http: GuardedHttp, txt: Arc<dyn TxtLookup>) -> Self {
+        Self::over(http, txt, Deadlines::default())
     }
 }
 

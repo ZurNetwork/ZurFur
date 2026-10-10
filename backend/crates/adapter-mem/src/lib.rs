@@ -49,7 +49,7 @@ use domain::elements::{
         SeatInvitationId, SurfaceName, TabId, VisibilityMode,
     },
     did::Did,
-    handle::Handle,
+    handle::{AtHandle, Handle},
     invitation::{Invitation, InvitationId, InvitationState},
     plc_operation::PlcOperationRecord,
     profile::Profile,
@@ -835,7 +835,7 @@ impl MemAuthenticator {
 
 #[async_trait]
 impl Authenticator for MemAuthenticator {
-    async fn start(&self, _handle: &str) -> anyhow::Result<String> {
+    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<String> {
         // Any callback URL works; the test issues the callback itself.
         Ok("/signin-callback?code=test".to_string())
     }

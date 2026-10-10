@@ -4,14 +4,14 @@
 //! (`MemAuthenticator`/`MemProfileSource`), the user store (`MemBackend`), and the
 //! session store (`MemoryStore`) — so these assert the *route* behavior, not the
 //! storage tech (`PgSessionStore` is exercised in adapter-pg's own tests).
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use adapter_mem::{MemAuthenticator, MemProfileSource};
 use api::AppState;
 use async_trait::async_trait;
 use domain::{
-    elements::{did::Did, profile::Profile},
-    ports::Authenticator,
+    elements::{did::Did, handle::AtHandle, profile::Profile},
+    ports::{AccountMismatch, Authenticator, ResolveError},
 };
 use test_support::http::{client, sign_in};
 
@@ -19,13 +19,16 @@ mod common;
 
 const DID: &str = "did:plc:sessionalice";
 
-/// Which method of [`FailingAuthenticator`] errors — the two PDS-handshake failure
-/// points the callback and sign-in surfaces must map to stable responses.
+/// Which method of [`FailingAuthenticator`] errors, and with what — the
+/// PDS-handshake failure points the callback and sign-in surfaces must map to
+/// stable responses.
 enum FailAt {
-    /// `start` errors: the handle can't begin sign-in (`POST /signin` failure).
-    Start,
+    /// `start` errors with this cause: the handle can't begin sign-in.
+    Start(fn() -> anyhow::Error),
     /// `start` succeeds but `complete` errors: the code exchange fails at callback.
     Complete,
+    /// `start` succeeds but the visitor signed in to a different account.
+    WrongAccount,
 }
 
 /// An [`Authenticator`] that fails at a chosen point, standing in for a PDS that
@@ -37,10 +40,10 @@ struct FailingAuthenticator {
 
 #[async_trait]
 impl Authenticator for FailingAuthenticator {
-    async fn start(&self, _handle: &str) -> anyhow::Result<String> {
+    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<String> {
         match self.fail_at {
-            FailAt::Start => Err(anyhow::anyhow!("PDS rejected the handle")),
-            FailAt::Complete => Ok("/signin-callback?code=test".to_string()),
+            FailAt::Start(cause) => Err(cause()),
+            FailAt::Complete | FailAt::WrongAccount => Ok("/signin-callback?code=test".to_string()),
         }
     }
 
@@ -50,8 +53,65 @@ impl Authenticator for FailingAuthenticator {
         _state: Option<String>,
         _iss: Option<String>,
     ) -> anyhow::Result<Did> {
-        Err(anyhow::anyhow!("code exchange failed"))
+        match self.fail_at {
+            FailAt::WrongAccount => Err(anyhow::Error::new(AccountMismatch)),
+            FailAt::Start(_) | FailAt::Complete => Err(anyhow::anyhow!("code exchange failed")),
+        }
     }
+}
+
+/// An [`Authenticator`] that records every handle `start` receives and then
+/// succeeds, so a test can see what the route passed on, or that it passed nothing.
+#[derive(Default)]
+struct RecordingAuthenticator {
+    started: Mutex<Vec<String>>,
+}
+
+impl RecordingAuthenticator {
+    fn started(&self) -> Vec<String> {
+        self.started.lock().expect("lock").clone()
+    }
+}
+
+#[async_trait]
+impl Authenticator for RecordingAuthenticator {
+    async fn start(&self, handle: &AtHandle) -> anyhow::Result<String> {
+        self.started.lock().expect("lock").push(handle.to_string());
+        Ok("/signin-callback?code=test".to_string())
+    }
+
+    async fn complete(
+        &self,
+        _code: String,
+        _state: Option<String>,
+        _iss: Option<String>,
+    ) -> anyhow::Result<Did> {
+        Ok(Did::from(DID.to_string()))
+    }
+}
+
+/// `POST /signin` with `handle` as the form field, URL-encoded.
+async fn post_signin(base: &str, handle: &str) -> reqwest::Response {
+    let body = format!("handle={}", urlencode(handle));
+    client()
+        .post(format!("{base}/signin"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /signin")
+}
+
+/// Percent-encode every byte outside the unreserved set.
+fn urlencode(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(byte).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
 }
 
 /// A profile with a full complement of fields, so a JSON `/me` read can assert each.
@@ -303,16 +363,10 @@ async fn signin_callback_exchange_failure_redirects_to_login_exchange_failed() {
 async fn signin_failure_returns_an_invalid_request_problem() {
     // A handle the PDS won't begin sign-in for is a problem+json the frontend renders.
     let auth = Arc::new(FailingAuthenticator {
-        fail_at: FailAt::Start,
+        fail_at: FailAt::Start(|| anyhow::anyhow!("PDS rejected the handle")),
     });
     let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
-    let res = client()
-        .post(format!("{base}/signin"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("handle=not-a-handle")
-        .send()
-        .await
-        .expect("POST /signin");
+    let res = post_signin(&base, "alice.bsky.social").await;
     // A steady 422 with our terse code; the internal error is not echoed (the shape
     // is what the frontend branches on).
     common::assert_problem(res, 422, "invalid_request").await;
@@ -346,4 +400,143 @@ async fn the_html_form_route_is_gone_but_the_callback_remains() {
         "/signin-callback still routes to the callback handler",
     );
     assert_eq!(res.headers()["location"], "/login?error=invalid_callback");
+}
+
+#[tokio::test]
+async fn signin_refuses_urls_dids_and_at_prefixes_without_starting() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+    let not_handles = [
+        "https://evil.example",
+        "did:plc:z72i7hdynmk6r22z27h6tvur",
+        "@alice.bsky.social",
+        "",
+    ];
+    for typed in not_handles {
+        let res = post_signin(&base, typed).await;
+        common::assert_problem(res, 422, "invalid_request").await;
+    }
+    assert!(
+        auth.started().is_empty(),
+        "nothing that is not a handle reaches the authenticator"
+    );
+}
+
+#[tokio::test]
+async fn signin_trims_and_lowercases_what_the_visitor_typed() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+    let res = post_signin(&base, " \tAlice.Bsky.Social \n").await;
+    assert_eq!(res.status(), 303, "a padded handle still signs in");
+    let expected_handles = vec!["alice.bsky.social".to_string()];
+    assert_eq!(auth.started(), expected_handles);
+}
+
+#[tokio::test]
+async fn every_signin_failure_answers_one_identical_body() {
+    /// The status, content type and raw body of a refused `POST /signin`.
+    async fn refusal(base: &str, typed: &str) -> (u16, String, Vec<u8>) {
+        let res = post_signin(base, typed).await;
+        let status = res.status().as_u16();
+        let content_type = res.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()
+            .expect("an ASCII content type")
+            .to_string();
+        let body = res.bytes().await.expect("body").to_vec();
+        (status, content_type, body)
+    }
+
+    let causes: [fn() -> anyhow::Error; 5] = [
+        || anyhow::Error::new(ResolveError::NotFound),
+        || anyhow::Error::new(ResolveError::NotConfirmed),
+        || anyhow::Error::new(ResolveError::Refused(anyhow::anyhow!("10.0.0.1"))),
+        || anyhow::Error::new(ResolveError::Unavailable(anyhow::anyhow!("timed out"))),
+        || anyhow::anyhow!("authorization endpoint refused"),
+    ];
+    let happy = serve_happy().await;
+    let not_a_handle = refusal(&happy, "https://evil.example").await;
+    assert_eq!(not_a_handle.0, 422);
+    for cause in causes {
+        let auth = Arc::new(FailingAuthenticator {
+            fail_at: FailAt::Start(cause),
+        });
+        let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+        let failed = refusal(&base, "alice.bsky.social").await;
+        assert_eq!(
+            failed, not_a_handle,
+            "every failure class answers the same bytes as a non-handle"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_a_handle_form_answers_the_same_bytes_as_a_non_handle() {
+    /// The status, content type and raw body `POST /signin` answers for `body`,
+    /// sent as `content_type`.
+    async fn answer(base: &str, content_type: &str, body: &'static str) -> (u16, String, Vec<u8>) {
+        let res = client()
+            .post(format!("{base}/signin"))
+            .header("content-type", content_type)
+            .body(body)
+            .send()
+            .await
+            .expect("POST /signin");
+        let status = res.status().as_u16();
+        let content_type = res.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()
+            .expect("an ASCII content type")
+            .to_string();
+        let body = res.bytes().await.expect("body").to_vec();
+        (status, content_type, body)
+    }
+
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+    let form = "application/x-www-form-urlencoded";
+    let not_a_handle = answer(&base, form, "handle=https%3A%2F%2Fevil.example").await;
+    assert_eq!(not_a_handle.0, 422);
+    let unreadable = [
+        (form, ""),
+        (form, "nickname=alice.bsky.social"),
+        ("application/json", r#"{"handle":"alice.bsky.social"}"#),
+        ("text/plain", "alice.bsky.social"),
+    ];
+    for (content_type, body) in unreadable {
+        let refused = answer(&base, content_type, body).await;
+        assert_eq!(
+            refused, not_a_handle,
+            "{content_type} {body:?} answers the same bytes as a non-handle"
+        );
+    }
+    assert!(
+        auth.started().is_empty(),
+        "nothing the route cannot read reaches the authenticator"
+    );
+}
+
+#[tokio::test]
+async fn signin_callback_wrong_account_redirects_to_login_account_mismatch() {
+    let auth = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::WrongAccount,
+    });
+    let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+    let res = client()
+        .get(format!("{base}/signin-callback?code=test&state=s"))
+        .send()
+        .await
+        .expect("GET /signin-callback");
+    assert_eq!(res.status(), 303);
+    assert_eq!(res.headers()["location"], "/login?error=account_mismatch");
 }
