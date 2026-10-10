@@ -813,3 +813,114 @@ async fn a_third_units_untouched_read_does_not_resurrect_a_concurrent_delete() {
 
 // The commission store-layer tests (ZMVP-65/87) live with the commission
 // fakes in `crate::commission`.
+
+// --- The deactivated-Accounts-for-their-Owner read ---
+
+/// Found `account` with `owner` as its Owner, through a committed unit.
+async fn found(backend: &MemBackend, account: &Account, owner: &UserId) {
+    let ownership = UserAccount {
+        user_id: owner.clone(),
+        account_id: account.id.clone(),
+        role: Role::Owner,
+        alias: None,
+    };
+    let mut uow = backend.database().begin().await.unwrap();
+    uow.accounts().create(account, &ownership).await.unwrap();
+    uow.commit().await.unwrap();
+}
+
+/// Soft-delete `account` through a committed unit.
+async fn deactivate(backend: &MemBackend, account: &AccountId) {
+    let mut uow = backend.database().begin().await.unwrap();
+    uow.accounts().soft_delete(account).await.unwrap();
+    uow.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_deactivated_read_returns_a_soft_deleted_account_to_its_owner_only() {
+    let backend = MemBackend::new();
+    let owner = user_id();
+    let admin = user_id();
+    let stranger = user_id();
+    let live = live_account("did:plc:deactlive");
+    let gone = live_account("did:plc:deactgone");
+    found(&backend, &live, &owner).await;
+    found(&backend, &gone, &owner).await;
+    let admin_membership = UserAccount {
+        user_id: admin.clone(),
+        account_id: gone.id.clone(),
+        role: Role::Admin,
+        alias: None,
+    };
+    backend.grant_role(&admin_membership).await.unwrap();
+    deactivate(&backend, &gone.id).await;
+    let accounts = backend.account_store();
+
+    let owners = accounts.list_deactivated_for_owner(&owner).await.unwrap();
+    let admins = accounts.list_deactivated_for_owner(&admin).await.unwrap();
+    let strangers = accounts
+        .list_deactivated_for_owner(&stranger)
+        .await
+        .unwrap();
+
+    let [deactivated] = owners.as_slice() else {
+        panic!(
+            "the Owner sees exactly one deactivated account, got {}",
+            owners.len()
+        );
+    };
+    assert_eq!(deactivated.id, gone.id);
+    assert!(
+        deactivated.deleted_at.is_some(),
+        "it carries its soft-delete stamp"
+    );
+    assert!(admins.is_empty(), "a non-Owner member never sees it");
+    assert!(strangers.is_empty(), "nor does a stranger");
+}
+
+#[tokio::test]
+async fn the_deactivated_read_leaves_the_live_listing_unchanged() {
+    let backend = MemBackend::new();
+    let owner = user_id();
+    let live = live_account("did:plc:deactlive2");
+    let gone = live_account("did:plc:deactgone2");
+    found(&backend, &live, &owner).await;
+    found(&backend, &gone, &owner).await;
+    deactivate(&backend, &gone.id).await;
+
+    let listed = backend
+        .account_store()
+        .list_for_user(&owner, ListingScope::SelfView)
+        .await
+        .unwrap();
+
+    let listed_ids: Vec<&AccountId> = listed
+        .iter()
+        .map(|membership| &membership.account.id)
+        .collect();
+    let expected_ids = vec![&live.id];
+    assert_eq!(listed_ids, expected_ids);
+}
+
+#[tokio::test]
+async fn the_deactivated_read_orders_by_account_did() {
+    let backend = MemBackend::new();
+    let owner = user_id();
+    // Byte order puts `Z` before `a`.
+    let second = live_account("did:plc:deactaa");
+    let first = live_account("did:plc:deactZz");
+    found(&backend, &second, &owner).await;
+    found(&backend, &first, &owner).await;
+    deactivate(&backend, &second.id).await;
+    deactivate(&backend, &first.id).await;
+
+    let deactivated = backend
+        .account_store()
+        .list_deactivated_for_owner(&owner)
+        .await
+        .unwrap();
+
+    let ids: Vec<&AccountId> = deactivated.iter().map(|account| &account.id).collect();
+    let expected_ids = vec![&first.id, &second.id];
+    assert_eq!(ids, expected_ids);
+}
