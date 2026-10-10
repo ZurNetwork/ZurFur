@@ -62,6 +62,29 @@ fn declared_routes() -> BTreeSet<(String, String)> {
     routes
 }
 
+/// An HttpRule path template spelled in axum's route syntax. A multi-segment
+/// variable `{name=**}` is axum's catch-all `{*name}`; a plain `{name}` and
+/// every literal piece are spelled alike in both.
+fn axum_route(template: &str) -> String {
+    let pieces: Vec<String> = template
+        .split('/')
+        .map(|piece| {
+            piece
+                .strip_prefix('{')
+                .and_then(|variable| variable.strip_suffix("=**}"))
+                .map_or_else(|| piece.to_string(), |name| format!("{{*{name}}}"))
+        })
+        .collect();
+    pieces.join("/")
+}
+
+#[test]
+fn a_multi_segment_variable_is_axum_s_catch_all() {
+    assert_eq!(axum_route("/den/{path=**}"), "/den/{*path}");
+    assert_eq!(axum_route("/accounts/{id}/handle"), "/accounts/{id}/handle");
+    assert_eq!(axum_route("/den"), "/den");
+}
+
 /// The package declared by the corpus — the other half of the path-major weld.
 fn declared_package() -> String {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(CONTRACT_DIR);
@@ -110,8 +133,11 @@ fn the_path_major_matches_the_proto_package() {
 fn every_declared_route_is_served() {
     let declared = declared_routes();
 
-    // The cookie-surface routes axum serves today, post-strip. Transcribed
-    // from `routes/session.rs`, `routes/accounts.rs`, `routes/commissions/mod.rs`.
+    // The cookie-surface routes axum serves, post-strip, in axum's syntax.
+    // Transcribed from `routes/session.rs`, `routes/accounts.rs`,
+    // `routes/commissions/mod.rs`. The two den routes are pinned together with
+    // `den.proto`, which declares them; their handlers mount on the same
+    // feature branch before it reaches `main`.
     let served: BTreeSet<(String, String)> = [
         ("GET", "/me"),
         ("POST", "/signin"),
@@ -122,6 +148,8 @@ fn every_declared_route_is_served() {
         ("PATCH", "/accounts/{id}/handle"),
         ("GET", "/commissions"),
         ("POST", "/commissions"),
+        ("GET", "/den"),
+        ("GET", "/den/{*path}"),
     ]
     .into_iter()
     .map(|(verb, path)| (verb.to_string(), path.to_string()))
@@ -134,19 +162,20 @@ fn every_declared_route_is_served() {
                      the path-major {STRIP_PREFIX} (DD 40992770 decision 9)"
             )
         });
+        let served_path = axum_route(stripped);
         assert!(
-            served.contains(&(verb.clone(), stripped.to_string())),
+            served.contains(&(verb.clone(), served_path)),
             "{verb} {declared_path}: declared by the contract but not served by \
              axum (post-strip: {stripped}) — the contract is lying about a route; \
              either serve it or remove the declaration"
         );
     }
 
-    // And the declared set covers the whole v1 surface — nine endpoints.
+    // And the declared set covers the whole v1 surface — eleven endpoints.
     assert_eq!(
         declared.len(),
-        9,
-        "the v1 corpus declares nine endpoints (Engineer scope ruling \
-         2026-07-25); got {declared:?}"
+        11,
+        "the v1 corpus declares eleven endpoints: the nine of the Engineer's \
+         scope ruling of 2026-07-25 and the two den reads; got {declared:?}"
     );
 }

@@ -48,8 +48,8 @@ export const GetMeRequestSchema: GenMessage<GetMeRequest> = /*@__PURE__*/
 export type GetMeResponse = Message<"zurfur.api.v1.GetMeResponse"> & {
   /**
    * The visitor's atproto DID — always present for a live session. Opaque to
-   * clients like every id (VERSIONING.md R6), though DIDs are additionally a
-   * public, externally-specified format.
+   * clients like every id (VERSIONING.md R6), at most 2048 characters, though
+   * DIDs are additionally a public, externally-specified format.
    *
    * @generated from field: string did = 1;
    */

@@ -1,4 +1,4 @@
-//! The golden wire-shape guard for the nine `/api/v1` contract endpoints —
+//! The golden wire-shape guard for the `/api/v1` contract endpoints —
 //! `contract/VERSIONING.md`'s golden test, first cut.
 //!
 //! Pins the three mint rulings as assertions, so a serializer change that
