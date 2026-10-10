@@ -3,7 +3,7 @@
 # Rosters (members register under their names when first spawned):
 #   den         lead Badger   · programmers Mole, Wren, Vole · QA Owl
 #   identity    lead Fox      · programmers Lynx, Otter, Stoat · QA Magpie
-#   commission  lead Wolf     · programmers Raven, Heron · QA Jay
+#   commission  lead Wolf     · programmers Raven, Egret · QA Jay
 #   web         lead Fennec   · programmers Finch, Gecko · QA Crow
 #   vulpes      lead Reynard  · programmers Kit, Tod · QA Rook
 #   wolven      lead Lobo     · programmers Dhole, Jackal · QA Shrike
@@ -11,6 +11,9 @@
 #   moderation  lead Meerkat  · programmers Mastiff, Goose, Alpaca · QA Lapwing
 #   plugin      lead Octopus  · programmers Hermit, Remora, Cuttle · QA Mantis
 #   internal    lead Beaver   · programmers Weaver, Pika, Coati · QA Hoopoe
+#   compliance  lead Tortoise · reviewers Pangolin, Armadillo · QA Avocet
+#   architects  lead Termite  · reviewers Caddis, Oriole · QA Grebe
+#   security    lead Heron    · reviewers Mongoose, Hedgehog · QA Nightjar
 board = "zurfur"
 vcs = "jj"
 
@@ -150,9 +153,11 @@ lead = "lead"
 # and appears in no release plan. It finds the most effective and efficient way for
 # the teams to work: it reads the leads' retrospectives and the QA logs
 # (`.understand/retros/`) and the board, and decides process refinements from
-# them. Outside this repo it uses advisory locks: `skills:<path>` (~/.claude/skills), `board:<path>`
-# (~/code/ai/agent-message-board), `nodes:<path>` (~/code/nodes) and `kit:<path>`
-# (~/code/ai/orchestration-kit).
+# them. It merges or splits teams as the data shows, and keeps that data (with CI
+# and PR history) organized as statistics gathered by tools. Outside this repo it
+# uses advisory locks, whose names must be slugs: `skills-<area>` (~/.claude/skills),
+# `board-<area>` (~/code/ai/agent-message-board), `nodes-<area>` (~/code/nodes) and
+# `kit-<area>` (~/code/ai/orchestration-kit).
 [teams.internal]
 mission = "Make the other teams' work easier: comms, way of working, CI/CD, tools"
 owns = [
@@ -163,6 +168,42 @@ owns = [
   ".agent-board.toml",
   ".claude/settings.json",
 ]
+lead = "lead"
+
+# The compliance team (the Engineer, 2026-10-10): what Zurfur is legally bound to and
+# must follow, such as privacy and data protection, age and adult-content rules,
+# copyright and takedowns, payments and tax, accessibility and dependency licenses.
+# Not a frequent team: it reviews at the end of every release, and the Orchestrator
+# calls it in when a slice touches one of those areas. A legal must-fix blocks the
+# release until it is fixed or the Engineer accepts the risk in writing. It owns no
+# paths; its report goes to `.understand/releases/<version>/compliance.md`.
+[teams.compliance]
+mission = "Legal duties: privacy, age, copyright, payments, accessibility, licenses"
+owns = []
+lead = "lead"
+
+# The architects team (the Engineer, 2026-10-10) reviews the whole project at the
+# end of every release and requests the changes needed to follow correct
+# architecture. Not a frequent team. Its requests go to
+# `.understand/releases/<version>/architecture.md` and are planned into the next
+# release; a request that would change a design ruling goes to the Engineer. It
+# owns no paths.
+[teams.architects]
+mission = "Architecture review of the whole project at the end of every release"
+owns = []
+lead = "lead"
+
+# The security team (the Engineer, 2026-10-10) reviews the whole system's security
+# at the end of every release, and after every big merge: a feature branch merging
+# into `main` when the feature touched authentication, the private/public data
+# boundary, DID or handle correlation, sessions or tokens, plugin trust or the blob
+# store. Per-slice security reviews still run as the Definition of Done requires;
+# Heron, the team's lead, keeps doing them. A security must-fix blocks the release
+# until it is fixed or the Engineer accepts the risk in writing. It owns no paths;
+# its report goes to `.understand/releases/<version>/security.md`.
+[teams.security]
+mission = "Whole-system security review at the end of every release and after big merges"
+owns = []
 lead = "lead"
 
 # Vulpes and Wolven live in their own repos, out of reach of this board's path
