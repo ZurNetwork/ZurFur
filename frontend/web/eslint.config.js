@@ -92,7 +92,7 @@ const DEN_HREF_IMPORT = {
 
 /** The same ban for every other spelling of the brand module: relative paths included. */
 const DEN_HREF_PATTERN = {
-	group: ['**/types/brand', '$lib/types/brand'],
+	group: ['**/types/brand', '**/types/brand.*', '$lib/types/brand', '$lib/types/brand.*'],
 	importNames: ['denHref'],
 	message: DEN_HREF_IMPORT.message
 };
@@ -207,7 +207,7 @@ export default defineConfig(
 				},
 				{
 					// A dynamic import would reach the brand module past the DenHref import ban.
-					selector: 'ImportExpression[source.value=/types\\u002Fbrand$/]',
+					selector: 'ImportExpression[source.value=/types\\u002Fbrand(\\.[a-z]+)?$/]',
 					message:
 						'Import the brand module statically, so the rule that only the Den path builder mints a DenHref can see it.'
 				},

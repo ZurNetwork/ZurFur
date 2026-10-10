@@ -2,7 +2,8 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
-import { denHref, denName, denType } from '$lib/types/brand';
+import { TREE_MEMORY_KEY, TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
+import { denHref, denName, denType, did } from '$lib/types/brand';
 
 /** What the mocked SvelteKit runtime holds for this spec. */
 interface Kit {
@@ -84,6 +85,21 @@ function renderPage(den: DenPageData) {
 	return render(DenPage, { data: { den, trail: den.trail } } as never);
 }
 
+/** The page rendered inside a frame whose tree memory is `memory`. */
+function renderInFrame(den: DenPageData, memory: TreeMemory) {
+	return render(DenPage, {
+		props: { data: { den, trail: den.trail } },
+		context: new Map([[TREE_MEMORY_KEY, memory]])
+	} as never);
+}
+
+/** The names the tree memory lists under `folder`. */
+function treeNames(memory: TreeMemory, folder: string): string[] {
+	const state = memory.folders.get(denHref(folder));
+	if (state?.state !== 'loaded') return [];
+	return state.entries.map((entry) => entry.name);
+}
+
 /** The den page's data for another folder, as after a navigation. */
 function otherFolderData(): DenPageData {
 	const data = folderData([open('/den/other/x', 'x.png')]);
@@ -124,6 +140,27 @@ describe('den page', () => {
 		expect(document.title).not.toContain('Big ref batch');
 	});
 
+	it('announces a second item with the same name as the first', async () => {
+		renderPage(folderData([]));
+		navigated('link');
+		const announcer = page.getByTestId('den-announcer');
+		await expect.element(announcer).toHaveTextContent('Big ref batch');
+		const spokenTexts: string[] = [];
+		const observer = new MutationObserver(() => {
+			spokenTexts.push(announcer.element().textContent);
+		});
+		observer.observe(announcer.element(), {
+			childList: true,
+			characterData: true,
+			subtree: true
+		});
+
+		navigated('link');
+
+		await expect.poll(() => spokenTexts).toEqual(['', 'Big ref batch']);
+		observer.disconnect();
+	});
+
 	it('shows busy only after the delay while another Den item loads', async () => {
 		vi.useFakeTimers();
 		kit.navigatingTo = { route: { id: '/(session)/den/[...path]' } };
@@ -149,6 +186,34 @@ describe('den page', () => {
 
 		await expect.element(page.getByRole('link', { name: 'c.png' })).toHaveFocus();
 		await expect.element(page.getByTestId('entry-more')).not.toBeInTheDocument();
+	});
+
+	it('extends the tree’s listing of the folder with the page "More" brought', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		const firstPage = [open('/den/batch/a', 'a.png'), open('/den/batch/b', 'b.png')];
+		memory.loaded(denHref('/den/batch'), firstPage, denHref('/den/batch?pageToken=p1.2'));
+		kit.preloaded = folderData([open('/den/batch/c', 'c.png')]);
+		renderInFrame(folderData(firstPage, '/den/batch?pageToken=p1.2'), memory);
+
+		await page.getByTestId('entry-more').click();
+
+		await expect.element(page.getByRole('link', { name: 'c.png' })).toHaveFocus();
+		expect(treeNames(memory, '/den/batch')).toEqual(['a.png', 'b.png', 'c.png']);
+		expect(memory.folders.get(denHref('/den/batch'))).toMatchObject({ more: undefined });
+	});
+
+	it('never appends to the tree a page the tree’s own "More…" already appended', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		const firstPage = [open('/den/batch/a', 'a.png'), open('/den/batch/b', 'b.png')];
+		const c = open('/den/batch/c', 'c.png');
+		memory.loaded(denHref('/den/batch'), [...firstPage, c], undefined);
+		kit.preloaded = folderData([c]);
+		renderInFrame(folderData(firstPage, '/den/batch?pageToken=p1.2'), memory);
+
+		await page.getByTestId('entry-more').click();
+
+		await expect.element(page.getByRole('link', { name: 'c.png' })).toHaveFocus();
+		expect(treeNames(memory, '/den/batch')).toEqual(['a.png', 'b.png', 'c.png']);
 	});
 
 	it('drops a "More" that answers after the page changed, never appending to the new one', async () => {

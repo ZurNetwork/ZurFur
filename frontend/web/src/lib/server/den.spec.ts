@@ -253,6 +253,28 @@ describe('denPage: ancestors', () => {
 		).toBe(true);
 	});
 
+	it('on a full page load of a later root page, also reads the root’s first page', async () => {
+		const { layer, seen } = listingPort([folder(['accounts'], 'accounts')], 'p1.50');
+		const data = pageData(await run(layer, '/den?pageToken=p1.25', true));
+
+		expect(seen.map((read) => read.query.pageToken).toSorted()).toEqual(['p1.25', undefined]);
+		expect(data.continued).toBe(true);
+		expect(data.ancestors).toEqual([
+			{
+				folder: '/den',
+				entries: [expect.objectContaining({ href: '/den/accounts' })],
+				more: '/den?pageToken=p1.50'
+			}
+		]);
+	});
+
+	it('on a full page load of the root’s first page, reads the root once', async () => {
+		const { layer, seen } = listingPort();
+		const data = pageData(await run(layer, '/den', true));
+		expect(seen).toHaveLength(1);
+		expect(data.ancestors).toEqual([]);
+	});
+
 	it('on an in-app navigation, reads only the node', async () => {
 		const { layer, seen } = listingPort();
 		await run(layer, '/den/commissions/c1', false);

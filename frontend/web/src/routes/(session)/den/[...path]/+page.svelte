@@ -21,6 +21,11 @@
 
 	/** How long a navigation runs before the pane shows it is busy, in ms: the one place this delay lives. */
 	const BUSY_DELAY_MS = 300;
+	/**
+	 * How long the live region stays empty before it says the opened item, in
+	 * ms, so a name the same as the last one is still a change to announce.
+	 */
+	const ANNOUNCE_GAP_MS = 100;
 
 	let pane: HTMLDivElement | undefined = $state();
 	/** Bumped on every navigation, so a "More" that answers after the page changed is dropped. */
@@ -65,12 +70,21 @@
 		}
 	}
 
+	/** Say `words` in the live region after a short silence, unless the page changes first. */
+	function announce(words: string): void {
+		const generation = pageGeneration;
+		announcement = '';
+		setTimeout(() => {
+			if (generation === pageGeneration) announcement = words;
+		}, ANNOUNCE_GAP_MS);
+	}
+
 	afterNavigate((navigation) => {
 		pageGeneration += 1;
 		continuation = undefined;
 		moreState = 'idle';
 		if (navigation.type === 'enter') return;
-		announcement = spoken();
+		announce(spoken());
 		const active = document.activeElement;
 		if (!(active instanceof HTMLElement) || active === document.body) heading?.focus();
 	});

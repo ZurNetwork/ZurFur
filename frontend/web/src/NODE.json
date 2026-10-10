@@ -14,7 +14,7 @@
     "One-channel forms: values, field errors AND the backend Problem all ride the superform `message`.",
     "Absence is `T | undefined` — no `Option`, no `null`.",
     "Domain strings are branded (`AccountId`, `Did`, `Handle`).",
-    "Every response to a signed-in request (one carrying the `zurfur.sid` cookie `handleFetch` forwards) leaves `Cache-Control: private, no-store` and `Referrer-Policy: same-origin`, set by the root `handle` hook — pages, 404/error pages and form-action JSON alike; no page can weaken it. Anonymous responses are untouched.",
+    "Every response to a signed-in request (one carrying the `zurfur.sid` cookie `handleFetch` forwards) leaves `Cache-Control: private, no-store` and `Referrer-Policy: same-origin`, set by the root `handle` hook — pages, 404/error pages and form-action JSON alike; no page can weaken it. The one exception is a redirect the sign-in gate throws: SvelteKit builds it outside the hook chain, so it leaves bare (a bodiless 303, which no cache stores without explicit freshness). Anonymous responses are untouched.",
     "Errors never show their own message: the error pages pick their words by status and route from a fixed list (`error-copy.ts`), `error(status, message)` takes only a literal (lint-enforced; a message still ships in the page source), and `handleError` logs only the route template and status.",
     "Every response carries `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` (a redirect the sign-in gate throws is the one bodiless exception)."
   ],

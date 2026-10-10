@@ -4,14 +4,15 @@
 	/**
 	 * Who is signed in: their picture (or a plain circle when the profile has
 	 * none) and their handle in the monospace face, falling back to the DID
-	 * when the profile didn't resolve.
+	 * when the profile didn't resolve. `compact` shows the picture alone on a
+	 * phone, the handle staying its accessible name and tooltip.
 	 */
-	let { session }: { session: Session } = $props();
+	let { session, compact = false }: { session: Session; compact?: boolean } = $props();
 
 	const shown = $derived(session.handle ?? session.did);
 </script>
 
-<span class="avatar">
+<span class="avatar" title={shown}>
 	{#if session.avatarUrl !== undefined}
 		<img
 			class="avatar__picture"
@@ -24,7 +25,9 @@
 	{:else}
 		<span class="avatar__picture avatar__picture--blank" aria-hidden="true"></span>
 	{/if}
-	<span class="avatar__handle" data-testid="session-handle">{shown}</span>
+	<span class="avatar__handle" class:phone-visually-hidden={compact} data-testid="session-handle"
+		>{shown}</span
+	>
 </span>
 
 <style>

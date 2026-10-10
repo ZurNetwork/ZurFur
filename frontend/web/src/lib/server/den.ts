@@ -203,9 +203,10 @@ function readDen(path: SegmentPath, query: DenQuery) {
 }
 
 /**
- * The listings of the folders above `path` — the root and each prefix —
- * read in parallel with the first page and no page token. A folder that
- * fails to read is left out; the tree fills it in later.
+ * The listings of the folders above `path` — the root and each prefix; for
+ * the root itself, the root — read in parallel with the first page and no
+ * page token. A folder that fails to read is left out; the tree fills it in
+ * later.
  */
 function readAncestors(
 	path: SegmentPath,
@@ -294,9 +295,9 @@ function readOutcome(
 /**
  * The den page for a browser address: the node at its path, read through the
  * port, mapped to the web's view. `withAncestors` (a full page load) also
- * reads the folders above it, in parallel, so the first paint shows the tree
- * opened down to the node. A refused address is the not-found without any
- * read.
+ * reads the folders above it (on a later page of the root, the root's first
+ * page), in parallel, so the first paint shows the tree opened down to the
+ * node. A refused address is the not-found without any read.
  */
 export function denPage(
 	pathname: string,
@@ -325,8 +326,11 @@ export function denPage(
 			return { result: 'page', data } satisfies DenPageResult;
 		}
 
+		// A later page of the root brings the tree no first page of the root, so
+		// that first page is read as if it were an ancestor.
+		const needsAncestors = path.length > 0 || query.pageToken !== undefined;
 		const ancestorsRead =
-			withAncestors && path.length > 0 ? readAncestors(path, query) : Effect.succeed([]);
+			withAncestors && needsAncestors ? readAncestors(path, query) : Effect.succeed([]);
 		const [read, ancestors] = yield* Effect.all([readOutcome(path, query), ancestorsRead], {
 			concurrency: 'unbounded'
 		});
