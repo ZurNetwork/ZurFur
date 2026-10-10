@@ -11,6 +11,7 @@ mod actor_identity;
 mod character;
 mod commission;
 mod file_store;
+pub mod fixture;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};

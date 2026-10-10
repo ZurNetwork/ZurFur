@@ -9,16 +9,17 @@ use domain::{
     elements::{
         commission::{
             Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
-            ElementPayload, ElementRow, ElementType, FileKey, GrantLevel, LapsedDeadline,
-            LifecycleStep, Markup, MarkupKey, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, SurfaceAddress, SurfaceName, TabId,
-            TabName, TabRow, Visibility, VisibilityMode, declared_tabs, declares_surface,
-            derive_deadline_status,
+            CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
+            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
+            LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
+            declared_tabs, declares_surface, derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
         maturity::{Maturity, MaturityRating},
+        text::StoredText,
         user::UserId,
         workflow::{Column, ColumnId, WorkflowId},
     },
@@ -157,7 +158,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Inserts the commission row, one `commission_tab` row per
     /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
     /// transaction. Every tab is minted [`VisibilityMode::Total`].
-    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
+    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
         sql::create_commission(
             &mut *self.conn,
             uuid::Uuid::from(commission.id),
@@ -584,10 +585,11 @@ impl PgCommissionStore {
 }
 
 /// Fields shared by the `find`, `find_for_update`, and `list_owned_by` rows, so
-/// [`to_commission`] re-validates them through one body. Every field is a raw
+/// [`to_commission`] rebuilds them through one body, re-validating every token
+/// (the title is carried as stored, never re-checked). Every field is a raw
 /// column value — nothing here is trusted.
 struct CommissionFields {
-    /// Re-validated into [`CommissionTitle`].
+    /// The stored title, carried as [`StoredText`] and never re-checked.
     title: String,
     /// The owning User's DID.
     owner_id: String,
@@ -710,7 +712,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     );
     let commission = Commission {
         id,
-        title: CommissionTitle::try_from(fields.title)?,
+        title: StoredText::from(fields.title),
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
         visibility: Visibility::try_from(fields.visibility.as_str())
@@ -1011,6 +1013,58 @@ impl CommissionStore for PgCommissionStore {
                 })
             })
             .collect()
+    }
+
+    /// One join from the participant record onto `commission`, seeking the
+    /// by-user index; archived rows included. Each visibility token is
+    /// re-validated; the title is carried as stored.
+    async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
+        sql::list_participating(&self.pool, user.as_ref())
+            .await?
+            .into_iter()
+            .map(|row| {
+                let visibility = Visibility::try_from(row.visibility.as_str()).map_err(|_| {
+                    anyhow::anyhow!("unknown visibility token {:?}", row.visibility)
+                })?;
+                let summary = CommissionSummary {
+                    id: CommissionId::from(row.id),
+                    title: StoredText::from(row.title),
+                    visibility,
+                    archived_at: row.archived_at,
+                };
+                Ok(summary)
+            })
+            .collect()
+    }
+
+    /// The commission's file entries in key (upload) order; the query selects
+    /// no uploader.
+    async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>> {
+        let rows = sql::files(&self.pool, uuid::Uuid::from(*commission)).await?;
+        let files = rows
+            .into_iter()
+            .map(|row| FileSummary {
+                id: FileKey::from(row.id),
+                created_at: row.created_at,
+            })
+            .collect();
+        Ok(files)
+    }
+
+    /// The commission's Slot satellites in declaration order; titles carried as
+    /// stored.
+    async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
+        let rows = sql::slots(&self.pool, uuid::Uuid::from(*commission)).await?;
+        let slots = rows
+            .into_iter()
+            .map(|row| Slot {
+                element_id: ElementId::from(row.element_id),
+                commission_id: CommissionId::from(row.commission_id),
+                title: StoredText::from(row.title),
+                notes: row.notes,
+            })
+            .collect();
+        Ok(slots)
     }
 
     /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by

@@ -1,0 +1,12 @@
+-- The by-user index on `commission_participant`, for the participant listing
+-- (`queries/commission/list_participating.sql`).
+--
+-- The table is keyed `PRIMARY KEY (commission_id, user_id)`. The listing
+-- constrains only `user_id`, the TRAILING column, which a composite btree
+-- cannot range-seek (Postgres 16; B-tree skip scan is 18+), so without this
+-- index every listing would scan every membership row on the platform, and any
+-- signed-in caller could drive that scan. `commission_id` rides as the second
+-- column so the listing reads its keys in id order from the index alone.
+-- The index also serves the `users` foreign key, which Postgres does not index
+-- on its own.
+CREATE INDEX commission_participant_by_user ON commission_participant (user_id, commission_id);

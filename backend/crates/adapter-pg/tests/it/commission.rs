@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 
 use adapter_pg::{COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -360,7 +361,7 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
 // owner scoping and the active filter hold in postgres.
 
 /// Create a commission owned by `owner` in its own committed unit of work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
         owner.id.clone(),

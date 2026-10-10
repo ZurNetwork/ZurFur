@@ -41,6 +41,11 @@
       "node": false
     },
     {
+      "name": "src/fixture.rs",
+      "role": "the fixture world façade: each team seeds its own leaf; fixture/commission.rs = \"Untitled\", the archived \"Old sketch\", the Workflow \"Queue\", fixed ids, seeded through the write ports (identity people/Account passed in)",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
       "role": "shared MemBackend (incl. markups map) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, MemAccountStore/Writes, MemAuthenticator, MemProfileSource, MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
       "node": false
@@ -121,6 +126,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "the markups map becomes the comments map (staged/merged like every commission-owned map); tombstoned comments stay in the map, unreachable at read"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "src/fixture/commission.rs: the commission fixtures the Den reads (Untitled, Old sketch, Queue)"
     }
   ],
   "notes": [

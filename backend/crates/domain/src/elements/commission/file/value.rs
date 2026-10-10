@@ -1,4 +1,5 @@
 use super::FileNameError;
+use crate::elements::text::StoredText;
 
 /// A file entry's filename — the save-name hint served back in the download's
 /// `Content-Disposition` header. Enforced here: trimmed, non-empty, at most
@@ -42,6 +43,13 @@ impl FileName {
     /// The validated, trimmed filename as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<FileName> for StoredText {
+    /// The checked filename, as the store keeps it.
+    fn from(filename: FileName) -> Self {
+        StoredText::from(filename.0)
     }
 }
 

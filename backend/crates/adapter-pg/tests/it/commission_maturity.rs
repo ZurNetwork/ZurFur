@@ -8,6 +8,7 @@
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{Commission, CommissionTitle},
@@ -41,7 +42,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 }
 
 /// Create and commit a commission owned by `owner_did`, returning it.
-async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
+async fn seed_commission(pool: &PgPool, owner_did: &str) -> NewCommission {
     let owner = provision(pool, owner_did).await;
     let title = "A ref sheet"
         .parse::<CommissionTitle>()
@@ -58,7 +59,7 @@ async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
 }
 
 /// Sets the posture in its own committed unit of work.
-async fn set_maturity(pool: &PgPool, commission: &Commission, maturity: Maturity) {
+async fn set_maturity(pool: &PgPool, commission: &NewCommission, maturity: Maturity) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()

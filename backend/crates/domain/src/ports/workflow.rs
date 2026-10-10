@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use crate::elements::{
     account::AccountId,
     commission::CommissionId,
-    workflow::{Column, ColumnId, Workflow, WorkflowId, WorkflowName},
+    workflow::{Column, ColumnId, Workflow, WorkflowId, WorkflowName, WorkflowSummary},
 };
 
 /// The **write** surface of an account's workflows — reachable only on an open
@@ -44,6 +44,9 @@ pub trait WorkflowStore: Send + Sync {
         workflow_id: &WorkflowId,
     ) -> anyhow::Result<Option<AccountId>>;
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>>;
+    /// The Workflows `account` owns, ordered by [`WorkflowId`]; empty for an
+    /// account with none, and for an unknown one.
+    async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>>;
 }
 
 /// The **write** surface of a workflow's columns — reachable only on an open

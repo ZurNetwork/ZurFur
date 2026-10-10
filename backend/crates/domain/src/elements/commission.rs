@@ -22,6 +22,7 @@ mod errors;
 mod grant_level;
 mod id;
 mod lifecycle;
+mod rows;
 mod title;
 mod visibility;
 
@@ -42,11 +43,14 @@ pub use errors::{
     UnknownVisibility,
 };
 pub use fact::Fact;
-pub use file::{CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError};
+pub use file::{
+    CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError, FileSummary,
+};
 pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::LifecycleStep;
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
+pub use rows::{CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };

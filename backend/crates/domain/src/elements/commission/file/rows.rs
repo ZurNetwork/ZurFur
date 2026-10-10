@@ -1,6 +1,17 @@
 use tokio::io::AsyncRead;
 
-use super::FileName;
+use super::FileKey;
+use crate::{datetime::DateTimeUtc, elements::text::StoredText};
+
+/// One file entry as a commission's file list reads it: its key and upload
+/// time. Who uploaded it is not part of this read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileSummary {
+    /// The file entry's opaque key.
+    pub id: FileKey,
+    /// When the entry was uploaded.
+    pub created_at: DateTimeUtc,
+}
 
 /// The metadata carried alongside a file entry's bytes — the
 /// [`FileStore`](crate::ports::FileStore)'s `put`/`get` payload. `content_type`
@@ -8,8 +19,9 @@ use super::FileName;
 /// value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMetadata {
-    /// The validated save-name (see [`FileName`]).
-    pub filename: FileName,
+    /// The save-name as stored; it passed the [`FileName`](super::FileName) rule
+    /// in force at upload, and a load never re-checks it.
+    pub filename: StoredText,
     /// The normalized MIME served back as `Content-Type` — never blank, never
     /// control-bearing.
     pub content_type: String,
@@ -23,7 +35,7 @@ impl FileMetadata {
 
     /// Build metadata, replacing a blank or control-bearing `content_type` with
     /// [`DEFAULT_CONTENT_TYPE`](Self::DEFAULT_CONTENT_TYPE).
-    pub fn new(filename: FileName, content_type: impl Into<String>, byte_size: i64) -> Self {
+    pub fn new(filename: StoredText, content_type: impl Into<String>, byte_size: i64) -> Self {
         let raw = content_type.into();
         let trimmed = raw.trim();
         let content_type = if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
