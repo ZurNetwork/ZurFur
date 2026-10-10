@@ -16,6 +16,16 @@
   ],
   "fs": [
     {
+      "name": "ci-paths.sh",
+      "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
+      "node": false
+    },
+    {
+      "name": "gate-light.sh",
+      "role": "the light local gate for restacks and fix rounds (just gate-light)",
+      "node": false
+    },
+    {
       "name": "hooks/",
       "role": "the SessionStart/PreToolUse hook scripts wired in .claude/settings.json, and their tests",
       "node": true
@@ -43,6 +53,16 @@
     {
       "name": "pds-smoke-test.sh",
       "role": "shell-level scripted proof the local PDS+PLC dev loop boots and is repeatable",
+      "node": false
+    },
+    {
+      "name": "pr-wait.sh",
+      "role": "waits once for a PR's CI and Copilot review, then prints a short verdict",
+      "node": false
+    },
+    {
+      "name": "tools-check.sh",
+      "role": "local tool versions vs CI's pins (warns) and SHA-pinned workflow actions (fails); just tools-check",
       "node": false
     },
     {

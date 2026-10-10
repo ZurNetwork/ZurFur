@@ -8,9 +8,9 @@
 # jj makes many tiny working-copy snapshots with no commit ceremony. Gating once,
 # at push (the moment code reaches the remote and CI), is the right seam.
 #
-# Runs the SAME two checks as the old hook — `cargo fmt --all --check` and
-# `cargo clippy --workspace --all-targets -- -D warnings` (SQLX_OFFLINE=true) —
-# then hands off to `jj git push`. Tests stay on CI, exactly as before.
+# Runs `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
+# --locked -- -D warnings`, the same commands as CI's fmt and clippy jobs, then
+# hands off to `jj git push`. Tests stay on CI, exactly as before.
 #
 # The gate runs against the WORKING COPY: `cargo` reads the files on disk, which
 # are the content of `@`, which is what CI builds for the pushed commit. All
@@ -68,8 +68,8 @@ if [ "$run_gate" = 1 ]; then
         exit 1
     fi
 
-    echo "jj-push: cargo clippy (SQLX_OFFLINE=true)"
-    if ! SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings; then
+    echo "jj-push: cargo clippy --locked"
+    if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
         echo ""
         echo "jj-push: clippy failed — fix the warnings above and push again."
         exit 1

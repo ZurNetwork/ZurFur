@@ -1,0 +1,5 @@
+# One Rust version for every machine and for CI, so the local gate and CI agree.
+# Bump it on purpose, in its own change.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
