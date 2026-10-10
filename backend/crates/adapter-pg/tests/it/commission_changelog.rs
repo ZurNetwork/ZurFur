@@ -9,6 +9,7 @@
 
 use adapter_pg::{PgChangelogStore, PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -44,7 +45,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 }
 
 /// Create and commit a commission owned by `owner_did`, returning it.
-async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
+async fn seed_commission(pool: &PgPool, owner_did: &str) -> NewCommission {
     let owner = provision(pool, owner_did).await;
     let title = "A ref sheet"
         .parse::<CommissionTitle>()

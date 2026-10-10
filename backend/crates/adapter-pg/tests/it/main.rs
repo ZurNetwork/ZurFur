@@ -20,6 +20,7 @@ mod commission_element;
 mod commission_file;
 mod commission_maturity;
 mod commission_positioning;
+mod commission_reads;
 mod commission_seat;
 mod commission_seat_invitation;
 mod commission_slot;

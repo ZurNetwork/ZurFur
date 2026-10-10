@@ -1,20 +1,22 @@
 use super::{
     ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
-    Visibility,
+    NewCommission, Visibility,
 };
 use crate::datetime::DateTimeUtc;
 use crate::elements::maturity::Maturity;
+use crate::elements::text::StoredText;
 use crate::elements::user::UserId;
 
-/// A created commission and its fixed metadata. Build one with
-/// [`Commission::create`]; it holds no participant list or composition, only the
-/// always-present envelope.
+/// A stored commission and its fixed metadata, as a load returns it. A new one
+/// starts as the [`NewCommission`] that [`Commission::create`] builds; it holds
+/// no participant list or composition, only the always-present envelope.
 #[derive(Debug)]
 pub struct Commission {
     /// The app-private id (UUIDv7, so it sorts by creation time).
     pub id: CommissionId,
-    /// The commission's Title — always present, validated non-empty.
-    pub title: CommissionTitle,
+    /// The commission's Title as stored. It passed [`CommissionTitle`]'s rule
+    /// in force when it was written, and a load never re-checks it.
+    pub title: StoredText,
     /// The User who created the commission and owns it.
     pub owner_id: UserId,
     /// The single lifecycle state the commission is in; a fresh one is
@@ -49,8 +51,10 @@ pub struct Commission {
 
 impl Commission {
     /// Create a commission owned by `owner`, born in [`LifecycleStep::Draft`]
-    /// with a fresh UUIDv7 id, no maturity and no statuses. Infallible — the
-    /// title arrives already validated, and authority is the caller's concern.
+    /// with a fresh UUIDv7 id, no maturity and no statuses, ready for
+    /// [`CommissionWrites::create`](crate::ports::CommissionWrites::create).
+    /// Infallible — the title arrives already checked, and authority is the
+    /// caller's concern.
     ///
     /// ```
     /// use chrono::Utc;
@@ -71,8 +75,8 @@ impl Commission {
         owner: UserId,
         now: DateTimeUtc,
         deadline: Option<DateTimeUtc>,
-    ) -> Self {
-        Self {
+    ) -> NewCommission {
+        NewCommission {
             id: CommissionId::from(uuid::Uuid::now_v7()),
             title,
             owner_id: owner,

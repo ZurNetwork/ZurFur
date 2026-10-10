@@ -8,7 +8,10 @@
 use async_trait::async_trait;
 use tokio::io::AsyncRead;
 
-use crate::elements::commission::{FileDownload, FileKey, FileName};
+use crate::elements::{
+    commission::{FileDownload, FileKey, FileName},
+    text::StoredText,
+};
 
 /// The private blob store behind a commission file entry, keyed by an opaque
 /// [`FileKey`] (a UUIDv7 handle, never a content-address). The commission link
@@ -32,6 +35,11 @@ pub trait FileStore: Send + Sync {
     /// caller has already authorized and confirmed the commission→file link, so a
     /// `None` here is an internal inconsistency, not an authorization outcome.
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>>;
+
+    /// The filename stored under `key`, or `None`. Reads no bytes. As with
+    /// [`get`](Self::get), the caller has already authorized the commission
+    /// link.
+    async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>>;
 
     /// Remove the bytes under `key`. Idempotent: deleting an absent key is a
     /// no-op, the shape the commission hard-delete cascade needs.

@@ -958,6 +958,22 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct CommissionSlotRow {
+        pub element_id: uuid::Uuid,
+        pub commission_id: uuid::Uuid,
+        pub title: String,
+        pub notes: Option<String>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FilesRow {
+        pub id: uuid::Uuid,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct FindForUpdateRow {
         pub title: String,
         pub owner_id: String,
@@ -996,6 +1012,15 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub deadline: chrono::DateTime<chrono::Utc>,
         pub deadline_status: Option<String>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ListParticipatingRow {
+        pub id: uuid::Uuid,
+        pub title: String,
+        pub visibility: String,
+        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1309,6 +1334,21 @@ pub mod commission {
             .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/files.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every file entry of one commission, key and upload time only (never the
+    /// uploader), ordered by key (UUIDv7, so upload order). Empty for a commission
+    /// with none and for an unknown one.
+    pub async fn files(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<FilesRow>> {
+        sqlx::query_as(include_str!("../queries/commission/files.sql"))
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/commission/find.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn find(
         conn: impl sqlx::PgExecutor<'_>,
@@ -1439,6 +1479,22 @@ pub mod commission {
     ) -> sqlx::Result<Vec<CommissionRow>> {
         sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
             .bind(owner_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/list_participating.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The commissions a User is a Participant of, read from the same
+    /// `commission_participant` record `is_participant` reads. Archived commissions
+    /// are included; hiding them is the caller's. Seeks the by-user index; ordered
+    /// by commission id (UUIDv7 sorts as creation order).
+    pub async fn list_participating(
+        conn: impl sqlx::PgExecutor<'_>,
+        user_id: &str,
+    ) -> sqlx::Result<Vec<ListParticipatingRow>> {
+        sqlx::query_as(include_str!("../queries/commission/list_participating.sql"))
+            .bind(user_id)
             .fetch_all(conn)
             .await
     }
@@ -1770,6 +1826,21 @@ pub mod commission {
             .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/slots.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every Slot declared on one commission, in declaration order (the carrying
+    /// element ids are UUIDv7). Empty for a commission with none and for an
+    /// unknown one.
+    pub async fn slots(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<CommissionSlotRow>> {
+        sqlx::query_as(include_str!("../queries/commission/slots.sql"))
+            .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/commission/view_grant.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// The level one grantee holds on one commission, or nothing. Addressed by the
@@ -1805,6 +1876,19 @@ pub mod file {
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/file/filename.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The filename stored under one key, without its bytes.
+    pub async fn filename(
+        conn: impl sqlx::PgExecutor<'_>,
+        key: uuid::Uuid,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!("../queries/file/filename.sql"))
+            .bind(key)
+            .fetch_optional(conn)
+            .await
     }
 
     /// `queries/file/get.sql`, contract inferred from the SQL against the migrated schema.
@@ -2139,6 +2223,13 @@ pub mod workflow {
         pub visibility: String,
     }
 
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ListForAccountRow {
+        pub id: uuid::Uuid,
+        pub name: String,
+    }
+
     /// `queries/workflow/columns.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// A board's columns in board order. Ordered by the base-62 fractional key,
@@ -2200,6 +2291,20 @@ pub mod workflow {
         sqlx::query_as(include_str!("../queries/workflow/find.sql"))
             .bind(id)
             .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/workflow/list_for_account.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The Workflows one Account owns: id and name only, ordered by id (UUIDv7, so
+    /// creation order). Seeks `workflow_account`.
+    pub async fn list_for_account(
+        conn: impl sqlx::PgExecutor<'_>,
+        account_id: &str,
+    ) -> sqlx::Result<Vec<ListForAccountRow>> {
+        sqlx::query_as(include_str!("../queries/workflow/list_for_account.sql"))
+            .bind(account_id)
+            .fetch_all(conn)
             .await
     }
 

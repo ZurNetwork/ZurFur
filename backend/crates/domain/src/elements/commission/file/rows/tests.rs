@@ -1,9 +1,9 @@
 use super::*;
-use crate::elements::commission::file::FileName;
+use crate::elements::{commission::file::FileName, text::StoredText};
 
 #[test]
 fn content_type_is_normalized_to_a_safe_header_value() {
-    let name = FileName::try_new("art.svg").unwrap();
+    let name = StoredText::from(FileName::try_new("art.svg").unwrap());
     // A good MIME is kept verbatim (trimmed).
     assert_eq!(
         FileMetadata::new(name.clone(), "  image/svg+xml  ", 10).content_type,

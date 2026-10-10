@@ -1,6 +1,8 @@
 use chrono::Utc;
 use domain::elements::account::AccountId;
-use domain::elements::commission::{NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle};
+use domain::elements::commission::{
+    CommissionTitle, FileName, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle,
+};
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
 use domain::ports::{ElementNotFound, UnknownSurface, UnknownTab};
@@ -17,7 +19,7 @@ fn user_id() -> UserId {
     UserId::from(mint_did())
 }
 
-fn commission(title: &str, owner: UserId) -> Commission {
+fn commission(title: &str, owner: UserId) -> NewCommission {
     Commission::create(
         title.parse::<CommissionTitle>().unwrap(),
         owner,
@@ -2153,5 +2155,253 @@ async fn declare_slot_commits_and_rolls_back_with_the_unit() {
     assert!(
         backend.find_slot(kept_id).await.unwrap().is_none(),
         "the satellite cascaded away with its element"
+    );
+}
+
+// ── The My Den read ports ────────────────────────────────────────────────────
+
+// The participant listing reads the participant record: the owner's row and a
+// seated member's row both list, a stranger lists nothing, and an archived
+// commission stays in the listing. Ordered by id.
+#[tokio::test]
+async fn list_participating_reads_the_participant_record_archived_included() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let member = user_id();
+    let stranger = user_id();
+    let first = commission("First", owner.clone());
+    let second = commission("Second", owner.clone());
+    backend.create_commission(&first).await.unwrap();
+    backend.create_commission(&second).await.unwrap();
+    backend.seed_participant(second.id, member.clone(), Utc::now());
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_archived(&first.id, Some(Utc::now()))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let store = backend.commission_store();
+
+    let owners_listing = store.list_participating(&owner).await.unwrap();
+    let members_listing = store.list_participating(&member).await.unwrap();
+    let strangers_listing = store.list_participating(&stranger).await.unwrap();
+
+    let owners_ids: Vec<CommissionId> = owners_listing.iter().map(|summary| summary.id).collect();
+    assert_eq!(owners_ids, [first.id, second.id], "both, in id order");
+    assert!(
+        owners_listing[0].is_archived(),
+        "the archived one stays listed"
+    );
+    assert_eq!(owners_listing[1].title.as_str(), "Second");
+    let members_ids: Vec<CommissionId> = members_listing.iter().map(|summary| summary.id).collect();
+    assert_eq!(members_ids, [second.id]);
+    assert!(strangers_listing.is_empty());
+}
+
+// A stored title today's rule would refuse still loads, verbatim: the listing
+// and `find` carry stored text and never re-check it.
+#[tokio::test]
+async fn a_stored_title_is_loaded_without_a_recheck() {
+    let backend = MemBackend::new();
+    let owner = user_id();
+    let created = commission("Legacy", owner.clone());
+    backend.create_commission(&created).await.unwrap();
+    backend.seed_stored_title(created.id, "   ");
+    assert!(
+        "   ".parse::<CommissionTitle>().is_err(),
+        "today's rule refuses it"
+    );
+
+    let listing = backend
+        .commission_store()
+        .list_participating(&owner)
+        .await
+        .unwrap();
+    let found = backend.find_commission(created.id).await.unwrap().unwrap();
+
+    assert_eq!(listing[0].title.as_str(), "   ");
+    assert_eq!(found.title.as_str(), "   ");
+}
+
+// The file list holds only this commission's entries, in key order; another
+// commission's and an unknown commission's are not in it.
+#[tokio::test]
+async fn files_lists_only_this_commissions_entries_in_key_order() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let (mine, _) = composed_commission(&backend, owner.clone()).await;
+    let (other, _) = composed_commission(&backend, owner.clone()).await;
+    let first = CommissionFile {
+        id: FileKey::generate(),
+        commission_id: mine,
+        uploaded_by: owner.clone(),
+        created_at: Utc::now(),
+    };
+    let foreign = CommissionFile {
+        id: FileKey::generate(),
+        commission_id: other,
+        uploaded_by: owner.clone(),
+        created_at: Utc::now(),
+    };
+    let second = CommissionFile {
+        id: FileKey::generate(),
+        commission_id: mine,
+        uploaded_by: owner.clone(),
+        created_at: Utc::now(),
+    };
+    let mut uow = database.begin().await.unwrap();
+    for file in [&second, &foreign, &first] {
+        uow.commissions().add_file(file).await.unwrap();
+    }
+    uow.commit().await.unwrap();
+    let store = backend.commission_store();
+
+    let files = store.files(&mine).await.unwrap();
+    let unknown = CommissionId::from(uuid::Uuid::now_v7());
+
+    let listed: Vec<(FileKey, DateTimeUtc)> = files
+        .iter()
+        .map(|file| (file.id, file.created_at))
+        .collect();
+    assert_eq!(
+        listed,
+        [(first.id, first.created_at), (second.id, second.created_at)]
+    );
+    assert!(store.files(&unknown).await.unwrap().is_empty());
+}
+
+// The name read answers the stored filename and reads no bytes; a missing key
+// answers `None`.
+#[tokio::test]
+async fn filename_answers_the_stored_name_or_none() {
+    let backend = MemBackend::new();
+    let file_store = backend.file_store();
+    let key = FileKey::generate();
+    let name = FileName::try_new("ref-abco.png").unwrap();
+    let mut content: &[u8] = b"bytes";
+    file_store
+        .put(key, &name, "image/png", &mut content)
+        .await
+        .unwrap();
+
+    let stored = file_store.filename(key).await.unwrap();
+    let missing = file_store.filename(FileKey::generate()).await.unwrap();
+
+    assert_eq!(
+        stored.map(|name| name.as_str().to_owned()).as_deref(),
+        Some("ref-abco.png")
+    );
+    assert!(missing.is_none());
+}
+
+// The Slot list holds this commission's Slots in declaration order and nothing
+// of another commission's.
+#[tokio::test]
+async fn slots_lists_only_this_commissions_slots_in_declaration_order() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let (mine, my_address) = composed_commission(&backend, owner.clone()).await;
+    let (other, other_address) = composed_commission(&backend, owner.clone()).await;
+    let declared = |commission, address: &SurfaceAddress, title: &str| {
+        NewSlot::contributed_at(
+            commission,
+            address.clone(),
+            title.parse::<SlotTitle>().unwrap(),
+            None,
+            owner.clone(),
+            Utc::now(),
+        )
+    };
+    let slots = [
+        declared(mine, &my_address, "Abco"),
+        declared(other, &other_address, "Elsewhere"),
+        declared(mine, &my_address, "Ember"),
+    ];
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions().declare_slots(&slots).await.unwrap();
+    uow.commit().await.unwrap();
+
+    let listed = backend.commission_store().slots(&mine).await.unwrap();
+
+    let titles: Vec<&str> = listed.iter().map(|slot| slot.title.as_str()).collect();
+    assert_eq!(titles, ["Abco", "Ember"]);
+}
+
+// The Workflow listing holds this Account's boards only, by id.
+#[tokio::test]
+async fn list_for_account_lists_only_this_accounts_workflows() {
+    let backend = MemBackend::new();
+    let mine = account_id();
+    let other = account_id();
+    let (first, _) = board_with_a_column(&backend, &mine).await;
+    board_with_a_column(&backend, &other).await;
+    let (second, _) = board_with_a_column(&backend, &mine).await;
+    let workflows = backend.workflow_store();
+
+    let listing = workflows.list_for_account(&mine).await.unwrap();
+    let unknown = workflows.list_for_account(&account_id()).await.unwrap();
+
+    let ids: Vec<WorkflowId> = listing.iter().map(|summary| summary.id).collect();
+    assert_eq!(ids, [first, second]);
+    assert!(
+        listing
+            .iter()
+            .all(|summary| summary.name.as_str() == "Queue")
+    );
+    assert!(unknown.is_empty());
+}
+
+// A hard delete takes the commission's participant rows, file links and their
+// markups, and view grants with it, as pg's cascade does: afterwards the
+// commission lists no files and counts nobody as a Participant.
+#[tokio::test]
+async fn delete_cascades_participants_files_and_grants() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let member = user_id();
+    let doomed = commission("Doomed", owner.clone());
+    let doomed_id = doomed.id;
+    backend.create_commission(&doomed).await.unwrap();
+    backend.seed_participant(doomed_id, member.clone(), Utc::now());
+    let file = CommissionFile {
+        id: FileKey::generate(),
+        commission_id: doomed_id,
+        uploaded_by: owner.clone(),
+        created_at: Utc::now(),
+    };
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions().add_file(&file).await.unwrap();
+    uow.commissions()
+        .grant_view(&doomed_id, &member, GrantLevel::Description)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions().delete(&doomed_id).await.unwrap();
+    uow.commit().await.unwrap();
+    let store = backend.commission_store();
+
+    assert!(store.files(&doomed_id).await.unwrap().is_empty());
+    assert!(!store.is_participant(&doomed_id, &owner).await.unwrap());
+    assert!(!store.is_participant(&doomed_id, &member).await.unwrap());
+    assert!(store.list_participating(&member).await.unwrap().is_empty());
+    assert!(
+        store
+            .view_grant(&doomed_id, &member)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .find_file(&doomed_id, file.id)
+            .await
+            .unwrap()
+            .is_none()
     );
 }

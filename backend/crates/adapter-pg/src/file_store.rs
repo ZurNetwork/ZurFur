@@ -4,7 +4,10 @@
 //! exemption in `no_bare_pool_writes.rs`). Buffers internally.
 
 use domain::{
-    elements::commission::{FileDownload, FileKey, FileMetadata, FileName},
+    elements::{
+        commission::{FileDownload, FileKey, FileMetadata, FileName},
+        text::StoredText,
+    },
     ports::FileStore,
 };
 use sqlx::PgPool;
@@ -55,8 +58,8 @@ impl FileStore for PgFileStore {
     }
 
     /// The bytes and metadata stored under `key`, or `None` on a miss; bytes
-    /// come back wrapped in a [`std::io::Cursor`]. Re-validates the stored
-    /// `filename`; an `Err` on tampering, never a panic.
+    /// come back wrapped in a [`std::io::Cursor`]. The stored `filename` is
+    /// carried as [`StoredText`], never re-checked.
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>> {
         let Some(row) = sql::get(&self.pool, uuid::Uuid::from(key)).await? else {
             return Ok(None);
@@ -64,12 +67,19 @@ impl FileStore for PgFileStore {
 
         Ok(Some(FileDownload {
             metadata: FileMetadata::new(
-                FileName::try_new(row.filename)?,
+                StoredText::from(row.filename),
                 row.content_type,
                 row.byte_size,
             ),
             content: Box::new(std::io::Cursor::new(row.bytes)),
         }))
+    }
+
+    /// The stored `filename` under `key`, or `None`; selects no bytes. Carried
+    /// as stored, never re-checked.
+    async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>> {
+        let filename = sql::filename(&self.pool, uuid::Uuid::from(key)).await?;
+        Ok(filename.map(StoredText::from))
     }
 
     /// Removes the bytes under `key`. Idempotent: an absent key is a no-op.

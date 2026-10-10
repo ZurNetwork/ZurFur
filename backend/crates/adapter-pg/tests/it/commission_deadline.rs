@@ -9,6 +9,7 @@
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::{DateTime, Utc};
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -50,7 +51,7 @@ async fn seed(
     title: &str,
     deadline: Option<DateTime<Utc>>,
     step: Option<LifecycleStep>,
-) -> Commission {
+) -> NewCommission {
     let mut commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
         owner.id.clone(),

@@ -9,7 +9,10 @@ use std::io::Cursor;
 
 use async_trait::async_trait;
 use domain::{
-    elements::commission::{FileDownload, FileKey, FileMetadata, FileName},
+    elements::{
+        commission::{FileDownload, FileKey, FileMetadata, FileName},
+        text::StoredText,
+    },
     ports::FileStore,
 };
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -42,7 +45,8 @@ impl FileStore for MemFileStore {
         let mut bytes = Vec::new();
         content.read_to_end(&mut bytes).await?;
         let len = bytes.len();
-        let metadata = FileMetadata::new(filename.clone(), content_type, len as i64);
+        let metadata =
+            FileMetadata::new(StoredText::from(filename.clone()), content_type, len as i64);
         let mut blobs = self
             .0
             .blobs
@@ -64,6 +68,19 @@ impl FileStore for MemFileStore {
             metadata: stored.metadata.clone(),
             content: Box::new(Cursor::new(stored.bytes.clone())),
         }))
+    }
+
+    /// The stored filename under `key`, or `None` on a miss; the bytes are not
+    /// copied.
+    async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>> {
+        let blobs = self
+            .0
+            .blobs
+            .lock()
+            .expect("MemBackend blobs mutex poisoned");
+        Ok(blobs
+            .get(&key)
+            .map(|stored| stored.metadata.filename.clone()))
     }
 
     /// Remove the bytes under `key`. Idempotent: an absent key is a no-op.

@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use crate::elements::text::StoredText;
 use crate::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// A Slot's title — the one required facet of a declared Slot: trimmed, and
@@ -51,6 +52,13 @@ impl SlotTitle {
     /// The validated, trimmed title as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<SlotTitle> for StoredText {
+    /// The checked title, as the store keeps it.
+    fn from(title: SlotTitle) -> Self {
+        StoredText::from(title.0)
     }
 }
 
