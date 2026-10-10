@@ -63,3 +63,65 @@ fn invalid_request_specifics_share_the_type_but_vary_the_code() {
     );
     assert_eq!(Problem::unknown_role("bad").status, 422);
 }
+
+// The Den's one not-found: every miss answers these exact bytes, so the
+// problem itself can never tell an absent node from a hidden one.
+#[test]
+fn node_not_found_is_one_fixed_404() {
+    let expected = serde_json::json!({
+        "type": "urn:zurfur:error:node-not-found",
+        "code": "node_not_found",
+        "title": "Node not found",
+        "detail": "No such node.",
+        "status": 404,
+    });
+
+    let first = serde_json::to_value(Problem::node_not_found()).expect("serializes");
+    let second = serde_json::to_value(Problem::node_not_found()).expect("serializes");
+
+    assert_eq!(first, expected);
+    assert_eq!(second, expected);
+}
+
+// An unknown query parameter is a fixed 400 under the general bad-request
+// type, and its detail never names the parameter it refused.
+#[test]
+fn unknown_parameter_is_one_fixed_400() {
+    let expected = serde_json::json!({
+        "type": "urn:zurfur:error:bad-request",
+        "code": "unknown_parameter",
+        "title": "Bad request",
+        "detail": "The request carries a query parameter this endpoint doesn't accept.",
+        "status": 400,
+    });
+
+    let problem = serde_json::to_value(Problem::unknown_parameter()).expect("serializes");
+
+    assert_eq!(problem, expected);
+}
+
+// The 400 renders with its own status line, like every registry entry.
+#[test]
+fn unknown_parameter_responds_400() {
+    let response = Problem::unknown_parameter().into_response();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// A known query parameter with a value the endpoint can't use is one fixed
+// 422: the general invalid-request type and code, with a detail that names
+// neither the parameter nor its value.
+#[test]
+fn invalid_query_is_one_fixed_422() {
+    let expected = serde_json::json!({
+        "type": "urn:zurfur:error:invalid-request",
+        "code": "invalid_request",
+        "title": "Invalid request",
+        "detail": "The request's query string carries a value this endpoint can't use.",
+        "status": 422,
+    });
+
+    let problem = serde_json::to_value(Problem::invalid_query()).expect("serializes");
+
+    assert_eq!(problem, expected);
+}

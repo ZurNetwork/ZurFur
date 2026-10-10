@@ -1478,6 +1478,1264 @@ impl<'de> serde::Deserialize<'de> for DeleteAccountResponse {
         deserializer.deserialize_struct("zurfur.api.v1.DeleteAccountResponse", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for DenCard {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let len = 0;
+        let struct_ser = serializer.serialize_struct("zurfur.api.v1.DenCard", len)?;
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenCard {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                            Err(serde::de::Error::unknown_field(value, FIELDS))
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenCard;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenCard")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenCard, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                while map_.next_key::<GeneratedField>()?.is_some() {
+                    let _ = map_.next_value::<serde::de::IgnoredAny>()?;
+                }
+                Ok(DenCard {
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenCard", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenCrumb {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.segments.is_empty() {
+            len += 1;
+        }
+        if !self.name.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenCrumb", len)?;
+        if !self.segments.is_empty() {
+            struct_ser.serialize_field("segments", &self.segments)?;
+        }
+        if !self.name.is_empty() {
+            struct_ser.serialize_field("name", &self.name)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenCrumb {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "segments",
+            "name",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Segments,
+            Name,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "segments" => Ok(GeneratedField::Segments),
+                            "name" => Ok(GeneratedField::Name),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenCrumb;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenCrumb")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenCrumb, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut segments__ = None;
+                let mut name__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Segments => {
+                            if segments__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("segments"));
+                            }
+                            segments__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Name => {
+                            if name__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("name"));
+                            }
+                            name__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(DenCrumb {
+                    segments: segments__.unwrap_or_default(),
+                    name: name__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenCrumb", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenFile {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let len = 0;
+        let struct_ser = serializer.serialize_struct("zurfur.api.v1.DenFile", len)?;
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenFile {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                            Err(serde::de::Error::unknown_field(value, FIELDS))
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenFile;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenFile")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenFile, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                while map_.next_key::<GeneratedField>()?.is_some() {
+                    let _ = map_.next_value::<serde::de::IgnoredAny>()?;
+                }
+                Ok(DenFile {
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenFile", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenLink {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let len = 0;
+        let struct_ser = serializer.serialize_struct("zurfur.api.v1.DenLink", len)?;
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenLink {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                            Err(serde::de::Error::unknown_field(value, FIELDS))
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenLink;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenLink")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenLink, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                while map_.next_key::<GeneratedField>()?.is_some() {
+                    let _ = map_.next_value::<serde::de::IgnoredAny>()?;
+                }
+                Ok(DenLink {
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenLink", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenListing {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.entries.is_empty() {
+            len += 1;
+        }
+        if !self.next_page_token.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenListing", len)?;
+        if !self.entries.is_empty() {
+            struct_ser.serialize_field("entries", &self.entries)?;
+        }
+        if !self.next_page_token.is_empty() {
+            struct_ser.serialize_field("nextPageToken", &self.next_page_token)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenListing {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "entries",
+            "next_page_token",
+            "nextPageToken",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Entries,
+            NextPageToken,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "entries" => Ok(GeneratedField::Entries),
+                            "nextPageToken" | "next_page_token" => Ok(GeneratedField::NextPageToken),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenListing;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenListing")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenListing, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut entries__ = None;
+                let mut next_page_token__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Entries => {
+                            if entries__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("entries"));
+                            }
+                            entries__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::NextPageToken => {
+                            if next_page_token__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("nextPageToken"));
+                            }
+                            next_page_token__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(DenListing {
+                    entries: entries__.unwrap_or_default(),
+                    next_page_token: next_page_token__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenListing", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenNode {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.segments.is_empty() {
+            len += 1;
+        }
+        if !self.name.is_empty() {
+            len += 1;
+        }
+        if !self.r#type.is_empty() {
+            len += 1;
+        }
+        if !self.kind.is_empty() {
+            len += 1;
+        }
+        if self.mount {
+            len += 1;
+        }
+        if self.access.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenNode", len)?;
+        if !self.segments.is_empty() {
+            struct_ser.serialize_field("segments", &self.segments)?;
+        }
+        if !self.name.is_empty() {
+            struct_ser.serialize_field("name", &self.name)?;
+        }
+        if !self.r#type.is_empty() {
+            struct_ser.serialize_field("type", &self.r#type)?;
+        }
+        if !self.kind.is_empty() {
+            struct_ser.serialize_field("kind", &self.kind)?;
+        }
+        if self.mount {
+            struct_ser.serialize_field("mount", &self.mount)?;
+        }
+        if let Some(v) = self.access.as_ref() {
+            match v {
+                den_node::Access::Open(v) => {
+                    struct_ser.serialize_field("open", v)?;
+                }
+                den_node::Access::Card(v) => {
+                    struct_ser.serialize_field("card", v)?;
+                }
+            }
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenNode {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "segments",
+            "name",
+            "type",
+            "kind",
+            "mount",
+            "open",
+            "card",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Segments,
+            Name,
+            Type,
+            Kind,
+            Mount,
+            Open,
+            Card,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "segments" => Ok(GeneratedField::Segments),
+                            "name" => Ok(GeneratedField::Name),
+                            "type" => Ok(GeneratedField::Type),
+                            "kind" => Ok(GeneratedField::Kind),
+                            "mount" => Ok(GeneratedField::Mount),
+                            "open" => Ok(GeneratedField::Open),
+                            "card" => Ok(GeneratedField::Card),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenNode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenNode")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenNode, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut segments__ = None;
+                let mut name__ = None;
+                let mut r#type__ = None;
+                let mut kind__ = None;
+                let mut mount__ = None;
+                let mut access__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Segments => {
+                            if segments__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("segments"));
+                            }
+                            segments__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Name => {
+                            if name__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("name"));
+                            }
+                            name__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Type => {
+                            if r#type__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("type"));
+                            }
+                            r#type__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Kind => {
+                            if kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kind"));
+                            }
+                            kind__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Mount => {
+                            if mount__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("mount"));
+                            }
+                            mount__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Open => {
+                            if access__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("open"));
+                            }
+                            access__ = map_.next_value::<::std::option::Option<_>>()?.map(den_node::Access::Open)
+;
+                        }
+                        GeneratedField::Card => {
+                            if access__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("card"));
+                            }
+                            access__ = map_.next_value::<::std::option::Option<_>>()?.map(den_node::Access::Card)
+;
+                        }
+                    }
+                }
+                Ok(DenNode {
+                    segments: segments__.unwrap_or_default(),
+                    name: name__.unwrap_or_default(),
+                    r#type: r#type__.unwrap_or_default(),
+                    kind: kind__.unwrap_or_default(),
+                    mount: mount__.unwrap_or_default(),
+                    access: access__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenNode", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DenOpen {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.own_level.is_empty() {
+            len += 1;
+        }
+        if self.content_not_shown {
+            len += 1;
+        }
+        if !self.soft_delete.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenOpen", len)?;
+        if !self.own_level.is_empty() {
+            struct_ser.serialize_field("ownLevel", &self.own_level)?;
+        }
+        if self.content_not_shown {
+            struct_ser.serialize_field("contentNotShown", &self.content_not_shown)?;
+        }
+        if !self.soft_delete.is_empty() {
+            struct_ser.serialize_field("softDelete", &self.soft_delete)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DenOpen {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "own_level",
+            "ownLevel",
+            "content_not_shown",
+            "contentNotShown",
+            "soft_delete",
+            "softDelete",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            OwnLevel,
+            ContentNotShown,
+            SoftDelete,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "ownLevel" | "own_level" => Ok(GeneratedField::OwnLevel),
+                            "contentNotShown" | "content_not_shown" => Ok(GeneratedField::ContentNotShown),
+                            "softDelete" | "soft_delete" => Ok(GeneratedField::SoftDelete),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DenOpen;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DenOpen")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DenOpen, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut own_level__ = None;
+                let mut content_not_shown__ = None;
+                let mut soft_delete__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::OwnLevel => {
+                            if own_level__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("ownLevel"));
+                            }
+                            own_level__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::ContentNotShown => {
+                            if content_not_shown__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("contentNotShown"));
+                            }
+                            content_not_shown__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::SoftDelete => {
+                            if soft_delete__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("softDelete"));
+                            }
+                            soft_delete__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(DenOpen {
+                    own_level: own_level__.unwrap_or_default(),
+                    content_not_shown: content_not_shown__.unwrap_or_default(),
+                    soft_delete: soft_delete__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DenOpen", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetDenNodeRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.path.is_empty() {
+            len += 1;
+        }
+        if self.include_deleted {
+            len += 1;
+        }
+        if !self.page_token.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetDenNodeRequest", len)?;
+        if !self.path.is_empty() {
+            struct_ser.serialize_field("path", &self.path)?;
+        }
+        if self.include_deleted {
+            struct_ser.serialize_field("includeDeleted", &self.include_deleted)?;
+        }
+        if !self.page_token.is_empty() {
+            struct_ser.serialize_field("pageToken", &self.page_token)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetDenNodeRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "path",
+            "include_deleted",
+            "includeDeleted",
+            "page_token",
+            "pageToken",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Path,
+            IncludeDeleted,
+            PageToken,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "path" => Ok(GeneratedField::Path),
+                            "includeDeleted" | "include_deleted" => Ok(GeneratedField::IncludeDeleted),
+                            "pageToken" | "page_token" => Ok(GeneratedField::PageToken),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetDenNodeRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetDenNodeRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetDenNodeRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut path__ = None;
+                let mut include_deleted__ = None;
+                let mut page_token__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Path => {
+                            if path__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("path"));
+                            }
+                            path__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::IncludeDeleted => {
+                            if include_deleted__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("includeDeleted"));
+                            }
+                            include_deleted__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::PageToken => {
+                            if page_token__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pageToken"));
+                            }
+                            page_token__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(GetDenNodeRequest {
+                    path: path__.unwrap_or_default(),
+                    include_deleted: include_deleted__.unwrap_or_default(),
+                    page_token: page_token__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetDenNodeRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetDenNodeResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.node.is_some() {
+            len += 1;
+        }
+        if !self.crumbs.is_empty() {
+            len += 1;
+        }
+        if self.content.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetDenNodeResponse", len)?;
+        if let Some(v) = self.node.as_ref() {
+            struct_ser.serialize_field("node", v)?;
+        }
+        if !self.crumbs.is_empty() {
+            struct_ser.serialize_field("crumbs", &self.crumbs)?;
+        }
+        if let Some(v) = self.content.as_ref() {
+            match v {
+                get_den_node_response::Content::Listing(v) => {
+                    struct_ser.serialize_field("listing", v)?;
+                }
+                get_den_node_response::Content::File(v) => {
+                    struct_ser.serialize_field("file", v)?;
+                }
+                get_den_node_response::Content::Link(v) => {
+                    struct_ser.serialize_field("link", v)?;
+                }
+            }
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetDenNodeResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "node",
+            "crumbs",
+            "listing",
+            "file",
+            "link",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Node,
+            Crumbs,
+            Listing,
+            File,
+            Link,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "node" => Ok(GeneratedField::Node),
+                            "crumbs" => Ok(GeneratedField::Crumbs),
+                            "listing" => Ok(GeneratedField::Listing),
+                            "file" => Ok(GeneratedField::File),
+                            "link" => Ok(GeneratedField::Link),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetDenNodeResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetDenNodeResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetDenNodeResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut node__ = None;
+                let mut crumbs__ = None;
+                let mut content__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Node => {
+                            if node__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("node"));
+                            }
+                            node__ = map_.next_value()?;
+                        }
+                        GeneratedField::Crumbs => {
+                            if crumbs__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("crumbs"));
+                            }
+                            crumbs__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Listing => {
+                            if content__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("listing"));
+                            }
+                            content__ = map_.next_value::<::std::option::Option<_>>()?.map(get_den_node_response::Content::Listing)
+;
+                        }
+                        GeneratedField::File => {
+                            if content__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("file"));
+                            }
+                            content__ = map_.next_value::<::std::option::Option<_>>()?.map(get_den_node_response::Content::File)
+;
+                        }
+                        GeneratedField::Link => {
+                            if content__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("link"));
+                            }
+                            content__ = map_.next_value::<::std::option::Option<_>>()?.map(get_den_node_response::Content::Link)
+;
+                        }
+                    }
+                }
+                Ok(GetDenNodeResponse {
+                    node: node__,
+                    crumbs: crumbs__.unwrap_or_default(),
+                    content: content__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetDenNodeResponse", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetDenRootRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.include_deleted {
+            len += 1;
+        }
+        if !self.page_token.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetDenRootRequest", len)?;
+        if self.include_deleted {
+            struct_ser.serialize_field("includeDeleted", &self.include_deleted)?;
+        }
+        if !self.page_token.is_empty() {
+            struct_ser.serialize_field("pageToken", &self.page_token)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetDenRootRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "include_deleted",
+            "includeDeleted",
+            "page_token",
+            "pageToken",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            IncludeDeleted,
+            PageToken,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "includeDeleted" | "include_deleted" => Ok(GeneratedField::IncludeDeleted),
+                            "pageToken" | "page_token" => Ok(GeneratedField::PageToken),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetDenRootRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetDenRootRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetDenRootRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut include_deleted__ = None;
+                let mut page_token__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::IncludeDeleted => {
+                            if include_deleted__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("includeDeleted"));
+                            }
+                            include_deleted__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::PageToken => {
+                            if page_token__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pageToken"));
+                            }
+                            page_token__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(GetDenRootRequest {
+                    include_deleted: include_deleted__.unwrap_or_default(),
+                    page_token: page_token__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetDenRootRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for GetDenRootResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.node.is_some() {
+            len += 1;
+        }
+        if self.content.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.GetDenRootResponse", len)?;
+        if let Some(v) = self.node.as_ref() {
+            struct_ser.serialize_field("node", v)?;
+        }
+        if let Some(v) = self.content.as_ref() {
+            match v {
+                get_den_root_response::Content::Listing(v) => {
+                    struct_ser.serialize_field("listing", v)?;
+                }
+            }
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for GetDenRootResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "node",
+            "listing",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Node,
+            Listing,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "node" => Ok(GeneratedField::Node),
+                            "listing" => Ok(GeneratedField::Listing),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = GetDenRootResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.GetDenRootResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<GetDenRootResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut node__ = None;
+                let mut content__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Node => {
+                            if node__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("node"));
+                            }
+                            node__ = map_.next_value()?;
+                        }
+                        GeneratedField::Listing => {
+                            if content__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("listing"));
+                            }
+                            content__ = map_.next_value::<::std::option::Option<_>>()?.map(get_den_root_response::Content::Listing)
+;
+                        }
+                    }
+                }
+                Ok(GetDenRootResponse {
+                    node: node__,
+                    content: content__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.GetDenRootResponse", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for GetMeRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

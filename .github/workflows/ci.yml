@@ -89,9 +89,10 @@ jobs:
           git add -A frontend/web/src/lib/server/api/generated
           git diff --cached --exit-code -- frontend/web/src/lib/server/api/generated
       # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
-      # against the base branch. Once the first version tag exists this gains
+      # against the base branch. Once the first release tag exists this gains
       # a second comparison against the last released tag (VERSIONING.md §2
-      # "two gates, not one").
+      # "two gates, not one"). The pre-release period ends at the first alpha
+      # tag (contract/lifecycle.toml); a pre-alpha tag is not a release tag.
       # Bootstrap guard: a base that predates the corpus has nothing to
       # compare against (buf fails with "had no .proto files"), and skipping
       # is CORRECT there — the first corpus commit cannot break a contract

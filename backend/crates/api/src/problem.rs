@@ -38,6 +38,18 @@ impl Problem {
         }
     }
 
+    /// `400` — the query string carries a parameter the endpoint doesn't know.
+    /// Fixed detail that never names the parameter.
+    pub fn unknown_parameter() -> Self {
+        Self::new(
+            "urn:zurfur:error:bad-request",
+            "unknown_parameter",
+            "Bad request",
+            400,
+            "The request carries a query parameter this endpoint doesn't accept.",
+        )
+    }
+
     /// `401` — no (or unreadable) session on an endpoint that requires one.
     pub fn not_authenticated() -> Self {
         Self::new(
@@ -82,6 +94,18 @@ impl Problem {
             "Account not found",
             404,
             "No such account.",
+        )
+    }
+
+    /// `404` — the Den's one not-found: absent, hidden, unopenable and malformed
+    /// paths all answer these same fixed bytes.
+    pub fn node_not_found() -> Self {
+        Self::new(
+            "urn:zurfur:error:node-not-found",
+            "node_not_found",
+            "Node not found",
+            404,
+            "No such node.",
         )
     }
 
@@ -298,6 +322,12 @@ impl Problem {
             409,
             "You can't leave an account you own. Transfer ownership or delete the account first.",
         )
+    }
+
+    /// `422`, code `invalid_request` — a known query parameter carries a value
+    /// the endpoint can't use. Fixed detail that names neither parameter nor value.
+    pub fn invalid_query() -> Self {
+        Self::invalid_request("The request's query string carries a value this endpoint can't use.")
     }
 
     /// `422` — the request is understood but its data won't do; `detail` says why.

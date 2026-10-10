@@ -1,8 +1,8 @@
 {
   "path": "contract/zurfur/api/v1",
   "charted": "2026-09-12",
-  "short": "The v1 proto corpus (session, account, commission, problem)",
-  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, error), welded to `/api/v1`.",
+  "short": "The v1 proto corpus (session, account, commission, den, problem)",
+  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, den, error), welded to `/api/v1`.",
   "type": "code",
   "tags": [
     "category:schema"
@@ -29,6 +29,11 @@
     {
       "name": "commission.proto",
       "role": "ListCommissions, CreateCommission (owner POV), Maturity; google.protobuf.Timestamp; CommissionService",
+      "node": false
+    },
+    {
+      "name": "den.proto",
+      "role": "GetDenRoot (GET /den), GetDenNode (GET /den/{path=**}): a signed-in viewer reads their own Den one node at a time; DenService",
       "node": false
     },
     {
@@ -72,6 +77,16 @@
       "page": 40992770,
       "title": "The API Contract",
       "governs": "decision 3: session.proto, account.proto, commission.proto: service blocks declare routes only, messages-only codegen"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "den.proto: Den paths, keys as path segments, levels, mounts and symlinks"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`"
     }
   ],
   "notes": [

@@ -14,7 +14,7 @@
     "Additive-only within a major; `buf breaking` at WIRE_JSON, the skip label is banned (R9).",
     "R1 canonical lowerCamelCase keys (`json_name` rejected).",
     "R4 absence = \"not set\" only.",
-    "R6 ids opaque (≤64-char strings).",
+    "R6 ids opaque (≤64-char strings; a DID ≤2048; a Den path segment is a key, not an id).",
     "R7 listings wrapped (`{\"accounts\": […]}`).",
     "R8 vocabularies are documented extensible `string`s, never enums.",
     "Deletions reserve number AND name.",
@@ -53,7 +53,7 @@
     },
     {
       "name": "lifecycle.toml",
-      "role": "per-major lifecycle manifest ([major.v1] live|deprecated|sunset); CI routes follow it",
+      "role": "per-major lifecycle manifest ([major.v1] live|deprecated|sunset); CI routes follow it; pre-release ends at the first alpha tag",
       "node": false
     },
     {
