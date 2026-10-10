@@ -9,8 +9,10 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{CommissionId, Visibility},
+        text::StoredText,
         workflow::{
-            Column, ColumnId, ColumnName, LexOrdering, Position, Workflow, WorkflowId, WorkflowName,
+            Column, ColumnId, ColumnName, LexOrdering, Position, Workflow, WorkflowId,
+            WorkflowName, WorkflowSummary,
         },
     },
     ports::{ColumnStore, ColumnWrites, WorkflowStore, WorkflowWrites},
@@ -201,6 +203,26 @@ impl WorkflowStore for MemWorkflowStore {
     /// A board's columns in board order, each with its cards.
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
         columns_of(&self.0, workflow_id)
+    }
+
+    /// Scan the boards for `account`'s, sorted by [`WorkflowId`] (UUIDv7, so
+    /// creation order), since the `HashMap` scan has no natural order.
+    async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>> {
+        let workflows = self
+            .0
+            .workflows
+            .lock()
+            .expect("MemBackend workflows mutex poisoned");
+        let mut owned: Vec<WorkflowSummary> = workflows
+            .iter()
+            .filter(|(_, stored)| &stored.account_id == account)
+            .map(|(id, stored)| {
+                let name = StoredText::from(stored.name.as_ref().to_owned());
+                WorkflowSummary { id: *id, name }
+            })
+            .collect();
+        owned.sort_by_key(|summary| uuid::Uuid::from(summary.id));
+        Ok(owned)
     }
 }
 

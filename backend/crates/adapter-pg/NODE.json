@@ -40,12 +40,12 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (42 files, latest creates workflow/workflow_column and drops the superseded placement tables), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (43 files, latest adds the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
       "node": false
     },
     {
       "name": "queries/",
-      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (36 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find), workflow/ + column/ (the account's boards and their cards), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/, key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
       "node": false
     },
     {

@@ -9,6 +9,7 @@
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -49,7 +50,7 @@ async fn composed_commission(
     pool: &PgPool,
     owner: &User,
     title: &str,
-) -> (Commission, SurfaceAddress) {
+) -> (NewCommission, SurfaceAddress) {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
         owner.id.clone(),

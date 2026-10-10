@@ -1,4 +1,5 @@
 use super::CommissionTitleError;
+use crate::elements::text::StoredText;
 use crate::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// A commission's Title: trimmed, and non-empty. No length cap yet.
@@ -57,5 +58,12 @@ impl std::str::FromStr for CommissionTitle {
 impl AsRef<str> for CommissionTitle {
     fn as_ref(&self) -> &str {
         self.as_str()
+    }
+}
+
+impl From<CommissionTitle> for StoredText {
+    /// The checked title, as the store keeps it.
+    fn from(title: CommissionTitle) -> Self {
+        StoredText::from(title.0)
     }
 }
