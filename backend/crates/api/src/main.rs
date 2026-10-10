@@ -9,7 +9,7 @@ use tower_sessions::{
     cookie::{SameSite, time},
     session_store::ExpiredDeletion,
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
 
 /// Boots the server: load config, init tracing, connect the pool, run
 /// migrations, build the session layer, assemble [`AppState`], then
@@ -20,11 +20,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load()?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
-        )
-        .init();
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    api::logging::subscriber(filter, std::io::stdout).init();
 
     // Migrations are the driver's explicit call, so one never runs by accident.
     let app_state: AppState = composition::Runtime::connect(config).await?;

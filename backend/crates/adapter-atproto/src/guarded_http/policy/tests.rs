@@ -80,6 +80,21 @@ fn userinfo_is_refused() {
 }
 
 #[test]
+fn empty_userinfo_is_never_serialized_so_the_url_is_the_plain_one() {
+    let plain = PublicHttpsUrl::try_from("https://bsky.social/").expect("admitted");
+
+    for text in ["https://@bsky.social/", "https://:@bsky.social/"] {
+        let with_empty_userinfo = PublicHttpsUrl::try_from(text).expect("admitted");
+        assert_eq!(with_empty_userinfo, plain, "{text}");
+        assert_eq!(
+            with_empty_userinfo.as_ref(),
+            "https://bsky.social/",
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn an_ip_literal_is_refused_in_every_spelling() {
     let urls = [
         "https://127.0.0.1/",
