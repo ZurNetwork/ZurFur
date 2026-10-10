@@ -53,6 +53,17 @@ pub mod account {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct ListDeactivatedForOwnerRow {
+        pub id: String,
+        pub handle: String,
+        pub name: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        pub updated_at: chrono::DateTime<chrono::Utc>,
+        pub deleted_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct ListForUserRow {
         pub id: String,
         pub handle: String,
@@ -467,6 +478,28 @@ pub mod account {
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
+    }
+
+    /// `queries/account/list_deactivated_for_owner.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every soft-deleted (deactivated) account in which `$1` holds the Owner
+    /// role. The one read that returns deactivated rows, and only to their Owner:
+    /// `find` and `list_for_user` keep filtering on `deleted_at IS NULL`.
+    ///
+    /// ORDER BY … COLLATE "C" sorts the DID by byte value, as the adapter-mem twin
+    /// sorts in process.
+    pub async fn list_deactivated_for_owner(
+        conn: impl sqlx::PgExecutor<'_>,
+        user_id: &str,
+        role: &str,
+    ) -> sqlx::Result<Vec<ListDeactivatedForOwnerRow>> {
+        sqlx::query_as(include_str!(
+            "../queries/account/list_deactivated_for_owner.sql"
+        ))
+        .bind(user_id)
+        .bind(role)
+        .fetch_all(conn)
+        .await
     }
 
     /// `queries/account/list_for_user.sql`, contract inferred from the SQL against the migrated schema.

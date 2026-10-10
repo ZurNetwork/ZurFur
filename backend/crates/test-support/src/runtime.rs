@@ -5,9 +5,7 @@
 
 use std::sync::Arc;
 
-use adapter_mem::{
-    MemAuthenticator, MemBackend, MemCharacterStore, MemDidMinter, MemProfileSource,
-};
+use adapter_mem::{MemAuthenticator, MemBackend, MemDidMinter, MemProfileSource};
 use composition::{Config, Environment, Runtime};
 use domain::elements::{did::Did, profile::Profile};
 
@@ -88,7 +86,7 @@ impl MemRuntimeBuilder {
             changelog: backend.changelog_store(),
             workflows: backend.workflow_store(),
             columns: backend.column_store(),
-            characters: Arc::new(MemCharacterStore),
+            characters: backend.character_store(),
             files: backend.file_store(),
             database: backend.database(),
             did_minter: Arc::new(MemDidMinter::new()),

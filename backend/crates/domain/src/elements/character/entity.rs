@@ -10,6 +10,7 @@ pub struct Character {
     pub id: CharacterId,
     pub presence: Presence,
     pub attributes: CharacterAttributes,
+    /// The Keeper: the User who keeps this Character.
     pub owner_id: UserId,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
