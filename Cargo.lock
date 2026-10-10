@@ -397,10 +397,9 @@ dependencies = [
 name = "atta"
 version = "0.1.0"
 dependencies = [
- "cid",
  "derive_more 2.1.1",
- "serde",
- "uuid",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
