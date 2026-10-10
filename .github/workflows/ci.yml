@@ -16,50 +16,130 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides whether the Rust, contract and web jobs can skip: only a pull
+  # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
+  # them. Fails closed: on a push, on any error, or when the checked-out merge
+  # commit's parents are not exactly the PR's base and head, `code` is true and
+  # everything runs. Dependents run unless `code` is exactly 'false', so a
+  # failed or cancelled detection also runs everything. Nothing from the event
+  # reaches `run:` text: the two SHAs arrive through env and are checked as hex.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      lock: ${{ steps.detect.outputs.lock }}
+    steps:
+      # The PR's test merge commit plus its two parents (base tip, PR head).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: detect
+        name: Classify the changed paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          code=true
+          lock=true
+          detect() {
+            if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+              echo "not a pull request: run everything"; return
+            fi
+            for sha in "$BASE_SHA" "$HEAD_SHA"; do
+              if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+                echo "::warning::changes: base or head SHA missing; running everything"; return
+              fi
+            done
+            if ! parent1=$(git rev-parse --verify --quiet 'HEAD^1') ||
+               ! parent2=$(git rev-parse --verify --quiet 'HEAD^2') ||
+               [ "$parent1" != "$BASE_SHA" ] || [ "$parent2" != "$HEAD_SHA" ]; then
+              echo "::warning::changes: the merge commit's parents are not the PR's base and head; running everything"; return
+            fi
+            echo "merge parents verified: HEAD^1 is the base, HEAD^2 is the PR head"
+            # The base branch's classifier, never the PR's own edit of it.
+            if ! git show "$BASE_SHA:scripts/ci-paths.sh" > "$RUNNER_TEMP/ci-paths.sh"; then
+              echo "::warning::changes: the base has no scripts/ci-paths.sh; running everything"; return
+            fi
+            # --no-renames: a moved file lists both its old and its new path.
+            if ! git diff --no-renames --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed.txt"; then
+              echo "::warning::changes: git diff failed; running everything"; return
+            fi
+            if ! result=$(sh "$RUNNER_TEMP/ci-paths.sh" < "$RUNNER_TEMP/changed.txt"); then
+              echo "::warning::changes: the classifier failed; running everything"; return
+            fi
+            case "$result" in *code=false*) code=false ;; esac
+            case "$result" in *lock=false*) lock=false ;; esac
+            echo "changed paths:"; cat "$RUNNER_TEMP/changed.txt"
+          }
+          detect
+          echo "code=$code lock=$lock"
+          printf 'code=%s\nlock=%s\n' "$code" "$lock" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: fmt
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          components: rustfmt
+          persist-credentials: false
+      # The toolchain and components rust-toolchain.toml pins: one pin for
+      # every machine and for CI.
+      - run: rustup toolchain install --profile minimal
       - run: cargo fmt --all --check
 
   clippy:
     name: clippy
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - run: rustup toolchain install --profile minimal
+      # Only main saves the cache; a PR restores main's and saves nothing, so
+      # main's entry isn't evicted under the repository's cache cap.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # --locked: build exactly what Cargo.lock pins (a git dep's locked SHA,
       # not a re-resolve of its tag); a stale lockfile fails loudly here.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
 
   contract:
     name: contract
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       # Full history: `buf breaking --against` compares the PR's contract to
       # the base branch's, which needs the base ref fetched.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
       # Pinned buf CLI (a Go binary; no JVM, no registry, no BUF_TOKEN — the
       # google/api deps are vendored in-tree).
-      - uses: bufbuild/buf-setup-action@v1
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
           github_token: ${{ github.token }}
@@ -69,7 +149,7 @@ jobs:
       # fail on any drift — the committed generated TS must match the corpus.
       # (The backend's generated module is drift-checked by the cargo test
       # job's contract_current test; this is its frontend twin.)
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: yarn
@@ -104,33 +184,55 @@ jobs:
             echo "base origin/${{ github.base_ref }} has no contract corpus (bootstrap) — breaking gate skipped"
           fi
 
+  # Licences, bans and sources always count. Advisories count only when the
+  # PR changes Cargo.lock (or detection can't tell); otherwise a newly
+  # published advisory reports here without failing unrelated PRs, and the
+  # daily Advisories workflow catches it on main.
   deny:
     name: deny
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # Matches the lockfile-assertion convention the other jobs use.
-          # --all-features: scan the full feature graph, not just default features.
+          persist-credentials: false
+      # --locked matches the other jobs' lockfile assertion; --all-features
+      # scans the full feature graph, not just default features. MPL-2.0
+      # (jacquard family) is Engineer-allowed in deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        with:
           arguments: --locked --all-features
-          # Full four-check set (advisories, licenses, bans, sources) —
-          # all green: every workspace crate sets `publish = false`, and
-          # MPL-2.0 (jacquard family) is Engineer-allowed in deny.toml.
+          command: check
+          command-arguments: bans licenses sources
+      - id: advisories
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        continue-on-error: ${{ needs.changes.outputs.lock == 'false' }}
+        with:
+          arguments: --locked --all-features
+          command: check
+          command-arguments: advisories
+      - if: ${{ steps.advisories.outcome == 'failure' }}
+        run: |
+          echo "::warning::deny: an advisory matches a dependency this PR does not change; reported, not blocking. The daily Advisories run on main tracks it."
 
   typos:
     name: typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
   nodes:
     name: nodes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
       # The design corpus (ZurNetwork/zurfur-design) is a private sibling repo,
       # never checked out here — $ZURFUR_DESIGN_DIR stays absent in CI, so this
       # prints a skip notice rather than failing (see scripts/design-index-check.sh).
@@ -146,21 +248,34 @@ jobs:
     name: hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
       # Fixture-driven; needs no live Claude session, no `nodes`/`jq` install
       # beyond what design-refs.sh's own tests stub or skip.
       - run: just hooks-test
+      # Fixture tests for the CI path classifier, gate-light and pr-wait.
+      - run: just scripts-test
+      # Every action pinned to a commit SHA, and the workflows' typos,
+      # cargo-deny and buf versions equal to the Justfile's pins.
+      - run: just tools-check --pins-only
+      # The TOML files the `changes` job lets skip the Rust jobs still parse.
+      - run: just toml-check
 
   web:
     name: web
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # Node 24 (current LTS): vite 8 requires >= 20.19; spec-lint's pin stays untouched.
           node-version: '24'
