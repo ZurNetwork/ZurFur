@@ -127,6 +127,19 @@ impl From<sql::ListForUserRow> for AccountFields {
     }
 }
 
+impl From<sql::ListDeactivatedForOwnerRow> for AccountFields {
+    fn from(row: sql::ListDeactivatedForOwnerRow) -> Self {
+        Self {
+            id: row.id,
+            handle: row.handle,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            deleted_at: Some(row.deleted_at),
+        }
+    }
+}
+
 /// Rebuild a domain [`Account`] from its `find` row. See [`build_account`].
 fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
     build_account(row.into())
@@ -374,6 +387,17 @@ impl AccountStore for PgAccountStore {
                 let alias = row.alias.clone();
                 to_account_membership(row, role, alias)
             })
+            .collect()
+    }
+
+    /// Every deactivated account `owner` holds the Owner role in, ordered by
+    /// id; each row re-validated.
+    async fn list_deactivated_for_owner(&self, owner: &UserId) -> anyhow::Result<Vec<Account>> {
+        let owner_role = <&'static str>::from(Role::Owner);
+        sql::list_deactivated_for_owner(&self.pool, owner.as_ref(), owner_role)
+            .await?
+            .into_iter()
+            .map(|row| build_account(AccountFields::from(row)))
             .collect()
     }
 }

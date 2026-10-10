@@ -11,6 +11,7 @@ mod actor_identity;
 mod character;
 mod commission;
 mod file_store;
+pub mod fixture;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
@@ -23,6 +24,7 @@ pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
 use workflow::{StoredColumn, StoredWorkflow};
 
+pub(crate) use character::StoredCharacter;
 pub(crate) use commission::{
     StoredChangelogEntry, StoredCommission, StoredElement, StoredSeat, StoredSeatInvitation,
     StoredSlot, StoredTab,
@@ -57,7 +59,7 @@ use domain::elements::{
     workflow::{ColumnId, WorkflowId},
 };
 use domain::ports::DidBelongsToAnotherActor;
-use domain::ports::character::CharacterWrites;
+use domain::ports::character::{CharacterStore, CharacterWrites};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
     ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites,
@@ -139,9 +141,9 @@ pub struct MemBackend {
     /// [`StoredActorIdentity`] parts keyed by [`ActorIdentityId`]. Staged; rows
     /// are immortal — no write here removes one.
     pub(crate) actor_identities: Arc<Mutex<HashMap<ActorIdentityId, StoredActorIdentity>>>,
-    /// Characters keyed by [`CharacterId`]; staged, so creation commits with
-    /// the rest of the unit.
-    pub(crate) characters: Arc<Mutex<HashMap<CharacterId, Character>>>,
+    /// [`StoredCharacter`] parts keyed by [`CharacterId`]; staged, so creation
+    /// commits with the rest of the unit.
+    pub(crate) characters: Arc<Mutex<HashMap<CharacterId, StoredCharacter>>>,
 }
 
 impl MemBackend {
@@ -179,6 +181,11 @@ impl MemBackend {
     /// The [`ColumnStore`] read port over this backend's shared state.
     pub fn column_store(&self) -> Arc<dyn ColumnStore> {
         Arc::new(MemColumnStore(self.clone()))
+    }
+
+    /// The [`CharacterStore`] read port over this backend's shared state.
+    pub fn character_store(&self) -> Arc<dyn CharacterStore> {
+        Arc::new(MemCharacterStore(self.clone()))
     }
 
     /// The [`ProfileCache`] read port over this backend's shared state.
@@ -649,6 +656,30 @@ impl MemBackend {
                     deleted_at: Some(now),
                 },
             );
+    }
+
+    /// Create a Character (seed).
+    pub async fn create_character(&self, character: Character) -> anyhow::Result<Character> {
+        MemCharacterWrites(self.clone()).create(character).await
+    }
+
+    /// Seed a tombstoned Character (test-only) by inserting its row directly —
+    /// there is no tombstone write path yet. Overwrites any Character with the
+    /// same id.
+    pub fn seed_tombstoned_character(&self, character: Character) {
+        let stored = StoredCharacter {
+            character: character.clone(),
+            tombstoned_at: Some(Utc::now()),
+        };
+        self.characters
+            .lock()
+            .expect("MemBackend characters mutex poisoned")
+            .insert(character.id, stored);
+    }
+
+    /// Store a profile in the read-through cache (seed).
+    pub async fn put_profile(&self, profile: &Profile) -> anyhow::Result<()> {
+        MemProfileCache(self.clone()).put(profile).await
     }
 
     /// Seat or replace a member's role (test seed).
@@ -1154,6 +1185,37 @@ impl AccountStore for MemAccountStore {
                 .cmp(&right.account.id.to_string())
         });
         Ok(rows)
+    }
+
+    /// Scan `owner`'s Owner memberships and keep the accounts whose row is
+    /// soft-deleted, sorted by the account's DID by byte value.
+    async fn list_deactivated_for_owner(&self, owner: &UserId) -> anyhow::Result<Vec<Account>> {
+        let accounts = self
+            .0
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned");
+        let memberships = self
+            .0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned");
+
+        let mut deactivated: Vec<Account> = memberships
+            .iter()
+            .filter(|((_, member_user), membership)| {
+                member_user == owner && membership.role == Role::Owner
+            })
+            .filter_map(|((account_id, _), _)| {
+                let stored = accounts.get(account_id)?;
+                stored
+                    .deleted_at
+                    .is_some()
+                    .then(|| account_from(account_id.clone(), stored))
+            })
+            .collect();
+        deactivated.sort_by_key(|account| account.id.to_string());
+        Ok(deactivated)
     }
 }
 
@@ -1721,15 +1783,20 @@ fn rebuild_account(id: AccountId, stored: &StoredAccount) -> Option<Account> {
     if stored.deleted_at.is_some() {
         return None;
     }
-    let account = Account {
+    Some(account_from(id, stored))
+}
+
+/// Rebuild an [`Account`] from its stored parts whatever its state; only the
+/// deactivated read may hand a soft-deleted one out.
+fn account_from(id: AccountId, stored: &StoredAccount) -> Account {
+    Account {
         id,
         handle: stored.handle.clone(),
         name: stored.name.clone(),
         created_at: stored.created_at,
         updated_at: stored.updated_at,
         deleted_at: stored.deleted_at,
-    };
-    Some(account)
+    }
 }
 
 /// Rebuild an [`Invitation`] from its stored parts.
