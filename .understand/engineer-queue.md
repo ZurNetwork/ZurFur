@@ -1,14 +1,15 @@
 # The Engineer's queue
 
 Kept by the Orchestrator. **The item at the top blocks the most work.** Each item is one specific task.
-**Every question already carries Claude's answer.** Adjust any answer you disagree with, in the file or in chat. One-way doors are marked; they wait for your review. Last updated: 2026-10-10.
+**Every question already carries Claude's answer.** Adjust any answer you disagree with, in the file or in chat. One-way doors are marked; they wait for your review. Last updated: 2026-10-10 (0.1 signed; Phase 1 building).
 
 ---
 
-**1. Sign release 0.1.** *Every decision is answered: you ruled them all by phone on 2026-10-09 (recorded in `.understand/releases/0.1/rulings-2026-10-09.md`). The PDD v5, TDD v4 and plan v4 fold them in. The build starts when you sign.*
-1. **Open** `.understand/releases/0.1/pdd.pdf` (version 5) → "In one page" and "What changed in version 5".
-   Done when: it matches what you ruled.
-2. **Tell me** "signed", or name what's wrong.
+**1. Reconnect the board, then merge four PRs.** *The new `board` is installed (2026-10-10). Trunk mode turns on once #252 is merged, because until then the trunk's config lacks the compliance, architects and security teams, and they'd close.*
+1. **Run** `/mcp` → `plugin:agent-board:board` → Reconnect.
+   Done when: `board sync --help` works in this session's tools.
+2. **Merge** #252 (three teams), #244 (the Rust pin; Internal's CI PR stacks on it), then #236, #237 and #250 into `main`.
+   Done when: all five show as merged. I then turn on trunk mode and restack what sits on them.
 
 **2. Click through the Explorer shell, on fake data.** *The UI you asked for. QA'd by Crow and cleared by Heron. PRs #245 → #246 → #247 → #248 → #249 are open. Copilot recommends approval on all but #247, which has one last fix in progress. I'll put the five up for merging, in order, once that fix is verified.* I set up a workspace of your own, with the web dependencies installed.
 1. **Run** `cd ~/code/zurfur-workspaces/zuri && just dev-mock` (it already sits on the newest shell slice)
