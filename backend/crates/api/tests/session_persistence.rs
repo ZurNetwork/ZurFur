@@ -96,12 +96,15 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     // Capture the session cookie the server minted. Replaying it by hand against a
     // fresh client (no shared cookie jar) is exactly a browser hitting a restarted
     // server: only what Postgres persisted can carry the session across.
+    // The callback also clears the sign-in's browser-binding cookie, so pick the
+    // session cookie as the one that is not it.
     let set_cookie = callback
         .headers()
-        .get("set-cookie")
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|cookie| !cookie.starts_with("zurfur.signin="))
         .expect("sign-in mints a session cookie")
-        .to_str()
-        .expect("cookie header is valid text")
         .to_string();
     let cookie = set_cookie
         .split(';')

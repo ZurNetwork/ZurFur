@@ -1,14 +1,16 @@
 //! [`AtprotoAuthenticator`]: OAuth sign-in against the visitor's PDS, on the
 //! identity resolver. `start` resolves the handle both ways, checks the
 //! authorization endpoint before the Pushed Authorization Request, and binds the
-//! DID to the request; `complete` refuses a sign-in as any other account and
-//! never leaves a failed sign-in's session stored.
+//! DID and the browser to the request; `complete` lets one callback claim the
+//! sign-in, refuses a callback from any other browser and a sign-in as any other
+//! account, and never leaves a failed sign-in's session stored.
 
 mod jacquard_bridge;
 
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use fluent_uri::Uri;
 use jacquard_common::{session::SessionStoreError, types::did::Did as AtDid};
 use jacquard_oauth::{
@@ -22,13 +24,15 @@ use jacquard_oauth::{
     session::ClientData,
     types::CallbackParams,
 };
+use rand::RngCore as _;
+use sha2::{Digest as _, Sha256};
 use smol_str::SmolStr;
 use sqlx::PgPool;
 
 use domain::elements::{did::Did, handle::AtHandle};
-use domain::ports::{AccountMismatch, Authenticator, ResolveError};
+use domain::ports::{AccountMismatch, Authenticator, BrowserBinding, ResolveError, SigninStarted};
 
-use crate::auth_store::AtprotoAuthStore;
+use crate::auth_store::{AtprotoAuthStore, StoredBinding};
 use crate::guarded_http::{Causes, PublicHttpsUrl, UrlPolicyError};
 use crate::resolver::AtprotoIdentityResolver;
 use crate::secret_vault::SecretVault;
@@ -37,6 +41,10 @@ use jacquard_bridge::JacquardBridge;
 /// OAuth scopes requested at sign-in: the base `atproto` scope plus the
 /// transitional `transition:generic` grant for the legacy XRPC surface.
 const OAUTH_SCOPES: &str = "atproto transition:generic";
+
+/// How long a started sign-in stays valid, and so its browser token: the
+/// cookie's lifetime and the age past which the callback is refused.
+const SIGNIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 /// The jacquard OAuth client sign-in drives, over the bridge and the
 /// Postgres-backed store. Private, so the protocol type never leaves the crate.
@@ -117,9 +125,9 @@ impl AtprotoAuthenticator {
 }
 
 impl Signin {
-    /// Resolve and bind, check the endpoint, push the request, save it, and
-    /// return where to send the visitor.
-    async fn begin(&self, handle: &AtHandle) -> Result<String, SigninFailure> {
+    /// Resolve and bind, check the endpoint, push the request, save it bound
+    /// to a fresh browser token, and return where to send the visitor.
+    async fn begin(&self, handle: &AtHandle) -> Result<SigninStarted, SigninFailure> {
         let (did, document) = self
             .resolver
             .confirm_handle(handle)
@@ -152,33 +160,43 @@ impl Signin {
         // Bind the DID: the callback must sign in as exactly this account.
         let bound = AtDid::new_owned(did.as_ref()).map_err(|_| SigninFailure::UnusableDid)?;
         request.account_did = Some(bound);
+        // Bind the browser: only the hash is stored, the token goes to the browser.
+        let token = new_browser_token();
         self.oauth
             .registry
             .store
-            .save_auth_req_info(&request)
+            .save_bound_auth_request(&request, &token_hash(&token))
             .await
             .map_err(SigninFailure::Store)?;
 
         let client_id = metadata.client_metadata.client_id.as_str();
-        let url = authorization_url(authorization_endpoint, client_id, &request.request_uri);
-        Ok(url)
+        let authorization_url =
+            authorization_url(authorization_endpoint, client_id, &request.request_uri);
+        let started = SigninStarted {
+            authorization_url,
+            browser_binding: BrowserBinding::from(token),
+            lifetime: SIGNIN_LIFETIME,
+        };
+        Ok(started)
     }
 
-    /// Run the callback under its deadline, then clean up outside it. A failure
-    /// of an attempt that found its own auth request deletes whatever session is
-    /// stored under `state`; another account's tokens are revoked after its
-    /// session is gone. An attempt that found no request deletes nothing: its
-    /// `state` may be a finished sign-in's, replayed.
+    /// Run the callback under its deadline, then clean up outside it. Only the
+    /// attempt that claimed the sign-in can have saved a session under `state`,
+    /// so any failure of that attempt, its deadline included, deletes every
+    /// session stored there; another account's session is deleted and its
+    /// tokens then revoked. An attempt that never claimed deletes nothing: its
+    /// `state` is a finished sign-in's, replayed, or another attempt's.
     async fn complete(
         &self,
         code: String,
         state: Option<String>,
         iss: Option<String>,
+        browser_binding: Option<BrowserBinding>,
         deadlines: Deadlines,
     ) -> Result<Did, SigninFailure> {
         let session_id = state.clone();
-        let mut found_request = false;
-        let finishing = self.finish(code, state, iss, &mut found_request);
+        let mut claimed = false;
+        let finishing = self.finish(code, state, iss, browser_binding, &mut claimed);
         let finished = tokio::time::timeout(deadlines.complete, finishing)
             .await
             .unwrap_or(Err(SigninFailure::Deadline));
@@ -189,7 +207,7 @@ impl Signin {
                 self.revoke(session, deadlines.revoke).await;
                 SigninFailure::AccountMismatch
             }
-            Err(failure) if found_request => {
+            Err(failure) if claimed => {
                 self.discard(session_id.as_deref(), deadlines.cleanup).await;
                 failure
             }
@@ -199,20 +217,25 @@ impl Signin {
         Err(failure)
     }
 
-    /// Read the bound DID, then run jacquard's callback (which saves the
-    /// session it gets) and say whose account signed in. Sets `found_request`
-    /// once this attempt has found its own auth request.
+    /// Claim the sign-in for this browser, read the bound DID, then run
+    /// jacquard's callback (which saves the session it gets) and say whose
+    /// account signed in. Sets `claimed` once this attempt owns the sign-in.
     async fn finish(
         &self,
         code: String,
         state: Option<String>,
         iss: Option<String>,
-        found_request: &mut bool,
+        browser_binding: Option<BrowserBinding>,
+        claimed: &mut bool,
     ) -> Result<Completed, SigninFailure> {
         let state = state.ok_or(SigninFailure::UnknownState)?;
-        // Read before the callback: jacquard deletes the request inside it.
+        // Both before any code exchange; read before the callback, which
+        // deletes the request.
+        self.claim_browser(&state, browser_binding.as_ref()).await?;
+        // No other attempt can run the callback for `state` now, so any session
+        // stored under it is this attempt's.
+        *claimed = true;
         let bound = self.bound_account(&state).await?;
-        *found_request = true;
         let params = CallbackParams {
             code: code.into(),
             state: Some(state.into()),
@@ -229,6 +252,55 @@ impl Signin {
         }
         let did = Did::from(signed_in.as_str().to_owned());
         Ok(Completed::SignedIn(did))
+    }
+
+    /// Refuse unless `presented` is the token bound to `state`'s live request,
+    /// compared by hash in constant time, then claim the sign-in. A refused
+    /// request is deleted, so nothing can complete it later; one another
+    /// callback has claimed is left to that callback.
+    async fn claim_browser(
+        &self,
+        state: &str,
+        presented: Option<&BrowserBinding>,
+    ) -> Result<(), SigninFailure> {
+        let store = &self.oauth.registry.store;
+        let binding = store
+            .browser_binding(state, SIGNIN_LIFETIME)
+            .await
+            .map_err(SigninFailure::Store)?;
+        let refusal = match (presented, binding) {
+            (_, StoredBinding::Claimed) => return Err(SigninFailure::Claimed),
+            (Some(token), StoredBinding::Bound(stored))
+                if hashes_match(&token_hash(token.as_ref()), &stored) =>
+            {
+                return self.claim(state, &stored).await;
+            }
+            (None, _) => SigninFailure::NoBrowserBinding,
+            (Some(_), StoredBinding::Gone) => SigninFailure::StaleSignin,
+            (Some(_), StoredBinding::Bound(_)) => SigninFailure::BrowserMismatch,
+        };
+        store
+            .delete_auth_req_info(state)
+            .await
+            .map_err(SigninFailure::Store)?;
+        Err(refusal)
+    }
+
+    /// Consume `state`'s browser binding, still `stored`, in one conditional
+    /// statement: of callbacks racing on it, exactly one clears it and owns the
+    /// sign-in. A loser deletes nothing, since the request is the winner's.
+    async fn claim(&self, state: &str, stored: &[u8]) -> Result<(), SigninFailure> {
+        let won = self
+            .oauth
+            .registry
+            .store
+            .claim_browser_binding(state, stored)
+            .await
+            .map_err(SigninFailure::Store)?;
+        if !won {
+            return Err(SigninFailure::Claimed);
+        }
+        Ok(())
     }
 
     /// The DID `start` bound to `state`. A request without one fails closed,
@@ -282,9 +354,10 @@ impl Signin {
 #[async_trait]
 impl Authenticator for AtprotoAuthenticator {
     /// Resolve `handle` both ways, check the PDS and its authorization endpoint,
-    /// run the Pushed Authorization Request with the DID bound, and return the
-    /// authorization URL. Every failure is one error, logged by class only.
-    async fn start(&self, handle: &AtHandle) -> anyhow::Result<String> {
+    /// run the Pushed Authorization Request with the DID and a fresh browser
+    /// token bound, and return the authorization URL and that token. Every
+    /// failure is one error, logged by class only.
+    async fn start(&self, handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         let started = tokio::time::timeout(self.deadlines.start, self.signin.begin(handle))
             .await
             .unwrap_or(Err(SigninFailure::Deadline));
@@ -296,17 +369,24 @@ impl Authenticator for AtprotoAuthenticator {
 
     /// Exchange the callback params for tokens and return the signed-in DID,
     /// which must be the DID `start` bound: another account is deleted, revoked
-    /// and refused with [`AccountMismatch`]. Runs in its own task, so a dropped
-    /// request cannot cut the cleanup short.
+    /// and refused with [`AccountMismatch`]. Refused before any code exchange
+    /// unless `browser_binding` is this sign-in's token and no other callback
+    /// claimed the sign-in first. Runs in its own task, so a dropped request
+    /// cannot cut the cleanup short.
     async fn complete(
         &self,
         code: String,
         state: Option<String>,
         iss: Option<String>,
+        browser_binding: Option<BrowserBinding>,
     ) -> anyhow::Result<Did> {
         let signin = self.signin.clone();
         let deadlines = self.deadlines;
-        let task = tokio::spawn(async move { signin.complete(code, state, iss, deadlines).await });
+        let task = tokio::spawn(async move {
+            signin
+                .complete(code, state, iss, browser_binding, deadlines)
+                .await
+        });
         let finished = task.await.unwrap_or_else(|join| {
             let failure = SigninFailure::Task(join);
             log_failure(&failure);
@@ -350,6 +430,18 @@ enum SigninFailure {
     /// The callback named no stored auth request.
     #[error("unknown sign-in state")]
     UnknownState,
+    /// The callback carried no browser token.
+    #[error("no browser binding")]
+    NoBrowserBinding,
+    /// No live sign-in is bound under this state: unknown, expired or unbound.
+    #[error("no live bound sign-in")]
+    StaleSignin,
+    /// The browser's token is not the one bound to this sign-in.
+    #[error("browser binding mismatch")]
+    BrowserMismatch,
+    /// Another callback for this sign-in claimed it first.
+    #[error("sign-in already claimed")]
+    Claimed,
     /// The stored auth request has no bound DID.
     #[error("sign-in has no bound account")]
     Unbound,
@@ -379,6 +471,33 @@ enum SigninFailure {
 fn log_failure(failure: &SigninFailure) {
     tracing::info!(failure = %failure, "sign-in failed");
     tracing::debug!(cause = %Causes(failure), "sign-in failure cause");
+}
+
+/// A fresh browser token: 256 random bits from the OS, base64url, unpadded.
+fn new_browser_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// The SHA-256 of a browser token: all that is stored of it.
+fn token_hash(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
+}
+
+/// Whether `stored` is `presented`. Both are SHA-256 digests, so even a
+/// timing difference reveals only digest bytes of the caller's own input,
+/// never the token; the branch-free fold is defence in depth (`black_box` is
+/// best effort). A stored value of any other length never matches.
+fn hashes_match(presented: &[u8; 32], stored: &[u8]) -> bool {
+    let Ok(stored) = <&[u8; 32]>::try_from(stored) else {
+        return false;
+    };
+    let difference = presented
+        .iter()
+        .zip(stored)
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right));
+    std::hint::black_box(difference) == 0
 }
 
 /// The PDS as jacquard compares it with the protected resource's `resource`:

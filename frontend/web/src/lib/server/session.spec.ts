@@ -50,13 +50,20 @@ describe('sessionOrAnonymous', () => {
 });
 
 describe('signinOutcome', () => {
-	it('carries the authorize location on success', async () => {
+	it('carries the authorize location and the browser-binding cookie on success', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const browserBinding = {
+			name: 'zurfur.signin' as const,
+			value: 'token',
+			maxAge: 600,
+			secure: false
+		};
+		const started = { location: authorizeUrl, browserBinding };
 		const outcome = await runTest(
-			{ startSignin: () => Effect.succeed(authorizeUrl) },
+			{ startSignin: () => Effect.succeed(started) },
 			signinOutcome('alice.zurfur.app')
 		);
-		expect(outcome).toEqual({ location: authorizeUrl });
+		expect(outcome).toEqual({ location: authorizeUrl, browserBinding });
 	});
 
 	it('carries the problem when the backend rejects the handle', async () => {

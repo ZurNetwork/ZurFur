@@ -22,6 +22,8 @@ const API_PREFIX = '/api/v1';
 
 /**
  * The ONLY cookie ever forwarded to the upstream: the host-only session cookie.
+ * Never the sign-in's browser-binding cookie, which reaches the backend only on
+ * `/signin-callback`, a browser navigation Caddy proxies to axum directly.
  * Named once so the filter below and any future caller can't drift apart —
  * exported so the mock `ZurfurApi` Layer (`zurfur-api-mock.ts`)
  * reports the same name `signout` clears, rather than a hand-copied literal.

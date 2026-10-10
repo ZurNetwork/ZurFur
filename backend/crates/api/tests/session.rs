@@ -5,13 +5,14 @@
 //! session store (`MemoryStore`) — so these assert the *route* behavior, not the
 //! storage tech (`PgSessionStore` is exercised in adapter-pg's own tests).
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use adapter_mem::{MemAuthenticator, MemProfileSource};
 use api::AppState;
 use async_trait::async_trait;
 use domain::{
     elements::{did::Did, handle::AtHandle, profile::Profile},
-    ports::{AccountMismatch, Authenticator, ResolveError},
+    ports::{AccountMismatch, Authenticator, BrowserBinding, ResolveError, SigninStarted},
 };
 use test_support::http::{client, sign_in};
 
@@ -38,12 +39,24 @@ struct FailingAuthenticator {
     fail_at: FailAt,
 }
 
+/// What every stand-in authenticator's successful `start` answers.
+fn started() -> SigninStarted {
+    SigninStarted {
+        authorization_url: "/signin-callback?code=test".to_string(),
+        browser_binding: BrowserBinding::from(BINDING.to_string()),
+        lifetime: Duration::from_secs(600),
+    }
+}
+
+/// The browser token the stand-ins hand out.
+const BINDING: &str = "test-browser-binding";
+
 #[async_trait]
 impl Authenticator for FailingAuthenticator {
-    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<String> {
+    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         match self.fail_at {
             FailAt::Start(cause) => Err(cause()),
-            FailAt::Complete | FailAt::WrongAccount => Ok("/signin-callback?code=test".to_string()),
+            FailAt::Complete | FailAt::WrongAccount => Ok(started()),
         }
     }
 
@@ -52,6 +65,7 @@ impl Authenticator for FailingAuthenticator {
         _code: String,
         _state: Option<String>,
         _iss: Option<String>,
+        _browser_binding: Option<BrowserBinding>,
     ) -> anyhow::Result<Did> {
         match self.fail_at {
             FailAt::WrongAccount => Err(anyhow::Error::new(AccountMismatch)),
@@ -60,24 +74,30 @@ impl Authenticator for FailingAuthenticator {
     }
 }
 
-/// An [`Authenticator`] that records every handle `start` receives and then
-/// succeeds, so a test can see what the route passed on, or that it passed nothing.
+/// An [`Authenticator`] that records every handle `start` receives and every
+/// browser token `complete` receives, then succeeds, so a test can see what the
+/// route passed on, or that it passed nothing.
 #[derive(Default)]
 struct RecordingAuthenticator {
     started: Mutex<Vec<String>>,
+    presented: Mutex<Vec<Option<String>>>,
 }
 
 impl RecordingAuthenticator {
     fn started(&self) -> Vec<String> {
         self.started.lock().expect("lock").clone()
     }
+
+    fn presented(&self) -> Vec<Option<String>> {
+        self.presented.lock().expect("lock").clone()
+    }
 }
 
 #[async_trait]
 impl Authenticator for RecordingAuthenticator {
-    async fn start(&self, handle: &AtHandle) -> anyhow::Result<String> {
+    async fn start(&self, handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         self.started.lock().expect("lock").push(handle.to_string());
-        Ok("/signin-callback?code=test".to_string())
+        Ok(started())
     }
 
     async fn complete(
@@ -85,7 +105,10 @@ impl Authenticator for RecordingAuthenticator {
         _code: String,
         _state: Option<String>,
         _iss: Option<String>,
+        browser_binding: Option<BrowserBinding>,
     ) -> anyhow::Result<Did> {
+        let token = browser_binding.map(|binding| binding.as_ref().to_owned());
+        self.presented.lock().expect("lock").push(token);
         Ok(Did::from(DID.to_string()))
     }
 }
@@ -539,4 +562,136 @@ async fn signin_callback_wrong_account_redirects_to_login_account_mismatch() {
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
     assert_eq!(res.headers()["location"], "/login?error=account_mismatch");
+}
+
+// --- the browser-binding cookie -------------------------------------------------
+
+/// Every `Set-Cookie` on `res` for the browser-binding cookie.
+fn binding_cookies(res: &reqwest::Response) -> Vec<String> {
+    res.headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter(|cookie| cookie.starts_with("zurfur.signin="))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The `Set-Cookie` that clears the browser-binding cookie in dev.
+const CLEARED: &str = "zurfur.signin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+
+#[tokio::test]
+async fn signin_sets_the_browser_binding_cookie() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+
+    let res = post_signin(&base, "alice.bsky.social").await;
+
+    assert_eq!(res.status(), 303);
+    let expected = vec![format!(
+        "zurfur.signin={BINDING}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600"
+    )];
+    assert_eq!(
+        binding_cookies(&res),
+        expected,
+        "dev serves plain HTTP: no Secure"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_signin_sets_no_cookie() {
+    let auth = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::Start(|| anyhow::anyhow!("refused")),
+    });
+    let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+
+    let res = post_signin(&base, "alice.bsky.social").await;
+
+    assert_eq!(res.status(), 422);
+    assert!(binding_cookies(&res).is_empty());
+}
+
+#[tokio::test]
+async fn the_callback_hands_the_cookie_to_complete_and_clears_it() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+
+    let res = client()
+        .get(format!("{base}/signin-callback?code=test&state=s"))
+        .header(
+            reqwest::header::COOKIE,
+            "other=1; zurfur.signin=from-the-browser",
+        )
+        .send()
+        .await
+        .expect("GET /signin-callback");
+
+    assert_eq!(res.status(), 303);
+    assert_eq!(res.headers()["location"], "/");
+    assert_eq!(binding_cookies(&res), vec![CLEARED.to_string()]);
+    let expected_presented = vec![Some("from-the-browser".to_string())];
+    assert_eq!(auth.presented(), expected_presented);
+}
+
+#[tokio::test]
+async fn a_callback_without_the_cookie_presents_none() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+
+    let res = client()
+        .get(format!("{base}/signin-callback?code=test&state=s"))
+        .header(reqwest::header::COOKIE, "zurfur.sid=whatever")
+        .send()
+        .await
+        .expect("GET /signin-callback");
+
+    assert_eq!(res.status(), 303);
+    assert_eq!(auth.presented(), vec![None]);
+}
+
+#[tokio::test]
+async fn every_callback_failure_clears_the_cookie() {
+    let wrong_account = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::WrongAccount,
+    });
+    let exchange_failed = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::Complete,
+    });
+    let cases: [(Arc<dyn Authenticator>, &str, &str); 4] = [
+        (wrong_account, "code=test", "/login?error=account_mismatch"),
+        (exchange_failed, "code=test", "/login?error=exchange_failed"),
+        (
+            Arc::new(RecordingAuthenticator::default()),
+            "error=access_denied",
+            "/login?error=denied",
+        ),
+        (
+            Arc::new(RecordingAuthenticator::default()),
+            "state=s",
+            "/login?error=invalid_callback",
+        ),
+    ];
+    for (auth, query, location) in cases {
+        let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+        let res = client()
+            .get(format!("{base}/signin-callback?{query}"))
+            .header(reqwest::header::COOKIE, "zurfur.signin=from-the-browser")
+            .send()
+            .await
+            .expect("GET /signin-callback");
+        assert_eq!(res.headers()["location"], location);
+        assert_eq!(
+            binding_cookies(&res),
+            vec![CLEARED.to_string()],
+            "{location} clears the cookie"
+        );
+    }
 }

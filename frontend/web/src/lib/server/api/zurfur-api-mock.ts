@@ -186,9 +186,17 @@ function mockMe(store: MockStore): ZurfurApiShape['me'] {
 	);
 }
 
-/** `startSignin`: never dials a PDS — hands back {@link MOCK_SIGNIN_PATH}, which the login form's existing redirect-to-`location` handling already knows how to follow. */
+/** `startSignin`: never dials a PDS — hands back {@link MOCK_SIGNIN_PATH}, which the login form's existing redirect-to-`location` handling already knows how to follow, and a fixed browser-binding cookie nothing checks. */
 function mockStartSignin(requestedHandle: string): ReturnType<ZurfurApiShape['startSignin']> {
-	return Effect.succeed(`${MOCK_SIGNIN_PATH}?handle=${encodeURIComponent(requestedHandle)}`);
+	return Effect.succeed({
+		location: `${MOCK_SIGNIN_PATH}?handle=${encodeURIComponent(requestedHandle)}`,
+		browserBinding: {
+			name: 'zurfur.signin',
+			value: 'mock-browser-binding',
+			maxAge: 600,
+			secure: false
+		}
+	});
 }
 
 /** `signout`: clears the store's session; succeeds with the one cookie name the real backend clears (`logout`'s action reads names off this return). */

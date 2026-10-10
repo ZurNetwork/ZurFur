@@ -45,7 +45,7 @@
     },
     {
       "name": "login/",
-      "role": "sign-in screen: handle form action → PDS redirect; callback-errors.ts maps axum's ?error= codes to copy",
+      "role": "sign-in screen: handle form action → sets the backend's browser-binding cookie (Path=/, HttpOnly, SameSite=Lax; name, Secure and Max-Age as the backend set them) → PDS redirect; callback-errors.ts maps axum's ?error= codes to copy",
       "node": false
     },
     {

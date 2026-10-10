@@ -3,7 +3,7 @@
 //! [`Config`], stands up Postgres, runs migrations, assembles [`AppState`],
 //! mounts [`api::app`], and serves.
 
-use api::{AppState, Config, Environment};
+use api::{AppState, Config};
 use tower_sessions::{
     Expiry, SessionManagerLayer,
     cookie::{SameSite, time},
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %http_addr, env = ?app_state.config.env, "starting HTTP server");
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
-    let secure_cookies = matches!(app_state.config.env, Environment::PROD | Environment::STG);
+    let secure_cookies = app_state.config.env.secure_cookies();
     let session_layer = SessionManagerLayer::new(store)
         .with_name("zurfur.sid")
         .with_http_only(true)
