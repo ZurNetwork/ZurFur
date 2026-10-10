@@ -1,4 +1,4 @@
-// The Reason's v1 surface: listing and creating Commissions, owner-POV only.
+// The Reason's v1 surface: creating Commissions.
 //
 // Only messages are generated; the service block declares routes only.
 // Every vocabulary here is a STRING with the known values documented (R8)
@@ -14,46 +14,14 @@ package zurfur.api.v1;
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
-// `GET /api/v1/commissions` takes no input; the session is the argument.
-message ListCommissionsRequest {}
-
 // `POST /api/v1/commissions` succeeds `201` with the created commission —
 // the bare resource, flat, exactly as CreateAccountResponse renders its
 // account (success bodies are bare resources, never wrapped). Minted at
 // `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
 // unable to navigate to what it just made — a client can only act on what
-// it is actually given. Field semantics are documented on `Commission`;
-// this is a dedicated message so the create response can evolve
-// independently of the listing row.
+// it is actually given. The content tree is deliberately absent, and so is
+// `owner`: the caller is the owner.
 message CreateCommissionResponse {
-  string id = 1;
-  string title = 2;
-  string lifecycle = 3;
-  string visibility = 4;
-  optional google.protobuf.Timestamp deadline = 5;
-  optional Maturity maturity = 6;
-  optional string direction_status = 7;
-  optional string deadline_status = 8;
-  optional string linked_channel = 9;
-  google.protobuf.Timestamp created_at = 10;
-}
-
-// A commission's maturity posture: the atproto self-label rating axis plus
-// the orthogonal graphic flag.
-message Maturity {
-  // Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
-  // `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
-  string rating = 1;
-  // The orthogonal graphic-content flag.
-  bool graphic = 2;
-}
-
-// One row of `GET /api/v1/commissions` — the envelope a listing renders.
-// The content tree is deliberately absent (the future single-commission
-// surface's job); `owner` is omitted because this endpoint is owner-POV only.
-// This is the FIRST place a Commission is serialized anywhere in the API —
-// the precedent later commission surfaces inherit.
-message Commission {
   // Opaque commission id (R6).
   string id = 1;
   // The commission's title.
@@ -78,11 +46,14 @@ message Commission {
   google.protobuf.Timestamp created_at = 10;
 }
 
-// `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
-message ListCommissionsResponse {
-  // The caller's owned, ACTIVE commissions (archived excluded), ascending by
-  // creation. Order is served — never derived from ids (R6).
-  repeated Commission commissions = 1;
+// A commission's maturity posture: the atproto self-label rating axis plus
+// the orthogonal graphic flag.
+message Maturity {
+  // Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
+  // `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
+  string rating = 1;
+  // The orthogonal graphic-content flag.
+  bool graphic = 2;
 }
 
 // `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
@@ -97,14 +68,6 @@ message CreateCommissionRequest {
 
 // The commissions service. Session-gated; Problems per problem.proto.
 service CommissionService {
-  // The caller's owned commissions, owner-POV only — a separate, later
-  // surface covers the non-participant projection.
-  rpc ListCommissions(ListCommissionsRequest) returns (ListCommissionsResponse) {
-    option (google.api.http) = {
-      get: "/api/v1/commissions"
-    };
-  }
-
   // Create a commission. `201` + the created commission, so the caller can
   // navigate straight to what it made — consistent with CreateAccount.
   rpc CreateCommission(CreateCommissionRequest) returns (CreateCommissionResponse) {

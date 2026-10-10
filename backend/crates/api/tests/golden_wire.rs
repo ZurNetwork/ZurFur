@@ -172,9 +172,8 @@ async fn account_wire_shapes() {
     );
 }
 
-/// The commission pair: create returns the created resource,
-/// list wraps; absent optionals omit keys; nested maturity is
-/// camelCase-clean.
+/// Commission creation: create returns the created resource; absent
+/// optionals omit keys; nested maturity is camelCase-clean.
 #[tokio::test]
 async fn commission_wire_shapes() {
     let _golden = golden().bind_to_scope();
@@ -206,20 +205,4 @@ async fn commission_wire_shapes() {
     // implicit-presence defaults omit too (§7.7); timestamps are
     // Z-normalized (§7.3); vocabulary stays lowercase (R8).
     insta::assert_json_snapshot!("commission_created", created);
-
-    // List: wrapped (R7).
-    let body: Value = c
-        .get(format!("{}/commissions", served.base_url))
-        .send()
-        .await
-        .expect("GET /commissions")
-        .json()
-        .await
-        .expect("json");
-    let rows = body["commissions"].as_array().expect("wrapped rows");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0], created,
-        "the listing row matches the created resource, shape-for-shape"
-    );
 }
