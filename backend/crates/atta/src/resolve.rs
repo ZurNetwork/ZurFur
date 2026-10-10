@@ -33,44 +33,68 @@ pub enum Error {
     Host(#[from] HostError),
 }
 
-/// What the viewer sees of a node they can see.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// What the viewer sees of a node they can see. Only a node they can open shows where it is,
+/// its own level and its kind; a card shows nothing beyond its entry's name and type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum View {
-    /// They can open it, and they see its own level.
+    /// They can open it.
     Open {
+        /// Its Den path from the viewer's root; empty for the root.
+        den_path: Vec<Segment>,
+        /// Where it really lives; never for the viewer's eyes.
+        real_path: RealPath,
         /// The node's own level; a mount shows its target's.
         own_level: Level,
+        /// Whether it is a directory or a file; a mount shows its target's.
+        kind: Kind,
     },
     /// They see a card: they may know it exists, but can't open it.
     Card,
 }
 
-/// One node as the viewer sees it, at a Den path.
+/// One node as the viewer sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Its Den path from the viewer's root; empty for the root.
-    pub den_path: Vec<Segment>,
-    /// Where it really lives; never for the viewer's eyes.
-    pub real_path: RealPath,
     /// Its display name; a mount shows its target's.
     pub name: NodeName,
     /// Its type; a mount shows its target's.
     pub typ: Type,
-    /// Whether it is a directory or a file; a mount shows its target's.
-    pub kind: Kind,
     /// Whether it is one of the viewer's mounts rather than a real child of its folder.
     pub mount: bool,
     /// What the viewer sees of it.
     pub view: View,
 }
 
-/// A typed Den path, resolved for the viewer.
+/// A typed Den path, resolved for one viewer. Only [`Resolver::resolve`] builds one, and
+/// [`Resolver::list`] lists it only for that viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
+    crumbs: Vec<Entry>,
+    node: Entry,
+    /// The viewer it was resolved for.
+    pub(crate) viewer: Viewer,
+    /// The directory to list, when the viewer can open the node and it is one.
+    pub(crate) folder: Option<Folder>,
+}
+
+/// What listing a resolved open directory needs: where it is, and the lifts that reach below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Folder {
+    pub(crate) den_path: Vec<Segment>,
+    pub(crate) real_path: RealPath,
+    pub(crate) below: Vec<Lift>,
+}
+
+impl Resolved {
     /// The folders above the node, the viewer's root first, down to its parent.
-    pub crumbs: Vec<Entry>,
+    pub fn crumbs(&self) -> &[Entry] {
+        &self.crumbs
+    }
+
     /// The node the path lands on.
-    pub node: Entry,
+    pub fn node(&self) -> &Entry {
+        &self.node
+    }
 }
 
 /// One node Atta has located on a real path, with what the viewer holds there.
@@ -136,8 +160,20 @@ impl Resolver<'_> {
             mount = next_mount;
         }
         self.enter(&current, true).await?;
+        let opens_as_directory =
+            current.access.level == Level::Public && self.kind(&current) == Kind::Directory;
+        let folder = opens_as_directory.then(|| Folder {
+            den_path: walked.clone(),
+            real_path: current.path.clone(),
+            below: current.below.clone(),
+        });
         let node = self.entry(&current, walked, mount);
-        let resolved = Resolved { crumbs, node };
+        let resolved = Resolved {
+            crumbs,
+            node,
+            viewer: self.viewer.clone(),
+            folder,
+        };
         Ok(resolved)
     }
 
@@ -255,17 +291,17 @@ impl Resolver<'_> {
         let metadata = &located.found.metadata;
         let view = if located.access.level == Level::Public {
             View::Open {
+                den_path,
+                real_path: located.path.clone(),
                 own_level: metadata.level,
+                kind: self.kind(located),
             }
         } else {
             View::Card
         };
         Entry {
-            den_path,
-            real_path: located.path.clone(),
             name: metadata.name.clone(),
             typ: metadata.typ.clone(),
-            kind: self.kind(located),
             mount,
             view,
         }
