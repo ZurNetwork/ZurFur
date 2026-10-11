@@ -1,8 +1,8 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { describe, expect, it } from 'vitest';
-import { sessionNoStore } from './session-cache';
+import { sessionHeaders } from './session-headers';
 
-type HandleInput = Parameters<typeof sessionNoStore>[0];
+type HandleInput = Parameters<typeof sessionHeaders>[0];
 
 /** Builds the response a stubbed `resolve` answers with (fresh per call: bodies are single-use). */
 type Respond = () => Response;
@@ -27,7 +27,7 @@ async function handleFor(visit: Visit, respond: Respond): Promise<Response> {
 	const event = { route: { id: visit.routeId }, request } as unknown as RequestEvent;
 	const resolve = () => Promise.resolve(respond());
 	const input: HandleInput = { event, resolve };
-	return await sessionNoStore(input);
+	return await sessionHeaders(input);
 }
 
 /** A signed-in visit to `routeId`. */
@@ -48,7 +48,7 @@ function notFoundResponse(): Response {
 	});
 }
 
-describe('sessionNoStore', () => {
+describe('sessionHeaders', () => {
 	// The root layout renders the visitor's handle, DID and avatar on every
 	// page, so a signed-in response is private wherever it lands.
 	it('marks a signed-in / private, no-store', async () => {
@@ -161,5 +161,39 @@ describe('sessionNoStore', () => {
 		const response = await handleFor(lookalike, pageResponse);
 
 		expect(response.headers.has('cache-control')).toBe(false);
+	});
+});
+
+describe('sessionHeaders: Referrer-Policy', () => {
+	it('sends same-origin on a signed-in Den page, so its address never reaches another site', async () => {
+		const response = await handleFor(signedIn('/(session)/den/[...path]'), pageResponse);
+
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
+	});
+
+	it('sends same-origin on a signed-in error page and redirect too', async () => {
+		const serverError = () => new Response('<p>Internal Error</p>', { status: 500 });
+		const seeOther = () => new Response(undefined, { status: 303, headers: { location: '/' } });
+
+		const errorPage = await handleFor(signedIn('/(session)/accounts'), serverError);
+		const redirect = await handleFor(signedIn('/(session)/logout'), seeOther);
+
+		expect(errorPage.headers.get('referrer-policy')).toBe('same-origin');
+		expect(redirect.headers.get('referrer-policy')).toBe('same-origin');
+	});
+
+	it('overrides a looser policy a signed-in page set', async () => {
+		const loose = () =>
+			new Response('<p>private</p>', { headers: { 'referrer-policy': 'unsafe-url' } });
+
+		const response = await handleFor(signedIn('/'), loose);
+
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
+	});
+
+	it('leaves an anonymous page alone', async () => {
+		const response = await handleFor({ routeId: '/', cookie: undefined }, pageResponse);
+
+		expect(response.headers.has('referrer-policy')).toBe(false);
 	});
 });

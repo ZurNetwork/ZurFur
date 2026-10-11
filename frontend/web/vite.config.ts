@@ -41,6 +41,13 @@ export default defineConfig({
 		projects: [
 			{
 				extends: './vite.config.ts',
+				// The browser tests' own server inherits `server` above, and with it
+				// `strictPort`; let it move to the next free port instead, so two
+				// workspaces can run their suites at once.
+				server: { strictPort: false },
+				// Optimized up front: a spec mocks through this entry, and finding it
+				// mid-run would make Vite reload the page under the test.
+				optimizeDeps: { include: ['sveltekit-superforms/client'] },
 				test: {
 					name: 'client',
 					browser: {

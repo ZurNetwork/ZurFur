@@ -22,6 +22,7 @@ import {
 import type { Session } from '$lib/api/session';
 import { SESSION_COOKIE_NAME } from '$lib/server/api-proxy';
 import { accountId, did, handle, handleFromTrusted, type Did } from '$lib/types/brand';
+import { mockDenRead } from './den-mock';
 import { ApiProblem, NotAuthenticated } from './errors';
 import { ZurfurApi, type ZurfurApiShape } from './zurfur-api';
 
@@ -261,7 +262,9 @@ function mockDeleteAccount(
 
 /**
  * The dev-mode Layer: the full {@link ZurfurApiShape} over `store` (the
- * shared singleton by default), six uniform `mock*`-named entries. Callers
+ * shared singleton by default): the `mock*`-named entries, plus the Den
+ * reads over the mock Den world (`den-mock.ts`), which reads this store's
+ * session and accounts. Callers
  * that run in a real server hold this Layer for the whole process
  * (`runtime.ts` builds it once at module scope) rather than
  * rebuilding it per request — safe because every entry below is already
@@ -277,7 +280,9 @@ export function zurfurApiMock(store: MockStore = sharedStore): Layer.Layer<Zurfu
 		signout: mockSignout(store),
 		listAccounts: mockListAccounts(store),
 		createAccount: (name, requestedHandle) => mockCreateAccount(store, name, requestedHandle),
-		deleteAccount: (id) => mockDeleteAccount(store, id)
+		deleteAccount: (id) => mockDeleteAccount(store, id),
+		denRoot: (query) => mockDenRead(store.session, store.accounts, [], query),
+		denNode: (path, query) => mockDenRead(store.session, store.accounts, path, query)
 	};
 	return Layer.succeed(ZurfurApi, shape);
 }

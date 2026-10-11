@@ -1,0 +1,52 @@
+import { page } from 'vitest/browser';
+import { describe, expect, it } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import Landing from './+page.svelte';
+import { did, handleFromTrusted } from '$lib/types/brand';
+
+describe('/ landing', () => {
+	it('shows the sign-in CTA when signed out', async () => {
+		render(Landing, { data: { session: undefined, denServed: false } });
+
+		await expect.element(page.getByTestId('signin-cta')).toHaveAttribute('href', '/login');
+	});
+
+	it('shows who is signed in (ruling 9b: / is the provisioning proof)', async () => {
+		const alice = {
+			did: did('did:plc:alice'),
+			handle: handleFromTrusted('alice.zurfur.app'),
+			displayName: 'Alice',
+			avatarUrl: undefined
+		};
+		render(Landing, { data: { session: alice, denServed: false } });
+
+		await expect
+			.element(page.getByTestId('signed-in-as'))
+			.toHaveTextContent('Signed in as alice.zurfur.app.');
+	});
+
+	it('offers "Open My Den" when signed in', async () => {
+		const alice = {
+			did: did('did:plc:alice'),
+			handle: handleFromTrusted('alice.zurfur.app'),
+			displayName: 'Alice',
+			avatarUrl: undefined
+		};
+		render(Landing, { data: { session: alice, denServed: true } });
+
+		await expect.element(page.getByTestId('open-my-den')).toHaveAttribute('href', '/den');
+	});
+
+	it('offers no way into My Den where this run serves none', async () => {
+		const alice = {
+			did: did('did:plc:alice'),
+			handle: handleFromTrusted('alice.zurfur.app'),
+			displayName: 'Alice',
+			avatarUrl: undefined
+		};
+		render(Landing, { data: { session: alice, denServed: false } });
+
+		await expect.element(page.getByTestId('signed-in-as')).toBeInTheDocument();
+		await expect.element(page.getByTestId('open-my-den')).not.toBeInTheDocument();
+	});
+});

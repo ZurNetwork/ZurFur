@@ -6,7 +6,7 @@ import { mockModeEnabled, mockSignin } from '$lib/server/api/zurfur-api-mock';
 /**
  * The mock sign-in callback: completes the login form's redirect
  * loop with no OAuth, no PDS, no backend. `/login`'s action
- * (`routes/login/+page.server.ts`) relays whatever URL `ZurfurApi.startSignin`
+ * (`routes/(public)/login/+page.server.ts`) relays whatever URL `ZurfurApi.startSignin`
  * hands back as a REAL navigation, unconditionally — it knows nothing about
  * mock mode. When mock mode is on, that URL happens to be this route's own
  * `MOCK_SIGNIN_PATH` (minted by `mockStartSignin`); this GET mints the

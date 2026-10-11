@@ -58,22 +58,29 @@ export function signinOutcome(
 	);
 }
 
-/** How a sign-out lands: cookie names to mirror-clear, or the status that broke it. */
-export type SignoutOutcome = { clearedCookies: readonly string[] } | { failedStatus: number };
+/**
+ * How a sign-out lands: the backend confirmed it (with the cookie names it
+ * cleared), or it didn't — it answered with a failure, or couldn't be reached.
+ */
+export type SignoutOutcome =
+	| { readonly clearedCookies: readonly string[] }
+	| { readonly unconfirmed: 'refused' | 'unreachable' };
 
 /**
  * End the session backend-side. Success carries the cookie names the backend
  * cleared (the action mirrors the clears onto the browser's response); a
- * non-redirect answer becomes `{failedStatus}` for the action's 502.
+ * failing answer or an unreachable backend is `{unconfirmed}`, never an
+ * error, so the action can still clear the browser's session.
  */
-export const signoutOutcome: Effect.Effect<SignoutOutcome, NetworkFailure, ZurfurApi> = Effect.gen(
+export const signoutOutcome: Effect.Effect<SignoutOutcome, never, ZurfurApi> = Effect.gen(
 	function* () {
 		const api = yield* ZurfurApi;
 		const clearedCookies = yield* api.signout;
 		return { clearedCookies } satisfies SignoutOutcome;
 	}
 ).pipe(
-	Effect.catchTag('SignoutFailed', ({ status }) =>
-		Effect.succeed<SignoutOutcome>({ failedStatus: status })
-	)
+	Effect.catchTags({
+		SignoutFailed: () => Effect.succeed<SignoutOutcome>({ unconfirmed: 'refused' }),
+		NetworkFailure: () => Effect.succeed<SignoutOutcome>({ unconfirmed: 'unreachable' })
+	})
 );
