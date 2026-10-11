@@ -279,3 +279,32 @@ async fn a_node_resolved_for_another_viewer_is_not_listed() {
         "{listed_for_bob:?}"
     );
 }
+
+#[tokio::test]
+async fn names_list_by_number_value_and_without_regard_to_case() {
+    let names = [
+        ("n1", "file10"),
+        ("n2", "File2"),
+        ("n3", "file2"),
+        ("n4", "file02"),
+        ("n5", "apple"),
+    ];
+    let host = names.iter().fold(
+        world().node("/user/alice/files", "folder", Level::Private, &[]),
+        |host, (key, name)| {
+            let at = format!("/user/alice/files/{key}");
+            host.node(&at, "file", Level::Private, &[]).named(&at, name)
+        },
+    );
+    let listing = list(&host, &["files"], 50, None)
+        .await
+        .expect("the folder resolves")
+        .expect("the folder lists");
+    let listed_names: Vec<String> = listing
+        .entries
+        .iter()
+        .map(|entry| entry.name.to_string())
+        .collect();
+    let expected_names = ["apple", "File2", "file02", "file2", "file10"];
+    assert_eq!(listed_names, expected_names);
+}

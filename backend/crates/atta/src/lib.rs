@@ -10,6 +10,7 @@ mod level;
 mod list;
 mod metadata;
 mod name;
+mod ordering;
 mod page;
 mod path;
 mod resolve;

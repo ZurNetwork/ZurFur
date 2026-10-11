@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     Admission, Entry, Error, Level, Listing, PageToken, Reach, Resolved, Resolver, Segment,
+    ordering::name_order,
     resolve::{Folder, Located},
 };
 
@@ -47,8 +48,7 @@ impl Resolver<'_> {
         };
         let mut ranked = self.visible_entries(folder).await?;
         ranked.sort_by(|(left, left_tiebreak), (right, right_tiebreak)| {
-            left.name
-                .cmp(&right.name)
+            name_order(left.name.as_ref(), right.name.as_ref())
                 .then_with(|| left_tiebreak.cmp(right_tiebreak))
         });
         let offset = page.map_or(0, |token| token.offset());

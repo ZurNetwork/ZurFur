@@ -46,7 +46,7 @@
     },
     {
       "name": "src/list.rs",
-      "role": "Resolver::list: one page of an open directory; Private and refused entries drop before the sort and the cut; order by name, then segment, cards by a keyed hash",
+      "role": "Resolver::list: one page of an open directory; Private and refused entries drop before the sort and the cut; ordered by name_order, then segment, cards by a keyed hash",
       "node": false
     },
     {
@@ -57,6 +57,11 @@
     {
       "name": "src/name.rs",
       "role": "NodeName: no Cc, no Cf but the two joiners, no line or paragraph separator, no /, not blank (white space, fillers, joiners alone), at most 2048 bytes",
+      "node": false
+    },
+    {
+      "name": "src/ordering.rs",
+      "role": "name_order: digit runs by value, other text case-insensitively, then the name itself (a file manager's order)",
       "node": false
     },
     {
