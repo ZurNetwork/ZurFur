@@ -79,8 +79,16 @@ const UNASSIGNED_DEFAULT_IGNORABLE: &[(u32, u32)] = &[
 /// U+1F3F4 WAVING BLACK FLAG, which a tag sequence after it makes a subdivision flag.
 const BLACK_FLAG: char = '\u{1F3F4}';
 
-/// The tag letters a subdivision flag spells its region with.
-const TAG_LETTERS: RangeInclusive<char> = '\u{E0020}'..='\u{E007E}';
+/// The tag digits, U+E0030 to U+E0039. With the tag lowercase letters they are the only tags an
+/// emoji tag sequence spells a subdivision id with (Unicode Technical Standard #51, Annex C).
+const TAG_DIGITS: RangeInclusive<char> = '\u{E0030}'..='\u{E0039}';
+
+/// The tag lowercase letters, U+E0061 to U+E007A.
+const TAG_LOWERCASE_LETTERS: RangeInclusive<char> = '\u{E0061}'..='\u{E007A}';
+
+/// How many tags a subdivision id takes: a two-letter region or three-digit code, then one to
+/// four letters or digits (Unicode Technical Standard #35, `unicode_subdivision_id`).
+const SUBDIVISION_ID_TAGS: RangeInclusive<usize> = 3..=7;
 
 /// U+E007F CANCEL TAG, which ends a subdivision flag's tag sequence.
 const CANCEL_TAG: char = '\u{E007F}';
@@ -88,8 +96,16 @@ const CANCEL_TAG: char = '\u{E007F}';
 /// U+180E MONGOLIAN VOWEL SEPARATOR, kept inside a Mongolian word.
 const MONGOLIAN_VOWEL_SEPARATOR: char = '\u{180E}';
 
-/// The Mongolian letters, Todo, Sibe, Manchu and Ali Gali included.
-const MONGOLIAN_LETTERS: RangeInclusive<char> = '\u{1820}'..='\u{18AA}';
+/// The assigned Mongolian letters (Lo and Lm), Todo, Sibe, Manchu and Ali Gali included, as
+/// inclusive ranges, from the Unicode Character Database 16.0.0 (unchanged in 17.0.0 and 18.0.0).
+/// The combining marks U+1885, U+1886 and U+18A9 and the unassigned U+1879 to U+187F are not
+/// letters.
+const MONGOLIAN_LETTERS: &[(u32, u32)] = &[
+    (0x1820, 0x1878),
+    (0x1880, 0x1884),
+    (0x1887, 0x18A8),
+    (0x18AA, 0x18AA),
+];
 
 /// The code points of Unicode's general category Cf (format), as inclusive ranges, from the
 /// Unicode Character Database 16.0.0.
@@ -183,13 +199,17 @@ fn is_joiner(character: char) -> bool {
     character == ZERO_WIDTH_JOINER || character == ZERO_WIDTH_NON_JOINER
 }
 
+/// Whether `character` is a variation selector.
+fn is_variation_selector(character: char) -> bool {
+    let code = u32::from(character);
+    VARIATION_SELECTORS
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&code))
+}
+
 /// Whether `character` is a joiner or a variation selector, which acts on the character before it.
 fn acts_on_previous(character: char) -> bool {
-    let code = u32::from(character);
-    is_joiner(character)
-        || VARIATION_SELECTORS
-            .iter()
-            .any(|&(first, last)| (first..=last).contains(&code))
+    is_joiner(character) || is_variation_selector(character)
 }
 
 /// Whether `character` is stripped even from inside a name: a filler or a zero-width space.
@@ -212,20 +232,34 @@ fn is_mongolian_selector(character: char) -> bool {
     matches!(character, '\u{180B}'..='\u{180D}' | '\u{180F}')
 }
 
-/// The length in bytes of the tag sequence `rest` starts with: one or more tag letters, then the
-/// cancel tag. Zero when `rest` starts with none.
+/// Whether `character` is a tag a subdivision id is spelled with: a tag digit or a tag
+/// lowercase letter.
+fn is_subdivision_tag(character: char) -> bool {
+    TAG_DIGITS.contains(&character) || TAG_LOWERCASE_LETTERS.contains(&character)
+}
+
+/// The length in bytes of the subdivision tag sequence `rest` starts with: three to seven tag
+/// digits or lowercase letters, then the cancel tag. Zero when `rest` starts with none.
 fn tag_sequence_len(rest: &str) -> usize {
-    let letters = rest
+    let count = rest
         .chars()
-        .take_while(|character| TAG_LETTERS.contains(character))
-        .map(char::len_utf8)
-        .sum::<usize>();
-    let terminated = letters > 0 && rest[letters..].starts_with(CANCEL_TAG);
-    if terminated {
+        .take_while(|&character| is_subdivision_tag(character))
+        .count();
+    let letters = rest.chars().take(count).map(char::len_utf8).sum::<usize>();
+    let terminated = rest[letters..].starts_with(CANCEL_TAG);
+    if terminated && SUBDIVISION_ID_TAGS.contains(&count) {
         letters + CANCEL_TAG.len_utf8()
     } else {
         0
     }
+}
+
+/// Whether `character` is an assigned Mongolian letter.
+fn is_mongolian_letter(character: char) -> bool {
+    let code = u32::from(character);
+    MONGOLIAN_LETTERS
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&code))
 }
 
 /// Splits `text` into the units the name rule reads: a subdivision flag whole, with its tag
@@ -275,9 +309,9 @@ fn inside_a_mongolian_word(units: &[&str], index: usize) -> bool {
         .and_then(|unit| single(unit));
     let next = units.get(index + 1).and_then(|unit| single(unit));
     let after_mongolian = previous.is_some_and(|character| {
-        MONGOLIAN_LETTERS.contains(&character) || is_mongolian_selector(character)
+        is_mongolian_letter(character) || is_mongolian_selector(character)
     });
-    let before_a_letter = next.is_some_and(|character| MONGOLIAN_LETTERS.contains(&character));
+    let before_a_letter = next.is_some_and(is_mongolian_letter);
     after_mongolian && before_a_letter
 }
 
@@ -294,6 +328,22 @@ fn is_invisible(units: &[&str], index: usize) -> bool {
         || is_unassigned_default_ignorable(character)
 }
 
+/// `units` with the fillers and zero-width spaces stripped, and every variation selector but the
+/// first of a run: one selector chooses a character's form, and more would only hide bytes.
+fn strip_inside(units: Vec<&str>) -> Vec<&str> {
+    let is_selector = |unit: &str| single(unit).is_some_and(is_variation_selector);
+    let mut kept: Vec<&str> = Vec::with_capacity(units.len());
+    for unit in units {
+        let stripped = single(unit).is_some_and(is_stripped_inside);
+        let repeated_selector =
+            is_selector(unit) && kept.last().is_some_and(|last| is_selector(last));
+        if !stripped && !repeated_selector {
+            kept.push(unit);
+        }
+    }
+    kept
+}
+
 /// Checks `text` against the name rule and returns the stripped form the name holds.
 fn normalize(text: &str) -> Result<String, NodeNameError> {
     if text.len() > MAX_NAME_BYTES {
@@ -306,10 +356,7 @@ fn normalize(text: &str) -> Result<String, NodeNameError> {
         return Err(NodeNameError::Separator);
     }
     let trimmed = trim_blank(text).ok_or(NodeNameError::Empty)?;
-    let stripped: Vec<&str> = trimmed
-        .into_iter()
-        .filter(|unit| !single(unit).is_some_and(is_stripped_inside))
-        .collect();
+    let stripped = strip_inside(trimmed);
     if (0..stripped.len()).any(|index| is_invisible(&stripped, index)) {
         return Err(NodeNameError::Invisible);
     }
