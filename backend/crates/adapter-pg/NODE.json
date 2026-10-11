@@ -139,6 +139,16 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "migrations/20260902225852_create_commission_markup.sql — commission_markup is REPLACED by commission_comment (anchor jsonb envelope, root+parent, composite FK onto commission_file); queries/commission/add_markup.sql + markups_for_file.sql become the comment/pin statements; commission_changelog.note and commission_slot.notes become comment_id FKs"
+    },
+    {
+      "page": 2026091901,
+      "title": "Character Deletion — Facts, the Tombstone & Keeper Consent for Slotting",
+      "governs": "the keeper read leaves tombstoned Characters out; empty on PostgreSQL until character storage lands"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only"
     }
   ],
   "notes": [
@@ -160,6 +170,7 @@
     "See also: `CLAUDE.md` here.",
     "See also: memory `project_sqlx_offline_cache`.",
     "See also: Superseded design (kept for history, not re-cited): DD 28246028 \"Commission Surfaces\" and DD 28409880 \"Commission Tree Storage\" governed the now-retired `commission_node` tree (`migrations/20260705150000_create_commission_node.sql`); both are superseded-in-part by DD 45514754.",
-    "Migration headers that say `See NODE.md (\"<file>\")` mean this node: the moved rationale sits in these notes, keyed by migration filename. The headers stay byte-for-byte as shipped because sqlx checksums every migration on boot."
+    "Migration headers that say `See NODE.md (\"<file>\")` mean this node: the moved rationale sits in these notes, keyed by migration filename. The headers stay byte-for-byte as shipped because sqlx checksums every migration on boot.",
+    "`src/character.rs`: `PgCharacterStore::list_kept_by` answers an empty list — a named exemption from \"no stubs\", because no Character can be stored in PostgreSQL yet (`create` is `unimplemented!`). A unit test (`src/character/tests.rs`) pins it; the slice that adds character storage replaces both as one of its acceptance criteria."
   ]
 }

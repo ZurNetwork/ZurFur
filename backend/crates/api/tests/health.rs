@@ -24,7 +24,7 @@ async fn health_is_green_against_fresh_postgres() {
         commissions: backend.commission_store(),
         workflows: backend.workflow_store(),
         columns: backend.column_store(),
-        characters: Arc::new(adapter_mem::MemCharacterStore),
+        characters: backend.character_store(),
         changelog: backend.changelog_store(),
         files: backend.file_store(),
         database: backend.database(),
