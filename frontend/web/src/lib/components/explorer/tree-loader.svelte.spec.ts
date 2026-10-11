@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { denHref, did } from '$lib/types/brand';
+import { denHref, did, type DenHref } from '$lib/types/brand';
 import { fetchListing, loadFolder, loadMore, type Preload } from './tree-loader';
 import type { DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
 import { denName, denType } from '$lib/types/brand';
@@ -29,10 +29,60 @@ function heldPreload() {
 }
 
 describe('tree loader', () => {
+	it('takes an answer only for the address it asked for, never the current page SvelteKit falls back to', async () => {
+		expect(await fetchListing(PAGE_TWO, { preload: offline() })).toEqual({ fetched: 'failed' });
+		expect(await fetchListing(denHref('/den/other'), { preload: offline() })).toEqual({
+			fetched: 'failed'
+		});
+		expect(await fetchListing(PAGE_TWO, { preload: answering([second]) })).toEqual({
+			fetched: 'listing',
+			entries: [second],
+			more: undefined
+		});
+	});
+
+	it('marks a folder failed, never listing the current page under it, when its fetch fails', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		await loadFolder(memory, denHref('/den/other'), { preload: offline() });
+		expect(memory.folders.get(denHref('/den/other'))).toEqual({ state: 'failed' });
+	});
+
+	it('marks "More" failed, never appending the current page again, when its fetch fails', async () => {
+		const memory = pagedFolder();
+		const appended = await loadMore(memory, FOLDER, PAGE_TWO, { preload: offline() });
+		expect(appended).toBe(false);
+		expect(names(memory)).toEqual(['first']);
+		expect(memory.folders.get(FOLDER)).toMatchObject({ moreState: 'failed', more: PAGE_TWO });
+	});
+
+	it('preloads a new address on every retry, so SvelteKit’s cache can’t replay the failure', async () => {
+		const asked: string[] = [];
+		const preload = answering([second], asked);
+		await fetchListing(PAGE_TWO, { preload });
+		const retried = await fetchListing(PAGE_TWO, { preload, attempt: 'retry' });
+		await fetchListing(PAGE_TWO, { preload, attempt: 'retry' });
+
+		expect(retried).toMatchObject({ fetched: 'listing' });
+		expect(asked[0]).toBe(PAGE_TWO);
+		expect(new Set(asked).size).toBe(3);
+		expect(asked.every((href) => href.startsWith(PAGE_TWO))).toBe(true);
+	});
+
+	it('a failed tree "More…" after the pane appended that page leaves the next page unmarked', async () => {
+		const memory = pagedFolder();
+		const { preload, release } = heldPreload();
+		const pending = loadMore(memory, FOLDER, PAGE_TWO, { preload });
+		memory.appended(FOLDER, [second], denHref('/den/batch?pageToken=p1.2'), PAGE_TWO);
+		release();
+		await pending;
+
+		expect(memory.folders.get(FOLDER)).toMatchObject({ moreState: 'idle' });
+	});
+
 	it('drops a folder fetch that finishes after the memory started over', async () => {
 		const memory = new TreeMemory(did('did:plc:alice'));
 		const { preload, release } = heldPreload();
-		const pending = loadFolder(memory, ROOT, preload);
+		const pending = loadFolder(memory, ROOT, { preload });
 
 		memory.restart(ROOT);
 		release();
@@ -44,12 +94,12 @@ describe('tree loader', () => {
 	it('treats a redirect back into the Den (a stale token) as a failure, never a page load', async () => {
 		const preload: Preload = () =>
 			Promise.resolve({ type: 'redirect', location: '/den/commissions' });
-		expect(await fetchListing(ROOT, preload)).toEqual({ fetched: 'failed' });
+		expect(await fetchListing(ROOT, { preload })).toEqual({ fetched: 'failed' });
 	});
 
 	it('tree "More…" then the pane’s stale "More": the page is appended once', async () => {
 		const memory = pagedFolder();
-		await loadMore(memory, FOLDER, PAGE_TWO, answering([second]));
+		await loadMore(memory, FOLDER, PAGE_TWO, { preload: answering([second]) });
 		memory.appended(FOLDER, [second], undefined, PAGE_TWO);
 
 		expect(names(memory)).toEqual(['first', 'second']);
@@ -58,7 +108,7 @@ describe('tree loader', () => {
 	it('the pane’s "More" then the tree’s stale "More…": the page is appended once', async () => {
 		const memory = pagedFolder();
 		memory.appended(FOLDER, [second], undefined, PAGE_TWO);
-		await loadMore(memory, FOLDER, PAGE_TWO, answering([second]));
+		await loadMore(memory, FOLDER, PAGE_TWO, { preload: answering([second]) });
 
 		expect(names(memory)).toEqual(['first', 'second']);
 	});
@@ -97,10 +147,11 @@ function names(memory: TreeMemory): readonly string[] {
 	return state?.state === 'loaded' ? state.entries.map((entry) => entry.name) : [];
 }
 
-/** A preload answering with a last page holding `entries`. */
-function answering(entries: readonly DenEntry[]): Preload {
-	const den: DenPageData = {
+/** The batch folder's page `address`, a last page holding `entries`. */
+function batchPage(address: DenHref, entries: readonly DenEntry[]): DenPageData {
+	return {
 		kind: 'denPage',
+		address,
 		outcome: {
 			outcome: 'page',
 			page: {
@@ -118,5 +169,32 @@ function answering(entries: readonly DenEntry[]): Preload {
 		title: 'My Den · Zurfur',
 		trail: []
 	};
-	return () => Promise.resolve({ type: 'loaded', status: 200, data: { den } });
+}
+
+/**
+ * A preload over a working network: the den page's load answers for the
+ * address asked, minus any parameter outside its allowlist (as the server
+ * reads it), with a last page holding `entries`.
+ */
+function answering(entries: readonly DenEntry[], asked: string[] = []): Preload {
+	return (href: string) => {
+		asked.push(href);
+		const url = new URL(href, 'http://den.invalid');
+		url.searchParams.delete('retry');
+		const address = denHref(`${url.pathname}${url.search}`);
+		return Promise.resolve({
+			type: 'loaded',
+			status: 200,
+			data: { den: batchPage(address, entries) }
+		});
+	};
+}
+
+/**
+ * A preload whose fetch failed (offline, a reset connection, a 502): as
+ * SvelteKit does, it answers with the current page, here the folder's first.
+ */
+function offline(): Preload {
+	const current = batchPage(FOLDER, [fileEntry('first')]);
+	return () => Promise.resolve({ type: 'loaded', status: 200, data: { den: current } });
 }

@@ -24,14 +24,45 @@ export type ListingFetch =
 /** The function that preloads a page's data; SvelteKit's, unless a test hands in its own. */
 export type Preload = typeof preloadData;
 
-/** The listing behind `href`, fetched through the den page's load. */
+/** Whether a fetch is the first try for its link, or a retry after a failure. */
+export type Attempt = 'first' | 'retry';
+
+/** How a fetch runs: as a first try or a retry, and through which preload. */
+export interface FetchOptions {
+	readonly attempt?: Attempt | undefined;
+	readonly preload?: Preload | undefined;
+}
+
+/**
+ * The query parameter a retry carries, so SvelteKit's preload cache (keyed by
+ * path and query) can't replay the failed answer. The den page's load reads
+ * only its allowlisted parameters, so it never sees this one.
+ */
+const RETRY_PARAM = 'retry';
+
+/** How many retries this page has run: each one's address is new. */
+let retries = 0;
+
+/** The address to preload for `href`: itself on a first try, made unique on a retry. */
+function preloadAddress(href: DenHref, attempt: Attempt): string {
+	if (attempt === 'first') return href;
+	retries += 1;
+	const separator = href.includes('?') ? '&' : '?';
+	return `${href}${separator}${RETRY_PARAM}=${String(retries)}`;
+}
+
+/**
+ * The listing behind `href`, fetched through the den page's load. Only an
+ * answer for `href` itself counts: when its fetch fails, SvelteKit answers
+ * with the current page instead, and that is a failure here.
+ */
 export async function fetchListing(
 	href: DenHref,
-	preload: Preload = preloadData
+	{ attempt = 'first', preload = preloadData }: FetchOptions = {}
 ): Promise<ListingFetch> {
 	let result: Awaited<ReturnType<Preload>>;
 	try {
-		result = await preload(href);
+		result = await preload(preloadAddress(href, attempt));
 	} catch {
 		return { fetched: 'failed' };
 	}
@@ -45,6 +76,7 @@ export async function fetchListing(
 	}
 	const den: unknown = result.data.den;
 	if (result.status !== HttpStatus.Ok || !isDenPageData(den)) return { fetched: 'failed' };
+	if (den.address !== href) return { fetched: 'failed' };
 	const { outcome } = den;
 	if (outcome.outcome !== 'page' || outcome.page.view !== 'open') return { fetched: 'failed' };
 	const { body } = outcome.page;
@@ -56,11 +88,11 @@ export async function fetchListing(
 export async function loadFolder(
 	memory: TreeMemory,
 	folder: DenHref,
-	preload?: Preload
+	options: FetchOptions = {}
 ): Promise<void> {
 	const generation = memory.generation;
 	memory.loading(folder);
-	const fetched = await fetchListing(folder, preload);
+	const fetched = await fetchListing(folder, options);
 	if (memory.generation !== generation) return;
 	switch (fetched.fetched) {
 		case 'listing':
@@ -74,25 +106,28 @@ export async function loadFolder(
 	}
 }
 
-/** Fetch the page after `folder`'s loaded ones, through its "More" link, and append it. */
+/**
+ * Fetch the page after `folder`'s loaded ones, through its "More" link, and
+ * append it. Answers whether it was appended (not dropped as stale, nor
+ * failed). A failure counts only while the folder still expects that page.
+ */
 export async function loadMore(
 	memory: TreeMemory,
 	folder: DenHref,
 	more: DenHref,
-	preload?: Preload
-): Promise<void> {
+	options: FetchOptions = {}
+): Promise<boolean> {
 	const generation = memory.generation;
 	memory.moreState(folder, 'loading');
-	const fetched = await fetchListing(more, preload);
-	if (memory.generation !== generation) return;
+	const fetched = await fetchListing(more, options);
+	if (memory.generation !== generation) return false;
 	switch (fetched.fetched) {
 		case 'listing':
-			memory.appended(folder, fetched.entries, fetched.more, more);
-			return;
+			return memory.appended(folder, fetched.entries, fetched.more, more);
 		case 'failed':
-			memory.moreState(folder, 'failed');
-			return;
+			memory.moreFailed(folder, more);
+			return false;
 		case 'redirected':
-			return;
+			return false;
 	}
 }

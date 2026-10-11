@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { isDenLink, isDenPageData } from './den';
 
 /** A well-formed den page answer, as plain JSON (what a preload hands back). */
-function pageData(entryHref: unknown = '/den/commissions/c1'): unknown {
+function pageData(entryHref: unknown = '/den/commissions/c1'): object {
 	return {
 		kind: 'denPage',
+		address: '/den/commissions',
 		rootHref: '/den',
 		includeDeleted: false,
 		continued: false,
@@ -66,6 +67,11 @@ describe('isDenPageData', () => {
 		['a number', 42]
 	])('refuses an answer whose entry link is %s', (_, href) => {
 		expect(isDenPageData(pageData(href))).toBe(false);
+	});
+
+	it('takes an answer with no address (a refused one), and refuses one outside My Den', () => {
+		expect(isDenPageData({ ...pageData(), address: undefined })).toBe(true);
+		expect(isDenPageData({ ...pageData(), address: '/accounts' })).toBe(false);
 	});
 
 	it('refuses something that only claims to be a den page', () => {

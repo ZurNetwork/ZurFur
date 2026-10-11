@@ -152,29 +152,42 @@ export class TreeMemory {
 	}
 
 	/**
+	 * Mark `folder`'s next page as failed to fetch — only while it is the page
+	 * `fetchedFrom` asked for, so a page the pane appended meanwhile doesn't
+	 * leave the following one marked failed.
+	 */
+	moreFailed(folder: DenHref, fetchedFrom: DenHref): void {
+		const current = this.folders.get(folder);
+		if (current?.state !== 'loaded' || current.more !== fetchedFrom) return;
+		this.folders.set(folder, { ...current, moreState: 'failed' });
+	}
+
+	/**
 	 * Append a later page to `folder`'s listing — only when it is the page the
 	 * folder still expects next (`fetchedFrom` is its current "More" link), so
 	 * the pane and the tree fetching the same page can't append it twice.
+	 * Answers whether it appended.
 	 */
 	appended(
 		folder: DenHref,
 		entries: readonly DenEntry[],
 		more: DenHref | undefined,
 		fetchedFrom: DenHref
-	): void {
+	): boolean {
 		const current = this.folders.get(folder);
-		if (current?.state !== 'loaded' || current.more !== fetchedFrom) return;
+		if (current?.state !== 'loaded' || current.more !== fetchedFrom) return false;
 		this.folders.set(folder, {
 			state: 'loaded',
 			entries: [...current.entries, ...entries],
 			more,
 			moreState: 'idle'
 		});
+		return true;
 	}
 }
 
-/** The context key the frame shares its tree memory under. */
-const TREE_MEMORY_KEY = Symbol('tree-memory');
+/** The context key the frame shares its tree memory under (exported so a spec can provide one). */
+export const TREE_MEMORY_KEY = Symbol('tree-memory');
 
 /** Share `memory` with the pages inside the frame. */
 export function provideTreeMemory(memory: TreeMemory): void {

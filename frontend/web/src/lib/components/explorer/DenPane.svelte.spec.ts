@@ -25,6 +25,7 @@ function open(href: string, name: string, extra: Partial<OpenEntry> = {}): OpenE
 function data(outcome: DenOutcome): DenPageData {
 	return {
 		kind: 'denPage',
+		address: denHref('/den/x'),
 		outcome,
 		rootHref: denHref('/den'),
 		includeDeleted: false,

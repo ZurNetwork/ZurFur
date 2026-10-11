@@ -67,7 +67,7 @@
 		>
 	</nav>
 	<div class="top-bar__session" class:desktop-only={drawer}>
-		<Avatar {session} />
+		<Avatar {session} compact />
 		<SignOut />
 	</div>
 </header>

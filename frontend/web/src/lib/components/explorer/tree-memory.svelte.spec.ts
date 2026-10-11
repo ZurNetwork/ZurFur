@@ -30,6 +30,7 @@ function denPage(
 	const includeDeleted = options.includeDeleted ?? false;
 	return {
 		kind: 'denPage',
+		address: node.href,
 		outcome: {
 			outcome: 'page',
 			page: {

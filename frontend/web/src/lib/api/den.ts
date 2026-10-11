@@ -94,6 +94,11 @@ export interface DenListing {
 /** Everything the den page's load hands the pane and the frame. */
 export interface DenPageData {
 	readonly kind: 'denPage';
+	/**
+	 * The address this answers, page token included; absent for a refused
+	 * address. A fetch takes an answer only for the address it asked for.
+	 */
+	readonly address: DenHref | undefined;
 	readonly outcome: DenOutcome;
 	/** My Den's root, with the current flag. */
 	readonly rootHref: DenHref;
@@ -234,6 +239,7 @@ function isDenOutcome(value: unknown): boolean {
 export function isDenPageData(value: unknown): value is DenPageData {
 	return (
 		field(value, 'kind') === 'denPage' &&
+		isOptionalDenLink(field(value, 'address')) &&
 		isDenLink(field(value, 'rootHref')) &&
 		typeof field(value, 'includeDeleted') === 'boolean' &&
 		typeof field(value, 'continued') === 'boolean' &&
