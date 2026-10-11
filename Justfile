@@ -281,6 +281,19 @@ gate:
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test
     yarn --cwd frontend/web run build
+    just engineer-tools-test
+
+# Tests for the Engineer's own tools (engineer-tools/*.test.sh); each skips
+# when jj isn't installed, as on CI.
+engineer-tools-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for t in engineer-tools/*.test.sh; do
+        echo "--- $t ---"
+        sh "$t" || status=1
+    done
+    exit "$status"
 
 # The light gate for restacks and fix rounds: fmt, clippy, typos and the
 # design-index check, plus the tests of the crates the change touches and the

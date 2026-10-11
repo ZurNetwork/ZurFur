@@ -82,6 +82,8 @@ cargo run -p api                     # Run the API server
 cargo test --workspace               # Run all tests
 ```
 
+To review a PR locally, the Engineer runs `engineer-tools/review-pr.sh --start --pr=<N>` in `~/code/zurfur` (`--pause`, `--stop`, `--help`; see `engineer-tools/NODE.json`).
+
 ## The node tree (`NODE.json`)
 
 Every directory that carries information beyond its parent has a `NODE.json` — *what/where*, while `CLAUDE.md` is *how to behave*. A node's `short` is the glance (what `just nodes tree` prints); `is` is the full sentence. The tree is read and written through the `nodes` tool (github.com/ZurNetwork/nodes, pinned by `NODES_VERSION` in the Justfile; `just setup` installs it): `just nodes tree` (the whole tree), `just nodes chain <path>` (root → … → node — what `/familiarize` loads for a path), `just nodes get <path> [field]`, `just nodes refs <pageId>` (every node citing a design page — `/design-sync` step 6), `just nodes find <term>`, and for writes `just nodes set <path> <field> '<json>'` · `just nodes add-ref <path> <page> "<title>" "<governs>"` (quote multi-word arguments; they pass through intact) · `rm-ref` · `touch`. A PostToolUse hook (`.claude/settings.json` → `scripts/nodes-fmt-hook.sh`) formats any `NODE.json` a model writes; `just nodes-check` (inside `just gate`, and CI's `nodes` job) validates the tree against the schema and `docs/design-index.md`. That index is generated from the corpus by `just design-index`, and `just design-index-check` (also inside `just gate`) reports when it has drifted from the corpus.
