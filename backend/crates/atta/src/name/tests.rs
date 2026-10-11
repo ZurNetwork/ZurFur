@@ -43,14 +43,12 @@ fn format_characters_are_refused_bidirectional_controls_included() {
     let refused = [
         '\u{00AD}',
         '\u{061C}',
-        '\u{200B}',
         '\u{200E}',
         '\u{200F}',
         '\u{202A}',
         '\u{202E}',
         '\u{2066}',
         '\u{2069}',
-        '\u{FEFF}',
         '\u{E0001}',
         '\u{E007F}',
     ];
@@ -298,8 +296,15 @@ fn blank_characters_beside_a_visible_character_are_allowed() {
 }
 
 #[test]
-fn an_invisible_character_beside_a_visible_one_is_still_refused_as_invisible() {
-    for name in ["\ta", "a\u{200B}", "\u{FEFF}a", "\u{0}\u{3164}"] {
+fn an_invisible_character_inside_a_name_is_still_refused_as_invisible() {
+    for name in [
+        "a\tb",
+        "a\nb",
+        "a\u{0}b",
+        "a\u{202E}b",
+        "a\u{00AD}b",
+        "\u{0}\u{3164}",
+    ] {
         assert_eq!(
             NodeName::try_from(name),
             Err(NodeNameError::Invisible),
@@ -360,4 +365,155 @@ fn each_visible_filler_is_neither_white_space_nor_default_ignorable() {
         assert!(!filler.is_whitespace(), "{filler:?}");
         assert!(!is_default_ignorable(filler), "{filler:?}");
     }
+}
+
+/// Asserts that `name` parses, and that what it stores is `stored`.
+fn assert_stored(name: &str, stored: &str) {
+    let parsed = NodeName::try_from(name).map(|name| name.to_string());
+    assert_eq!(parsed, Ok(stored.to_owned()), "{name:?}");
+}
+
+#[test]
+fn white_space_at_both_ends_is_stripped() {
+    assert_stored("  a  ", "a");
+    assert_stored("\ta\n", "a");
+    assert_stored("\u{3000}photo.png\u{00A0}", "photo.png");
+}
+
+#[test]
+fn fillers_at_both_ends_are_stripped() {
+    assert_stored("\u{3164}a\u{2800}", "a");
+    assert_stored("\u{115F}\u{1160}a\u{FFA0}\u{1D159}", "a");
+}
+
+#[test]
+fn invisible_format_characters_at_both_ends_are_stripped() {
+    assert_stored("\u{202E}a\u{200B}", "a");
+    assert_stored("\u{FEFF}a\u{00AD}", "a");
+    assert_stored("\u{2066}a\u{2069}", "a");
+}
+
+#[test]
+fn a_joiner_or_selector_at_the_start_is_stripped() {
+    assert_stored("\u{200D}a", "a");
+    assert_stored("\u{FE0F}a", "a");
+    assert_stored("\u{200C}\u{E0100}a", "a");
+}
+
+#[test]
+fn a_joiner_or_selector_after_the_last_character_is_kept() {
+    assert_stored("\u{2764}\u{FE0F}", "\u{2764}\u{FE0F}");
+    assert_stored("\u{0915}\u{094D}\u{200D}", "\u{0915}\u{094D}\u{200D}");
+    assert_stored("\u{1820}\u{180B}", "\u{1820}\u{180B}");
+    assert_stored("\u{2764}\u{FE0F} \u{3164}", "\u{2764}\u{FE0F}");
+}
+
+#[test]
+fn a_joiner_or_selector_after_white_space_at_the_end_is_stripped() {
+    assert_stored("a \u{200D}", "a");
+    assert_stored("a\u{3164}\u{FE0F}", "a");
+}
+
+#[test]
+fn fillers_inside_a_name_are_stripped() {
+    assert_stored("a\u{3164}b", "ab");
+    assert_stored("a\u{2800}b", "ab");
+    assert_stored("a\u{115F}\u{1160}\u{FFA0}b", "ab");
+    assert_stored("a\u{1D159}\u{16FE4}\u{13441}\u{13442}b", "ab");
+}
+
+#[test]
+fn zero_width_spaces_inside_a_name_are_stripped() {
+    assert_stored("a\u{200B}b", "ab");
+    assert_stored("a\u{2060}b", "ab");
+    assert_stored("a\u{FEFF}b", "ab");
+    assert_stored("a\u{200B}", "a");
+}
+
+#[test]
+fn ordinary_spaces_inside_a_name_are_kept() {
+    assert_stored("Old sketch", "Old sketch");
+    assert_stored("a  b", "a  b");
+}
+
+#[test]
+fn other_space_separators_inside_a_name_are_kept() {
+    assert_stored("a\u{00A0}b", "a\u{00A0}b");
+    assert_stored("a\u{3000}b", "a\u{3000}b");
+    assert_stored("a\u{2003}b", "a\u{2003}b");
+}
+
+#[test]
+fn emoji_sequences_are_kept_whole() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    assert_stored("\u{1F468}\u{200D}\u{1F469}", "\u{1F468}\u{200D}\u{1F469}");
+    assert_stored(family, family);
+    assert_stored("\u{2764}\u{FE0F}", "\u{2764}\u{FE0F}");
+    assert_stored(
+        "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",
+        "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",
+    );
+}
+
+#[test]
+fn a_persian_word_keeps_its_non_joiner() {
+    let word = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}";
+    assert_stored(word, word);
+}
+
+#[test]
+fn selectors_inside_a_name_are_kept() {
+    assert_stored("a\u{E0100}b", "a\u{E0100}b");
+    assert_stored("\u{1820}\u{180B}\u{1821}", "\u{1820}\u{180B}\u{1821}");
+}
+
+#[test]
+fn a_name_blank_once_stripped_is_refused_as_empty() {
+    for name in [
+        "\t\u{3164}",
+        "\u{200D}\u{FE0F}",
+        " \u{200B} ",
+        "\u{FE0F}\u{2800}\u{E0100}",
+    ] {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn a_tab_inside_a_name_is_refused() {
+    assert_eq!(NodeName::try_from("a\tb"), Err(NodeNameError::Invisible));
+}
+
+#[test]
+fn a_separator_is_refused_even_where_it_would_be_stripped() {
+    for name in ["\u{2028}a", "a\u{2029}", " \u{2028} a"] {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Separator),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn the_stripped_form_parses_to_itself() {
+    let names = [
+        "  a  ",
+        "a\u{3164}b",
+        "\u{2764}\u{FE0F} ",
+        "\u{200D}x\u{200B}y\u{200D}",
+    ];
+    for name in names {
+        let stripped = NodeName::try_from(name).expect("a name that strips to something");
+        let reparsed = NodeName::try_from(stripped.as_ref());
+        assert_eq!(reparsed, Ok(stripped.clone()), "{name:?}");
+    }
+}
+
+#[test]
+fn from_str_and_try_from_string_strip_alike() {
+    let from_str: Result<NodeName, _> = " a\u{3164}b ".parse();
+    let from_string = NodeName::try_from(String::from(" a\u{3164}b "));
+    assert_eq!(from_str, from_string);
+    assert_eq!(from_str.map(|name| name.to_string()), Ok("ab".to_owned()));
 }
