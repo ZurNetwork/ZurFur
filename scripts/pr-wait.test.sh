@@ -16,7 +16,19 @@ cat >"$work/bin/gh" <<'STUB'
 #!/bin/sh
 dir="$STUB_DIR"
 case "$1 $2" in
-    "pr view") echo "abcdef1234567890" ;;
+    "pr view")
+        # heads.txt, if present: one head per call, the last one repeating.
+        if [ -f "$dir/heads.txt" ]; then
+            n=$(cat "$dir/head-calls" 2>/dev/null || echo 0)
+            n=$((n + 1))
+            echo "$n" >"$dir/head-calls"
+            total=$(wc -l <"$dir/heads.txt")
+            [ "$n" -gt "$total" ] && n=$total
+            awk -v n="$n" 'NR == n' "$dir/heads.txt"
+        else
+            echo "abcdef1234567890"
+        fi
+        ;;
     "pr checks")
         [ -f "$dir/checks.err" ] && { cat "$dir/checks.err" >&2; exit 1; }
         [ -f "$dir/checks.json" ] || { echo "no checks reported on the 'x' branch" >&2; exit 1; }
@@ -100,6 +112,15 @@ new_case
 echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
 echo 'not json' >"$work/case/requested.json"
 run_case "a GitHub error on the reviewers exits 3" 3 "cannot read the requested reviewers"
+
+new_case
+echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
+printf 'aaaaaaa000\nbbbbbbb111\n' >"$work/case/heads.txt"
+run_case "a push while waiting waits again for the new head" 0 "this verdict is for bbbbbbb"
+
+new_case
+echo 'not json' >"$work/case/checks.json"
+run_case "an unparsable checks answer is a GitHub error" 3 "cannot read the checks"
 
 set +e
 bash "$under_test" notanumber >/dev/null 2>&1

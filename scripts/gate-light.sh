@@ -25,13 +25,22 @@ root="$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel)"
 cd "$root"
 
 # Both sides of every `diff --git a/<old> b/<new>` header, so a moved file
-# lists its old path too (jj's --name-only shows only the new one). A header
-# that doesn't split cleanly is printed whole and so classifies as code.
+# lists its old path too (jj's --name-only shows only the new one). An
+# unmoved file is split at the middle, so a name holding " b/" still parses.
+# A header in any other form (quoted, say) prints "?unparsed", which runs
+# everything.
 diff_paths() {
-    awk '/^diff --git a\// {
+    awk '/^diff --git / {
+        if (substr($0, 1, 13) != "diff --git a/") { print "?unparsed"; next }
         line = substr($0, 14)
+        half = (length(line) - 3) / 2
+        if (half == int(half) && substr(line, half + 1, 3) == " b/" &&
+            substr(line, 1, half) == substr(line, half + 4)) {
+            print substr(line, 1, half)
+            next
+        }
         i = index(line, " b/")
-        if (i == 0) { print line; next }
+        if (i == 0) { print "?unparsed"; next }
         print substr(line, 1, i - 1)
         print substr(line, i + 3)
     }' | sort -u
@@ -69,6 +78,11 @@ if [ "$whole_workspace" = 0 ]; then
     while read -r kind path; do
         [ "$kind" = code ] || continue
         case "$path" in
+            \"* | \?*)
+                # A name git quoted, or a diff header that didn't parse.
+                whole_workspace=1
+                web=1
+                ;;
             frontend/*)
                 web=1
                 ;;

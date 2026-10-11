@@ -32,23 +32,30 @@ head_sha() {
     gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid 2>/dev/null
 }
 
-# ci_state prints pending, green, red, or error when GitHub can't be read.
-# "No checks reported" counts as pending: right after a push they aren't
-# registered yet. Any other empty answer is an error.
+state_dir="$(mktemp -d)" || exit 3
+trap 'rm -rf "$state_dir"' EXIT
+
+# ci_state prints pending, green, red, or error when GitHub can't be read,
+# and saves the last payload it could parse to $state_dir/checks.json for the
+# verdict. "No checks reported" counts as pending: right after a push they
+# aren't registered yet. Any other empty or unparsable answer is an error.
 ci_state() {
-    local json err_file
-    err_file="$(mktemp)"
-    json="$(gh pr checks "$pr" -R "$repo" --json name,bucket 2>"$err_file")"
+    local json
+    json="$(gh pr checks "$pr" -R "$repo" --json name,bucket 2>"$state_dir/checks.err")"
     if [ -z "$json" ]; then
-        if grep -qi 'no checks reported' "$err_file"; then
+        if grep -qi 'no checks reported' "$state_dir/checks.err"; then
+            echo '[]' >"$state_dir/checks.json"
             echo pending
         else
             echo error
         fi
-        rm -f "$err_file"
         return
     fi
-    rm -f "$err_file"
+    if ! jq -e 'type == "array"' <<<"$json" >/dev/null 2>&1; then
+        echo error
+        return
+    fi
+    printf '%s\n' "$json" >"$state_dir/checks.json"
     jq -r '
         if length == 0 then "pending"
         elif any(.[]; .bucket == "pending") then "pending"
@@ -85,35 +92,55 @@ if [ -z "$start_head" ]; then
     exit 3
 fi
 
-deadline=$((SECONDS + timeout_min * 60))
-ci="pending"
-copilot=1
-while :; do
-    ci="$(ci_state)"
-    copilot="$(copilot_requested)"
-    if [ "$ci" = error ]; then
-        github_error "the checks"
-    elif [ "$copilot" = error ]; then
-        github_error "the requested reviewers"
-    else
-        errors=0
-        if [ "$ci" != "pending" ] && [ "$copilot" = 0 ]; then
-            break
+# wait_once polls until CI settles and Copilot is no longer requested, or the
+# deadline passes; it leaves the last states in $ci and $copilot.
+wait_once() {
+    ci="pending"
+    copilot=1
+    while :; do
+        ci="$(ci_state)"
+        copilot="$(copilot_requested)"
+        if [ "$ci" = error ]; then
+            github_error "the checks"
+        elif [ "$copilot" = error ]; then
+            github_error "the requested reviewers"
+        else
+            errors=0
+            if [ "$ci" != "pending" ] && [ "$copilot" = 0 ]; then
+                return
+            fi
         fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            return
+        fi
+        sleep "$interval"
+    done
+}
+
+# A push while waiting makes the states belong to an old head: wait again for
+# the new one, within the same deadline.
+deadline=$((SECONDS + timeout_min * 60))
+moved_from=""
+while :; do
+    wait_once
+    end_head="$(head_sha)"
+    if [ -z "$end_head" ]; then
+        echo "pr-wait: cannot read PR #$pr in $repo" >&2
+        exit 3
     fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
+    if [ "$end_head" = "$start_head" ]; then
         break
     fi
-    sleep "$interval"
+    moved_from="${moved_from:-$start_head}"
+    start_head="$end_head"
 done
 
-end_head="$(head_sha)"
 echo "PR #$pr in $repo, head ${end_head:0:7}"
-if [ "$end_head" != "$start_head" ]; then
-    echo "note: the head moved from ${start_head:0:7} while waiting"
+if [ -n "$moved_from" ]; then
+    echo "note: the head moved from ${moved_from:0:7} while waiting; this verdict is for ${end_head:0:7}"
 fi
 
-checks="$(gh pr checks "$pr" -R "$repo" --json name,bucket 2>/dev/null)"
+checks="$(cat "$state_dir/checks.json" 2>/dev/null)"
 [ -n "$checks" ] || checks='[]'
 case "$ci" in
     green)

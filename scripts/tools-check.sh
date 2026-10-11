@@ -30,6 +30,8 @@ esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 workflows=".github/workflows"
+# GitHub loads both extensions; workflow file names carry no spaces here.
+workflow_files="$(find "$workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)"
 errors=0
 
 pin_error() {
@@ -37,8 +39,10 @@ pin_error() {
     errors=$((errors + 1))
 }
 
-# Every `uses:` names a full 40-hex commit SHA followed by `# v<version>`.
-unpinned="$(grep -hE '^[[:space:]]*-?[[:space:]]*uses:' "$workflows"/*.yml | grep -vE '@[0-9a-f]{40} # v[0-9]' || true)"
+# Every `uses:` reference is `<action>@<40-hex SHA>` directly, then `# v<version>`.
+# shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
+unpinned="$(grep -hE '^[[:space:]]*-?[[:space:]]*uses:' $workflow_files |
+    grep -vE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^[:space:]@#]+@[0-9a-f]{40}[[:space:]]+# v[0-9]' || true)"
 if [ -n "$unpinned" ]; then
     pin_error "actions not pinned to a commit SHA with a '# v<version>' comment:"
     printf '  %s\n' "$unpinned" >&2
@@ -46,7 +50,8 @@ fi
 
 # check_every_use <action> <required text> — each line using <action> carries <text>.
 check_every_use() {
-    lines="$(grep -hF "$1@" "$workflows"/*.yml || true)"
+    # shellcheck disable=SC2086
+    lines="$(grep -hF "$1@" $workflow_files || true)"
     if [ -z "$lines" ]; then
         pin_error "no workflow uses $1"
         return
@@ -61,8 +66,10 @@ if ! grep -qF "version: '$BUF_VERSION'" "$workflows/ci.yml"; then
     pin_error "ci.yml's buf version is not '$BUF_VERSION' (Justfile pin)"
 fi
 # Every setup-just step is followed by `just-version: '<JUST_VERSION>'`.
-setup_just_uses="$(grep -hcF 'extractions/setup-just@' "$workflows"/*.yml | awk '{ n += $1 } END { print n + 0 }')"
-just_pins="$(grep -hcF "just-version: '$JUST_VERSION'" "$workflows"/*.yml | awk '{ n += $1 } END { print n + 0 }')"
+# shellcheck disable=SC2086
+setup_just_uses="$(grep -hcF 'extractions/setup-just@' $workflow_files | awk '{ n += $1 } END { print n + 0 }')"
+# shellcheck disable=SC2086
+just_pins="$(grep -hcF "just-version: '$JUST_VERSION'" $workflow_files | awk '{ n += $1 } END { print n + 0 }')"
 if [ "$setup_just_uses" != "$just_pins" ]; then
     pin_error "$setup_just_uses setup-just step(s) but $just_pins pinned at just-version '$JUST_VERSION' (Justfile pin)"
 fi

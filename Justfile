@@ -197,15 +197,15 @@ hooks-test:
     done
     exit "$status"
 
-# Fixture tests for the CI path classifier, the `changes` job, gate-light and
-# pr-wait (the
+# Fixture tests for the CI path classifier, the `changes` job, gate-light,
+# pr-wait and tools-check (the
 # design-index check's own tests run under `design-index-check-test`). CI
 # runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

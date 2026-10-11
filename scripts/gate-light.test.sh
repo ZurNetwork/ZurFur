@@ -81,6 +81,30 @@ change backend/crates/thing/src/lib.rs "fn main() { }"
 printf '#!/bin/sh\nexit 1\n' >"$repo/scripts/ci-paths.sh"
 expect_plan "a failing classifier runs everything" "classifier failed" "cargo test --workspace --locked" "yarn --cwd frontend/web run test"
 
+new_repo
+change "frontend/web/$(printf 'x\303\251y').ts" "export {}"
+expect_plan "a name git quotes runs everything" "cargo test --workspace --locked" "yarn --cwd frontend/web run test"
+
+# The jj path (jj diff --git), when jj is installed; CI has no jj.
+if command -v jj >/dev/null 2>&1; then
+    jj_repo() {
+        new_repo
+        (cd "$repo" && jj git init --colocate >/dev/null 2>&1)
+    }
+    jj_repo
+    git -C "$repo" mv backend/crates/thing/src/lib.rs frontend/web/lib.md >/dev/null 2>&1
+    expect_plan "jj: a crate file moved out lists its old path" "cargo test --locked -p thing-pkg"
+    jj_repo
+    mkdir -p "$repo/docs/x b"
+    echo "notes" >"$repo/docs/x b/y.md"
+    expect_plan "jj: a name holding ' b/' still parses" "no crate changed" "skipping the web checks"
+    jj_repo
+    echo "export {}" >"$repo/frontend/web/a b.ts"
+    expect_plan "jj: a name with a space under frontend runs the web checks" "yarn --cwd frontend/web run test"
+else
+    echo "skip jj cases (jj not installed)"
+fi
+
 if [ "$failures" -ne 0 ]; then
     echo "$failures failure(s)"
     exit 1
