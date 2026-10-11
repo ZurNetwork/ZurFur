@@ -174,6 +174,17 @@ async fn a_participants_standing_opens_the_mounted_subtree() {
 }
 
 #[tokio::test]
+async fn a_lift_at_a_top_level_directory_opens_nothing_below_it() {
+    let host = world()
+        .lifted("/commission", &[STANDING])
+        .lifted("/user", &[STANDING])
+        .node("/user/bob", "user", Level::Private, &[]);
+    assert_not_found(&host, &["commissions", "stranger"]).await;
+    let bobs_root = resolver(&host).resolve(&path("/user/bob"), &[]).await;
+    assert!(matches!(bobs_root, Err(Error::NotFound)), "{bobs_root:?}");
+}
+
+#[tokio::test]
 async fn a_public_node_opens_through_its_own_level() {
     let host = world();
     let resolved = resolve(&host, &["commissions", "public"])
