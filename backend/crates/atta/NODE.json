@@ -25,8 +25,38 @@
       "node": false
     },
     {
+      "name": "src/level.rs",
+      "role": "Level: Private < Listed < Public",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
-      "role": "the first types: key, type, level, name, payload hash, metadata, payload and the node trait",
+      "role": "façade: the crate doc and the public surface",
+      "node": false
+    },
+    {
+      "name": "src/metadata.rs",
+      "role": "Metadata, the closed per-node field set, and Type, the opaque type key",
+      "node": false
+    },
+    {
+      "name": "src/name.rs",
+      "role": "NodeName: no Cc, no Cf but the two joiners, no /, not empty, at most 2048 bytes",
+      "node": false
+    },
+    {
+      "name": "src/path.rs",
+      "role": "RealPath, a node real path from the global root",
+      "node": false
+    },
+    {
+      "name": "src/segment.rs",
+      "role": "Segment, a node key: the ASCII allowlist, 1 to 2048 bytes, never . or ..",
+      "node": false
+    },
+    {
+      "name": "tests/no_workspace_dependency.rs",
+      "role": "guard: atta depends on no workspace crate, of any kind (cargo metadata)",
       "node": false
     }
   ],
@@ -44,6 +74,8 @@
   ],
   "notes": [
     "Name: Atta is the leafcutter-ant genus.",
-    "Runs on the server for the MVP; the same crate is built for the browser later."
+    "Runs on the server for the MVP; the same crate is built for the browser later.",
+    "NodeName carries Unicode general category Cf as a hand table from the Unicode Character Database 16.0.0 (generated with Python unicodedata 16.0.0, 2026-10-10; checked unchanged against 17.0.0 and 18.0.0); std has no general-category query and no crate was added. Regenerate it when Unicode adds Cf code points.",
+    "Not yet in Atta, waiting for the first payload: the payload hash in Metadata, Payload, and attributes. Links resolve nowhere yet: a symlink handed to Atta fails closed as absent."
   ]
 }
