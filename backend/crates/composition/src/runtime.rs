@@ -95,8 +95,9 @@ impl Runtime {
     /// pg-backed store.
     ///
     /// Fails if the pool cannot connect, `public_url` or the root key will not
-    /// parse, or [`ensure_custody_hardened`] refuses the configuration; the
-    /// error messages never echo the secrets themselves.
+    /// parse, [`ensure_custody_hardened`] refuses the configuration, or the
+    /// system DNS configuration cannot be read; the error messages never echo
+    /// the secrets themselves.
     pub async fn connect(config: Config) -> Result<Self, ConnectError> {
         let pool = adapter_pg::connect(&config.database_url)
             .await
@@ -136,9 +137,9 @@ impl Runtime {
                 redirect_uri,
                 pool.clone(),
                 oauth_vault,
-            )),
+            )?),
             users: Arc::new(adapter_pg::PgUserStore::new(pool.clone())),
-            profile_source: Arc::new(adapter_atproto::AtprotoProfileSource::new()),
+            profile_source: Arc::new(adapter_atproto::AtprotoProfileSource::new()?),
             profile_cache: Arc::new(adapter_pg::PgProfileCache::new(
                 pool.clone(),
                 std::time::Duration::from_secs(60 * 60),
@@ -164,8 +165,8 @@ impl Runtime {
 pub enum ConnectError {
     /// The Postgres pool could not connect to [`Config::database_url`].
     Database(adapter_pg::SqlxError),
-    /// The configuration is unusable: bad `public_url` or root key, or the
-    /// custody guard refused it.
+    /// The configuration is unusable: bad `public_url` or root key, the
+    /// custody guard refused it, or the system DNS configuration is unreadable.
     Setup(anyhow::Error),
 }
 
