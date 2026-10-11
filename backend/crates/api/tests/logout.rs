@@ -42,6 +42,7 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
         .build()
         .expect("client builds");
     let base = format!("http://{addr}");
+    let home = format!("{base}/");
 
     // Sign in: start the flow and complete the callback, leaving a live session.
     client
@@ -74,7 +75,7 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
     assert_eq!(res.status(), 303, "sign-out redirects");
     assert_eq!(
         res.headers()["location"],
-        "/",
+        home.as_str(),
         "sign-out lands on the sign-in page"
     );
 
@@ -101,7 +102,7 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
     assert_eq!(res.status(), 303, "a second sign-out is harmless");
     assert_eq!(
         res.headers()["location"],
-        "/",
+        home.as_str(),
         "and still lands on the sign-in page"
     );
 }

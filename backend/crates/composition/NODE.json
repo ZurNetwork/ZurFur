@@ -26,7 +26,7 @@
     },
     {
       "name": "src/config.rs",
-      "role": "Config struct, figment loader (Config::load/load_from), Environment enum, boot-time custody guard ensure_custody_hardened",
+      "role": "Config struct (public_url a url::Url), figment loader (Config::load/load_from), Environment enum, boot-time custody guard ensure_custody_hardened",
       "node": false
     },
     {
@@ -36,7 +36,7 @@
     },
     {
       "name": "src/logging.rs",
-      "role": "the log filter both drivers (api, cli) layer on their subscriber: every event from hickory's crates dropped whatever RUST_LOG says (hickory logs a queried handle's domain at error); is_loggable_target + without_dns_client",
+      "role": "the log filter both drivers (api, cli) layer on their subscriber: every event from hickory's crates dropped whatever RUST_LOG says (hickory logs a queried handle's domain at error); is_loggable_target, and without_dns_client() -> impl Layer, a filter_fn over it",
       "node": false
     },
     {

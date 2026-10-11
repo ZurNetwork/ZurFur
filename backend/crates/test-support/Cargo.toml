@@ -44,3 +44,5 @@ tower-sessions = { workspace = true }
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.
 atrium-crypto = { workspace = true }
+# The runtime fixture's `Config::public_url`.
+url = { workspace = true }

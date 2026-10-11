@@ -328,9 +328,10 @@ async fn signin_callback_success_redirects_to_root() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303, "callback redirects on success");
+    let home = format!("{base}/");
     assert_eq!(
         res.headers()["location"],
-        "/",
+        home.as_str(),
         "a successful callback lands the visitor on the frontend root",
     );
 }
@@ -348,7 +349,8 @@ async fn signin_callback_user_denial_redirects_to_login_denied() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["location"], "/login?error=denied");
+    let expected = format!("{base}/login?error=denied");
+    assert_eq!(res.headers()["location"], expected.as_str());
 }
 
 #[tokio::test]
@@ -361,7 +363,8 @@ async fn signin_callback_missing_code_redirects_to_login_invalid() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["location"], "/login?error=invalid_callback");
+    let expected = format!("{base}/login?error=invalid_callback");
+    assert_eq!(res.headers()["location"], expected.as_str());
 }
 
 #[tokio::test]
@@ -377,7 +380,8 @@ async fn signin_callback_exchange_failure_redirects_to_login_exchange_failed() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["location"], "/login?error=exchange_failed");
+    let expected = format!("{base}/login?error=exchange_failed");
+    assert_eq!(res.headers()["location"], expected.as_str());
 }
 
 // --- POST /signin ---------------------------------------------------------------
@@ -422,7 +426,8 @@ async fn the_html_form_route_is_gone_but_the_callback_remains() {
         303,
         "/signin-callback still routes to the callback handler",
     );
-    assert_eq!(res.headers()["location"], "/login?error=invalid_callback");
+    let expected = format!("{base}/login?error=invalid_callback");
+    assert_eq!(res.headers()["location"], expected.as_str());
 }
 
 #[tokio::test]
@@ -561,7 +566,8 @@ async fn signin_callback_wrong_account_redirects_to_login_account_mismatch() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["location"], "/login?error=account_mismatch");
+    let expected = format!("{base}/login?error=account_mismatch");
+    assert_eq!(res.headers()["location"], expected.as_str());
 }
 
 // --- the browser-binding cookie -------------------------------------------------
@@ -631,7 +637,8 @@ async fn the_callback_hands_the_cookie_to_complete_and_clears_it() {
         .expect("GET /signin-callback");
 
     assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["location"], "/");
+    let home = format!("{base}/");
+    assert_eq!(res.headers()["location"], home.as_str());
     assert_eq!(binding_cookies(&res), vec![CLEARED.to_string()]);
     let expected_presented = vec![Some("from-the-browser".to_string())];
     assert_eq!(auth.presented(), expected_presented);
@@ -687,7 +694,8 @@ async fn every_callback_failure_clears_the_cookie() {
             .send()
             .await
             .expect("GET /signin-callback");
-        assert_eq!(res.headers()["location"], location);
+        let expected = format!("{base}{location}");
+        assert_eq!(res.headers()["location"], expected.as_str());
         assert_eq!(
             binding_cookies(&res),
             vec![CLEARED.to_string()],

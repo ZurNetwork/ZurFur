@@ -126,8 +126,9 @@ zeroize = { version = "1", features = ["derive"] }
 # The DNS stub resolver on the system configuration, behind the address filter.
 # 0.26 on purpose: 0.24 carries RUSTSEC-2026-0119.
 hickory-resolver = "0.26.3"
-# The one parsed URL the guarded client checks and dials.
-url = "2.5.8"
+# The one parsed URL the guarded client checks and dials; serde so the config's
+# public origin deserializes straight into one.
+url = { version = "2.5.8", features = ["serde"] }
 # Test-only: a TLS server whose certificate the guarded client must refuse.
 # Default features off, so it rides the ring provider reqwest already uses.
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }

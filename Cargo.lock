@@ -232,6 +232,7 @@ dependencies = [
  "tower-sessions",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 
@@ -1022,6 +1023,7 @@ dependencies = [
  "serde",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -5814,6 +5816,7 @@ dependencies = [
  "tokio",
  "tower-sessions",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

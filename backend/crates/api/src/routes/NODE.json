@@ -33,12 +33,12 @@
     },
     {
       "name": "mod.rs",
-      "role": "group index + require_first_party_origin CSRF middleware",
+      "role": "group index + require_first_party_origin CSRF middleware (an Origin header must equal public_url's origin; an opaque origin matches nothing)",
       "node": false
     },
     {
       "name": "session.rs",
-      "role": "browser sign-in: POST /signin (sets the browser-binding cookie), GET /signin-callback (hands that cookie to complete, always clears it), GET /me, POST /logout",
+      "role": "browser sign-in: POST /signin (sets the browser-binding cookie), GET /signin-callback (hands that cookie to complete, always clears it), GET /me, POST /logout; every redirect a Url built on Config::public_url, failures as the closed SignInFailure codes",
       "node": false
     },
     {
