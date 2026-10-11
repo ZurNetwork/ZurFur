@@ -2,11 +2,17 @@
 # Reviews a GitHub PR locally in the colocated checkout, so VS Code's Source
 # Control and rust-analyzer show the whole PR as uncommitted changes.
 #
-#   engineer-tools/review-pr.sh --start --pr=<N>   start, or resume a paused review
-#   engineer-tools/review-pr.sh --pause [--pr=<N>] keep the review and its notes, go back
-#   engineer-tools/review-pr.sh --stop [--pr=<N>] [--yes]
-#                                                  drop the review, go back
-#   engineer-tools/review-pr.sh                    list the active and paused reviews
+#   review-pr --start --pr=<N>     start, or resume a paused review
+#   review-pr --pause [--pr=<N>]   keep the review and its notes, go back
+#   review-pr --stop [--pr=<N>] [--yes]
+#                                  drop the review, go back
+#   review-pr --publish [--pr=<N>] post the notes as a pending review
+#   review-pr                      list the active and paused reviews
+#
+# Install it once with `just engineer-tools-install` (again to update), which
+# copies it to ${XDG_BIN_HOME:-~/.local/bin}/review-pr. Run from the checkout
+# instead, as engineer-tools/review-pr.sh, it vanishes whenever a review's
+# files predate it.
 #
 # A review is a scratch jj change: a child of the point where the PR left its
 # base branch, holding the PR head's files. Notes typed into those files
@@ -14,6 +20,12 @@
 # --pause keeps them and --start brings them back. "Back" is the change that
 # was open before --start. The scratch change carries no bookmark, so it can't
 # be pushed, and this script never pushes.
+#
+# --publish posts every `REVIEW:` note (after //, #, <!-- or --) as one
+# pending GitHub review, which the Engineer edits and submits on GitHub. A
+# note comments on the PR head's line right above it; one outside the PR's
+# diff hunks goes into the review's body as `path:line — text`. The notes stay
+# in the local review.
 #
 # Runs in any colocated jj checkout (one with a .git directory, which VS Code
 # needs), such as ~/code/zurfur; a jj workspace without .git is refused.
@@ -46,7 +58,7 @@ pr=""
 yes=0
 set_action() {
     if [ -n "$action" ] && [ "$action" != "$1" ]; then
-        usage_error "--$action and --$1 can't be used together; pick one of --start, --pause, --stop"
+        usage_error "--$action and --$1 can't be used together; pick one of --start, --pause, --stop, --publish"
     fi
     action="$1"
 }
@@ -55,6 +67,7 @@ while [ $# -gt 0 ]; do
         --start) set_action start ;;
         --pause) set_action pause ;;
         --stop) set_action stop ;;
+        --publish) set_action publish ;;
         --pr=*) pr="${1#--pr=}" ;;
         --pr)
             [ $# -ge 2 ] || usage_error "--pr needs a PR number"
@@ -185,8 +198,29 @@ list_reviews() {
     [ "$any" = 1 ] || echo "No reviews. Start one with --start --pr=<N>."
 }
 
+# pr_info <N> — prints "<base branch> <head sha> <url>".
+pr_info() {
+    gh pr view "$1" --json baseRefName,headRefOid,url \
+        --jq '.baseRefName + " " + .headRefOid + " " + .url' 2>/dev/null
+}
+
+# warn_if_inside_checkout — the review rewrites the checkout's files, so a copy
+# of this script run from inside it can vanish before --pause or --stop.
+warn_if_inside_checkout() {
+    local self
+    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+    case "$self" in
+        "$root"/*)
+            echo "warning: this runs ${self#"$root"/} from inside $root, which the review rewrites;" >&2
+            echo "warning: it may be missing for --pause or --stop. Install it once with: just engineer-tools-install" >&2
+            echo "warning: then run review-pr instead." >&2
+            ;;
+    esac
+}
+
 start_review() {
     local active answer base head fork review now back parents old_head
+    warn_if_inside_checkout
     refuse_if_conflicted
     active="$(reviews_with_status active)"
     if [ -n "$active" ] && [ "$active" != "$pr" ]; then
@@ -194,10 +228,8 @@ start_review() {
     fi
 
     command -v gh >/dev/null 2>&1 || die "gh isn't installed"
-    if ! answer="$(gh pr view "$pr" --json baseRefName,headRefOid --jq '.baseRefName + " " + .headRefOid' 2>/dev/null)"; then
-        die "can't read PR #$pr from GitHub"
-    fi
-    read -r base head <<<"$answer"
+    answer="$(pr_info "$pr")" || die "can't read PR #$pr from GitHub"
+    read -r base head _ <<<"$answer"
     [[ $head =~ ^[0-9a-f]{40}$ ]] && [ -n "$base" ] || die "GitHub's answer for #$pr doesn't parse: '$answer'"
     jj git fetch >/dev/null 2>&1 || die "jj git fetch failed"
     [ -n "$(jj_one "$head" 'commit_id')" ] ||
@@ -283,8 +315,155 @@ stop_review() {
     echo "Stopped the review of #$n."
 }
 
+# review_notes <head> <review> — what the review adds relative to <head>, one
+# tab-separated line each: `N path line text` for a note (its marker
+# stripped), `E path line text` for an edit that isn't a note. `line` is the
+# head's line right above it ("new" in a file the head lacks). A deleted head
+# line is an edit with the text "(deleted)".
+review_notes() {
+    jj diff --ignore-working-copy --git --context 0 --from "$1" --to "$2" | awk '
+        # The head lines a replacement hunk removed but nothing replaced.
+        function flush(   i) {
+            if (in_hunk && count > edits)
+                for (i = start + edits; i < start + count; i++) printf "E\t%s\t%d\t(deleted)\n", path, i
+            in_hunk = 0
+        }
+        # above: the head line right above the next added line. Inside a
+        # replacement, each non-note added line stands for the next head line.
+        function above(   line) {
+            if (newfile) return "new"
+            line = (count == 0) ? start : start - 1 + (edits < count ? edits : count)
+            return (line < 1) ? 1 : line
+        }
+        /^diff --git / { flush(); path = ""; newfile = 0; next }
+        !in_hunk && /^--- \/dev\/null/ { newfile = 1; next }
+        !in_hunk && /^\+\+\+ b\// { path = substr($0, 7); next }
+        /^@@ / {
+            flush()
+            in_hunk = 1
+            edits = 0
+            old = $2
+            sub(/^-/, "", old)
+            n = split(old, part, ",")
+            start = part[1] + 0
+            count = (n > 1) ? part[2] + 0 : 1
+            next
+        }
+        in_hunk && /^\+/ {
+            text = substr($0, 2)
+            if (path != "" && match(text, /^[ \t]*(\/\/|#|<!--|--)[ \t]*REVIEW:[ \t]*/)) {
+                text = substr(text, RSTART + RLENGTH)
+                sub(/[ \t]*-->[ \t]*$/, "", text)
+                sub(/[ \t]+$/, "", text)
+                printf "N\t%s\t%s\t%s\n", path, above(), text
+            } else {
+                edits++
+                printf "E\t%s\t%s\t%s\n", path, above(), text
+            }
+        }
+        END { flush() }
+    '
+}
+
+# diff_ranges <N> — "path<TAB>first<TAB>last" for every hunk's right side in
+# the PR's diff on GitHub: the lines a review comment can sit on.
+diff_ranges() {
+    gh api "repos/{owner}/{repo}/pulls/$1/files" --paginate \
+        --jq '.[] | select(.patch != null) | .filename as $f | .patch | split("\n")[] | select(startswith("@@ ")) | "\($f)\t\(.)"' |
+        awk -F '\t' '{
+            split($2, field, " ")
+            new = field[3]
+            sub(/^\+/, "", new)
+            n = split(new, part, ",")
+            count = (n > 1) ? part[2] + 0 : 1
+            if (count > 0) printf "%s\t%d\t%d\n", $1, part[1], part[1] + count - 1
+        }'
+}
+
+publish_review() {
+    local n review head answer now_head url changes notes edits ranges pending payload posted
+    n="$(pick_pr active)"
+    refuse_if_conflicted
+    review="$(state_get "$n" change)"
+    head="$(state_get "$n" head)"
+    [ -n "$(jj_one "$review" 'change_id')" ] || die "the review change $review of #$n is gone"
+    current_change >/dev/null
+
+    answer="$(pr_info "$n")" || die "can't read PR #$n from GitHub"
+    read -r _ now_head url <<<"$answer"
+    if [ "$now_head" != "$head" ]; then
+        die "#$n's head moved since this review started (${head:0:12}..${now_head:0:12}), so the notes' lines would be off; --stop it and --start again"
+    fi
+
+    changes="$(review_notes "$head" "$review")" || die "couldn't read the notes from $review"
+    notes="$(awk -F '\t' -v OFS='\t' '$1 == "N" { print $2, $3, $4 }' <<<"$changes")"
+    edits="$(awk -F '\t' '$1 == "E" { printf "  %s:%s — %s\n", $2, $3, $4 }' <<<"$changes")"
+    if [ -n "$edits" ]; then
+        echo "warning: these edits aren't REVIEW: notes, so they won't be published:" >&2
+        printf '%s\n' "$edits" >&2
+    fi
+    [ -n "$notes" ] || die "the review of #$n has no REVIEW: notes to publish"
+
+    pending="$(gh api "repos/{owner}/{repo}/pulls/$n/reviews" --paginate \
+        --jq '[.[] | select(.state == "PENDING")] | length' 2>/dev/null)" ||
+        die "can't read #$n's reviews from GitHub"
+    if [ "$(awk '{ n += $1 } END { print n + 0 }' <<<"$pending")" -gt 0 ]; then
+        die "you already have a pending review on #$n, and GitHub allows one; submit or delete it on GitHub first ($url)"
+    fi
+
+    ranges="$(diff_ranges "$n")" || die "can't read #$n's diff from GitHub"
+
+    # Notes on a line inside a hunk become line comments (consecutive notes
+    # on one line join); the rest go into the review body.
+    payload="$(
+        { printf '%s\n' "$ranges" | awk '{ print "R\t" $0 }'; printf '%s\n' "$notes" | awk '{ print "N\t" $0 }'; } |
+            awk -F '\t' '
+                $1 == "R" { lo[$2] = lo[$2] " " $3; hi[$2] = hi[$2] " " $4; next }
+                $1 != "N" { next }
+                {
+                    path = $2; line = $3; text = $4
+                    inside = 0
+                    if (line != "new") {
+                        nl = split(lo[path], l, " ")
+                        split(hi[path], h, " ")
+                        for (i = 1; i <= nl; i++) if (line + 0 >= l[i] + 0 && line + 0 <= h[i] + 0) inside = 1
+                    }
+                    if (inside) {
+                        key = path "\t" line
+                        if (!(key in body)) order[++keys] = key
+                        body[key] = (key in body) ? body[key] "\\n" text : text
+                    } else {
+                        where = (line == "new") ? path " (new file)" : path ":" line
+                        print "B\t" where "\t" text
+                    }
+                }
+                END { for (k = 1; k <= keys; k++) print "C\t" order[k] "\t" body[order[k]] }' |
+            jq -R -s --arg head "$head" '
+                split("\n") | map(select(length > 0) | split("\t")) as $rows
+                | ($rows | map(select(.[0] == "C")
+                    | {path: .[1], line: (.[2] | tonumber), side: "RIGHT", body: (.[3] | gsub("\\\\n"; "\n"))})) as $comments
+                | ($rows | map(select(.[0] == "B") | "- `\(.[1])` — \(.[2])")) as $body
+                | {commit_id: $head, comments: $comments}
+                  + (if ($body | length) > 0
+                     then {body: (["Notes outside the diff:", ""] + $body | join("\n"))}
+                     else {} end)'
+    )" || die "couldn't build the review"
+
+    posted="$(mktemp)"
+    printf '%s\n' "$payload" >"$posted"
+    if ! gh api -X POST "repos/{owner}/{repo}/pulls/$n/reviews" --input "$posted" >/dev/null 2>&1; then
+        rm -f "$posted"
+        die "GitHub refused the pending review for #$n"
+    fi
+    rm -f "$posted"
+    printf 'Pending review on #%s: %s line comment(s), %s in the body. Edit and submit it on GitHub: %s\n' "$n" \
+        "$(jq '.comments | length' <<<"$payload")" \
+        "$(jq '(.body // "") | split("\n") | map(select(startswith("- "))) | length' <<<"$payload")" "$url"
+}
+
 case "$action" in
     start) start_review ;;
+    publish) publish_review ;;
     pause) pause_review ;;
     stop) stop_review ;;
     "") list_reviews ;;
