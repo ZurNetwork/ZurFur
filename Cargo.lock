@@ -5754,6 +5754,7 @@ dependencies = [
  "async-trait",
  "atrium-crypto",
  "axum",
+ "base64",
  "chrono",
  "composition",
  "data-encoding",
