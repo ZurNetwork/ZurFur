@@ -130,6 +130,11 @@
       "node": true
     },
     {
+      "name": "engineer-tools/",
+      "role": "tools the Engineer runs by hand (review-pr.sh)",
+      "node": true
+    },
+    {
       "name": "forks/",
       "role": "the /boardroom skill's numbered deliberation runs (briefs, seat transcripts, sealed rankings)",
       "node": true
