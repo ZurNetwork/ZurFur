@@ -88,10 +88,12 @@ impl Commission {
         }
     }
 
+    /// Whether the commission is archived: true once it carries an archive time.
     pub fn is_archived(&self) -> bool {
-        self.archived_at.is_none()
+        self.archived_at.is_some()
     }
 
+    /// Whether `user_id` is the commission's owner.
     pub fn is_owned_by(&self, user_id: &UserId) -> bool {
         self.owner_id == *user_id
     }
