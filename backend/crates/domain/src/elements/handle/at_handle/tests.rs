@@ -68,7 +68,7 @@ fn refuses_the_specs_valid_but_disallowed_examples() {
 
 #[test]
 fn refuses_each_disallowed_tld() {
-    for tld in DISALLOWED_TLDS {
+    for tld in &DISALLOWED_TLDS {
         let raw = format!("alice.{tld}");
         let expected_error = HandleError::ReservedTld((*tld).to_owned());
         assert_eq!(parse(&raw), Err(expected_error), "{raw}");

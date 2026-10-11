@@ -1,9 +1,14 @@
-//! The DNS filter: the guarded client's only way from a host name to an address.
+//! The DNS client: the guarded client's only way from a host name to an
+//! address, and the identity resolver's TXT lookups, over one system resolver.
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use hickory_resolver::{TokioResolver, net::NetError};
+use hickory_resolver::{
+    TokioResolver,
+    net::NetError,
+    proto::rr::{RData, Record},
+};
 
 use super::{
     address::{ForbiddenAddress, PublicAddress},
@@ -28,7 +33,16 @@ pub(crate) trait AddressLookup: Send + Sync {
     async fn lookup_ip(&self, fqdn: &str) -> Result<Vec<IpAddr>, LookupError>;
 }
 
-/// The system's DNS configuration, through one hickory resolver.
+/// A source of TXT answers: the system's DNS, or a test's script.
+#[async_trait]
+pub(crate) trait TxtLookup: Send + Sync {
+    /// Every TXT record at the fully qualified `fqdn`, each one's
+    /// character-strings joined into one value.
+    async fn lookup_txt(&self, fqdn: &str) -> Result<Vec<Vec<u8>>, LookupError>;
+}
+
+/// The system's DNS configuration, through one hickory resolver. Built once at
+/// boot and shared by the guarded client and the identity resolver.
 pub(crate) struct SystemDns(TokioResolver);
 
 impl SystemDns {
@@ -44,14 +58,37 @@ impl SystemDns {
 #[async_trait]
 impl AddressLookup for SystemDns {
     async fn lookup_ip(&self, fqdn: &str) -> Result<Vec<IpAddr>, LookupError> {
-        let answers = self.0.lookup_ip(fqdn).await.map_err(|error| {
-            if error.is_no_records_found() {
-                LookupError::NoRecords
-            } else {
-                LookupError::Failed(Box::new(error))
-            }
-        })?;
+        let answers = self.0.lookup_ip(fqdn).await.map_err(lookup_error)?;
         Ok(answers.iter().collect())
+    }
+}
+
+#[async_trait]
+impl TxtLookup for SystemDns {
+    async fn lookup_txt(&self, fqdn: &str) -> Result<Vec<Vec<u8>>, LookupError> {
+        let answers = self.0.txt_lookup(fqdn).await.map_err(lookup_error)?;
+        Ok(txt_values(answers.answers()))
+    }
+}
+
+/// One value per TXT record among `records`, its character-strings joined in
+/// order; any other record type (a CNAME on the way) is skipped.
+fn txt_values(records: &[Record]) -> Vec<Vec<u8>> {
+    records
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::TXT(txt) => Some(txt.txt_data.concat()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// "No records" (NXDOMAIN or an empty answer) apart from every other failure.
+fn lookup_error(error: NetError) -> LookupError {
+    if error.is_no_records_found() {
+        LookupError::NoRecords
+    } else {
+        LookupError::Failed(Box::new(error))
     }
 }
 

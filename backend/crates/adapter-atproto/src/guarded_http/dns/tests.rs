@@ -153,3 +153,83 @@ async fn a_dns_error_never_echoes_the_name() {
 
     assert!(!error.to_string().contains("secret"));
 }
+
+// --- the system DNS's conversions of hickory's answers ---
+
+mod system {
+    use hickory_resolver::net::{DnsError as HickoryDnsError, NoRecords};
+    use hickory_resolver::proto::op::{Query, ResponseCode};
+    use hickory_resolver::proto::rr::{Name, rdata::TXT};
+
+    use super::*;
+
+    fn txt_record(pieces: &[&str]) -> Record {
+        let pieces = pieces.iter().map(|piece| (*piece).to_string()).collect();
+        Record::from_rdata(Name::root(), 300, RData::TXT(TXT::new(pieces)))
+    }
+
+    #[test]
+    fn a_txt_record_split_into_pieces_is_joined_in_order() {
+        let records = [
+            txt_record(&["did=did:web:", "alice.example.com"]),
+            txt_record(&["v=spf1 -all"]),
+        ];
+
+        let values = txt_values(&records);
+
+        let expected = vec![
+            b"did=did:web:alice.example.com".to_vec(),
+            b"v=spf1 -all".to_vec(),
+        ];
+        assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn records_that_are_not_txt_are_skipped() {
+        let address = Record::from_rdata(
+            Name::root(),
+            300,
+            RData::A("93.184.216.34".parse().expect("an address")),
+        );
+        let records = [
+            address,
+            txt_record(&["did=did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"]),
+        ];
+
+        let values = txt_values(&records);
+
+        let expected = vec![b"did=did:plc:aaaaaaaaaaaaaaaaaaaaaaaa".to_vec()];
+        assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn nxdomain_and_an_empty_answer_are_no_records() {
+        for code in [ResponseCode::NXDomain, ResponseCode::NoError] {
+            let no_records = NoRecords::new(Query::default(), code);
+            let error = NetError::from(no_records);
+            let converted = lookup_error(error);
+            assert!(
+                matches!(converted, LookupError::NoRecords),
+                "{code:?}: {converted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn servfail_and_other_failures_are_failures_never_no_records() {
+        let failures = [
+            NetError::from(HickoryDnsError::ResponseCode(ResponseCode::ServFail)),
+            NetError::from(HickoryDnsError::ResponseCode(ResponseCode::Refused)),
+            NetError::from(HickoryDnsError::ResponseCode(ResponseCode::FormErr)),
+            NetError::Timeout,
+        ];
+        for error in failures {
+            let shown = error.to_string();
+            let converted = lookup_error(error);
+            assert!(
+                matches!(converted, LookupError::Failed(_)),
+                "{shown}: {converted:?}"
+            );
+        }
+    }
+}

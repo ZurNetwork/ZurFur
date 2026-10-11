@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use jacquard_common::http_client::HttpClient;
 
 use super::{
-    dns::{AddressLookup, DnsError, FilteringDns, SystemDns},
+    dns::{AddressLookup, DnsError, FilteringDns},
     errors::{FetchError, Refusal},
     limits::{BodyCap, Timeouts},
     policy::PublicHttpsUrl,
@@ -31,13 +31,11 @@ pub(crate) struct GuardedHttp {
 }
 
 impl GuardedHttp {
-    /// The production client over the system's DNS configuration. Errors when
-    /// that configuration cannot be read or TLS cannot start. Inherent: it
-    /// reads the system, it converts nothing.
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        let system =
-            SystemDns::from_system_conf().context("reading the system DNS configuration")?;
-        let client = client_builder(Arc::new(system), Timeouts::default())
+    /// The production client over `lookup` (the system DNS, shared with the
+    /// identity resolver). Errors when TLS cannot start. Inherent: it assembles
+    /// a transport, it converts nothing.
+    pub(crate) fn new(lookup: Arc<dyn AddressLookup>) -> anyhow::Result<Self> {
+        let client = client_builder(lookup, Timeouts::default())
             .build()
             .context("building the guarded HTTP client")?;
         Ok(Self {
@@ -193,7 +191,9 @@ fn classify(error: reqwest::Error) -> FetchError {
 
 /// `error`, then each cause in turn. An `io::Error` is followed into its
 /// payload (`get_ref`), which its own `source()` would skip.
-fn causes<'a>(error: &'a (dyn Error + 'static)) -> impl Iterator<Item = &'a (dyn Error + 'static)> {
+pub(crate) fn causes<'a>(
+    error: &'a (dyn Error + 'static),
+) -> impl Iterator<Item = &'a (dyn Error + 'static)> {
     std::iter::successors(Some(error), |&current| {
         let payload = current
             .downcast_ref::<io::Error>()

@@ -33,12 +33,14 @@ mod plc;
 mod plc_directory;
 mod profile;
 mod public_records;
+mod resolver;
 mod secret_vault;
 pub use auth_store::AtprotoAuthStore;
 pub use did_minter::{RealDidMinter, StubDidMinter};
 pub use plc_directory::{DirectoryConfig, NoopPlcDirectory, plc_directory_from_config};
 pub use profile::AtprotoProfileSource;
 pub use public_records::AtprotoPublicRecords;
+pub use resolver::AtprotoIdentityResolver;
 pub use secret_vault::SecretVault;
 
 /// The applied jacquard OAuth client this crate drives, over the
@@ -54,18 +56,19 @@ pub struct AtprotoAuthenticator {
 impl AtprotoAuthenticator {
     /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
     /// registered redirect target. `pool` backs the persistent
-    /// [`AtprotoAuthStore`]; `vault` seals that store's secrets at rest. Errors
-    /// when the system DNS configuration cannot be read.
+    /// [`AtprotoAuthStore`]; `vault` seals that store's secrets at rest; every
+    /// request goes through `resolver`'s guarded client.
     pub fn new(
         redirect_uri: Uri<String>,
         pool: PgPool,
         vault: SecretVault,
-    ) -> anyhow::Result<Self> {
-        let http = GuardedHttp::new()?;
+        resolver: Arc<AtprotoIdentityResolver>,
+    ) -> Self {
+        let http = resolver.http().clone();
         let store = AtprotoAuthStore::new(pool, vault);
-        Ok(Self {
+        Self {
             oauth: build_oauth(redirect_uri, store, http),
-        })
+        }
     }
 }
 

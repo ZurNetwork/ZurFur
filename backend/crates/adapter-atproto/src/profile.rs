@@ -20,6 +20,7 @@ use smol_str::SmolStr;
 use std::sync::Arc;
 
 use crate::guarded_http::GuardedHttp;
+use crate::resolver::AtprotoIdentityResolver;
 
 /// The unauthenticated jacquard agent the source reads through, every request
 /// over [`GuardedHttp`].
@@ -35,11 +36,11 @@ pub struct AtprotoProfileSource {
 }
 
 impl AtprotoProfileSource {
-    /// Build the source with a fresh unauthenticated jacquard client over the
-    /// guarded web client. Errors when the system DNS configuration cannot be read.
-    pub fn new() -> anyhow::Result<Self> {
-        let http = GuardedHttp::new()?;
-        Ok(Self::over(http, ResolverOptions::default()))
+    /// Build the source with a fresh unauthenticated jacquard client over
+    /// `resolver`'s guarded web client.
+    pub fn new(resolver: Arc<AtprotoIdentityResolver>) -> Self {
+        let http = resolver.http().clone();
+        Self::over(http, ResolverOptions::default())
     }
 
     /// The source reading through `http`, resolving with `options`.

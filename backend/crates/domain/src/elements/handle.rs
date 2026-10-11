@@ -20,5 +20,5 @@ mod value;
 pub use at_handle::AtHandle;
 pub use domain::HandleDomain;
 pub use errors::{HandleDomainError, HandleError};
-pub use reserved::{HANDLE_MAX_LEN, LABEL_MAX_LEN};
+pub use reserved::{HANDLE_MAX_LEN, LABEL_MAX_LEN, RESERVED_TLDS};
 pub use value::Handle;

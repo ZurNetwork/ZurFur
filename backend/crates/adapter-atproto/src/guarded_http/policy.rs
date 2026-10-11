@@ -1,5 +1,7 @@
 //! The URL policy: which URLs the guarded client may fetch or hand to a browser.
 
+use domain::elements::handle::RESERVED_TLDS;
+
 /// A URL that passed the policy: `https`, port 443, no userinfo, and a domain-name
 /// host of at least two labels outside the local and reserved TLDs. Parsed once;
 /// the URL checked is the URL dialled.
@@ -29,19 +31,6 @@ pub(crate) enum UrlPolicyError {
     LocalName,
 }
 
-/// The handle spec's disallowed TLDs, plus `test`.
-const REFUSED_TLDS: [&str; 9] = [
-    "alt",
-    "arpa",
-    "example",
-    "internal",
-    "invalid",
-    "local",
-    "localhost",
-    "onion",
-    "test",
-];
-
 impl TryFrom<url::Url> for PublicHttpsUrl {
     type Error = UrlPolicyError;
 
@@ -70,6 +59,13 @@ impl TryFrom<url::Url> for PublicHttpsUrl {
     }
 }
 
+impl AsRef<str> for PublicHttpsUrl {
+    /// The URL as text, exactly as it will be dialled.
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl TryFrom<&str> for PublicHttpsUrl {
     type Error = UrlPolicyError;
 
@@ -89,15 +85,15 @@ impl PublicHttpsUrl {
 }
 
 /// After one trailing dot is stripped: two or more non-empty labels, the last
-/// not a refused TLD.
-fn is_public_domain(domain: &str) -> bool {
+/// not a reserved TLD. Handle lookups ask it too, so DNS and HTTPS agree.
+pub(crate) fn is_public_domain(domain: &str) -> bool {
     let name = domain.strip_suffix('.').unwrap_or(domain);
     let labels: Vec<&str> = name.split('.').collect();
     let Some(tld) = labels.last() else {
         return false;
     };
     let every_label_present = labels.iter().all(|label| !label.is_empty());
-    labels.len() >= 2 && every_label_present && !REFUSED_TLDS.contains(tld)
+    labels.len() >= 2 && every_label_present && !RESERVED_TLDS.contains(tld)
 }
 
 #[cfg(test)]

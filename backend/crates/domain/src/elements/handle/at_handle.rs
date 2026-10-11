@@ -47,7 +47,7 @@ impl FromStr for AtHandle {
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         let normalized = raw.to_ascii_lowercase();
         let labels = syntax::split_labels(&normalized)?;
-        syntax::check_top_level(&labels, DISALLOWED_TLDS)?;
+        syntax::check_top_level(&labels, &DISALLOWED_TLDS)?;
         Ok(Self(normalized))
     }
 }
