@@ -33,11 +33,12 @@ impl AtprotoIdentityResolver {
             SystemDns::from_system_conf().context("reading the system DNS configuration")?;
         let system = Arc::new(system);
         let http = GuardedHttp::new(system.clone())?;
-        Ok(Self {
+        let resolver = Self {
             http,
             txt: system,
             deadlines: Deadlines::default(),
-        })
+        };
+        Ok(resolver)
     }
 
     /// The guarded client this resolver fetches through, for the adapters that
