@@ -18,18 +18,18 @@ describe('root layout load', () => {
 		};
 		const { fetch } = fetchStub(() => Response.json(me));
 		const result = await load(layoutEvent(fetch));
-		expect(result).toEqual({ session: me });
+		expect(result).toEqual({ session: me, denServed: false });
 	});
 
 	it('carries undefined for an anonymous visitor (backend 401)', async () => {
 		const { fetch } = fetchStub(() => problemResponse(401, 'not_authenticated'));
 		const result = await load(layoutEvent(fetch));
-		expect(result).toStrictEqual({ session: undefined });
+		expect(result).toStrictEqual({ session: undefined, denServed: false });
 	});
 
 	it('degrades to signed-out when the backend is unreachable', async () => {
 		const result = await load(layoutEvent(unreachableFetch()));
-		expect(result).toStrictEqual({ session: undefined });
+		expect(result).toStrictEqual({ session: undefined, denServed: false });
 	});
 
 	it('surfaces a broken contract instead of treating it as signed-out', async () => {
@@ -42,7 +42,7 @@ describe('root layout load', () => {
 		const gated = { did: 'did:plc:alice' };
 		const event = { fetch, locals: { session: gated } } as unknown as LoadEvent;
 		const result = await load(event);
-		expect(result).toEqual({ session: gated });
+		expect(result).toEqual({ session: gated, denServed: false });
 		expect(calls).toEqual([]);
 	});
 });

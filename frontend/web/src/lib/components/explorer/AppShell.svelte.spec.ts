@@ -24,8 +24,15 @@ const navigation = createRawSnippet(() => ({
 /** The pane's content. */
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderShell() {
-	return render(AppShell, { session: alice, trail, section: 'accounts', navigation, children });
+function renderShell(denServed = true) {
+	return render(AppShell, {
+		session: alice,
+		trail,
+		section: 'accounts',
+		denServed,
+		navigation,
+		children
+	});
 }
 
 describe('AppShell', () => {
@@ -91,5 +98,24 @@ describe('AppShell', () => {
 
 		await expect.element(page.getByTestId('sidebar-drawer')).not.toBeInTheDocument();
 		await expect.element(opener).toHaveFocus();
+	});
+
+	it('shows no sidebar, no drawer and no ☰ where this run serves no Den', async () => {
+		renderShell(false);
+
+		await expect.element(page.getByRole('main')).toBeInTheDocument();
+		await expect.element(page.getByTestId('sidebar')).not.toBeInTheDocument();
+		await expect.element(page.getByTestId('open-drawer')).not.toBeInTheDocument();
+		await expect.element(page.getByRole('dialog', { includeHidden: true })).not.toBeInTheDocument();
+		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+	});
+
+	it('keeps the sections and Sign out in the row on a phone when there is no drawer', async () => {
+		renderShell(false);
+		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
+
+		expect(page.getByTestId('accounts-link').element().closest('.desktop-only')).toBeNull();
+		expect(page.getByTestId('session-handle').element().closest('.desktop-only')).toBeNull();
 	});
 });

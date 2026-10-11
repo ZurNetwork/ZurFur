@@ -35,7 +35,7 @@
     },
     {
       "name": "+layout.server.ts",
-      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes); unreachable backend degrades to signed-out, contract breakage still 500s",
+      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes), plus `denServed` (whether this run can show a Den); unreachable backend degrades to signed-out, contract breakage still 500s",
       "node": false
     },
     {

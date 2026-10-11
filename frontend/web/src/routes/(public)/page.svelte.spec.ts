@@ -6,7 +6,7 @@ import { did, handleFromTrusted } from '$lib/types/brand';
 
 describe('/ landing', () => {
 	it('shows the sign-in CTA when signed out', async () => {
-		render(Landing, { data: { session: undefined } });
+		render(Landing, { data: { session: undefined, denServed: false } });
 
 		await expect.element(page.getByTestId('signin-cta')).toHaveAttribute('href', '/login');
 	});
@@ -18,7 +18,7 @@ describe('/ landing', () => {
 			displayName: 'Alice',
 			avatarUrl: undefined
 		};
-		render(Landing, { data: { session: alice } });
+		render(Landing, { data: { session: alice, denServed: false } });
 
 		await expect
 			.element(page.getByTestId('signed-in-as'))

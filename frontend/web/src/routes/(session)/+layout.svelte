@@ -11,6 +11,7 @@
 	 * Every signed-in page sits in the Explorer frame. The frame reads nothing
 	 * itself: the path comes from the open page's `trail`, and the drawer
 	 * closes after every navigation, so choosing an item in it closes it.
+	 * The sidebar and drawer appear only where this run serves a Den.
 	 */
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 
@@ -24,7 +25,7 @@
 	const section = $derived(frameSectionOf(page.route.id ?? undefined));
 </script>
 
-<AppShell session={data.session} {trail} {section} bind:drawerOpen>
+<AppShell session={data.session} {trail} {section} denServed={data.denServed} bind:drawerOpen>
 	{#snippet navigation()}
 		<!-- The sidebar stays empty until My Den's tree arrives; the sections live in the top bar and the drawer's footer. -->
 	{/snippet}

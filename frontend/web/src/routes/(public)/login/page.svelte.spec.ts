@@ -17,7 +17,7 @@ function loginForm(
 }
 
 function loginData(form: ReturnType<typeof loginForm> = loginForm(), callbackError?: string) {
-	return { session: undefined, callbackError, form };
+	return { session: undefined, denServed: false, callbackError, form };
 }
 
 describe('/login page', () => {
