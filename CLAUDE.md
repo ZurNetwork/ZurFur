@@ -69,7 +69,10 @@ just db-shell              # psql into the running database
 just migrate-add <name>    # Create a migration file in adapter-pg
 just db-reset              # Drop the DB volume, bring up fresh PostgreSQL
 just test                  # cargo test --workspace (integration tests need a container runtime socket, not `just up`)
-just setup                 # First-time setup: copy .env, install tools
+just setup                 # First-time setup: copy .env, install tools (typos, cargo-deny at CI's versions)
+just gate                  # The full local mirror of CI (see "Which local gate when")
+just gate-light            # The light gate for restacks and fix rounds
+just tools-check           # Warn when local typos/cargo-deny/buf/rustc differ from CI's pins
 ```
 
 Building and running directly:
@@ -78,6 +81,8 @@ cargo build                          # Build all crates (workspace root)
 cargo run -p api                     # Run the API server
 cargo test --workspace               # Run all tests
 ```
+
+To review a PR locally, the Engineer runs `engineer-tools/review-pr.sh --start --pr=<N>` in `~/code/zurfur` (`--pause`, `--stop`, `--help`; see `engineer-tools/NODE.json`).
 
 ## The node tree (`NODE.json`)
 
@@ -116,6 +121,9 @@ Config is figment in `api`: `backend/config/{profile}.toml` then `ZURFUR_*` env 
 - `feature/*` / `bug/*` — one ticket each: the **integration branch**, created **exactly at `main`'s tip, nothing else on it**. Work lands on it as **bite-sized slice PRs** (slice branch → PR **into the feature branch**, reviewed there by QA, plus security when it applies (no Copilot on slices), then merged by Claude with a **merge commit**, never squashed). The feature branch gets its PR to `main` **only when the ticket is ready — every slice merged**; that PR is **the Engineer's review**, with Copilot, and it merges as one squash. The slices already had their line review. (Engineer ruling 2026-07-14; prototype: ZMVP-122 / slice PRs #127 + #122–#126.) CI runs on PRs into `feature/**` by design — name slice branches `feature/…` so *their* children also trigger it.
 - **The working-state contract lives on the feature branch (and `main`)**: every first-parent commit *on the integration branch* (each slice's merge commit) is gate-green (fmt, clippy, full test suite) — incomplete is fine, broken never. Slice branches may hold work-in-progress that doesn't stand alone; the enforcement seam is the merge: a slice PR's CI runs against the merge preview (feature + slice), so green slice CI ⇒ the feature branch stays working after the merge.
 - Stacked slice PRs: a merge commit keeps the merged slice's commits, so the next slice is still built on them and needs no restack; GitHub retargets its PR to the feature branch when the merged slice's branch is deleted. Restack a slice only when it must pick up something new from the feature branch — mechanical, Claude's own slice chain, distinct from the Engineer-owned cross-branch restacks. (Engineer ruling 2026-10-11.)
+
+- **PRs into `main` go through the merge queue** *(Engineer ruling 2026-10-11)*. Once a PR's required checks pass, `gh pr merge <N> --squash` queues it (before they pass, the same command turns on auto-merge, which queues it when they do). The queue re-runs CI on the PR applied to the latest `main` and the PRs ahead of it, then squash-merges; nobody clicks "Update branch" or rebases just to catch up with `main`. PRs into `feature/*` don't use the queue.
+- **Which local gate when.** `just gate` (the full suite) before a slice's first push for review and before handing it to QA: that run is the evidence QA and the Engineer read. On restacks and fix rounds, `just gate-light` is enough: fmt, clippy, typos, `just design-index-check` (CI can't run it; the corpus is private), the tests of the crates the change touches, and the web checks when `frontend/` or `contract/` changed. CI re-runs the full suite on every push, and its run on the merge preview stays the enforcement seam. `jj push` always runs fmt + clippy. To wait for CI and Copilot, run `scripts/pr-wait.sh <PR>` once in the background instead of polling. It waits for Copilot only on PRs into `main`. Exit 4 means CI is green but Copilot was unavailable (a quota or no-files notice): go on, and tell the Engineer.
 
 ### Parallel work — jj workspaces & units of work
 
