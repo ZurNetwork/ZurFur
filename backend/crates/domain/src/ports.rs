@@ -14,6 +14,7 @@ mod account;
 mod authenticator;
 mod errors;
 mod identity;
+mod identity_resolver;
 mod profile;
 mod public_records;
 mod unit_of_work;
@@ -28,9 +29,10 @@ pub use commission::{
     CommissionReads, CommissionRepo, CommissionStore, CommissionWrites, ElementNotFound,
     UnknownSurface, UnknownTab,
 };
-pub use errors::{DidBelongsToAnotherActor, HandleTaken, PublicRecordsError};
+pub use errors::{DidBelongsToAnotherActor, HandleTaken, PublicRecordsError, ResolveError};
 pub use file::FileStore;
 pub use identity::{DidMinter, DidOperations, KeyStore, PlcOperationLog};
+pub use identity_resolver::IdentityResolver;
 pub use profile::{ProfileCache, ProfileSource};
 pub use public_records::PublicRecords;
 pub use unit_of_work::{Database, Unit, UnitOfWork, UnitOfWorkFn};

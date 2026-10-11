@@ -7,7 +7,22 @@ pub const LABEL_MAX_LEN: usize = 63;
 /// The Zurfur-issued handle namespace, gated by [`RESERVED_LABELS`].
 pub(super) const ZURFUR_NAMESPACE_SUFFIX: &str = ".zurfur.app";
 
-/// Top-level domains the atproto handle spec forbids as handles.
+/// Top-level domains the atproto handle spec disallows: reserved or
+/// non-resolvable names that must fail resolution. An [`AtHandle`](super::AtHandle)
+/// refuses these.
+pub(super) const DISALLOWED_TLDS: &[&str] = &[
+    "alt",
+    "arpa",
+    "example",
+    "internal",
+    "invalid",
+    "local",
+    "localhost",
+    "onion",
+];
+
+/// Top-level domains a claimed [`Handle`](super::Handle) refuses: the spec's
+/// [`DISALLOWED_TLDS`] plus `test`, which real-world handles must not use.
 pub(super) const RESERVED_TLDS: &[&str] = &[
     "alt",
     "arpa",
@@ -75,3 +90,6 @@ pub(super) const RESERVED_LABELS: &[&str] = &[
     "xrpc",
     "ns",
 ];
+
+#[cfg(test)]
+mod tests;
