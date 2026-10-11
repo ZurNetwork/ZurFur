@@ -4,7 +4,7 @@ use super::*;
 
 /// Names built from visible characters, ordinary and other spaces, fillers, zero-width spaces,
 /// joiners, selectors, format characters, a tab, the pieces of a subdivision flag, a Mongolian
-/// letter and vowel separator, and an unassigned default-ignorable.
+/// letter and vowel separator, an unassigned default-ignorable and two invisible marks.
 fn name() -> impl Strategy<Value = String> {
     let alphabet = vec![
         'a',
@@ -33,6 +33,8 @@ fn name() -> impl Strategy<Value = String> {
         '\u{1820}',
         '\u{180E}',
         '\u{2065}',
+        '\u{034F}',
+        '\u{17B4}',
     ];
     let characters = prop::sample::select(alphabet);
     prop::collection::vec(characters, 0..10).prop_map(|characters| characters.into_iter().collect())
@@ -63,6 +65,26 @@ proptest! {
             prop_assert!(!blank(first));
             prop_assert!(last_visible.is_some_and(|unit| !blank(unit)));
             prop_assert!(!stored.iter().any(stripped_inside));
+        }
+    }
+
+    #[test]
+    fn each_gap_holds_at_most_one_joiner_and_one_selector(text in name()) {
+        if let Ok(name) = NodeName::try_from(text.as_str()) {
+            let mut joiners = 0;
+            let mut selectors = 0;
+            for unit in units(name.as_ref()) {
+                match modifier(unit) {
+                    Some(Modifier::Joiner) => joiners += 1,
+                    Some(Modifier::Selector) => selectors += 1,
+                    None if !single(unit).is_some_and(is_blank) => {
+                        joiners = 0;
+                        selectors = 0;
+                    }
+                    None => {}
+                }
+                prop_assert!(joiners <= 1 && selectors <= 1, "{name:?}");
+            }
         }
     }
 }

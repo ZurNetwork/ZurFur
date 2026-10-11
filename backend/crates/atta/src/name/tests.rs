@@ -819,3 +819,57 @@ fn emoji_and_persian_joins_with_one_joiner_each_are_unchanged() {
     assert_stored(rainbow_flag, rainbow_flag);
     assert_stored(persian, persian);
 }
+
+#[test]
+fn the_grapheme_joiner_and_khmer_inherent_vowels_are_stripped_inside_a_name() {
+    assert_stored("a\u{034F}b", "ab");
+    assert_stored("a\u{17B4}b", "ab");
+    assert_stored("a\u{17B5}b", "ab");
+}
+
+#[test]
+fn invisible_marks_do_not_restart_the_joiner_and_selector_count() {
+    for mark in ['\u{034F}', '\u{17B4}', '\u{17B5}'] {
+        let run = format!("{mark}\u{FE0F}\u{200C}").repeat(150);
+        let name = format!("a{run}b");
+        assert_stored(&name, "a\u{FE0F}\u{200C}b");
+    }
+}
+
+#[test]
+fn spaces_do_not_restart_the_joiner_and_selector_count() {
+    let run = " \u{FE0F}\u{200D}".repeat(150);
+    let name = format!("a{run}b");
+    let remaining_spaces = " ".repeat(149);
+    let expected = format!("a \u{FE0F}\u{200D}{remaining_spaces}b");
+    assert_stored(&name, &expected);
+}
+
+#[test]
+fn a_selector_after_a_space_is_stored_as_it_reparses() {
+    let names = ["a \u{FE0F}b", "a\u{FE0F} \u{FE0F}b", "a \u{200D} \u{200D}b"];
+    for name in names {
+        let stored = NodeName::try_from(name).expect("a name that strips to something");
+        let reparsed = NodeName::try_from(stored.as_ref());
+        assert_eq!(reparsed, Ok(stored.clone()), "{name:?}");
+    }
+    assert_stored("a\u{FE0F} \u{FE0F}b", "a\u{FE0F} b");
+    assert_stored("a \u{200D} \u{200D}b", "a \u{200D} b");
+}
+
+#[test]
+fn single_joins_and_selectors_survive_the_gap_count() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let persian = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}";
+    let half_form = "\u{0915}\u{094D}\u{200D}";
+    let scotland = flag("gbsct");
+    for name in [
+        family,
+        persian,
+        half_form,
+        "\u{2764}\u{FE0F}",
+        scotland.as_str(),
+    ] {
+        assert_stored(name, name);
+    }
+}

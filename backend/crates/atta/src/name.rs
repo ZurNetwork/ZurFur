@@ -212,11 +212,17 @@ fn acts_on_previous(character: char) -> bool {
     is_joiner(character) || is_variation_selector(character)
 }
 
-/// Whether `character` is stripped even from inside a name: a filler or a zero-width space.
+/// U+034F COMBINING GRAPHEME JOINER and the Khmer inherent vowels U+17B4 and U+17B5: invisible,
+/// and neither a joiner nor a selector, so stripped wherever they stand.
+const INVISIBLE_MARKS: &[char] = &['\u{034F}', '\u{17B4}', '\u{17B5}'];
+
+/// Whether `character` is stripped even from inside a name: a filler, a zero-width space or an
+/// invisible mark.
 fn is_stripped_inside(character: char) -> bool {
     HANGUL_FILLERS.contains(&character)
         || VISIBLE_FILLERS.contains(&character)
         || ZERO_WIDTH_SPACES.contains(&character)
+        || INVISIBLE_MARKS.contains(&character)
 }
 
 /// Whether `character` is default-ignorable but not yet assigned.
@@ -346,22 +352,30 @@ fn modifier(unit: &str) -> Option<Modifier> {
     is_variation_selector(character).then_some(Modifier::Selector)
 }
 
-/// `units` with the fillers and zero-width spaces stripped, and each run of joiners and selectors
-/// cut to its first joiner and its first selector: an emoji or a script needs no more, and more
-/// would only hide bytes.
+/// `units` with the fillers, zero-width spaces and invisible marks stripped, and each gap between
+/// two characters that aren't blank cut to its first joiner and its first selector: an emoji or a
+/// script needs no more, and more would only hide bytes. Spaces in the gap stay.
 fn strip_inside(units: Vec<&str>) -> Vec<&str> {
     let mut kept: Vec<&str> = Vec::with_capacity(units.len());
+    let mut joiner_in_gap = false;
+    let mut selector_in_gap = false;
     for unit in units {
-        let stripped = single(unit).is_some_and(is_stripped_inside);
-        let repeated = modifier(unit).is_some_and(|kind| {
-            kept.iter()
-                .rev()
-                .map_while(|previous| modifier(previous))
-                .any(|previous| previous == kind)
-        });
-        if !stripped && !repeated {
-            kept.push(unit);
+        if single(unit).is_some_and(is_stripped_inside) {
+            continue;
         }
+        let seen = match modifier(unit) {
+            Some(Modifier::Joiner) => std::mem::replace(&mut joiner_in_gap, true),
+            Some(Modifier::Selector) => std::mem::replace(&mut selector_in_gap, true),
+            None => false,
+        };
+        if seen {
+            continue;
+        }
+        if !single(unit).is_some_and(is_blank) {
+            joiner_in_gap = false;
+            selector_in_gap = false;
+        }
+        kept.push(unit);
     }
     kept
 }
