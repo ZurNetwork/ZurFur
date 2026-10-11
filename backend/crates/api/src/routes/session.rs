@@ -8,13 +8,15 @@ use application::user::me::{self, MeError, MeQuery};
 use axum::{
     Form, Json, Router,
     extract::{Query, State, rejection::FormRejection},
+    http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use domain::elements::handle::AtHandle;
-use domain::ports::{AccountMismatch, UnitOfWork};
+use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
 use serde::Deserialize;
 use tower_sessions::Session;
+use tower_sessions::cookie::{Cookie, SameSite, time};
 
 use crate::{
     AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
@@ -50,16 +52,16 @@ struct CallbackQuery {
 
 /// `POST /signin` (form body) — trims what the visitor typed, parses it as a
 /// handle, and redirects the browser to the PDS authorization URL the
-/// Authenticator returns.
+/// Authenticator returns, setting the cookie that binds the sign-in to this browser.
 ///
-/// - `303` → PDS authorize URL
+/// - `303` → PDS authorize URL, with the browser-binding cookie
 /// - `422 invalid_request` — a body that is not a form carrying `handle`, not a
 ///   handle (a URL or a DID included), or a handle that could not begin
 ///   sign-in; one identical body for every cause
 async fn signin(
     State(state): State<AppState>,
     form: Result<Form<SigninForm>, FormRejection>,
-) -> Result<Redirect, Problem> {
+) -> Result<Response, Problem> {
     // An unreadable body is refused like every other cause, never with axum's own text.
     let Form(form) = form.map_err(|_| signin_refused())?;
     // The handle type is strict; trimming what a person typed happens here.
@@ -68,12 +70,74 @@ async fn signin(
         .trim()
         .parse::<AtHandle>()
         .map_err(|_| signin_refused())?;
-    let url = state
+    let started = state
         .auth
         .start(&handle)
         .await
         .map_err(|_| signin_refused())?;
-    Ok(Redirect::to(&url))
+    let secure = state.config.env.secure_cookies();
+    let binding =
+        browser_binding_cookie(secure, started.browser_binding.as_ref(), started.lifetime)
+            .ok_or_else(signin_refused)?;
+    let headers = [(header::SET_COOKIE, binding)];
+    let response = (headers, Redirect::to(&started.authorization_url)).into_response();
+    Ok(response)
+}
+
+/// The cookie that binds a sign-in to the browser that started it. Where
+/// cookies are `Secure` its name carries the `__Host-` prefix, which locks it to
+/// this host, `Path=/` and HTTPS, so no sibling host can plant one.
+fn browser_binding_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        "__Host-zurfur.signin"
+    } else {
+        "zurfur.signin"
+    }
+}
+
+/// `Set-Cookie` for `token`: `HttpOnly`, `SameSite=Lax` (the callback arrives as
+/// a top-level navigation from the PDS, which `Strict` would strip), `Path=/`,
+/// and gone after `lifetime`, the sign-in's own. `None` when `token` cannot
+/// travel in a header.
+fn browser_binding_cookie(
+    secure: bool,
+    token: &str,
+    lifetime: std::time::Duration,
+) -> Option<HeaderValue> {
+    let max_age = time::Duration::try_from(lifetime).unwrap_or(time::Duration::ZERO);
+    let cookie = Cookie::build((browser_binding_cookie_name(secure), token))
+        .http_only(true)
+        .secure(secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(max_age)
+        .build();
+    HeaderValue::from_str(&cookie.to_string()).ok()
+}
+
+/// `Set-Cookie` clearing the browser-binding cookie: same name, path and flags,
+/// expired.
+fn cleared_browser_binding_cookie(secure: bool) -> HeaderValue {
+    if secure {
+        HeaderValue::from_static(
+            "__Host-zurfur.signin=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0",
+        )
+    } else {
+        HeaderValue::from_static("zurfur.signin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+    }
+}
+
+/// The browser-binding token the request's `Cookie` header carries, if any.
+fn presented_browser_binding(headers: &HeaderMap, secure: bool) -> Option<BrowserBinding> {
+    let name = browser_binding_cookie_name(secure);
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(Cookie::split_parse)
+        .filter_map(Result::ok)
+        .find(|cookie| cookie.name() == name)
+        .map(|cookie| BrowserBinding::from(cookie.value().to_owned()))
 }
 
 /// The one answer a failed `POST /signin` gets, whatever failed: an anonymous
@@ -82,9 +146,10 @@ fn signin_refused() -> Problem {
     Problem::invalid_request("That handle could not be used to sign in. Check it and try again.")
 }
 
-/// `GET /signin-callback` — completes sign-in: exchanges `code` for a DID,
-/// provisions the User (mint-or-return), rotates the session id, and stores
-/// the User's id in the session.
+/// `GET /signin-callback` — completes sign-in: checks the browser-binding
+/// cookie, exchanges `code` for a DID, provisions the User (mint-or-return),
+/// rotates the session id, and stores the User's id in the session. Every
+/// answer clears the browser-binding cookie, success or failure.
 ///
 /// - `303 /` — success (`Set-Cookie` on the response)
 /// - `303 /login?error=denied|invalid_callback|exchange_failed|account_mismatch`
@@ -94,7 +159,23 @@ fn signin_refused() -> Problem {
 async fn signin_callback(
     State(state): State<AppState>,
     session: Session,
+    headers: HeaderMap,
     Query(q): Query<CallbackQuery>,
+) -> Response {
+    let secure = state.config.env.secure_cookies();
+    let presented = presented_browser_binding(&headers, secure);
+    let mut response = complete_signin(state, session, q, presented).await;
+    let cleared = cleared_browser_binding_cookie(secure);
+    response.headers_mut().append(header::SET_COOKIE, cleared);
+    response
+}
+
+/// The callback itself: every outcome as a response, the cookie left to the caller.
+async fn complete_signin(
+    state: AppState,
+    session: Session,
+    q: CallbackQuery,
+    presented: Option<BrowserBinding>,
 ) -> Response {
     // Denied: no crash, no blank page — the PDS-supplied reason isn't echoed.
     if q.error.is_some() {
@@ -104,7 +185,7 @@ async fn signin_callback(
         return Redirect::to("/login?error=invalid_callback").into_response();
     };
 
-    let completed = state.auth.complete(code, q.state, q.iss).await;
+    let completed = state.auth.complete(code, q.state, q.iss, presented).await;
     let did = match completed {
         Ok(did) => did,
         Err(error) => return Redirect::to(callback_failure_location(&error)).into_response(),
@@ -203,3 +284,6 @@ async fn logout(session: Session) -> Response {
     }
     Redirect::to("/").into_response()
 }
+
+#[cfg(test)]
+mod tests;

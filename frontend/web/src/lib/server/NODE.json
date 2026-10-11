@@ -31,7 +31,7 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-cache.ts (no $env, unit-tests standalone)",
+      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-cache.ts (no $env, unit-tests standalone); forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
       "node": false
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "name": "session.ts",
-      "role": "session programs (sessionOrAnonymous, optionalSession, signinOutcome, signoutOutcome)",
+      "role": "session programs (sessionOrAnonymous, optionalSession, signinOutcome — the PDS URL plus the browser-binding cookie to relay, signoutOutcome)",
       "node": false
     }
   ],

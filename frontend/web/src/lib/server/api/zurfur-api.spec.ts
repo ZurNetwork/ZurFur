@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
-import { RequestFetch, ZurfurApi, ZurfurApiLive } from './zurfur-api';
+import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
 import type { ZurfurApiError } from './errors';
 
 /** Run a program against the LIVE layer over a stubbed fetch. */
@@ -88,13 +88,30 @@ describe('ZurfurApi.me (live)', () => {
 });
 
 describe('ZurfurApi.startSignin (live)', () => {
-	it('returns the PDS authorize location from the 303', async () => {
+	it('returns the PDS authorize location and the browser-binding cookie from the 303', async () => {
+		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const headers = new Headers({ location: authorizeUrl });
+		headers.append('set-cookie', 'other=1; Path=/');
+		headers.append(
+			'set-cookie',
+			'zurfur.signin=tok_en-1; HttpOnly; SameSite=Lax; Path=/; Max-Age=600'
+		);
+		const { fetch } = fetchStub(() => new Response(null, { status: 303, headers }));
+		const started = await runLive(fetch, startSignin('alice.zurfur.app'));
+		expect(started).toEqual({
+			location: authorizeUrl,
+			browserBinding: { name: 'zurfur.signin', value: 'tok_en-1', maxAge: 600, secure: false }
+		});
+	});
+
+	it('fails ContractViolation when the redirect carries no browser-binding cookie', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
 		const { fetch } = fetchStub(
 			() => new Response(null, { status: 303, headers: { location: authorizeUrl } })
 		);
-		const location = await runLive(fetch, startSignin('alice.zurfur.app'));
-		expect(location).toBe(authorizeUrl);
+		const failure = await runLive(fetch, failureOf(startSignin('alice.zurfur.app')));
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/browser-binding cookie/);
 	});
 
 	it('fails ApiProblem when the backend rejects the handle', async () => {
@@ -249,5 +266,30 @@ describe('ZurfurApi.deleteAccount (live)', () => {
 		const { fetch } = fetchStub(() => Response.json({ outcome: 'quarantined' }));
 		const outcome = await runLive(fetch, deleteAccount('acct-1'));
 		expect(outcome).toBe('unknown');
+	});
+});
+
+describe('parseBrowserBindingCookie', () => {
+	it('reads the host-locked cookie where cookies are Secure', () => {
+		const setCookie =
+			'__Host-zurfur.signin=abc; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=600';
+		expect(parseBrowserBindingCookie(setCookie)).toEqual({
+			name: '__Host-zurfur.signin',
+			value: 'abc',
+			maxAge: 600,
+			secure: true
+		});
+	});
+
+	it('ignores every other cookie', () => {
+		expect(parseBrowserBindingCookie('zurfur.sid=abc; Path=/; Max-Age=600')).toBeUndefined();
+		expect(parseBrowserBindingCookie('zurfur.signinx=abc; Max-Age=600')).toBeUndefined();
+	});
+
+	it('refuses a cookie with no token or no positive Max-Age', () => {
+		expect(parseBrowserBindingCookie('zurfur.signin=; Path=/; Max-Age=600')).toBeUndefined();
+		expect(parseBrowserBindingCookie('zurfur.signin=abc; Path=/')).toBeUndefined();
+		expect(parseBrowserBindingCookie('zurfur.signin=abc; Max-Age=0')).toBeUndefined();
+		expect(parseBrowserBindingCookie('zurfur.signin=abc; Max-Age=ten')).toBeUndefined();
 	});
 });

@@ -22,7 +22,7 @@ mod user;
 
 pub use account::{AccountReads, AccountRepo, AccountStore, AccountWrites};
 pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
-pub use authenticator::Authenticator;
+pub use authenticator::{Authenticator, BrowserBinding, SigninStarted};
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use character::{CharacterStore, CharacterWrites};
 pub use commission::{
