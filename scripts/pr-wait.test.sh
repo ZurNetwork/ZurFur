@@ -29,6 +29,13 @@ case "$1 $2" in
         cat "$dir/repo.txt"
         ;;
     "pr view")
+        # base.txt, if present, answers the base query (default: main).
+        case "$*" in
+            *baseRefName*)
+                if [ -f "$dir/base.txt" ]; then cat "$dir/base.txt"; else echo main; fi
+                exit 0
+                ;;
+        esac
         # heads.txt, if present: one head per call, the last one repeating.
         if [ -f "$dir/heads.txt" ]; then
             n=$(cat "$dir/head-calls" 2>/dev/null || echo 0)
@@ -120,7 +127,10 @@ new_case
 echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
 copilot_review 4 1111111222 >"$work/case/reviews.json"
 run_case "a Copilot review of an older head isn't done" 2 "Copilot: no review of abcdef1 by the timeout (last reviewed 1111111)"
-run_case "PR_WAIT_COPILOT=0 doesn't wait for Copilot" 0 "Copilot: not waited for" PR_WAIT_COPILOT=0
+run_case "PR_WAIT_COPILOT=0 doesn't wait for Copilot" 0 "Copilot: not waited for (PR_WAIT_COPILOT=0)" PR_WAIT_COPILOT=0
+echo "feature/my-den" >"$work/case/base.txt"
+run_case "a slice PR (base isn't main) doesn't wait for Copilot" 0 "Copilot: not waited for (a PR into feature/my-den)"
+run_case "PR_WAIT_COPILOT=0 still skips on a slice" 0 "Copilot: not waited for (PR_WAIT_COPILOT=0)" PR_WAIT_COPILOT=0
 
 new_case
 echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
@@ -129,6 +139,8 @@ printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"copilot-pull-requ
 run_case "a quota notice on the head is not a review (exit 4)" 4 "Copilot: unavailable (the user who requested the review has reached their quota limit)"
 printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"Copilot"}},{"id":9,"commit_id":"%s","body":"Looks fine.","user":{"login":"Copilot"}}]\n' "$head" "$quota" "$head" >"$work/case/reviews.json"
 run_case "a real review after a quota notice counts" 0 "Copilot: reviewed abcdef1"
+printf '[{"id":8,"commit_id":"%s","body":"Copilot wasn%st able to review any files in this pull request. --- Add a code-review agent skill.","user":{"login":"Copilot"}}]\n' "$head" "'" >"$work/case/reviews.json"
+run_case "the no-files notice is not a review (exit 4)" 4 "Copilot: unavailable (Copilot wasn't able to review any files in this pull request)"
 echo '[{"name":"test","bucket":"fail"}]' >"$work/case/checks.json"
 printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"Copilot"}}]\n' "$head" "$quota" >"$work/case/reviews.json"
 run_case "red CI with a quota notice is still red" 1 "Copilot: unavailable"

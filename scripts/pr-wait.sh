@@ -6,7 +6,8 @@
 #
 # Env: PR_WAIT_REPO (owner/name; default: `gh repo view`, else the GitHub URL
 #        of jj's `origin` remote, so a jj workspace without .git works),
-#      PR_WAIT_COPILOT (0: don't wait for Copilot; default 1),
+#      PR_WAIT_COPILOT (0: don't wait for Copilot; default 1; a PR whose
+#        base isn't main never waits, since Copilot isn't requested there),
 #      PR_WAIT_INTERVAL (seconds between polls; default 30),
 #      PR_WAIT_TIMEOUT (minutes before giving up; default 45),
 #      PR_WAIT_MAX_ERRORS (GitHub read failures in a row before exit 3; default 3).
@@ -16,8 +17,8 @@
 # (its quota notice, say): re-request it later, or go on without it.
 # Copilot counts as done only once it has a review whose commit is the PR's
 # head; leaving the requested reviewers isn't enough, since that happens when
-# its review starts. A review whose body says Copilot was unable to review is
-# a notice, not a review.
+# its review starts. A review whose body says Copilot was unable (or wasn't
+# able) to review is a notice, not a review.
 set -uo pipefail
 
 if [ $# -ne 1 ] || ! [[ $1 =~ ^[0-9]+$ ]]; then
@@ -30,6 +31,7 @@ timeout_min="${PR_WAIT_TIMEOUT:-45}"
 max_errors="${PR_WAIT_MAX_ERRORS:-3}"
 
 copilot_wait="${PR_WAIT_COPILOT:-1}"
+copilot_skip_reason="PR_WAIT_COPILOT=0"
 
 # detect_repo prints owner/name: PR_WAIT_REPO, else what gh reads from git,
 # else the GitHub URL of jj's `origin` remote (or its only remote).
@@ -65,6 +67,18 @@ head_sha() {
     gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid 2>/dev/null
 }
 
+# Copilot is requested only on PRs into main; a slice PR never gets a review.
+if [ "$copilot_wait" != 0 ]; then
+    if ! base="$(gh pr view "$pr" -R "$repo" --json baseRefName --jq .baseRefName 2>/dev/null)" || [ -z "$base" ]; then
+        echo "pr-wait: cannot read the base of PR #$pr in $repo" >&2
+        exit 3
+    fi
+    if [ "$base" != main ]; then
+        copilot_wait=0
+        copilot_skip_reason="a PR into $base"
+    fi
+fi
+
 state_dir="$(mktemp -d)" || exit 3
 trap 'rm -rf "$state_dir"' EXIT
 
@@ -97,14 +111,14 @@ ci_state() {
 }
 
 # copilot_reviews prints one tab-separated line per Copilot review, oldest
-# first: id, commit, 1 when its body says Copilot was unable to review (else
-# 0), and that body on one line. Fails when GitHub can't be read.
+# first: id, commit, 1 when its body says Copilot was unable or wasn't able
+# to review (else 0), and that body on one line. Fails when GitHub can't be read.
 copilot_reviews() {
     gh api "repos/$repo/pulls/$pr/reviews" --paginate \
         --jq '.[] | select(.user.login | ascii_downcase | contains("copilot"))
             | (.body // "") as $body
             | [(.id | tostring), .commit_id,
-               (if ($body | test("unable to review"; "i")) then "1" else "0" end),
+               (if ($body | test("(unable|wasn.t able|was not able) to review"; "i")) then "1" else "0" end),
                ($body | gsub("[\\t\\r\\n]+"; " ") | .[0:300])]
             | @tsv' 2>/dev/null
 }
@@ -212,7 +226,7 @@ esac
 
 case "$copilot" in
     skipped)
-        echo "Copilot: not waited for (PR_WAIT_COPILOT=0)"
+        echo "Copilot: not waited for ($copilot_skip_reason)"
         ;;
     error)
         echo "Copilot: could not read the reviews"
@@ -226,7 +240,9 @@ case "$copilot" in
         last_commit="$(awk -F '\t' '$3 == 0 { c = $2 } END { print c }' <<<"$reviews")"
         if [ "$copilot" = unavailable ]; then
             notice="$(awk -F '\t' -v head="$end_head" '$2 == head && $3 == 1 { b = $4 } END { print b }' <<<"$reviews")"
+            # The reason after "because", else the notice's first sentence.
             reason="${notice#*because }"
+            reason="${reason%%. *}"
             reason="${reason%.}"
             echo "Copilot: unavailable ($reason)"
         elif [ "$copilot" = reviewed ]; then
