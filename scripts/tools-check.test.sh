@@ -68,6 +68,28 @@ awk '{ sub(/# v1\.51\.1/, "# v1.50.0"); print }' "$work/repo/.github/workflows/c
 mv "$work/ci.yml" "$work/repo/.github/workflows/ci.yml"
 expect_exit "a typos pin that differs from the Justfile fails" 1
 
+# replace_in_ci <awk program> — rewrites ci.yml through awk.
+replace_in_ci() {
+    awk "$1" "$work/repo/.github/workflows/ci.yml" >"$work/ci.yml"
+    mv "$work/ci.yml" "$work/repo/.github/workflows/ci.yml"
+}
+
+new_tree
+replace_in_ci '{ sub(/version: .1\.72\.0./, "version: '"'"'1.71.0'"'"' # version: '"'"'1.72.0'"'"'"); print }'
+expect_exit "a buf version only in a comment fails" 1
+
+new_tree
+replace_in_ci '/^          version: / { print "          # version: '"'"'1.72.0'"'"'"; next } { print }'
+expect_exit "a buf step whose version is only a comment line fails" 1
+
+new_tree
+replace_in_ci '/^          just-version: / { print "          # just-version: '"'"'1.49.0'"'"'"; next } { print }'
+expect_exit "a just pin only in a comment fails" 1
+
+new_tree
+replace_in_ci '/^          just-version: / { print "          just-version: \"1.49.0\" # pinned"; next } { print }'
+expect_exit "a double-quoted just pin passes" 0
+
 if [ "$failures" -ne 0 ]; then
     echo "$failures failure(s)"
     exit 1

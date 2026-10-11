@@ -9,13 +9,25 @@ work="$(mktemp -d)"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 
-# The stub answers from files in $STUB_DIR: checks.json, requested.json,
-# reviews.json, comments.json. A missing checks.json mimics "no checks yet".
+# The stub answers from files in $STUB_DIR: checks.json, reviews.json,
+# comments.json, and repo.txt for `gh repo view` (absent: it fails, as outside
+# a git checkout). A missing checks.json mimics "no checks yet". The jj stub
+# prints jj-remotes.txt for `jj git remote list` (absent: it fails).
 mkdir -p "$work/bin"
+cat >"$work/bin/jj" <<'STUB'
+#!/bin/sh
+[ "$1 $2 $3" = "git remote list" ] && [ -f "$STUB_DIR/jj-remotes.txt" ] || exit 1
+cat "$STUB_DIR/jj-remotes.txt"
+STUB
+chmod +x "$work/bin/jj"
 cat >"$work/bin/gh" <<'STUB'
 #!/bin/sh
 dir="$STUB_DIR"
 case "$1 $2" in
+    "repo view")
+        [ -f "$dir/repo.txt" ] || exit 1
+        cat "$dir/repo.txt"
+        ;;
     "pr view")
         # heads.txt, if present: one head per call, the last one repeating.
         if [ -f "$dir/heads.txt" ]; then
@@ -42,7 +54,6 @@ case "$1 $2" in
             prev="$arg"
         done
         case "$2" in
-            */requested_reviewers) file="$dir/requested.json" ;;
             */reviews/*/comments) file="$dir/comments.json" ;;
             */reviews) file="$dir/reviews.json" ;;
             *) exit 1 ;;
@@ -56,13 +67,15 @@ chmod +x "$work/bin/gh"
 
 failures=0
 
-# run_case <name> <expected exit> <expected output fragment>
+# run_case <name> <expected exit> <expected output fragment> [env assignments…]
+# PR_WAIT_REPO is o/r unless an assignment overrides it (PR_WAIT_REPO= unsets).
 run_case() {
     name="$1"
     want="$2"
     needle="$3"
+    shift 3
     set +e
-    PATH="$work/bin:$PATH" STUB_DIR="$work/case" PR_WAIT_REPO=o/r PR_WAIT_INTERVAL=0 PR_WAIT_TIMEOUT=0 PR_WAIT_MAX_ERRORS=1 \
+    env PATH="$work/bin:$PATH" STUB_DIR="$work/case" PR_WAIT_REPO=o/r PR_WAIT_INTERVAL=0 PR_WAIT_TIMEOUT=0 PR_WAIT_MAX_ERRORS=1 "$@" \
         bash "$under_test" 7 >"$work/out" 2>&1
     got=$?
     set -e
@@ -78,14 +91,18 @@ run_case() {
 new_case() {
     rm -rf "$work/case"
     mkdir -p "$work/case"
-    echo '{"users":[],"teams":[]}' >"$work/case/requested.json"
     echo '[]' >"$work/case/reviews.json"
     echo '[]' >"$work/case/comments.json"
 }
 
+head=abcdef1234567890
+copilot_review() { # copilot_review <id> <commit>…
+    printf '[%s]\n' "$(printf '{"id":%s,"commit_id":"%s","user":{"login":"copilot-pull-request-reviewer[bot]"}}' "$1" "$2")"
+}
+
 new_case
 echo '[{"name":"test","bucket":"pass"},{"name":"web","bucket":"skipping"}]' >"$work/case/checks.json"
-echo '[{"id":5,"commit_id":"abcdef1234","user":{"login":"copilot-pull-request-reviewer[bot]"}}]' >"$work/case/reviews.json"
+copilot_review 5 "$head" >"$work/case/reviews.json"
 echo '[{"id":1},{"id":2}]' >"$work/case/comments.json"
 run_case "green and reviewed" 0 "Copilot: reviewed abcdef1, 2 inline comment(s)"
 run_case "green counts passed and skipped" 0 "CI: green, 1 passed, 1 skipped"
@@ -93,13 +110,17 @@ run_case "green counts passed and skipped" 0 "CI: green, 1 passed, 1 skipped"
 new_case
 echo '[{"name":"test","bucket":"fail"},{"name":"fmt","bucket":"pass"}]' >"$work/case/checks.json"
 run_case "red names the failed job" 1 "CI: red, failed: test"
-run_case "never requested" 1 "Copilot: not requested, no review"
+run_case "no Copilot review at all" 1 "Copilot: no review of abcdef1 by the timeout (none yet)"
 
 new_case
 echo '[{"name":"test","bucket":"pending"}]' >"$work/case/checks.json"
-echo '{"users":[{"login":"Copilot"}],"teams":[]}' >"$work/case/requested.json"
 run_case "pending at the timeout" 2 "CI: still running at the timeout: test"
-run_case "Copilot still requested" 2 "Copilot: still requested at the timeout"
+
+new_case
+echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
+copilot_review 4 1111111222 >"$work/case/reviews.json"
+run_case "a Copilot review of an older head isn't done" 2 "Copilot: no review of abcdef1 by the timeout (last reviewed 1111111)"
+run_case "PR_WAIT_COPILOT=0 doesn't wait for Copilot" 0 "Copilot: not waited for" PR_WAIT_COPILOT=0
 
 new_case
 run_case "no checks yet counts as pending" 2 "CI: still running at the timeout"
@@ -110,17 +131,34 @@ run_case "a GitHub error on the checks exits 3" 3 "cannot read the checks"
 
 new_case
 echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
-echo 'not json' >"$work/case/requested.json"
-run_case "a GitHub error on the reviewers exits 3" 3 "cannot read the requested reviewers"
+echo 'not json' >"$work/case/reviews.json"
+run_case "a GitHub error on the reviews exits 3" 3 "cannot read the Copilot reviews"
 
 new_case
 echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
 printf 'aaaaaaa000\nbbbbbbb111\n' >"$work/case/heads.txt"
+copilot_review 6 bbbbbbb111 >"$work/case/reviews.json"
 run_case "a push while waiting waits again for the new head" 0 "this verdict is for bbbbbbb"
 
 new_case
 echo 'not json' >"$work/case/checks.json"
 run_case "an unparsable checks answer is a GitHub error" 3 "cannot read the checks"
+
+# Which repository: PR_WAIT_REPO, else gh (a git checkout), else jj's remote.
+new_case
+echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
+copilot_review 5 "$head" >"$work/case/reviews.json"
+echo "o2/r2" >"$work/case/repo.txt"
+run_case "the repo comes from gh in a git checkout" 0 "PR #7 in o2/r2" PR_WAIT_REPO=
+rm "$work/case/repo.txt"
+printf 'origin git@github.com:Zur/Fur.git\nupstream https://github.com/x/y\n' >"$work/case/jj-remotes.txt"
+run_case "the repo comes from jj's origin in a jj workspace" 0 "PR #7 in Zur/Fur" PR_WAIT_REPO=
+printf 'fork https://github.com/Zur/Fork.git\n' >"$work/case/jj-remotes.txt"
+run_case "jj's only remote is used when there is no origin" 0 "PR #7 in Zur/Fork" PR_WAIT_REPO=
+printf 'origin https://gitlab.com/Zur/Fur.git\n' >"$work/case/jj-remotes.txt"
+run_case "a remote that isn't GitHub is a usage error" 3 "set PR_WAIT_REPO" PR_WAIT_REPO=
+rm "$work/case/jj-remotes.txt"
+run_case "no gh repo and no jj remote is a usage error" 3 "set PR_WAIT_REPO" PR_WAIT_REPO=
 
 set +e
 bash "$under_test" notanumber >/dev/null 2>&1

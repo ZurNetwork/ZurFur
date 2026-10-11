@@ -62,17 +62,64 @@ check_every_use() {
 }
 check_every_use crate-ci/typos "# v$TYPOS_VERSION"
 check_every_use EmbarkStudios/cargo-deny-action "(cargo-deny $CARGO_DENY_VERSION)"
-if ! grep -qF "version: '$BUF_VERSION'" "$workflows/ci.yml"; then
-    pin_error "ci.yml's buf version is not '$BUF_VERSION' (Justfile pin)"
-fi
-# Every setup-just step is followed by `just-version: '<JUST_VERSION>'`.
-# shellcheck disable=SC2086
-setup_just_uses="$(grep -hcF 'extractions/setup-just@' $workflow_files | awk '{ n += $1 } END { print n + 0 }')"
-# shellcheck disable=SC2086
-just_pins="$(grep -hcF "just-version: '$JUST_VERSION'" $workflow_files | awk '{ n += $1 } END { print n + 0 }')"
-if [ "$setup_just_uses" != "$just_pins" ]; then
-    pin_error "$setup_just_uses setup-just step(s) but $just_pins pinned at just-version '$JUST_VERSION' (Justfile pin)"
-fi
+# step_pins <action> <input> <value> — prints "<steps> <pinned>": how many
+# steps use <action>, and how many of those set `<input>: <value>` among their
+# own inputs (the lines indented under the step's `uses:`). A comment never
+# counts, so a pin that survives only in a comment fails.
+step_pins() {
+    # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
+    awk -v action="$1" -v key="$2" -v want="$3" -v q="'" '
+        function indent(s) { match(s, /^ */); return RLENGTH }
+        function close_step() {
+            if (in_step) { steps++; if (found) ok++ }
+            in_step = 0
+        }
+        FNR == 1 { close_step() }
+        {
+            line = $0
+            if (in_step) {
+                if (line ~ /^ *(#.*)?$/) next
+                if (indent(line) >= key_ind) {
+                    t = line
+                    sub(/^ */, "", t)
+                    if (indent(line) > key_ind && index(t, key ":") == 1) {
+                        v = substr(t, length(key) + 2)
+                        sub(/[ \t]+#.*$/, "", v)
+                        gsub(/^[ \t]+|[ \t]+$/, "", v)
+                        if (v ~ ("^" q ".*" q "$") || v ~ /^".*"$/) v = substr(v, 2, length(v) - 2)
+                        if (v == want) found = 1
+                    }
+                    next
+                }
+                close_step()
+            }
+            if (match(line, /^ *(- +)?uses: */)) {
+                if (index(substr(line, RLENGTH + 1), action "@") == 1) {
+                    match(line, /uses:/)
+                    key_ind = RSTART - 1
+                    in_step = 1
+                    found = 0
+                }
+            }
+        }
+        END { close_step(); print steps + 0, ok + 0 }
+    ' $workflow_files
+}
+
+# check_step_input <action> <input> <value> — at least one step uses <action>,
+# and every such step sets <input> to <value>.
+check_step_input() {
+    counts="$(step_pins "$1" "$2" "$3")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" -eq 0 ]; then
+        pin_error "no workflow uses $1"
+    elif [ "$steps" != "$pinned" ]; then
+        pin_error "$steps $1 step(s) but $pinned set $2: '$3' (Justfile pin)"
+    fi
+}
+check_step_input bufbuild/buf-action version "$BUF_VERSION"
+check_step_input extractions/setup-just just-version "$JUST_VERSION"
 
 if [ "$pins_only" = 0 ]; then
     # local_version <label> <want> <command…> — warn when the tool is missing or differs.
