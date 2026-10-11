@@ -100,7 +100,7 @@ impl Resolver<'_> {
         let mut ranked = Vec::new();
         for (segment, node, mount) in located {
             let admitted = self.admitted_entry(&folder.den_path, segment, &node, mount);
-            if let Some(entry) = admitted.await? {
+            if let Some(entry) = admitted {
                 ranked.push(entry);
             }
         }
@@ -109,28 +109,25 @@ impl Resolver<'_> {
 
     /// The entry for one located node of a listing, with its [`Tiebreak`], unless the viewer
     /// can't see it or the host refuses it.
-    async fn admitted_entry(
+    fn admitted_entry(
         &self,
         folder_den_path: &[Segment],
         segment: Segment,
         node: &Located,
         mount: bool,
-    ) -> Result<Option<(Entry, Tiebreak)>, Error> {
+    ) -> Option<(Entry, Tiebreak)> {
         if node.access.level == Level::Private {
-            return Ok(None);
+            return None;
         }
-        let admission = self
-            .host
-            .admit(
-                &self.viewer,
-                &node.path,
-                &node.found.metadata,
-                node.access,
-                Reach::Listing,
-            )
-            .await?;
+        let admission = self.host.admit(
+            &self.viewer,
+            &node.path,
+            &node.found.metadata,
+            node.access,
+            Reach::Listing,
+        );
         if admission == Admission::Refuse {
-            return Ok(None);
+            return None;
         }
         let tiebreak = if node.access.level == Level::Public {
             Tiebreak::Open(segment.clone())
@@ -140,7 +137,7 @@ impl Resolver<'_> {
         let mut den_path = folder_den_path.to_vec();
         den_path.push(segment);
         let entry = self.entry(node, den_path, mount);
-        Ok(Some((entry, tiebreak)))
+        Some((entry, tiebreak))
     }
 }
 

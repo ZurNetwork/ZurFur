@@ -152,14 +152,14 @@ impl Resolver<'_> {
         let mut mount = false;
         let mut walked = Vec::new();
         for segment in den_path {
-            self.enter(&current, false).await?;
+            self.enter(&current, false)?;
             crumbs.push(self.entry(&current, walked.clone(), mount));
             let (next, next_mount) = self.step(&current, segment).await?;
             walked.push(segment.clone());
             current = next;
             mount = next_mount;
         }
-        self.enter(&current, true).await?;
+        self.enter(&current, true)?;
         let opens_as_directory =
             current.access.level == Level::Public && self.kind(&current) == Kind::Directory;
         let folder = opens_as_directory.then(|| Folder {
@@ -178,7 +178,7 @@ impl Resolver<'_> {
     }
 
     /// Checks the viewer may stand on `located` as a step of a typed path, `last` or not.
-    async fn enter(&self, located: &Located, last: bool) -> Result<(), Error> {
+    fn enter(&self, located: &Located, last: bool) -> Result<(), Error> {
         if located.access.level == Level::Private {
             return Err(Error::NotFound);
         }
@@ -187,16 +187,13 @@ impl Resolver<'_> {
         if !last && !passes_through {
             return Err(Error::NotFound);
         }
-        let admission = self
-            .host
-            .admit(
-                &self.viewer,
-                &located.path,
-                &located.found.metadata,
-                located.access,
-                Reach::Path,
-            )
-            .await?;
+        let admission = self.host.admit(
+            &self.viewer,
+            &located.path,
+            &located.found.metadata,
+            located.access,
+            Reach::Path,
+        );
         if admission == Admission::Refuse {
             return Err(Error::NotFound);
         }

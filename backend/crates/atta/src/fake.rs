@@ -270,27 +270,26 @@ impl Host for FakeHost {
         }
     }
 
-    async fn admit(
+    fn admit(
         &self,
         _viewer: &Viewer,
         path: &RealPath,
         _node: &Metadata,
         access: Access,
         reach: Reach,
-    ) -> Result<Admission, HostError> {
+    ) -> Admission {
         let call = Call::Admit {
             path: path.clone(),
             access,
             reach,
         };
-        self.record(call)?;
+        self.calls.lock().expect("the call log").push(call);
         let refused = self.refused.contains(&(path.clone(), reach));
-        let admission = if refused {
+        if refused {
             Admission::Refuse
         } else {
             Admission::Admit
-        };
-        Ok(admission)
+        }
     }
 }
 
