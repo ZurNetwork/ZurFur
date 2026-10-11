@@ -38,6 +38,8 @@ uuid = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
+# `pg_app` encodes the shipped example root key into its dev-profile Config.
+base64 = { workspace = true }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.

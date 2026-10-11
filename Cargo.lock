@@ -396,6 +396,14 @@ dependencies = [
 [[package]]
 name = "atta"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "derive_more 2.1.1",
+ "proptest",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "autocfg"
@@ -5754,6 +5762,7 @@ dependencies = [
  "async-trait",
  "atrium-crypto",
  "axum",
+ "base64",
  "chrono",
  "composition",
  "data-encoding",

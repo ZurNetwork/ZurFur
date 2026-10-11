@@ -1,9 +1,7 @@
-//! [`CharacterId`] — the identity of a Character. **Stub.**
-//!
-//! A Character is a repository and representation of a character, kept by one or
-//! more Keepers and identified by its own `did:plc`. Characters are sovereign
-//! data meant to survive both their creator and account deletion. Only the id
-//! type exists so far.
+//! [`Character`] — a sona or OC, identified by its own `did:plc` and kept by
+//! one User, its Keeper. Characters are sovereign data meant to survive both
+//! their creator and account deletion. Zurfur's own record names the Keeper;
+//! no public ownership claim is modelled yet.
 
 mod attributes;
 mod entity;

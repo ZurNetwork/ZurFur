@@ -10,6 +10,7 @@ use domain::elements::{
     commission::{FileDownload, FileKey, FileName},
     did::Did,
     handle::Handle,
+    text::StoredText,
 };
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, ChangelogWrites, CharacterWrites, ColumnWrites,
@@ -147,7 +148,8 @@ impl DidMinter for RecordingDidMinter {
     }
 }
 
-/// A [`FileStore`] that logs `put`, `get` and `delete` before delegating.
+/// A [`FileStore`] that logs `put`, `get`, `filename` and `delete` before
+/// delegating.
 pub struct RecordingFileStore {
     inner: Arc<dyn FileStore>,
     log: CallLog,
@@ -176,6 +178,11 @@ impl FileStore for RecordingFileStore {
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>> {
         self.log.record("get");
         self.inner.get(key).await
+    }
+
+    async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>> {
+        self.log.record("filename");
+        self.inner.filename(key).await
     }
 
     async fn delete(&self, key: FileKey) -> anyhow::Result<()> {

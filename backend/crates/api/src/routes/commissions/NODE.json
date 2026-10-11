@@ -35,7 +35,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, then the created resource read back through commission::list (create::Output carries only the id — GAP)",
+      "role": "POST /commissions → commission::create, then the created resource read back through commission::list and projected into CreateCommissionResponse (create::Output carries only the id — GAP)",
       "node": false
     },
     {
@@ -61,11 +61,6 @@
     {
       "name": "invitations.rs",
       "role": "POST/DELETE seat invitations → commission::invitations::issue / revoke",
-      "node": false
-    },
-    {
-      "name": "list.rs",
-      "role": "GET /commissions (owner POV) → commission::list + wire_commission projection",
       "node": false
     },
     {

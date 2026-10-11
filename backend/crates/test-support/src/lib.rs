@@ -11,6 +11,7 @@ mod fixture;
 pub mod http;
 mod pds;
 pub mod pg;
+pub mod pg_app;
 mod plc_stub;
 pub mod recording;
 pub mod runtime;

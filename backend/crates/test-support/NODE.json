@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/test-support",
   "charted": "2026-09-13",
-  "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness",
-  "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, and the cross-adapter PublicRecords conformance suite.",
+  "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
+  "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
   "tags": [
     "category:tests",
@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs, async-trait for the recording wrappers",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key",
       "node": false
     },
     {
@@ -52,6 +52,21 @@
     {
       "name": "src/pg.rs",
       "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test",
+      "node": false
+    },
+    {
+      "name": "src/pg_app.rs",
+      "role": "the PostgreSQL test setup: pg_app::serve boots the app on composition's live PostgreSQL wiring over a fresh_db clone, sessions in PostgreSQL; PgServed::sign_in(Profile) drives the real sign-in routes",
+      "node": false
+    },
+    {
+      "name": "src/pg_app/in_process_pds.rs",
+      "role": "InProcessPds — the sign-in (Authenticator) and profile (ProfileSource) ports answered in-process for registered profiles; unknown handles/DIDs refused",
+      "node": false
+    },
+    {
+      "name": "src/pg_app/served.rs",
+      "role": "serve + PgServed (base_url, live Runtime, the PDS) + the dev-profile Config (example root key, PLC submission off)",
       "node": false
     },
     {
@@ -86,6 +101,7 @@
     "See also: ZMVP-102 — `.env.example`'s `ZURFUR_PDS_IMAGE` ownership; `test-support::DEFAULT_PDS_IMAGE` must match it (src/lib.rs `DEFAULT_PDS_IMAGE`, `default_image_matches_env_example`).",
     "See also: ZMVP-106 — determinism capstone that reuses `contract::fixed_created_at()` (src/contract.rs).",
     "See also: ZMVP-199 ruling 8 / Engineer ruling 2026-08-25 — one shared `MemRuntime` fixture instead of a copy per test file (src/runtime.rs).",
-    "See also: uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs)."
+    "See also: uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs).",
+    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one with the example root key and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime."
   ]
 }

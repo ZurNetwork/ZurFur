@@ -11,16 +11,17 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
-        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionTitle,
+        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionSummary,
         DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
-        FileKey, GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry, NewElement, NewSeat,
-        NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-        SlotTitle, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
-        declared_tabs, declares_surface, derive_deadline_status,
+        FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry,
+        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
+        SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+        Visibility, VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
     maturity::Maturity,
+    text::StoredText,
     user::UserId,
     workflow::{Column, ColumnId, LexOrdering, WorkflowId},
 };
@@ -118,8 +119,9 @@ fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<
 /// `PartialEq` lets [`crate::merge_map`] tell an untouched row from a written one.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
-    /// The commission's fixed, always-present Title, validated non-empty.
-    pub(crate) title: CommissionTitle,
+    /// The commission's Title as the store holds it — the pg `title` text
+    /// column's mirror, so a load never re-checks it.
+    pub(crate) title: StoredText,
     /// The User who created it — the permanent owner.
     pub(crate) owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
@@ -144,6 +146,16 @@ pub(crate) struct StoredCommission {
 }
 
 impl StoredCommission {
+    /// The listing's slim projection of this row, keyed by `id`.
+    fn summarize(&self, id: CommissionId) -> CommissionSummary {
+        CommissionSummary {
+            id,
+            title: self.title.clone(),
+            visibility: self.visibility.clone(),
+            archived_at: self.archived_at,
+        }
+    }
+
     /// Rebuild the aggregate from its stored parts.
     fn rebuild(&self, id: CommissionId) -> Commission {
         // Late is derived fresh at lookup, never persisted; the stored
@@ -217,8 +229,8 @@ pub(crate) struct StoredTab {
 pub(crate) struct StoredSlot {
     /// The commission the Slot belongs to (the pg row's own commission FK).
     pub(crate) commission_id: CommissionId,
-    /// The Slot's required title, validated at the boundary.
-    pub(crate) title: SlotTitle,
+    /// The Slot's title as the store holds it, never re-checked on load.
+    pub(crate) title: StoredText,
     /// The optional freeform notes, exactly as declared.
     pub(crate) notes: Option<String>,
 }
@@ -337,7 +349,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// staging snapshot — so a tabless or owner-less commission is
     /// unrepresentable. Every tab is born [`VisibilityMode::Total`]; the
     /// commission's own visibility gates over the composition, never seeds it.
-    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
+    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
         {
             let mut commissions = self
                 .0
@@ -347,7 +359,7 @@ impl CommissionWrites for MemCommissionWrites {
             commissions.insert(
                 commission.id,
                 StoredCommission {
-                    title: commission.title.clone(),
+                    title: StoredText::from(commission.title.clone()),
                     owner_id: commission.owner_id.clone(),
                     lifecycle_step: commission.lifecycle_step.clone(),
                     visibility: commission.visibility.clone(),
@@ -518,7 +530,7 @@ impl CommissionWrites for MemCommissionWrites {
                 slot.id,
                 StoredSlot {
                     commission_id: slot.commission_id,
-                    title: slot.title.clone(),
+                    title: StoredText::from(slot.title.clone()),
                     notes: slot.notes.clone(),
                 },
             );
@@ -534,11 +546,13 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(false)
     }
 
-    /// Remove the commission with its changelog entries and its whole
+    /// Remove the commission with its changelog entries, its participant rows,
+    /// its file links with their markups, its view grants and its whole
     /// composition — tabs, elements, surface modes, and the Slot/Seat satellites
     /// with a seat's pending offers. Lands on the unit's staged snapshot; an
-    /// absent commission is a no-op. Participants, files and positioning do NOT
-    /// cascade here, a known divergence; any future child map must.
+    /// absent commission is a no-op. Positioning (a card on a board) does NOT
+    /// cascade here, a known divergence; any future child map must. The blobs
+    /// stay, as in pg: the blob store sits outside the unit.
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         let id = *id;
         {
@@ -598,6 +612,26 @@ impl CommissionWrites for MemCommissionWrites {
             .surface_modes
             .lock()
             .expect("MemBackend surface_modes mutex poisoned")
+            .retain(|(commission, _), _| *commission != id);
+        self.0
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .retain(|(commission, _), _| *commission != id);
+        self.0
+            .markups
+            .lock()
+            .expect("MemBackend markups mutex poisoned")
+            .retain(|_, markup| markup.commission_id != id);
+        self.0
+            .files
+            .lock()
+            .expect("MemBackend files mutex poisoned")
+            .retain(|_, file| file.commission_id != id);
+        self.0
+            .view_grants
+            .lock()
+            .expect("MemBackend view_grants mutex poisoned")
             .retain(|(commission, _), _| *commission != id);
         Ok(())
     }
@@ -1259,6 +1293,70 @@ impl CommissionStore for MemCommissionStore {
         owned.sort_by_key(|commission| uuid::Uuid::from(commission.id));
         Ok(owned)
     }
+
+    /// Scan the participant map for `user`'s memberships and summarize each
+    /// commission, archived ones included. Sorted by [`CommissionId`] (UUIDv7,
+    /// so creation order), since the `HashMap` scan has no natural order.
+    async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
+        let participants = self
+            .0
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned");
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let mut found: Vec<CommissionSummary> = participants
+            .keys()
+            .filter(|(_, member)| member == user)
+            .filter_map(|(commission, _)| {
+                commissions
+                    .get(commission)
+                    .map(|stored| stored.summarize(*commission))
+            })
+            .collect();
+        found.sort_by_key(|summary| uuid::Uuid::from(summary.id));
+        Ok(found)
+    }
+
+    /// The commission's file entries, key and upload time only, sorted by
+    /// [`FileKey`] (UUIDv7, so upload order). An unknown commission has none.
+    async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>> {
+        let files = self
+            .0
+            .files
+            .lock()
+            .expect("MemBackend files mutex poisoned");
+        let mut found: Vec<FileSummary> = files
+            .values()
+            .filter(|file| &file.commission_id == commission)
+            .map(|file| FileSummary {
+                id: file.id,
+                created_at: file.created_at,
+            })
+            .collect();
+        found.sort_by_key(|file| uuid::Uuid::from(file.id));
+        Ok(found)
+    }
+
+    /// Every Slot declared on `commission`, in declaration order (carrying
+    /// element ids are UUIDv7, so id order is creation order).
+    async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
+        let slots = self
+            .0
+            .slots
+            .lock()
+            .expect("MemBackend slots mutex poisoned");
+        let mut found: Vec<Slot> = slots
+            .iter()
+            .filter(|(_, stored)| &stored.commission_id == commission)
+            .map(|(id, stored)| stored.rebuild(*id))
+            .collect();
+        found.sort_by_key(|slot| uuid::Uuid::from(slot.element_id));
+        Ok(found)
+    }
 }
 
 /// In-memory [`ChangelogStore`] read surface over the shared [`MemBackend`].
@@ -1287,7 +1385,7 @@ impl ChangelogStore for MemChangelogStore {
 /// skipping the begin()/accessor/commit() ceremony.
 impl MemBackend {
     /// Persist a commission directly onto the shared store (test seed).
-    pub async fn create_commission(&self, commission: &Commission) -> anyhow::Result<()> {
+    pub async fn create_commission(&self, commission: &NewCommission) -> anyhow::Result<()> {
         MemCommissionWrites(self.clone()).create(commission).await
     }
 
@@ -1324,17 +1422,22 @@ impl MemBackend {
         Ok(slots.get(&element).map(|stored| stored.rebuild(element)))
     }
 
-    /// Every Slot declared on `commission`, in declaration order (carrying
-    /// element ids are UUIDv7, so id order is creation order).
+    /// Every Slot declared on `commission`, in declaration order (inspect
+    /// helper over [`CommissionStore::slots`]).
     pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
-        let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
-        let mut found: Vec<Slot> = slots
-            .iter()
-            .filter(|(_, stored)| stored.commission_id == commission)
-            .map(|(id, stored)| stored.rebuild(*id))
-            .collect();
-        found.sort_by_key(|slot| uuid::Uuid::from(slot.element_id));
-        Ok(found)
+        MemCommissionStore(self.clone()).slots(&commission).await
+    }
+
+    /// Overwrite a stored commission title with raw text (test-only seeder),
+    /// standing in for a row written under an older title rule. Panics if
+    /// `commission` is not stored.
+    pub fn seed_stored_title(&self, commission: CommissionId, title: &str) {
+        self.commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get_mut(&commission)
+            .expect("seed_stored_title: no such commission")
+            .title = StoredText::from(title.to_owned());
     }
 
     /// The commission's tabs, in declared order (inspect helper) — how a test
@@ -1410,16 +1513,16 @@ impl MemBackend {
             .occupant = Some(occupant);
     }
 
-    /// Seed a non-owner participant membership row (test-only), standing in for
-    /// a seated member until the seat-accept path exists.
-    pub fn seed_participant(&self, commission: CommissionId, user: UserId) {
-        // A re-seed of an already-seated pair is a no-op, preserving the
-        // original created_at.
+    /// Seed a non-owner participant membership row that began at `since`
+    /// (test-only), standing in for a seated member until the seat-accept path
+    /// exists. A re-seed of an already-seated pair is a no-op, keeping the
+    /// original time.
+    pub fn seed_participant(&self, commission: CommissionId, user: UserId, since: DateTimeUtc) {
         self.participants
             .lock()
             .expect("MemBackend participants mutex poisoned")
             .entry((commission, user))
-            .or_insert_with(chrono::Utc::now);
+            .or_insert(since);
     }
 }
 
