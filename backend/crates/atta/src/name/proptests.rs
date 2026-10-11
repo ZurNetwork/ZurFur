@@ -4,7 +4,8 @@ use super::*;
 
 /// Names built from visible characters, ordinary and other spaces, fillers, zero-width spaces,
 /// joiners, selectors, format characters, a tab, the pieces of a subdivision flag, a Mongolian
-/// letter and vowel separator, an unassigned default-ignorable and two invisible marks.
+/// letter and vowel separator, an unassigned default-ignorable, two invisible marks and two
+/// combining marks.
 fn name() -> impl Strategy<Value = String> {
     let alphabet = vec![
         'a',
@@ -35,6 +36,8 @@ fn name() -> impl Strategy<Value = String> {
         '\u{2065}',
         '\u{034F}',
         '\u{17B4}',
+        '\u{0301}',
+        '\u{20DD}',
     ];
     let characters = prop::sample::select(alphabet);
     prop::collection::vec(characters, 0..10).prop_map(|characters| characters.into_iter().collect())
@@ -63,6 +66,7 @@ proptest! {
                 .find(|unit| !single(unit).is_some_and(acts_on_previous));
             let stripped_inside = |unit: &&str| single(unit).is_some_and(is_stripped_inside);
             prop_assert!(!blank(first));
+            prop_assert!(!single(first).is_some_and(is_combining_mark));
             prop_assert!(last_visible.is_some_and(|unit| !blank(unit)));
             prop_assert!(!stored.iter().any(stripped_inside));
         }
