@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 chrono = { workspace = true }
 uuid = { workspace = true }
-cid = "0.11.3"
+cid = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 # The `FileStore` port's neutral stream vocabulary (ZMVP-88/205): the
