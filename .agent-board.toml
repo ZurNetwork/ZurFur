@@ -207,8 +207,8 @@ owns = []
 lead = "lead"
 
 # Vulpes and Wolven live in their own repos, out of reach of this board's path
-# locks, so they own no paths here; their agents use advisory locks named
-# `vulpes:<path>` and `wolven:<path>`.
+# locks, so they own no paths here; their agents use advisory locks, whose names
+# must be slugs: `vulpes-<area>` and `wolven-<area>`.
 [teams.vulpes]
 mission = "Vulpes (~/code/vulpes): ACP reference impl, upstream of Zurfur and Wolven"
 owns = []

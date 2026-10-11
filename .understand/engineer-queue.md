@@ -1,38 +1,40 @@
 # The Engineer's queue
 
 Kept by the Orchestrator. **The item at the top blocks the most work.** Each item is one specific task.
-**Every question already carries Claude's answer.** Adjust any answer you disagree with, in the file or in chat. One-way doors are marked; they wait for your review. Last updated: 2026-10-10 (0.1 signed; Phase 1 building).
+**Every question already carries Claude's answer.** Adjust any answer you disagree with, in the file or in chat. One-way doors are marked; they wait for your review. Last updated: 2026-10-11.
+
+New rules on 2026-10-11:
+- You review only PRs into `main` (and the corpus's and Vulpes's `main`).
+- Copilot and QA review slice PRs, plus security when it applies, and the Orchestrator merges them with a merge commit.
+- PRs into `main` squash. After #259 they go through a merge queue.
 
 ---
 
-**1. Reconnect the board, then merge four PRs.** *The new `board` is installed (2026-10-10). Trunk mode turns on once #252 is merged, because until then the trunk's config lacks the compliance, architects and security teams, and they'd close.*
-1. **Run** `/mcp` → `plugin:agent-board:board` → Reconnect.
-   Done when: `board sync --help` works in this session's tools.
-2. **Merge** #252 (three teams), #244 (the Rust pin; Internal's CI PR stacks on it), then #236, #237 and #250 into `main`.
-   Done when: all five show as merged. I then turn on trunk mode and restack what sits on them.
+**1. Merge #266 (docs bundle) into `main`.**
+1. **Run** `cd ~/code/zurfur && gh pr update-branch 266; sleep 15; gh pr checks 266 --watch --fail-fast && gh pr merge 266 --squash`
+   Done when: #266 shows as merged.
 
-**2. Click through the Explorer shell, on fake data.** *The UI you asked for. QA'd by Crow and cleared by Heron. PRs #245 → #246 → #247 → #248 → #249 are open. Copilot recommends approval on all but #247, which has one last fix in progress. I'll put the five up for merging, in order, once that fix is verified.* I set up a workspace of your own, with the web dependencies installed.
-1. **Run** `cd ~/code/zurfur-workspaces/zuri && just dev-mock` (it already sits on the newest shell slice)
-   Done when: the dev server prints a local address.
-2. **Open** http://127.0.0.1:5174 and **click** "Open My Den". You're signed in as alice.
-   Done when: the tree shows `~` with its folders.
-3. **Try** the tree with the keyboard (Tab in, arrows, a letter to jump), then the mouse (a click opens a folder; only the arrow expands it).
-   Done when: it behaves like a file explorer.
-4. **Turn on** "Show archived and deactivated".
-   Done when: "Winter YCH" shows "Archived" in commissions and "Former Studio" shows "Deactivated" in accounts.
-5. **Open** `/den/commissions/0192d00d-0b16-7000-8000-0000000b16b1/attachments`, then **click** "More".
-   Done when: 25 entries become 40, in place.
-6. **Narrow** the window to phone width and **use** ☰.
-   Done when: the drawer opens with the tree.
-7. **Tell me** anything that feels wrong, in plain words. Your answers to the shell's questions are in `.understand/20261008-web-explorer-shell.md` → "Questions for you" and "Questions from the build" (Q1 to Q10, all pre-answered).
+**2. Read den.proto on #255 (D-19).** It is held for you; the Orchestrator merges it into `feature/my-den` after you've read it.
+1. **Open** GitHub → #255 → `Files changed` → `den.proto`.
+   Done when: you say "OK" or what to change.
 
-**3. Merge the PRs that are ready.** CI is green on all of them and Copilot is clean.
-1. **Merge** #236 (the `cid` cleanup), #237 (three team rules in CLAUDE.md), #244 (the Rust version pin) and #250 (agents talk on the board; once Copilot has reviewed it) into `main`.
-2. **Merge** #238 (the domain words) and #239 (the guarded client) into `feature/identity-resolver`.
-   Done when: all five show as merged. I then open the resolver PR, and after it #240 → #241 → #242 → #243 come up in turn.
+**3. Merge design#47 into the corpus.**
+1. **Run** `gh pr merge 47 -R ZurNetwork/zurfur-design --squash`
+   Done when: design#47 shows as merged.
 
-**4. den.proto: approved as a whole (D-6, 2026-10-09).** *Your answers to D-4, D-7 to D-10, D-14 and D-16 go into it. Under D-19 you still read the text itself on its PR, when "den.proto into the contract" opens it. Nothing to do until then.*
+**4. Merge #259 (toolchain + CI + merge queue).** *Not ready yet.* Pika is folding in #236 and #244, then Hoopoe re-checks it. After it merges:
+1. **Run** `cd ~/code/zurfur && jj git fetch && jj rebase -s ywryypxk -d main@origin` (moves your checkout onto `main`).
 
-**5. Optional: install Typst,** so you can recompile the documents yourself. I compiled these PDFs with a throwaway build in my scratch folder (Typst 0.15.1).
-1. **Run** `! sudo pacman -S --needed typst`
-   Done when: `typst --version` prints 0.15.1 or later.
+---
+
+## Questions (each pre-answered; adjust any)
+
+- **A Character's one ownership edge vs. "public character, anonymous owner".** The corpus (Characters on ATProto) says a Character has exactly one ownership edge, always Character ↔ User. Its flow 13 has no public owner record; ownership is proven by a holder-held credential or a key-control challenge. **Claude's answer:** keep the one-edge rule. Flow 13 is the case where the edge exists but is never published, and it's proven privately. *(Vulpes #30 follow-up; it touches the corpus.)*
+- **SEC-3: a hidden real child can hide the viewer's own mount of the same name.** **Claude's answer (Heron's (a)):** mount names and real names never collide. Needed before the first folder that holds both (bookmarks, commissions brought into an Account, links).
+- **A claim column for the sign-in binding.** **Claude's answer:** no column; clearing the binding stays the single-use marker (Hedgehog agrees). A `claimed_at` for a sweeper can come later. Fox builds #242 on this answer.
+- **A tombstoned Character under `include-deleted`.** **Claude's answer:** a later narrow, name-only read; not in this slice.
+- **The hosting pick (R-56) and the staging domain's name (R-58).** Beaver is widening the comparison. The pick and names come to you with Hoopoe's QA.
+
+---
+
+**Later:** your Explorer click-through now happens on the `feature/web-explorer-shell` → `main` PR, after #249. Optional: `! sudo pacman -S --needed typst`.

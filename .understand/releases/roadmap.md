@@ -512,7 +512,7 @@ You ruled the owners of the areas that had none (R-41); Internal may re-shape th
 
 ## Questions, by version
 
-Your rulings R-1 to R-50 are marked **Ruled** in place (R-1 and R-17 to R-19 concern the build and the board, not this list). **No open question blocks 0.2.** 71 questions are open: 63 of the original hundred, and 8 of the 13 new from QA. Two are needed by 0.3. Every answer is pre-filled and yours to change. **Door** marks a one-way door. Numbers are kept from earlier drafts, so a few run out of order where staging's move (R-47) changed when they're needed.
+Your rulings R-1 to R-50 are marked **Ruled** in place (R-1 and R-17 to R-19 concern the build and the board, not this list). **Rulings after this revision are not folded in yet:** R-51 to R-59 (`roadmap/rulings-2026-10-10.md`) and R-60 to R-65 (`roadmap/rulings-2026-10-11.md`). Where they differ from this file, the rulings win; for example, R-57 settles question 65's region as N. Virginia (us-east-1), so the open-question count below is high. **No open question blocks 0.2.** 71 questions are open: 63 of the original hundred, and 8 of the 13 new from QA. Two are needed by 0.3. Every answer is pre-filled and yours to change. **Door** marks a one-way door. Numbers are kept from earlier drafts, so a few run out of order where staging's move (R-47) changed when they're needed.
 
 ### New from QA, for the Engineer
 

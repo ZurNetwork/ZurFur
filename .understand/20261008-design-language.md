@@ -42,7 +42,7 @@ Build a **design system** from this: tokens and core components, not full screen
 - **Hidden configuration files** ("dotfiles") appear only behind a toggle, styled quieter than normal items.
 
 ## 7. Special treatments
-- **Mature art.** Ratings are Safe, Suggestive, Nudity and Adult, plus a separate Graphic flag. Mature art is **blurred by default for everyone**, with a click-through ("I'm 18+"). Each viewer can choose to see it unblurred, or to hide it entirely. The blur cover is respectful and neutral: no warning signs, no shame.
+- **Mature art.** Ratings are Safe, Suggestive, Nudity and Adult, plus a separate Graphic flag. **Adult work shows no image at all** until a signed-in user has passed the vendor age check; everyone else sees the label alone (ruling R-6, 2026-10-10). Other mature art is **blurred by default for everyone**, with a click-through ("I'm 18+"). Each viewer can choose to see it unblurred, or to hide it entirely. The blur cover is respectful and neutral: no warning signs, no shame.
 - **Pins on artwork.** Reviewers drop pins on an image, and each pin opens a thread. Pins stay legible on any artwork, light or dark.
 - **The changelog** is an append-only timeline of everything that happened in a commission. It must be easy to scan.
 - **Commission status:** a lifecycle plus a two-part status, for example "in progress" or "waiting on client". Show it as a calm status pill.
