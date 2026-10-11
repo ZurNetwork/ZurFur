@@ -120,7 +120,6 @@ fn every_declared_route_is_served() {
         ("POST", "/accounts"),
         ("DELETE", "/accounts/{id}"),
         ("PATCH", "/accounts/{id}/handle"),
-        ("GET", "/commissions"),
         ("POST", "/commissions"),
     ]
     .into_iter()
@@ -142,11 +141,28 @@ fn every_declared_route_is_served() {
         );
     }
 
-    // And the declared set covers the whole v1 surface — nine endpoints.
+    // And the declared set covers the whole v1 surface — eight endpoints.
     assert_eq!(
         declared.len(),
-        9,
-        "the v1 corpus declares nine endpoints (Engineer scope ruling \
-         2026-07-25); got {declared:?}"
+        8,
+        "the v1 corpus declares eight endpoints; got {declared:?}"
+    );
+}
+
+/// The owner's commission list is retired: the contract no longer declares
+/// `GET /api/v1/commissions`, while the create route on the same path stays.
+#[test]
+fn the_owners_commission_list_is_not_declared() {
+    let declared = declared_routes();
+
+    let list = ("GET".to_string(), format!("{STRIP_PREFIX}/commissions"));
+    let create = ("POST".to_string(), format!("{STRIP_PREFIX}/commissions"));
+    assert!(
+        !declared.contains(&list),
+        "the owner's commission list is retired; the contract must not declare it"
+    );
+    assert!(
+        declared.contains(&create),
+        "creating a commission stays declared"
     );
 }

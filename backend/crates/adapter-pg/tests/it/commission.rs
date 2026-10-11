@@ -354,10 +354,9 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
 
 // --- ZMVP-157: `list_owned_by` against real SQL. ---
 //
-// `WHERE owner_id = $1 AND archived_at IS NULL` is the authorization boundary
-// for `GET /commissions`. The API-level suite runs against adapter-mem, whose
-// implementation is independently hand-written, so only this test proves the
-// owner scoping and the active filter hold in postgres.
+// `WHERE owner_id = $1 AND archived_at IS NULL` scopes `commission::list`, whose
+// only caller is create's read-back of the row it just made. These tests prove
+// the owner scoping and the active filter hold in postgres.
 
 /// Create a commission owned by `owner` in its own committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
@@ -375,7 +374,7 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commissi
 }
 
 // The listing is owner-scoped and active-only: another user's commission never
-// appears (the containment property `GET /commissions` rests on), and an
+// appears (the containment property `commission::list` rests on), and an
 // archived one of the caller's own is filtered out — the active-view filtering
 // `Commission::archived_at` documents as belonging to listing projections.
 #[tokio::test]
@@ -437,7 +436,7 @@ async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order()
 }
 
 // A user with nothing owns nothing: the empty listing is a plain empty vec, not
-// an error — the shape `GET /commissions` renders for a new account.
+// an error — what `commission::list` returns for a new account.
 #[tokio::test]
 async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
     let (pool, _container) = fresh_pool().await;

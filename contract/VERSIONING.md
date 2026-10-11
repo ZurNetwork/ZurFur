@@ -1,16 +1,17 @@
 # The Zurfur API versioning & deprecation contract
 
 **Status: BINDING — ratified by the Engineer 2026-07-27 after the full-document
-ratification read (ZMVP-28).** Every Engineer question is ruled (R1–R11); the one
-obligation still open is the Q1 spike, deferred by R8 until the first true enum enters
-the corpus. This satisfies DD 40992770's hard ordering constraint: the versioning
+ratification read (ZMVP-28).** Every Engineer question is ruled (R1–R11); two
+obligations are still open: the Q1 spike, deferred by R8 until the first true enum enters
+the corpus, and the CI assertion that closes R9's baseline-reset hatch at the first published client
+(the alpha), owed at alpha planning. This satisfies DD 40992770's hard ordering constraint: the versioning
 contract is DECIDED and `v1` may now be tagged.
 
 Research method, per the Engineer's standing directive (2026-07-25): every factual
 claim below was web-fetched from a primary source and carries its URL; nothing is
 asserted from memory; items that could not be verified are labelled UNVERIFIED in §8.
 
-## Rulings (Engineer, 2026-07-25 · R9–R11 2026-07-27)
+## Rulings (Engineer, 2026-07-25 · R9–R11 2026-07-27 · R9 amended 2026-08-30)
 
 | # | Ruling | Consequence here |
 | --- | --- | --- |
@@ -20,17 +21,21 @@ asserted from memory; items that could not be verified are labelled UNVERIFIED i
 | R4 | **Absence: canonical, and absence may only mean "not set"** (§7.4). Keys omitted, `T \| undefined` client-side (converges with DD 39944194's no-Option ruling). Absence that would carry positive meaning MUST be an explicit discriminant (oneof / kind field) — "no actor" and "actor withheld" must never be the same bytes. |
 | R5 | **Upload cap: 50 MiB (52,428,800 bytes), Bluesky PDS blob-cap parity** — MVP value, "increase eventually." Bounds §7.2 for `byte_size`: int32 is defensible by construction while the cap stays ≤ 2 GiB; crossing that line flips the field to the canonical int64 string and is a planned break, never an accident. Sources: https://github.com/bluesky-social/atproto/discussions/1740 · https://docs.bsky.app/docs/tutorials/video |
 | R6 | **Ids are opaque** (resolves §8 Q2, taking the Microsoft Graph side of the AIP/Graph contradiction). Every id is a stable, unique, opaque string of at most 64 characters. Clients must not parse ids, derive meaning from their structure, or order by them; ordering, timestamps, and any other derived fact are provided as explicit fields or response order. Changes to id length or format within the bound are **not breaking**. Binds consumers only — the backend keeps full internal knowledge of its own formats (`Uuid` parsing, `ORDER BY id`, the embedded v7 timestamp). |
-| R7 | **Listing responses are wrapped objects at the `/api/v1` mint** (resolves §8 Q4; ZAL #110). `GET /accounts` → `{ "accounts": [...] }`, `GET /commissions` → `{ "commissions": [...] }` — so pagination can later land additively (`next_cursor` sibling) instead of costing a major. Rationale is pagination-extensibility, not protobuf: `HttpRule.response_body` could have preserved the bare array. The pre-`/api/v1` bare-array shape is pre-GA and exempt (§5). The changelog's bare array is wrapped whenever that endpoint is next touched. |
+| R7 | **Listing responses are wrapped objects at the `/api/v1` mint** (resolves §8 Q4; ZAL #110). `GET /accounts` → `{ "accounts": [...] }`, `GET /commissions` → `{ "commissions": [...] }` — so pagination can later land additively (`next_cursor` sibling) instead of costing a major. Rationale is pagination-extensibility, not protobuf: `HttpRule.response_body` could have preserved the bare array. The pre-`/api/v1` bare-array shape is pre-GA and exempt (§5). The changelog's bare array is wrapped whenever that endpoint is next touched. *2026-10-10 (R-40): `GET /commissions` is retired (PDD 0.1 D-28, a declared baseline reset); the rule stands, as `GET /accounts` shows.* |
 | R8 | **All v1 vocabularies are `string` fields, never proto enums** (extends the `role` precedent to `lifecycle`, `visibility`, `direction_status`, `deadline_status`, `maturity.rating`; defers §8 Q1 until the first true enum enters the corpus). Rationale, the Engineer's: **the backend enforces vocabularies — the contract just says "this is this."** Enforcement lives in the domain (newtypes, `try_from`, the state machines); a proto enum would move domain law into the schema layer. Consequences: (a) the contract documents each field's known values as an **extensible vocabulary** — clients MUST tolerate unknown strings with a defined fallback (the ZAL #112 pattern, pinned by a §6-style test); (b) vocabulary changes are invisible to `buf breaking` and are therefore a **review obligation** under §1's semantics items — changing a value's meaning is breaking-by-review; (c) wire values stay lowercase, unchanged. |
-| R9 | **The `buf skip breaking` label is banned** (resolves §8 Q5; ruled 2026-07-27). The `contract` CI job is a **required status check** on `main` — a PR label cannot skip a required check, so the bypass is structurally unreachable rather than policed. A genuine §5 emergency must edit the workflow in the PR itself, which is loud, reviewed, and diffed. No signed-justification lane exists. |
+| R9 | **The `buf skip breaking` label is banned** (resolves §8 Q5; ruled 2026-07-27). The `contract` CI job is a **required status check** on `main` — a PR label cannot skip a required check, so the bypass is structurally unreachable rather than policed. A genuine §5 emergency must edit the workflow in the PR itself, which is loud, reviewed, and diffed. No signed-justification lane exists. **Amended 2026-08-30 (DD 40992770; DD 57081857 D8): until the first published client, a breaking change resets the baseline in its own declared PR.** The first published client is the alpha; the hatch's expiry is enforced as the second open obligation below says (ruled 2026-10-10, R-40). |
 | R10 | **Notice window: 12 months, bound to per-major telemetry** (resolves §8 Q7; ruled 2026-07-27). ≥ 12 months from `Deprecation` to `Sunset` for any GA path-major (Google Cloud ToS floor); pre-GA surfaces get zero. The commitment is honest only with eyes: Zalando #188 **per-major request-count telemetry is committed alongside it** — an implementation obligation (nothing is instrumented today) that must land before the first GA deprecation is announced. A major retires when the numbers show migration, never calendar-blind. 12 is a floor, not a ceiling. |
 | R11 | **Payload typing follows vocabulary ownership** (resolves §8 Q9; ruled 2026-07-27 at the ratification read). **Changelog payloads are typed per-kind proto messages** — a `oneof` over the closed, Zurfur-defined vocabulary (Eventlog DD 32178178 D1); the free-form blob retires when the changelog endpoint enters the corpus. The kinds ARE Zurfur's language: shapes declared in the contract, guarded by `buf breaking`, big integers declared `int64` and carried by §7.2's canonical string — the 2⁵³ hazard becomes unrepresentable rather than policed. **Plugin-owned payloads (eventlog source streams) take the opposite form by mandate: an opaque JSON `string`** — core is forbidden from knowing their structure (Eventlog DD D4/D5's envelope + fallback + registered template; R6's opacity doctrine), and the string form passes numeric precision through untouched. The deciding principle, quotable: *typed where Zurfur owns the vocabulary, opaque where a plugin does — representation is forced by ownership, not taste.* Underlying model recorded with it: the domain event causes both the changelog entry and other effects (EXP, notifications); the changelog is a recorder, not a source — payload shapes are the event shapes. **Amended 2026-09-04 by DD 59310081:** the Eventlog is a live frontend Surface with no storage, so "plugin-owned payloads (eventlog source streams)" now means plugin entries appended INTO the changelog (kind `plugin_recorded`: mandatory human sentence + opaque JSON string payload) — the ownership principle is unchanged. R3's opaque cursor and R7's wrap land together with cursor pagination of the changelog read. |
 
 **No Engineer questions remain open.** Q2/Q4/Q5/Q7/Q9 are resolved above (R6, R7, R9,
 R10, R11); Q3 by R1–R4; Q6 verified; **Q8 fully swept 2026-07-27** (all six items
 resolved — R10 gained a second precedent, §3 gained the CORS clause, §7.9 is new).
-**The one open obligation:** the Q1 spike (protobuf-es unknown-enum behaviour —
-deferred by R8 until the first true enum enters the corpus).
+**Two open obligations:** the Q1 spike (protobuf-es unknown-enum behaviour —
+deferred by R8 until the first true enum enters the corpus); and R9's baseline-reset
+expiry (DD 40992770, open item "R9 baseline-reset line", obligation b). Ruled
+2026-10-10 (R-40): the hatch closes at the first published client, the alpha; until the
+alpha is planned the expiry is this written rule, and a CI assertion over
+`contract/lifecycle.toml` is owed at alpha planning.
 
 ---
 
