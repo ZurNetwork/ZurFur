@@ -29,3 +29,36 @@ fn a_fresh_commission_has_no_direction_status() {
     );
     assert_eq!(c.direction_status, None);
 }
+
+// A fresh commission is not archived.
+#[test]
+fn a_fresh_commission_is_not_archived() {
+    let owner = crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+        "did:plc:{}",
+        uuid::Uuid::now_v7()
+    )));
+    let c = Commission::create(
+        "Ref".parse::<CommissionTitle>().unwrap(),
+        owner,
+        chrono::Utc::now(),
+        None,
+    );
+    assert!(!c.is_archived());
+}
+
+// A commission with an archive time is archived.
+#[test]
+fn a_commission_with_an_archive_time_is_archived() {
+    let owner = crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+        "did:plc:{}",
+        uuid::Uuid::now_v7()
+    )));
+    let mut c = Commission::create(
+        "Ref".parse::<CommissionTitle>().unwrap(),
+        owner,
+        chrono::Utc::now(),
+        None,
+    );
+    c.archived_at = Some(chrono::Utc::now());
+    assert!(c.is_archived());
+}
