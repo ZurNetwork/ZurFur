@@ -130,13 +130,14 @@ pub trait Host: Send + Sync {
     /// Whether to keep a node the viewer can see, after Atta has resolved the viewer's access.
     ///
     /// Answers from what `child` and `children` already loaded for this request, with no store
-    /// call, so a node refused on a path costs what an absent one does.
-    async fn admit(
+    /// call and no way to fail, so a node refused on a path looks and costs the same as an
+    /// absent one. A node the host holds no record of is refused.
+    fn admit(
         &self,
         viewer: &Viewer,
         path: &RealPath,
         node: &Metadata,
         access: Access,
         reach: Reach,
-    ) -> Result<Admission, HostError>;
+    ) -> Admission;
 }
