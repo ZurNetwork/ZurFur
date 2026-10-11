@@ -20,9 +20,9 @@ jobs:
   # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
   # them. Fails closed: on a push, on any error, or when the checked-out merge
   # commit's parents are not exactly the PR's base and head, `code` is true and
-  # everything runs. Dependents run unless `code` is exactly 'false', so a
-  # failed or cancelled detection also runs everything. Nothing from the event
-  # reaches `run:` text: the two SHAs arrive through env and are checked as hex.
+  # everything runs (scripts/ci-changes.sh). Dependents run unless `code` is
+  # exactly 'false', so a failed or cancelled detection also runs everything.
+  # Nothing from the event reaches `run:` text: the SHAs arrive through env.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -31,7 +31,7 @@ jobs:
       lock: ${{ steps.detect.outputs.lock }}
     steps:
       # The PR's test merge commit plus its two parents (base tip, PR head).
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
           persist-credentials: false
@@ -40,40 +40,23 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The detection is scripts/ci-changes.sh (tested by `just scripts-test`),
+        # taken from the BASE commit so a PR can't rewrite the logic that decides
+        # whether its own jobs run. No base copy, or anything else odd: run all.
         run: |
+          result=""
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "not a pull request: run everything"
+          elif printf '%s' "$BASE_SHA" | grep -qE '^[0-9a-f]{40}$' &&
+               git show "$BASE_SHA:scripts/ci-changes.sh" > "$RUNNER_TEMP/ci-changes.sh" 2>/dev/null; then
+            result=$(CI_CHANGES_TMP="$RUNNER_TEMP" sh "$RUNNER_TEMP/ci-changes.sh") || result=""
+          else
+            echo "::warning::changes: the base has no scripts/ci-changes.sh; running everything"
+          fi
           code=true
           lock=true
-          detect() {
-            if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
-              echo "not a pull request: run everything"; return
-            fi
-            for sha in "$BASE_SHA" "$HEAD_SHA"; do
-              if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
-                echo "::warning::changes: base or head SHA missing; running everything"; return
-              fi
-            done
-            if ! parent1=$(git rev-parse --verify --quiet 'HEAD^1') ||
-               ! parent2=$(git rev-parse --verify --quiet 'HEAD^2') ||
-               [ "$parent1" != "$BASE_SHA" ] || [ "$parent2" != "$HEAD_SHA" ]; then
-              echo "::warning::changes: the merge commit's parents are not the PR's base and head; running everything"; return
-            fi
-            echo "merge parents verified: HEAD^1 is the base, HEAD^2 is the PR head"
-            # The base branch's classifier, never the PR's own edit of it.
-            if ! git show "$BASE_SHA:scripts/ci-paths.sh" > "$RUNNER_TEMP/ci-paths.sh"; then
-              echo "::warning::changes: the base has no scripts/ci-paths.sh; running everything"; return
-            fi
-            # --no-renames: a moved file lists both its old and its new path.
-            if ! git diff --no-renames --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed.txt"; then
-              echo "::warning::changes: git diff failed; running everything"; return
-            fi
-            if ! result=$(sh "$RUNNER_TEMP/ci-paths.sh" < "$RUNNER_TEMP/changed.txt"); then
-              echo "::warning::changes: the classifier failed; running everything"; return
-            fi
-            case "$result" in *code=false*) code=false ;; esac
-            case "$result" in *lock=false*) lock=false ;; esac
-            echo "changed paths:"; cat "$RUNNER_TEMP/changed.txt"
-          }
-          detect
+          if printf '%s\n' "$result" | grep -qx 'code=false'; then code=false; fi
+          if printf '%s\n' "$result" | grep -qx 'lock=false'; then lock=false; fi
           echo "code=$code lock=$lock"
           printf 'code=%s\nlock=%s\n' "$code" "$lock" >> "$GITHUB_OUTPUT"
 
@@ -83,7 +66,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # The toolchain and components rust-toolchain.toml pins: one pin for
@@ -97,7 +80,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: rustup toolchain install --profile minimal
@@ -116,7 +99,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: rustup toolchain install --profile minimal
@@ -133,23 +116,24 @@ jobs:
     steps:
       # Full history: `buf breaking --against` compares the PR's contract to
       # the base branch's, which needs the base ref fetched.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       # Pinned buf CLI (a Go binary; no JVM, no registry, no BUF_TOKEN — the
-      # google/api deps are vendored in-tree).
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+      # google/api deps are vendored in-tree). setup_only: install buf and
+      # nothing else; the steps below run lint and breaking themselves.
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:
           version: '1.72.0'
-          github_token: ${{ github.token }}
+          setup_only: true
       # Lint the corpus (STANDARD rules; see contract/buf.yaml).
       - run: buf lint contract
       # Frontend codegen drift (ZMVP-161): regenerate protobuf-es output and
       # fail on any drift — the committed generated TS must match the corpus.
       # (The backend's generated module is drift-checked by the cargo test
       # job's contract_current test; this is its frontend twin.)
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: yarn
@@ -177,11 +161,13 @@ jobs:
       # is CORRECT there — the first corpus commit cannot break a contract
       # that does not exist yet.
       - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if git ls-tree -r "origin/${{ github.base_ref }}" --name-only | grep -q '^contract/.*\.proto$'; then
-            buf breaking contract --against ".git#branch=origin/${{ github.base_ref }},subdir=contract"
+          if git ls-tree -r "origin/$BASE_REF" --name-only | grep -q '^contract/.*\.proto$'; then
+            buf breaking contract --against ".git#branch=origin/$BASE_REF,subdir=contract"
           else
-            echo "base origin/${{ github.base_ref }} has no contract corpus (bootstrap) — breaking gate skipped"
+            echo "base origin/$BASE_REF has no contract corpus (bootstrap) — breaking gate skipped"
           fi
 
   # Licences, bans and sources always count. Advisories count only when the
@@ -194,7 +180,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # --locked matches the other jobs' lockfile assertion; --all-features
@@ -220,7 +206,7 @@ jobs:
     name: typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
@@ -229,10 +215,12 @@ jobs:
     name: nodes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.49.0'
       # The design corpus (ZurNetwork/zurfur-design) is a private sibling repo,
       # never checked out here — $ZURFUR_DESIGN_DIR stays absent in CI, so this
       # prints a skip notice rather than failing (see scripts/design-index-check.sh).
@@ -248,10 +236,12 @@ jobs:
     name: hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.49.0'
       # Fixture-driven; needs no live Claude session, no `nodes`/`jq` install
       # beyond what design-refs.sh's own tests stub or skip.
       - run: just hooks-test
@@ -272,10 +262,10 @@ jobs:
       run:
         working-directory: frontend/web
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Node 24 (current LTS): vite 8 requires >= 20.19; spec-lint's pin stays untouched.
           node-version: '24'

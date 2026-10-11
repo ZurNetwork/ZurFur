@@ -20,10 +20,14 @@ expect() {
 }
 
 expect "no paths fails closed" "code=true lock=true " ""
-expect "markdown anywhere" "code=false lock=false " "README.md
-backend/crates/domain/README.md
-frontend/web/notes.md
+expect "markdown outside the code trees" "code=false lock=false " "README.md
+.github/copilot-instructions.md
+docs/notes.md
 "
+expect "markdown under frontend is read by prettier" "code=true lock=false " "frontend/web/README.md"
+expect "markdown under backend counts as code" "code=true lock=false " "backend/crates/domain/README.md"
+expect "markdown under contract counts as code" "code=true lock=false " "contract/VERSIONING.md"
+expect "a NODE.json under frontend stays docs-only" "code=false lock=false " "frontend/web/NODE.json"
 expect "node files" "code=false lock=false " "NODE.json
 backend/crates/api/NODE.json
 NODE.toml

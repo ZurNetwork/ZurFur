@@ -69,6 +69,10 @@ change frontend/web/app.ts "export {}"
 expect_plan "a frontend change runs the web checks" "yarn --cwd frontend/web run test"
 
 new_repo
+change frontend/web/README.md "* star list"
+expect_plan "a Markdown edit under frontend runs the web checks" "yarn --cwd frontend/web run lint"
+
+new_repo
 change Cargo.lock "# lock"
 expect_plan "a path outside every crate tests the workspace" "cargo test --workspace --locked"
 

@@ -19,10 +19,13 @@ set -eu
 # The always-on jobs (typos, nodes, hooks) still check every one of these.
 docs_only() {
     case "$1" in
-        # Markdown anywhere: no Rust, web or contract code reads one.
-        *.md) return 0 ;;
-        # Read only by the `nodes` job.
+        # Read only by the `nodes` job (frontend/web's prettier ignores them).
         NODE.json | */NODE.json | NODE.toml) return 0 ;;
+        # Everything else in the code trees, Markdown included: the web job's
+        # `prettier --check .` reads frontend/web's Markdown.
+        backend/* | frontend/* | contract/*) return 1 ;;
+        # Markdown outside the code trees: no Rust, web or contract job reads it.
+        *.md) return 0 ;;
         # design-index.md (nodes job); documents; boardroom runs; agent settings.
         docs/* | .understand/* | reports/* | forks/* | .claude/*) return 0 ;;
         # The board tool's config; parsed by the always-on `hooks` job.

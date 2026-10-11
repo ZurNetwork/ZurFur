@@ -16,6 +16,11 @@
   ],
   "fs": [
     {
+      "name": "ci-changes.sh",
+      "role": "the body of CI's changes job: verifies the merge parents, diffs, classifies with the base's ci-paths.sh; fails closed",
+      "node": false
+    },
+    {
       "name": "ci-paths.sh",
       "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
       "node": false

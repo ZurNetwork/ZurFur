@@ -1,7 +1,8 @@
 #!/bin/sh
 # Compares this machine's tools with the versions CI uses, and checks that the
 # workflows agree with those pins. Run via `just tools-check`, which exports
-# TYPOS_VERSION, CARGO_DENY_VERSION and BUF_VERSION from the Justfile.
+# TYPOS_VERSION, CARGO_DENY_VERSION, BUF_VERSION and JUST_VERSION from the
+# Justfile.
 #
 #   tools-check.sh              both checks; local drift only warns
 #   tools-check.sh --pins-only  the workflow check alone (what CI runs)
@@ -14,6 +15,7 @@ set -eu
 : "${TYPOS_VERSION:?run through just tools-check}"
 : "${CARGO_DENY_VERSION:?run through just tools-check}"
 : "${BUF_VERSION:?run through just tools-check}"
+: "${JUST_VERSION:?run through just tools-check}"
 
 pins_only=0
 case "${1:-}" in
@@ -58,6 +60,12 @@ check_every_use EmbarkStudios/cargo-deny-action "(cargo-deny $CARGO_DENY_VERSION
 if ! grep -qF "version: '$BUF_VERSION'" "$workflows/ci.yml"; then
     pin_error "ci.yml's buf version is not '$BUF_VERSION' (Justfile pin)"
 fi
+# Every setup-just step is followed by `just-version: '<JUST_VERSION>'`.
+setup_just_uses="$(grep -hcF 'extractions/setup-just@' "$workflows"/*.yml | awk '{ n += $1 } END { print n + 0 }')"
+just_pins="$(grep -hcF "just-version: '$JUST_VERSION'" "$workflows"/*.yml | awk '{ n += $1 } END { print n + 0 }')"
+if [ "$setup_just_uses" != "$just_pins" ]; then
+    pin_error "$setup_just_uses setup-just step(s) but $just_pins pinned at just-version '$JUST_VERSION' (Justfile pin)"
+fi
 
 if [ "$pins_only" = 0 ]; then
     # local_version <label> <want> <command…> — warn when the tool is missing or differs.
@@ -79,6 +87,7 @@ if [ "$pins_only" = 0 ]; then
     local_version typos "$TYPOS_VERSION" typos --version
     local_version cargo-deny "$CARGO_DENY_VERSION" cargo deny --version
     local_version buf "$BUF_VERSION" buf --version
+    local_version just "$JUST_VERSION" just --version
     channel="$(awk -F'"' '/^channel[[:space:]]*=/ { print $2; exit }' rust-toolchain.toml)"
     local_version rustc "$channel" rustc --version
 fi

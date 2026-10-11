@@ -24,7 +24,22 @@ esac
 root="$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel)"
 cd "$root"
 
-if ! changed="$(jj diff --from 'trunk()' --to '@' --name-only 2>/dev/null)"; then
+# Both sides of every `diff --git a/<old> b/<new>` header, so a moved file
+# lists its old path too (jj's --name-only shows only the new one). A header
+# that doesn't split cleanly is printed whole and so classifies as code.
+diff_paths() {
+    awk '/^diff --git a\// {
+        line = substr($0, 14)
+        i = index(line, " b/")
+        if (i == 0) { print line; next }
+        print substr(line, 1, i - 1)
+        print substr(line, i + 3)
+    }' | sort -u
+}
+
+if jj_diff="$(jj diff --git --from 'trunk()' --to '@' 2>/dev/null)"; then
+    changed="$(diff_paths <<<"$jj_diff")"
+else
     if ! base="$(git merge-base origin/main HEAD 2>/dev/null)" ||
         ! changed="$(git diff --no-renames --name-only "$base" 2>/dev/null)"; then
         changed=""

@@ -9,13 +9,14 @@ set positional-arguments := true
 NODES_VERSION := "v0.6.0"
 
 # The tool versions CI runs, so the local gate agrees with it. `just setup`
-# installs typos and cargo-deny at these; `just tools-check` warns when this
+# installs typos, cargo-deny and just at these; `just tools-check` warns when this
 # machine differs and fails when .github/workflows disagrees. The workflows
 # pin the same versions (typos and cargo-deny through their actions' SHAs);
 # bump both sides in one change. Rust is pinned in rust-toolchain.toml.
 export TYPOS_VERSION := "1.51.1"
 export CARGO_DENY_VERSION := "0.20.2"
 export BUF_VERSION := "1.72.0"
+export JUST_VERSION := "1.49.0"
 
 # The design corpus (github.com/ZurNetwork/zurfur-design — private; the single
 # source of truth for Zurfur's glossary, decisions, scope and architecture),
@@ -196,20 +197,21 @@ hooks-test:
     done
     exit "$status"
 
-# Fixture tests for the CI path classifier, gate-light and pr-wait (the
+# Fixture tests for the CI path classifier, the `changes` job, gate-light and
+# pr-wait (the
 # design-index check's own tests run under `design-index-check-test`). CI
 # runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
     exit "$status"
 
-# Compare this machine's typos, cargo-deny, buf and rustc with CI's versions
+# Compare this machine's typos, cargo-deny, buf, just and rustc with CI's versions
 # (warns), and check every workflow pins its actions by SHA at the Justfile's
 # versions (fails). `--pins-only` skips the local half; CI runs that.
 tools-check *ARGS:
@@ -294,7 +296,8 @@ setup:
     @echo "Copying .env.example to .env (edit values before running)..."
     @cp -n .env.example .env || true
     @echo "Installing tools..."
-    cargo install just cargo-watch bacon
+    cargo install --locked just --version {{JUST_VERSION}}
+    cargo install cargo-watch bacon
     cargo install cargo-insta
     cargo install sqlx-cli --no-default-features --features postgres
     cargo install --locked typos-cli --version {{TYPOS_VERSION}}
