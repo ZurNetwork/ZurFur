@@ -296,35 +296,53 @@ stop_review() {
     echo "Stopped the review of #$n."
 }
 
-# review_notes <head> <review> — one tab-separated line per note added in
-# <review> relative to <head>: path, the head's line right above it (or "new"
-# in a file the head lacks), and the note's text without its marker.
+# review_notes <head> <review> — what the review adds relative to <head>, one
+# tab-separated line each: `N path line text` for a note (its marker
+# stripped), `E path line text` for an edit that isn't a note. `line` is the
+# head's line right above it ("new" in a file the head lacks). A deleted head
+# line is an edit with the text "(deleted)".
 review_notes() {
     jj diff --ignore-working-copy --git --context 0 --from "$1" --to "$2" | awk '
-        /^diff --git / { path = ""; newfile = 0; in_hunk = 0; next }
+        # The head lines a replacement hunk removed but nothing replaced.
+        function flush(   i) {
+            if (in_hunk && count > edits)
+                for (i = start + edits; i < start + count; i++) printf "E\t%s\t%d\t(deleted)\n", path, i
+            in_hunk = 0
+        }
+        # above: the head line right above the next added line. Inside a
+        # replacement, each non-note added line stands for the next head line.
+        function above(   line) {
+            if (newfile) return "new"
+            line = (count == 0) ? start : start - 1 + (edits < count ? edits : count)
+            return (line < 1) ? 1 : line
+        }
+        /^diff --git / { flush(); path = ""; newfile = 0; next }
         !in_hunk && /^--- \/dev\/null/ { newfile = 1; next }
         !in_hunk && /^\+\+\+ b\// { path = substr($0, 7); next }
         /^@@ / {
+            flush()
             in_hunk = 1
+            edits = 0
             old = $2
             sub(/^-/, "", old)
             n = split(old, part, ",")
             start = part[1] + 0
             count = (n > 1) ? part[2] + 0 : 1
-            # An insertion follows head line `start`; a replacement follows
-            # the line before the replaced ones.
-            anchor = (count == 0) ? start : start - 1
-            if (anchor < 1) anchor = 1
             next
         }
         in_hunk && /^\+/ {
             text = substr($0, 2)
-            if (path == "" || !match(text, /^[ \t]*(\/\/|#|<!--|--)[ \t]*REVIEW:[ \t]*/)) next
-            text = substr(text, RSTART + RLENGTH)
-            sub(/[ \t]*-->[ \t]*$/, "", text)
-            sub(/[ \t]+$/, "", text)
-            printf "%s\t%s\t%s\n", path, (newfile ? "new" : anchor), text
+            if (path != "" && match(text, /^[ \t]*(\/\/|#|<!--|--)[ \t]*REVIEW:[ \t]*/)) {
+                text = substr(text, RSTART + RLENGTH)
+                sub(/[ \t]*-->[ \t]*$/, "", text)
+                sub(/[ \t]+$/, "", text)
+                printf "N\t%s\t%s\t%s\n", path, above(), text
+            } else {
+                edits++
+                printf "E\t%s\t%s\t%s\n", path, above(), text
+            }
         }
+        END { flush() }
     '
 }
 
@@ -344,7 +362,7 @@ diff_ranges() {
 }
 
 publish_review() {
-    local n review head answer now_head url notes ranges pending payload posted
+    local n review head answer now_head url changes notes edits ranges pending payload posted
     n="$(pick_pr active)"
     refuse_if_conflicted
     review="$(state_get "$n" change)"
@@ -358,7 +376,13 @@ publish_review() {
         die "#$n's head moved since this review started (${head:0:12}..${now_head:0:12}), so the notes' lines would be off; --stop it and --start again"
     fi
 
-    notes="$(review_notes "$head" "$review")" || die "couldn't read the notes from $review"
+    changes="$(review_notes "$head" "$review")" || die "couldn't read the notes from $review"
+    notes="$(awk -F '\t' -v OFS='\t' '$1 == "N" { print $2, $3, $4 }' <<<"$changes")"
+    edits="$(awk -F '\t' '$1 == "E" { printf "  %s:%s — %s\n", $2, $3, $4 }' <<<"$changes")"
+    if [ -n "$edits" ]; then
+        echo "warning: these edits aren't REVIEW: notes, so they won't be published:" >&2
+        printf '%s\n' "$edits" >&2
+    fi
     [ -n "$notes" ] || die "the review of #$n has no REVIEW: notes to publish"
 
     pending="$(gh api "repos/{owner}/{repo}/pulls/$n/reviews" --paginate \

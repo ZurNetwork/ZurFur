@@ -243,14 +243,16 @@ assert "the new change sits on main" sh -c "[ \"\$(cd '$co' && jj log --no-graph
 # Publish: notes become one pending review.
 check "start #3" 0 "Review of #3" --start --pr=3
 review3="$(at change_id)"
-printf -- '-- REVIEW: top\nl1\nl2\nl3\nl4\nL5 changed\n// REVIEW: why change l5?\n  // REVIEW: second line\nl6\nl7\n<!-- REVIEW: html note -->\nl8\nl9 edited\nl10\n# REVIEW: outside the hunk\n' >"$co/lib.rs"
+printf -- '-- REVIEW: top\nl1\nl2\nl3\nl4\nL5 changed\n// REVIEW: why change l5?\n  // REVIEW: second line\nl6 edited\n// REVIEW: on the edited l6\nl7\n<!-- REVIEW: html note -->\nl8 // REVIEW: inline\nl9 edited\nl10\n# REVIEW: outside the hunk\n' >"$co/lib.rs"
 printf '# REVIEW: new file note\n' >"$co/new.md"
-check "publish posts one pending review" 0 "2 line comment(s), 3 in the body" --publish
+check "publish posts one pending review" 0 "3 line comment(s), 3 in the body" --publish
+assert "edits that aren't notes are listed in a warning" sh -c "grep -qF \"these edits aren't REVIEW: notes\" '$work/out' && grep -qF 'lib.rs:6 — l6 edited' '$work/out' && grep -qF 'lib.rs:8 — l8 // REVIEW: inline' '$work/out' && grep -qF 'lib.rs:9 — l9 edited' '$work/out'"
 posted="$STUB_DIR/posted-3.json"
 assert "the review is pending (no event) on the PR head" sh -c "jq -e --arg h '$pr3_head' '.commit_id == \$h and (has(\"event\") | not)' '$posted' >/dev/null"
 assert "consecutive notes on line 5 join into one comment" sh -c "jq -e '.comments[0] == {path: \"lib.rs\", line: 5, side: \"RIGHT\", body: \"why change l5?\\nsecond line\"}' '$posted' >/dev/null"
-assert "an HTML-comment note maps to line 7" sh -c "jq -e '.comments[1] == {path: \"lib.rs\", line: 7, side: \"RIGHT\", body: \"html note\"}' '$posted' >/dev/null"
-assert "only the notes inside the hunk are line comments" sh -c "jq -e '.comments | length == 2' '$posted' >/dev/null"
+assert "a note under an edited line maps to that line" sh -c "jq -e '.comments[1] == {path: \"lib.rs\", line: 6, side: \"RIGHT\", body: \"on the edited l6\"}' '$posted' >/dev/null"
+assert "an HTML-comment note maps to line 7" sh -c "jq -e '.comments[2] == {path: \"lib.rs\", line: 7, side: \"RIGHT\", body: \"html note\"}' '$posted' >/dev/null"
+assert "only the notes inside the hunk are line comments" sh -c "jq -e '.comments | length == 3' '$posted' >/dev/null"
 assert "a note outside the hunk goes into the body" sh -c "jq -r .body '$posted' | grep -qF -- '- \`lib.rs:10\` — outside the hunk'"
 assert "a note above line 1 goes into the body at line 1" sh -c "jq -r .body '$posted' | grep -qF -- '- \`lib.rs:1\` — top'"
 assert "a note in a file the head lacks goes into the body" sh -c "jq -r .body '$posted' | grep -qF -- '- \`new.md (new file)\` — new file note'"
