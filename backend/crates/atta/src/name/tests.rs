@@ -121,3 +121,78 @@ fn the_format_table_matches_its_known_edges() {
         assert!(!is_format(character), "{character:?}");
     }
 }
+
+#[test]
+fn a_name_of_white_space_alone_is_refused_as_empty() {
+    let blank_names = [
+        " ", "   ", "\u{00A0}", "\u{1680}", "\u{2003}", "\u{202F}", "\u{205F}", "\u{3000}",
+    ];
+    for name in blank_names {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Empty),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_name_of_fillers_alone_is_refused_as_empty() {
+    let filler_names = [
+        "\u{115F}",
+        "\u{1160}",
+        "\u{3164}",
+        "\u{FFA0}",
+        "\u{2800}",
+        "\u{3164}\u{3164}",
+    ];
+    for name in filler_names {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Empty),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_name_mixing_white_space_fillers_and_joiners_alone_is_refused_as_empty() {
+    let mixed = " \u{3164}\u{200D}\u{2800} \u{200C}";
+    assert_eq!(NodeName::try_from(mixed), Err(NodeNameError::Empty));
+}
+
+#[test]
+fn white_space_and_fillers_beside_a_visible_character_are_allowed() {
+    let names = ["Old sketch", " a ", "a\u{3000}b", "\u{3164}a", "a\u{2800}"];
+    for name in names {
+        assert!(NodeName::try_from(name).is_ok(), "{name:?}");
+    }
+}
+
+#[test]
+fn line_and_paragraph_separators_are_refused_anywhere() {
+    let names = ["a\u{2028}b", "a\u{2029}b", "\u{2028}", "ab\u{2029}"];
+    for name in names {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Separator),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn the_white_space_table_matches_its_known_edges() {
+    let inside = [
+        '\u{0009}', '\u{000D}', ' ', '\u{0085}', '\u{2000}', '\u{200A}', '\u{2028}', '\u{3000}',
+    ];
+    let outside = [
+        '\u{0008}', '\u{000E}', '\u{200B}', '\u{1FFF}', '\u{180E}', '\u{FEFF}', 'a',
+    ];
+    for character in inside {
+        assert!(is_white_space(character), "{character:?}");
+    }
+    for character in outside {
+        assert!(!is_white_space(character), "{character:?}");
+    }
+}
