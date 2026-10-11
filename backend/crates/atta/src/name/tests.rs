@@ -785,3 +785,37 @@ fn a_run_of_mongolian_selectors_before_a_vowel_separator_keeps_only_the_first() 
     let name = "\u{1828}\u{180B}\u{180C}\u{180D}\u{180E}\u{1820}";
     assert_stored(name, "\u{1828}\u{180B}\u{180E}\u{1820}");
 }
+
+#[test]
+fn an_alternating_joiner_run_inside_a_name_keeps_only_the_first_joiner() {
+    let run = "\u{200D}\u{200C}".repeat(200);
+    let name = format!("a{run}b");
+    assert_stored(&name, "a\u{200D}b");
+}
+
+#[test]
+fn a_joiner_run_at_the_start_is_stripped_and_at_the_end_keeps_one() {
+    let run = "\u{200C}\u{200D}".repeat(200);
+    let leading = format!("{run}a");
+    let trailing = format!("a{run}");
+    assert_stored(&leading, "a");
+    assert_stored(&trailing, "a\u{200C}");
+}
+
+#[test]
+fn joiners_and_selectors_interleaved_keep_one_of_each() {
+    let joiner_first = format!("a{}b", "\u{200D}\u{FE0F}".repeat(200));
+    let selector_first = format!("a{}b", "\u{FE0F}\u{200D}".repeat(200));
+    assert_stored(&joiner_first, "a\u{200D}\u{FE0F}b");
+    assert_stored(&selector_first, "a\u{FE0F}\u{200D}b");
+}
+
+#[test]
+fn emoji_and_persian_joins_with_one_joiner_each_are_unchanged() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let rainbow_flag = "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}";
+    let persian = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}";
+    assert_stored(family, family);
+    assert_stored(rainbow_flag, rainbow_flag);
+    assert_stored(persian, persian);
+}

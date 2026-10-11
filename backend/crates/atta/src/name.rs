@@ -328,16 +328,38 @@ fn is_invisible(units: &[&str], index: usize) -> bool {
         || is_unassigned_default_ignorable(character)
 }
 
-/// `units` with the fillers and zero-width spaces stripped, and every variation selector but the
-/// first of a run: one selector chooses a character's form, and more would only hide bytes.
+/// What a unit is to a run of joiners and selectors after a character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Modifier {
+    /// A zero-width joiner or non-joiner.
+    Joiner,
+    /// A variation selector.
+    Selector,
+}
+
+/// The kind of modifier `unit` is, or `None` when it is not one.
+fn modifier(unit: &str) -> Option<Modifier> {
+    let character = single(unit)?;
+    if is_joiner(character) {
+        return Some(Modifier::Joiner);
+    }
+    is_variation_selector(character).then_some(Modifier::Selector)
+}
+
+/// `units` with the fillers and zero-width spaces stripped, and each run of joiners and selectors
+/// cut to its first joiner and its first selector: an emoji or a script needs no more, and more
+/// would only hide bytes.
 fn strip_inside(units: Vec<&str>) -> Vec<&str> {
-    let is_selector = |unit: &str| single(unit).is_some_and(is_variation_selector);
     let mut kept: Vec<&str> = Vec::with_capacity(units.len());
     for unit in units {
         let stripped = single(unit).is_some_and(is_stripped_inside);
-        let repeated_selector =
-            is_selector(unit) && kept.last().is_some_and(|last| is_selector(last));
-        if !stripped && !repeated_selector {
+        let repeated = modifier(unit).is_some_and(|kind| {
+            kept.iter()
+                .rev()
+                .map_while(|previous| modifier(previous))
+                .any(|previous| previous == kind)
+        });
+        if !stripped && !repeated {
             kept.push(unit);
         }
     }
