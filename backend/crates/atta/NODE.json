@@ -56,7 +56,7 @@
     },
     {
       "name": "src/name.rs",
-      "role": "NodeName: no Cc, no Cf but the two joiners, no /, not empty, at most 2048 bytes",
+      "role": "NodeName: no Cc, no Cf but the two joiners, no line or paragraph separator, no /, not blank (white space, fillers, joiners alone), at most 2048 bytes",
       "node": false
     },
     {
@@ -101,6 +101,7 @@
     "Name: Atta is the leafcutter-ant genus.",
     "Runs on the server for the MVP; the same crate is built for the browser later.",
     "NodeName carries Unicode general category Cf as a hand table from the Unicode Character Database 16.0.0 (generated with Python unicodedata 16.0.0, 2026-10-10; checked unchanged against 17.0.0 and 18.0.0); std has no general-category query and no crate was added. Regenerate it when Unicode adds Cf code points.",
+    "NodeName carries Unicode White_Space as a hand table from UCD 16.0.0 PropList.txt (checked unchanged against 17.0.0 and 18.0.0, 2026-10-10), and a named filler table: U+115F, U+1160, U+3164, U+FFA0 (the Hangul fillers) and U+2800 (the blank Braille pattern). A name of only white space, fillers and joiners is empty.",
     "Not yet in Atta, waiting for the first payload: the payload hash in Metadata, Payload, and attributes. Links resolve nowhere yet: a symlink handed to Atta fails closed as absent."
   ]
 }
