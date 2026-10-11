@@ -7,6 +7,9 @@ on:
     branches: [main, "feature/**", "bug/**"]
   push:
     branches: [main]
+  # The merge queue on main: every required check must also run on the
+  # queue's group commit, or the queue waits until its check timeout.
+  merge_group:
 
 permissions:
   contents: read
@@ -20,9 +23,11 @@ jobs:
   # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
   # them. Fails closed: on a push, on any error, or when the checked-out merge
   # commit's parents are not exactly the PR's base and head, `code` is true and
-  # everything runs (scripts/ci-changes.sh). Dependents run unless `code` is
-  # exactly 'false', so a failed or cancelled detection also runs everything.
-  # Nothing from the event reaches `run:` text: the SHAs arrive through env.
+  # everything runs (scripts/ci-changes.sh). A merge-queue group always runs
+  # everything; only its `lock` (whether advisories block) follows its paths.
+  # Dependents run unless `code` is exactly 'false', so a failed or cancelled
+  # detection also runs everything. Nothing from the event reaches `run:`
+  # text: the SHAs arrive through env.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -30,23 +35,25 @@ jobs:
       code: ${{ steps.detect.outputs.code }}
       lock: ${{ steps.detect.outputs.lock }}
     steps:
-      # The PR's test merge commit plus its two parents (base tip, PR head).
+      # A PR: its test merge commit plus its two parents (base tip, PR head).
+      # A merge group: its head with full history, which holds the group's
+      # base however many queued PRs sit between them.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '2' }}
           persist-credentials: false
       - id: detect
         name: Classify the changed paths
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         # The detection is scripts/ci-changes.sh (tested by `just scripts-test`),
         # taken from the BASE commit so a PR can't rewrite the logic that decides
         # whether its own jobs run. No base copy, or anything else odd: run all.
         run: |
           result=""
-          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
-            echo "not a pull request: run everything"
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_EVENT_NAME" != merge_group ]; then
+            echo "not a pull request or a merge group: run everything"
           elif printf '%s' "$BASE_SHA" | grep -qE '^[0-9a-f]{40}$' &&
                git show "$BASE_SHA:scripts/ci-changes.sh" > "$RUNNER_TEMP/ci-changes.sh" 2>/dev/null; then
             result=$(CI_CHANGES_TMP="$RUNNER_TEMP" sh "$RUNNER_TEMP/ci-changes.sh") || result=""
@@ -152,18 +159,25 @@ jobs:
           (cd contract && buf generate)
           git add -A frontend/web/src/lib/server/api/generated
           git diff --cached --exit-code -- frontend/web/src/lib/server/api/generated
-      # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
-      # against the base branch. Once the first version tag exists this gains
-      # a second comparison against the last released tag (VERSIONING.md §2
-      # "two gates, not one").
+      # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs and
+      # merge-queue groups, against the base branch. Once the first version
+      # tag exists this gains a second comparison against the last released
+      # tag (VERSIONING.md §2 "two gates, not one").
       # Bootstrap guard: a base that predates the corpus has nothing to
       # compare against (buf fails with "had no .proto files"), and skipping
       # is CORRECT there — the first corpus commit cannot break a contract
       # that does not exist yet.
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_REF: ${{ github.base_ref }}
+          # A merge group names its base as refs/heads/<branch>.
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
         run: |
+          BASE_REF="${BASE_REF#refs/heads/}"
+          # A base we can't read must fail, not pass as a bootstrap skip.
+          if [ -z "$BASE_REF" ] || ! git rev-parse --verify --quiet "origin/$BASE_REF" >/dev/null; then
+            echo "::error::contract: base branch origin/$BASE_REF not found"
+            exit 1
+          fi
           if git ls-tree -r "origin/$BASE_REF" --name-only | grep -q '^contract/.*\.proto$'; then
             buf breaking contract --against ".git#branch=origin/$BASE_REF,subdir=contract"
           else

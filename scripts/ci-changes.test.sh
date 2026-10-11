@@ -42,6 +42,16 @@ pr_commit() {
     g merge --no-ff -m merge pr
 }
 
+# group_commit — commits whatever the case changed as one more squashed entry
+# on top of the base, the way the merge queue builds its group branch, and
+# leaves HEAD on it.
+group_commit() {
+    g checkout -q --detach HEAD
+    g add -A
+    g commit -m entry
+    head_sha="$(git -C "$repo" rev-parse HEAD)"
+}
+
 # expect <name> <expected stdout> [env assignments…]
 expect() {
     name="$1"
@@ -90,6 +100,57 @@ new_base no-classifier
 echo "notes" >"$repo/docs.md"
 pr_commit
 expect "a base without the classifier runs everything" "code=true lock=true "
+
+# Merge-queue groups: everything runs; only `lock` follows the paths.
+mg=GITHUB_EVENT_NAME=merge_group
+
+new_base
+g checkout -q main
+echo "notes" >"$repo/docs.md"
+group_commit
+expect "a docs-only merge group still runs everything" "code=true lock=false " "$mg"
+expect "a merge group with a missing head SHA runs everything" "code=true lock=true " "$mg" HEAD_SHA=
+expect "a merge group whose HEAD isn't its head runs everything" "code=true lock=true " "$mg" HEAD_SHA="$base_sha"
+
+new_base
+g checkout -q main
+echo "# lock" >"$repo/Cargo.lock"
+group_commit
+echo "notes" >"$repo/docs.md"
+group_commit
+expect "a Cargo.lock change from a PR ahead in the queue blocks on advisories" "code=true lock=true " "$mg"
+
+new_base
+g checkout -q main
+printf '#!/bin/sh\nprintf "code=false\\nlock=false\\n"\n' >"$repo/scripts/ci-paths.sh"
+echo "# lock" >"$repo/Cargo.lock"
+group_commit
+expect "a merge group's own classifier edit is ignored" "code=true lock=true " "$mg"
+
+new_base
+echo "side" >"$repo/side.md"
+g add -A
+g commit -m side
+side_sha="$(git -C "$repo" rev-parse HEAD)"
+g checkout -q main
+echo "notes" >"$repo/docs.md"
+group_commit
+expect "a merge group whose base isn't an ancestor runs everything" "code=true lock=true " "$mg" BASE_SHA="$side_sha"
+
+# A shallow clone that lacks the base (a checkout without full history).
+new_base
+g checkout -q main
+echo "notes" >"$repo/docs.md"
+group_commit
+echo "more" >>"$repo/docs.md"
+group_commit
+full="$repo"
+repo="$work/shallow"
+rm -rf "$repo"
+git clone -q --depth 1 "file://$full" "$repo" 2>/dev/null
+g checkout -q --detach "$head_sha"
+expect "a merge group checked out without its base runs everything" "code=true lock=true " "$mg"
+repo="$full"
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures failure(s)"

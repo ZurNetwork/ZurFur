@@ -17,7 +17,7 @@
   "fs": [
     {
       "name": "ci-changes.sh",
-      "role": "the body of CI's changes job: verifies the merge parents, diffs, classifies with the base's ci-paths.sh; fails closed",
+      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",
       "node": false
     },
     {
