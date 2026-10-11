@@ -9,7 +9,7 @@ use application::user::me::{self, MeError, MeQuery};
 use axum::{
     Form, Json, Router,
     extract::{Query, State, rejection::FormRejection},
-    http::{HeaderMap, HeaderValue, header},
+    http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -17,11 +17,15 @@ use domain::elements::handle::AtHandle;
 use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
 use serde::Deserialize;
 use tower_sessions::Session;
-use tower_sessions::cookie::{Cookie, SameSite, time};
+use tower_sessions::cookie::{Cookie, time};
 use url::Url;
 
 use crate::{
-    AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
+    AppState, SESSION_USER_KEY,
+    cookies::{ZurfurCookie, set_cookie_header},
+    extract::CallingUser,
+    generated::GetMeResponse,
+    problem::Problem,
 };
 
 /// The session route group: the OAuth sign-in flow and the JSON whoami. Each
@@ -78,60 +82,19 @@ async fn signin(
         .await
         .map_err(|_| signin_refused())?;
     let secure = state.config.env.secure_cookies();
+    // The binding lives exactly as long as the sign-in it binds.
+    let max_age = time::Duration::try_from(started.lifetime).unwrap_or(time::Duration::ZERO);
     let binding =
-        browser_binding_cookie(secure, started.browser_binding.as_ref(), started.lifetime)
-            .ok_or_else(signin_refused)?;
+        ZurfurCookie::SignInBinding.cookie(secure, started.browser_binding.as_ref(), max_age);
+    let binding = set_cookie_header(&binding).ok_or_else(signin_refused)?;
     let headers = [(header::SET_COOKIE, binding)];
     let response = (headers, Redirect::to(&started.authorization_url)).into_response();
     Ok(response)
 }
 
-/// The cookie that binds a sign-in to the browser that started it. Where
-/// cookies are `Secure` its name carries the `__Host-` prefix, which locks it to
-/// this host, `Path=/` and HTTPS, so no sibling host can plant one.
-fn browser_binding_cookie_name(secure: bool) -> &'static str {
-    if secure {
-        "__Host-zurfur.signin"
-    } else {
-        "zurfur.signin"
-    }
-}
-
-/// `Set-Cookie` for `token`: `HttpOnly`, `SameSite=Lax` (the callback arrives as
-/// a top-level navigation from the PDS, which `Strict` would strip), `Path=/`,
-/// and gone after `lifetime`, the sign-in's own. `None` when `token` cannot
-/// travel in a header.
-fn browser_binding_cookie(
-    secure: bool,
-    token: &str,
-    lifetime: std::time::Duration,
-) -> Option<HeaderValue> {
-    let max_age = time::Duration::try_from(lifetime).unwrap_or(time::Duration::ZERO);
-    let cookie = Cookie::build((browser_binding_cookie_name(secure), token))
-        .http_only(true)
-        .secure(secure)
-        .same_site(SameSite::Lax)
-        .path("/")
-        .max_age(max_age)
-        .build();
-    HeaderValue::from_str(&cookie.to_string()).ok()
-}
-
-/// `Set-Cookie` clearing the browser-binding cookie: same name, path and flags,
-/// expired.
-fn cleared_browser_binding_cookie(secure: bool) -> HeaderValue {
-    if secure {
-        HeaderValue::from_static(
-            "__Host-zurfur.signin=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0",
-        )
-    } else {
-        HeaderValue::from_static("zurfur.signin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
-    }
-}
-
 /// The browser-binding token the request's `Cookie` header carries, if any.
 fn presented_browser_binding(headers: &HeaderMap, secure: bool) -> Option<BrowserBinding> {
-    let name = browser_binding_cookie_name(secure);
+    let name = ZurfurCookie::SignInBinding.name(secure);
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -167,8 +130,11 @@ async fn signin_callback(
     let secure = state.config.env.secure_cookies();
     let presented = presented_browser_binding(&headers, secure);
     let mut response = complete_signin(state, session, q, presented).await;
-    let cleared = cleared_browser_binding_cookie(secure);
-    response.headers_mut().append(header::SET_COOKIE, cleared);
+    let cleared = ZurfurCookie::SignInBinding.cleared(secure);
+    // Always `Some`: a cleared cookie carries no value that could break a header.
+    if let Some(cleared) = set_cookie_header(&cleared) {
+        response.headers_mut().append(header::SET_COOKIE, cleared);
+    }
     response
 }
 

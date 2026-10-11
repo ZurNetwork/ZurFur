@@ -19,6 +19,11 @@
   ],
   "fs": [
     {
+      "name": "cookies.rs",
+      "role": "ZurfurCookie (Session, SignInBinding): every cookie name and attribute, the set/clear builder, and the session layer main.rs mounts",
+      "node": false
+    },
+    {
       "name": "extract.rs",
       "role": "CallingUser extractor — session → Did → UserId, 401 on absence",
       "node": false
@@ -35,7 +40,7 @@
     },
     {
       "name": "main.rs",
-      "role": "boot: .env, config, tracing, pool, migrations, session layer, live pg/atproto adapters, serve",
+      "role": "boot: .env, config, tracing, pool, migrations, session layer (from cookies.rs), live pg/atproto adapters, serve",
       "node": false
     },
     {

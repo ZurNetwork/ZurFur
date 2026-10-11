@@ -20,7 +20,7 @@ import {
 	NOT_AUTHENTICATED_PROBLEM
 } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
-import { SESSION_COOKIE_NAME } from '$lib/server/api-proxy';
+import { SESSION_COOKIE, signInBindingCookieName } from '$lib/server/cookies';
 import { accountId, did, handle, handleFromTrusted, type Did } from '$lib/types/brand';
 import { mockDenRead } from './den-mock';
 import { ApiProblem, NotAuthenticated } from './errors';
@@ -192,7 +192,7 @@ function mockStartSignin(requestedHandle: string): ReturnType<ZurfurApiShape['st
 	return Effect.succeed({
 		location: `${MOCK_SIGNIN_PATH}?handle=${encodeURIComponent(requestedHandle)}`,
 		browserBinding: {
-			name: 'zurfur.signin',
+			name: signInBindingCookieName(false),
 			value: 'mock-browser-binding',
 			maxAge: 600,
 			secure: false
@@ -204,7 +204,7 @@ function mockStartSignin(requestedHandle: string): ReturnType<ZurfurApiShape['st
 function mockSignout(store: MockStore): ZurfurApiShape['signout'] {
 	return Effect.sync(() => {
 		store.session = undefined;
-		return [SESSION_COOKIE_NAME];
+		return [SESSION_COOKIE];
 	});
 }
 

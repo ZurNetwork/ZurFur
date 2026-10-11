@@ -19,6 +19,9 @@ pub use composition::{Config, Environment, Runtime as AppState};
 /// the `contract_current` test.
 pub mod generated;
 
+/// Every cookie the backend sets, by name, and the session layer that issues one.
+pub mod cookies;
+
 mod extract;
 
 /// The server's log subscriber, which keeps the DNS client's own events out.

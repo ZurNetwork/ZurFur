@@ -44,6 +44,7 @@ import {
 } from './errors';
 import type { DenQuery, DenRead } from './den-read';
 import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
+import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -115,21 +116,13 @@ export interface ZurfurApiShape {
 	readonly denNode: (path: SegmentPath, query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 }
 
-/** The two names the backend gives the browser-binding cookie: host-locked where cookies are `Secure`. */
-export type BrowserBindingCookieName = '__Host-zurfur.signin' | 'zurfur.signin';
-
-const BROWSER_BINDING_COOKIE_NAMES: readonly BrowserBindingCookieName[] = [
-	'__Host-zurfur.signin',
-	'zurfur.signin'
-];
-
 /**
  * The cookie binding a sign-in to the browser that started it, as the backend
  * set it on `/signin`'s 303. Only what varies rides here (the name, value,
- * lifetime and `Secure`); the action fixes `Path=/`, `HttpOnly` and `SameSite=Lax`.
+ * lifetime and `Secure`); `cookieOptions` fixes the rest.
  */
 export interface BrowserBindingCookie {
-	readonly name: BrowserBindingCookieName;
+	readonly name: SignInBindingCookieName;
 	readonly value: string;
 	readonly maxAge: number;
 	readonly secure: boolean;
@@ -262,10 +255,6 @@ const liveMe = (fetch: FetchFunction) =>
 		});
 	});
 
-function isBrowserBindingCookieName(name: string): name is BrowserBindingCookieName {
-	return BROWSER_BINDING_COOKIE_NAMES.some((known) => known === name);
-}
-
 /**
  * The browser-binding cookie in one `Set-Cookie` value, or `undefined` when the
  * value is another cookie, has no token, or carries no `Max-Age`.
@@ -276,7 +265,7 @@ export function parseBrowserBindingCookie(setCookie: string): BrowserBindingCook
 	if (equalsIndex === -1) return undefined;
 	const name = pair.slice(0, equalsIndex).trim();
 	const value = pair.slice(equalsIndex + 1).trim();
-	if (!isBrowserBindingCookieName(name) || value === '') return undefined;
+	if (!isSignInBindingCookieName(name) || value === '') return undefined;
 	const lowered = attributes.map((attribute) => attribute.trim().toLowerCase());
 	const maxAgeText = lowered.find((attribute) => attribute.startsWith('max-age='))?.slice(8);
 	const maxAge = maxAgeText === undefined ? Number.NaN : Number(maxAgeText);

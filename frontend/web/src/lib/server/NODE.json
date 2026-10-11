@@ -40,6 +40,11 @@
       "node": true
     },
     {
+      "name": "cookies.ts",
+      "role": "every cookie name Zurfur sets (closed SessionCookieName | SignInBindingCookieName) and cookieOptions, the one set/clear options helper; the backend ZurfurCookie's twin",
+      "node": false
+    },
+    {
       "name": "den-served.ts",
       "role": "denServed(): whether this run can show a Den — the mock only, for now; fails closed (false) on the everyday stack, so the frame shows no sidebar, tree or My Den links there",
       "node": false
