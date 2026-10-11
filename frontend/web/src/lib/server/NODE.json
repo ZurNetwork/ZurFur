@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, api-proxy, session-cache)",
+      "role": "node-project specs beside each program module (accounts, session, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log)",
       "node": false
     },
     {
@@ -31,7 +31,7 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-cache.ts (no $env, unit-tests standalone)",
+      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone)",
       "node": false
     },
     {
@@ -40,8 +40,23 @@
       "node": true
     },
     {
+      "name": "error-log.ts",
+      "role": "pure logUnexpectedError (hooks.server.ts's handleError): logs route template + status only, returns a fixed message",
+      "node": false
+    },
+    {
       "name": "forms/",
       "role": "one Effect Schema per form (login, create-account, delete-account) over a shared handle field; problem-message.ts bridges a Problem onto the superform message",
+      "node": false
+    },
+    {
+      "name": "frame-headers.ts",
+      "role": "refuseFraming handle hook: Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY on every response",
+      "node": false
+    },
+    {
+      "name": "handle-chain.ts",
+      "role": "handleChain(...handles): the handle hooks as one, first outermost — a plain stand-in for SvelteKit's sequence, which needs the live request store and can't be unit-tested",
       "node": false
     },
     {
@@ -50,8 +65,13 @@
       "node": false
     },
     {
-      "name": "session-cache.ts",
-      "role": "pure sessionNoStore handle hook used by hooks.server.ts: marks every response to a request carrying the session cookie Cache-Control: private, no-store",
+      "name": "session-gate.ts",
+      "role": "the sign-in gate, the one real one: a handle hook that, for every (session) route (page, __data.json whatever it skips, form action), asks the backend who is signed in and redirects to /login if nobody is, before any load or action runs; hands the session to the root layout through locals",
+      "node": false
+    },
+    {
+      "name": "session-headers.ts",
+      "role": "pure sessionHeaders handle hook used by hooks.server.ts: marks every response to a request carrying the session cookie Cache-Control: private, no-store and Referrer-Policy: same-origin",
       "node": false
     },
     {

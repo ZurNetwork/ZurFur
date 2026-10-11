@@ -11,7 +11,9 @@
   "conventions": [
     "`$lib/api/*` is the vocabulary that crosses the seam — plain interfaces + `as const` maps.",
     "A rule stated once lives in the shared module both sides import (`handle-format.ts` backs both the Schema field and the brand validator).",
-    "New shared UI goes in `components/`."
+    "New shared UI goes in `components/`.",
+    "Components name a token, never a raw colour or a palette custom property; core components use the design language's names exactly (`ui/`), and the frame's compositions live in `explorer/`.",
+    "Icons are inline SVG path data copied from Lucide (ISC) into `components/ui/icons.ts`, always `aria-hidden` beside words."
   ],
   "entry_points": [
     "api/ (the seam vocabulary)",
@@ -20,7 +22,7 @@
   "fs": [
     {
       "name": "api/",
-      "role": "component-facing plain-data contracts: Problem, Session, Account, HttpStatus, API_PREFIX, FetchFunction",
+      "role": "component-facing plain-data contracts: Problem, Session, Account, Trail (the path bar's steps a page hands the frame), HttpStatus, API_PREFIX, FetchFunction",
       "node": false
     },
     {
@@ -30,7 +32,7 @@
     },
     {
       "name": "components/",
-      "role": "ProblemNote (the one way a problem renders) + SessionHeader",
+      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, SignOut, ErrorView with its fixed copy in error-copy.ts), built only from `ui/` and tokens",
       "node": false
     },
     {
@@ -42,6 +44,11 @@
       "name": "server/",
       "role": "the Effect half — runtime, API port, programs, form schemas",
       "node": true
+    },
+    {
+      "name": "styles/",
+      "role": "tokens.css (palette → semantic → layout custom properties; dark on :root, light under [data-theme='light'], reduced-motion and more-contrast overrides) + base.css (element defaults, focus ring, .visually-hidden, the one 48rem phone breakpoint behind .desktop-only/.phone-only and --shell-columns); imported once by the root layout",
+      "node": false
     },
     {
       "name": "testing/",

@@ -7,6 +7,10 @@ import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import { formStub } from '$lib/testing/superforms';
+import type { Trail } from '$lib/api/trail';
+
+/** The frame's path on this page; the page itself doesn't render it. */
+const trail: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
@@ -67,11 +71,11 @@ function listingData(
 	deleted?: DeleteOutcome,
 	form: ReturnType<typeof createForm> = createForm()
 ) {
-	return { session: alice, accounts, deleted, form };
+	return { session: alice, accounts, deleted, form, trail };
 }
 
 function problemData(problem: Problem, form: ReturnType<typeof createForm> = createForm()) {
-	return { session: alice, problem, deleted: undefined, form };
+	return { session: alice, problem, deleted: undefined, form, trail };
 }
 
 describe('/accounts page', () => {

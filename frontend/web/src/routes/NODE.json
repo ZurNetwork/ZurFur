@@ -2,7 +2,7 @@
   "path": "frontend/web/src/routes",
   "charted": "2026-09-12",
   "short": "The SvelteKit route tree",
-  "is": "The route tree: a root layout that resolves whoami once per render, a public home and `/login`, and an auth-gated `(session)` group.",
+  "is": "The route tree: a root layout that resolves whoami once per render and loads the tokens, base styles and fonts; a `(public)` group (landing, `/login`) under today's plain header; and an auth-gated `(session)` group inside the Explorer frame.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -19,33 +19,38 @@
   ],
   "fs": [
     {
+      "name": "(public)/",
+      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → PDS redirect, callback-errors.ts maps axum's ?error= codes to copy",
+      "node": false
+    },
+    {
       "name": "(session)/",
-      "role": "the auth-gated group (accounts, logout) behind a redirect-to-login layout guard",
+      "role": "the auth-gated group (accounts, logout) inside the Explorer frame (AppShell), behind a redirect-to-login layout guard",
       "node": true
     },
     {
+      "name": "+error.svelte",
+      "role": "errors outside the frame, rendered by status and route alone (ErrorView), never by message",
+      "node": false
+    },
+    {
       "name": "+layout.server.ts",
-      "role": "one whoami per server render shared via layout data; unreachable backend degrades to signed-out, contract breakage still 500s",
+      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes); unreachable backend degrades to signed-out, contract breakage still 500s",
       "node": false
     },
     {
       "name": "+layout.svelte",
-      "role": "the shell — favicon + SessionHeader + children",
+      "role": "the root — tokens.css, base.css, the self-hosted fonts and the favicon; no header (each group brings its own)",
       "node": false
     },
     {
-      "name": "+page.svelte",
-      "role": "the public landing page",
+      "name": "error.svelte.spec.ts",
+      "role": "proves the public error page never shows the error's own text ($app/state mocked)",
       "node": false
     },
     {
-      "name": "layout.server.spec.ts / page.svelte.spec.ts",
-      "role": "specs for the root layout load and the landing page (the `+` is dropped in route spec names)",
-      "node": false
-    },
-    {
-      "name": "login/",
-      "role": "sign-in screen: handle form action → PDS redirect; callback-errors.ts maps axum's ?error= codes to copy",
+      "name": "layout.server.spec.ts",
+      "role": "spec for the root layout load (the `+` is dropped in route spec names)",
       "node": false
     },
     {
