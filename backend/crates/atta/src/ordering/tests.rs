@@ -71,16 +71,14 @@ fn a_name_without_a_number_sorts_before_the_same_name_with_one() {
         "photo2.png",
         "photo10.png",
     ];
-    assert_eq!(
-        sorted(&[
-            "photo10.png",
-            "photo2.png",
-            "photo.png",
-            "Photo2.png",
-            "photo1.png"
-        ]),
-        expected
-    );
+    let shuffled = [
+        "photo10.png",
+        "photo2.png",
+        "photo.png",
+        "Photo2.png",
+        "photo1.png",
+    ];
+    assert_eq!(sorted(&shuffled), expected);
 }
 
 #[test]
@@ -88,4 +86,17 @@ fn text_after_a_shared_prefix_compares_character_by_character() {
     assert_eq!(name_order("file.txt", "file2.txt"), Ordering::Less);
     assert_eq!(name_order("a-", "a1"), Ordering::Less);
     assert_eq!(name_order("ab", "a1"), Ordering::Greater);
+}
+
+#[test]
+fn a_final_sigma_sorts_as_a_sigma() {
+    assert_eq!(name_order("ΟΔΟΣ", "οδος 2"), Ordering::Less);
+    assert_eq!(name_order("οδος", "οδοσ 2"), Ordering::Less);
+}
+
+#[test]
+fn names_differing_only_in_sigma_forms_fall_to_the_tie_break() {
+    assert_eq!(name_order("Σ", "ς"), "Σ".cmp("ς"));
+    assert_eq!(name_order("ΟΣ", "ος"), "ΟΣ".cmp("ος"));
+    assert_eq!(name_order("σ", "ς"), "σ".cmp("ς"));
 }

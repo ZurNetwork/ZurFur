@@ -281,7 +281,7 @@ fn mixed_blank_names_are_refused_as_empty() {
 }
 
 #[test]
-fn blank_characters_beside_a_visible_character_are_allowed() {
+fn blank_characters_the_other_rules_allow_beside_a_visible_one_are_accepted() {
     let names = [
         "\u{2764}\u{FE0F}",
         "a\u{034F}b",
@@ -297,14 +297,15 @@ fn blank_characters_beside_a_visible_character_are_allowed() {
 
 #[test]
 fn an_invisible_character_inside_a_name_is_still_refused_as_invisible() {
-    for name in [
+    let names = [
         "a\tb",
         "a\nb",
         "a\u{0}b",
         "a\u{202E}b",
         "a\u{00AD}b",
         "\u{0}\u{3164}",
-    ] {
+    ];
+    for name in names {
         assert_eq!(
             NodeName::try_from(name),
             Err(NodeNameError::Invisible),
@@ -469,12 +470,13 @@ fn selectors_inside_a_name_are_kept() {
 
 #[test]
 fn a_name_blank_once_stripped_is_refused_as_empty() {
-    for name in [
+    let names = [
         "\t\u{3164}",
         "\u{200D}\u{FE0F}",
         " \u{200B} ",
         "\u{FE0F}\u{2800}\u{E0100}",
-    ] {
+    ];
+    for name in names {
         assert_empty(name);
     }
 }
@@ -516,4 +518,154 @@ fn from_str_and_try_from_string_strip_alike() {
     let from_string = NodeName::try_from(String::from(" a\u{3164}b "));
     assert_eq!(from_str, from_string);
     assert_eq!(from_str.map(|name| name.to_string()), Ok("ab".to_owned()));
+}
+
+/// The flag of Scotland: a black flag, the tag letters "gbsct", and the cancel tag.
+const SCOTLAND: &str = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+
+/// Asserts that `name` is refused as [`NodeNameError::Invisible`].
+fn assert_invisible(name: &str) {
+    assert_eq!(
+        NodeName::try_from(name),
+        Err(NodeNameError::Invisible),
+        "{name:?}"
+    );
+}
+
+#[test]
+fn a_subdivision_flag_alone_is_kept() {
+    assert_stored(SCOTLAND, SCOTLAND);
+}
+
+#[test]
+fn a_subdivision_flag_at_the_end_is_kept() {
+    let name = format!("Highlands {SCOTLAND}");
+    let padded = format!("Highlands {SCOTLAND} \u{3164}");
+    assert_stored(&name, &name);
+    assert_stored(&padded, &name);
+}
+
+#[test]
+fn a_subdivision_flag_inside_a_name_is_kept() {
+    let name = format!("{SCOTLAND} sketches");
+    let two_flags = format!("{SCOTLAND}{SCOTLAND}");
+    assert_stored(&name, &name);
+    assert_stored(&two_flags, &two_flags);
+}
+
+#[test]
+fn tags_not_after_a_black_flag_are_stripped_at_the_end_and_refused_inside() {
+    assert_stored("a\u{E0067}\u{E007F}", "a");
+    assert_invisible("a\u{E0067}\u{E007F}b");
+}
+
+#[test]
+fn a_tag_sequence_without_its_cancel_tag_is_not_a_flag() {
+    assert_stored("\u{1F3F4}\u{E0067}\u{E0062}", "\u{1F3F4}");
+    assert_invisible("\u{1F3F4}\u{E0067}\u{E0062} a");
+}
+
+#[test]
+fn a_cancel_tag_with_no_tag_letters_is_not_a_flag() {
+    assert_stored("\u{1F3F4}\u{E007F}", "\u{1F3F4}");
+    assert_invisible("\u{1F3F4}\u{E007F}a");
+}
+
+#[test]
+fn a_mongolian_vowel_separator_inside_a_mongolian_word_is_kept() {
+    let khara = "\u{182C}\u{1820}\u{1837}\u{180E}\u{1820}";
+    let after_a_selector = "\u{1828}\u{180B}\u{180E}\u{1820}";
+    assert_stored(khara, khara);
+    assert_stored(after_a_selector, after_a_selector);
+}
+
+#[test]
+fn a_mongolian_vowel_separator_outside_a_mongolian_word_is_refused() {
+    assert_invisible("a\u{180E}b");
+    assert_invisible("\u{1820}\u{180E}b");
+    assert_invisible("a\u{180E}\u{1820}");
+}
+
+#[test]
+fn a_mongolian_vowel_separator_at_the_ends_is_stripped() {
+    assert_stored("\u{180E}\u{1820}\u{180E}", "\u{1820}");
+}
+
+#[test]
+fn an_unassigned_default_ignorable_inside_a_name_is_refused() {
+    let names = [
+        "a\u{2065}b",
+        "a\u{FFF0}b",
+        "a\u{FFF8}b",
+        "a\u{E0000}b",
+        "a\u{E0002}b",
+        "a\u{E0080}b",
+        "a\u{E01F0}b",
+        "a\u{E0FFF}b",
+    ];
+    for name in names {
+        assert_invisible(name);
+    }
+}
+
+#[test]
+fn an_unassigned_default_ignorable_at_the_ends_is_stripped() {
+    assert_stored("\u{2065}a\u{FFF8}", "a");
+    assert_stored("\u{E0000}a\u{E0FFF}", "a");
+}
+
+#[test]
+fn the_unassigned_default_ignorable_table_matches_its_known_edges() {
+    let inside = [
+        '\u{2065}',
+        '\u{FFF0}',
+        '\u{FFF8}',
+        '\u{E0000}',
+        '\u{E0002}',
+        '\u{E001F}',
+        '\u{E0080}',
+        '\u{E00FF}',
+        '\u{E01F0}',
+        '\u{E0FFF}',
+    ];
+    let outside = [
+        '\u{2064}',
+        '\u{2066}',
+        '\u{FFF9}',
+        '\u{E0001}',
+        '\u{E0020}',
+        '\u{E007F}',
+        '\u{E0100}',
+        '\u{E01EF}',
+        'a',
+    ];
+    for character in inside {
+        assert!(is_unassigned_default_ignorable(character), "{character:?}");
+    }
+    for character in outside {
+        assert!(!is_unassigned_default_ignorable(character), "{character:?}");
+    }
+}
+
+#[test]
+fn every_unassigned_default_ignorable_is_default_ignorable_and_not_a_format_character() {
+    let ranges = UNASSIGNED_DEFAULT_IGNORABLE
+        .iter()
+        .flat_map(|&(first, last)| first..=last)
+        .filter_map(char::from_u32);
+    for character in ranges {
+        assert!(is_default_ignorable(character), "{character:?}");
+        assert!(!is_format(character), "{character:?}");
+    }
+}
+
+#[test]
+fn the_toolchain_unicode_version_is_one_the_tables_were_checked_against() {
+    let checked_versions = [(16, 0, 0), (17, 0, 0), (18, 0, 0)];
+    assert!(
+        checked_versions.contains(&char::UNICODE_VERSION),
+        "std is on Unicode {:?}: re-check FORMAT_CHARACTERS, DEFAULT_IGNORABLE and \
+         UNASSIGNED_DEFAULT_IGNORABLE against its UCD, then add the version here",
+        char::UNICODE_VERSION
+    );
 }

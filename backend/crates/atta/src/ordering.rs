@@ -1,12 +1,15 @@
 use std::{cmp::Ordering, iter::Peekable, str::Chars};
 
+/// U+03C2 GREEK SMALL LETTER FINAL SIGMA, which case folding maps to σ, as it does Σ.
+const FINAL_SIGMA: char = 'ς';
+
 /// One run of a name: a number, compared by value, or one other character, compared
 /// case-insensitively.
 #[derive(Debug, PartialEq, Eq)]
 enum Run {
     /// A run of ASCII digits, with its leading zeros dropped.
     Number(String),
-    /// One character that isn't an ASCII digit, lowercased.
+    /// One character that isn't an ASCII digit, lowercased, a final sigma as σ.
     Text(String),
 }
 
@@ -62,7 +65,8 @@ impl Iterator for Runs<'_> {
             let value = run.trim_start_matches('0');
             return Some(Run::Number(value.to_owned()));
         }
-        Some(Run::Text(run.to_lowercase()))
+        let folded = run.to_lowercase().replace(FINAL_SIGMA, "σ");
+        Some(Run::Text(folded))
     }
 }
 

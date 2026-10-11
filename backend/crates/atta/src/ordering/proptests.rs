@@ -7,10 +7,11 @@ use super::*;
 /// Names built from the characters that stress the order: both cases, digits and leading
 /// zeros, punctuation, a space, and letters whose lowercase differs in length or form.
 fn name() -> impl Strategy<Value = String> {
-    let characters = prop::sample::select(vec![
+    let alphabet = vec![
         'a', 'A', 'b', 'B', 'z', '0', '1', '2', '9', '-', '.', ' ', 'é', 'É', 'ß', 'Σ', 'σ', 'ς',
         '２', 'İ',
-    ]);
+    ];
+    let characters = prop::sample::select(alphabet);
     prop::collection::vec(characters, 0..8).prop_map(|characters| characters.into_iter().collect())
 }
 
