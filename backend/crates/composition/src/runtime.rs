@@ -113,10 +113,13 @@ impl Runtime {
     /// The pure-construction half of [`connect`](Runtime::connect), over an
     /// already-connected pool.
     fn wire(config: Config, pool: PgPool) -> anyhow::Result<Self> {
-        let redirect_uri =
-            Uri::parse(format!("{}/signin-callback", config.public_url)).map_err(|(e, uri)| {
-                anyhow::anyhow!("invalid public_url, cannot build redirect URI ({uri}): {e}")
-            })?;
+        let callback = config
+            .public_url
+            .join("/signin-callback")
+            .map_err(|e| anyhow::anyhow!("invalid public_url, cannot build redirect URI: {e}"))?;
+        let redirect_uri = Uri::parse(String::from(callback)).map_err(|(e, uri)| {
+            anyhow::anyhow!("invalid public_url, cannot build redirect URI ({uri}): {e}")
+        })?;
 
         let root_key_bytes = base64::engine::general_purpose::STANDARD
             .decode(config.did_key_root_key.trim())

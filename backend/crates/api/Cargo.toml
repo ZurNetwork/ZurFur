@@ -47,6 +47,8 @@ tokio-util = { workspace = true }
 futures-util = { workspace = true }
 # strum: VARIANTS over the domain vocabularies
 strum = { workspace = true }
+# Redirects built on the public origin (`Config::public_url`).
+url = { workspace = true }
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }

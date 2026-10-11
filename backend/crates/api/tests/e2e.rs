@@ -59,9 +59,10 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
         .await
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303, "callback should redirect on success");
+    let home = format!("{base}/");
     assert_eq!(
         res.headers()["location"],
-        "/",
+        home.as_str(),
         "callback lands the visitor on the signed-in frontend root"
     );
 

@@ -9,6 +9,7 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Deserializer, de};
+use url::Url;
 
 /// The environment variable naming the config profile (`dev`/`stg`/`prod`).
 pub const PROFILE_ENV: &str = "ZURFUR_ENV";
@@ -57,9 +58,9 @@ pub struct Config {
     /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`.
     #[serde(default = "default_http_addr")]
     pub http_addr: SocketAddr,
-    /// Externally-visible origin (scheme + host + port). Must parse as a URI —
-    /// the OAuth redirect URI is built from it, and boot aborts if it can't be.
-    pub public_url: String,
+    /// Externally-visible origin (scheme + host + port). Every redirect and the
+    /// OAuth redirect URI are built on it; boot aborts if the latter can't be.
+    pub public_url: Url,
     /// Postgres connection string for the pool built at boot. Read from the
     /// unprefixed `DATABASE_URL`, the name sqlx tooling expects.
     pub database_url: String,

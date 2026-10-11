@@ -1,8 +1,9 @@
 //! The session route group: the browser OAuth sign-in flow — `POST /signin`,
 //! `GET /signin-callback`, `GET /me`, `POST /logout`. `/signin` and
 //! `/signin-callback` redirect the browser; `/me` is JSON whoami (`401` on no
-//! session, not a redirect). Callback failures redirect to `/login` with a
-//! stable `error=<code>`, never the PDS-supplied reason.
+//! session, not a redirect). Every redirect is an absolute URL on the public
+//! origin; callback failures land on `/login` with a stable `error=<code>`
+//! ([`SignInFailure`]), never the PDS-supplied reason.
 
 use application::user::me::{self, MeError, MeQuery};
 use axum::{
@@ -17,6 +18,7 @@ use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
 use serde::Deserialize;
 use tower_sessions::Session;
 use tower_sessions::cookie::{Cookie, SameSite, time};
+use url::Url;
 
 use crate::{
     AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
@@ -151,10 +153,10 @@ fn signin_refused() -> Problem {
 /// rotates the session id, and stores the User's id in the session. Every
 /// answer clears the browser-binding cookie, success or failure.
 ///
-/// - `303 /` — success (`Set-Cookie` on the response)
-/// - `303 /login?error=denied|invalid_callback|exchange_failed|account_mismatch`
-///   — failure modes; `account_mismatch` when the visitor signed in to a
-///   different account than the handle they typed
+/// - `303 <public origin>/` — success (`Set-Cookie` on the response)
+/// - `303 <public origin>/login?error=<SignInFailure>` — failure modes;
+///   `account_mismatch` when the visitor signed in to a different account
+///   than the handle they typed
 /// - `500 internal_error` — provisioning or session-write failure
 async fn signin_callback(
     State(state): State<AppState>,
@@ -177,18 +179,19 @@ async fn complete_signin(
     q: CallbackQuery,
     presented: Option<BrowserBinding>,
 ) -> Response {
+    let public_url = &state.config.public_url;
     // Denied: no crash, no blank page — the PDS-supplied reason isn't echoed.
     if q.error.is_some() {
-        return Redirect::to("/login?error=denied").into_response();
+        return redirect(login_location(public_url, SignInFailure::Denied));
     }
     let Some(code) = q.code else {
-        return Redirect::to("/login?error=invalid_callback").into_response();
+        return redirect(login_location(public_url, SignInFailure::InvalidCallback));
     };
 
     let completed = state.auth.complete(code, q.state, q.iss, presented).await;
     let did = match completed {
         Ok(did) => did,
-        Err(error) => return Redirect::to(callback_failure_location(&error)).into_response(),
+        Err(error) => return redirect(login_location(public_url, callback_failure(&error))),
     };
 
     // Mint-or-return: recognizes rather than registers (idempotent, one DID = one User).
@@ -214,17 +217,59 @@ async fn complete_signin(
         )
         .into_response();
     }
-    Redirect::to("/").into_response()
+    redirect(home_location(public_url))
 }
 
-/// Where a failed code exchange sends the visitor: its own code for the wrong
-/// account, the generic one for everything else.
-fn callback_failure_location(error: &anyhow::Error) -> &'static str {
+/// Why a sign-in callback failed, as the stable code `/login?error=` carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::AsRefStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+enum SignInFailure {
+    /// The visitor declined at their PDS.
+    Denied,
+    /// The PDS came back without a code.
+    InvalidCallback,
+    /// The code could not be exchanged for a DID.
+    ExchangeFailed,
+    /// The visitor signed in to another account than the handle they typed.
+    AccountMismatch,
+}
+
+/// The failure a refused code exchange reports: its own for the wrong account,
+/// the generic one for everything else.
+fn callback_failure(error: &anyhow::Error) -> SignInFailure {
     if error.is::<AccountMismatch>() {
-        "/login?error=account_mismatch"
+        SignInFailure::AccountMismatch
     } else {
-        "/login?error=exchange_failed"
+        SignInFailure::ExchangeFailed
     }
+}
+
+/// `public_url` at `path`, its own path, query and fragment replaced.
+fn at_path(public_url: &Url, path: &str) -> Url {
+    let mut location = public_url.clone();
+    location.set_path(path);
+    location.set_query(None);
+    location.set_fragment(None);
+    location
+}
+
+/// The frontend root on the public origin.
+fn home_location(public_url: &Url) -> Url {
+    at_path(public_url, "/")
+}
+
+/// The sign-in page on the public origin, carrying `failure`'s code.
+fn login_location(public_url: &Url, failure: SignInFailure) -> Url {
+    let mut location = at_path(public_url, "/login");
+    location
+        .query_pairs_mut()
+        .append_pair("error", failure.as_ref());
+    location
+}
+
+/// A `303 See Other` to `location`.
+fn redirect(location: Url) -> Response {
+    Redirect::to(location.as_str()).into_response()
 }
 
 /// `GET /me` — the JSON whoami: resolves the session to a User, no PDS round trip.
@@ -276,13 +321,14 @@ impl From<me::Output> for GetMeResponse {
 /// `POST /logout` — destroys the session server-side (store row + cookie), so a
 /// stolen cookie dies with it. A stale/already-gone session still succeeds.
 ///
-/// - `303 /` — success (including a repeat sign-out) · `500` — store failure
-async fn logout(session: Session) -> Response {
+/// - `303 <public origin>/` — success (including a repeat sign-out) · `500` —
+///   store failure
+async fn logout(State(state): State<AppState>, session: Session) -> Response {
     if session.flush().await.is_err() {
         return Problem::internal_error("Sign-out couldn't be completed. Please try again.")
             .into_response();
     }
-    Redirect::to("/").into_response()
+    redirect(home_location(&state.config.public_url))
 }
 
 #[cfg(test)]

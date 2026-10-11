@@ -32,7 +32,7 @@ async fn health_is_green_against_fresh_postgres() {
         config: Config {
             env: Environment::DEV,
             http_addr: addr,
-            public_url: format!("http://{addr}"),
+            public_url: format!("http://{addr}").parse().expect("a URL"),
             database_url,
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
