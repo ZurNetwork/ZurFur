@@ -2,13 +2,17 @@
 # Reviews a GitHub PR locally in the colocated checkout, so VS Code's Source
 # Control and rust-analyzer show the whole PR as uncommitted changes.
 #
-#   engineer-tools/review-pr.sh --start --pr=<N>   start, or resume a paused review
-#   engineer-tools/review-pr.sh --pause [--pr=<N>] keep the review and its notes, go back
-#   engineer-tools/review-pr.sh --stop [--pr=<N>] [--yes]
-#                                                  drop the review, go back
-#   engineer-tools/review-pr.sh --publish [--pr=<N>]
-#                                                  post the notes as a pending review
-#   engineer-tools/review-pr.sh                    list the active and paused reviews
+#   review-pr --start --pr=<N>     start, or resume a paused review
+#   review-pr --pause [--pr=<N>]   keep the review and its notes, go back
+#   review-pr --stop [--pr=<N>] [--yes]
+#                                  drop the review, go back
+#   review-pr --publish [--pr=<N>] post the notes as a pending review
+#   review-pr                      list the active and paused reviews
+#
+# Install it once with `just engineer-tools-install` (again to update), which
+# copies it to ${XDG_BIN_HOME:-~/.local/bin}/review-pr. Run from the checkout
+# instead, as engineer-tools/review-pr.sh, it vanishes whenever a review's
+# files predate it.
 #
 # A review is a scratch jj change: a child of the point where the PR left its
 # base branch, holding the PR head's files. Notes typed into those files
@@ -200,8 +204,23 @@ pr_info() {
         --jq '.baseRefName + " " + .headRefOid + " " + .url' 2>/dev/null
 }
 
+# warn_if_inside_checkout — the review rewrites the checkout's files, so a copy
+# of this script run from inside it can vanish before --pause or --stop.
+warn_if_inside_checkout() {
+    local self
+    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+    case "$self" in
+        "$root"/*)
+            echo "warning: this runs ${self#"$root"/} from inside $root, which the review rewrites;" >&2
+            echo "warning: it may be missing for --pause or --stop. Install it once with: just engineer-tools-install" >&2
+            echo "warning: then run review-pr instead." >&2
+            ;;
+    esac
+}
+
 start_review() {
     local active answer base head fork review now back parents old_head
+    warn_if_inside_checkout
     refuse_if_conflicted
     active="$(reviews_with_status active)"
     if [ -n "$active" ] && [ "$active" != "$pr" ]; then

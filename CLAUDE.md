@@ -82,7 +82,7 @@ cargo run -p api                     # Run the API server
 cargo test --workspace               # Run all tests
 ```
 
-To review a PR locally, the Engineer runs `engineer-tools/review-pr.sh --start --pr=<N>` in `~/code/zurfur` (`--pause`, `--publish` to post the `REVIEW:` notes as a pending review, `--stop`, `--help`; see `engineer-tools/NODE.json`).
+To review a PR locally, the Engineer installs `review-pr` once with `just engineer-tools-install`, then runs `review-pr --start --pr=<N>` in `~/code/zurfur` (`--pause`, `--publish` to post the `REVIEW:` notes as a pending review, `--stop`, `--help`; see `engineer-tools/NODE.json`).
 
 ## The node tree (`NODE.json`)
 

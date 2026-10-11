@@ -272,6 +272,36 @@ check "start #2 for the no-notes case" 0 "Review of #2" --start --pr=2
 check "a review with no notes is refused" 1 "no REVIEW: notes" --publish
 check "stop #2" 0 "Stopped the review of #2" --stop
 
+# Installing: the recipe copies the script onto PATH as review-pr.
+if command -v just >/dev/null 2>&1; then
+    inst="$work/inst-bin"
+    set +e
+    (cd "$script_dir/.." && XDG_BIN_HOME="$inst" just engineer-tools-install) >"$work/out" 2>&1
+    got=$?
+    set -e
+    assert "engineer-tools-install installs review-pr" sh -c "[ $got -eq 0 ] && grep -qF 'installed review-pr from' '$work/out' && cmp -s '$under_test' '$inst/review-pr'"
+    assert "the installed review-pr is executable (755)" sh -c "[ \"\$(stat -c %a '$inst/review-pr')\" = 755 ]"
+    printf 'old\n' >"$inst/review-pr"
+    (cd "$script_dir/.." && XDG_BIN_HOME="$inst" just engineer-tools-install) >/dev/null 2>&1
+    assert "running it again updates review-pr" cmp -s "$under_test" "$inst/review-pr"
+else
+    echo "skip install cases (just not installed)"
+fi
+
+# A copy run from inside the checkout warns, then carries on.
+(cd "$co" && jj new main@origin >/dev/null 2>&1)
+cp "$under_test" "$co/rp.sh"
+set +e
+(cd "$co" && bash "$co/rp.sh" --start --pr=2) >"$work/out" 2>&1
+got=$?
+set -e
+assert "a copy inside the checkout warns and still starts" sh -c "[ $got -eq 0 ] && grep -qF 'from inside $co' '$work/out' && grep -qF 'just engineer-tools-install' '$work/out' && grep -qF 'Review of #2' '$work/out'"
+assert "the copy really is gone from the review's files" sh -c "[ ! -e '$co/rp.sh' ]"
+check "a copy outside the checkout stops it" 0 "Stopped the review of #2" --stop
+check "a copy outside the checkout starts" 0 "Review of #2" --start --pr=2
+assert "and doesn't warn" sh -c "! grep -qF 'from inside' '$work/out'"
+check "stop #2 once more" 0 "Stopped the review of #2" --stop
+
 # A conflicted working copy is refused.
 (cd "$co" && jj new main@origin -m a >/dev/null 2>&1 && printf 'a\n' >c.txt && jj new main@origin -m b >/dev/null 2>&1 && printf 'b\n' >c.txt && jj status >/dev/null)
 (cd "$co" && jj new 'description(exact:"a\n")' 'description(exact:"b\n")' >/dev/null 2>&1)
