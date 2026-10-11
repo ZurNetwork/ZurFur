@@ -15,13 +15,13 @@ describe('(session) guard', () => {
 		expect(redirect.location).toBe('/login');
 	});
 
-	it('passes a signed-in visit through', async () => {
+	it('passes a signed-in visit through, handing the frame its session', async () => {
 		const signedIn = {
 			did: 'did:plc:alice',
 			handle: undefined,
 			displayName: undefined,
 			avatarUrl: undefined
 		};
-		await expect(load(guardEvent(signedIn))).resolves.toEqual({});
+		await expect(load(guardEvent(signedIn))).resolves.toEqual({ session: signedIn });
 	});
 });
