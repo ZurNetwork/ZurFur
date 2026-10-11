@@ -87,6 +87,14 @@ replace_in_ci '/^          just-version: / { print "          # just-version: '"
 expect_exit "a just pin only in a comment fails" 1
 
 new_tree
+replace_in_ci '/^          version: / { print "          version: '"'"'1.71.0'"'"'"; print "        env:"; print "          version: '"'"'1.72.0'"'"'"; next } { print }'
+expect_exit "a buf pin under env: while with: disagrees fails" 1
+
+new_tree
+replace_in_ci '/^        with:/ && ++n == 1 { print "        env:"; next } { print }'
+expect_exit "a just pin under env: instead of with: fails" 1
+
+new_tree
 replace_in_ci '/^          just-version: / { print "          just-version: \"1.49.0\" # pinned"; next } { print }'
 expect_exit "a double-quoted just pin passes" 0
 

@@ -28,6 +28,9 @@ expect "markdown under frontend is read by prettier" "code=true lock=false " "fr
 expect "markdown under backend counts as code" "code=true lock=false " "backend/crates/domain/README.md"
 expect "markdown under contract counts as code" "code=true lock=false " "contract/VERSIONING.md"
 expect "a NODE.json under frontend stays docs-only" "code=false lock=false " "frontend/web/NODE.json"
+expect "a NODE.json in a crate's queries/ is code (sqlx-rust-codegen)" "code=true lock=false " "backend/crates/adapter-pg/queries/account/NODE.json"
+expect "a NODE.json in the api's generated/ is code (contract_current)" "code=true lock=false " "backend/crates/api/src/generated/NODE.json"
+expect "a NODE.json in the web's generated/ is code (contract regeneration)" "code=true lock=false " "frontend/web/src/lib/server/api/generated/NODE.json"
 expect "node files" "code=false lock=false " "NODE.json
 backend/crates/api/NODE.json
 NODE.toml

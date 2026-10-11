@@ -12,9 +12,12 @@
 #      PR_WAIT_MAX_ERRORS (GitHub read failures in a row before exit 3; default 3).
 #
 # Exit: 0 CI green and Copilot reviewed the head, 1 CI red, 2 timed out,
-# 3 usage or GitHub error. Copilot counts as done only once it has a review
-# whose commit is the PR's head; leaving the requested reviewers isn't enough,
-# since that happens when its review starts.
+# 3 usage or GitHub error, 4 CI green but Copilot unable to review the head
+# (its quota notice, say): re-request it later, or go on without it.
+# Copilot counts as done only once it has a review whose commit is the PR's
+# head; leaving the requested reviewers isn't enough, since that happens when
+# its review starts. A review whose body says Copilot was unable to review is
+# a notice, not a review.
 set -uo pipefail
 
 if [ $# -ne 1 ] || ! [[ $1 =~ ^[0-9]+$ ]]; then
@@ -93,16 +96,23 @@ ci_state() {
         else "green" end' <<<"$json" 2>/dev/null || echo error
 }
 
-# copilot_reviews prints "<id> <commit>" per Copilot review, oldest first, and
-# fails when GitHub can't be read.
+# copilot_reviews prints one tab-separated line per Copilot review, oldest
+# first: id, commit, 1 when its body says Copilot was unable to review (else
+# 0), and that body on one line. Fails when GitHub can't be read.
 copilot_reviews() {
     gh api "repos/$repo/pulls/$pr/reviews" --paginate \
-        --jq '.[] | select(.user.login | ascii_downcase | contains("copilot")) | "\(.id) \(.commit_id)"' 2>/dev/null
+        --jq '.[] | select(.user.login | ascii_downcase | contains("copilot"))
+            | (.body // "") as $body
+            | [(.id | tostring), .commit_id,
+               (if ($body | test("unable to review"; "i")) then "1" else "0" end),
+               ($body | gsub("[\\t\\r\\n]+"; " ") | .[0:300])]
+            | @tsv' 2>/dev/null
 }
 
 # copilot_state <head> prints reviewed once a Copilot review's commit is
-# <head>, waiting until then, skipped under PR_WAIT_COPILOT=0, or error when
-# GitHub can't be read.
+# <head>, unavailable when Copilot's only answers for <head> are "unable to
+# review" notices, waiting until either, skipped under PR_WAIT_COPILOT=0, or
+# error when GitHub can't be read.
 copilot_state() {
     local reviews
     if [ "$copilot_wait" = 0 ]; then
@@ -113,11 +123,10 @@ copilot_state() {
         echo error
         return
     fi
-    if awk -v head="$1" '$2 == head { found = 1 } END { exit !found }' <<<"$reviews"; then
-        echo reviewed
-    else
-        echo waiting
-    fi
+    awk -F '\t' -v head="$1" '
+        $2 == head && $3 == 0 { reviewed = 1 }
+        $2 == head && $3 == 1 { notice = 1 }
+        END { print reviewed ? "reviewed" : notice ? "unavailable" : "waiting" }' <<<"$reviews"
 }
 
 # github_error <what> — exit 3 after max_errors failed reads in a row.
@@ -214,9 +223,14 @@ case "$copilot" in
             echo "Copilot: could not read the reviews"
             exit 3
         fi
-        last_commit="$(awk 'END { print $2 }' <<<"$reviews")"
-        if [ "$copilot" = reviewed ]; then
-            review_id="$(awk -v head="$end_head" '$2 == head { id = $1 } END { print id }' <<<"$reviews")"
+        last_commit="$(awk -F '\t' '$3 == 0 { c = $2 } END { print c }' <<<"$reviews")"
+        if [ "$copilot" = unavailable ]; then
+            notice="$(awk -F '\t' -v head="$end_head" '$2 == head && $3 == 1 { b = $4 } END { print b }' <<<"$reviews")"
+            reason="${notice#*because }"
+            reason="${reason%.}"
+            echo "Copilot: unavailable ($reason)"
+        elif [ "$copilot" = reviewed ]; then
+            review_id="$(awk -F '\t' -v head="$end_head" '$2 == head && $3 == 0 { id = $1 } END { print id }' <<<"$reviews")"
             if counts="$(gh api "repos/$repo/pulls/$pr/reviews/$review_id/comments" --paginate --jq 'length' 2>/dev/null)"; then
                 comments="$(awk '{ n += $1 } END { print n + 0 }' <<<"$counts")"
                 echo "Copilot: reviewed ${end_head:0:7}, $comments inline comment(s)"
@@ -232,7 +246,13 @@ case "$copilot" in
 esac
 
 case "$ci" in
-    green) [ "$copilot" = waiting ] && exit 2 || exit 0 ;;
+    green)
+        case "$copilot" in
+            waiting) exit 2 ;;
+            unavailable) exit 4 ;;
+            *) exit 0 ;;
+        esac
+        ;;
     red) exit 1 ;;
     pending) exit 2 ;;
     *) exit 3 ;;

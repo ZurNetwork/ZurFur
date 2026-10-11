@@ -123,6 +123,17 @@ run_case "a Copilot review of an older head isn't done" 2 "Copilot: no review of
 run_case "PR_WAIT_COPILOT=0 doesn't wait for Copilot" 0 "Copilot: not waited for" PR_WAIT_COPILOT=0
 
 new_case
+echo '[{"name":"test","bucket":"pass"}]' >"$work/case/checks.json"
+quota="Copilot was unable to review this pull request because the user who requested the review has reached their quota limit."
+printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"copilot-pull-request-reviewer[bot]"}}]\n' "$head" "$quota" >"$work/case/reviews.json"
+run_case "a quota notice on the head is not a review (exit 4)" 4 "Copilot: unavailable (the user who requested the review has reached their quota limit)"
+printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"Copilot"}},{"id":9,"commit_id":"%s","body":"Looks fine.","user":{"login":"Copilot"}}]\n' "$head" "$quota" "$head" >"$work/case/reviews.json"
+run_case "a real review after a quota notice counts" 0 "Copilot: reviewed abcdef1"
+echo '[{"name":"test","bucket":"fail"}]' >"$work/case/checks.json"
+printf '[{"id":8,"commit_id":"%s","body":"%s","user":{"login":"Copilot"}}]\n' "$head" "$quota" >"$work/case/reviews.json"
+run_case "red CI with a quota notice is still red" 1 "Copilot: unavailable"
+
+new_case
 run_case "no checks yet counts as pending" 2 "CI: still running at the timeout"
 
 new_case

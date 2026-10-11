@@ -63,9 +63,9 @@ check_every_use() {
 check_every_use crate-ci/typos "# v$TYPOS_VERSION"
 check_every_use EmbarkStudios/cargo-deny-action "(cargo-deny $CARGO_DENY_VERSION)"
 # step_pins <action> <input> <value> — prints "<steps> <pinned>": how many
-# steps use <action>, and how many of those set `<input>: <value>` among their
-# own inputs (the lines indented under the step's `uses:`). A comment never
-# counts, so a pin that survives only in a comment fails.
+# steps use <action>, and how many of those set `<input>: <value>` in their own
+# `with:` block. A comment or an `env:` entry never counts, so a pin that
+# survives only there fails.
 step_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     awk -v action="$1" -v key="$2" -v want="$3" -v q="'" '
@@ -82,7 +82,8 @@ step_pins() {
                 if (indent(line) >= key_ind) {
                     t = line
                     sub(/^ */, "", t)
-                    if (indent(line) > key_ind && index(t, key ":") == 1) {
+                    if (indent(line) == key_ind) in_with = (t ~ /^with:[ \t]*(#.*)?$/)
+                    if (in_with && indent(line) > key_ind && index(t, key ":") == 1) {
                         v = substr(t, length(key) + 2)
                         sub(/[ \t]+#.*$/, "", v)
                         gsub(/^[ \t]+|[ \t]+$/, "", v)
@@ -98,6 +99,7 @@ step_pins() {
                     match(line, /uses:/)
                     key_ind = RSTART - 1
                     in_step = 1
+                    in_with = 0
                     found = 0
                 }
             }
