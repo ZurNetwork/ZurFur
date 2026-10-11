@@ -25,12 +25,42 @@ git config --file "$GIT_CONFIG_GLOBAL" user.email t@example.com
 git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 export XDG_STATE_HOME="$work/state"
 
-# gh stub: `gh pr view <N> …` prints $STUB_DIR/pr-<N>.txt ("<base> <head>").
+# gh stub, answering from $STUB_DIR:
+#   gh pr view <N> …                    pr-<N>.txt ("<base> <head> <url>")
+#   gh api …/pulls/<N>/files --jq F     F over files-<N>.json
+#   gh api …/pulls/<N>/reviews --jq F   F over reviews-<N>.json (default [])
+#   gh api -X POST …/pulls/<N>/reviews  saves --input to posted-<N>.json
 mkdir -p "$work/bin" "$work/stub"
 cat >"$work/bin/gh" <<'STUB'
 #!/bin/sh
-[ "$1 $2" = "pr view" ] && [ -f "$STUB_DIR/pr-$3.txt" ] || exit 1
-cat "$STUB_DIR/pr-$3.txt"
+d="$STUB_DIR"
+if [ "$1 $2" = "pr view" ]; then
+    [ -f "$d/pr-$3.txt" ] || exit 1
+    cat "$d/pr-$3.txt"
+    exit 0
+fi
+[ "$1" = api ] || exit 1
+shift
+method=GET
+input=""
+filter=""
+path=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -X | --method) method="$2"; shift ;;
+        --input) input="$2"; shift ;;
+        --jq) filter="$2"; shift ;;
+        repos/*) path="$1" ;;
+    esac
+    shift
+done
+n="$(printf '%s' "$path" | awk -F/ '{ print $5 }')"
+case "$method $path" in
+    "POST "*/reviews) cp "$input" "$d/posted-$n.json" && echo '{"id":1}' ;;
+    "GET "*/reviews) [ -f "$d/reviews-$n.json" ] || echo '[]' >"$d/reviews-$n.json"; jq -r "$filter" "$d/reviews-$n.json" ;;
+    "GET "*/files) jq -r "$filter" "$d/files-$n.json" ;;
+    *) exit 1 ;;
+esac
 STUB
 chmod +x "$work/bin/gh"
 export STUB_DIR="$work/stub"
@@ -41,6 +71,7 @@ git init -q --bare "$work/origin.git"
 seed="$work/seed"
 git clone -q "$work/origin.git" "$seed" 2>/dev/null
 printf 'fn main() {}\n' >"$seed/app.rs"
+printf 'l%s\n' 1 2 3 4 5 6 7 8 9 10 >"$seed/lib.rs"
 git -C "$seed" add -A
 git -C "$seed" commit -qm base
 git -C "$seed" push -q origin HEAD:main
@@ -54,6 +85,15 @@ printf 'two\n' >"$seed/two.md"
 git -C "$seed" add -A
 git -C "$seed" commit -qm "pr two"
 git -C "$seed" push -q origin pr2
+git -C "$seed" checkout -q main
+git -C "$seed" checkout -qb pr3
+printf 'l1\nl2\nl3\nl4\nL5 changed\nl6\nl7\nl8\nl9\nl10\n' >"$seed/lib.rs"
+git -C "$seed" commit -qam "pr three"
+git -C "$seed" push -q origin pr3
+pr3_head="$(git -C "$seed" rev-parse pr3)"
+printf 'main %s https://github.com/o/r/pull/3\n' "$pr3_head" >"$STUB_DIR/pr-3.txt"
+# GitHub's diff of #3: one hunk, lib.rs lines 2-8 on the right.
+printf '[{"filename":"lib.rs","patch":"@@ -2,7 +2,7 @@ l1\\n l2"}]\n' >"$STUB_DIR/files-3.json"
 printf 'main %s\n' "$(git -C "$seed" rev-parse pr1)" >"$STUB_DIR/pr-1.txt"
 printf 'main %s\n' "$(git -C "$seed" rev-parse pr2)" >"$STUB_DIR/pr-2.txt"
 
@@ -112,6 +152,7 @@ check "--start needs --pr" 2 "--start needs --pr" --start
 check "two actions are refused" 2 "can't be used together" --start --stop --pr=1
 check "--yes only with --stop" 2 "--yes only goes with --stop" --pause --yes
 check "a non-numeric --pr is refused" 2 "wants a PR number" --start --pr=abc
+check "--publish with another action is refused" 2 "can't be used together" --publish --stop
 
 # Where it runs: any colocated jj checkout; REVIEW_PR_ROOT only narrows it.
 mkdir -p "$work/plain"
@@ -198,6 +239,36 @@ assert "that stop is back on the draft too" on_change "$draft"
 check "start from an empty change" 0 "Review of #2" --start --pr=2
 check "stop returns to a new change on the same parent" 0 "Back on a new change" --stop
 assert "the new change sits on main" sh -c "[ \"\$(cd '$co' && jj log --no-graph -r @- -T commit_id)\" = \"\$(cd '$co' && jj log --no-graph -r main@origin -T commit_id)\" ]"
+
+# Publish: notes become one pending review.
+check "start #3" 0 "Review of #3" --start --pr=3
+review3="$(at change_id)"
+printf -- '-- REVIEW: top\nl1\nl2\nl3\nl4\nL5 changed\n// REVIEW: why change l5?\n  // REVIEW: second line\nl6\nl7\n<!-- REVIEW: html note -->\nl8\nl9 edited\nl10\n# REVIEW: outside the hunk\n' >"$co/lib.rs"
+printf '# REVIEW: new file note\n' >"$co/new.md"
+check "publish posts one pending review" 0 "2 line comment(s), 3 in the body" --publish
+posted="$STUB_DIR/posted-3.json"
+assert "the review is pending (no event) on the PR head" sh -c "jq -e --arg h '$pr3_head' '.commit_id == \$h and (has(\"event\") | not)' '$posted' >/dev/null"
+assert "consecutive notes on line 5 join into one comment" sh -c "jq -e '.comments[0] == {path: \"lib.rs\", line: 5, side: \"RIGHT\", body: \"why change l5?\\nsecond line\"}' '$posted' >/dev/null"
+assert "an HTML-comment note maps to line 7" sh -c "jq -e '.comments[1] == {path: \"lib.rs\", line: 7, side: \"RIGHT\", body: \"html note\"}' '$posted' >/dev/null"
+assert "only the notes inside the hunk are line comments" sh -c "jq -e '.comments | length == 2' '$posted' >/dev/null"
+assert "a note outside the hunk goes into the body" sh -c "jq -r .body '$posted' | grep -qF -- '- \`lib.rs:10\` — outside the hunk'"
+assert "a note above line 1 goes into the body at line 1" sh -c "jq -r .body '$posted' | grep -qF -- '- \`lib.rs:1\` — top'"
+assert "a note in a file the head lacks goes into the body" sh -c "jq -r .body '$posted' | grep -qF -- '- \`new.md (new file)\` — new file note'"
+assert "a code edit is not a note" sh -c "! grep -qF 'l9 edited' '$posted'"
+assert "publishing leaves the review as it was" sh -c "[ \"\$(cd '$co' && jj log --no-graph -r @ -T change_id)\" = '$review3' ] && grep -qF 'REVIEW: why change l5?' '$co/lib.rs'"
+rm -f "$posted"
+
+echo '[{"id":7,"state":"PENDING"}]' >"$STUB_DIR/reviews-3.json"
+check "an existing pending review is refused" 1 "already have a pending review" --publish
+rm -f "$STUB_DIR/reviews-3.json"
+printf 'main 0123456789abcdef0123456789abcdef01234567 https://github.com/o/r/pull/3\n' >"$STUB_DIR/pr-3.txt"
+check "a moved head is refused" 1 "--stop it and --start again" --publish --pr=3
+printf 'main %s https://github.com/o/r/pull/3\n' "$pr3_head" >"$STUB_DIR/pr-3.txt"
+assert "nothing was posted by the refusals" sh -c "[ ! -e '$posted' ]"
+check "stop #3" 0 "Stopped the review of #3" --stop --yes
+check "start #2 for the no-notes case" 0 "Review of #2" --start --pr=2
+check "a review with no notes is refused" 1 "no REVIEW: notes" --publish
+check "stop #2" 0 "Stopped the review of #2" --stop
 
 # A conflicted working copy is refused.
 (cd "$co" && jj new main@origin -m a >/dev/null 2>&1 && printf 'a\n' >c.txt && jj new main@origin -m b >/dev/null 2>&1 && printf 'b\n' >c.txt && jj status >/dev/null)
