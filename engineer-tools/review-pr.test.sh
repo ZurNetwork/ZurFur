@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests for engineer-tools/review-pr.sh against a scratch colocated jj checkout
 # of a scratch origin, with `gh` stubbed. Run directly, or via
-# `just scripts-test`. Needs git and jj; skips without jj (CI has none).
+# `just engineer-tools-test`. Needs git and jj; skips without jj (CI has none).
 set -eu
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -60,16 +60,17 @@ printf 'main %s\n' "$(git -C "$seed" rev-parse pr2)" >"$STUB_DIR/pr-2.txt"
 # The Engineer's colocated checkout, with a draft change open.
 co="$work/zurfur"
 jj git clone --colocate "file://$work/origin.git" "$co" >/dev/null 2>&1
-export REVIEW_PR_ROOT="$co"
 (cd "$co" && jj new main@origin -m "engineer draft" >/dev/null 2>&1 && printf 'draft\n' >draft.txt && jj status >/dev/null)
 draft="$(cd "$co" && jj log --no-graph -r @ -T change_id)"
+
+run_env=""
 
 # run <dir> <args…> — runs the script there; leaves $got and $work/out.
 run() {
     dir="$1"
     shift
     set +e
-    (cd "$dir" && bash "$under_test" "$@") >"$work/out" 2>&1
+    (cd "$dir" && env $run_env bash "$under_test" "$@") >"$work/out" 2>&1
     got=$?
     set -e
 }
@@ -112,14 +113,22 @@ check "two actions are refused" 2 "can't be used together" --start --stop --pr=1
 check "--yes only with --stop" 2 "--yes only goes with --stop" --pause --yes
 check "a non-numeric --pr is refused" 2 "wants a PR number" --start --pr=abc
 
-# Where it runs.
-mkdir -p "$work/elsewhere"
-(cd "$work/elsewhere" && jj git init >/dev/null 2>&1)
-run "$work/elsewhere" --start --pr=1
-assert "another checkout is refused" sh -c "[ $got -eq 1 ] && grep -qF 'run this in' '$work/out'"
+# Where it runs: any colocated jj checkout; REVIEW_PR_ROOT only narrows it.
+mkdir -p "$work/plain"
+run "$work/plain" --start --pr=1
+assert "outside jj is refused" sh -c "[ $got -eq 1 ] && grep -qF 'not in a jj checkout' '$work/out'"
 (cd "$co" && jj workspace add "$work/ws" >/dev/null 2>&1)
-REVIEW_PR_ROOT="$work/ws" run "$work/ws" --start --pr=1
-assert "a workspace without .git is refused" sh -c "[ $got -eq 1 ] && grep -qF 'has no .git' '$work/out'"
+run "$work/ws" --start --pr=1
+assert "a workspace without .git is refused" sh -c "[ $got -eq 1 ] && grep -qF 'has no .git directory' '$work/out'"
+jj git clone --colocate "file://$work/origin.git" "$work/other" >/dev/null 2>&1
+run_env="REVIEW_PR_ROOT=$co"
+run "$work/other" --start --pr=2
+assert "REVIEW_PR_ROOT refuses another checkout" sh -c "[ $got -eq 1 ] && grep -qF 'REVIEW_PR_ROOT says' '$work/out'"
+run_env=""
+run "$work/other" --start --pr=2
+assert "another colocated checkout works without the override" sh -c "[ $got -eq 0 ] && grep -qF 'Review of #2' '$work/out'"
+run "$work/other" --stop --pr=2
+assert "and stops there" sh -c "[ $got -eq 0 ] && grep -qF 'Stopped the review of #2' '$work/out'"
 
 # Start.
 check "with no action and no reviews, it says so" 0 "No reviews"
@@ -163,6 +172,25 @@ assert "the state is gone" sh -c "[ ! -e '$XDG_STATE_HOME/zurfur/reviews/1.state
 check "start #2" 0 "Review of #2" --start --pr=2
 check "stop without notes needs no --yes" 0 "Stopped the review of #2" --stop
 assert "back on the draft after #2" on_change "$draft"
+
+# A paused review reopened by hand: stop leaves it before abandoning it.
+check "start #2 again" 0 "Review of #2" --start --pr=2
+review2="$(at change_id)"
+check "pause #2" 0 "Paused" --pause
+(cd "$co" && jj edit "$review2" >/dev/null 2>&1)
+check "stop a paused review from inside it" 0 "Stopped the review of #2" --stop --pr=2
+assert "that stop is back on the draft" on_change "$draft"
+
+# A failed restore leaves state behind, so --stop gets back.
+real_jj="$(command -v jj)"
+mkdir -p "$work/failbin"
+printf '#!/bin/sh\n[ "$1" = restore ] && exit 1\nexec "%s" "$@"\n' "$real_jj" >"$work/failbin/jj"
+chmod +x "$work/failbin/jj"
+run_env="PATH=$work/failbin:$PATH"
+check "a failed restore names the way back" 1 "--stop --pr=2 --yes goes back to $draft" --start --pr=2
+run_env=""
+check "stop after a failed restore" 0 "Stopped the review of #2" --stop --pr=2 --yes
+assert "that stop is back on the draft too" on_change "$draft"
 
 # An empty change before --start: jj drops it, so stop returns to a new
 # change on the same parent.

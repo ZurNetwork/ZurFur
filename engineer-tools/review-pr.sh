@@ -15,7 +15,10 @@
 # was open before --start. The scratch change carries no bookmark, so it can't
 # be pushed, and this script never pushes.
 #
-# Env: REVIEW_PR_ROOT (the colocated checkout; default ~/code/zurfur),
+# Runs in any colocated jj checkout (one with a .git directory, which VS Code
+# needs), such as ~/code/zurfur; a jj workspace without .git is refused.
+#
+# Env: REVIEW_PR_ROOT (optional: refuse any checkout but this one),
 #      XDG_STATE_HOME (state goes to $XDG_STATE_HOME/zurfur/reviews/;
 #        default ~/.local/state).
 # Exit: 0 done, 1 refused (with the reason), 2 usage error.
@@ -74,17 +77,18 @@ if [ "$yes" = 1 ] && [ "$action" != stop ]; then
     usage_error "--yes only goes with --stop"
 fi
 
-# Only in the colocated checkout: the jj workspaces have no .git, so VS Code
+# Only in a colocated checkout: the jj workspaces have no .git, so VS Code
 # can't show the review there.
-expected_root="$(cd "${REVIEW_PR_ROOT:-$HOME/code/zurfur}" 2>/dev/null && pwd -P)" ||
-    die "the checkout ${REVIEW_PR_ROOT:-$HOME/code/zurfur} doesn't exist"
-root="$(jj workspace root 2>/dev/null)" || die "not in a jj checkout; run this in $expected_root"
+root="$(jj workspace root 2>/dev/null)" || die "not in a jj checkout; run this in ~/code/zurfur"
 root="$(cd "$root" && pwd -P)"
-if [ "$root" != "$expected_root" ]; then
-    die "run this in $expected_root, the colocated checkout (this is $root)"
-fi
 if [ ! -d "$root/.git" ]; then
-    die "$root has no .git, so VS Code can't show the review; use the colocated checkout"
+    die "$root has no .git directory, so VS Code can't show the review; run this in ~/code/zurfur"
+fi
+if [ -n "${REVIEW_PR_ROOT:-}" ]; then
+    expected_root="$(cd "$REVIEW_PR_ROOT" 2>/dev/null && pwd -P)" || die "REVIEW_PR_ROOT=$REVIEW_PR_ROOT doesn't exist"
+    if [ "$root" != "$expected_root" ]; then
+        die "REVIEW_PR_ROOT says $expected_root, but this is $root"
+    fi
 fi
 cd "$root"
 
@@ -229,10 +233,12 @@ start_review() {
         [ -n "$fork" ] || die "no common ancestor of $base@origin and $head"
         jj new "$fork" -m "review #$pr (scratch, never push)" >/dev/null 2>&1 || die "couldn't create the review change"
         review="$(current_change)"
-        jj restore --from "$head" >/dev/null 2>&1 || die "couldn't load #$pr's files into $review"
+        # The state first, so a failed restore can still be stopped.
         state_write "$pr" "pr=$pr" "status=active" "change=$review" "return_change=$back" \
             "return_parents=$parents" "base=$base" "fork=$fork" "head=$head" \
             "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        jj restore --from "$head" >/dev/null 2>&1 ||
+            die "couldn't load #$pr's files into the review change $review; --stop --pr=$pr --yes goes back to $back"
         echo "Review of #$pr (into $base) open as change $review; you were on $back."
     fi
     echo "Next: code $root"
@@ -265,7 +271,9 @@ stop_review() {
             die "they'd be lost; --pause keeps them, --stop --yes drops them"
         fi
     fi
-    if [ "$(state_get "$n" status)" = active ]; then
+    # Leave the review change before abandoning it, even a paused one
+    # reopened by hand.
+    if [ "$(state_get "$n" status)" = active ] || [ "$(current_change)" = "$review" ]; then
         go_back "$n"
     fi
     if [ -n "$(jj_one "$review" 'change_id')" ]; then
