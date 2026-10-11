@@ -286,13 +286,19 @@ async fn the_whole_read_gives_up_at_the_port_call_deadline() {
     let dns = ScriptedLookup::default().with_txt(&txt_at(HANDLE), did_record(&did));
     let resolver = resolver_over(&server, dns).with_port_call_deadline(Duration::from_millis(300));
     let source = AtprotoProfileSource::new(Arc::new(resolver));
-    let started = std::time::Instant::now();
 
     let result = source.fetch(&did).await;
 
-    let elapsed = started.elapsed();
-    assert!(result.is_err(), "got: {result:?}");
-    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+    // Each fetch has 1 s, so only the 300 ms port-call deadline yields this
+    // class: no wall clock needed.
+    let error = result.expect_err("a read past its deadline fails");
+    assert!(
+        matches!(
+            error.downcast_ref::<ProfileReadError>(),
+            Some(ProfileReadError::Deadline)
+        ),
+        "cut off by its deadline: {error:?}"
+    );
 }
 
 #[tokio::test]

@@ -142,16 +142,19 @@ async fn the_issuer_check_document_fetch_gives_up_at_its_deadline() {
         .await;
     let bridge = bridge(&server).with_document_deadline(Duration::from_millis(300));
 
-    let begun = std::time::Instant::now();
     let result = bridge.resolve_did_doc(&did).await;
 
-    assert!(
-        result.is_err(),
-        "a document past the deadline is no document"
+    let Err(error) = result else {
+        panic!("a document past the deadline is no document");
+    };
+    // The 2 s fetch timeout would fail with the client's own error, so only
+    // the deadline leaves its `Elapsed` as the cause: no wall clock needed.
+    let cause = error
+        .source()
+        .and_then(|source| source.downcast_ref::<ResolveError>());
+    let cut_off = matches!(
+        cause,
+        Some(ResolveError::Unavailable(elapsed)) if elapsed.is::<tokio::time::error::Elapsed>()
     );
-    // Well under the 2 s fetch timeout, so only the deadline explains it.
-    assert!(
-        begun.elapsed() < Duration::from_secs(1),
-        "the deadline cut it off"
-    );
+    assert!(cut_off, "cut off by its deadline: {error:?}");
 }
