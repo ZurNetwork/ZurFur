@@ -181,18 +181,183 @@ fn line_and_paragraph_separators_are_refused_anywhere() {
     }
 }
 
+/// Asserts that `name` is refused as [`NodeNameError::Empty`].
+fn assert_empty(name: &str) {
+    assert_eq!(
+        NodeName::try_from(name),
+        Err(NodeNameError::Empty),
+        "{name:?}"
+    );
+}
+
 #[test]
-fn the_white_space_table_matches_its_known_edges() {
+fn braille_pattern_blank_alone_is_refused_as_empty() {
+    assert_empty("\u{2800}");
+}
+
+#[test]
+fn hangul_filler_alone_is_refused_as_empty() {
+    assert_empty("\u{3164}");
+}
+
+#[test]
+fn hangul_choseong_filler_alone_is_refused_as_empty() {
+    assert_empty("\u{115F}");
+}
+
+#[test]
+fn hangul_jungseong_filler_alone_is_refused_as_empty() {
+    assert_empty("\u{1160}");
+}
+
+#[test]
+fn halfwidth_hangul_filler_alone_is_refused_as_empty() {
+    assert_empty("\u{FFA0}");
+}
+
+#[test]
+fn musical_symbol_null_notehead_alone_is_refused_as_empty() {
+    assert_empty("\u{1D159}");
+}
+
+#[test]
+fn khitan_small_script_filler_alone_is_refused_as_empty() {
+    assert_empty("\u{16FE4}");
+}
+
+#[test]
+fn the_egyptian_hieroglyph_blanks_alone_are_refused_as_empty() {
+    assert_empty("\u{13441}");
+    assert_empty("\u{13442}");
+}
+
+#[test]
+fn default_ignorable_characters_alone_are_refused_as_empty() {
+    let ignorable_names = [
+        "\u{034F}",
+        "\u{17B4}",
+        "\u{17B5}",
+        "\u{180B}",
+        "\u{180F}",
+        "\u{FE00}",
+        "\u{FE0F}",
+        "\u{E0100}",
+        "\u{E01EF}",
+        "\u{2065}",
+        "\u{FFF0}",
+        "\u{E0000}",
+        "\u{E0FFF}",
+    ];
+    for name in ignorable_names {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn invisible_format_characters_alone_are_refused_as_empty() {
+    for name in ["\u{200B}", "\u{FEFF}", "\u{202E}", "\u{2060}", "\u{00AD}"] {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn control_white_space_alone_is_refused_as_empty() {
+    for name in ["\t", "\n", "\r\n", "\u{000B}", "\u{000C}", "\u{0085}"] {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn mixed_blank_names_are_refused_as_empty() {
+    let mixed_names = [
+        "\t\u{3164}",
+        " \u{034F}\u{3164}",
+        "\u{FE0F}\u{2800}\t",
+        "\u{200B}\u{2800}\u{200D}",
+        "\u{1D159} \u{FFA0}\u{E0100}",
+        "\u{115F}\u{1160}\u{16FE4}\u{13441}",
+    ];
+    for name in mixed_names {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn blank_characters_beside_a_visible_character_are_allowed() {
+    let names = [
+        "\u{2764}\u{FE0F}",
+        "a\u{034F}b",
+        "\u{1D159}a",
+        "a\u{16FE4}",
+        "\u{13441}a",
+        "a\u{E0100}",
+    ];
+    for name in names {
+        assert!(NodeName::try_from(name).is_ok(), "{name:?}");
+    }
+}
+
+#[test]
+fn an_invisible_character_beside_a_visible_one_is_still_refused_as_invisible() {
+    for name in ["\ta", "a\u{200B}", "\u{FEFF}a", "\u{0}\u{3164}"] {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Invisible),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_separator_in_an_otherwise_blank_name_is_refused_as_a_separator() {
+    for name in ["\u{2028}\u{3164}", " \u{2029}", "\u{2800}\u{2028}\u{2800}"] {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Separator),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn the_default_ignorable_table_matches_its_known_edges() {
     let inside = [
-        '\u{0009}', '\u{000D}', ' ', '\u{0085}', '\u{2000}', '\u{200A}', '\u{2028}', '\u{3000}',
+        '\u{00AD}',
+        '\u{034F}',
+        '\u{115F}',
+        '\u{1160}',
+        '\u{200B}',
+        '\u{200F}',
+        '\u{3164}',
+        '\u{FFA0}',
+        '\u{FFF8}',
+        '\u{E0000}',
+        '\u{E0FFF}',
     ];
     let outside = [
-        '\u{0008}', '\u{000E}', '\u{200B}', '\u{1FFF}', '\u{180E}', '\u{FEFF}', 'a',
+        '\u{00AC}',
+        '\u{034E}',
+        '\u{1161}',
+        '\u{17B6}',
+        '\u{1810}',
+        '\u{2800}',
+        '\u{FFF9}',
+        '\u{E1000}',
+        ' ',
+        'a',
     ];
     for character in inside {
-        assert!(is_white_space(character), "{character:?}");
+        assert!(is_default_ignorable(character), "{character:?}");
     }
     for character in outside {
-        assert!(!is_white_space(character), "{character:?}");
+        assert!(!is_default_ignorable(character), "{character:?}");
+    }
+}
+
+#[test]
+fn each_visible_filler_is_neither_white_space_nor_default_ignorable() {
+    for &filler in VISIBLE_FILLERS {
+        assert!(!filler.is_whitespace(), "{filler:?}");
+        assert!(!is_default_ignorable(filler), "{filler:?}");
     }
 }
