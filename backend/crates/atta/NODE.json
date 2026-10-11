@@ -21,12 +21,12 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "crate manifest — no dependencies",
+      "role": "crate manifest — external crates only, never a workspace crate",
       "node": false
     },
     {
       "name": "src/lib.rs",
-      "role": "crate root doc; no code yet",
+      "role": "the first types: key, type, level, name, payload hash, metadata, payload and the node trait",
       "node": false
     }
   ],
