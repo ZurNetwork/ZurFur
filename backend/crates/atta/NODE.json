@@ -45,6 +45,11 @@
       "node": false
     },
     {
+      "name": "src/list.rs",
+      "role": "Resolver::list: one page of an open directory; Private and refused entries drop before the sort and the cut; order by name, then segment, cards by a keyed hash",
+      "node": false
+    },
+    {
       "name": "src/metadata.rs",
       "role": "Metadata, the closed per-node field set, and Type, the opaque type key",
       "node": false
@@ -52,6 +57,11 @@
     {
       "name": "src/name.rs",
       "role": "NodeName: no Cc, no Cf but the two joiners, no /, not empty, at most 2048 bytes",
+      "node": false
+    },
+    {
+      "name": "src/page.rs",
+      "role": "PageToken (a version and an offset, hex; FromStr and Display) and Listing",
       "node": false
     },
     {

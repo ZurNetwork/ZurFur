@@ -7,8 +7,10 @@
 
 mod host;
 mod level;
+mod list;
 mod metadata;
 mod name;
+mod page;
 mod path;
 mod resolve;
 mod segment;
@@ -23,6 +25,7 @@ pub use host::{
 pub use level::Level;
 pub use metadata::{Metadata, Type};
 pub use name::{MAX_NAME_BYTES, NodeName, NodeNameError};
+pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;
 pub use resolve::{Caps, Entry, Error, Resolved, Resolver, View};
 pub use segment::{MAX_SEGMENT_BYTES, Segment, SegmentError};

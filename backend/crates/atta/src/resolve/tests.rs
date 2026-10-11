@@ -1,10 +1,8 @@
 use super::*;
-use crate::fake::{Call, CallShape, FakeHost, GRANT_CARD, GRANT_NODE, STANDING, path, segment};
-
-/// The view of a node the viewer opens, showing `own_level`.
-fn open(own_level: Level) -> View {
-    View::Open { own_level }
-}
+use crate::fake::{
+    Call, CallShape, FakeHost, GRANT_CARD, GRANT_NODE, STANDING, den_path, kind, own_level, path,
+    real_path, segment,
+};
 
 /// The access a viewer holds at `level`, given by `via`.
 fn expected_access(level: Level, via: Via) -> Access {
@@ -116,11 +114,11 @@ async fn assert_not_found(host: &FakeHost, pieces: &[&str]) {
 async fn the_root_opens_through_the_viewers_own_standing() {
     let host = world();
     let resolved = resolve(&host, &[]).await.expect("the root opens");
-    let expected_view = open(Level::Private);
-    assert_eq!(resolved.node.view, expected_view);
-    assert_eq!(resolved.node.real_path, root());
-    assert!(resolved.node.den_path.is_empty());
-    assert!(resolved.crumbs.is_empty());
+    let node = resolved.node();
+    assert_eq!(own_level(node), Some(Level::Private));
+    assert_eq!(real_path(node), Some(&root()));
+    assert_eq!(den_path(node), Some(&[][..]));
+    assert!(resolved.crumbs().is_empty());
     let standing = expected_access(Level::Public, Via::Standing);
     assert_eq!(host.admits(), [(root(), standing, Reach::Path)]);
 }
@@ -131,7 +129,7 @@ async fn standing_covers_the_real_subtree() {
     let resolved = resolve(&host, &["commissions"])
         .await
         .expect("a folder in her own root opens");
-    assert_eq!(resolved.node.view, open(Level::Private));
+    assert_eq!(own_level(resolved.node()), Some(Level::Private));
     let (_, access, _) = host.admits().pop().expect("the folder was admitted");
     assert_eq!(access, expected_access(Level::Public, Via::Standing));
 }
@@ -148,20 +146,16 @@ async fn a_participants_standing_opens_the_mounted_subtree() {
     let resolved = resolve(&host, &["commissions", "c1", "attachments", "f1"])
         .await
         .expect("her file opens");
-    assert_eq!(
-        resolved.node.real_path,
-        path("/commission/c1/attachments/f1")
-    );
-    assert_eq!(
-        resolved.node.den_path,
-        den(&["commissions", "c1", "attachments", "f1"])
-    );
-    assert_eq!(resolved.node.kind, Kind::File);
-    assert!(!resolved.node.mount);
+    let expected_real_path = path("/commission/c1/attachments/f1");
+    let expected_den_path = den(&["commissions", "c1", "attachments", "f1"]);
+    assert_eq!(real_path(resolved.node()), Some(&expected_real_path));
+    assert_eq!(den_path(resolved.node()), Some(&expected_den_path[..]));
+    assert_eq!(kind(resolved.node()), Some(Kind::File));
+    assert!(!resolved.node().mount);
     let crumb_paths: Vec<_> = resolved
-        .crumbs
+        .crumbs()
         .iter()
-        .map(|crumb| crumb.real_path.to_string())
+        .filter_map(|crumb| real_path(crumb).map(RealPath::to_string))
         .collect();
     let expected_crumb_paths = [
         "/user/alice",
@@ -170,9 +164,13 @@ async fn a_participants_standing_opens_the_mounted_subtree() {
         "/commission/c1/attachments",
     ];
     assert_eq!(crumb_paths, expected_crumb_paths);
-    let mount_flags: Vec<_> = resolved.crumbs.iter().map(|crumb| crumb.mount).collect();
+    let mount_flags: Vec<_> = resolved.crumbs().iter().map(|crumb| crumb.mount).collect();
     assert_eq!(mount_flags, [false, false, true, false]);
-    assert_eq!(resolved.crumbs[2].den_path, den(&["commissions", "c1"]));
+    let expected_mount_path = den(&["commissions", "c1"]);
+    assert_eq!(
+        den_path(&resolved.crumbs()[2]),
+        Some(&expected_mount_path[..])
+    );
 }
 
 #[tokio::test]
@@ -181,7 +179,7 @@ async fn a_public_node_opens_through_its_own_level() {
     let resolved = resolve(&host, &["commissions", "public"])
         .await
         .expect("a public node opens");
-    assert_eq!(resolved.node.view, open(Level::Public));
+    assert_eq!(own_level(resolved.node()), Some(Level::Public));
     let (_, access, _) = host.admits().pop().expect("the node was admitted");
     assert_eq!(access, expected_access(Level::Public, Via::OwnLevel));
 }
@@ -198,7 +196,7 @@ async fn a_node_scoped_grant_opens_the_node_alone() {
     let resolved = resolve(&host, &["commissions", "granted"])
         .await
         .expect("the granted node opens");
-    assert_eq!(resolved.node.view, open(Level::Private));
+    assert_eq!(own_level(resolved.node()), Some(Level::Private));
     let (_, access, _) = host.admits().pop().expect("the node was admitted");
     assert_eq!(access, expected_access(Level::Public, Via::Grant));
     // Its public child opens by its own level, not by the grant.
@@ -206,7 +204,7 @@ async fn a_node_scoped_grant_opens_the_node_alone() {
         .await
         .expect("a public child opens");
     let (_, child_access, _) = host.admits().pop().expect("the child was admitted");
-    assert_eq!(child.node.view, open(Level::Public));
+    assert_eq!(own_level(child.node()), Some(Level::Public));
     assert_eq!(child_access.via, Via::OwnLevel);
 }
 
@@ -216,7 +214,7 @@ async fn a_listed_node_is_a_card_and_nothing_inside_it_opens() {
     let resolved = resolve(&host, &["commissions", "card"])
         .await
         .expect("a card answers");
-    assert_eq!(resolved.node.view, View::Card);
+    assert_eq!(resolved.node().view, View::Card);
     let (_, access, reach) = host.admits().pop().expect("the card was admitted");
     assert_eq!(access, expected_access(Level::Listed, Via::Grant));
     assert_eq!(reach, Reach::Path);

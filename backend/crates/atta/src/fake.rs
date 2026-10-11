@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Lift, Metadata, Mount, NodeName, Reach,
-    RealPath, Relationship, Scope, Segment, Type, Viewer,
+    Access, Admission, Entry, Found, Host, HostError, Kind, Level, Lift, Metadata, Mount, NodeName,
+    Reach, RealPath, Relationship, Scope, Segment, Type, View, Viewer,
 };
 
 /// One call the fake host received.
@@ -115,6 +115,13 @@ impl FakeHost {
             lifts: lifts.to_vec(),
         };
         self.nodes.push((path.clone(), found));
+        self
+    }
+
+    /// Changes the display name of the node at `at`.
+    pub fn named(mut self, at: &str, name: &str) -> Self {
+        let name = NodeName::try_from(name).expect("a valid test name");
+        self.found_mut(at).metadata.name = name;
         self
     }
 
@@ -284,5 +291,37 @@ impl Host for FakeHost {
             Admission::Admit
         };
         Ok(admission)
+    }
+}
+
+/// The own level an entry shows, if the viewer can open it.
+pub fn own_level(entry: &Entry) -> Option<Level> {
+    match &entry.view {
+        View::Open { own_level, .. } => Some(*own_level),
+        View::Card => None,
+    }
+}
+
+/// The Den path an entry shows, if the viewer can open it.
+pub fn den_path(entry: &Entry) -> Option<&[Segment]> {
+    match &entry.view {
+        View::Open { den_path, .. } => Some(den_path),
+        View::Card => None,
+    }
+}
+
+/// Where an entry really lives, if the viewer can open it.
+pub fn real_path(entry: &Entry) -> Option<&RealPath> {
+    match &entry.view {
+        View::Open { real_path, .. } => Some(real_path),
+        View::Card => None,
+    }
+}
+
+/// Whether an entry is a directory or a file, if the viewer can open it.
+pub fn kind(entry: &Entry) -> Option<Kind> {
+    match &entry.view {
+        View::Open { kind, .. } => Some(*kind),
+        View::Card => None,
     }
 }
