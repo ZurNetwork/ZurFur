@@ -1,5 +1,9 @@
 use std::{ops::RangeInclusive, str::FromStr};
 
+use combining_marks::is_combining_mark;
+
+mod combining_marks;
+
 /// The most bytes a node's name may hold.
 pub const MAX_NAME_BYTES: usize = 2048;
 
@@ -11,6 +15,13 @@ const ZERO_WIDTH_JOINER: char = '\u{200D}';
 
 /// U+2028 LINE SEPARATOR, refused anywhere in a name.
 const LINE_SEPARATOR: char = '\u{2028}';
+
+/// U+FFFC OBJECT REPLACEMENT CHARACTER, refused anywhere in a name: it stands for an object, not
+/// text.
+const OBJECT_REPLACEMENT: char = '\u{FFFC}';
+
+/// The noncharacters of the Arabic Presentation Forms-A block, refused anywhere in a name.
+const ARABIC_NONCHARACTERS: RangeInclusive<char> = '\u{FDD0}'..='\u{FDEF}';
 
 /// U+2029 PARAGRAPH SEPARATOR, refused anywhere in a name.
 const PARAGRAPH_SEPARATOR: char = '\u{2029}';
@@ -136,9 +147,10 @@ const FORMAT_CHARACTERS: &[(u32, u32)] = &[
 /// A node's display name, taken from what the node holds and never its key.
 ///
 /// Parsed by hand because the parse is the rule. Blank characters are stripped from both ends
-/// (a joiner or selector right after the last character stays), and fillers and zero-width
-/// spaces from inside; the stripped form is what the name holds. The input is at most
-/// [`MAX_NAME_BYTES`] bytes with no `/` and no line or paragraph separator, and the stripped form
+/// (a joiner or selector right after the last character stays), with any combining mark that
+/// leads, and fillers and zero-width spaces from inside; the stripped form is what the name holds.
+/// The input is at most [`MAX_NAME_BYTES`] bytes with no `/`, no line or paragraph separator, no
+/// noncharacter and no object replacement character, and the stripped form
 /// is not empty and holds no control character, no unassigned default-ignorable, and no format
 /// character but the two joiners, a subdivision flag's tags and a vowel separator inside a
 /// Mongolian word.
@@ -168,6 +180,10 @@ pub enum NodeNameError {
     /// The name holds a line or paragraph separator.
     #[error("a node name holds a line or paragraph separator")]
     Separator,
+    /// The name holds a noncharacter or U+FFFC OBJECT REPLACEMENT CHARACTER, which stand for no
+    /// text of their own.
+    #[error("a node name holds a noncharacter or an object replacement character")]
+    Reserved,
 }
 
 /// Whether `character` is in Unicode's general category Cf.
@@ -291,13 +307,29 @@ fn single(unit: &str) -> Option<char> {
     characters.next().is_none().then_some(first)
 }
 
+/// Whether `character` is a noncharacter: U+FDD0 to U+FDEF, or the last two code points of a
+/// plane.
+fn is_noncharacter(character: char) -> bool {
+    let code = u32::from(character);
+    ARABIC_NONCHARACTERS.contains(&character) || code & 0xFFFE == 0xFFFE
+}
+
+/// Whether `character` is refused anywhere in a name as standing for no text: a noncharacter or
+/// the object replacement character.
+fn is_reserved(character: char) -> bool {
+    is_noncharacter(character) || character == OBJECT_REPLACEMENT
+}
+
 /// The units of `text` left once blank units are stripped from both ends: from the first unit
-/// that isn't blank to the last, with the joiners and selectors right after it. `None` when every
-/// unit is blank.
+/// that is neither blank nor a combining mark with no base before it, to the last unit that isn't
+/// blank, with the joiners and selectors right after it. `None` when nothing is left.
 fn trim_blank(text: &str) -> Option<Vec<&str>> {
     let all: Vec<&str> = units(text).collect();
     let is_blank_unit = |unit: &&str| single(unit).is_some_and(is_blank);
-    let first = all.iter().position(|unit| !is_blank_unit(unit))?;
+    let is_lone_mark = |unit: &&str| single(unit).is_some_and(is_combining_mark);
+    let first = all
+        .iter()
+        .position(|unit| !is_blank_unit(unit) && !is_lone_mark(unit))?;
     let last = all.iter().rposition(|unit| !is_blank_unit(unit))?;
     let kept_after = all[last + 1..]
         .iter()
@@ -390,6 +422,9 @@ fn normalize(text: &str) -> Result<String, NodeNameError> {
     }
     if text.contains([LINE_SEPARATOR, PARAGRAPH_SEPARATOR]) {
         return Err(NodeNameError::Separator);
+    }
+    if text.chars().any(is_reserved) {
+        return Err(NodeNameError::Reserved);
     }
     let trimmed = trim_blank(text).ok_or(NodeNameError::Empty)?;
     let stripped = strip_inside(trimmed);

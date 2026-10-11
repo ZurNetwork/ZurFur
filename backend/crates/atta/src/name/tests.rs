@@ -750,7 +750,7 @@ fn a_vowel_separator_beside_an_unassigned_or_combining_mongolian_code_point_is_r
     let names = [
         "\u{1879}\u{180E}\u{1820}",
         "\u{1820}\u{180E}\u{1879}",
-        "\u{1885}\u{180E}\u{1820}",
+        "\u{1820}\u{1885}\u{180E}\u{1820}",
         "\u{1820}\u{180E}\u{18A9}",
         "\u{1820}\u{180E}\u{1886}",
     ];
@@ -871,5 +871,124 @@ fn single_joins_and_selectors_survive_the_gap_count() {
         scotland.as_str(),
     ] {
         assert_stored(name, name);
+    }
+}
+
+/// Asserts that `name` is refused as [`NodeNameError::Reserved`].
+fn assert_reserved(name: &str) {
+    assert_eq!(
+        NodeName::try_from(name),
+        Err(NodeNameError::Reserved),
+        "{name:?}"
+    );
+}
+
+#[test]
+fn the_noncharacters_of_the_arabic_presentation_block_are_refused_anywhere() {
+    for noncharacter in ['\u{FDD0}', '\u{FDE7}', '\u{FDEF}'] {
+        let alone = noncharacter.to_string();
+        let inside = format!("a{noncharacter}b");
+        let at_the_end = format!("a{noncharacter}");
+        assert_reserved(&alone);
+        assert_reserved(&inside);
+        assert_reserved(&at_the_end);
+    }
+}
+
+#[test]
+fn the_last_two_code_points_of_every_plane_are_refused_anywhere() {
+    let noncharacters = (0..=0x10_u32)
+        .flat_map(|plane| [plane * 0x10000 + 0xFFFE, plane * 0x10000 + 0xFFFF])
+        .filter_map(char::from_u32);
+    for noncharacter in noncharacters {
+        let alone = noncharacter.to_string();
+        let inside = format!("a{noncharacter}b");
+        let at_the_start = format!("{noncharacter}a");
+        assert_reserved(&alone);
+        assert_reserved(&inside);
+        assert_reserved(&at_the_start);
+    }
+}
+
+#[test]
+fn code_points_beside_the_noncharacters_are_not_reserved() {
+    let names = [
+        "a\u{FDCF}b",
+        "a\u{FDF0}b",
+        "a\u{FFFD}b",
+        "a\u{1FFFD}b",
+        "a\u{10000}b",
+    ];
+    for name in names {
+        assert!(NodeName::try_from(name).is_ok(), "{name:?}");
+    }
+}
+
+#[test]
+fn the_object_replacement_character_is_refused_alone_inside_and_at_the_ends() {
+    for name in [
+        "\u{FFFC}",
+        "a\u{FFFC}b",
+        "\u{FFFC}a",
+        "a\u{FFFC}",
+        " \u{FFFC} ",
+    ] {
+        assert_reserved(name);
+    }
+}
+
+#[test]
+fn a_lone_leading_combining_mark_is_stripped() {
+    assert_stored(" \u{0301}x", "x");
+    assert_stored("\u{0301}x", "x");
+    assert_stored("\u{0301}\u{0302}x", "x");
+    assert_stored("\u{0301} \u{3164}\u{0302}x", "x");
+}
+
+#[test]
+fn spacing_and_enclosing_marks_are_stripped_at_the_start_too() {
+    assert_stored("\u{0903}x", "x");
+    assert_stored("\u{20DD}x", "x");
+}
+
+#[test]
+fn a_name_of_combining_marks_alone_is_blank() {
+    for name in ["\u{0301}", " \u{0301} ", "\u{0301}\u{20DD}\u{0903}"] {
+        assert_empty(name);
+    }
+}
+
+#[test]
+fn a_combining_mark_after_a_base_stays() {
+    let names = [
+        "e\u{0301}",
+        "e\u{0301}\u{0302}x",
+        "\u{0915}\u{094D}",
+        "a \u{0301}b",
+        "x\u{20DD}",
+    ];
+    for name in names {
+        assert_stored(name, name);
+    }
+}
+
+#[test]
+fn the_combining_mark_table_matches_its_known_edges() {
+    let inside = [
+        '\u{0300}',
+        '\u{036F}',
+        '\u{0903}',
+        '\u{20DD}',
+        '\u{1AB0}',
+        '\u{FE20}',
+        '\u{E0100}',
+        '\u{E01EF}',
+    ];
+    let outside = ['a', '\u{02FF}', '\u{0370}', '\u{20F1}', '\u{E01F0}', ' '];
+    for character in inside {
+        assert!(is_combining_mark(character), "{character:?}");
+    }
+    for character in outside {
+        assert!(!is_combining_mark(character), "{character:?}");
     }
 }
