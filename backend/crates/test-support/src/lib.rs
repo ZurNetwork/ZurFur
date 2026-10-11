@@ -10,6 +10,7 @@ pub mod contract;
 mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
+pub mod log_capture;
 mod pds;
 pub mod pg;
 mod plc_stub;

@@ -27,7 +27,7 @@
     },
     {
       "name": "src/",
-      "role": "lib/main, extractors, routes, problem, sweep, generated contract types",
+      "role": "lib/main, logging (the server subscriber with the shared DNS-client filter), extractors, routes, problem, sweep, generated contract types",
       "node": true
     },
     {
@@ -141,6 +141,7 @@
   "notes": [
     "Cross-persona unlinkability: no route may join one person's separate handles/Users as the same human (holds by construction — separate handle → separate User → separate DID); guarded by `tests/cross_persona_unlinkability.rs`.",
     "The cookie surface also carries `Cache-Control: no-store` (beyond CSRF) so authenticated identity/PII JSON is never cached (CWE-525).",
+    "Logging (`src/logging.rs`): `main` installs `logging::subscriber` — `RUST_LOG`, else the config's `log_level`, over formatted stdout — with `composition::logging`'s filter layer on top, which drops every event from the DNS client's crates (`hickory_resolver`, `hickory_net`, `hickory_proto`) whatever the filter says, because hickory logs the name it was asked about (a handle's domain) at `error` on a malformed answer. The CLI layers the same filter. Pinned by `logging/tests.rs`.",
     "`src/generated/*.rs` still carries DD pointers in its doc comments: it is generated from `contract/*.proto`, so the fix belongs on the `.proto` field comments, not here — a hand-edit would be regenerated away.",
     "See also: `contract/VERSIONING.md`.",
     "See also: ZMVP-205."

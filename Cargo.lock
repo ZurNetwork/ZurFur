@@ -1021,6 +1021,7 @@ dependencies = [
  "fluent-uri",
  "serde",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5812,6 +5813,7 @@ dependencies = [
  "testcontainers-modules",
  "tokio",
  "tower-sessions",
+ "tracing-subscriber",
  "uuid",
 ]
 
