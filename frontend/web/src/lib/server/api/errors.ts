@@ -39,6 +39,14 @@ export class SignoutFailed extends Data.TaggedError('SignoutFailed')<{
 	readonly status: number;
 }> {}
 
+/** This build's live port has no Den behind it yet: My Den shows a notice instead of a Den. */
+export class DenNotConnected extends Data.TaggedError('DenNotConnected')<Record<never, never>> {}
+
 /** Everything a {@link import('./zurfur-api').ZurfurApi} call can fail with. */
 export type ZurfurApiError =
-	NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation | SignoutFailed;
+	| NotAuthenticated
+	| ApiProblem
+	| NetworkFailure
+	| ContractViolation
+	| SignoutFailed
+	| DenNotConnected;
