@@ -61,3 +61,31 @@ fn only_identical_names_compare_equal() {
     assert_eq!(name_order("Old sketch", "Old sketch"), Ordering::Equal);
     assert_ne!(name_order("a1", "a01"), Ordering::Equal);
 }
+
+#[test]
+fn a_name_without_a_number_sorts_before_the_same_name_with_one() {
+    let expected = [
+        "photo.png",
+        "photo1.png",
+        "Photo2.png",
+        "photo2.png",
+        "photo10.png",
+    ];
+    assert_eq!(
+        sorted(&[
+            "photo10.png",
+            "photo2.png",
+            "photo.png",
+            "Photo2.png",
+            "photo1.png"
+        ]),
+        expected
+    );
+}
+
+#[test]
+fn text_after_a_shared_prefix_compares_character_by_character() {
+    assert_eq!(name_order("file.txt", "file2.txt"), Ordering::Less);
+    assert_eq!(name_order("a-", "a1"), Ordering::Less);
+    assert_eq!(name_order("ab", "a1"), Ordering::Greater);
+}

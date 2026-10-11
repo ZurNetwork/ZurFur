@@ -61,7 +61,7 @@
     },
     {
       "name": "src/ordering.rs",
-      "role": "name_order: digit runs by value, other text case-insensitively, then the name itself (a file manager's order)",
+      "role": "name_order: digit runs by value, every other character on its own and case-insensitively, then the name itself (a file manager's order); proptests.rs checks it is a total order",
       "node": false
     },
     {
