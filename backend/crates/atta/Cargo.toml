@@ -7,8 +7,10 @@ edition = "2024"
 # Host-agnostic: never depends on another workspace crate or names a Zurfur
 # type. It lives in this workspace only until it is split into its own library.
 [dependencies]
+async-trait = { workspace = true }
 derive_more = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tokio = { workspace = true }

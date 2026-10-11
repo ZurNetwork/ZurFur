@@ -25,6 +25,16 @@
       "node": false
     },
     {
+      "name": "src/fake.rs",
+      "role": "test-only Host over an in-memory tree that records every call",
+      "node": false
+    },
+    {
+      "name": "src/host.rs",
+      "role": "the one Host trait (child, children, mounts, kind, admit; no payload method) and the values it speaks: Viewer, Lift, Found, Mount, Access, Reach, Admission",
+      "node": false
+    },
+    {
       "name": "src/level.rs",
       "role": "Level: Private < Listed < Public",
       "node": false
@@ -47,6 +57,11 @@
     {
       "name": "src/path.rs",
       "role": "RealPath, a node real path from the global root",
+      "node": false
+    },
+    {
+      "name": "src/resolve.rs",
+      "role": "Resolver::resolve: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; Caps",
       "node": false
     },
     {
