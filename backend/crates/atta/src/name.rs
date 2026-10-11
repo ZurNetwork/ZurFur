@@ -38,6 +38,9 @@ const DEFAULT_IGNORABLE: &[(u32, u32)] = &[
     (0xE0000, 0xE0FFF),
 ];
 
+/// The Hangul fillers. They are default-ignorable, and stripped wherever they stand.
+const HANGUL_FILLERS: &[char] = &['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
+
 /// Characters that show an empty cell yet are neither white space nor default-ignorable: the
 /// blank Braille pattern, the null notehead, the Khitan filler and the two Egyptian blanks.
 const VISIBLE_FILLERS: &[char] = &[
@@ -46,6 +49,19 @@ const VISIBLE_FILLERS: &[char] = &[
     '\u{16FE4}',
     '\u{13441}',
     '\u{13442}',
+];
+
+/// The zero-width spaces, stripped wherever they stand: U+200B ZERO WIDTH SPACE, U+2060 WORD
+/// JOINER and U+FEFF ZERO WIDTH NO-BREAK SPACE.
+const ZERO_WIDTH_SPACES: &[char] = &['\u{200B}', '\u{2060}', '\u{FEFF}'];
+
+/// The variation selectors, as inclusive ranges: the Mongolian free variation selectors, VS1 to
+/// VS16 and the variation selectors supplement.
+const VARIATION_SELECTORS: &[(u32, u32)] = &[
+    (0x180B, 0x180D),
+    (0x180F, 0x180F),
+    (0xFE00, 0xFE0F),
+    (0xE0100, 0xE01EF),
 ];
 
 /// The code points of Unicode's general category Cf (format), as inclusive ranges, from the
@@ -76,10 +92,11 @@ const FORMAT_CHARACTERS: &[(u32, u32)] = &[
 
 /// A node's display name, taken from what the node holds and never its key.
 ///
-/// Parsed by hand because the parse is the rule: at most [`MAX_NAME_BYTES`] bytes, no `/`, no
-/// control character (Cc), no line or paragraph separator, no format character (Cf) except the
-/// zero-width joiner and non-joiner, and at least one character that is not blank: not white
-/// space, not default-ignorable and not a visible filler.
+/// Parsed by hand because the parse is the rule. Blank characters are stripped from both ends
+/// (a joiner or selector right after the last character stays), and fillers and zero-width
+/// spaces from inside; the stripped form is what the name holds. The input is at most
+/// [`MAX_NAME_BYTES`] bytes with no `/` and no line or paragraph separator, and the stripped form
+/// is not empty and holds no control character and no format character but the two joiners.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, derive_more::AsRef,
 )]
@@ -89,8 +106,7 @@ pub struct NodeName(String);
 /// Why a piece of text is not a [`NodeName`]. Carries no part of the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NodeNameError {
-    /// The name is empty, or holds only white space, default-ignorable characters and visible
-    /// fillers.
+    /// The name is empty once its blank characters are stripped.
     #[error("a node name is empty")]
     Empty,
     /// The name is longer than [`MAX_NAME_BYTES`].
@@ -136,8 +152,43 @@ fn is_joiner(character: char) -> bool {
     character == ZERO_WIDTH_JOINER || character == ZERO_WIDTH_NON_JOINER
 }
 
-/// Checks `text` against the name rule, before anything is copied.
-fn check(text: &str) -> Result<(), NodeNameError> {
+/// Whether `character` is a joiner or a variation selector, which acts on the character before it.
+fn acts_on_previous(character: char) -> bool {
+    let code = u32::from(character);
+    is_joiner(character)
+        || VARIATION_SELECTORS
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&code))
+}
+
+/// Whether `character` is stripped even from inside a name: a filler or a zero-width space.
+fn is_stripped_inside(character: char) -> bool {
+    HANGUL_FILLERS.contains(&character)
+        || VISIBLE_FILLERS.contains(&character)
+        || ZERO_WIDTH_SPACES.contains(&character)
+}
+
+/// The part of `text` left once blank characters are stripped from both ends: from the first
+/// character that isn't blank to the last, with the joiners and selectors right after it.
+/// `None` when every character is blank.
+fn trim_blank(text: &str) -> Option<&str> {
+    let (start, _) = text
+        .char_indices()
+        .find(|&(_, character)| !is_blank(character))?;
+    let (last, last_character) = text
+        .char_indices()
+        .rfind(|&(_, character)| !is_blank(character))?;
+    let after_last = last + last_character.len_utf8();
+    let kept_after = text[after_last..]
+        .chars()
+        .take_while(|&character| acts_on_previous(character))
+        .map(char::len_utf8)
+        .sum::<usize>();
+    Some(&text[start..after_last + kept_after])
+}
+
+/// Checks `text` against the name rule and returns the stripped form the name holds.
+fn normalize(text: &str) -> Result<String, NodeNameError> {
     if text.len() > MAX_NAME_BYTES {
         return Err(NodeNameError::TooLong);
     }
@@ -147,23 +198,24 @@ fn check(text: &str) -> Result<(), NodeNameError> {
     if text.contains([LINE_SEPARATOR, PARAGRAPH_SEPARATOR]) {
         return Err(NodeNameError::Separator);
     }
-    if text.chars().all(is_blank) {
-        return Err(NodeNameError::Empty);
-    }
+    let trimmed = trim_blank(text).ok_or(NodeNameError::Empty)?;
+    let stripped: String = trimmed
+        .chars()
+        .filter(|&character| !is_stripped_inside(character))
+        .collect();
     let invisible =
         |character: char| character.is_control() || (is_format(character) && !is_joiner(character));
-    if text.chars().any(invisible) {
+    if stripped.chars().any(invisible) {
         return Err(NodeNameError::Invisible);
     }
-    Ok(())
+    Ok(stripped)
 }
 
 impl TryFrom<String> for NodeName {
     type Error = NodeNameError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
-        check(&text)?;
-        Ok(Self(text))
+        normalize(&text).map(Self)
     }
 }
 
@@ -171,8 +223,7 @@ impl TryFrom<&str> for NodeName {
     type Error = NodeNameError;
 
     fn try_from(text: &str) -> Result<Self, Self::Error> {
-        check(text)?;
-        Ok(Self(text.to_owned()))
+        normalize(text).map(Self)
     }
 }
 
@@ -184,5 +235,7 @@ impl FromStr for NodeName {
     }
 }
 
+#[cfg(test)]
+mod proptests;
 #[cfg(test)]
 mod tests;
