@@ -204,6 +204,11 @@ struct World {
 }
 
 async fn world(authorize: &str, claimed: &str) -> World {
+    world_with_fetch_timeout(authorize, claimed, Duration::from_secs(2)).await
+}
+
+/// [`world`] with each fetch cut off after `fetch` instead of 2 s.
+async fn world_with_fetch_timeout(authorize: &str, claimed: &str, fetch: Duration) -> World {
     let server = MockServer::start().await;
     serve_document(&server, &alice(), document(&alice(), claimed)).await;
     serve_document(
@@ -222,7 +227,7 @@ async fn world(authorize: &str, claimed: &str) -> World {
         .with(&format!("{AUTH}."), resolves_to_public());
     let dns = Arc::new(dns);
     let timeouts = Timeouts {
-        fetch: Duration::from_secs(2),
+        fetch,
         dns: Duration::from_millis(500),
     };
     let http = GuardedHttp::upstream(*server.address(), dns.clone(), timeouts);
@@ -345,14 +350,14 @@ async fn start_gives_up_at_its_deadline() {
         .authenticator
         .with_deadlines(Duration::from_millis(300), Duration::from_secs(5));
 
-    let begun = std::time::Instant::now();
     let result = authenticator.start(&handle(HANDLE)).await;
 
-    assert!(result.is_err(), "a start past its deadline fails");
-    // Well under the 2 s fetch timeout, so only the start deadline explains it.
+    // The 2 s fetch timeout would end it as a fetch failure, so only the start
+    // deadline gives this class: no wall clock needed.
+    let error = result.expect_err("a start past its deadline fails");
     assert!(
-        begun.elapsed() < Duration::from_secs(1),
-        "the deadline cut it off"
+        matches!(failure_of(&error), Some(SigninFailure::Deadline)),
+        "cut off by its deadline: {error:?}"
     );
 }
 
@@ -587,18 +592,21 @@ async fn metadata_then(server: &MockServer, later: ResponseTemplate) {
 
 #[tokio::test]
 async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
-    let world = world(AUTHORIZE, HANDLE).await;
+    // A 30 s fetch timeout, so only the 300 ms revocation deadline can end the
+    // stall below within the 10 s bound, however loaded the machine.
+    let world = world_with_fetch_timeout(AUTHORIZE, HANDLE, Duration::from_secs(30)).await;
     serve_token(&world.server, &mallory()).await;
     let (state, binding) = started(&world).await;
     // The authorization server answers the callback, then stalls logout's
     // metadata fetch: the stall must neither strand the row nor change the answer.
     let stalled = ResponseTemplate::new(200)
         .set_body_json(server_metadata(AUTHORIZE))
-        .set_delay(Duration::from_secs(3));
+        .set_delay(Duration::from_secs(60));
     metadata_then(&world.server, stalled).await;
+    // The callback's deadline is only room for the callback, never the point.
     let authenticator = world
         .authenticator
-        .with_deadlines(Duration::from_secs(1), Duration::from_millis(300));
+        .with_deadlines(Duration::from_secs(10), Duration::from_millis(300));
 
     let begun = std::time::Instant::now();
     let result = authenticator
@@ -613,7 +621,7 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
     let error = result.expect_err("another account is refused");
     assert!(error.is::<AccountMismatch>(), "still an account mismatch");
     assert!(
-        begun.elapsed() < Duration::from_secs(2),
+        begun.elapsed() < Duration::from_secs(10),
         "the revocation gave up"
     );
     let session = world
@@ -628,17 +636,19 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
 async fn the_complete_deadline_cuts_off_the_callback_and_discards_its_session() {
     let world = world(AUTHORIZE, HANDLE).await;
     let (state, binding) = started(&world).await;
-    // A token exchange that answers only after the deadline, and a session
-    // already saved under this sign-in's state, as if the callback had got that far.
+    // A token exchange that never answers in time, and a session already saved
+    // under this sign-in's state, as if the callback had got that far.
     let slow = ResponseTemplate::new(200).set_delay(Duration::from_secs(5));
     mount(&world.server, "POST", AUTH, "/oauth/token", slow).await;
     let saved = saved_session(&mallory(), &state);
     world.store.upsert_session(saved).await.expect("saved");
+    // Long enough for the claim on a loaded machine, and shorter than the 2 s
+    // fetch timeout, which starts only after the claim: the deadline always
+    // ends the exchange first.
     let authenticator = world
         .authenticator
-        .with_deadlines(Duration::from_millis(300), Duration::from_secs(5));
+        .with_deadlines(Duration::from_millis(1500), Duration::from_secs(5));
 
-    let begun = std::time::Instant::now();
     let result = authenticator
         .complete(
             "code".into(),
@@ -649,10 +659,9 @@ async fn the_complete_deadline_cuts_off_the_callback_and_discards_its_session() 
         .await;
 
     let error = result.expect_err("a callback past its deadline fails");
-    assert!(!error.is::<AccountMismatch>());
     assert!(
-        begun.elapsed() < Duration::from_secs(1),
-        "the deadline cut it off"
+        matches!(failure_of(&error), Some(SigninFailure::Deadline)),
+        "cut off by its deadline, not the fetch timeout: {error:?}"
     );
     let session = world
         .store
@@ -1226,7 +1235,6 @@ async fn a_callback_stalled_before_its_claim_deletes_nothing_at_its_deadline() {
         .authenticator
         .with_deadlines(Duration::from_millis(300), Duration::from_secs(5));
 
-    let begun = std::time::Instant::now();
     let result = authenticator
         .complete(
             "code".into(),
@@ -1235,7 +1243,6 @@ async fn a_callback_stalled_before_its_claim_deletes_nothing_at_its_deadline() {
             Some(binding.clone()),
         )
         .await;
-    let elapsed = begun.elapsed();
     winning_claim
         .rollback()
         .await
@@ -1246,7 +1253,6 @@ async fn a_callback_stalled_before_its_claim_deletes_nothing_at_its_deadline() {
         matches!(failure_of(&error), Some(SigninFailure::Deadline)),
         "cut off by its deadline: {error:?}"
     );
-    assert!(elapsed < Duration::from_secs(2), "the deadline cut it off");
     let session = world
         .store
         .get_session(&at_did(&alice()), &state)
