@@ -23,7 +23,7 @@
   "fs": [
     {
       "name": "api/",
-      "role": "component-facing plain-data contracts: Problem, Session, Account, Trail (the path bar's steps: a Den link or a fixed section page), the Den view (den.ts: DenPageData, its full shape check isDenPageData, DenOutcome, DenEntry…) and its root route (den-route.ts, pinned to an app with no base path), HttpStatus, API_PREFIX, FetchFunction",
+      "role": "component-facing plain-data contracts: Problem, Session, Account, Trail (the path bar's steps: a Den link or a fixed section page), the Den view (den.ts: DenPageData, its full shape check isDenPageData, DenOutcome, DenEntry…) and its root route (den-route.ts, pinned to an app with no base path), the sign-out notice (signout.ts: the unconfirmed-sign-out address and its words), HttpStatus, API_PREFIX, FetchFunction",
       "node": false
     },
     {

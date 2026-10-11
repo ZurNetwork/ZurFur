@@ -79,8 +79,14 @@ describe('signoutOutcome', () => {
 		expect(outcome).toEqual({ clearedCookies: ['zurfur.sid'] });
 	});
 
-	it('carries the failing status when the backend does not redirect', async () => {
+	it('is unconfirmed (refused) when the backend does not redirect', async () => {
 		const outcome = await runTest({}, signoutOutcome);
-		expect(outcome).toEqual({ failedStatus: 500 });
+		expect(outcome).toEqual({ unconfirmed: 'refused' });
+	});
+
+	it('is unconfirmed (unreachable) when the backend can’t be reached', async () => {
+		const unreachable = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const outcome = await runTest({ signout: unreachable }, signoutOutcome);
+		expect(outcome).toEqual({ unconfirmed: 'unreachable' });
 	});
 });

@@ -86,7 +86,7 @@
     },
     {
       "name": "session-gate.ts",
-      "role": "the sign-in gate, the one real one: a handle hook that, for every (session) route (page, __data.json whatever it skips, form action), asks the backend who is signed in and redirects to /login if nobody is, before any load or action runs; hands the session to the root layout through locals",
+      "role": "the sign-in gate, the one real one: a handle hook that, for every (session) route (page, __data.json whatever it skips, form action), asks the backend who is signed in and redirects to /login if nobody is, before any load or action runs; hands the session to the root layout through locals. The sign-out action is let through, so it can always clear the browser's session",
       "node": false
     },
     {

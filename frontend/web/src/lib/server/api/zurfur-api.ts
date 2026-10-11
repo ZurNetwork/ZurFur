@@ -78,7 +78,8 @@ export interface ZurfurApiShape {
 		handle: string
 	) => Effect.Effect<string, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
-	 * `POST /logout` — end the session backend-side; succeeds with the cookie
+	 * `POST /logout` — end the session backend-side, waiting at most
+	 * {@link SIGNOUT_TIMEOUT_MS} (a timeout fails `NetworkFailure`); succeeds with the cookie
 	 * names the backend cleared (for mirroring onto the browser's response —
 	 * the SSR proxy rewrites the host, so SvelteKit won't pass `set-cookie`
 	 * through on its own).
@@ -257,11 +258,28 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		);
 	});
 
+/**
+ * How long sign-out waits for the backend, in ms. A backend that accepts the
+ * connection and never answers must not hold the sign-out (and the browser's
+ * cookie) forever: past this, the call is aborted and reads as unreachable.
+ */
+export const SIGNOUT_TIMEOUT_MS = 5_000;
+
 const liveSignout = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
+		const controller = new AbortController();
+		const timer = setTimeout(() => {
+			controller.abort();
+		}, SIGNOUT_TIMEOUT_MS);
 		// Server-only undici semantics again: the 303 + Set-Cookie stay readable.
-		const init: RequestInit = { method: 'POST', redirect: 'manual' };
-		const response = yield* backendFetch(fetch, '/logout', init);
+		const init: RequestInit = { method: 'POST', redirect: 'manual', signal: controller.signal };
+		const response = yield* backendFetch(fetch, '/logout', init).pipe(
+			Effect.ensuring(
+				Effect.sync(() => {
+					clearTimeout(timer);
+				})
+			)
+		);
 		if (!isRedirectStatus(response.status)) {
 			return yield* new SignoutFailed({ status: response.status });
 		}

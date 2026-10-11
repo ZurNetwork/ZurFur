@@ -16,8 +16,12 @@ function loginForm(
 	return formStub({ handle: overrides.handle ?? '' }, overrides);
 }
 
-function loginData(form: ReturnType<typeof loginForm> = loginForm(), callbackError?: string) {
-	return { session: undefined, denServed: false, callbackError, form };
+function loginData(
+	form: ReturnType<typeof loginForm> = loginForm(),
+	callbackError?: string,
+	signoutUnconfirmed = false
+) {
+	return { session: undefined, denServed: false, callbackError, form, signoutUnconfirmed };
 }
 
 describe('/login page', () => {
@@ -70,5 +74,19 @@ describe('/login page', () => {
 		await expect
 			.element(page.getByTestId('problem'))
 			.toHaveTextContent('the handle could not be used to start sign-in');
+	});
+
+	it('says an unconfirmed sign-out plainly', async () => {
+		render(Login, { data: loginData(loginForm(), undefined, true) });
+
+		await expect
+			.element(page.getByTestId('signout-unconfirmed'))
+			.toHaveTextContent("You're signed out on this device.");
+	});
+
+	it('says nothing about sign-out otherwise', async () => {
+		render(Login, { data: loginData() });
+
+		await expect.element(page.getByTestId('signout-unconfirmed')).not.toBeInTheDocument();
 	});
 });
