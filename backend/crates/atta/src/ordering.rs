@@ -1,11 +1,12 @@
 use std::{cmp::Ordering, iter::Peekable, str::Chars};
 
-/// One run of a name: a number, compared by value, or text, compared case-insensitively.
+/// One run of a name: a number, compared by value, or one other character, compared
+/// case-insensitively.
 #[derive(Debug, PartialEq, Eq)]
 enum Run {
     /// A run of ASCII digits, with its leading zeros dropped.
     Number(String),
-    /// A run of anything else, lowercased.
+    /// One character that isn't an ASCII digit, lowercased.
     Text(String),
 }
 
@@ -39,7 +40,7 @@ impl PartialOrd for Run {
     }
 }
 
-/// Splits a name into its runs, in order.
+/// Splits a name into its runs, in order: each digit run whole, every other character alone.
 struct Runs<'a> {
     characters: Peekable<Chars<'a>>,
 }
@@ -53,7 +54,7 @@ impl Iterator for Runs<'_> {
         let mut run = String::from(first);
         while let Some(next) = self
             .characters
-            .next_if(|next| next.is_ascii_digit() == digit)
+            .next_if(|next| digit && next.is_ascii_digit())
         {
             run.push(next);
         }
@@ -78,5 +79,7 @@ pub(crate) fn name_order(left: &str, right: &str) -> Ordering {
     runs(left).cmp(runs(right)).then_with(|| left.cmp(right))
 }
 
+#[cfg(test)]
+mod proptests;
 #[cfg(test)]
 mod tests;
