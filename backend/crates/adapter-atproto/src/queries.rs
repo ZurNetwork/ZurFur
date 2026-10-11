@@ -35,6 +35,23 @@ pub mod auth_store {
             .map(|r| r.rows_affected())
     }
 
+    /// `queries/auth_store/delete_sessions_by_id.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete every session stored under `session_id`, whatever its account: the
+    /// cleanup for a sign-in that failed after its callback saved a session.
+    pub async fn delete_sessions_by_id(
+        conn: impl sqlx::PgExecutor<'_>,
+        session_id: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/auth_store/delete_sessions_by_id.sql"
+        ))
+        .bind(session_id)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
     /// `queries/auth_store/get_auth_req_info.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn get_auth_req_info(
         conn: impl sqlx::PgExecutor<'_>,
@@ -95,6 +112,7 @@ pub mod auth_store {
 pub static WRITE_QUERY_FNS: &[&str] = &[
     "auth_store::delete_auth_req_info",
     "auth_store::delete_session",
+    "auth_store::delete_sessions_by_id",
     "auth_store::save_auth_req_info",
     "auth_store::upsert_session",
 ];

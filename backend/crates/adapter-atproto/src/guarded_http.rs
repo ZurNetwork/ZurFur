@@ -13,7 +13,7 @@ mod policy;
 #[cfg(test)]
 mod scripted;
 
-pub(crate) use client::{GuardedHttp, causes};
+pub(crate) use client::{Causes, GuardedHttp};
 pub(crate) use dns::{LookupError, SystemDns, TxtLookup};
 pub(crate) use errors::FetchError;
 #[cfg(test)]
@@ -21,6 +21,6 @@ pub(crate) use errors::Refusal;
 pub(crate) use limits::DNS_TIMEOUT;
 #[cfg(test)]
 pub(crate) use limits::Timeouts;
-pub(crate) use policy::{PublicHttpsUrl, is_public_domain};
+pub(crate) use policy::{PublicHttpsUrl, UrlPolicyError, is_public_domain};
 #[cfg(test)]
 pub(crate) use scripted::{Script, ScriptedLookup, TxtScript};

@@ -31,6 +31,18 @@ impl AtprotoAuthStore {
         Self { pool, vault }
     }
 
+    /// Delete every session stored under `session_id`, whatever its account:
+    /// the cleanup for a sign-in that failed after its callback saved one.
+    pub(crate) async fn delete_sessions_by_id(
+        &self,
+        session_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        sql::delete_sessions_by_id(&self.pool, session_id)
+            .await
+            .map_err(backend)?;
+        Ok(())
+    }
+
     /// AEAD associated data binding a session blob to its `(account_did,
     /// session_id)` key. Table-name prefix domain-separates it from an
     /// auth-request AAD; the length-prefixed DID blocks a re-split into a

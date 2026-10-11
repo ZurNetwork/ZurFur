@@ -103,6 +103,8 @@ impl<'a> FromIterator<&'a str> for Claim {
 #[derive(Debug)]
 pub(crate) struct ResolvedDocument {
     document: DidDocument,
+    /// The body exactly as fetched, for a caller that must parse it itself.
+    body: Vec<u8>,
 }
 
 impl ResolvedDocument {
@@ -115,7 +117,15 @@ impl ResolvedDocument {
         if document.id.as_str() != requested.as_ref() {
             return Err(ResolveError::NotFound);
         }
-        Ok(Self { document })
+        Ok(Self {
+            document,
+            body: body.to_vec(),
+        })
+    }
+
+    /// The body that passed these checks, byte for byte.
+    pub(crate) fn into_body(self) -> Vec<u8> {
+        self.body
     }
 
     /// The handle this document claims.
@@ -127,13 +137,6 @@ impl ResolvedDocument {
     /// The PDS: the first service whose `id` ends `#atproto_pds` and whose type
     /// is `AtprotoPersonalDataServer`, admitted by the URL policy. `NotFound`
     /// when there is none; `Refused` when the policy refuses it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "sign-in and the profile read take their PDS from here next"
-        )
-    )]
     pub(crate) fn pds(&self) -> Result<PublicHttpsUrl, ResolveError> {
         let services = self.document.service.as_deref().unwrap_or_default();
         let endpoint = services

@@ -29,7 +29,9 @@ pub use commission::{
     CommissionReads, CommissionRepo, CommissionStore, CommissionWrites, ElementNotFound,
     UnknownSurface, UnknownTab,
 };
-pub use errors::{DidBelongsToAnotherActor, HandleTaken, PublicRecordsError, ResolveError};
+pub use errors::{
+    AccountMismatch, DidBelongsToAnotherActor, HandleTaken, PublicRecordsError, ResolveError,
+};
 pub use file::FileStore;
 pub use identity::{DidMinter, DidOperations, KeyStore, PlcOperationLog};
 pub use identity_resolver::IdentityResolver;

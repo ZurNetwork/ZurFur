@@ -2,7 +2,7 @@
 
 use std::{
     error::Error,
-    io,
+    fmt, io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
@@ -191,9 +191,7 @@ fn classify(error: reqwest::Error) -> FetchError {
 
 /// `error`, then each cause in turn. An `io::Error` is followed into its
 /// payload (`get_ref`), which its own `source()` would skip.
-pub(crate) fn causes<'a>(
-    error: &'a (dyn Error + 'static),
-) -> impl Iterator<Item = &'a (dyn Error + 'static)> {
+fn causes<'a>(error: &'a (dyn Error + 'static)) -> impl Iterator<Item = &'a (dyn Error + 'static)> {
     std::iter::successors(Some(error), |&current| {
         let payload = current
             .downcast_ref::<io::Error>()
@@ -201,6 +199,22 @@ pub(crate) fn causes<'a>(
             .map(|inner| inner as &(dyn Error + 'static));
         payload.or_else(|| current.source())
     })
+}
+
+/// An error's causes after the error itself, joined with `: `, an
+/// `io::Error`'s payload included: the text a `debug` line may carry.
+pub(crate) struct Causes<'a>(pub(crate) &'a (dyn Error + 'static));
+
+impl fmt::Display for Causes<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, cause) in causes(self.0).skip(1).enumerate() {
+            if index > 0 {
+                f.write_str(": ")?;
+            }
+            write!(f, "{cause}")?;
+        }
+        Ok(())
+    }
 }
 
 /// The first `T` among `error`'s causes, `error` itself included.

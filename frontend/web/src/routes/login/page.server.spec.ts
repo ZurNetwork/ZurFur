@@ -62,6 +62,13 @@ describe('/login load', () => {
 		expect(result.callbackError).toBe('Sign-in was cancelled at your PDS.');
 	});
 
+	it('maps ?error=account_mismatch to its own message', async () => {
+		const result = await runLoad(loadEvent(undefined, '?error=account_mismatch'));
+		expect(result.callbackError).toBe(
+			'You signed in to a different account than the handle you typed.'
+		);
+	});
+
 	it('falls back on an unknown ?error code', async () => {
 		const result = await runLoad(loadEvent(undefined, '?error=mystery'));
 		expect(result.callbackError).toBe('Sign-in failed. Try again.');
