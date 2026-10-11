@@ -144,7 +144,7 @@
     },
     {
       "name": "text.rs",
-      "role": "text primitives — NonEmptyString, the trimmed never-blank string free-text names wrap",
+      "role": "text primitives — NonEmptyString, the trimmed never-blank string free-text names wrap; StoredText, text as the store holds it, loaded without a re-check",
       "node": false
     },
     {
@@ -316,7 +316,7 @@
     }
   ],
   "notes": [
-    "`commission/` layout: `entity.rs` = the envelope (id, title, owner, lifecycle, visibility, deadline, maturity, the two status axes, linked channel, archive); `element.rs` = the flat composition (tabs/surfaces/elements, `SKELETON`, `effective_visibility`); `fact.rs` = the hard-delete gate contract; `changelog.rs`; `deadline.rs`; `direction.rs`; `file.rs`; `lifecycle.rs`; `markup.rs`; `title.rs`; `visibility.rs`; `grant_level.rs` (view grants only); `seat.rs` / `seat_invitation.rs` / `slot.rs` (element satellites).",
+    "`commission/` layout: `entity.rs` = the envelope (id, title, owner, lifecycle, visibility, deadline, maturity, the two status axes, linked channel, archive); `element.rs` = the flat composition (tabs/surfaces/elements, `SKELETON`, `effective_visibility`); `fact.rs` = the hard-delete gate contract; `changelog.rs`; `deadline.rs`; `direction.rs`; `file.rs`; `lifecycle.rs`; `markup.rs`; `title.rs`; `rows.rs` = `NewCommission` (the write shape, a checked `CommissionTitle`) and `CommissionSummary` (the listing read; loads carry the title as `StoredText`); `visibility.rs`; `grant_level.rs` (view grants only); `seat.rs` / `seat_invitation.rs` / `slot.rs` (element satellites).",
     "Composition structure is CODE (`element::SKELETON`), modes are DATA. Effective visibility = `min(tab, surface, element)` under the commission's own `Visibility`. An absent `commission_surface_mode` row means `Total`. (DD 45514754)",
     "Surface names must be globally unique across tabs: `commission_surface_mode`'s PK is `(commission_id, surface)` with no tab column, so a duplicate name would make widening one tab's surface widen the other's. Pinned by a unit test in `element.rs`.",
     "`CommissionComposition`, `ElementRow` and `ElementPayload` implement no `serde::Serialize` **by design** — content leaves only through a viewer projection that applied `effective_visibility` server-side. A compile-time probe test in `element.rs` pins the absence.",

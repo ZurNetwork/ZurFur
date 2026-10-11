@@ -9,7 +9,11 @@ use domain::{
         account::AccountId,
         commission::{CommissionId, Visibility},
         did::Did,
-        workflow::{Column, ColumnId, LexOrdering, Position, Workflow, WorkflowId, WorkflowName},
+        text::StoredText,
+        workflow::{
+            Column, ColumnId, LexOrdering, Position, Workflow, WorkflowId, WorkflowName,
+            WorkflowSummary,
+        },
     },
     ports::{ColumnStore, ColumnWrites, WorkflowStore, WorkflowWrites},
 };
@@ -192,6 +196,20 @@ impl WorkflowStore for PgWorkflowStore {
     /// A board's columns in board order, each with its cards.
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
         load_columns(&self.pool, workflow_id).await
+    }
+
+    /// The account's boards, id and name only, in id (creation) order; names
+    /// carried as stored, never re-checked.
+    async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>> {
+        let rows = workflow_sql::list_for_account(&self.pool, account.as_ref()).await?;
+        let workflows = rows
+            .into_iter()
+            .map(|row| WorkflowSummary {
+                id: WorkflowId::from(row.id),
+                name: StoredText::from(row.name),
+            })
+            .collect();
+        Ok(workflows)
     }
 }
 

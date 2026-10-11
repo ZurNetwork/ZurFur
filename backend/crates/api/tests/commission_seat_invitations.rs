@@ -402,7 +402,7 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
         .create_commission(&foreign)
         .await
         .expect("seed foreign commission");
-    backend.seed_participant(foreign.id, artist.id);
+    backend.seed_participant(foreign.id, artist.id, Utc::now());
 
     // The seat need not exist — require_owner refuses before the seat lookup.
     let res = client

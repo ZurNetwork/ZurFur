@@ -8,6 +8,7 @@
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -44,7 +45,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 
 /// Create a commission (which mints its tabs and its owner's participant row) in
 /// one committed unit of work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
         owner.id.clone(),

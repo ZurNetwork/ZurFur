@@ -10,6 +10,7 @@ mod errors;
 mod id;
 mod ordering;
 mod position;
+mod rows;
 mod value;
 
 pub use entity::{Column, MAX_COLUMNS_PER_WORKFLOW, Workflow};
@@ -17,4 +18,5 @@ pub use errors::{PositionError, WorkflowError, WorkflowNameError};
 pub use id::{ColumnId, WorkflowId};
 pub use ordering::LexOrdering;
 pub use position::Position;
+pub use rows::WorkflowSummary;
 pub use value::{ColumnName, WorkflowName};
