@@ -21,12 +21,12 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log)",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log); den/den-path.spec.ts holds the path-handling security cases",
       "node": false
     },
     {
       "name": "accounts.ts",
-      "role": "account programs (accountsOutcome, accountOutcome, create/deleteAccountOutcome)",
+      "role": "account programs (accountsOutcome, accountOutcome, create/deleteAccountOutcome); the delete's API path goes through path-builder.ts",
       "node": false
     },
     {
@@ -42,6 +42,16 @@
     {
       "name": "den-served.ts",
       "role": "denServed(): whether this run can show a Den — the mock only, for now; fails closed (false) on the everyday stack, so the frame shows no sidebar, tree or My Den links there",
+      "node": false
+    },
+    {
+      "name": "den.ts",
+      "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings in parallel), map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
+      "node": false
+    },
+    {
+      "name": "den/",
+      "role": "den-path.ts — the Den path builder: browser pathname → segments (decoded once, allowlisted, ≤16), allowlisted query (includeDeleted, pageToken), the only DenHref mint, the API path",
       "node": false
     },
     {
@@ -62,6 +72,11 @@
     {
       "name": "handle-chain.ts",
       "role": "handleChain(...handles): the handle hooks as one, first outermost — a plain stand-in for SvelteKit's sequence, which needs the live request store and can't be unit-tested",
+      "node": false
+    },
+    {
+      "name": "path-builder.ts",
+      "role": "the one way a path is put together from pieces: each piece a minted PathSegment, `%` escaped, then parsed back to prove the URL parser reads exactly what was built; used by the Den path builder and the account-delete call",
       "node": false
     },
     {

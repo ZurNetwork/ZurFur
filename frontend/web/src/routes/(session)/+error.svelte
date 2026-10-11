@@ -6,7 +6,7 @@
 	/**
 	 * A signed-in error renders inside the frame, by its status and route
 	 * alone: the error's own message is never read here, so it can't reach the
-	 * screen.
+	 * screen. Its way back is My Den only where this run serves one.
 	 */
 	const routeId = $derived(page.route.id ?? undefined);
 	const title = $derived(errorCopy(page.status, routeId).title);
@@ -16,4 +16,4 @@
 	<title>{title} — Zurfur</title>
 </svelte:head>
 
-<ErrorView status={page.status} {routeId} />
+<ErrorView status={page.status} {routeId} inFrame={page.data.denServed === true} />

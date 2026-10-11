@@ -17,7 +17,12 @@ import {
 import { Context, Effect, Layer } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { PROBLEM_CONTENT_TYPE, type Problem, ProblemKind } from '$lib/api/problem';
+import {
+	ACCOUNT_NOT_FOUND_PROBLEM,
+	PROBLEM_CONTENT_TYPE,
+	type Problem,
+	ProblemKind
+} from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
@@ -32,10 +37,13 @@ import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	ApiProblem,
 	ContractViolation,
+	DenNotConnected,
 	NetworkFailure,
 	NotAuthenticated,
 	SignoutFailed
 } from './errors';
+import type { DenQuery, DenRead } from './den-read';
+import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -95,7 +103,19 @@ export interface ZurfurApiShape {
 	readonly deleteAccount: (
 		id: string
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
+	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
+	 * Fails `ApiProblem` `node_not_found` for every miss, `DenNotConnected` while
+	 * this build has no live Den behind it.
+	 */
+	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
+	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
+	readonly denNode: (path: SegmentPath, query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 }
+
+/** Every way a Den read fails. */
+export type DenReadError =
+	DenNotConnected | NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
 
 /** The port tag — programs ask for `ZurfurApi`, the seam decides which Layer answers. */
 export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApiShape>() {}
@@ -336,9 +356,17 @@ function toDeleteOutcome(outcome: string): DeleteOutcome {
 	return 'unknown';
 }
 
+/**
+ * `DELETE /accounts/{id}`, its path built by the shared path builder: an id
+ * the builder refuses (empty, a dot segment, a slash, anything off the
+ * segment allowlist) never reaches `fetch` and answers the same not-found
+ * an unknown id gets.
+ */
 const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 	Effect.gen(function* () {
-		const path = `/accounts/${encodeURIComponent(id)}`;
+		const accountPath = segmentPath([id]);
+		const path = accountPath === undefined ? undefined : joinPath('/accounts', accountPath);
+		if (path === undefined) return yield* new ApiProblem({ problem: ACCOUNT_NOT_FOUND_PROBLEM });
 		const response = yield* backendFetch(fetch, path, { method: 'DELETE' });
 		if (!response.ok) return yield* accountProblemFailure(response, path);
 		const raw = yield* parsedBody(response, path);
@@ -356,6 +384,15 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 		});
 	});
 
+/**
+ * The live port's Den reads, until the Den contract is wired: every read
+ * answers `DenNotConnected`, so a live run shows a notice, never an empty Den
+ * or the not-found.
+ */
+const liveDenNotConnected: Effect.Effect<never, DenNotConnected> = Effect.fail(
+	new DenNotConnected()
+);
+
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
 	ZurfurApi,
@@ -367,7 +404,9 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			signout: liveSignout(fetch),
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
-			deleteAccount: (id) => liveDeleteAccount(fetch, id)
+			deleteAccount: (id) => liveDeleteAccount(fetch, id),
+			denRoot: () => liveDenNotConnected,
+			denNode: () => liveDenNotConnected
 		});
 	})
 );
@@ -387,7 +426,9 @@ const anonymousDefaults: ZurfurApiShape = {
 	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
-	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem }))
+	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
+	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };
 
 /**

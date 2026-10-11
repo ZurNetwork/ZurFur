@@ -7,12 +7,14 @@
 	import PathBar from '$lib/components/ui/PathBar.svelte';
 	import type { FrameSection } from './frame-section';
 	import SignOut from './SignOut.svelte';
+	import { denRootPath } from '$lib/api/den-route';
 
 	/**
 	 * The frame's top row. On a desktop: the brand, the path, the section
 	 * links, who is signed in and Sign out. On a phone with a `drawer`: the
 	 * drawer's ☰ and the back link to the parent, the rest moving into the
-	 * drawer; without one, everything stays in the row.
+	 * drawer; without one (no Den served), everything stays in the row and
+	 * there is no "My Den" link.
 	 */
 	let {
 		session,
@@ -51,6 +53,13 @@
 		<PathBar {trail} />
 	</div>
 	<nav class="top-bar__links" class:desktop-only={drawer} aria-label="Sections">
+		{#if drawer}
+			<a
+				href={denRootPath()}
+				aria-current={section === 'den' ? 'page' : undefined}
+				data-testid="den-link">My Den</a
+			>
+		{/if}
 		<a
 			href={resolve('/accounts')}
 			aria-current={section === 'accounts' ? 'page' : undefined}

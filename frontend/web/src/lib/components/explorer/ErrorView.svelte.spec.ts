@@ -37,4 +37,12 @@ describe('ErrorView', () => {
 
 		await expect.element(page.getByRole('link', { name: 'Back to the start' })).toBeInTheDocument();
 	});
+
+	it('leads back to My Den inside the frame', async () => {
+		render(ErrorView, { status: 404, routeId: '/(session)/den/[...path]', inFrame: true });
+
+		await expect
+			.element(page.getByRole('link', { name: 'Back to My Den' }))
+			.toHaveAttribute('href', '/den');
+	});
 });

@@ -2,6 +2,7 @@
 // for information about these interfaces
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import type { DenPageData } from '$lib/api/den';
 import type { Trail } from '$lib/api/trail';
 
 declare global {
@@ -17,6 +18,10 @@ declare global {
 		interface PageData {
 			/** The path bar's steps down to this page; a page without one shows an empty path. */
 			trail?: Trail | undefined;
+			/** Whether this run can show a Den at all (the root layout's switch). */
+			denServed?: boolean | undefined;
+			/** On a My Den page: everything its load read, for the pane and the tree. */
+			den?: DenPageData | undefined;
 		}
 
 		// interface PageState {}
