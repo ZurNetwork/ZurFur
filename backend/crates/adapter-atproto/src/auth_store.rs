@@ -85,17 +85,33 @@ impl AtprotoAuthStore {
     }
 
     /// Consume the browser binding of `state`'s auth request if it is still
-    /// `browser_binding`: `true` for the one caller whose statement cleared it,
-    /// `false` once another has (or the request is gone).
+    /// `browser_binding` and the request is younger than `lifetime`: `true` for
+    /// the one caller whose statement cleared it, `false` once another has, the
+    /// request has aged out, or it is gone.
     pub(crate) async fn claim_browser_binding(
         &self,
         state: &str,
         browser_binding: &[u8],
+        lifetime: std::time::Duration,
     ) -> Result<bool, SessionStoreError> {
-        let consumed = sql::claim_browser_binding(&self.pool, state, browser_binding)
+        let lifetime_seconds = i32::try_from(lifetime.as_secs()).unwrap_or(i32::MAX);
+        let consumed =
+            sql::claim_browser_binding(&self.pool, state, browser_binding, lifetime_seconds)
+                .await
+                .map_err(backend)?;
+        Ok(consumed == 1)
+    }
+
+    /// Delete `state`'s auth request unless a callback has claimed it: a refused
+    /// callback's cleanup, which leaves a claimed request to its claimer.
+    pub(crate) async fn delete_unclaimed_auth_request(
+        &self,
+        state: &str,
+    ) -> Result<(), SessionStoreError> {
+        sql::delete_unclaimed_auth_request(&self.pool, state)
             .await
             .map_err(backend)?;
-        Ok(consumed == 1)
+        Ok(())
     }
 
     /// Delete every session stored under `session_id`, whatever its account:

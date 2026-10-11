@@ -183,9 +183,10 @@ impl Signin {
     /// Run the callback under its deadline, then clean up outside it. Only the
     /// attempt that claimed the sign-in can have saved a session under `state`,
     /// so any failure of that attempt, its deadline included, deletes every
-    /// session stored there; another account's session is deleted and its
-    /// tokens then revoked. An attempt that never claimed deletes nothing: its
-    /// `state` is a finished sign-in's, replayed, or another attempt's.
+    /// session stored there and the request itself; another account's session
+    /// is deleted and its tokens then revoked. An attempt that never claimed
+    /// deletes nothing: its `state` is a finished sign-in's, replayed, or
+    /// another attempt's.
     async fn complete(
         &self,
         code: String,
@@ -219,7 +220,9 @@ impl Signin {
 
     /// Claim the sign-in for this browser, read the bound DID, then run
     /// jacquard's callback (which saves the session it gets) and say whose
-    /// account signed in. Sets `claimed` once this attempt owns the sign-in.
+    /// account signed in. Sets `claimed` once this attempt knows it owns the
+    /// sign-in; a claim the deadline cuts off may still commit unseen, which
+    /// fails closed (no callback ran, so nothing was saved).
     async fn finish(
         &self,
         code: String,
@@ -256,8 +259,8 @@ impl Signin {
 
     /// Refuse unless `presented` is the token bound to `state`'s live request,
     /// compared by hash in constant time, then claim the sign-in. A refused
-    /// request is deleted, so nothing can complete it later; one another
-    /// callback has claimed is left to that callback.
+    /// request is deleted, so nothing can complete it later, unless a callback
+    /// has claimed it: a claimed request, however old, is left to its claimer.
     async fn claim_browser(
         &self,
         state: &str,
@@ -279,22 +282,25 @@ impl Signin {
             (Some(_), StoredBinding::Gone) => SigninFailure::StaleSignin,
             (Some(_), StoredBinding::Bound(_)) => SigninFailure::BrowserMismatch,
         };
+        // Conditional on the binding, not on the read above: a claim may have
+        // committed since, and a claimed request is never a refusal's to delete.
         store
-            .delete_auth_req_info(state)
+            .delete_unclaimed_auth_request(state)
             .await
             .map_err(SigninFailure::Store)?;
         Err(refusal)
     }
 
-    /// Consume `state`'s browser binding, still `stored`, in one conditional
-    /// statement: of callbacks racing on it, exactly one clears it and owns the
-    /// sign-in. A loser deletes nothing, since the request is the winner's.
+    /// Consume `state`'s browser binding, still `stored` and within the
+    /// sign-in's lifetime, in one conditional statement: of callbacks racing on
+    /// it, exactly one clears it and owns the sign-in. A loser deletes nothing,
+    /// since the request is the winner's.
     async fn claim(&self, state: &str, stored: &[u8]) -> Result<(), SigninFailure> {
         let won = self
             .oauth
             .registry
             .store
-            .claim_browser_binding(state, stored)
+            .claim_browser_binding(state, stored, SIGNIN_LIFETIME)
             .await
             .map_err(SigninFailure::Store)?;
         if !won {
@@ -304,7 +310,8 @@ impl Signin {
     }
 
     /// The DID `start` bound to `state`. A request without one fails closed,
-    /// and is deleted so nothing can complete it later.
+    /// and is deleted so nothing can complete it later; only the claimer gets
+    /// here, so the request is its own to delete.
     async fn bound_account(&self, state: &str) -> Result<AtDid, SigninFailure> {
         let store = &self.oauth.registry.store;
         let request = store
@@ -323,12 +330,18 @@ impl Signin {
     }
 
     /// Delete every session stored under `session_id` (jacquard keys a new
-    /// session by the sign-in's `state`) within `limit`, logging a failure by class.
+    /// session by the sign-in's `state`), then the claimed request under that
+    /// `state` if jacquard has not already, within `limit`, logging a failure by
+    /// class. Only the claimer calls this, so the request is its own.
     async fn discard(&self, session_id: Option<&str>, limit: Duration) {
         let Some(session_id) = session_id else {
             return;
         };
-        let deleting = self.oauth.registry.store.delete_sessions_by_id(session_id);
+        let store = &self.oauth.registry.store;
+        let deleting = async {
+            store.delete_sessions_by_id(session_id).await?;
+            store.delete_auth_req_info(session_id).await
+        };
         let deleted = tokio::time::timeout(limit, deleting).await;
         let failure = match deleted {
             Ok(Ok(())) => return,

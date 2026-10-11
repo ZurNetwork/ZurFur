@@ -979,12 +979,16 @@ async fn exactly_one_of_two_racing_claims_wins() {
 
     let stale = world
         .store
-        .claim_browser_binding(&state, &[0u8; 32])
+        .claim_browser_binding(&state, &[0u8; 32], SIGNIN_LIFETIME)
         .await
         .expect("the store answers");
     let (first, second) = tokio::join!(
-        world.store.claim_browser_binding(&state, &bound),
-        world.store.claim_browser_binding(&state, &bound),
+        world
+            .store
+            .claim_browser_binding(&state, &bound, SIGNIN_LIFETIME),
+        world
+            .store
+            .claim_browser_binding(&state, &bound, SIGNIN_LIFETIME),
     );
 
     assert!(!stale, "a hash that isn't the binding claims nothing");
@@ -1045,7 +1049,7 @@ async fn a_callback_after_the_claim_is_refused_and_leaves_the_request_to_the_cla
     let (state, binding) = started(&world).await;
     let claimed = world
         .store
-        .claim_browser_binding(&state, &token_hash(binding.as_ref()))
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()), SIGNIN_LIFETIME)
         .await
         .expect("the store answers");
     assert!(claimed, "the first callback claims the sign-in");
@@ -1080,6 +1084,133 @@ fn a_row_reads_as_bound_claimed_or_gone() {
     );
     assert_eq!(StoredBinding::from(Some(None)), StoredBinding::Claimed);
     assert_eq!(StoredBinding::from(None), StoredBinding::Gone);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refusal_racing_a_claim_leaves_the_claimed_request() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, _binding) = started(&world).await;
+    let claim = claim_in_flight(&world, &state).await;
+    let commit_later = async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        claim.commit().await.expect("the claim commits");
+    };
+    let forged = Some(BrowserBinding::from("A".repeat(43)));
+    let (refused, ()) = tokio::join!(completed_presenting(&world, &state, forged), commit_later);
+
+    assert!(refused.is_err(), "a wrong cookie is refused");
+    assert!(
+        still_pending(&world, &state).await,
+        "the claimed request is the claimer's"
+    );
+}
+
+/// Age `state`'s request past the sign-in's lifetime.
+async fn aged_out(world: &World, state: &str) {
+    let aged = "UPDATE atproto_oauth.auth_request SET created_at = now() - interval '11 minutes' WHERE state = $1";
+    sqlx::query(aged)
+        .bind(state)
+        .execute(&world.pool)
+        .await
+        .expect("aged");
+}
+
+#[tokio::test]
+async fn a_late_callback_leaves_a_claimed_request_past_its_lifetime() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    let claimed = world
+        .store
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()), SIGNIN_LIFETIME)
+        .await
+        .expect("the store answers");
+    assert!(claimed, "the first callback claims the sign-in");
+    aged_out(&world, &state).await;
+
+    let late = completed(&world, &state, &binding).await;
+
+    let error = late.expect_err("a sign-in past its lifetime is refused");
+    assert!(
+        matches!(failure_of(&error), Some(SigninFailure::StaleSignin)),
+        "refused as stale: {error:?}"
+    );
+    assert!(
+        still_pending(&world, &state).await,
+        "a claimed request is never a refusal's to delete"
+    );
+}
+
+#[tokio::test]
+async fn a_request_past_its_lifetime_cannot_be_claimed() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    aged_out(&world, &state).await;
+
+    let claimed = world
+        .store
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()), SIGNIN_LIFETIME)
+        .await
+        .expect("the store answers");
+
+    assert!(!claimed, "the claim checks the age itself");
+}
+
+#[tokio::test]
+async fn the_claimers_cleanup_deletes_its_request_and_sessions() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    let claimed = world
+        .store
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()), SIGNIN_LIFETIME)
+        .await
+        .expect("the store answers");
+    assert!(claimed, "this attempt owns the sign-in");
+    let saved = saved_session(&alice(), &state);
+    world.store.upsert_session(saved).await.expect("saved");
+
+    world
+        .authenticator
+        .signin
+        .discard(Some(&state), Duration::from_secs(5))
+        .await;
+
+    assert!(
+        !still_pending(&world, &state).await,
+        "no orphan request outlives a failed claimer"
+    );
+    let session = world
+        .store
+        .get_session(&at_did(&alice()), &state)
+        .await
+        .expect("the store answers");
+    assert!(session.is_none(), "and no session either");
+}
+
+#[tokio::test]
+async fn a_bound_request_is_never_saved_over_another_under_the_same_state() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, _binding) = started(&world).await;
+    let request = world
+        .store
+        .get_auth_req_info(&state)
+        .await
+        .expect("the store answers")
+        .expect("the auth request is stored");
+
+    let resaved = world
+        .store
+        .save_bound_auth_request(&request, &[9u8; 32])
+        .await;
+
+    assert!(resaved.is_err(), "a stored state is never overwritten");
+    let stored: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT browser_binding FROM atproto_oauth.auth_request WHERE state = $1",
+    )
+    .bind(&state)
+    .fetch_one(&world.pool)
+    .await
+    .expect("the request row");
+    assert_ne!(stored, Some(vec![9u8; 32]), "the first binding stands");
 }
 
 #[tokio::test]
