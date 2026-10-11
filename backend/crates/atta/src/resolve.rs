@@ -227,7 +227,7 @@ impl Resolver<'_> {
 
     /// The node at `path`, which must sit directly under a top-level directory, as a viewer's
     /// root and every mount target do; `None` at any other depth. The top-level directory opens
-    /// by rule but must be a directory.
+    /// by rule but must be a directory, and any lift the host gives there is ignored.
     pub(crate) async fn locate(&self, path: &RealPath) -> Result<Option<Located>, Error> {
         let [top_level, key] = path.segments() else {
             return Ok(None);
@@ -242,9 +242,9 @@ impl Resolver<'_> {
         if self.kind(&directory) != Kind::Directory {
             return Ok(None);
         }
+        // Lifts at a top-level directory reach nothing: it is never a viewer's standing.
         let found = self.host.child(&self.viewer, &directory.path, key).await?;
-        let located =
-            found.and_then(|found| self.check(&directory.path, key, &directory.below, found));
+        let located = found.and_then(|found| self.check(&directory.path, key, &[], found));
         Ok(located)
     }
 

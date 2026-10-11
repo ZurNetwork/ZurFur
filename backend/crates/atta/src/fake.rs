@@ -125,6 +125,12 @@ impl FakeHost {
         self
     }
 
+    /// Gives the viewer `lifts` at the node at `at`, in place of the ones it had.
+    pub fn lifted(mut self, at: &str, lifts: &[Lift]) -> Self {
+        self.found_mut(at).lifts = lifts.to_vec();
+        self
+    }
+
     /// Makes the node at `at` a symlink to `target`.
     pub fn linked(mut self, at: &str, target: &str) -> Self {
         self.found_mut(at).metadata.symlink_target = Some(path(target));
