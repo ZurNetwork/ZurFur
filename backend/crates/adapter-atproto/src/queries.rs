@@ -10,19 +10,21 @@ pub mod auth_store {
     /// `queries/auth_store/claim_browser_binding.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Consume the browser binding of the auth request saved under `state` if it is
-    /// still `browser_binding`: the one callback whose statement clears it claims the
-    /// sign-in. A racing statement waits on the row lock, re-checks the cleared row
-    /// and claims nothing.
+    /// still `browser_binding` and the request is younger than `lifetime_seconds`:
+    /// the one callback whose statement clears it claims the sign-in. A racing
+    /// statement waits on the row lock, re-checks the cleared row and claims nothing.
     pub async fn claim_browser_binding(
         conn: impl sqlx::PgExecutor<'_>,
         state: &str,
         browser_binding: &[u8],
+        lifetime_seconds: i32,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/auth_store/claim_browser_binding.sql"
         ))
         .bind(state)
         .bind(browser_binding)
+        .bind(lifetime_seconds)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
@@ -68,6 +70,24 @@ pub mod auth_store {
             "../queries/auth_store/delete_sessions_by_id.sql"
         ))
         .bind(session_id)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
+    /// `queries/auth_store/delete_unclaimed_auth_request.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete the auth request saved under `state` unless a callback has claimed it
+    /// (cleared its binding): a refused callback's cleanup, which never removes a
+    /// claimed request, whatever it read before or however old the request is.
+    pub async fn delete_unclaimed_auth_request(
+        conn: impl sqlx::PgExecutor<'_>,
+        state: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/auth_store/delete_unclaimed_auth_request.sql"
+        ))
+        .bind(state)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
@@ -133,7 +153,8 @@ pub mod auth_store {
     /// `queries/auth_store/save_bound_auth_request.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Save an in-flight auth request together with the hash of the browser token
-    /// that binds it, in one statement.
+    /// that binds it, in one statement. A plain insert: a `state` already stored is
+    /// an error, never an overwrite, so nothing can re-arm a claimed request.
     pub async fn save_bound_auth_request(
         conn: impl sqlx::PgExecutor<'_>,
         state: &str,
@@ -175,6 +196,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "auth_store::delete_auth_req_info",
     "auth_store::delete_session",
     "auth_store::delete_sessions_by_id",
+    "auth_store::delete_unclaimed_auth_request",
     "auth_store::save_auth_req_info",
     "auth_store::save_bound_auth_request",
     "auth_store::upsert_session",
