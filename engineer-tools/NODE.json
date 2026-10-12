@@ -8,16 +8,17 @@
     "category:tooling"
   ],
   "conventions": [
-    "Bash like scripts/, each tool with a sibling <name>.test.sh in the scripts/*.test.sh style, run by `just scripts-test`.",
-    "A tool keeps its state outside the repo, under ${XDG_STATE_HOME:-~/.local/state}/zurfur/."
+    "Bash like scripts/, each tool with a sibling <name>.test.sh in the scripts/*.test.sh style, run by `just engineer-tools-test`.",
+    "A tool keeps its state outside the repo, under ${XDG_STATE_HOME:-~/.local/state}/zurfur/.",
+    "Install with `just engineer-tools-install` (to ${XDG_BIN_HOME:-~/.local/bin}) and run the installed `review-pr`: a review rewrites the checkout, and the copy here can vanish mid-review."
   ],
   "entry_points": [
-    "review-pr.sh (--start/--pause/--stop --pr=<N>; --help)"
+    "review-pr.sh, installed as `review-pr` by `just engineer-tools-install` (--start/--pause/--publish/--stop --pr=<N>; --help)"
   ],
   "fs": [
     {
       "name": "review-pr.sh",
-      "role": "local PR review in ~/code/zurfur: a scratch jj change holding the PR head's files; pause keeps typed notes; stop drops it; never pushes",
+      "role": "local PR review in ~/code/zurfur: a scratch jj change holding the PR head's files; pause keeps typed notes; publish posts the `REVIEW:` notes as one pending GitHub review; stop drops it; never pushes",
       "node": false
     },
     {

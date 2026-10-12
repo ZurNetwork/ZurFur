@@ -283,6 +283,22 @@ gate:
     yarn --cwd frontend/web run build
     just engineer-tools-test
 
+# engineer-tools/review-pr.sh becomes ${XDG_BIN_HOME:-~/.local/bin}/review-pr,
+# outside any checkout a review rewrites; it prints the commit it came from.
+# Install review-pr on PATH (run again to update).
+engineer-tools-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    mkdir -p "$bin"
+    from="$(jj log --no-graph --ignore-working-copy -r @ -T 'commit_id.short(12)' 2>/dev/null || git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+    install -m 755 engineer-tools/review-pr.sh "$bin/review-pr"
+    echo "installed review-pr from $from at $bin/review-pr"
+    case ":$PATH:" in
+        *":$bin:"*) ;;
+        *) echo "note: $bin is not on PATH; add it to run review-pr" ;;
+    esac
+
 # Tests for the Engineer's own tools (engineer-tools/*.test.sh); each skips
 # when jj isn't installed, as on CI.
 engineer-tools-test:
