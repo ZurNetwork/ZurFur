@@ -20,7 +20,7 @@
   "fs": [
     {
       "name": "(public)/",
-      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → PDS redirect, callback-errors.ts maps axum's ?error= codes to copy",
+      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → sets the backend's browser-binding cookie (Path=/, HttpOnly, SameSite=Lax; name, Secure and Max-Age as the backend set them) → PDS redirect, callback-errors.ts maps axum's ?error= codes to copy",
       "node": false
     },
     {

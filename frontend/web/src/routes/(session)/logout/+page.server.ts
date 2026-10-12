@@ -2,7 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { runApi } from '$lib/server/runtime';
 import { signoutOutcome } from '$lib/server/session';
-import { SESSION_COOKIE_NAME } from '$lib/server/api-proxy';
+import { cookieOptions, SESSION_COOKIE } from '$lib/server/cookies';
 import { HttpStatus } from '$lib/api/http-status';
 import { SIGNOUT_UNCONFIRMED_LOCATION } from '$lib/api/signout';
 
@@ -28,10 +28,10 @@ export const actions = {
 	 */
 	default: async ({ fetch, cookies }) => {
 		const outcome = await runApi(fetch, signoutOutcome);
-		cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
+		cookies.delete(SESSION_COOKIE, cookieOptions());
 		if ('unconfirmed' in outcome) redirect(HttpStatus.SeeOther, SIGNOUT_UNCONFIRMED_LOCATION);
 		for (const clearedName of outcome.clearedCookies) {
-			if (clearedName !== SESSION_COOKIE_NAME) cookies.delete(clearedName, { path: '/' });
+			if (clearedName !== SESSION_COOKIE) cookies.delete(clearedName, cookieOptions());
 		}
 		redirect(HttpStatus.SeeOther, '/');
 	}

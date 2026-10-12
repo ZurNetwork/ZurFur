@@ -42,7 +42,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, changelog, commission, character, file, workflow, authenticator, public_records ports; errors.rs shared",
+      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), changelog, commission, character, file, workflow, authenticator, public_records ports; errors.rs shared (incl. ResolveError)",
       "node": false
     },
     {
@@ -121,6 +121,11 @@
       "page": 54427650,
       "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
       "governs": "ports.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer — Use Cases, DTOs and Ports",
+      "governs": "ports/errors.rs ResolveError: terse Display that never echoes the input, the cause via #[source] (D8)"
     },
     {
       "page": 59310081,

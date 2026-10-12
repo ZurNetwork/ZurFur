@@ -31,13 +31,18 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone)",
+      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
       "node": false
     },
     {
       "name": "api/",
       "role": "the backend port + tagged error union + generated protobuf messages",
       "node": true
+    },
+    {
+      "name": "cookies.ts",
+      "role": "every cookie name Zurfur sets (closed SessionCookieName | SignInBindingCookieName) and cookieOptions, the one set/clear options helper; the backend ZurfurCookie's twin",
+      "node": false
     },
     {
       "name": "den-served.ts",
@@ -96,7 +101,7 @@
     },
     {
       "name": "session.ts",
-      "role": "session programs (sessionOrAnonymous, optionalSession, signinOutcome, signoutOutcome)",
+      "role": "session programs (sessionOrAnonymous, optionalSession, signinOutcome — the PDS URL plus the browser-binding cookie to relay, signoutOutcome)",
       "node": false
     }
   ],

@@ -44,6 +44,7 @@ import {
 } from './errors';
 import type { DenQuery, DenRead } from './den-read';
 import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
+import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -72,11 +73,12 @@ export interface ZurfurApiShape {
 	/**
 	 * `POST /signin` — start the atproto OAuth flow; succeeds with the PDS
 	 * authorize URL off the 303's `Location` (server-side `redirect: 'manual'`
-	 * semantics — a browser fetch would return an opaque redirect).
+	 * semantics — a browser fetch would return an opaque redirect) and the
+	 * cookie binding the sign-in to this browser, for the action to relay.
 	 */
 	readonly startSignin: (
 		handle: string
-	) => Effect.Effect<string, ApiProblem | NetworkFailure | ContractViolation>;
+	) => Effect.Effect<StartedSignin, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
 	 * `POST /logout` — end the session backend-side, waiting at most
 	 * {@link SIGNOUT_TIMEOUT_MS} (a timeout fails `NetworkFailure`); succeeds with the cookie
@@ -112,6 +114,24 @@ export interface ZurfurApiShape {
 	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
 	readonly denNode: (path: SegmentPath, query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
+}
+
+/**
+ * The cookie binding a sign-in to the browser that started it, as the backend
+ * set it on `/signin`'s 303. Only what varies rides here (the name, value,
+ * lifetime and `Secure`); `cookieOptions` fixes the rest.
+ */
+export interface BrowserBindingCookie {
+	readonly name: SignInBindingCookieName;
+	readonly value: string;
+	readonly maxAge: number;
+	readonly secure: boolean;
+}
+
+/** A started sign-in: where to send the browser, and the cookie it must carry back. */
+export interface StartedSignin {
+	readonly location: string;
+	readonly browserBinding: BrowserBindingCookie;
 }
 
 /** Every way a Den read fails. */
@@ -235,6 +255,25 @@ const liveMe = (fetch: FetchFunction) =>
 		});
 	});
 
+/**
+ * The browser-binding cookie in one `Set-Cookie` value, or `undefined` when the
+ * value is another cookie, has no token, or carries no `Max-Age`.
+ */
+export function parseBrowserBindingCookie(setCookie: string): BrowserBindingCookie | undefined {
+	const [pair = '', ...attributes] = setCookie.split(';');
+	const equalsIndex = pair.indexOf('=');
+	if (equalsIndex === -1) return undefined;
+	const name = pair.slice(0, equalsIndex).trim();
+	const value = pair.slice(equalsIndex + 1).trim();
+	if (!isSignInBindingCookieName(name) || value === '') return undefined;
+	const lowered = attributes.map((attribute) => attribute.trim().toLowerCase());
+	const maxAgeText = lowered.find((attribute) => attribute.startsWith('max-age='))?.slice(8);
+	const maxAge = maxAgeText === undefined ? Number.NaN : Number(maxAgeText);
+	if (!Number.isInteger(maxAge) || maxAge <= 0) return undefined;
+	const secure = lowered.includes('secure');
+	return { name, value, maxAge, secure };
+}
+
 const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 	Effect.gen(function* () {
 		const form = new URLSearchParams({ handle });
@@ -251,7 +290,19 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 					detail: 'redirect carried no Location header'
 				});
 			}
-			return location;
+			const browserBinding = response.headers
+				.getSetCookie()
+				.map(parseBrowserBindingCookie)
+				.find((cookie) => cookie !== undefined);
+			if (browserBinding === undefined) {
+				return yield* new ContractViolation({
+					path: '/signin',
+					status: response.status,
+					detail: 'redirect carried no browser-binding cookie'
+				});
+			}
+			const started: StartedSignin = { location, browserBinding };
+			return started;
 		}
 		return yield* problemFailure(response, '/signin').pipe(
 			Effect.catchTag('NotAuthenticated', ({ problem }) => new ApiProblem({ problem }))

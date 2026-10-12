@@ -48,6 +48,8 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 # Facade (axum layer + Session extractor) for the composition root; the adapter
 # implements the traits from -core directly, so it needn't pull the axum layer.
 tower-sessions = { version = "0.15" }
+# `HeaderValue` for the `Set-Cookie` headers http-cookies builds; the version axum re-exports.
+http = { version = "1.4" }
 # `set-header` only: the `SetResponseHeaderLayer` that stamps `Cache-Control:
 # no-store` on the authenticated cookie surface (CWE-525, ZMVP-151). Already in
 # the tree transitively (reqwest decompression) — this just turns on the module.
@@ -124,3 +126,13 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 # Wipe secret key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
+# --- The guarded web client: identity fetches to hosts a visitor names ---
+# The DNS stub resolver on the system configuration, behind the address filter.
+# 0.26 on purpose: 0.24 carries RUSTSEC-2026-0119.
+hickory-resolver = "0.26.3"
+# The one parsed URL the guarded client checks and dials; serde so the config's
+# public origin deserializes straight into one.
+url = { version = "2.5.8", features = ["serde"] }
+# Test-only: a TLS server whose certificate the guarded client must refuse.
+# Default features off, so it rides the ring provider reqwest already uses.
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }

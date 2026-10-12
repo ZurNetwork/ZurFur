@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "http-cookies"
+version = "0.1.0"
+edition = "2024"
+
+# Every cookie the HTTP driver sets, by name and attributes, and the session
+# layer that issues one. A leaf the `api` driver and the `test-support` rig both
+# consume, so the served test app runs the real session cookie; `composition`
+# stays HTTP-free.
+[dependencies]
+# `HeaderValue`, the type a `Set-Cookie` travels as.
+http = { workspace = true }
+# The session layer and its re-exported `cookie` crate.
+tower-sessions = { workspace = true }
+# `VariantArray` over the cookie vocabulary.
+strum = { workspace = true }
+
+[dev-dependencies]
+# Serve a router under `session_layer` and read back the `Set-Cookie` it emits.
+axum = { workspace = true }
+tokio = { workspace = true }
+reqwest = { version = "0.13", default-features = false }

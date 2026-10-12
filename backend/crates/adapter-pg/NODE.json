@@ -40,7 +40,7 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (42 files, latest creates workflow/workflow_column and drops the superseded placement tables), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (44 files, latest adds atproto_oauth.auth_request.browser_binding, the hash binding a sign-in to its browser), embedded and run on boot and by every test template",
       "node": false
     },
     {
