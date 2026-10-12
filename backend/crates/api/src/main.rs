@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
     let secure_cookies = app_state.config.env.secure_cookies();
-    let session_layer = api::cookies::session_layer(store, secure_cookies);
+    let session_layer = http_cookies::session_layer(store, secure_cookies);
 
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),

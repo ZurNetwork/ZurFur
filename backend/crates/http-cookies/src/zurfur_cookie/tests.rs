@@ -72,6 +72,21 @@ fn the_session_cookie_is_set_and_cleared_with_the_same_flags() {
 }
 
 #[test]
+fn every_clear_header_is_the_cleared_cookie() {
+    let headers: Vec<HeaderValue> = ZurfurCookie::VARIANTS
+        .iter()
+        .flat_map(|cookie| [cookie.cleared_header(true), cookie.cleared_header(false)])
+        .collect();
+    let expected = [
+        "zurfur.sid=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0",
+        "zurfur.sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+        "__Host-zurfur.signin=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0",
+        "zurfur.signin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+    ];
+    assert_eq!(headers, expected);
+}
+
+#[test]
 fn a_value_that_cannot_be_a_header_is_refused() {
     let max_age = time::Duration::seconds(600);
     let binding = ZurfurCookie::SignInBinding.cookie(false, "bad\nvalue", max_age);

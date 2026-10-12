@@ -7,11 +7,12 @@
 use domain::elements::{did::Did, profile::Profile};
 use test_support::http::{client, serve, sign_in};
 
-/// The session id this response sets via its `id` cookie (tower-sessions' default
-/// cookie name), if any.
+/// The session id this response sets via the session cookie, if any.
 fn session_id(res: &reqwest::Response) -> Option<String> {
+    // The served test app speaks plain HTTP, so its cookies are not `Secure`.
+    let session_cookie = http_cookies::ZurfurCookie::Session.name(false);
     res.cookies()
-        .find(|c| c.name() == "id")
+        .find(|c| c.name() == session_cookie)
         .map(|c| c.value().to_string())
 }
 

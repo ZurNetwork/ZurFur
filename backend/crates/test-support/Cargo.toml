@@ -40,6 +40,8 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "coo
 tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
+# ...built by the driver's own `session_layer`, so tests run the real session cookie
+http-cookies = { path = "../http-cookies" }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.

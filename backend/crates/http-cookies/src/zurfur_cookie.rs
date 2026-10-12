@@ -1,11 +1,6 @@
-//! Every cookie the backend sets, by name, and the one place each one's
-//! attributes are chosen: [`ZurfurCookie`] builds the cookies the routes set
-//! and clear, and [`session_layer`] hands the same attributes to the session
-//! middleware, which issues its own.
-
 use std::borrow::Cow;
 
-use axum::http::HeaderValue;
+use http::HeaderValue;
 use tower_sessions::{
     Expiry, SessionManagerLayer, SessionStore,
     cookie::{Cookie, SameSite, time},
@@ -79,6 +74,13 @@ impl ZurfurCookie {
     /// already expired.
     pub fn cleared(self, secure: bool) -> Cookie<'static> {
         self.cookie(secure, "", time::Duration::ZERO)
+    }
+
+    /// [`cleared`](Self::cleared) as a `Set-Cookie` header value. Never fails: a
+    /// clear is a fixed name and attributes with an empty value, all visible ASCII.
+    pub fn cleared_header(self, secure: bool) -> HeaderValue {
+        let cleared = self.cleared(secure).to_string();
+        HeaderValue::from_str(&cleared).expect("a cleared cookie is visible ASCII")
     }
 }
 

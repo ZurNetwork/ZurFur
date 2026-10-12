@@ -15,17 +15,14 @@ use axum::{
 };
 use domain::elements::handle::AtHandle;
 use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
+use http_cookies::{ZurfurCookie, set_cookie_header};
 use serde::Deserialize;
 use tower_sessions::Session;
 use tower_sessions::cookie::{Cookie, time};
 use url::Url;
 
 use crate::{
-    AppState, SESSION_USER_KEY,
-    cookies::{ZurfurCookie, set_cookie_header},
-    extract::CallingUser,
-    generated::GetMeResponse,
-    problem::Problem,
+    AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
 };
 
 /// The session route group: the OAuth sign-in flow and the JSON whoami. Each
@@ -130,11 +127,8 @@ async fn signin_callback(
     let secure = state.config.env.secure_cookies();
     let presented = presented_browser_binding(&headers, secure);
     let mut response = complete_signin(state, session, q, presented).await;
-    let cleared = ZurfurCookie::SignInBinding.cleared(secure);
-    // Always `Some`: a cleared cookie carries no value that could break a header.
-    if let Some(cleared) = set_cookie_header(&cleared) {
-        response.headers_mut().append(header::SET_COOKIE, cleared);
-    }
+    let cleared = ZurfurCookie::SignInBinding.cleared_header(secure);
+    response.headers_mut().append(header::SET_COOKIE, cleared);
     response
 }
 

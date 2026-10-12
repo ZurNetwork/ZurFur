@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions for http.rs, async-trait for the recording wrappers",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers",
       "node": false
     },
     {
@@ -36,7 +36,7 @@
     },
     {
       "name": "src/http.rs",
-      "role": "serve / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, session layer, router passed as a closure so test-support never depends on api)",
+      "role": "serve / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, the real session layer (http-cookies), router passed as a closure so test-support never depends on api)",
       "node": false
     },
     {

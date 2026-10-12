@@ -6,7 +6,7 @@ use adapter_mem::MemBackend;
 use axum::Router;
 use composition::Runtime;
 use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use tower_sessions::MemoryStore;
 
 use crate::runtime::{MemRuntime, MemRuntimeBuilder};
 
@@ -18,7 +18,7 @@ pub struct Served {
 }
 
 /// Boots `app` against an in-memory [`Runtime`] built from `builder`,
-/// wrapping it in a fresh session layer, and returns the running server's
+/// wrapping it in a fresh session layer issuing the real session cookie, and returns the running server's
 /// [`Served`] handle.
 pub async fn serve(builder: MemRuntimeBuilder, app: impl FnOnce(Runtime) -> Router) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -28,7 +28,9 @@ pub async fn serve(builder: MemRuntimeBuilder, app: impl FnOnce(Runtime) -> Rout
 
     let MemRuntime { runtime, backend } = builder.public_url(format!("http://{addr}")).build();
 
-    let router = app(runtime).layer(SessionManagerLayer::new(MemoryStore::default()));
+    // The served app speaks plain HTTP, so its cookies are not `Secure`.
+    let session_layer = http_cookies::session_layer(MemoryStore::default(), false);
+    let router = app(runtime).layer(session_layer);
     tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
