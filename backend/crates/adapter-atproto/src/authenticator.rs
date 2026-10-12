@@ -2,8 +2,9 @@
 //! identity resolver. `start` resolves the handle both ways, checks the
 //! authorization endpoint before the Pushed Authorization Request, and binds the
 //! DID and the browser to the request; `complete` lets one callback claim the
-//! sign-in, refuses a callback from any other browser and a sign-in as any other
-//! account, and never leaves a failed sign-in's session stored.
+//! sign-in, refuses a callback from any other browser, a sign-in as any other
+//! account and a grant other than `atproto`, and never leaves a failed
+//! sign-in's session stored.
 
 mod jacquard_bridge;
 
@@ -38,9 +39,10 @@ use crate::resolver::AtprotoIdentityResolver;
 use crate::secret_vault::SecretVault;
 use jacquard_bridge::JacquardBridge;
 
-/// OAuth scopes requested at sign-in: the base `atproto` scope plus the
-/// transitional `transition:generic` grant for the legacy XRPC surface.
-const OAUTH_SCOPES: &str = "atproto transition:generic";
+/// OAuth scopes requested at sign-in: `atproto` alone, which authenticates the
+/// account and asks for no access to its repo. Write access is never requested
+/// here.
+const OAUTH_SCOPES: &str = "atproto";
 
 /// How long a started sign-in stays valid, and so its browser token: the
 /// cookie's lifetime and the age past which the callback is refused.
@@ -220,7 +222,9 @@ impl Signin {
 
     /// Claim the sign-in for this browser, read the bound DID, then run
     /// jacquard's callback (which saves the session it gets) and say whose
-    /// account signed in. Sets `claimed` once this attempt knows it owns the
+    /// account signed in. The bound account's sign-in fails unless the token
+    /// response granted exactly [`OAUTH_SCOPES`], so its saved session is
+    /// discarded. Sets `claimed` once this attempt knows it owns the
     /// sign-in; a claim the deadline cuts off may still commit unseen, which
     /// fails closed (no callback ran, so nothing was saved).
     async fn finish(
@@ -249,9 +253,15 @@ impl Signin {
             .callback(params)
             .await
             .map_err(|error| SigninFailure::Callback(Box::new(error)))?;
-        let signed_in = session.data.read().await.account_did.clone();
+        let (signed_in, granted) = {
+            let data = session.data.read().await;
+            (data.account_did.clone(), data.token_set.scope.clone())
+        };
         if signed_in.as_str() != bound.as_str() {
             return Ok(Completed::OtherAccount(Box::new(session)));
+        }
+        if !grants_identity_only(granted.as_deref()) {
+            return Err(SigninFailure::GrantedScope);
         }
         let did = Did::from(signed_in.as_str().to_owned());
         Ok(Completed::SignedIn(did))
@@ -382,7 +392,8 @@ impl Authenticator for AtprotoAuthenticator {
 
     /// Exchange the callback params for tokens and return the signed-in DID,
     /// which must be the DID `start` bound: another account is deleted, revoked
-    /// and refused with [`AccountMismatch`]. Refused before any code exchange
+    /// and refused with [`AccountMismatch`]; a grant other than exactly
+    /// `atproto` is refused and its session deleted. Refused before any code exchange
     /// unless `browser_binding` is this sign-in's token and no other callback
     /// claimed the sign-in first. Runs in its own task, so a dropped request
     /// cannot cut the cleanup short.
@@ -464,6 +475,10 @@ enum SigninFailure {
     /// The visitor signed in as an account other than the bound one.
     #[error("signed in as a different account")]
     AccountMismatch,
+    /// The token response granted a scope other than exactly `atproto`, or
+    /// named none.
+    #[error("granted scope refused")]
+    GrantedScope,
     /// Revoking another account's tokens failed or ran out of time; its
     /// session was already deleted.
     #[error("revocation failed")]
@@ -484,6 +499,18 @@ enum SigninFailure {
 fn log_failure(failure: &SigninFailure) {
     tracing::info!(failure = %failure, "sign-in failed");
     tracing::debug!(cause = %Causes(failure), "sign-in failure cause");
+}
+
+/// Whether `granted`, the token response's `scope`, is exactly
+/// [`OAUTH_SCOPES`]. A missing scope, a wider one and a narrower one are all
+/// refused.
+fn grants_identity_only(granted: Option<&str>) -> bool {
+    let Some(granted) = granted else {
+        return false;
+    };
+    granted
+        .split_whitespace()
+        .eq(OAUTH_SCOPES.split_whitespace())
 }
 
 /// A fresh browser token: 256 random bits from the OS, base64url, unpadded.

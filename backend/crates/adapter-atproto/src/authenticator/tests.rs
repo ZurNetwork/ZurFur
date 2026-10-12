@@ -153,16 +153,24 @@ async fn serve_oauth(server: &MockServer, authorize: &str) {
     .await;
 }
 
-/// The token endpoint, issuing tokens for `sub`.
+/// The token endpoint, issuing tokens for `sub` with the scope asked for.
 async fn serve_token(server: &MockServer, sub: &Did) {
-    let tokens = json!({
+    serve_token_granting(server, sub, Some(OAUTH_SCOPES)).await;
+}
+
+/// The token endpoint, issuing tokens for `sub` that grant `scope`, or name
+/// no scope at all.
+async fn serve_token_granting(server: &MockServer, sub: &Did, scope: Option<&str>) {
+    let mut tokens = json!({
         "access_token": "access",
         "token_type": "DPoP",
         "expires_in": 3600,
         "refresh_token": "refresh",
-        "scope": OAUTH_SCOPES,
         "sub": sub.as_ref(),
     });
+    if let Some(scope) = scope {
+        tokens["scope"] = json!(scope);
+    }
     let tokens = ResponseTemplate::new(200).set_body_json(tokens);
     mount(server, "POST", AUTH, "/oauth/token", tokens).await;
 }
@@ -312,6 +320,55 @@ async fn start_binds_the_resolved_did_and_hints_the_typed_handle() {
     assert!(query.contains_key("client_id"));
 }
 
+/// The scope words of a space-separated scope list.
+fn scope_words(scopes: &str) -> Vec<&str> {
+    scopes.split_whitespace().collect()
+}
+
+/// The `scope` values in the query of the loopback client id `client_id`.
+fn client_id_scopes(client_id: &str) -> Vec<String> {
+    let client_id = url::Url::parse(client_id).expect("the loopback client id is a URL");
+    client_id
+        .query_pairs()
+        .filter(|(name, _)| name == "scope")
+        .map(|(_, value)| value.into_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn sign_in_asks_for_the_atproto_scope_alone() {
+    let world = world(AUTHORIZE, HANDLE).await;
+
+    let signin = world
+        .authenticator
+        .start(&handle(HANDLE))
+        .await
+        .expect("sign-in starts");
+
+    let fields = par_fields(&world.server).await;
+    let pushed_scope = fields.get("scope").expect("the PAR carries a scope");
+    assert_eq!(
+        scope_words(pushed_scope),
+        ["atproto"],
+        "the PAR asks for `atproto` alone"
+    );
+    let url = url::Url::parse(&signin.authorization_url).expect("an authorization URL");
+    let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let client_id = query.get("client_id").expect("the URL names the client");
+    let client_scopes = client_id_scopes(client_id);
+    let expected_client_scopes = vec!["atproto".to_owned()];
+    assert_eq!(
+        client_scopes, expected_client_scopes,
+        "the client id the browser carries declares `atproto` alone"
+    );
+    let par_mentions_transition = fields.values().any(|value| value.contains("transition"));
+    let url_mentions_transition = signin.authorization_url.contains("transition");
+    assert!(
+        !par_mentions_transition && !url_mentions_transition,
+        "no `transition` scope travels in the PAR or the authorization URL"
+    );
+}
+
 #[tokio::test]
 async fn an_authorization_endpoint_failing_the_url_policy_is_refused_before_the_par() {
     let refused_endpoints = [
@@ -374,6 +431,92 @@ async fn the_bound_account_completes() {
         .expect("the bound account signs in");
 
     assert_eq!(did, alice());
+}
+
+/// Complete a sign-in for the bound account whose token response grants
+/// `scope`, and check it is refused and leaves no session or request behind.
+async fn a_grant_of(scope: Option<&str>) {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token_granting(&world.server, &alice(), scope).await;
+    let (state, binding) = started(&world).await;
+
+    let result = completed(&world, &state, &binding).await;
+
+    let error = result.expect_err("the grant is refused");
+    assert!(
+        matches!(failure_of(&error), Some(SigninFailure::GrantedScope)),
+        "refused for its granted scope: {error:?}"
+    );
+    let session = world
+        .store
+        .get_session(&at_did(&alice()), &state)
+        .await
+        .expect("the store answers");
+    assert!(session.is_none(), "the refused session row is gone");
+    assert!(
+        !still_pending(&world, &state).await,
+        "and so is its request"
+    );
+}
+
+#[tokio::test]
+async fn a_grant_wider_than_atproto_is_refused_and_its_session_discarded() {
+    a_grant_of(Some("atproto transition:generic")).await;
+}
+
+#[tokio::test]
+async fn a_grant_naming_no_scope_is_refused_and_its_session_discarded() {
+    a_grant_of(None).await;
+}
+
+#[test]
+fn only_exactly_atproto_is_identity_only() {
+    let cases = [
+        (Some("atproto"), true),
+        (Some(" atproto "), true),
+        (Some("atproto transition:generic"), false),
+        (Some("transition:generic atproto"), false),
+        (Some("atproto repo:app.bsky.feed.post"), false),
+        (Some("transition:generic"), false),
+        (Some(""), false),
+        (None, false),
+    ];
+
+    for (granted, expected) in cases {
+        assert_eq!(
+            grants_identity_only(granted),
+            expected,
+            "the verdict on {granted:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn another_account_with_a_wider_grant_is_refused_as_a_mismatch_and_revoked() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token_granting(
+        &world.server,
+        &mallory(),
+        Some("atproto transition:generic"),
+    )
+    .await;
+    let (state, binding) = started(&world).await;
+
+    let result = completed(&world, &state, &binding).await;
+
+    let error = result.expect_err("another account is refused");
+    assert!(
+        error.is::<AccountMismatch>(),
+        "the account check runs before the scope check: {error:?}"
+    );
+    let revocations = hits(&world.server, AUTH, "/oauth/revoke").await;
+    assert_eq!(revocations, 1, "the mismatched tokens are revoked");
+    let session = world
+        .store
+        .get_session(&at_did(&mallory()), &state)
+        .await
+        .expect("the store answers");
+    assert!(session.is_none(), "the mismatched session row is gone");
 }
 
 #[tokio::test]

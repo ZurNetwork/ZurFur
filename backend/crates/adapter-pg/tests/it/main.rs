@@ -23,6 +23,7 @@ mod commission_positioning;
 mod commission_seat;
 mod commission_seat_invitation;
 mod commission_slot;
+mod delete_stored_oauth_sessions;
 mod key_store;
 mod no_bare_pool_writes;
 mod plc_operation_log;
