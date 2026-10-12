@@ -1,4 +1,4 @@
-import type { HandleFetch, RequestEvent } from '@sveltejs/kit';
+import { isRedirect, type HandleFetch, type RequestEvent } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // SvelteKit's real server-side `event.fetch`, reached through its internals on
 // purpose: which cookies it re-attaches is source-only behaviour, so a kit bump
@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { create_fetch } from '../node_modules/@sveltejs/kit/src/runtime/server/fetch.js';
 // @ts-expect-error -- kit internal, untyped
 import { get_cookies } from '../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
-import { handle, handleFetch } from './hooks.server';
+import { handle, handleError, handleFetch } from './hooks.server';
 
 type HandleInput = Parameters<typeof handle>[0];
 
@@ -67,6 +67,77 @@ describe('handle', () => {
 		const response = await handle(input);
 
 		expect(response.headers.get('cache-control')).toBe('private, no-store');
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
+		expect(response.headers.get('x-frame-options')).toBe('DENY');
+		expect(response.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+	});
+
+	it('refuses framing on an anonymous response too', async () => {
+		const request = new Request('http://127.0.0.1:5174/login');
+		const event = { route: { id: '/(public)/login' }, request } as unknown as RequestEvent;
+		const resolve = () => Promise.resolve(new Response('<p>sign in</p>'));
+		const response = await handle({ event, resolve });
+
+		expect(response.headers.get('x-frame-options')).toBe('DENY');
+		expect(response.headers.has('cache-control')).toBe(false);
+	});
+
+	it('is wired to the sign-in gate: a crafted (session) data request never resolves', async () => {
+		const request = new Request(
+			'http://127.0.0.1:5174/accounts/__data.json?x-sveltekit-invalidated=001'
+		);
+		const anonymousMe = () =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						type: 'urn:zurfur:error:not-authenticated',
+						code: 'not_authenticated',
+						title: 'x',
+						detail: 'x',
+						status: 401
+					}),
+					{ status: 401, headers: { 'content-type': 'application/problem+json' } }
+				)
+			);
+		const event = {
+			route: { id: '/(session)/accounts' },
+			url: new URL(request.url),
+			request,
+			fetch: anonymousMe,
+			locals: {}
+		} as unknown as RequestEvent;
+		const resolve = vi.fn(() => Promise.resolve(new Response('UNGUARDED-DATA')));
+
+		const outcome: unknown = await Promise.resolve()
+			.then(() => handle({ event, resolve }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(isRedirect(outcome) && outcome.location).toBe('/login');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe('handleError', () => {
+	it('is wired to log the route template only and return a fixed message', async () => {
+		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const event = {
+			route: { id: '/(session)/den/[...path]' },
+			url: new URL('http://127.0.0.1:5174/den/accounts/did:plc:leak')
+		} as unknown as RequestEvent;
+		const input: Parameters<typeof handleError>[0] = {
+			error: new Error('did:plc:leak'),
+			event,
+			status: 500,
+			message: 'Internal Error'
+		};
+
+		const result = await handleError(input);
+		const logged = JSON.stringify(errorLog.mock.calls);
+		errorLog.mockRestore();
+
+		expect(result).toEqual({ message: 'Internal Error' });
+		expect(logged).not.toContain('did:plc:leak');
+		expect(logged).toContain('/(session)/den/[...path]');
 	});
 });
 

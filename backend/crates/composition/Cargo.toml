@@ -17,10 +17,14 @@ figment = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+# The log filter both drivers install (`logging`): DNS-client events dropped.
+tracing-subscriber = { workspace = true }
 # Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
 base64 = { workspace = true }
 # Build the OAuth redirect URI from `public_url`.
 fluent-uri = { workspace = true }
+# `Config::public_url`: the public origin every redirect is built on.
+url = { workspace = true }
 
 [dev-dependencies]
 # `figment::Jail` — the config-precedence test.

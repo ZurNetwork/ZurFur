@@ -92,7 +92,9 @@ describe('zurfurApiMock', () => {
 
 	it('startSignin returns the local mock callback URL, handle encoded', async () => {
 		const outcome = await runOn(createMockStore(), signinOutcome('bob test.zurfur.app'));
-		expect(outcome).toEqual({ location: `${MOCK_SIGNIN_PATH}?handle=bob%20test.zurfur.app` });
+		expect(outcome).toMatchObject({
+			location: `${MOCK_SIGNIN_PATH}?handle=bob%20test.zurfur.app`
+		});
 	});
 
 	it('createAccount adds a new owner membership visible in listAccounts', async () => {

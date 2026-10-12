@@ -1,0 +1,43 @@
+{
+  "path": "backend/crates/http-cookies",
+  "charted": "2026-10-11",
+  "short": "Every cookie the HTTP driver sets",
+  "is": "The leaf crate naming every cookie the HTTP driver sets (ZurfurCookie: Session, SignInBinding), the one builder that sets their attributes, and the session layer that issues the session cookie; api and test-support both consume it.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "No cookie name or attribute is spelled outside this crate; drivers and the test rig take them from ZurfurCookie or session_layer.",
+    "Wire output is pinned byte for byte by zurfur_cookie/tests.rs: every Set-Cookie, set and clear, secure and not, and the live session layer's.",
+    "Lives outside composition so composition stays HTTP-free; never depends on another workspace crate."
+  ],
+  "entry_points": [
+    "src/lib.rs",
+    "src/zurfur_cookie.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "crate manifest — http + tower-sessions + strum; no intra-workspace deps",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "façade: re-exports ZurfurCookie, set_cookie_header, session_layer",
+      "node": false
+    },
+    {
+      "name": "src/zurfur_cookie.rs",
+      "role": "ZurfurCookie: name(secure), cookie() builder, cleared(), infallible cleared_header(); set_cookie_header; session_layer with the 7-day inactivity expiry",
+      "node": false
+    },
+    {
+      "name": "src/zurfur_cookie/tests.rs",
+      "role": "pins every Set-Cookie byte for byte, including the served session layer's",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": []
+}

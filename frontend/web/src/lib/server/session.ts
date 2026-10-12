@@ -7,7 +7,7 @@
 import { Effect } from 'effect';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
-import { ZurfurApi } from './api/zurfur-api';
+import { type BrowserBindingCookie, ZurfurApi } from './api/zurfur-api';
 import type { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
 
 /**
@@ -36,12 +36,18 @@ export const sessionOrAnonymous: Effect.Effect<
 	ZurfurApi
 > = optionalSession.pipe(Effect.catchTag('NetworkFailure', () => Effect.succeed(undefined)));
 
-/** The two ways a sign-in start comes back: bounce to the PDS, or a problem to render. */
-export type SigninOutcome = { location: string } | { problem: Problem };
+/**
+ * The two ways a sign-in start comes back: bounce to the PDS carrying the
+ * browser-binding cookie, or a problem to render.
+ */
+export type SigninOutcome =
+	| { readonly location: string; readonly browserBinding: BrowserBindingCookie }
+	| { readonly problem: Problem };
 
 /**
- * Start the atproto OAuth flow: the backend's 303 becomes `{location}` (the
- * PDS authorize URL to relay as a real navigation), a rejected handle becomes
+ * Start the atproto OAuth flow: the backend's 303 becomes `{location,
+ * browserBinding}` (the PDS authorize URL to relay as a real navigation, and
+ * the cookie to set on the browser's response), a rejected handle becomes
  * `{problem}` for the page to render. Broken contract / dead backend stay in
  * the error channel — the action's 500s, as before Effect.
  */
@@ -50,30 +56,40 @@ export function signinOutcome(
 ): Effect.Effect<SigninOutcome, NetworkFailure | ContractViolation, ZurfurApi> {
 	const started = Effect.gen(function* () {
 		const api = yield* ZurfurApi;
-		const location = yield* api.startSignin(handle);
-		return { location } satisfies SigninOutcome;
+		const started = yield* api.startSignin(handle);
+		return {
+			location: started.location,
+			browserBinding: started.browserBinding
+		} satisfies SigninOutcome;
 	});
 	return started.pipe(
 		Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<SigninOutcome>({ problem }))
 	);
 }
 
-/** How a sign-out lands: cookie names to mirror-clear, or the status that broke it. */
-export type SignoutOutcome = { clearedCookies: readonly string[] } | { failedStatus: number };
+/**
+ * How a sign-out lands: the backend confirmed it (with the cookie names it
+ * cleared), or it didn't — it answered with a failure, or couldn't be reached.
+ */
+export type SignoutOutcome =
+	| { readonly clearedCookies: readonly string[] }
+	| { readonly unconfirmed: 'refused' | 'unreachable' };
 
 /**
  * End the session backend-side. Success carries the cookie names the backend
  * cleared (the action mirrors the clears onto the browser's response); a
- * non-redirect answer becomes `{failedStatus}` for the action's 502.
+ * failing answer or an unreachable backend is `{unconfirmed}`, never an
+ * error, so the action can still clear the browser's session.
  */
-export const signoutOutcome: Effect.Effect<SignoutOutcome, NetworkFailure, ZurfurApi> = Effect.gen(
+export const signoutOutcome: Effect.Effect<SignoutOutcome, never, ZurfurApi> = Effect.gen(
 	function* () {
 		const api = yield* ZurfurApi;
 		const clearedCookies = yield* api.signout;
 		return { clearedCookies } satisfies SignoutOutcome;
 	}
 ).pipe(
-	Effect.catchTag('SignoutFailed', ({ status }) =>
-		Effect.succeed<SignoutOutcome>({ failedStatus: status })
-	)
+	Effect.catchTags({
+		SignoutFailed: () => Effect.succeed<SignoutOutcome>({ unconfirmed: 'refused' }),
+		NetworkFailure: () => Effect.succeed<SignoutOutcome>({ unconfirmed: 'unreachable' })
+	})
 );

@@ -74,7 +74,7 @@
     },
     {
       "name": "handle.rs",
-      "role": "validated, normalized atproto handle — the one claim-validation gate",
+      "role": "Handle (a claimed Account handle — the one claim-validation gate), HandleDomain, and AtHandle (any valid atproto handle Zurfur looks up); both handle types share the syntax rules in handle/syntax.rs",
       "node": false
     },
     {
@@ -252,7 +252,7 @@
     {
       "page": 26050561,
       "title": "Confusable Handles & the Punycode Policy",
-      "governs": "handle.rs PunycodeLabel variant"
+      "governs": "handle.rs PunycodeLabel variant; handle/at_handle.rs: AtHandle accepts xn-- labels — a foreign identity being looked up, not a claim — so the punycode ban stays on Handle (Account handles)"
     },
     {
       "page": 26804226,

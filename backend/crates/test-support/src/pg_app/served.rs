@@ -5,8 +5,6 @@ use axum::Router;
 use base64::Engine as _;
 use composition::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime};
 use domain::elements::profile::Profile;
-use tower_sessions::cookie::{SameSite, time::Duration};
-use tower_sessions::{Expiry, SessionManagerLayer};
 
 use super::InProcessPds;
 use crate::http::client;
@@ -45,12 +43,7 @@ pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
         ..live
     };
 
-    let sessions = SessionManagerLayer::new(PgSessionStore::new(runtime.pool.clone()))
-        .with_name("zurfur.sid")
-        .with_http_only(true)
-        .with_same_site(SameSite::Lax)
-        .with_secure(false)
-        .with_expiry(Expiry::OnInactivity(Duration::days(7)));
+    let sessions = http_cookies::session_layer(PgSessionStore::new(runtime.pool.clone()), false);
     let router = app(runtime.clone()).layer(sessions);
     tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
@@ -102,7 +95,12 @@ impl PgServed {
             .headers()
             .get("location")
             .expect("the callback redirects somewhere");
-        assert_eq!(landing, "/", "sign-in lands on the home page, not an error");
+        let home = format!("{}/", self.base_url);
+        assert_eq!(
+            landing,
+            home.as_str(),
+            "sign-in lands on the home page, not an error"
+        );
 
         browser
     }
@@ -110,12 +108,13 @@ impl PgServed {
 
 /// A dev-profile [`Config`] on `database_url`, served at `public_url`: the
 /// shipped example root key with PLC submission off, so minting stays local.
+/// Panics when `public_url` is not a URL.
 fn config(public_url: &str, database_url: &str) -> Config {
     let root_key = base64::engine::general_purpose::STANDARD.encode(EXAMPLE_DEV_ROOT_KEY);
     Config {
         env: Environment::DEV,
         http_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
-        public_url: public_url.to_string(),
+        public_url: url::Url::parse(public_url).expect("a URL"),
         database_url: database_url.to_string(),
         log_level: "info".to_string(),
         handle_domain: "zurfur.app".parse().expect("a valid handle domain"),

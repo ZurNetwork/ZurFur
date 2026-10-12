@@ -1,8 +1,12 @@
-import type { Handle, HandleFetch } from '@sveltejs/kit';
+import type { Handle, HandleFetch, HandleServerError } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
-import { sessionNoStore } from '$lib/server/session-cache';
+import { logUnexpectedError } from '$lib/server/error-log';
+import { refuseFraming } from '$lib/server/frame-headers';
+import { handleChain } from '$lib/server/handle-chain';
+import { sessionGate } from '$lib/server/session-gate';
+import { sessionHeaders } from '$lib/server/session-headers';
 
 /**
  * PROD GUARD: mock mode must be UNREACHABLE in a real server, checked at
@@ -49,5 +53,12 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	return fetch(proxied);
 };
 
-/** Signed-in responses are never stored: each leaves with `private, no-store`. */
-export const handle: Handle = sessionNoStore;
+/**
+ * Every response refuses to be framed; signed-in responses are never stored
+ * and never leak their address (`private, no-store`, `Referrer-Policy:
+ * same-origin`); and no `(session)` load or action runs without a session.
+ */
+export const handle: Handle = handleChain(refuseFraming, sessionHeaders, sessionGate);
+
+/** An unexpected server error is logged by its route template only, and pages get a fixed message. */
+export const handleError: HandleServerError = logUnexpectedError;

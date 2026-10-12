@@ -61,7 +61,12 @@ describe('redirect: "manual" — real 303 + Location + Set-Cookie survive undici
 	beforeAll(async () => {
 		server = createServer((request, response) => {
 			if (request.url?.endsWith('/signin')) {
-				response.writeHead(303, { location: authorizeUrl }).end();
+				response
+					.writeHead(303, {
+						location: authorizeUrl,
+						'set-cookie': ['zurfur.signin=tok; HttpOnly; SameSite=Lax; Path=/; Max-Age=600']
+					})
+					.end();
 				return;
 			}
 			if (request.url?.endsWith('/logout')) {
@@ -85,9 +90,12 @@ describe('redirect: "manual" — real 303 + Location + Set-Cookie survive undici
 	const realFetch: FetchFunction = (input: RequestInfo | URL, init?: RequestInit) =>
 		fetch(`${origin}${requestUrl(input).replace(/^\/api\/v1/, '')}`, init);
 
-	it('liveStartSignin reads the real 303 status and Location header', async () => {
-		const location = await runLive(realFetch, startSignin('alice.zurfur.app'));
-		expect(location).toBe(authorizeUrl);
+	it('liveStartSignin reads the real 303 status, Location and browser-binding cookie', async () => {
+		const started = await runLive(realFetch, startSignin('alice.zurfur.app'));
+		expect(started).toEqual({
+			location: authorizeUrl,
+			browserBinding: { name: 'zurfur.signin', value: 'tok', maxAge: 600, secure: false }
+		});
 	});
 
 	it('liveSignout reads the real 303 status and Set-Cookie headers', async () => {

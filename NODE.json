@@ -51,7 +51,7 @@
     },
     {
       "name": ".github/",
-      "role": "CI workflow (fmt/clippy/test/contract/deny/typos/web) + copilot-instructions.md",
+      "role": "CI workflow (changes/fmt/clippy/test/contract/deny/typos/nodes/hooks/web), the daily advisories workflow, copilot-instructions.md",
       "node": false
     },
     {
@@ -127,6 +127,11 @@
     {
       "name": "docs/",
       "role": "design-index.md — generated pointer index into the design corpus, never content",
+      "node": true
+    },
+    {
+      "name": "engineer-tools/",
+      "role": "tools the Engineer runs by hand (review-pr.sh)",
       "node": true
     },
     {

@@ -7,6 +7,9 @@ on:
     branches: [main, "feature/**", "bug/**"]
   push:
     branches: [main]
+  # The merge queue on main: every required check must also run on the
+  # queue's group commit, or the queue waits until its check timeout.
+  merge_group:
 
 permissions:
   contents: read
@@ -16,60 +19,128 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides whether the Rust, contract and web jobs can skip: only a pull
+  # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
+  # them. Fails closed: on a push, on any error, or when the checked-out merge
+  # commit's parents are not exactly the PR's base and head, `code` is true and
+  # everything runs (scripts/ci-changes.sh). A merge-queue group always runs
+  # everything; only its `lock` (whether advisories block) follows its paths.
+  # Dependents run unless `code` is exactly 'false', so a failed or cancelled
+  # detection also runs everything. Nothing from the event reaches `run:`
+  # text: the SHAs arrive through env.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      lock: ${{ steps.detect.outputs.lock }}
+    steps:
+      # A PR: its test merge commit plus its two parents (base tip, PR head).
+      # A merge group: its head with full history, which holds the group's
+      # base however many queued PRs sit between them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '2' }}
+          persist-credentials: false
+      - id: detect
+        name: Classify the changed paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        # The detection is scripts/ci-changes.sh (tested by `just scripts-test`),
+        # taken from the BASE commit so a PR can't rewrite the logic that decides
+        # whether its own jobs run. No base copy, or anything else odd: run all.
+        run: |
+          result=""
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_EVENT_NAME" != merge_group ]; then
+            echo "not a pull request or a merge group: run everything"
+          elif printf '%s' "$BASE_SHA" | grep -qE '^[0-9a-f]{40}$' &&
+               git show "$BASE_SHA:scripts/ci-changes.sh" > "$RUNNER_TEMP/ci-changes.sh" 2>/dev/null; then
+            result=$(CI_CHANGES_TMP="$RUNNER_TEMP" sh "$RUNNER_TEMP/ci-changes.sh") || result=""
+          else
+            echo "::warning::changes: the base has no scripts/ci-changes.sh; running everything"
+          fi
+          code=true
+          lock=true
+          if printf '%s\n' "$result" | grep -qx 'code=false'; then code=false; fi
+          if printf '%s\n' "$result" | grep -qx 'lock=false'; then lock=false; fi
+          echo "code=$code lock=$lock"
+          printf 'code=%s\nlock=%s\n' "$code" "$lock" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: fmt
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: rustfmt
+          persist-credentials: false
+      # The toolchain and components rust-toolchain.toml pins: one pin for
+      # every machine and for CI.
+      - run: rustup toolchain install --profile minimal
       - run: cargo fmt --all --check
 
   clippy:
     name: clippy
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - run: rustup toolchain install --profile minimal
+      # Only main saves the cache; a PR restores main's and saves nothing, so
+      # main's entry isn't evicted under the repository's cache cap.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # --locked: build exactly what Cargo.lock pins (a git dep's locked SHA,
       # not a re-resolve of its tag); a stale lockfile fails loudly here.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
 
   contract:
     name: contract
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       # Full history: `buf breaking --against` compares the PR's contract to
       # the base branch's, which needs the base ref fetched.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       # Pinned buf CLI (a Go binary; no JVM, no registry, no BUF_TOKEN — the
-      # google/api deps are vendored in-tree).
-      - uses: bufbuild/buf-setup-action@v1
+      # google/api deps are vendored in-tree). setup_only: install buf and
+      # nothing else; the steps below run lint and breaking themselves.
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:
           version: '1.72.0'
-          github_token: ${{ github.token }}
+          setup_only: true
       # Lint the corpus (STANDARD rules; see contract/buf.yaml).
       - run: buf lint contract
       # Frontend codegen drift (ZMVP-161): regenerate protobuf-es output and
       # fail on any drift — the committed generated TS must match the corpus.
       # (The backend's generated module is drift-checked by the cargo test
       # job's contract_current test; this is its frontend twin.)
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: yarn
@@ -88,50 +159,84 @@ jobs:
           (cd contract && buf generate)
           git add -A frontend/web/src/lib/server/api/generated
           git diff --cached --exit-code -- frontend/web/src/lib/server/api/generated
-      # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs,
-      # against the base branch. Once the first release tag exists this gains
-      # a second comparison against the last released tag (VERSIONING.md §2
-      # "two gates, not one"). The pre-release period ends at the first alpha
-      # tag (contract/lifecycle.toml); a pre-alpha tag is not a release tag.
+      # The breaking gate at WIRE_JSON (DD 40992770 decision 10): on PRs and
+      # merge-queue groups, against the base branch. Once the first release
+      # tag exists this gains a second comparison against the last released
+      # tag (VERSIONING.md §2 "two gates, not one"). The pre-release period
+      # ends at the first alpha tag (contract/lifecycle.toml); a pre-alpha tag
+      # is not a release tag.
       # Bootstrap guard: a base that predates the corpus has nothing to
       # compare against (buf fails with "had no .proto files"), and skipping
       # is CORRECT there — the first corpus commit cannot break a contract
       # that does not exist yet.
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          # A merge group names its base as refs/heads/<branch>.
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
         run: |
-          if git ls-tree -r "origin/${{ github.base_ref }}" --name-only | grep -q '^contract/.*\.proto$'; then
-            buf breaking contract --against ".git#branch=origin/${{ github.base_ref }},subdir=contract"
+          BASE_REF="${BASE_REF#refs/heads/}"
+          # A base we can't read must fail, not pass as a bootstrap skip.
+          if [ -z "$BASE_REF" ] || ! git rev-parse --verify --quiet "origin/$BASE_REF" >/dev/null; then
+            echo "::error::contract: base branch origin/$BASE_REF not found"
+            exit 1
+          fi
+          if git ls-tree -r "origin/$BASE_REF" --name-only | grep -q '^contract/.*\.proto$'; then
+            buf breaking contract --against ".git#branch=origin/$BASE_REF,subdir=contract"
           else
-            echo "base origin/${{ github.base_ref }} has no contract corpus (bootstrap) — breaking gate skipped"
+            echo "base origin/$BASE_REF has no contract corpus (bootstrap) — breaking gate skipped"
           fi
 
+  # Licences, bans and sources always count. Advisories count only when the
+  # PR changes Cargo.lock (or detection can't tell); otherwise a newly
+  # published advisory reports here without failing unrelated PRs, and the
+  # daily Advisories workflow catches it on main.
   deny:
     name: deny
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Matches the lockfile-assertion convention the other jobs use.
-          # --all-features: scan the full feature graph, not just default features.
+          persist-credentials: false
+      # --locked matches the other jobs' lockfile assertion; --all-features
+      # scans the full feature graph, not just default features. MPL-2.0
+      # (jacquard family) is Engineer-allowed in deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        with:
           arguments: --locked --all-features
-          # Full four-check set (advisories, licenses, bans, sources) —
-          # all green: every workspace crate sets `publish = false`, and
-          # MPL-2.0 (jacquard family) is Engineer-allowed in deny.toml.
+          command: check
+          command-arguments: bans licenses sources
+      - id: advisories
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        continue-on-error: ${{ needs.changes.outputs.lock == 'false' }}
+        with:
+          arguments: --locked --all-features
+          command: check
+          command-arguments: advisories
+      - if: ${{ steps.advisories.outcome == 'failure' }}
+        run: |
+          echo "::warning::deny: an advisory matches a dependency this PR does not change; reported, not blocking. The daily Advisories run on main tracks it."
 
   typos:
     name: typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
   nodes:
     name: nodes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.49.0'
       # The design corpus (ZurNetwork/zurfur-design) is a private sibling repo,
       # never checked out here — $ZURFUR_DESIGN_DIR stays absent in CI, so this
       # prints a skip notice rather than failing (see scripts/design-index-check.sh).
@@ -147,21 +252,36 @@ jobs:
     name: hooks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.49.0'
       # Fixture-driven; needs no live Claude session, no `nodes`/`jq` install
       # beyond what design-refs.sh's own tests stub or skip.
       - run: just hooks-test
+      # Fixture tests for the CI path classifier, gate-light and pr-wait.
+      - run: just scripts-test
+      # Every action pinned to a commit SHA, and the workflows' typos,
+      # cargo-deny and buf versions equal to the Justfile's pins.
+      - run: just tools-check --pins-only
+      # The TOML files the `changes` job lets skip the Rust jobs still parse.
+      - run: just toml-check
 
   web:
     name: web
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Node 24 (current LTS): vite 8 requires >= 20.19; spec-lint's pin stays untouched.
           node-version: '24'

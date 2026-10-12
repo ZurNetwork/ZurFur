@@ -1,19 +1,25 @@
 //! The session route group: the browser OAuth sign-in flow — `POST /signin`,
 //! `GET /signin-callback`, `GET /me`, `POST /logout`. `/signin` and
 //! `/signin-callback` redirect the browser; `/me` is JSON whoami (`401` on no
-//! session, not a redirect). Callback failures redirect to `/login` with a
-//! stable `error=<code>`, never the PDS-supplied reason.
+//! session, not a redirect). Every redirect is an absolute URL on the public
+//! origin; callback failures land on `/login` with a stable `error=<code>`
+//! ([`SignInFailure`]), never the PDS-supplied reason.
 
 use application::user::me::{self, MeError, MeQuery};
 use axum::{
     Form, Json, Router,
-    extract::{Query, State},
+    extract::{Query, State, rejection::FormRejection},
+    http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use domain::ports::UnitOfWork;
+use domain::elements::handle::AtHandle;
+use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
+use http_cookies::{ZurfurCookie, set_cookie_header};
 use serde::Deserialize;
 use tower_sessions::Session;
+use tower_sessions::cookie::{Cookie, time};
+use url::Url;
 
 use crate::{
     AppState, SESSION_USER_KEY, extract::CallingUser, generated::GetMeResponse, problem::Problem,
@@ -47,46 +53,105 @@ struct CallbackQuery {
     error: Option<String>,
 }
 
-/// `POST /signin` (form body) — resolves the handle via the Authenticator and
-/// redirects the browser to the PDS authorization URL.
+/// `POST /signin` (form body) — trims what the visitor typed, parses it as a
+/// handle, and redirects the browser to the PDS authorization URL the
+/// Authenticator returns, setting the cookie that binds the sign-in to this browser.
 ///
-/// - `303` → PDS authorize URL
-/// - `422 invalid_request` — unknown or malformed handle
+/// - `303` → PDS authorize URL, with the browser-binding cookie
+/// - `422 invalid_request` — a body that is not a form carrying `handle`, not a
+///   handle (a URL or a DID included), or a handle that could not begin
+///   sign-in; one identical body for every cause
 async fn signin(
     State(state): State<AppState>,
-    Form(f): Form<SigninForm>,
-) -> Result<Redirect, Problem> {
-    // Steady message on failure — the underlying error can be noisy/internal.
-    let url = state.auth.start(&f.handle).await.map_err(|_| {
-        Problem::invalid_request(
-            "That handle could not be used to sign in. Check it and try again.",
-        )
-    })?;
-    Ok(Redirect::to(&url))
+    form: Result<Form<SigninForm>, FormRejection>,
+) -> Result<Response, Problem> {
+    // An unreadable body is refused like every other cause, never with axum's own text.
+    let Form(form) = form.map_err(|_| signin_refused())?;
+    // The handle type is strict; trimming what a person typed happens here.
+    let handle = form
+        .handle
+        .trim()
+        .parse::<AtHandle>()
+        .map_err(|_| signin_refused())?;
+    let started = state
+        .auth
+        .start(&handle)
+        .await
+        .map_err(|_| signin_refused())?;
+    let secure = state.config.env.secure_cookies();
+    // The binding lives exactly as long as the sign-in it binds.
+    let max_age = time::Duration::try_from(started.lifetime).unwrap_or(time::Duration::ZERO);
+    let binding =
+        ZurfurCookie::SignInBinding.cookie(secure, started.browser_binding.as_ref(), max_age);
+    let binding = set_cookie_header(&binding).ok_or_else(signin_refused)?;
+    let headers = [(header::SET_COOKIE, binding)];
+    let response = (headers, Redirect::to(&started.authorization_url)).into_response();
+    Ok(response)
 }
 
-/// `GET /signin-callback` — completes sign-in: exchanges `code` for a DID,
-/// provisions the User (mint-or-return), rotates the session id, and stores
-/// the User's id in the session.
+/// The browser-binding token the request's `Cookie` header carries, if any.
+fn presented_browser_binding(headers: &HeaderMap, secure: bool) -> Option<BrowserBinding> {
+    let name = ZurfurCookie::SignInBinding.name(secure);
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(Cookie::split_parse)
+        .filter_map(Result::ok)
+        .find(|cookie| cookie.name() == name)
+        .map(|cookie| BrowserBinding::from(cookie.value().to_owned()))
+}
+
+/// The one answer a failed `POST /signin` gets, whatever failed: an anonymous
+/// visitor learns nothing about why.
+fn signin_refused() -> Problem {
+    Problem::invalid_request("That handle could not be used to sign in. Check it and try again.")
+}
+
+/// `GET /signin-callback` — completes sign-in: checks the browser-binding
+/// cookie, exchanges `code` for a DID, provisions the User (mint-or-return),
+/// rotates the session id, and stores the User's id in the session. Every
+/// answer clears the browser-binding cookie, success or failure.
 ///
-/// - `303 /` — success (`Set-Cookie` on the response)
-/// - `303 /login?error=denied|invalid_callback|exchange_failed` — failure modes
+/// - `303 <public origin>/` — success (`Set-Cookie` on the response)
+/// - `303 <public origin>/login?error=<SignInFailure>` — failure modes;
+///   `account_mismatch` when the visitor signed in to a different account
+///   than the handle they typed
 /// - `500 internal_error` — provisioning or session-write failure
 async fn signin_callback(
     State(state): State<AppState>,
     session: Session,
+    headers: HeaderMap,
     Query(q): Query<CallbackQuery>,
 ) -> Response {
+    let secure = state.config.env.secure_cookies();
+    let presented = presented_browser_binding(&headers, secure);
+    let mut response = complete_signin(state, session, q, presented).await;
+    let cleared = ZurfurCookie::SignInBinding.cleared_header(secure);
+    response.headers_mut().append(header::SET_COOKIE, cleared);
+    response
+}
+
+/// The callback itself: every outcome as a response, the cookie left to the caller.
+async fn complete_signin(
+    state: AppState,
+    session: Session,
+    q: CallbackQuery,
+    presented: Option<BrowserBinding>,
+) -> Response {
+    let public_url = &state.config.public_url;
     // Denied: no crash, no blank page — the PDS-supplied reason isn't echoed.
     if q.error.is_some() {
-        return Redirect::to("/login?error=denied").into_response();
+        return redirect(login_location(public_url, SignInFailure::Denied));
     }
     let Some(code) = q.code else {
-        return Redirect::to("/login?error=invalid_callback").into_response();
+        return redirect(login_location(public_url, SignInFailure::InvalidCallback));
     };
 
-    let Ok(did) = state.auth.complete(code, q.state, q.iss).await else {
-        return Redirect::to("/login?error=exchange_failed").into_response();
+    let completed = state.auth.complete(code, q.state, q.iss, presented).await;
+    let did = match completed {
+        Ok(did) => did,
+        Err(error) => return redirect(login_location(public_url, callback_failure(&error))),
     };
 
     // Mint-or-return: recognizes rather than registers (idempotent, one DID = one User).
@@ -112,7 +177,59 @@ async fn signin_callback(
         )
         .into_response();
     }
-    Redirect::to("/").into_response()
+    redirect(home_location(public_url))
+}
+
+/// Why a sign-in callback failed, as the stable code `/login?error=` carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::AsRefStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+enum SignInFailure {
+    /// The visitor declined at their PDS.
+    Denied,
+    /// The PDS came back without a code.
+    InvalidCallback,
+    /// The code could not be exchanged for a DID.
+    ExchangeFailed,
+    /// The visitor signed in to another account than the handle they typed.
+    AccountMismatch,
+}
+
+/// The failure a refused code exchange reports: its own for the wrong account,
+/// the generic one for everything else.
+fn callback_failure(error: &anyhow::Error) -> SignInFailure {
+    if error.is::<AccountMismatch>() {
+        SignInFailure::AccountMismatch
+    } else {
+        SignInFailure::ExchangeFailed
+    }
+}
+
+/// `public_url` at `path`, its own path, query and fragment replaced.
+fn at_path(public_url: &Url, path: &str) -> Url {
+    let mut location = public_url.clone();
+    location.set_path(path);
+    location.set_query(None);
+    location.set_fragment(None);
+    location
+}
+
+/// The frontend root on the public origin.
+fn home_location(public_url: &Url) -> Url {
+    at_path(public_url, "/")
+}
+
+/// The sign-in page on the public origin, carrying `failure`'s code.
+fn login_location(public_url: &Url, failure: SignInFailure) -> Url {
+    let mut location = at_path(public_url, "/login");
+    location
+        .query_pairs_mut()
+        .append_pair("error", failure.as_ref());
+    location
+}
+
+/// A `303 See Other` to `location`.
+fn redirect(location: Url) -> Response {
+    Redirect::to(location.as_str()).into_response()
 }
 
 /// `GET /me` — the JSON whoami: resolves the session to a User, no PDS round trip.
@@ -164,11 +281,15 @@ impl From<me::Output> for GetMeResponse {
 /// `POST /logout` — destroys the session server-side (store row + cookie), so a
 /// stolen cookie dies with it. A stale/already-gone session still succeeds.
 ///
-/// - `303 /` — success (including a repeat sign-out) · `500` — store failure
-async fn logout(session: Session) -> Response {
+/// - `303 <public origin>/` — success (including a repeat sign-out) · `500` —
+///   store failure
+async fn logout(State(state): State<AppState>, session: Session) -> Response {
     if session.flush().await.is_err() {
         return Problem::internal_error("Sign-out couldn't be completed. Please try again.")
             .into_response();
     }
-    Redirect::to("/").into_response()
+    redirect(home_location(&state.config.public_url))
 }
+
+#[cfg(test)]
+mod tests;

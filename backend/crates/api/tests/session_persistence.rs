@@ -16,7 +16,6 @@ use adapter_pg::{PgPool, PgSessionStore};
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use tower_sessions::SessionManagerLayer;
 
 /// Builds the app router wired to a fresh `PgSessionStore` over `pool`, serves it
 /// on an ephemeral port, and returns the base URL. The `backend` is shared so a
@@ -48,7 +47,10 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let state: AppState = runtime;
     // The session layer backs the cookie with Postgres, so the row survives the
     // "restart" simulated below by tearing down this app and building another.
-    let app = api::app(state).layer(SessionManagerLayer::new(PgSessionStore::new(pool)));
+    let app = api::app(state).layer(http_cookies::session_layer(
+        PgSessionStore::new(pool),
+        false,
+    ));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
@@ -96,12 +98,15 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
     // Capture the session cookie the server minted. Replaying it by hand against a
     // fresh client (no shared cookie jar) is exactly a browser hitting a restarted
     // server: only what Postgres persisted can carry the session across.
+    // The callback also clears the sign-in's browser-binding cookie, so pick the
+    // session cookie as the one that is not it.
     let set_cookie = callback
         .headers()
-        .get("set-cookie")
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|cookie| !cookie.starts_with("zurfur.signin="))
         .expect("sign-in mints a session cookie")
-        .to_str()
-        .expect("cookie header is valid text")
         .to_string();
     let cookie = set_cookie
         .split(';')

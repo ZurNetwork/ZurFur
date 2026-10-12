@@ -42,7 +42,8 @@ export const ProblemKind = {
 	InvalidRequest: { type: 'urn:zurfur:error:invalid-request', code: 'invalid_request' },
 	AccountNotFound: { type: 'urn:zurfur:error:account-not-found', code: 'account_not_found' },
 	NotAuthenticated: { type: 'urn:zurfur:error:not-authenticated', code: 'not_authenticated' },
-	Forbidden: { type: 'urn:zurfur:error:forbidden', code: 'forbidden' }
+	Forbidden: { type: 'urn:zurfur:error:forbidden', code: 'forbidden' },
+	NodeNotFound: { type: 'urn:zurfur:error:node-not-found', code: 'node_not_found' }
 } as const satisfies Record<string, Pick<Problem, 'type' | 'code'>>;
 
 /** The union of every locally-mintable kind (a `{type, code}` pair). */
@@ -93,6 +94,19 @@ export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
 	...ProblemKind.AccountNotFound,
 	title: 'Account not found',
 	detail: 'No such account.',
+	status: HttpStatus.NotFound
+};
+
+/**
+ * The Den's one not-found: every miss — absent, nonexistent, inside a node
+ * the viewer can't open, a refused path — answers this same problem, so the
+ * answer never tells which. The mock Den mints it; the den program turns it
+ * into the one not-found view.
+ */
+export const NODE_NOT_FOUND_PROBLEM: Problem = {
+	...ProblemKind.NodeNotFound,
+	title: 'Not found',
+	detail: "This doesn't exist, or you can't open it.",
 	status: HttpStatus.NotFound
 };
 
