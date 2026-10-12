@@ -2,7 +2,7 @@
   "path": "backend/crates/application",
   "charted": "2026-09-19",
   "short": "Use cases: one #[use_case] method each",
-  "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, and the `transaction()` orchestrator for callers that are not use-case methods.",
+  "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
   "type": "code",
   "tags": [
     "category:source"
@@ -30,12 +30,13 @@
     "src/user.rs",
     "src/character.rs",
     "src/transaction.rs",
-    "src/lazy_unit.rs"
+    "src/lazy_unit.rs",
+    "src/den.rs"
   ],
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
       "node": false
     },
     {
@@ -84,6 +85,16 @@
       "node": false
     },
     {
+      "name": "src/den.rs",
+      "role": "den module root — the `Den` namespace, DenError, the public output values and the crate-private re-exports of Atta's values for the team arms",
+      "node": false
+    },
+    {
+      "name": "src/den/",
+      "role": "the den Queries, DenType, the one Atta host and den's own arms",
+      "node": true
+    },
+    {
       "name": "src/lazy_unit.rs",
       "role": "`LazyUnit` — the `#[lazy_unit]` injection: begins on `open()`, settles (commit/rollback) only if opened — and the task-local nested-unit guard; tests beside it in lazy_unit/tests.rs",
       "node": false
@@ -126,6 +137,11 @@
     {
       "name": "tests/commission_files.rs",
       "role": "file upload-then-download as a use case (streaming, auth order, reject-then-delete cleanup) via composition::Runtime over adapter-mem",
+      "node": false
+    },
+    {
+      "name": "tests/den.rs",
+      "role": "the den Query over the in-memory runtime: every malformed path is the one not-found; the root is not-found while no identity arm answers",
       "node": false
     },
     {

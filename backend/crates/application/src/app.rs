@@ -10,7 +10,7 @@ use domain::ports::{
     character::CharacterStore,
 };
 
-use crate::{account::Accounts, commission::Commissions, user::Users};
+use crate::{account::Accounts, commission::Commissions, den::Den, user::Users};
 
 /// Every port the orchestrator may use, built once by the composition root.
 /// Reads are pool-side; writes and in-unit reads come from [`Database::begin`].
@@ -62,6 +62,11 @@ impl App {
     /// User use cases.
     pub fn users(&self) -> Users<'_> {
         Users::from(self)
+    }
+
+    /// Den reads, with the bag's ports already bound.
+    pub fn den(&self) -> Den<'_> {
+        Den::from(self)
     }
 }
 

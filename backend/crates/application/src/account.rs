@@ -14,6 +14,7 @@ use shared::settings::HANDLE_QUARANTINE_WINDOW;
 pub mod change_handle;
 pub mod create;
 pub mod delete;
+pub(crate) mod den;
 pub mod facts;
 pub mod invitation;
 pub mod leave;

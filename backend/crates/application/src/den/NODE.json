@@ -1,0 +1,131 @@
+{
+  "path": "backend/crates/application/src/den",
+  "charted": "2026-10-12",
+  "short": "The Den read: the den Query and Zurfur's one Atta host",
+  "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; and `DenHost`, the one implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). Atta's types are imported only here; every public signature uses the application's own values.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "Atta is imported only inside `src/den*`. The team arms (`user/den.rs`, `account/den.rs`, `character/den.rs`, `commission/den.rs`, `account/workflow/den.rs`) name Atta's values through `crate::den`'s re-exports.",
+    "Every miss is the one `DenError::NotFound`; the only other answer is `DenError::Store`. No arm, helper or Query panics, unwraps or expects; an impossible conversion makes the node absent.",
+    "A folder's real children and mounts are answered by the arm that owns the folder's place (`Place`); den's host matches over `Place` exhaustively, with no `_` arm.",
+    "`include_deleted` lives only in the host; Atta never sees it. The viewer comes from the session only, and every host method fails closed for any other viewer.",
+    "`admit` answers from the request's record alone: no store call, no failure."
+  ],
+  "entry_points": [
+    "../den.rs",
+    "host.rs",
+    "node.rs",
+    "root.rs"
+  ],
+  "fs": [
+    {
+      "name": "admission.rs",
+      "role": "the admit table: live, archived and deactivated nodes by access, reach and include_deleted",
+      "node": false
+    },
+    {
+      "name": "context.rs",
+      "role": "DenContext: the ports and the session viewer every arm receives",
+      "node": false
+    },
+    {
+      "name": "den_type.rs",
+      "role": "DenType, the wire words, and the kind and content-not-shown tables",
+      "node": false
+    },
+    {
+      "name": "host.rs",
+      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm",
+      "node": false
+    },
+    {
+      "name": "kind.rs",
+      "role": "NodeKind: directory, file, symlink",
+      "node": false
+    },
+    {
+      "name": "level.rs",
+      "role": "NodeLevel: private, listed, public",
+      "node": false
+    },
+    {
+      "name": "name.rs",
+      "role": "DenName and DenNameError: the Den's name rule, the write-side check every naming write calls",
+      "node": false
+    },
+    {
+      "name": "names.rs",
+      "role": "the fixed folder words, and the stored-text name with its `Unnamed` fallback",
+      "node": false
+    },
+    {
+      "name": "node.rs",
+      "role": "the `node` Query: a Den path below the viewer's root",
+      "node": false
+    },
+    {
+      "name": "output.rs",
+      "role": "the Queries' output values: DenNode, DenAccess, DenCrumb, DenListing, DenContent",
+      "node": false
+    },
+    {
+      "name": "page_token.rs",
+      "role": "PageToken, the application's own token over Atta's, with FromStr/Display",
+      "node": false
+    },
+    {
+      "name": "place.rs",
+      "role": "Place, TopLevel, Node (an arm's answer), DenMount and the STANDING lift",
+      "node": false
+    },
+    {
+      "name": "post.rs",
+      "role": "den's arm for /post/<did>; absent until the posts slice",
+      "node": false
+    },
+    {
+      "name": "read.rs",
+      "role": "the Queries' shared read: path parsing, the viewer's root, Atta's answers into output values",
+      "node": false
+    },
+    {
+      "name": "root.rs",
+      "role": "the `root` Query: the viewer's own root and its listing",
+      "node": false
+    },
+    {
+      "name": "segment.rs",
+      "role": "DenSegment: one Den path piece in an answer",
+      "node": false
+    },
+    {
+      "name": "soft_delete.rs",
+      "role": "SoftDelete: archived, deactivated",
+      "node": false
+    },
+    {
+      "name": "state.rs",
+      "role": "NodeState: live, archived, deactivated (with whether the viewer is the Owner)",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "host.rs, place.rs: the global root and its traverse-only top-level directories, actor and commission keys, users' and Accounts' system folders, mounts, commission entries (rulings 14–21)"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); page tokens (D24)"
+    }
+  ],
+  "notes": [
+    "Interim (slice 7): every identity and commission arm answers absent, so the viewer's root is the one not-found until the identity arms serve the user's directory; `tests/den.rs` pins it.",
+    "A folder's contents belong to the arm that owns its entries: a user's `commissions` folder and an Account's `commissions` folder are `CommissionPlace`s, and an Account's `workflows` folder is a `WorkflowPlace`, though identity answers each folder node as a child of its user or Account."
+  ]
+}
