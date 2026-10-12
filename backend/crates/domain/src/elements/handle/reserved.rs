@@ -53,6 +53,8 @@ pub(super) const RESERVED_LABELS: &[&str] = &[
     "status",
     "health",
     "metrics",
+    // product surfaces: hosts Zurfur serves its own apps from
+    "studio",
     // auth / identity
     "auth",
     "login",
