@@ -50,13 +50,20 @@ describe('sessionOrAnonymous', () => {
 });
 
 describe('signinOutcome', () => {
-	it('carries the authorize location on success', async () => {
+	it('carries the authorize location and the browser-binding cookie on success', async () => {
 		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const browserBinding = {
+			name: 'zurfur.signin' as const,
+			value: 'token',
+			maxAge: 600,
+			secure: false
+		};
+		const started = { location: authorizeUrl, browserBinding };
 		const outcome = await runTest(
-			{ startSignin: () => Effect.succeed(authorizeUrl) },
+			{ startSignin: () => Effect.succeed(started) },
 			signinOutcome('alice.zurfur.app')
 		);
-		expect(outcome).toEqual({ location: authorizeUrl });
+		expect(outcome).toEqual({ location: authorizeUrl, browserBinding });
 	});
 
 	it('carries the problem when the backend rejects the handle', async () => {
@@ -79,8 +86,14 @@ describe('signoutOutcome', () => {
 		expect(outcome).toEqual({ clearedCookies: ['zurfur.sid'] });
 	});
 
-	it('carries the failing status when the backend does not redirect', async () => {
+	it('is unconfirmed (refused) when the backend does not redirect', async () => {
 		const outcome = await runTest({}, signoutOutcome);
-		expect(outcome).toEqual({ failedStatus: 500 });
+		expect(outcome).toEqual({ unconfirmed: 'refused' });
+	});
+
+	it('is unconfirmed (unreachable) when the backend can’t be reached', async () => {
+		const unreachable = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const outcome = await runTest({ signout: unreachable }, signoutOutcome);
+		expect(outcome).toEqual({ unconfirmed: 'unreachable' });
 	});
 });

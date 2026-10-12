@@ -17,7 +17,12 @@ import {
 import { Context, Effect, Layer } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
-import { PROBLEM_CONTENT_TYPE, type Problem, ProblemKind } from '$lib/api/problem';
+import {
+	ACCOUNT_NOT_FOUND_PROBLEM,
+	PROBLEM_CONTENT_TYPE,
+	type Problem,
+	ProblemKind
+} from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
@@ -32,10 +37,14 @@ import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	ApiProblem,
 	ContractViolation,
+	DenNotConnected,
 	NetworkFailure,
 	NotAuthenticated,
 	SignoutFailed
 } from './errors';
+import type { DenQuery, DenRead } from './den-read';
+import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
+import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -64,13 +73,15 @@ export interface ZurfurApiShape {
 	/**
 	 * `POST /signin` — start the atproto OAuth flow; succeeds with the PDS
 	 * authorize URL off the 303's `Location` (server-side `redirect: 'manual'`
-	 * semantics — a browser fetch would return an opaque redirect).
+	 * semantics — a browser fetch would return an opaque redirect) and the
+	 * cookie binding the sign-in to this browser, for the action to relay.
 	 */
 	readonly startSignin: (
 		handle: string
-	) => Effect.Effect<string, ApiProblem | NetworkFailure | ContractViolation>;
+	) => Effect.Effect<StartedSignin, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
-	 * `POST /logout` — end the session backend-side; succeeds with the cookie
+	 * `POST /logout` — end the session backend-side, waiting at most
+	 * {@link SIGNOUT_TIMEOUT_MS} (a timeout fails `NetworkFailure`); succeeds with the cookie
 	 * names the backend cleared (for mirroring onto the browser's response —
 	 * the SSR proxy rewrites the host, so SvelteKit won't pass `set-cookie`
 	 * through on its own).
@@ -95,7 +106,37 @@ export interface ZurfurApiShape {
 	readonly deleteAccount: (
 		id: string
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
+	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
+	 * Fails `ApiProblem` `node_not_found` for every miss, `DenNotConnected` while
+	 * this build has no live Den behind it.
+	 */
+	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
+	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
+	readonly denNode: (path: SegmentPath, query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 }
+
+/**
+ * The cookie binding a sign-in to the browser that started it, as the backend
+ * set it on `/signin`'s 303. Only what varies rides here (the name, value,
+ * lifetime and `Secure`); `cookieOptions` fixes the rest.
+ */
+export interface BrowserBindingCookie {
+	readonly name: SignInBindingCookieName;
+	readonly value: string;
+	readonly maxAge: number;
+	readonly secure: boolean;
+}
+
+/** A started sign-in: where to send the browser, and the cookie it must carry back. */
+export interface StartedSignin {
+	readonly location: string;
+	readonly browserBinding: BrowserBindingCookie;
+}
+
+/** Every way a Den read fails. */
+export type DenReadError =
+	DenNotConnected | NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
 
 /** The port tag — programs ask for `ZurfurApi`, the seam decides which Layer answers. */
 export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApiShape>() {}
@@ -214,6 +255,25 @@ const liveMe = (fetch: FetchFunction) =>
 		});
 	});
 
+/**
+ * The browser-binding cookie in one `Set-Cookie` value, or `undefined` when the
+ * value is another cookie, has no token, or carries no `Max-Age`.
+ */
+export function parseBrowserBindingCookie(setCookie: string): BrowserBindingCookie | undefined {
+	const [pair = '', ...attributes] = setCookie.split(';');
+	const equalsIndex = pair.indexOf('=');
+	if (equalsIndex === -1) return undefined;
+	const name = pair.slice(0, equalsIndex).trim();
+	const value = pair.slice(equalsIndex + 1).trim();
+	if (!isSignInBindingCookieName(name) || value === '') return undefined;
+	const lowered = attributes.map((attribute) => attribute.trim().toLowerCase());
+	const maxAgeText = lowered.find((attribute) => attribute.startsWith('max-age='))?.slice(8);
+	const maxAge = maxAgeText === undefined ? Number.NaN : Number(maxAgeText);
+	if (!Number.isInteger(maxAge) || maxAge <= 0) return undefined;
+	const secure = lowered.includes('secure');
+	return { name, value, maxAge, secure };
+}
+
 const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 	Effect.gen(function* () {
 		const form = new URLSearchParams({ handle });
@@ -230,18 +290,47 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 					detail: 'redirect carried no Location header'
 				});
 			}
-			return location;
+			const browserBinding = response.headers
+				.getSetCookie()
+				.map(parseBrowserBindingCookie)
+				.find((cookie) => cookie !== undefined);
+			if (browserBinding === undefined) {
+				return yield* new ContractViolation({
+					path: '/signin',
+					status: response.status,
+					detail: 'redirect carried no browser-binding cookie'
+				});
+			}
+			const started: StartedSignin = { location, browserBinding };
+			return started;
 		}
 		return yield* problemFailure(response, '/signin').pipe(
 			Effect.catchTag('NotAuthenticated', ({ problem }) => new ApiProblem({ problem }))
 		);
 	});
 
+/**
+ * How long sign-out waits for the backend, in ms. A backend that accepts the
+ * connection and never answers must not hold the sign-out (and the browser's
+ * cookie) forever: past this, the call is aborted and reads as unreachable.
+ */
+export const SIGNOUT_TIMEOUT_MS = 5_000;
+
 const liveSignout = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
+		const controller = new AbortController();
+		const timer = setTimeout(() => {
+			controller.abort();
+		}, SIGNOUT_TIMEOUT_MS);
 		// Server-only undici semantics again: the 303 + Set-Cookie stay readable.
-		const init: RequestInit = { method: 'POST', redirect: 'manual' };
-		const response = yield* backendFetch(fetch, '/logout', init);
+		const init: RequestInit = { method: 'POST', redirect: 'manual', signal: controller.signal };
+		const response = yield* backendFetch(fetch, '/logout', init).pipe(
+			Effect.ensuring(
+				Effect.sync(() => {
+					clearTimeout(timer);
+				})
+			)
+		);
 		if (!isRedirectStatus(response.status)) {
 			return yield* new SignoutFailed({ status: response.status });
 		}
@@ -336,9 +425,17 @@ function toDeleteOutcome(outcome: string): DeleteOutcome {
 	return 'unknown';
 }
 
+/**
+ * `DELETE /accounts/{id}`, its path built by the shared path builder: an id
+ * the builder refuses (empty, a dot segment, a slash, anything off the
+ * segment allowlist) never reaches `fetch` and answers the same not-found
+ * an unknown id gets.
+ */
 const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 	Effect.gen(function* () {
-		const path = `/accounts/${encodeURIComponent(id)}`;
+		const accountPath = segmentPath([id]);
+		const path = accountPath === undefined ? undefined : joinPath('/accounts', accountPath);
+		if (path === undefined) return yield* new ApiProblem({ problem: ACCOUNT_NOT_FOUND_PROBLEM });
 		const response = yield* backendFetch(fetch, path, { method: 'DELETE' });
 		if (!response.ok) return yield* accountProblemFailure(response, path);
 		const raw = yield* parsedBody(response, path);
@@ -356,6 +453,15 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 		});
 	});
 
+/**
+ * The live port's Den reads, until the Den contract is wired: every read
+ * answers `DenNotConnected`, so a live run shows a notice, never an empty Den
+ * or the not-found.
+ */
+const liveDenNotConnected: Effect.Effect<never, DenNotConnected> = Effect.fail(
+	new DenNotConnected()
+);
+
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
 	ZurfurApi,
@@ -367,7 +473,9 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			signout: liveSignout(fetch),
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
-			deleteAccount: (id) => liveDeleteAccount(fetch, id)
+			deleteAccount: (id) => liveDeleteAccount(fetch, id),
+			denRoot: () => liveDenNotConnected,
+			denNode: () => liveDenNotConnected
 		});
 	})
 );
@@ -387,7 +495,9 @@ const anonymousDefaults: ZurfurApiShape = {
 	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
-	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem }))
+	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
+	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };
 
 /**

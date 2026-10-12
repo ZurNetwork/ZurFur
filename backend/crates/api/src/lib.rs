@@ -20,6 +20,10 @@ pub use composition::{Config, Environment, Runtime as AppState};
 pub mod generated;
 
 mod extract;
+
+/// The server's log subscriber, which keeps the DNS client's own events out.
+pub mod logging;
+
 mod problem;
 mod routes;
 mod sweep;

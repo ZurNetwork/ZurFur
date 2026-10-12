@@ -51,7 +51,7 @@ fn env_wins_over_the_profile_file() {
         let config = Config::load().map_err(|e| *e)?;
         assert!(matches!(config.env, Environment::DEV));
         assert_eq!(config.database_url, "postgres://from-env");
-        assert_eq!(config.public_url, "http://from-env");
+        assert_eq!(config.public_url.as_str(), "http://from-env/");
         assert_eq!(config.log_level, "info");
         assert_eq!(config.handle_domain.as_str(), "zurfur.app");
         assert_eq!(config.max_upload_bytes, Config::DEFAULT_MAX_UPLOAD_BYTES);

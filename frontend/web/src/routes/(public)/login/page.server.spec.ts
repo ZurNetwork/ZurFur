@@ -1,0 +1,206 @@
+import { describe, expect, it } from 'vitest';
+import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { expectRedirect } from '$lib/testing/redirect';
+import { actions, load } from './+page.server';
+import type { Session } from '$lib/api/session';
+import { did, handleFromTrusted } from '$lib/types/brand';
+import type { SuperValidated } from 'sveltekit-superforms';
+
+type LoadEvent = Parameters<typeof load>[0];
+type ActionEvent = Parameters<(typeof actions)['default']>[0];
+
+const signinDefaultAction = actions.default;
+
+/** The action's fail payload: everything rides the superform (message = backend Problem). */
+type LoginForm = SuperValidated<{ handle: string }>;
+
+const alice: Session = {
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
+	displayName: 'Alice',
+	avatarUrl: undefined
+};
+
+function loadEvent(session: Session | undefined, search = '', sessionCookie?: string): LoadEvent {
+	const event = {
+		parent: () => Promise.resolve({ session }),
+		url: new URL(`http://localhost/login${search}`),
+		cookies: { get: (name: string) => (name === 'zurfur.sid' ? sessionCookie : undefined) }
+	};
+	return event as unknown as LoadEvent;
+}
+
+/** `load` types its return as possibly-void (it may throw a redirect); pin the data shape. */
+async function runLoad(
+	event: LoadEvent
+): Promise<{ callbackError: string | undefined; form: LoginForm; signoutUnconfirmed: boolean }> {
+	return (await load(event)) as {
+		callbackError: string | undefined;
+		form: LoginForm;
+		signoutUnconfirmed: boolean;
+	};
+}
+
+/** One `cookies.set` call the action made. */
+interface SetCookieCall {
+	name: string;
+	value: string;
+	options: Record<string, unknown>;
+}
+
+/** A `cookies` stand-in that records every `set`. */
+function recordingCookies(): { cookies: unknown; sets: SetCookieCall[] } {
+	const sets: SetCookieCall[] = [];
+	const cookies = {
+		set: (name: string, value: string, options: Record<string, unknown>) => {
+			sets.push({ name, value, options });
+		}
+	};
+	return { cookies, sets };
+}
+
+async function signinAction(
+	fetch: typeof globalThis.fetch,
+	handle: string | null,
+	cookies: unknown = recordingCookies().cookies
+) {
+	const body = new URLSearchParams(handle === null ? {} : { handle });
+	const request = new Request('http://localhost/login', { method: 'POST', body });
+	return (await signinDefaultAction({ request, fetch, cookies } as unknown as ActionEvent)) as {
+		status: number;
+		data: { form: LoginForm };
+	};
+}
+
+/** The backend's 303 to `location`, setting the browser-binding cookie `setCookie`. */
+function signinRedirect(location: string, setCookie: string): Response {
+	const headers = new Headers({ location });
+	headers.append('set-cookie', setCookie);
+	return new Response(null, { status: 303, headers });
+}
+
+describe('/login load', () => {
+	it('renders signed-out with no callback error and a pristine form', async () => {
+		const result = await runLoad(loadEvent(undefined));
+		expect(result.callbackError).toBeUndefined();
+		// superforms deprecates `posted` toward v3 without a drop-in replacement
+		// for "did this pristine load produce a submitted form"; revisit on the
+		// v3 upgrade.
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		expect(result.form.posted).toBe(false);
+		expect(result.form.message).toBeUndefined();
+	});
+
+	it('reads an unconfirmed sign-out from the address', async () => {
+		const result = await runLoad(loadEvent(undefined, '?signout=unconfirmed'));
+		expect(result.signoutUnconfirmed).toBe(true);
+	});
+
+	it('shows the notice only when the request carries no session cookie', async () => {
+		const withCookie = await runLoad(loadEvent(undefined, '?signout=unconfirmed', 'still-live'));
+		const withoutCookie = await runLoad(loadEvent(undefined, '?signout=unconfirmed'));
+		expect(withCookie.signoutUnconfirmed).toBe(false);
+		expect(withoutCookie.signoutUnconfirmed).toBe(true);
+	});
+
+	it('reads no sign-out notice from any other value', async () => {
+		const result = await runLoad(loadEvent(undefined, '?signout=yes'));
+		expect(result.signoutUnconfirmed).toBe(false);
+	});
+
+	it('maps a known ?error code to its message', async () => {
+		const result = await runLoad(loadEvent(undefined, '?error=denied'));
+		expect(result.callbackError).toBe('Sign-in was cancelled at your PDS.');
+	});
+
+	it('maps ?error=account_mismatch to its own message', async () => {
+		const result = await runLoad(loadEvent(undefined, '?error=account_mismatch'));
+		expect(result.callbackError).toBe(
+			'You signed in to a different account than the handle you typed.'
+		);
+	});
+
+	it('falls back on an unknown ?error code', async () => {
+		const result = await runLoad(loadEvent(undefined, '?error=mystery'));
+		expect(result.callbackError).toBe('Sign-in failed. Try again.');
+	});
+
+	it('bounces a signed-in visitor home', async () => {
+		const redirect = await expectRedirect(() => load(loadEvent(alice)));
+		expect(redirect.status).toBe(303);
+		expect(redirect.location).toBe('/');
+	});
+});
+
+describe('/login signin action', () => {
+	it('rejects an empty handle locally with a field error, never reaching the backend', async () => {
+		const failure = await signinAction(unreachableFetch('must not reach the backend'), '   ');
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.valid).toBe(false);
+		expect(failure.data.form.errors.handle).toContain('Please insert your handle');
+	});
+
+	it('rejects a shape-invalid handle locally', async () => {
+		const failure = await signinAction(unreachableFetch('must not reach the backend'), 'no-dot');
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.errors.handle).toContain('This handle is not valid');
+	});
+
+	it('accepts a punycode (xn--) handle at sign-in — auth-time, not claim-time (Engineer ruling)', async () => {
+		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=idn';
+		const setCookie = 'zurfur.signin=tok; HttpOnly; SameSite=Lax; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
+		const redirect = await expectRedirect(() => signinAction(fetch, 'xn--sneaky.example'));
+		expect(redirect.status).toBe(303);
+		expect(redirect.location).toBe(authorizeUrl);
+	});
+
+	it('rejects an over-long handle locally (the 253-char atproto cap)', async () => {
+		const failure = await signinAction(
+			unreachableFetch('must not reach the backend'),
+			`${'a'.repeat(250)}.com`
+		);
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.errors.handle).toContain('This handle is too long');
+	});
+
+	it('relays the PDS authorize URL as a 303 navigation, trimming the handle first', async () => {
+		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const setCookie = 'zurfur.signin=tok; HttpOnly; SameSite=Lax; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
+		const redirect = await expectRedirect(() => signinAction(fetch, '  alice.test  '));
+		expect(redirect.status).toBe(303);
+		expect(redirect.location).toBe(authorizeUrl);
+	});
+
+	it('sets the browser-binding cookie on the browser, narrow and short-lived', async () => {
+		const authorizeUrl = 'https://pds.example/oauth/authorize?request_uri=abc';
+		const setCookie =
+			'__Host-zurfur.signin=tok; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=600';
+		const { fetch } = fetchStub(() => signinRedirect(authorizeUrl, setCookie));
+		const { cookies, sets } = recordingCookies();
+		await expectRedirect(() => signinAction(fetch, 'alice.test', cookies));
+		expect(sets).toEqual([
+			{
+				name: '__Host-zurfur.signin',
+				value: 'tok',
+				options: { path: '/', httpOnly: true, sameSite: 'lax', secure: true, maxAge: 600 }
+			}
+		]);
+	});
+
+	it('sets no cookie when the backend refuses the handle', async () => {
+		const { fetch } = fetchStub(() => problemResponse(422, 'invalid_request'));
+		const { cookies, sets } = recordingCookies();
+		await signinAction(fetch, 'valid.example', cookies);
+		expect(sets).toEqual([]);
+	});
+
+	it('hands a backend problem to the page as the form message', async () => {
+		const { fetch } = fetchStub(() => problemResponse(422, 'invalid_request'));
+		const failure = await signinAction(fetch, 'valid.example');
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.message).toMatchObject({ code: 'invalid_request' });
+		expect(failure.data.form.data.handle).toBe('valid.example');
+	});
+});

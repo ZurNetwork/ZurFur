@@ -3,13 +3,9 @@
 //! [`Config`], stands up Postgres, runs migrations, assembles [`AppState`],
 //! mounts [`api::app`], and serves.
 
-use api::{AppState, Config, Environment};
-use tower_sessions::{
-    Expiry, SessionManagerLayer,
-    cookie::{SameSite, time},
-    session_store::ExpiredDeletion,
-};
-use tracing_subscriber::EnvFilter;
+use api::{AppState, Config};
+use tower_sessions::session_store::ExpiredDeletion;
+use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
 
 /// Boots the server: load config, init tracing, connect the pool, run
 /// migrations, build the session layer, assemble [`AppState`], then
@@ -20,11 +16,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load()?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
-        )
-        .init();
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    api::logging::subscriber(filter, std::io::stdout).init();
 
     // Migrations are the driver's explicit call, so one never runs by accident.
     let app_state: AppState = composition::Runtime::connect(config).await?;
@@ -35,13 +29,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %http_addr, env = ?app_state.config.env, "starting HTTP server");
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
-    let secure_cookies = matches!(app_state.config.env, Environment::PROD | Environment::STG);
-    let session_layer = SessionManagerLayer::new(store)
-        .with_name("zurfur.sid")
-        .with_http_only(true)
-        .with_same_site(SameSite::Lax)
-        .with_secure(secure_cookies)
-        .with_expiry(Expiry::OnInactivity(time::Duration::days(7)));
+    let secure_cookies = app_state.config.env.secure_cookies();
+    let session_layer = http_cookies::session_layer(store, secure_cookies);
 
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),

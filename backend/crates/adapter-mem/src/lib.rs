@@ -12,6 +12,7 @@ mod character;
 mod commission;
 mod file_store;
 pub mod fixture;
+mod identity_resolver;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
@@ -20,6 +21,7 @@ pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
+pub use identity_resolver::MemIdentityResolver;
 pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
 use workflow::{StoredColumn, StoredWorkflow};
@@ -49,7 +51,7 @@ use domain::elements::{
         SeatInvitationId, SurfaceName, TabId, VisibilityMode,
     },
     did::Did,
-    handle::Handle,
+    handle::{AtHandle, Handle},
     invitation::{Invitation, InvitationId, InvitationState},
     plc_operation::PlcOperationRecord,
     profile::Profile,
@@ -62,10 +64,10 @@ use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::character::{CharacterStore, CharacterWrites};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
-    ActorIdentityWrites, Authenticator, ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites,
-    CommissionRepo, CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore,
-    PlcOperationLog, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowStore,
-    WorkflowWrites,
+    ActorIdentityWrites, Authenticator, BrowserBinding, ChangelogStore, ChangelogWrites,
+    ColumnStore, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
+    HandleTaken, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, SigninStarted, UnitOfWork,
+    UserStore, UserWrites, WorkflowStore, WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -864,9 +866,15 @@ impl MemAuthenticator {
 
 #[async_trait]
 impl Authenticator for MemAuthenticator {
-    async fn start(&self, _handle: &str) -> anyhow::Result<String> {
-        // Any callback URL works; the test issues the callback itself.
-        Ok("/signin-callback?code=test".to_string())
+    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
+        // Any callback URL works; the test issues the callback itself. The
+        // browser token is fixed and never checked: this fake stays thin.
+        let started = SigninStarted {
+            authorization_url: "/signin-callback?code=test".to_string(),
+            browser_binding: BrowserBinding::from("mem-browser-binding".to_string()),
+            lifetime: std::time::Duration::from_secs(600),
+        };
+        Ok(started)
     }
 
     async fn complete(
@@ -874,6 +882,7 @@ impl Authenticator for MemAuthenticator {
         _code: String,
         _state: Option<String>,
         _iss: Option<String>,
+        _browser_binding: Option<BrowserBinding>,
     ) -> anyhow::Result<Did> {
         Ok(self.did.clone())
     }

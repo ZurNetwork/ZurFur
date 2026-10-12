@@ -11,6 +11,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use url::Url;
+
 use crate::AppState;
 use crate::problem::Problem;
 
@@ -28,8 +30,8 @@ pub(crate) use wellknown::wellknown_router;
 
 /// CSRF defense-in-depth on the cookie surface: rejects a state-changing
 /// request (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is present
-/// and isn't [`Config::public_url`](crate::Config::public_url). A missing
-/// `Origin` or a safe method passes.
+/// and isn't [`Config::public_url`](crate::Config::public_url)'s origin. A
+/// missing `Origin` or a safe method passes.
 pub(crate) async fn require_first_party_origin(
     State(state): State<AppState>,
     request: Request,
@@ -41,9 +43,20 @@ pub(crate) async fn require_first_party_origin(
     );
     if state_changing
         && let Some(origin) = request.headers().get(ORIGIN)
-        && origin.as_bytes() != state.config.public_url.trim_end_matches('/').as_bytes()
+        && !is_first_party(origin.as_bytes(), &state.config.public_url)
     {
         return Problem::cross_origin().into_response();
     }
     next.run(request).await
 }
+
+/// Whether an `Origin` header names `public_url`'s origin. An opaque origin
+/// (serialized `null`) matches nothing, so a sandboxed page's `Origin: null`
+/// never passes.
+fn is_first_party(origin: &[u8], public_url: &Url) -> bool {
+    let first_party = public_url.origin();
+    first_party.is_tuple() && origin == first_party.ascii_serialization().as_bytes()
+}
+
+#[cfg(test)]
+mod tests;

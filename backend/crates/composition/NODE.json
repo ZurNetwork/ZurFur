@@ -21,17 +21,22 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, base64, fluent-uri",
+      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64, fluent-uri",
       "node": false
     },
     {
       "name": "src/config.rs",
-      "role": "Config struct, figment loader (Config::load/load_from), Environment enum, boot-time custody guard ensure_custody_hardened",
+      "role": "Config struct (public_url a url::Url), figment loader (Config::load/load_from), Environment enum, boot-time custody guard ensure_custody_hardened",
       "node": false
     },
     {
       "name": "src/lib.rs",
-      "role": "crate doc + re-exports of Config and Runtime; runtime is pub(crate), ports is pub",
+      "role": "crate doc + re-exports of Config and Runtime; runtime is pub(crate), ports and logging are pub",
+      "node": false
+    },
+    {
+      "name": "src/logging.rs",
+      "role": "the log filter both drivers (api, cli) layer on their subscriber: every event from hickory's crates dropped whatever RUST_LOG says (hickory logs a queried handle's domain at error); is_loggable_target, and without_dns_client() -> impl Layer, a filter_fn over it",
       "node": false
     },
     {
@@ -41,7 +46,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, ProfileCache, ProfileSource, UserStore), Runtime::connect wiring pg+atproto adapters, transaction convenience",
+      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore), Runtime::connect wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), transaction convenience",
       "node": false
     },
     {

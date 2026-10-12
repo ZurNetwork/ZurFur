@@ -5,6 +5,7 @@ import { actions, load } from './+page.server';
 import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import type { Problem } from '$lib/api/problem';
+import type { Trail } from '$lib/api/trail';
 import type { SuperValidated } from 'sveltekit-superforms';
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -14,7 +15,7 @@ type ActionEvent = Parameters<(typeof actions)['default']>[0];
 type CreateForm = SuperValidated<{ name: string; handle: string }>;
 
 /** `load`'s actual return, pinned past the generated type's `MaybeWithVoid` noise. */
-type ListLoadData = { deleted?: DeleteOutcome; form: CreateForm } & (
+type ListLoadData = { deleted?: DeleteOutcome; form: CreateForm; trail: Trail } & (
 	{ accounts: readonly AccountMembership[] } | { problem: Problem }
 );
 
@@ -159,5 +160,13 @@ describe('/accounts create action', () => {
 		expect(redirect.status).toBe(303);
 		expect(redirect.location).toBe('/accounts');
 		expect(sentBody).toMatchObject({ name: 'New Studio', handle: 'new.zurfur.app' });
+	});
+});
+
+describe('/accounts load: the frame’s path', () => {
+	it('hands the frame the path "Accounts"', async () => {
+		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
+		const result = await runLoad(loadEvent(fetch));
+		expect(result.trail).toEqual([{ step: 'named', label: 'Accounts', href: undefined }]);
 	});
 });

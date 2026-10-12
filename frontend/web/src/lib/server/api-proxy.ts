@@ -14,19 +14,13 @@
  * them in.
  */
 
+import { SESSION_COOKIE } from './cookies';
+
 /** The `/api` prefix, exposed once so the boundary logic can't drift. */
 // The FULL versioned prefix is stripped (Caddy does the same): the backend's
 // route table stays unprefixed, and the weld between path-major and proto
 // package is held by the contract's router test rather than by axum nesting.
 const API_PREFIX = '/api/v1';
-
-/**
- * The ONLY cookie ever forwarded to the upstream: the host-only session cookie.
- * Named once so the filter below and any future caller can't drift apart —
- * exported so the mock `ZurfurApi` Layer (`zurfur-api-mock.ts`)
- * reports the same name `signout` clears, rather than a hand-copied literal.
- */
-export const SESSION_COOKIE_NAME = 'zurfur.sid';
 
 export interface RewriteApiRequestInput {
 	/** The outgoing request SvelteKit's `handleFetch` handed us. */
@@ -67,10 +61,12 @@ export function extractSessionCookie(incomingCookie: string | undefined): string
 			continue;
 		}
 
+		// The ONLY cookie ever forwarded: never the sign-in's browser-binding cookie,
+		// which reaches the backend only on `/signin-callback`, through Caddy.
 		const name = trimmed.slice(0, equalsIndex);
-		if (name === SESSION_COOKIE_NAME) {
+		if (name === SESSION_COOKIE) {
 			const value = trimmed.slice(equalsIndex + 1);
-			return `${SESSION_COOKIE_NAME}=${value}`;
+			return `${SESSION_COOKIE}=${value}`;
 		}
 	}
 	return undefined;
