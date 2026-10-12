@@ -170,6 +170,13 @@ fn rejects_reserved_labels_in_zurfur_namespace() {
     }
 }
 
+// Zurfur Studio is served from `studio.zurfur.app`, so no one may claim it.
+#[test]
+fn rejects_the_studio_product_host() {
+    let claimed = "studio.zurfur.app".parse::<Handle>();
+    assert_eq!(claimed, Err(HandleError::ReservedLabel("studio".into())));
+}
+
 // The platform root handle is reserved too — the leading-dot suffix check
 // alone would let the bare apex slip past.
 #[test]
