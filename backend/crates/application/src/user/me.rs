@@ -1,13 +1,13 @@
 use crate::use_case;
-use domain::{
-    elements::{
-        profile::{DisplayHandle, Profile},
-        user::UserId,
-    },
-    ports::{ProfileCache, ProfileSource},
+use domain::elements::{
+    profile::{DisplayHandle, Profile},
+    user::UserId,
 };
 
-use crate::{Ports, user::Users};
+use crate::{
+    Ports,
+    user::{ProfileLookups, Users},
+};
 
 /// The caller whose identity to report; how `user_id` was established is the
 /// driver's business.
@@ -17,8 +17,8 @@ pub struct MeQuery {
 }
 
 /// The recognized user's DID, plus their public profile when it resolved.
-/// `profile` is `None` when neither the cache nor the PDS answered — absence
-/// is not an error; the drivers render the bare DID.
+/// `profile` is `None` when neither the cache nor the PDS answered within the
+/// wait — absence is not an error; the drivers render the bare DID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub id: UserId,
@@ -76,24 +76,24 @@ impl std::error::Error for MeError {
     }
 }
 
-/// Load the user behind [`MeQuery::user_id`] and resolve their profile
-/// read-through ([`crate::user::resolve_profile`]).
+/// Load the user behind [`MeQuery::user_id`] and resolve their profile through
+/// `profile_lookups`, waiting at most [`crate::user::PROFILE_WAIT`] on a miss.
 impl Users<'_> {
     #[use_case]
     pub async fn me(
         &self,
         #[ports] ports: &Ports,
         query: MeQuery,
-        profile_cache: &dyn ProfileCache,
-        profile_source: &dyn ProfileSource,
+        profile_lookups: &ProfileLookups,
     ) -> Result<Output, MeError> {
         let user = ports
             .users
             .find_by_did(query.user_id.did())
             .await?
             .ok_or(MeError::UnknownUser(query.user_id))?;
-        let profile =
-            crate::user::resolve_profile(profile_cache, profile_source, user.id.did()).await;
+        let profile = profile_lookups
+            .profile(&ports.profile_cache, &ports.profile_source, user.id.did())
+            .await;
         Ok(Output {
             id: user.id,
             profile: profile.map(MeProfile::from),

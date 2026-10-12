@@ -236,6 +236,72 @@ async fn me_omits_the_profile_fields_when_the_pds_is_unreachable_and_uncached() 
 }
 
 #[tokio::test]
+async fn concurrent_me_requests_for_one_did_share_one_fetch() {
+    // Axum clones the runtime for every request: the lookups must still be one set.
+    let source = Arc::new(MemProfileSource::new(alice_profile()));
+    let auth = Arc::new(MemAuthenticator::new(Did::from(DID.to_string())));
+    let base = serve(auth, source.clone()).await;
+    let first_client = client();
+    let second_client = client();
+    sign_in(&first_client, &base, "alice.bsky.social").await;
+    sign_in(&second_client, &base, "alice.bsky.social").await;
+    source.answer_after(Duration::from_millis(500));
+    let before = source.fetch_count();
+
+    let (first, second) = tokio::join!(
+        first_client.get(format!("{base}/me")).send(),
+        second_client.get(format!("{base}/me")).send()
+    );
+
+    assert_eq!(first.expect("GET /me").status(), 200);
+    assert_eq!(second.expect("GET /me").status(), 200);
+    assert_eq!(
+        source.fetch_count() - before,
+        1,
+        "two concurrent requests for one DID shared one PDS fetch"
+    );
+}
+
+/// How long the web's session check waits for `GET /me` before it gives up.
+const WEB_SESSION_CHECK_LIMIT: Duration = Duration::from_secs(5);
+
+#[tokio::test]
+async fn me_answers_with_the_bare_did_within_the_wait_when_the_pds_never_answers() {
+    // A cold cache and a PDS that never answers: /me stops waiting for the
+    // profile and reports the DID alone, well inside the web's session check.
+    let source = MemProfileSource::new(alice_profile());
+    source.never_answer();
+    let auth = Arc::new(MemAuthenticator::new(Did::from(DID.to_string())));
+    let base = serve(auth, Arc::new(source)).await;
+    let client = client();
+    sign_in(&client, &base, "alice.bsky.social").await;
+
+    let started = std::time::Instant::now();
+    let res = client
+        .get(format!("{base}/me"))
+        .send()
+        .await
+        .expect("GET /me");
+    let elapsed = started.elapsed();
+
+    assert_eq!(res.status(), 200, "a silent PDS is not an error");
+    let body: serde_json::Value = res.json().await.expect("body is JSON");
+    assert_eq!(body["did"], DID, "the DID still proves who is signed in");
+    assert!(
+        body.get("handle").is_none(),
+        "handle key is omitted when unresolved, got {body}"
+    );
+    assert!(
+        elapsed >= application::user::PROFILE_WAIT,
+        "/me waited for the profile first, answered after {elapsed:?}"
+    );
+    assert!(
+        elapsed < WEB_SESSION_CHECK_LIMIT,
+        "/me answered inside the web's session check, after {elapsed:?}"
+    );
+}
+
+#[tokio::test]
 async fn me_returns_401_problem_for_an_anonymous_visitor() {
     // An anonymous /me is a 401 problem+json now, not a redirect: the frontend owns
     // the redirect to /login.

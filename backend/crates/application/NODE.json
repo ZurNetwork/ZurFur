@@ -10,7 +10,7 @@
   "conventions": [
     "One `#[use_case] pub async fn` per use case, a method on its namespace (`app.accounts().role().grant(cmd)`), no mediator.",
     "Each use case is its own file exporting `Command` (or `Query`) + `Output` + the `impl Namespace<'_>` block holding the method; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module.",
-    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[lazy_unit] uow: &mut LazyUnit<'_>` (or `#[unit] uow: Unit<'_>`), then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now`.",
+    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[lazy_unit] uow: &mut LazyUnit<'_>` (or `#[unit] uow: Unit<'_>`), then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now` (and, for `me`, the process-wide `&ProfileLookups`).",
     "A write takes `#[lazy_unit]`: the body does its `ports` reads and external calls first, then `let uow = uow.open().await?;` right before its first write; the wrapper commits on `Ok` and rolls back on `Err` only if the unit was opened. `#[unit]` (opened before the body) is legal only where the body cannot read through the pool, and the macro refuses it beside `#[ports]`. A read takes `#[ports]` only. `clippy.toml` bans a hand-written `begin`/`commit`/`rollback` in this crate, tests included; the sanctioned doors are the wrapper, `LazyUnit` and `transaction()`.",
     "A namespace is a struct deriving `WithPorts` (re-exported from `crate::ports`): a root holds `#[ports(is_root = true)] ports: &'a Ports`, a facet holds `#[ports]` on a reference to its parent and gets its accessor on the parent for free.",
     "The module root file keeps the namespace, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias.",
@@ -35,7 +35,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+adapter-mem+composition+tokio(test-util)+uuid+chrono+async-trait",
       "node": false
     },
     {
@@ -105,12 +105,12 @@
     },
     {
       "name": "src/user.rs",
-      "role": "user module root — the `Users` root namespace, resolve_profile",
+      "role": "user module root — the `Users` root namespace; re-exports ProfileLookups, PROFILE_WAIT, LOOKUP_CAP",
       "node": false
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; profile_lookup.rs — ProfileLookups, the profile read-through that waits PROFILE_WAIT (2 s) on a miss while one background lookup per DID, capped at LOOKUP_CAP, fills the cache",
       "node": false
     },
     {
@@ -140,7 +140,7 @@
     },
     {
       "name": "tests/user.rs",
-      "role": "integration tests for the me use case",
+      "role": "integration tests for the me use case, its bounded profile wait included (paused tokio clock)",
       "node": false
     },
     {

@@ -41,6 +41,9 @@ pub struct Runtime {
     /// Pool-backed both ways — a documented exception to the unit-of-work
     /// write rule, since the fill carries no transactional invariant.
     pub profile_cache: Arc<dyn ProfileCache>,
+    /// The profile lookups running behind `me`, one per DID, shared by every
+    /// clone of this runtime so concurrent misses join one fetch.
+    pub profile_lookups: application::user::ProfileLookups,
     /// Account, membership and invitation reads; every account write lives on
     /// the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub accounts: Arc<dyn AccountStore>,
@@ -156,6 +159,7 @@ impl Runtime {
                 pool.clone(),
                 std::time::Duration::from_secs(60 * 60),
             )),
+            profile_lookups: application::user::ProfileLookups::default(),
             did_minter,
             accounts: Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
             commissions: Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
