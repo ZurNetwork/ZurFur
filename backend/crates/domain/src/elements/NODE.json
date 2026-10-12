@@ -313,6 +313,16 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "commission/markup.rs (Markup, MarkupShape, MarkupKey, CommissionMarkup) is REPLACED by the Comment entity: CommentId, text (trim + non-empty + 2000), optional anchor (closed envelope, alpha vocabulary point {x,y} normalized 0–1), optional root+parent with the same-commission and parent.root == root invariants; changelog kinds MarkupAdded {comment_id,file_id,anchor}, CommentAdded, CommentEdited, CommentDeleted"
+    },
+    {
+      "page": 2026101201,
+      "title": "Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers",
+      "governs": "commission/markup: the alpha anchor vocabulary widens (D4) — circle, arrow and freehand join point as variants of the closed envelope; MarkupShape is shelved, not deleted. handle/reserved.rs: 'studio' is a reserved label (D10)"
+    },
+    {
+      "page": 2026101202,
+      "title": "Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core",
+      "governs": "commission/changelog: the Linked Channel pointer stays opaque; Zurfur's page offers 'Open chat' when it holds a Telegram chat reference and hands it to Unofficial Mini Telegram as-is (D6, D9); the Telegram login never touches Zurfur (D4)"
     }
   ],
   "notes": [

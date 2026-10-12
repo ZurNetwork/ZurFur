@@ -123,6 +123,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "markup.rs and notes.rs are REPLACED by the comment use cases: a pin = a root Comment with a point anchor, replies carry root+parent (same commission, parent.root == root — a domain invariant), thread read by root cursor-paginated, edit author-only, delete = tombstone via the one shared read path; changelog payloads carry comment ids never text; kinds markup_added/comment_added/comment_edited/comment_deleted"
+    },
+    {
+      "page": 2026101201,
+      "title": "Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers",
+      "governs": "the comment/pin use cases accept the widened anchor (D4): circle, arrow and freehand marks are root Comments with their own threads, drawn as SVG by any page"
     }
   ],
   "notes": [
