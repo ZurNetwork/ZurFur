@@ -1,7 +1,7 @@
 //! The atproto well-known route group: `GET /.well-known/atproto-did`,
-//! handle→DID resolution for the `*.zurfur.app` namespace.
-//! Reads `Host`, validates it's a subdomain of `handle_domain`, and returns
-//! the bare DID as `text/plain`, or `404`. No auth, no cookie; a single
+//! handle→DID resolution for the configured handle namespace.
+//! Reads `Host`, validates it's a claimable subdomain of `handle_domain`, and
+//! returns the bare DID as `text/plain`, or `404`. No auth, no cookie; a single
 //! private-store read (no PDS touch).
 
 use axum::{
@@ -23,7 +23,7 @@ pub(crate) fn wellknown_router() -> Router<AppState> {
 
 /// Parses a request `Host` into the account [`Handle`] it addresses, or
 /// `None` if the host isn't ours to resolve (not a subdomain of
-/// `handle_domain`, or malformed).
+/// `handle_domain`, a handle the namespace withholds, or malformed).
 fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Handle> {
     // Drop an optional :port; more than one colon is not a valid authority (fail closed).
     let host = match host.split_once(':') {
@@ -35,13 +35,18 @@ fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Handle> 
     let host = host.strip_suffix('.').unwrap_or(host);
     let handle = host.parse::<Handle>().ok()?;
     // Never the apex or a foreign authority — a BYO-domain handle resolves at its own domain.
-    handle.is_in_namespace(handle_domain).then_some(handle)
+    if !handle.is_in_namespace(handle_domain) {
+        return None;
+    }
+    // Never a reserved label: no account can hold one, so no lookup is made.
+    handle.ensure_unreserved(handle_domain).ok()?;
+    Some(handle)
 }
 
 /// `GET /.well-known/atproto-did` — resolves the `Host` header's handle to its
 /// account's `did:plc`, `text/plain` (`200`).
 ///
-/// - `404` — `Host` not a subdomain of `handle_domain`, or no live account holds it
+/// - `404` — `Host` not a claimable subdomain of `handle_domain`, or no live account holds it
 async fn atproto_did(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
         return StatusCode::NOT_FOUND.into_response();

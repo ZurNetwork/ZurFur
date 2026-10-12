@@ -11,10 +11,11 @@ use chrono::Utc;
 use domain::elements::user::{User, UserId};
 use domain::elements::{
     did::Did,
-    handle::{Handle, HandleDomain},
+    handle::{Handle, HandleDomain, HandleError},
     role::Role,
 };
 use domain::ports::{Database, DidMinter, UnitOfWork};
+use test_support::recording::{CallLog, RecordingDidMinter};
 
 /// The configured Zurfur handle namespace, the way `Config::handle_domain`
 /// hands it to the use case: already parsed at load.
@@ -110,6 +111,47 @@ async fn a_live_handle_is_taken() {
     };
 
     assert!(matches!(error, AccountError::HandleTaken));
+}
+
+// The claim gate withholds reserved labels in the CONFIGURED namespace: on a
+// staging namespace `admin.zurfur.foo` is refused before anything is minted.
+#[tokio::test]
+async fn a_reserved_label_in_the_configured_namespace_is_refused() {
+    let did = Did::from("did:plc:app-reserved".to_string());
+    let fixture = test_support::runtime::mem(&did).build();
+    let mut runtime = fixture.runtime;
+    let user = recognized(&*runtime.database, &did).await;
+    let log = CallLog::default();
+    let recording_minter = RecordingDidMinter::new(runtime.did_minter.clone(), log.clone());
+    runtime.did_minter = Arc::new(recording_minter);
+    let app = runtime.app();
+    let staging: HandleDomain = "zurfur.foo".parse().expect("a valid handle domain");
+
+    let Err(error) = app
+        .accounts()
+        .create(
+            command(user.id.clone(), "admin.zurfur.foo"),
+            &staging,
+            Utc::now(),
+        )
+        .await
+    else {
+        panic!("a reserved label in the configured namespace must not found an account");
+    };
+
+    let reserved_label_error = HandleError::ReservedLabel("admin".into());
+    assert!(
+        matches!(&error, AccountError::InvalidHandle(rule) if *rule == reserved_label_error),
+        "{error:?}"
+    );
+    let unclaimed: Handle = "admin.zurfur.foo".parse().expect("a valid handle");
+    let holder = runtime
+        .accounts
+        .find_did_by_handle(&unclaimed)
+        .await
+        .expect("read");
+    assert!(holder.is_none());
+    assert!(log.events().is_empty(), "minted: {:?}", log.events());
 }
 
 /// A minter that always fails — the fallible, key-generating step the use

@@ -25,6 +25,10 @@ base64 = { workspace = true }
 fluent-uri = { workspace = true }
 # `Config::public_url`: the public origin every redirect is built on.
 url = { workspace = true }
+# `ConfigRefusal`, the load-time environment guard's error.
+thiserror = { workspace = true }
+# `BareOrigin`'s `AsRef<Url>`.
+derive_more = { workspace = true }
 
 [dev-dependencies]
 # `figment::Jail` — the config-precedence test.
