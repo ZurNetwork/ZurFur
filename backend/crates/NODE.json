@@ -74,6 +74,11 @@
       "node": true
     },
     {
+      "name": "http-cookies/",
+      "role": "every cookie the HTTP driver sets (ZurfurCookie) and the session layer; consumed by api and test-support",
+      "node": true
+    },
+    {
       "name": "query-codegen/",
       "role": "sqlx-rust-codegen runner (`just gen-queries`): boots a container, migrates, rewrites both adapters' src/queries.rs",
       "node": true

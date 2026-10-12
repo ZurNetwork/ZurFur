@@ -16,7 +16,6 @@ use adapter_pg::{PgPool, PgSessionStore};
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use tower_sessions::SessionManagerLayer;
 
 /// Builds the app router wired to a fresh `PgSessionStore` over `pool`, serves it
 /// on an ephemeral port, and returns the base URL. The `backend` is shared so a
@@ -48,7 +47,10 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let state: AppState = runtime;
     // The session layer backs the cookie with Postgres, so the row survives the
     // "restart" simulated below by tearing down this app and building another.
-    let app = api::app(state).layer(SessionManagerLayer::new(PgSessionStore::new(pool)));
+    let app = api::app(state).layer(http_cookies::session_layer(
+        PgSessionStore::new(pool),
+        false,
+    ));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

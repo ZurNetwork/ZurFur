@@ -214,6 +214,7 @@ dependencies = [
  "domain",
  "dotenvy",
  "futures-util",
+ "http-cookies",
  "insta",
  "pbjson",
  "pbjson-types",
@@ -2392,6 +2393,18 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-cookies"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http",
+ "reqwest 0.13.4",
+ "strum",
+ "tokio",
+ "tower-sessions",
 ]
 
 [[package]]
@@ -5807,6 +5820,7 @@ dependencies = [
  "composition",
  "data-encoding",
  "domain",
+ "http-cookies",
  "rand 0.8.6",
  "reqwest 0.13.4",
  "serde_json",

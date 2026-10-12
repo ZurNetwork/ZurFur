@@ -35,7 +35,7 @@
     },
     {
       "name": "main.rs",
-      "role": "boot: .env, config, tracing, pool, migrations, session layer, live pg/atproto adapters, serve",
+      "role": "boot: .env, config, tracing, pool, migrations, session layer (http-cookies), live pg/atproto adapters, serve",
       "node": false
     },
     {

@@ -4,11 +4,7 @@
 //! mounts [`api::app`], and serves.
 
 use api::{AppState, Config};
-use tower_sessions::{
-    Expiry, SessionManagerLayer,
-    cookie::{SameSite, time},
-    session_store::ExpiredDeletion,
-};
+use tower_sessions::session_store::ExpiredDeletion;
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
 
 /// Boots the server: load config, init tracing, connect the pool, run
@@ -34,12 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
     let secure_cookies = app_state.config.env.secure_cookies();
-    let session_layer = SessionManagerLayer::new(store)
-        .with_name("zurfur.sid")
-        .with_http_only(true)
-        .with_same_site(SameSite::Lax)
-        .with_secure(secure_cookies)
-        .with_expiry(Expiry::OnInactivity(time::Duration::days(7)));
+    let session_layer = http_cookies::session_layer(store, secure_cookies);
 
     tokio::spawn(api::run_deadline_sweeper(
         app_state.database.clone(),

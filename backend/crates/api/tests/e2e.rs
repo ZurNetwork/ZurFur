@@ -7,7 +7,7 @@
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use tower_sessions::MemoryStore;
 
 #[tokio::test]
 async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
@@ -28,7 +28,7 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
             .public_url(format!("http://{addr}"))
             .build();
     let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
+    let app = api::app(state).layer(http_cookies::session_layer(MemoryStore::default(), false));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

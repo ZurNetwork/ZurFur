@@ -7,7 +7,7 @@
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::redirect::Policy;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use tower_sessions::MemoryStore;
 
 #[tokio::test]
 async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
@@ -29,7 +29,7 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
         .public_url(format!("http://{addr}"))
         .build();
     let state: AppState = runtime;
-    let app = api::app(state).layer(SessionManagerLayer::new(MemoryStore::default()));
+    let app = api::app(state).layer(http_cookies::session_layer(MemoryStore::default(), false));
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
