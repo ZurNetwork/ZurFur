@@ -1,8 +1,14 @@
 //! Postgres persistence for jacquard's OAuth state — see [`AtprotoAuthStore`].
 //!
 //! Every `data` blob is sealed at rest ([`SecretVault`]) before it is written
-//! and opened on read; the rows never hold secrets in the clear.
+//! and opened on read; the rows never hold secrets in the clear. A session
+//! granting more than `atproto` is never written: it is held in memory for the
+//! sign-in that got it, to revoke.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use crate::oauth_scope::grants_identity_only;
 use crate::queries::auth_store as sql;
 use crate::secret_vault::SecretVault;
 use jacquard_common::{bos::BosStr, session::SessionStoreError, types::did::Did};
@@ -45,13 +51,65 @@ impl From<Option<Option<Vec<u8>>>> for StoredBinding {
 pub struct AtprotoAuthStore {
     pool: PgPool,
     vault: SecretVault,
+    refused: RefusedGrants,
 }
+
+/// Sessions the store refused to write because they grant more than
+/// `atproto`, keyed by session id (the sign-in's `state`) until that sign-in
+/// takes them to revoke. Shared by every clone of the store.
+#[derive(Clone, Default)]
+struct RefusedGrants(Arc<Mutex<HashMap<String, ClientSessionData>>>);
+
+impl RefusedGrants {
+    /// The held grants, locked. A panic while the lock was held leaves the
+    /// map intact, so a poisoned lock is still used.
+    fn held(&self) -> MutexGuard<'_, HashMap<String, ClientSessionData>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hold `session` under its session id until its sign-in takes it.
+    fn hold(&self, session: ClientSessionData) {
+        let session_id = AsRef::<str>::as_ref(&session.session_id).to_owned();
+        self.held().insert(session_id, session);
+    }
+
+    /// Take the grant held under `session_id`, if any, leaving none held.
+    fn take(&self, session_id: &str) -> Option<ClientSessionData> {
+        self.held().remove(session_id)
+    }
+}
+
+/// Shows how many grants are held, never their tokens.
+impl std::fmt::Debug for RefusedGrants {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let held = self.held().len();
+        formatter
+            .debug_struct("RefusedGrants")
+            .field("held", &held)
+            .finish()
+    }
+}
+
+/// Why the store refused to write a session: its grant is not exactly
+/// `atproto` (wider, narrower, or no scope at all).
+#[derive(Debug, thiserror::Error)]
+#[error("granted scope refused")]
+pub(crate) struct GrantedScopeRefused;
 
 impl AtprotoAuthStore {
     /// Wrap a connection `pool` and a [`SecretVault`] as an OAuth store; the
     /// vault seals every stored blob at rest.
     pub fn new(pool: PgPool, vault: SecretVault) -> Self {
-        Self { pool, vault }
+        Self {
+            pool,
+            vault,
+            refused: RefusedGrants::default(),
+        }
+    }
+
+    /// Take the session refused under `session_id`, if any, leaving none held.
+    pub(crate) fn take_refused(&self, session_id: &str) -> Option<ClientSessionData> {
+        self.refused.take(session_id)
     }
 
     /// Save `request` together with the hash of the browser token that binds
@@ -115,7 +173,7 @@ impl AtprotoAuthStore {
     }
 
     /// Delete every session stored under `session_id`, whatever its account:
-    /// the cleanup for a sign-in that failed after its callback saved one.
+    /// the cleanup after a sign-in's callback saved one, failed or not.
     pub(crate) async fn delete_sessions_by_id(
         &self,
         session_id: &str,
@@ -165,6 +223,14 @@ impl AtprotoAuthStore {
     }
 }
 
+#[cfg(test)]
+impl AtprotoAuthStore {
+    /// Whether a refused session is held under `session_id`; takes nothing.
+    pub(crate) fn holds_refused(&self, session_id: &str) -> bool {
+        self.refused.held().contains_key(session_id)
+    }
+}
+
 /// Map a sqlx error into jacquard's [`SessionStoreError`], so a database fault
 /// is never misread as "no session".
 fn backend(e: sqlx::Error) -> SessionStoreError {
@@ -191,8 +257,13 @@ impl ClientAuthStore for AtprotoAuthStore {
     }
 
     /// Insert-or-replace the session keyed by (DID, session id), so a rotated
-    /// token set overwrites the prior row.
+    /// token set overwrites the prior row. A session whose grant is not exactly
+    /// `atproto` is refused and never written; it is held for its sign-in.
     async fn upsert_session(&self, session: ClientSessionData) -> Result<(), SessionStoreError> {
+        if !grants_identity_only(session.token_set.scope.as_deref()) {
+            self.refused.hold(session);
+            return Err(SessionStoreError::Other(Box::new(GrantedScopeRefused)));
+        }
         let account_did = session.account_did.as_ref();
         let session_id = AsRef::<str>::as_ref(&session.session_id);
         let aad = Self::session_aad(account_did, session_id);

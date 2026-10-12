@@ -21,6 +21,9 @@ const AUTH: &str = "auth.example.com";
 const ISSUER: &str = "https://auth.example.com";
 const REQUEST_URI: &str = "urn:ietf:params:oauth:request_uri:req-1";
 const AUTHORIZE: &str = "https://auth.example.com/oauth/authorize";
+/// The tokens the mock token endpoint issues.
+const ACCESS_TOKEN: &str = "issued-access-token";
+const REFRESH_TOKEN: &str = "issued-refresh-token";
 
 fn plc(fill: char) -> Did {
     let id: String = std::iter::repeat_n(fill, 24).collect();
@@ -162,10 +165,10 @@ async fn serve_token(server: &MockServer, sub: &Did) {
 /// no scope at all.
 async fn serve_token_granting(server: &MockServer, sub: &Did, scope: Option<&str>) {
     let mut tokens = json!({
-        "access_token": "access",
+        "access_token": ACCESS_TOKEN,
         "token_type": "DPoP",
         "expires_in": 3600,
-        "refresh_token": "refresh",
+        "refresh_token": REFRESH_TOKEN,
         "sub": sub.as_ref(),
     });
     if let Some(scope) = scope {
@@ -185,6 +188,83 @@ async fn hits(server: &MockServer, host: &str, route: &str) -> usize {
             host_header == Some(host) && request.url.path() == route
         })
         .count()
+}
+
+/// The `token` field of every revocation request `server` received, in the
+/// order they arrived.
+async fn revoked_tokens(server: &MockServer) -> Vec<String> {
+    let requests = server.received_requests().await.unwrap_or_default();
+    requests
+        .iter()
+        .filter(|request| request.url.path() == "/oauth/revoke")
+        .filter_map(|request| {
+            url::form_urlencoded::parse(&request.body)
+                .find(|(name, _)| name == "token")
+                .map(|(_, token)| token.into_owned())
+        })
+        .collect()
+}
+
+/// [`revoked_tokens`], once `count` revocations have arrived or 10 s have
+/// passed, whichever is first: a background revocation lands after the
+/// callback returns.
+async fn revocations_arrived(server: &MockServer, count: usize) -> Vec<String> {
+    let arriving = async {
+        while revoked_tokens(server).await.len() < count {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(10), arriving).await;
+    revoked_tokens(server).await
+}
+
+/// How many OAuth sessions and auth requests the store holds, under any key.
+async fn stored_rows(pool: &PgPool) -> (i64, i64) {
+    let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM atproto_oauth.client_session")
+        .fetch_one(pool)
+        .await
+        .expect("the session table answers");
+    let requests: i64 = sqlx::query_scalar("SELECT count(*) FROM atproto_oauth.auth_request")
+        .fetch_one(pool)
+        .await
+        .expect("the request table answers");
+    (sessions, requests)
+}
+
+/// Wait until a delete of sessions is blocked on a held row in this test's
+/// database, failing after 10 s.
+async fn delete_waits_on_the_hold(pool: &PgPool) {
+    let waiting = "SELECT count(*) FROM pg_stat_activity \
+        WHERE datname = current_database() AND wait_event_type = 'Lock' \
+        AND query LIKE '%DELETE FROM atproto_oauth.client_session%'";
+    let blocked = async {
+        loop {
+            let deletes: i64 = sqlx::query_scalar(waiting)
+                .fetch_one(pool)
+                .await
+                .expect("the activity view answers");
+            if deletes > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), blocked)
+        .await
+        .expect("the sign-in's delete waits on the hold");
+}
+
+/// Hold every session row stored under `state` the way a slow statement
+/// would, so a delete of them waits until the transaction ends.
+async fn sessions_locked(world: &World, state: &str) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut lock = world.pool.begin().await.expect("a transaction");
+    let hold = "SELECT 1 FROM atproto_oauth.client_session WHERE session_id = $1 FOR UPDATE";
+    sqlx::query(hold)
+        .bind(state)
+        .fetch_all(&mut *lock)
+        .await
+        .expect("the rows are held");
+    lock
 }
 
 /// The form fields of the latest PAR request `server` received.
@@ -433,8 +513,274 @@ async fn the_bound_account_completes() {
     assert_eq!(did, alice());
 }
 
+#[tokio::test]
+async fn a_finished_sign_in_leaves_no_oauth_session_or_request_stored() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+
+    completed(&world, &state, &binding)
+        .await
+        .expect("the bound account signs in");
+
+    let stored = stored_rows(&world.pool).await;
+    assert_eq!(
+        stored,
+        (0, 0),
+        "no OAuth session and no auth request outlive the sign-in"
+    );
+}
+
+#[tokio::test]
+async fn a_finished_sign_in_revokes_its_refresh_token_then_its_access_token() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+
+    completed(&world, &state, &binding)
+        .await
+        .expect("the bound account signs in");
+
+    let revoked = revocations_arrived(&world.server, 2).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned(), ACCESS_TOKEN.to_owned()];
+    assert_eq!(
+        revoked, expected_revoked,
+        "the issued refresh token is revoked first, then the access token"
+    );
+}
+
+#[tokio::test]
+async fn a_finished_sign_in_sends_its_revocation_only_after_its_session_is_deleted() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    // Another row under the same state, held: the sign-in's delete of every
+    // session under its state waits on it until the hold ends.
+    let held = saved_session(&mallory(), &state);
+    world.store.upsert_session(held).await.expect("saved");
+    let hold = sessions_locked(&world, &state).await;
+
+    let answered = std::cell::Cell::new(false);
+    let signing_in = async {
+        let signed_in = completed(&world, &state, &binding).await;
+        answered.set(true);
+        signed_in
+    };
+    let while_deleting = async {
+        delete_waits_on_the_hold(&world.pool).await;
+        let answered_while_deleting = answered.get();
+        let session = world
+            .store
+            .get_session(&at_did(&alice()), &state)
+            .await
+            .expect("the store answers");
+        let revocations = hits(&world.server, AUTH, "/oauth/revoke").await;
+        hold.rollback().await.expect("the hold ends");
+        (answered_while_deleting, session.is_some(), revocations)
+    };
+    let (signed_in, (answered_while_deleting, saved_while_deleting, revoked_while_deleting)) =
+        tokio::join!(signing_in, while_deleting);
+
+    assert!(
+        !answered_while_deleting,
+        "the sign-in does not answer before its delete is done"
+    );
+    assert!(
+        saved_while_deleting,
+        "the callback saved its session and was held at the delete"
+    );
+    assert_eq!(
+        revoked_while_deleting, 0,
+        "nothing is revoked while the delete is pending"
+    );
+    let did = signed_in.expect("the bound account signs in");
+    assert_eq!(did, alice());
+    let session = world
+        .store
+        .get_session(&at_did(&alice()), &state)
+        .await
+        .expect("the store answers");
+    assert!(session.is_none(), "the session is deleted");
+    let revoked = revocations_arrived(&world.server, 2).await;
+    assert_eq!(revoked.len(), 2, "and then revoked: {revoked:?}");
+}
+
+#[tokio::test]
+async fn a_delete_that_runs_out_of_time_still_signs_in_and_still_revokes() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let held = saved_session(&mallory(), &state);
+    world.store.upsert_session(held).await.expect("saved");
+    // Held for the whole callback: the delete cannot finish in time.
+    let hold = sessions_locked(&world, &state).await;
+    let authenticator = world.authenticator.with_cleanup(Duration::from_millis(300));
+
+    let signed_in = authenticator
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
+        .await;
+    let revoked = revocations_arrived(&world.server, 2).await;
+    hold.rollback().await.expect("the hold ends");
+
+    let did = signed_in.expect("a failed delete does not fail the sign-in");
+    assert_eq!(did, alice());
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned(), ACCESS_TOKEN.to_owned()];
+    assert_eq!(revoked, expected_revoked, "the tokens are still revoked");
+}
+
+#[tokio::test]
+async fn a_revocation_that_never_answers_does_not_hold_up_the_sign_in() {
+    // A 30 s fetch timeout and a 30 s revocation deadline: only the sign-in
+    // not waiting for the revocation can return within 5 s.
+    let world = world_with_fetch_timeout(AUTHORIZE, HANDLE, Duration::from_secs(30)).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    let never = ResponseTemplate::new(204).set_delay(Duration::from_secs(120));
+    mount_with(&world.server, ("POST", AUTH, "/oauth/revoke"), never, true).await;
+    let authenticator = world
+        .authenticator
+        .with_deadlines(Duration::from_secs(10), Duration::from_secs(30));
+
+    let begun = std::time::Instant::now();
+    let signed_in = authenticator
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
+        .await;
+    let waited = begun.elapsed();
+
+    let did = signed_in.expect("the bound account signs in");
+    assert_eq!(did, alice());
+    assert!(
+        waited < Duration::from_secs(5),
+        "the sign-in did not wait for the revocation: {waited:?}"
+    );
+    let revoked = revocations_arrived(&world.server, 1).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned()];
+    assert_eq!(revoked, expected_revoked, "the revocation was sent");
+    let stored = stored_rows(&world.pool).await;
+    assert_eq!(stored, (0, 0), "nothing is stored meanwhile");
+}
+
+#[tokio::test]
+async fn a_refused_scope_is_answered_without_waiting_for_its_revocation() {
+    // As above: only a refusal that does not wait for the revocation can
+    // return within 5 s.
+    let world = world_with_fetch_timeout(AUTHORIZE, HANDLE, Duration::from_secs(30)).await;
+    serve_token_granting(&world.server, &alice(), Some("atproto transition:generic")).await;
+    let (state, binding) = started(&world).await;
+    let never = ResponseTemplate::new(204).set_delay(Duration::from_secs(120));
+    mount_with(&world.server, ("POST", AUTH, "/oauth/revoke"), never, true).await;
+    let authenticator = world
+        .authenticator
+        .with_deadlines(Duration::from_secs(10), Duration::from_secs(30));
+
+    let begun = std::time::Instant::now();
+    let refused = authenticator
+        .complete(
+            "code".into(),
+            Some(state.clone()),
+            Some(ISSUER.into()),
+            Some(binding.clone()),
+        )
+        .await;
+    let waited = begun.elapsed();
+
+    let error = refused.expect_err("the wider grant is refused");
+    assert!(
+        matches!(failure_of(&error), Some(SigninFailure::GrantedScope)),
+        "refused for its granted scope: {error:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "the refusal did not wait for the revocation: {waited:?}"
+    );
+    let revoked = revocations_arrived(&world.server, 1).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned()];
+    assert_eq!(revoked, expected_revoked, "the revocation was sent");
+}
+
+/// Sign in as the bound account against a revocation endpoint answering
+/// with `answer`, and return the `info` lines and above logged until both
+/// revocations were answered.
+async fn revocation_log_after_sign_in(answer: ResponseTemplate) -> Vec<String> {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &alice()).await;
+    let (state, binding) = started(&world).await;
+    mount_with(&world.server, ("POST", AUTH, "/oauth/revoke"), answer, true).await;
+
+    let (signed_in, events) = record_events(async {
+        let signed_in = completed(&world, &state, &binding).await;
+        revocations_arrived(&world.server, 2).await;
+        // The background task logs once each answer is in.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        signed_in
+    })
+    .await;
+
+    signed_in.expect("the revocation's answer does not change the sign-in's");
+    let logged = lines_at(&events, tracing::Level::INFO, true);
+    for line in &logged {
+        for secret in [REFRESH_TOKEN, ACCESS_TOKEN, state.as_str(), "did:plc"] {
+            assert!(
+                !line.contains(secret),
+                "an info line carries {secret:?}: {line}"
+            );
+        }
+    }
+    logged
+}
+
+#[tokio::test]
+async fn a_failed_revocation_after_a_sign_in_is_logged_as_a_revocation_by_class_only() {
+    let refusals = [
+        ResponseTemplate::new(500),
+        ResponseTemplate::new(400).set_body_json(json!({ "error": "invalid_request" })),
+    ];
+
+    for refusal in refusals {
+        let logged = revocation_log_after_sign_in(refusal).await;
+
+        let failed_revocation =
+            "message=revocation failed failure=revocation request failed ".to_string();
+        let expected_logged = vec![failed_revocation.clone(), failed_revocation];
+        assert_eq!(
+            logged, expected_logged,
+            "one line per token, by class, and never as a failed sign-in"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_revocation_answered_with_200_or_204_is_a_revocation() {
+    let answers = [
+        ResponseTemplate::new(200).set_body_json(json!({})),
+        ResponseTemplate::new(204),
+    ];
+
+    for answer in answers {
+        let logged = revocation_log_after_sign_in(answer).await;
+
+        assert!(logged.is_empty(), "nothing failed: {logged:?}");
+    }
+}
+
+/// Whether the sign-in's store still holds a refused grant under `state`.
+fn still_held(world: &World, state: &str) -> bool {
+    let store = &world.authenticator.signin.oauth.registry.store;
+    store.holds_refused(state)
+}
+
 /// Complete a sign-in for the bound account whose token response grants
-/// `scope`, and check it is refused and leaves no session or request behind.
+/// `scope`, and check it is refused, never stored, and revoked.
 async fn a_grant_of(scope: Option<&str>) {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token_granting(&world.server, &alice(), scope).await;
@@ -447,6 +793,10 @@ async fn a_grant_of(scope: Option<&str>) {
         matches!(failure_of(&error), Some(SigninFailure::GrantedScope)),
         "refused for its granted scope: {error:?}"
     );
+    assert!(
+        !is_browser_mismatch(&error) && !error.is::<AccountMismatch>(),
+        "a refused scope stays generic at the port: {error:?}"
+    );
     let session = world
         .store
         .get_session(&at_did(&alice()), &state)
@@ -457,38 +807,28 @@ async fn a_grant_of(scope: Option<&str>) {
         !still_pending(&world, &state).await,
         "and so is its request"
     );
+    let stored = stored_rows(&world.pool).await;
+    assert_eq!(stored, (0, 0), "the refused grant was never stored");
+    assert!(
+        !still_held(&world, &state),
+        "no refused grant is left in memory"
+    );
+    let revoked = revocations_arrived(&world.server, 2).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned(), ACCESS_TOKEN.to_owned()];
+    assert_eq!(
+        revoked, expected_revoked,
+        "the refused grant's refresh token is revoked, then its access token"
+    );
 }
 
 #[tokio::test]
-async fn a_grant_wider_than_atproto_is_refused_and_its_session_discarded() {
+async fn a_grant_wider_than_atproto_is_refused_never_stored_and_revoked() {
     a_grant_of(Some("atproto transition:generic")).await;
 }
 
 #[tokio::test]
-async fn a_grant_naming_no_scope_is_refused_and_its_session_discarded() {
+async fn a_grant_naming_no_scope_is_refused_never_stored_and_revoked() {
     a_grant_of(None).await;
-}
-
-#[test]
-fn only_exactly_atproto_is_identity_only() {
-    let cases = [
-        (Some("atproto"), true),
-        (Some(" atproto "), true),
-        (Some("atproto transition:generic"), false),
-        (Some("transition:generic atproto"), false),
-        (Some("atproto repo:app.bsky.feed.post"), false),
-        (Some("transition:generic"), false),
-        (Some(""), false),
-        (None, false),
-    ];
-
-    for (granted, expected) in cases {
-        assert_eq!(
-            grants_identity_only(granted),
-            expected,
-            "the verdict on {granted:?}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -509,8 +849,18 @@ async fn another_account_with_a_wider_grant_is_refused_as_a_mismatch_and_revoked
         error.is::<AccountMismatch>(),
         "the account check runs before the scope check: {error:?}"
     );
-    let revocations = hits(&world.server, AUTH, "/oauth/revoke").await;
-    assert_eq!(revocations, 1, "the mismatched tokens are revoked");
+    let revoked = revoked_tokens(&world.server).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned(), ACCESS_TOKEN.to_owned()];
+    assert_eq!(
+        revoked, expected_revoked,
+        "the mismatched wider grant is revoked, refresh token first"
+    );
+    let stored = stored_rows(&world.pool).await;
+    assert_eq!(stored, (0, 0), "the wider grant was never stored");
+    assert!(
+        !still_held(&world, &state),
+        "no refused grant is left in memory"
+    );
     let session = world
         .store
         .get_session(&at_did(&mallory()), &state)
@@ -532,8 +882,12 @@ async fn another_account_is_revoked_deleted_and_refused() {
         error.is::<AccountMismatch>(),
         "refused as an account mismatch"
     );
-    let revocations = hits(&world.server, AUTH, "/oauth/revoke").await;
-    assert_eq!(revocations, 1, "the mismatched tokens are revoked");
+    let revoked = revoked_tokens(&world.server).await;
+    let expected_revoked = vec![REFRESH_TOKEN.to_owned(), ACCESS_TOKEN.to_owned()];
+    assert_eq!(
+        revoked, expected_revoked,
+        "the mismatched refresh token is revoked first, then the access token"
+    );
     let session = world
         .store
         .get_session(&at_did(&mallory()), &state)
@@ -549,7 +903,7 @@ async fn a_failed_revocation_still_deletes_the_mismatched_session() {
     let (state, binding) = started(&world).await;
     // The authorization server vanishes once the callback is through: its two
     // metadata fetches (the callback's own, the issuer check's) answer, and
-    // logout's cannot, so the session must be deleted without a revocation.
+    // the revocation's cannot, so the session must be deleted without a revocation.
     let metadata_route = ("GET", AUTH, "/.well-known/oauth-authorization-server");
     let metadata = ResponseTemplate::new(200).set_body_json(server_metadata(AUTHORIZE));
     Mock::given(method(metadata_route.0))
@@ -691,9 +1045,9 @@ fn saved_session(did: &Did, session_id: &str) -> ClientSessionData {
         iss: SmolStr::new_static(ISSUER),
         sub: account_did.clone(),
         aud: SmolStr::new(format!("https://{PDS}")),
-        scope: None,
-        refresh_token: Some(SmolStr::new_static("refresh")),
-        access_token: SmolStr::new_static("access"),
+        scope: Some(SmolStr::new_static(OAUTH_SCOPES)),
+        refresh_token: Some(SmolStr::new_static(REFRESH_TOKEN)),
+        access_token: SmolStr::new_static(ACCESS_TOKEN),
         token_type: OAuthTokenType::DPoP,
         expires_at: None,
     };
@@ -740,8 +1094,9 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
     let world = world_with_fetch_timeout(AUTHORIZE, HANDLE, Duration::from_secs(30)).await;
     serve_token(&world.server, &mallory()).await;
     let (state, binding) = started(&world).await;
-    // The authorization server answers the callback, then stalls logout's
-    // metadata fetch: the stall must neither strand the row nor change the answer.
+    // The authorization server answers the callback, then stalls the
+    // revocation's metadata fetch: the stall must neither strand the row nor
+    // change the answer.
     let stalled = ResponseTemplate::new(200)
         .set_body_json(server_metadata(AUTHORIZE))
         .set_delay(Duration::from_secs(60));
@@ -752,14 +1107,13 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
         .with_deadlines(Duration::from_secs(10), Duration::from_millis(300));
 
     let begun = std::time::Instant::now();
-    let result = authenticator
-        .complete(
-            "code".into(),
-            Some(state.clone()),
-            Some(ISSUER.into()),
-            Some(binding.clone()),
-        )
-        .await;
+    let refusing = authenticator.complete(
+        "code".into(),
+        Some(state.clone()),
+        Some(ISSUER.into()),
+        Some(binding.clone()),
+    );
+    let (result, events) = record_events(refusing).await;
 
     let error = result.expect_err("another account is refused");
     assert!(error.is::<AccountMismatch>(), "still an account mismatch");
@@ -767,12 +1121,47 @@ async fn a_stalled_revocation_still_refuses_and_leaves_no_session() {
         begun.elapsed() < Duration::from_secs(10),
         "the revocation gave up"
     );
+    let info = lines_at(&events, tracing::Level::INFO, false);
+    let expected_info = vec![
+        "message=revocation failed failure=revocation deadline passed ".to_string(),
+        "message=sign-in failed failure=signed in as a different account ".to_string(),
+    ];
+    assert_eq!(info, expected_info, "given up at the revocation deadline");
     let session = world
         .store
         .get_session(&at_did(&mallory()), &state)
         .await
         .expect("the store answers");
     assert!(session.is_none(), "the row is gone before any revocation");
+}
+
+#[tokio::test]
+async fn an_authorization_server_without_a_revocation_endpoint_is_logged_by_class() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    serve_token(&world.server, &mallory()).await;
+    let (state, binding) = started(&world).await;
+    // The callback's two metadata fetches see the full metadata; the
+    // revocation's sees none of a revocation endpoint.
+    let mut without_revocation = server_metadata(AUTHORIZE);
+    without_revocation
+        .as_object_mut()
+        .expect("the metadata is an object")
+        .remove("revocation_endpoint");
+    let later = ResponseTemplate::new(200).set_body_json(without_revocation);
+    metadata_then(&world.server, later).await;
+
+    let (result, events) = record_events(completed(&world, &state, &binding)).await;
+
+    let error = result.expect_err("another account is refused");
+    assert!(error.is::<AccountMismatch>(), "still an account mismatch");
+    let info = lines_at(&events, tracing::Level::INFO, false);
+    let expected_info = vec![
+        "message=revocation failed failure=no revocation endpoint ".to_string(),
+        "message=sign-in failed failure=signed in as a different account ".to_string(),
+    ];
+    assert_eq!(info, expected_info, "the missing endpoint is logged once");
+    let revoked = revoked_tokens(&world.server).await;
+    assert!(revoked.is_empty(), "nothing is sent: {revoked:?}");
 }
 
 #[tokio::test]
@@ -823,7 +1212,7 @@ async fn a_dropped_callback_request_still_cleans_up() {
     let (state, binding) = started(&world).await;
     // The token exchange for another account answers after the request is gone.
     let tokens = json!({
-        "access_token": "access",
+        "access_token": ACCESS_TOKEN,
         "token_type": "DPoP",
         "expires_in": 3600,
         "scope": OAUTH_SCOPES,
@@ -914,30 +1303,25 @@ async fn a_failure_cause_reaches_the_debug_line_only() {
 }
 
 #[tokio::test]
-async fn a_replayed_callback_is_refused_and_leaves_the_live_session() {
+async fn a_replayed_callback_is_refused_and_stores_nothing() {
     let world = world(AUTHORIZE, HANDLE).await;
     serve_token(&world.server, &alice()).await;
     let (state, binding) = started(&world).await;
     completed(&world, &state, &binding)
         .await
         .expect("the first callback signs in");
-    let live = world
-        .store
-        .get_session(&at_did(&alice()), &state)
-        .await
-        .expect("the store answers");
-    assert!(live.is_some(), "the sign-in stored its session");
 
     // A reload, the back button, or anyone who saw the callback URL.
     let replay = completed(&world, &state, &binding).await;
 
     assert!(replay.is_err(), "a state is single-use");
-    let still_live = world
-        .store
-        .get_session(&at_did(&alice()), &state)
-        .await
-        .expect("the store answers");
-    assert!(still_live.is_some(), "the replay deleted nothing");
+    assert_eq!(
+        hits(&world.server, AUTH, "/oauth/token").await,
+        1,
+        "the replay exchanged no code"
+    );
+    let stored = stored_rows(&world.pool).await;
+    assert_eq!(stored, (0, 0), "nothing is stored after either callback");
 }
 
 // ---- the browser binding ---------------------------------------------------

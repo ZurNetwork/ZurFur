@@ -12,6 +12,7 @@ mod auth_store;
 mod authenticator;
 mod did_minter;
 mod guarded_http;
+mod oauth_scope;
 mod plc;
 mod plc_directory;
 mod profile;

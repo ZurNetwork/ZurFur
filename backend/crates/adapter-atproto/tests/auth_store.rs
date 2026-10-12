@@ -61,7 +61,7 @@ fn client_session(did: &'static str, session_id: &'static str) -> ClientSessionD
             iss: SmolStr::new_static("https://issuer.example.com"),
             sub: account_did,
             aud: SmolStr::new_static("https://pds.example.com"),
-            scope: None,
+            scope: Some(SmolStr::new_static("atproto")),
             refresh_token: Some(SmolStr::new_static("refresh-token")),
             access_token: SmolStr::new_static("access-token"),
             token_type: OAuthTokenType::DPoP,
@@ -128,6 +128,59 @@ async fn client_session_upsert_get_delete_roundtrip() {
             .is_none(),
         "session must be gone after delete"
     );
+}
+
+#[tokio::test]
+async fn a_session_granting_anything_but_exactly_atproto_is_never_written() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let refused_grants = [
+        Some("atproto transition:generic"),
+        Some("transition:generic"),
+        Some(""),
+        None,
+    ];
+
+    for granted in refused_grants {
+        let mut session = client_session("did:plc:alice", "session-1");
+        session.token_set.scope = granted.map(SmolStr::new);
+        let saved = store.upsert_session(session).await;
+        assert!(saved.is_err(), "a grant of {granted:?} is refused");
+    }
+
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM atproto_oauth.client_session")
+        .fetch_one(&pool)
+        .await
+        .expect("the session table answers");
+    assert_eq!(rows, 0, "no refused session reached the table");
+    let identity_only = client_session("did:plc:alice", "session-1");
+    store
+        .upsert_session(identity_only)
+        .await
+        .expect("exactly atproto is saved");
+}
+
+#[tokio::test]
+async fn a_held_refused_session_never_shows_in_the_stores_debug() {
+    let (store, _container) = fresh_store().await;
+    let mut wider = client_session("did:plc:alice", "session-1");
+    wider.token_set.scope = Some(SmolStr::new_static("atproto transition:generic"));
+    let saved = store.upsert_session(wider).await;
+    assert!(saved.is_err(), "the wider grant is refused, and held");
+
+    let shown = format!("{store:?}");
+
+    assert!(shown.contains("held: 1"), "the held count shows: {shown}");
+    for secret in [
+        "refresh-token",
+        "access-token",
+        "session-1",
+        "did:plc:alice",
+    ] {
+        assert!(
+            !shown.contains(secret),
+            "the Debug shows {secret:?}: {shown}"
+        );
+    }
 }
 
 #[tokio::test]
