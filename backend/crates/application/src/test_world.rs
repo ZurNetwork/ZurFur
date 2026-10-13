@@ -1,4 +1,4 @@
-//! The arms' shared test world: the in-memory fixture as this crate's own ports, and a Den
+//! The Den arms' shared test world: the in-memory fixture as this crate's own ports, and a Den
 //! read from any node directly under a top-level directory.
 
 use atta::{Caps, RealPath, Segment};
@@ -19,25 +19,6 @@ pub(crate) struct World {
     pub(crate) ports: Ports,
 }
 
-/// This crate's own [`Ports`] over a runtime's stores.
-pub(crate) fn ports_of(runtime: &composition::Runtime) -> Ports {
-    Ports {
-        database: runtime.database.clone(),
-        users: runtime.users.clone(),
-        accounts: runtime.accounts.clone(),
-        commissions: runtime.commissions.clone(),
-        changelog: runtime.changelog.clone(),
-        profile_source: runtime.profile_source.clone(),
-        profile_cache: runtime.profile_cache.clone(),
-        identity_resolver: runtime.identity_resolver.clone(),
-        did_minter: runtime.did_minter.clone(),
-        files: runtime.files.clone(),
-        workflows: runtime.workflows.clone(),
-        columns: runtime.columns.clone(),
-        characters: runtime.characters.clone(),
-    }
-}
-
 /// The fixture world: identity's people and Account, then commission's rows.
 pub(crate) async fn world() -> World {
     let did = Did::from("did:plc:den-arms-test".to_owned());
@@ -51,7 +32,7 @@ pub(crate) async fn world() -> World {
     adapter_mem::fixture::seed_commission(&built.backend, &alice, &bob, &supreme_arts)
         .await
         .expect("commission's fixture seeds");
-    let ports = ports_of(&built.runtime);
+    let ports = Ports::from(&built.runtime);
     World {
         runtime: built.runtime,
         ports,

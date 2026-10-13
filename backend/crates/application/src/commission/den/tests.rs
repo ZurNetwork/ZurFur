@@ -9,9 +9,9 @@ use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileSt
 use uuid::Uuid;
 
 use super::*;
-use crate::den::{
-    DenAccess, DenContent, DenError, DenNode, NodeKind, NodeLevel, SoftDelete,
-    tests::{self as testing, World, path, segment},
+use crate::{
+    den::{DenAccess, DenContent, DenError, DenNode, NodeKind, NodeLevel, SoftDelete},
+    test_world::{self, World, path, segment},
 };
 
 /// The real path of a commission.
@@ -44,9 +44,9 @@ fn flagged(node: &DenNode) -> bool {
 
 #[tokio::test]
 async fn untitled_opens_to_its_four_entries() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
 
-    let read = testing::read(&ports, &alice(), false, &commission_path(untitled()), &[])
+    let read = test_world::read(&ports, &alice(), false, &commission_path(untitled()), &[])
         .await
         .expect("alice opens Untitled");
 
@@ -84,9 +84,9 @@ async fn untitled_opens_to_its_four_entries() {
 
 #[tokio::test]
 async fn attachments_list_the_files_by_name_each_flagged() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
 
-    let read = testing::read(
+    let read = test_world::read(
         &ports,
         &alice(),
         false,
@@ -111,10 +111,10 @@ async fn attachments_list_the_files_by_name_each_flagged() {
 
 #[tokio::test]
 async fn a_file_opens_as_a_file() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let [ref_abco, _] = untitled_files();
 
-    let read = testing::read(
+    let read = test_world::read(
         &ports,
         &alice(),
         false,
@@ -130,17 +130,17 @@ async fn a_file_opens_as_a_file() {
 
 #[tokio::test]
 async fn slots_list_their_titles_and_each_opens_flagged_and_empty() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let root = commission_path(untitled());
 
-    let read = testing::read(&ports, &alice(), false, &root, &["slots"])
+    let read = test_world::read(&ports, &alice(), false, &root, &["slots"])
         .await
         .expect("alice opens the slots");
 
     assert_eq!(names(&read.content), ["Abco", "Ember", "Kael", "Open slot"]);
     for slot in untitled_slots() {
         let slot_key = slot.to_string();
-        let opened = testing::read(&ports, &alice(), false, &root, &["slots", &slot_key])
+        let opened = test_world::read(&ports, &alice(), false, &root, &["slots", &slot_key])
             .await
             .expect("alice opens a slot");
 
@@ -152,9 +152,9 @@ async fn slots_list_their_titles_and_each_opens_flagged_and_empty() {
 
 #[tokio::test]
 async fn products_are_empty_and_not_flagged() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
 
-    let read = testing::read(
+    let read = test_world::read(
         &ports,
         &alice(),
         false,
@@ -170,9 +170,9 @@ async fn products_are_empty_and_not_flagged() {
 
 #[tokio::test]
 async fn products_hold_nothing_until_products_can_be_stored() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let alice = alice();
-    let context = testing::context(&ports, &alice);
+    let context = test_world::context(&ports, &alice);
 
     let products = children(&context, &CommissionPlace::Products(untitled()))
         .await
@@ -183,9 +183,9 @@ async fn products_hold_nothing_until_products_can_be_stored() {
 
 #[tokio::test]
 async fn the_changelog_is_a_file() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
 
-    let read = testing::read(
+    let read = test_world::read(
         &ports,
         &alice(),
         false,
@@ -201,9 +201,9 @@ async fn the_changelog_is_a_file() {
 
 #[tokio::test]
 async fn an_archived_commission_opens_by_its_path_marked_archived() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
 
-    let read = testing::read(&ports, &alice(), false, &commission_path(old_sketch()), &[])
+    let read = test_world::read(&ports, &alice(), false, &commission_path(old_sketch()), &[])
         .await
         .expect("alice opens Old sketch by its path");
 
@@ -220,13 +220,13 @@ async fn an_archived_commission_opens_by_its_path_marked_archived() {
 
 #[tokio::test]
 async fn a_commission_that_is_not_the_viewer_s_reads_as_one_that_does_not_exist() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let bob = bob();
     let nowhere = CommissionId::from(Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0099));
 
-    let not_bobs = testing::read(&ports, &bob, false, &commission_path(old_sketch()), &[]).await;
-    let absent = testing::read(&ports, &bob, false, &commission_path(nowhere), &[]).await;
-    let context = testing::context(&ports, &bob);
+    let not_bobs = test_world::read(&ports, &bob, false, &commission_path(old_sketch()), &[]).await;
+    let absent = test_world::read(&ports, &bob, false, &commission_path(nowhere), &[]).await;
+    let context = test_world::context(&ports, &bob);
     let bobs_node = node(&context, old_sketch())
         .await
         .expect("no store fails")
@@ -240,9 +240,9 @@ async fn a_commission_that_is_not_the_viewer_s_reads_as_one_that_does_not_exist(
 
 #[tokio::test]
 async fn a_participant_holds_standing_at_the_commission() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let bob = bob();
-    let context = testing::context(&ports, &bob);
+    let context = test_world::context(&ports, &bob);
 
     let untitled_for_bob = node(&context, untitled())
         .await
@@ -255,7 +255,7 @@ async fn a_participant_holds_standing_at_the_commission() {
 
 #[tokio::test]
 async fn a_stored_title_the_name_rule_refuses_shows_unnamed() {
-    let World { runtime, ports } = testing::world().await;
+    let World { runtime, ports } = test_world::world().await;
     let alice = alice();
     let legacy_title = "photo\u{202E}gpj.exe"
         .parse::<CommissionTitle>()
@@ -267,7 +267,7 @@ async fn a_stored_title_the_name_rule_refuses_shows_unnamed() {
         .await
         .expect("the legacy commission seeds");
 
-    let read = testing::read(&ports, &alice, false, &commission_path(legacy_id), &[])
+    let read = test_world::read(&ports, &alice, false, &commission_path(legacy_id), &[])
         .await
         .expect("alice opens her legacy commission");
 
@@ -276,9 +276,9 @@ async fn a_stored_title_the_name_rule_refuses_shows_unnamed() {
 
 #[tokio::test]
 async fn mounts_in_the_viewer_s_own_commissions_include_archived_ones() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let alice = alice();
-    let context = testing::context(&ports, &alice);
+    let context = test_world::context(&ports, &alice);
 
     let own = mounts(&context, &CommissionPlace::UserCommissions(alice.clone()))
         .await
@@ -300,7 +300,7 @@ async fn mounts_in_the_viewer_s_own_commissions_include_archived_ones() {
 
 /// The fixture world with its commission and file stores recording every read.
 async fn recorded() -> (World, CallLog) {
-    let World { runtime, mut ports } = testing::world().await;
+    let World { runtime, mut ports } = test_world::world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
     ports.commissions = Arc::new(commissions);
@@ -312,7 +312,7 @@ async fn recorded() -> (World, CallLog) {
 async fn an_absent_commission_and_one_not_the_viewer_s_run_the_same_reads() {
     let (World { ports, .. }, log) = recorded().await;
     let bob = bob();
-    let context = testing::context(&ports, &bob);
+    let context = test_world::context(&ports, &bob);
     let nowhere = CommissionId::from(Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0098));
 
     node(&context, nowhere).await.expect("no store fails");
@@ -329,7 +329,7 @@ async fn an_absent_commission_and_one_not_the_viewer_s_run_the_same_reads() {
 async fn an_absent_file_key_and_another_commission_s_run_the_same_reads() {
     let (World { ports, .. }, log) = recorded().await;
     let alice = alice();
-    let context = testing::context(&ports, &alice);
+    let context = test_world::context(&ports, &alice);
     let elsewhere = FileKey::from(Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0097));
     let stored_name = FileName::try_from("elsewhere.png").expect("a valid file name");
     let mut bytes: &[u8] = b"bytes of a file in no commission of alice's";

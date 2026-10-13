@@ -105,6 +105,11 @@
       "node": false
     },
     {
+      "name": "src/test_world.rs",
+      "role": "test-only (cfg(test)): the Den arms' shared world — the identity and commission fixtures seeded in memory, this crate's Ports over them, a DenContext, and a Den read from any node directly under a top-level directory",
+      "node": false
+    },
+    {
       "name": "src/ports.rs",
       "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace — and the `WithPorts` derive re-exported beside it",
       "node": false

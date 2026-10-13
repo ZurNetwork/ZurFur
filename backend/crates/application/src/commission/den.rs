@@ -16,16 +16,8 @@ use crate::den::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommissionPlace {
     /// A user's `commissions` folder, which holds a mount of each commission they are part of.
-    #[allow(
-        dead_code,
-        reason = "built by the identity arms, which answer the user's folders"
-    )]
     UserCommissions(UserId),
     /// An Account's `commissions` folder, which holds a mount of each commission brought into it.
-    #[allow(
-        dead_code,
-        reason = "built by the identity arms, which answer the Account's folders"
-    )]
     AccountCommissions(AccountId),
     /// The commission's directory, `/commission/<id>`.
     Commission(CommissionId),

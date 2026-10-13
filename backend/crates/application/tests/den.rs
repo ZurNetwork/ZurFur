@@ -1,6 +1,6 @@
 //! The den Query over the in-memory runtime: every malformed path is the one not-found, and
-//! the identity arms serve a viewer's own root, their Accounts and their Characters on the
-//! fixture world, and nothing of anyone else's.
+//! the identity and commission arms serve a viewer's own root, their Accounts, their
+//! Characters and their commissions on the fixture world, and nothing of anyone else's.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use adapter_mem::{
     MemBackend,
-    fixture::{abco, alice, bob, ember, kael_sona, seed_commission, seed_identity, supreme_arts},
+    fixture::{
+        abco, alice, bob, ember, kael_sona, old_sketch, seed_commission, seed_identity,
+        supreme_arts, untitled, untitled_slots,
+    },
 };
 use application::den::{
     DenAccess, DenContent, DenError, DenListing, DenNode, NodeKind, NodeLevel, SoftDelete,
@@ -552,6 +555,14 @@ async fn no_answer_alice_can_reach_names_bob() {
         answers.len() > 8,
         "the walk reached alice's nodes: {answers:#?}"
     );
+    for inside_a_commission in ["Old sketch", "sketch-01.png", "Open slot", "changelog"] {
+        assert!(
+            answers
+                .iter()
+                .any(|answer| answer.contains(inside_a_commission)),
+            "the walk reached alice's commissions: {inside_a_commission}"
+        );
+    }
     for answer in &answers {
         for word in &bob_s {
             assert!(!answer.contains(word.as_str()), "{word} in {answer}");
@@ -592,4 +603,122 @@ async fn the_den_reads_only_the_viewer_s_cached_profile_and_never_the_profile_so
         cache_log.events()
     );
     assert_eq!(source_log.events(), Vec::<&str>::new());
+}
+
+/// An open, live, Private folder whose content isn't shown yet.
+const NOT_SHOWN_PRIVATE_FOLDER: (NodeKind, NodeLevel, bool, Option<SoftDelete>) =
+    (NodeKind::Directory, NodeLevel::Private, true, None);
+
+#[tokio::test]
+async fn untitled_opens_from_alice_s_commissions_to_its_four_entries() {
+    let (runtime, _backend) = world().await;
+    let untitled_id = untitled().to_string();
+
+    let output = read(&runtime, alice(), &["commissions", &untitled_id], false)
+        .await
+        .expect("Untitled");
+
+    assert_eq!(output.node.name.to_string(), "Untitled");
+    assert!(output.node.mount);
+    assert_eq!(open(&output.node), OPEN_PRIVATE_FOLDER);
+    assert_eq!(
+        names(&listing(output)),
+        ["attachments", "changelog", "products", "slots"]
+    );
+}
+
+#[tokio::test]
+async fn untitled_s_attachments_list_its_two_files() {
+    let (runtime, _backend) = world().await;
+    let untitled_id = untitled().to_string();
+
+    let output = read(
+        &runtime,
+        alice(),
+        &["commissions", &untitled_id, "attachments"],
+        false,
+    )
+    .await
+    .expect("Untitled's attachments");
+
+    assert_eq!(names(&listing(output)), ["ref-abco.png", "sketch-01.png"]);
+}
+
+#[tokio::test]
+async fn a_slot_of_untitled_opens_flagged_and_empty() {
+    let (runtime, _backend) = world().await;
+    let untitled_id = untitled().to_string();
+    let [first_slot, ..] = untitled_slots();
+    let slot_key = first_slot.to_string();
+
+    let output = read(
+        &runtime,
+        alice(),
+        &["commissions", &untitled_id, "slots", &slot_key],
+        false,
+    )
+    .await
+    .expect("a slot of Untitled");
+
+    assert_eq!(open(&output.node), NOT_SHOWN_PRIVATE_FOLDER);
+    assert_eq!(listing(output), DenListing::default());
+}
+
+#[tokio::test]
+async fn old_sketch_is_listed_in_alice_s_commissions_only_when_asked_for_marked_archived() {
+    let (runtime, _backend) = world().await;
+
+    let hidden = listing(
+        read(&runtime, alice(), &["commissions"], false)
+            .await
+            .expect("alice's commissions"),
+    );
+    let shown = listing(
+        read(&runtime, alice(), &["commissions"], true)
+            .await
+            .expect("alice's commissions, deleted ones included"),
+    );
+
+    assert_eq!(names(&hidden), ["Untitled"]);
+    assert_eq!(names(&shown), ["Old sketch", "Untitled"]);
+    let archived = (
+        NodeKind::Directory,
+        NodeLevel::Private,
+        false,
+        Some(SoftDelete::Archived),
+    );
+    assert_eq!(open(&shown.entries[0]), archived);
+    assert!(shown.entries.iter().all(|entry| entry.mount));
+}
+
+#[tokio::test]
+async fn old_sketch_s_typed_path_opens_marked_archived_without_asking_for_deleted_ones() {
+    let (runtime, _backend) = world().await;
+    let old_sketch_id = old_sketch().to_string();
+
+    let output = read(&runtime, alice(), &["commissions", &old_sketch_id], false)
+        .await
+        .expect("Old sketch by its typed path");
+
+    assert_eq!(output.node.name.to_string(), "Old sketch");
+    let archived = (
+        NodeKind::Directory,
+        NodeLevel::Private,
+        false,
+        Some(SoftDelete::Archived),
+    );
+    assert_eq!(open(&output.node), archived);
+}
+
+#[tokio::test]
+async fn bob_s_commissions_list_only_untitled() {
+    let (runtime, _backend) = world().await;
+
+    let bob_s = listing(
+        read(&runtime, bob(), &["commissions"], true)
+            .await
+            .expect("bob's commissions"),
+    );
+
+    assert_eq!(names(&bob_s), ["Untitled"]);
 }

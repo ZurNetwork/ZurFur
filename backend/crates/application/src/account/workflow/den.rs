@@ -12,10 +12,6 @@ use crate::den::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WorkflowPlace {
     /// An Account's `workflows` folder.
-    #[allow(
-        dead_code,
-        reason = "built by the identity arms, which answer the Account's folders"
-    )]
     Workflows(AccountId),
     /// One Workflow in it.
     Workflow(AccountId, WorkflowId),

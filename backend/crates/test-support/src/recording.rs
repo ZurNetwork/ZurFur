@@ -25,8 +25,8 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountRepo, AccountStore, ActorIdentityWrites, ChangelogWrites, CharacterStore,
-    CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore, ProfileCache,
-    ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
+    CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
 };
 use tokio::io::AsyncRead;
 

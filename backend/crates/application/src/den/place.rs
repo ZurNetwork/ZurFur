@@ -46,10 +46,6 @@ pub(crate) enum TopLevel {
 /// Where a node sits, typed: its type and the ids the arm that answers for it needs. Each
 /// variant is one team's places, defined beside that team's arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "the identity and posts variants are built by their arms once they serve nodes"
-)]
 pub(crate) enum Place {
     /// A top-level directory, den's own.
     TopLevel(TopLevel),

@@ -5,7 +5,7 @@
 mod admission;
 mod context;
 mod den_type;
-mod host;
+pub(crate) mod host;
 mod kind;
 mod level;
 mod name;
@@ -15,13 +15,11 @@ mod output;
 mod page_token;
 mod place;
 pub(crate) mod post;
-mod read;
+pub(crate) mod read;
 pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
-#[cfg(test)]
-pub(crate) mod tests;
 
 use crate::ports::WithPorts;
 
@@ -35,12 +33,8 @@ pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 
 pub(crate) use atta::Level;
+pub(crate) use atta::NodeName;
 pub(crate) use atta::Segment;
-#[allow(
-    unused_imports,
-    reason = "the identity arms name these through the den module"
-)]
-pub(crate) use atta::{Lift, NodeName};
 pub(crate) use context::DenContext;
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};

@@ -1,13 +1,13 @@
 use adapter_mem::fixture::{alice, queue, supreme_arts};
 
 use super::*;
-use crate::den::tests::{self as testing, World, segment};
+use crate::test_world::{self, World, segment};
 
 #[tokio::test]
 async fn an_account_s_workflows_folder_lists_its_workflows() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let alice = alice();
-    let context = testing::context(&ports, &alice);
+    let context = test_world::context(&ports, &alice);
 
     let workflows = children(&context, &WorkflowPlace::Workflows(supreme_arts()))
         .await
@@ -26,9 +26,9 @@ async fn an_account_s_workflows_folder_lists_its_workflows() {
 
 #[tokio::test]
 async fn a_workflow_is_found_by_its_key_in_its_account_s_folder_only() {
-    let World { ports, .. } = testing::world().await;
+    let World { ports, .. } = test_world::world().await;
     let alice = alice();
-    let context = testing::context(&ports, &alice);
+    let context = test_world::context(&ports, &alice);
     let folder = WorkflowPlace::Workflows(supreme_arts());
 
     let found = child(&context, &folder, &segment(&queue().to_string()))
