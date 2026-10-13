@@ -27,6 +27,16 @@
       "node": true
     },
     {
+      "name": "den.rs",
+      "role": "the den route group's façade: GET /den and GET /den/{*path} over application::den",
+      "node": false
+    },
+    {
+      "name": "den/",
+      "role": "the Den read over HTTP: session, then query, then the raw path split and decoded once; one 404; private, no-store",
+      "node": true
+    },
+    {
       "name": "health.rs",
       "role": "GET /health, outside the CSRF layer",
       "node": false

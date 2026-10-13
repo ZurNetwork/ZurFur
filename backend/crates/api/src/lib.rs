@@ -49,9 +49,10 @@ pub fn app(state: AppState) -> Router {
         HeaderValue::from_static("no-store"),
     );
 
-    // Cookie surface: session + accounts + commissions, under CSRF; no-store outermost.
+    // Cookie surface: session + accounts + commissions + den, under CSRF; no-store outermost.
     let cookie_surface = routes::session_router()
         .merge(routes::accounts_router())
+        .merge(routes::den_router())
         .merge(routes::commissions_router(
             // Checked, not `as`: an oversized cap must saturate, never silently truncate.
             usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX),

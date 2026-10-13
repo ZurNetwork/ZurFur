@@ -77,8 +77,9 @@ pub(crate) fn crumb(entry: &Entry) -> DenCrumb {
     }
 }
 
-/// Where a Den read finds the soft-deleted word of a node the host answered for.
-pub(crate) trait SoftDeleteLookup {
+/// Where a Den read finds the soft-deleted word of a node the host answered for; `Sync`, so a
+/// read's future can cross threads.
+pub(crate) trait SoftDeleteLookup: Sync {
     /// The word for the node at `path`, `None` when live; the outer `None` when the host
     /// never answered for that path.
     fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>>;
