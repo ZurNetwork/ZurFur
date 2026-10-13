@@ -29,6 +29,7 @@ pub mod changelog;
 pub mod create;
 pub mod deadline;
 pub mod delete;
+pub(crate) mod den;
 pub mod files;
 pub mod invitations;
 pub mod list;

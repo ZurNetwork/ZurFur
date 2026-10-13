@@ -15,6 +15,8 @@ domain = { path = "../domain" }
 anyhow = { workspace = true }
 # `derive(Error)` for the per-module error enums (Display/source/From by attribute).
 thiserror = { workspace = true }
+# `Display`/`AsRef` on the den module's output newtypes.
+derive_more = { workspace = true }
 # Enum string tables (`NotFoundEntity`, `AccountEntity`).
 strum = { workspace = true }
 # Structured logging for the steps a use case deliberately swallows (e.g. the
@@ -30,6 +32,11 @@ serde_json = { workspace = true }
 # `workspace = true` cannot itself drop `default-features` here).
 tokio = { version = "1.49.0", default-features = false, features = ["io-util", "rt"] }
 application-macros = { path = "../application-macros" }
+# The Den's engine: the den module implements its one host trait and calls its
+# resolver. Imported only inside `src/den*`; no driver sees an Atta type.
+atta = { path = "../atta" }
+# `atta::Host` is an `#[async_trait]` trait, so its one implementation here is too.
+async-trait = { workspace = true }
 
 [dev-dependencies]
 # The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks
@@ -37,9 +44,10 @@ application-macros = { path = "../application-macros" }
 test-support = { path = "../test-support" }
 tokio = { workspace = true }
 uuid = { workspace = true }
+# The den keys' property tests over UUIDs and DIDs.
+proptest = { workspace = true }
 # The tests' `now` + a hand-rolled failing port double.
 chrono = { workspace = true }
-async-trait = { workspace = true }
 # Names `composition::Runtime` so the integration tests can build an `App` over
 # the in-memory fixture — already in the dev graph
 # transitively via `test-support` (see the dep-guard's cyclic-dev-graph note).

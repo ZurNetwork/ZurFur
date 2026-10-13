@@ -38,6 +38,11 @@
       "node": false
     },
     {
+      "name": "den.rs",
+      "role": "commission's Den arm: CommissionPlace (a commission, its entries, slots, files, and the user's and Account's `commissions` folders) and its node/child/children/mounts leaves, answering absent until the commission arms serve them",
+      "node": false
+    },
+    {
       "name": "files.rs + files/{upload,download}.rs",
       "role": "streaming upload (auth before read, capped, blob written before its row, orphan deleted on refusal) and gated download",
       "node": false

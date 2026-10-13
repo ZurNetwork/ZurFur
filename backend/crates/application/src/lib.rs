@@ -9,6 +9,7 @@ pub mod app;
 pub mod character;
 pub mod commission;
 pub mod common_error;
+pub mod den;
 mod lazy_unit;
 pub(crate) mod ports;
 mod transaction;

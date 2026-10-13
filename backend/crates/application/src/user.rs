@@ -4,6 +4,7 @@ use crate::ports::WithPorts;
 use domain::elements::{did::Did, profile::Profile};
 use domain::ports::{ProfileCache, ProfileSource};
 
+pub(crate) mod den;
 pub mod me;
 
 /// Read-through resolution of a visitor's profile: a cache hit is served

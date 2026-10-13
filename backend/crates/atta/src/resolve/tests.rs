@@ -99,7 +99,7 @@ fn resolver(host: &FakeHost) -> Resolver<'_> {
 }
 
 async fn resolve(host: &FakeHost, pieces: &[&str]) -> Result<Resolved, Error> {
-    resolver(host).resolve(&root(), &den(pieces)).await
+    resolver(host).resolve_path(&root(), &den(pieces)).await
 }
 
 async fn assert_not_found(host: &FakeHost, pieces: &[&str]) {
@@ -180,7 +180,7 @@ async fn a_lift_at_a_top_level_directory_opens_nothing_below_it() {
         .lifted("/user", &[STANDING])
         .node("/user/bob", "user", Level::Private, &[]);
     assert_not_found(&host, &["commissions", "stranger"]).await;
-    let bobs_root = resolver(&host).resolve(&path("/user/bob"), &[]).await;
+    let bobs_root = resolver(&host).resolve_path(&path("/user/bob"), &[]).await;
     assert!(matches!(bobs_root, Err(Error::NotFound)), "{bobs_root:?}");
 }
 
@@ -387,7 +387,7 @@ async fn a_path_over_the_cap_is_not_found_before_the_host_is_asked() {
 async fn a_root_not_directly_under_a_top_level_directory_is_never_resolved() {
     let host = world();
     for root in ["/", "/user", "/user/alice/commissions"] {
-        let result = resolver(&host).resolve(&path(root), &[]).await;
+        let result = resolver(&host).resolve_path(&path(root), &[]).await;
         assert!(matches!(result, Err(Error::NotFound)), "{root}: {result:?}");
     }
 }

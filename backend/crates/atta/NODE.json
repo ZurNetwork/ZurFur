@@ -76,7 +76,7 @@
     },
     {
       "name": "src/resolve.rs",
-      "role": "Resolver::resolve: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; Caps",
+      "role": "Resolver::resolve_path: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; Caps",
       "node": false
     },
     {
