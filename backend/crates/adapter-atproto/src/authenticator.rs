@@ -3,8 +3,9 @@
 //! authorization endpoint before the Pushed Authorization Request, and binds the
 //! DID and the browser to the request; `complete` lets one callback claim the
 //! sign-in, refuses a callback from any other browser, a sign-in as any other
-//! account and a grant other than `atproto`, and never leaves a failed
-//! sign-in's session stored.
+//! account and a grant other than `atproto`, and keeps no OAuth session: a
+//! failed sign-in's is deleted, a finished one's is deleted, then revoked in
+//! the background, and a wider grant is never stored and is revoked too.
 
 mod jacquard_bridge;
 
@@ -19,10 +20,10 @@ use jacquard_oauth::{
     authstore::ClientAuthStore,
     client::{OAuthClient, OAuthSession},
     error::OAuthError,
-    request::{OAuthMetadata, RequestError, par},
+    request::{OAuthMetadata, RequestError, RequestErrorKind, par},
     resolver::{OAuthResolver, ResolverError},
     scopes::Scopes,
-    session::ClientData,
+    session::{ClientData, ClientSessionData, SessionRegistry},
     types::CallbackParams,
 };
 use rand::RngCore as _;
@@ -31,18 +32,16 @@ use smol_str::SmolStr;
 use sqlx::PgPool;
 
 use domain::elements::{did::Did, handle::AtHandle};
-use domain::ports::{AccountMismatch, Authenticator, BrowserBinding, ResolveError, SigninStarted};
+use domain::ports::{
+    AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, ResolveError, SigninStarted,
+};
 
 use crate::auth_store::{AtprotoAuthStore, StoredBinding};
 use crate::guarded_http::{Causes, PublicHttpsUrl, UrlPolicyError};
+use crate::oauth_scope::{OAUTH_SCOPES, grants_identity_only};
 use crate::resolver::AtprotoIdentityResolver;
 use crate::secret_vault::SecretVault;
 use jacquard_bridge::JacquardBridge;
-
-/// OAuth scopes requested at sign-in: `atproto` alone, which authenticates the
-/// account and asks for no access to its repo. Write access is never requested
-/// here.
-const OAUTH_SCOPES: &str = "atproto";
 
 /// How long a started sign-in stays valid, and so its browser token: the
 /// cookie's lifetime and the age past which the callback is refused.
@@ -55,6 +54,10 @@ type Oauth = OAuthClient<JacquardBridge, AtprotoAuthStore>;
 /// A session jacquard's callback saved, as it hands it back.
 type Session = OAuthSession<JacquardBridge, AtprotoAuthStore>;
 
+/// The registry jacquard's client and sessions share: the store and this
+/// client's own data.
+type Registry = SessionRegistry<JacquardBridge, AtprotoAuthStore, SmolStr>;
+
 /// How long each part of the handshake may take, every lookup and request in
 /// it included.
 #[derive(Clone, Copy, Debug)]
@@ -64,10 +67,10 @@ struct Deadlines {
     /// `complete`'s callback: the issuer metadata, the token exchange and the
     /// issuer check. The cleanup after it runs outside this deadline.
     complete: Duration,
-    /// Revoking another account's tokens, after its session is deleted.
+    /// Revoking a sign-in's tokens, after its session is deleted.
     revoke: Duration,
-    /// Deleting a failed sign-in's session, so a stuck statement cannot hold
-    /// the callback's task.
+    /// Deleting a sign-in's session, so a stuck statement cannot hold the
+    /// callback's task.
     cleanup: Duration,
 }
 
@@ -94,12 +97,34 @@ struct Signin {
     oauth: Oauth,
 }
 
-/// How a callback that ran to the end turned out.
+/// How a callback that ran to the end turned out. Each outcome carries the
+/// grant it got, which is deleted and revoked.
 enum Completed {
-    /// The bound account signed in.
-    SignedIn(Did),
-    /// Another account signed in; its saved session, to delete and revoke.
-    OtherAccount(Box<Session>),
+    /// The bound account signed in with exactly `atproto`.
+    SignedIn { did: Did, grant: Box<Grant> },
+    /// Another account signed in.
+    OtherAccount(Box<Grant>),
+    /// The bound account signed in, but with a grant other than exactly `atproto`.
+    RefusedScope(Box<Grant>),
+}
+
+/// A grant a callback got: its tokens and DPoP key, and the client to revoke
+/// them through.
+struct Grant {
+    client: Arc<JacquardBridge>,
+    registry: Arc<Registry>,
+    data: ClientSessionData,
+}
+
+/// The grant behind a session jacquard's callback saved.
+impl From<Session> for Grant {
+    fn from(session: Session) -> Self {
+        Self {
+            client: session.client,
+            registry: session.registry,
+            data: session.data.into_inner(),
+        }
+    }
 }
 
 impl AtprotoAuthenticator {
@@ -182,13 +207,10 @@ impl Signin {
         Ok(started)
     }
 
-    /// Run the callback under its deadline, then clean up outside it. Only the
-    /// attempt that claimed the sign-in can have saved a session under `state`,
-    /// so any failure of that attempt, its deadline included, deletes every
-    /// session stored there and the request itself; another account's session
-    /// is deleted and its tokens then revoked. An attempt that never claimed
-    /// deletes nothing: its `state` is a finished sign-in's, replayed, or
-    /// another attempt's.
+    /// Run the callback under its deadline, then, outside it, delete what the
+    /// claimer saved and revoke any grant it got: in the background after a
+    /// sign-in or a refused scope, before the answer for another account. An
+    /// attempt that never claimed deletes nothing.
     async fn complete(
         &self,
         code: String,
@@ -204,14 +226,31 @@ impl Signin {
             .await
             .unwrap_or(Err(SigninFailure::Deadline));
         let failure = match finished {
-            Ok(Completed::SignedIn(did)) => return Ok(did),
-            Ok(Completed::OtherAccount(session)) => {
+            Ok(Completed::SignedIn { did, grant }) => {
+                // A failed delete is logged and does not fail the sign-in.
                 self.discard(session_id.as_deref(), deadlines.cleanup).await;
-                self.revoke(session, deadlines.revoke).await;
+                tokio::spawn(revoke(grant, deadlines.revoke));
+                return Ok(did);
+            }
+            Ok(Completed::OtherAccount(grant)) => {
+                self.discard(session_id.as_deref(), deadlines.cleanup).await;
+                revoke(grant, deadlines.revoke).await;
                 SigninFailure::AccountMismatch
             }
+            Ok(Completed::RefusedScope(grant)) => {
+                self.discard(session_id.as_deref(), deadlines.cleanup).await;
+                tokio::spawn(revoke(grant, deadlines.revoke));
+                SigninFailure::GrantedScope
+            }
+            // Only the claimer runs the callback, so every session stored
+            // under `state` is its own.
             Err(failure) if claimed => {
                 self.discard(session_id.as_deref(), deadlines.cleanup).await;
+                // A grant the store refused is held for this claimer alone; a
+                // deadline may have cut `finish` off before it took it.
+                if let Some(refused) = self.take_refused(session_id.as_deref()) {
+                    tokio::spawn(revoke(refused, deadlines.revoke));
+                }
                 failure
             }
             Err(failure) => failure,
@@ -220,13 +259,10 @@ impl Signin {
         Err(failure)
     }
 
-    /// Claim the sign-in for this browser, read the bound DID, then run
-    /// jacquard's callback (which saves the session it gets) and say whose
-    /// account signed in. The bound account's sign-in fails unless the token
-    /// response granted exactly [`OAUTH_SCOPES`], so its saved session is
-    /// discarded. Sets `claimed` once this attempt knows it owns the
-    /// sign-in; a claim the deadline cuts off may still commit unseen, which
-    /// fails closed (no callback ran, so nothing was saved).
+    /// Claim the sign-in for this browser, run jacquard's callback and judge
+    /// the grant it got, saved or refused by the store. Sets `claimed` once
+    /// this attempt owns the sign-in; a claim cut off by the deadline fails
+    /// closed, since no callback ran.
     async fn finish(
         &self,
         code: String,
@@ -245,26 +281,29 @@ impl Signin {
         let bound = self.bound_account(&state).await?;
         let params = CallbackParams {
             code: code.into(),
-            state: Some(state.into()),
+            state: Some(state.as_str().into()),
             iss: iss.map(Into::into),
         };
-        let session = self
-            .oauth
-            .callback(params)
-            .await
-            .map_err(|error| SigninFailure::Callback(Box::new(error)))?;
-        let (signed_in, granted) = {
-            let data = session.data.read().await;
-            (data.account_did.clone(), data.token_set.scope.clone())
+        let called_back = self.oauth.callback(params).await;
+        let grant = match called_back {
+            Ok(session) => Box::new(Grant::from(session)),
+            Err(error) => self
+                .take_refused(Some(&state))
+                .ok_or_else(|| SigninFailure::Callback(Box::new(error)))?,
         };
-        if signed_in.as_str() != bound.as_str() {
-            return Ok(Completed::OtherAccount(Box::new(session)));
-        }
-        if !grants_identity_only(granted.as_deref()) {
-            return Err(SigninFailure::GrantedScope);
-        }
-        let did = Did::from(signed_in.as_str().to_owned());
-        Ok(Completed::SignedIn(did))
+        Ok(judged(grant, &bound))
+    }
+
+    /// The grant the store refused under `session_id`, if one is held, ready
+    /// to revoke. Only the claimer calls this, so the grant is its own.
+    fn take_refused(&self, session_id: Option<&str>) -> Option<Box<Grant>> {
+        let refused = self.oauth.registry.store.take_refused(session_id?)?;
+        let grant = Grant {
+            client: self.oauth.client.clone(),
+            registry: self.oauth.registry.clone(),
+            data: refused,
+        };
+        Some(Box::new(grant))
     }
 
     /// Refuse unless `presented` is the token bound to `state`'s live request,
@@ -360,18 +399,75 @@ impl Signin {
         };
         log_failure(&failure);
     }
+}
 
-    /// Revoke `session`'s tokens at its authorization server, best effort and
-    /// within `limit`; its stored row is already gone.
-    async fn revoke(&self, session: Box<Session>, limit: Duration) {
-        let revoked = tokio::time::timeout(limit, session.logout()).await;
-        let failed = match revoked {
-            Ok(Ok(())) => return,
-            Ok(Err(error)) => Some(Box::new(error)),
-            Err(_elapsed) => None,
-        };
-        log_failure(&SigninFailure::Revocation(failed));
+/// Whose account `grant` signed in and what it grants: another account is
+/// judged first, whatever its grant; then a grant other than exactly
+/// [`OAUTH_SCOPES`]; otherwise the bound account signed in.
+fn judged(grant: Box<Grant>, bound: &AtDid) -> Completed {
+    let signed_in = grant.data.account_did.as_str();
+    if signed_in != bound.as_str() {
+        return Completed::OtherAccount(grant);
     }
+    if !grants_identity_only(grant.data.token_set.scope.as_deref()) {
+        return Completed::RefusedScope(grant);
+    }
+    let did = Did::from(signed_in.to_owned());
+    Completed::SignedIn { did, grant }
+}
+
+/// Revoke `grant`'s tokens at its authorization server, best effort and
+/// within `limit`, logging a failure by class; it is no longer stored.
+async fn revoke(grant: Box<Grant>, limit: Duration) {
+    let mut grant = *grant;
+    let revoked = tokio::time::timeout(limit, revoke_tokens(&mut grant)).await;
+    if revoked.is_err() {
+        log_revocation_failure(&RevocationFailure::Deadline);
+    }
+}
+
+/// Revoke the refresh token, which ends the whole grant, then the access token,
+/// each on its own: a failure of one is logged and the other still sent.
+async fn revoke_tokens(grant: &mut Grant) {
+    let bridge = grant.client.as_ref();
+    let data = &mut grant.data;
+    let client_data = &grant.registry.client_data;
+    let metadata = OAuthMetadata::new(bridge, client_data, data).await;
+    let metadata = match metadata {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            log_revocation_failure(&RevocationFailure::Metadata(Box::new(error)));
+            return;
+        }
+    };
+    if metadata.server_metadata.revocation_endpoint.is_none() {
+        log_revocation_failure(&RevocationFailure::NoEndpoint);
+        return;
+    }
+    let refresh_token = data.token_set.refresh_token.clone();
+    let access_token = data.token_set.access_token.clone();
+    for token in refresh_token.into_iter().chain([access_token]) {
+        let sent =
+            jacquard_oauth::request::revoke(bridge, &mut data.dpop_data, &token, &metadata).await;
+        if let Some(failure) = revocation_failure(sent) {
+            log_revocation_failure(&failure);
+        }
+    }
+}
+
+/// How a revocation request `sent` failed, if it did. A `200` counts as
+/// revoked: RFC 7009 answers a revocation with `200`, and jacquard accepts
+/// only `204`.
+fn revocation_failure(sent: Result<(), RequestError>) -> Option<RevocationFailure> {
+    let error = sent.err()?;
+    let answered_ok = matches!(
+        error.kind(),
+        RequestErrorKind::HttpStatus(http::StatusCode::OK)
+    );
+    if answered_ok {
+        return None;
+    }
+    Some(RevocationFailure::Request(Box::new(error)))
 }
 
 #[async_trait]
@@ -390,14 +486,10 @@ impl Authenticator for AtprotoAuthenticator {
         })
     }
 
-    /// Exchange the callback params for tokens and return the signed-in DID,
-    /// which must be the DID `start` bound: another account is deleted, revoked
-    /// and refused with [`AccountMismatch`]; a grant other than exactly
-    /// `atproto` is refused and its session deleted. Refused before any code exchange
-    /// unless `browser_binding` is this sign-in's token and no other callback
-    /// claimed the sign-in first; for an unclaimed sign-in, a missing, stale or
-    /// wrong token is the port's [`BrowserMismatch`](domain::ports::BrowserMismatch).
-    /// Runs in its own task, so a dropped request cannot cut the cleanup short.
+    /// Exchange the callback params for tokens and return the DID `start`
+    /// bound. Refuses another browser ([`BrowserMismatch`], unless the sign-in
+    /// is claimed), another account ([`AccountMismatch`]) and any grant but
+    /// `atproto`; keeps no OAuth session, in a task a dropped request can't cut.
     async fn complete(
         &self,
         code: String,
@@ -423,7 +515,7 @@ impl Authenticator for AtprotoAuthenticator {
             refused @ (SigninFailure::NoBrowserBinding
             | SigninFailure::StaleSignin
             | SigninFailure::BrowserMismatch) => {
-                anyhow::Error::new(refused).context(domain::ports::BrowserMismatch)
+                anyhow::Error::new(refused).context(BrowserMismatch)
             }
             other => anyhow::Error::new(other),
         })
@@ -486,17 +578,13 @@ enum SigninFailure {
     /// named none.
     #[error("granted scope refused")]
     GrantedScope,
-    /// Revoking another account's tokens failed or ran out of time; its
-    /// session was already deleted.
-    #[error("revocation failed")]
-    Revocation(#[source] Option<Box<OAuthError>>),
     /// The callback's task panicked or was cancelled.
     #[error("sign-in task failed")]
     Task(#[source] tokio::task::JoinError),
     /// The deadline ran out.
     #[error("sign-in deadline passed")]
     Deadline,
-    /// Deleting a failed sign-in's session ran out of time.
+    /// Deleting a sign-in's session ran out of time.
     #[error("cleanup deadline passed")]
     CleanupDeadline,
 }
@@ -508,16 +596,31 @@ fn log_failure(failure: &SigninFailure) {
     tracing::debug!(cause = %Causes(failure), "sign-in failure cause");
 }
 
-/// Whether `granted`, the token response's `scope`, is exactly
-/// [`OAUTH_SCOPES`]. A missing scope, a wider one and a narrower one are all
-/// refused.
-fn grants_identity_only(granted: Option<&str>) -> bool {
-    let Some(granted) = granted else {
-        return false;
-    };
-    granted
-        .split_whitespace()
-        .eq(OAUTH_SCOPES.split_whitespace())
+/// Why revoking a grant's tokens failed. The grant's session is already
+/// deleted, and the sign-in's answer does not depend on it. The message is
+/// the class only: it never names a token, the `state` or the DID.
+#[derive(Debug, thiserror::Error)]
+enum RevocationFailure {
+    /// The authorization server's metadata could not be fetched.
+    #[error("authorization server metadata failed")]
+    Metadata(#[source] Box<RequestError>),
+    /// The authorization server names no revocation endpoint, so the tokens
+    /// are left to expire.
+    #[error("no revocation endpoint")]
+    NoEndpoint,
+    /// A revocation request failed or was refused.
+    #[error("revocation request failed")]
+    Request(#[source] Box<RequestError>),
+    /// Revoking ran out of time.
+    #[error("revocation deadline passed")]
+    Deadline,
+}
+
+/// A failed revocation's class at `info`, under its own message; its causes
+/// only at `debug`.
+fn log_revocation_failure(failure: &RevocationFailure) {
+    tracing::info!(failure = %failure, "revocation failed");
+    tracing::debug!(cause = %Causes(failure), "revocation failure cause");
 }
 
 /// A fresh browser token: 256 random bits from the OS, base64url, unpadded.
@@ -593,6 +696,15 @@ impl AtprotoAuthenticator {
             complete: limit,
             revoke,
             cleanup: Duration::from_secs(5),
+        };
+        Self { deadlines, ..self }
+    }
+
+    /// This authenticator with its session delete cut off after `cleanup`.
+    fn with_cleanup(self, cleanup: Duration) -> Self {
+        let deadlines = Deadlines {
+            cleanup,
+            ..self.deadlines
         };
         Self { deadlines, ..self }
     }

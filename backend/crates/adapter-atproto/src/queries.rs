@@ -61,7 +61,7 @@ pub mod auth_store {
     /// `queries/auth_store/delete_sessions_by_id.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Delete every session stored under `session_id`, whatever its account: the
-    /// cleanup for a sign-in that failed after its callback saved a session.
+    /// cleanup after a sign-in's callback saved a session, whether it failed or not.
     pub async fn delete_sessions_by_id(
         conn: impl sqlx::PgExecutor<'_>,
         session_id: &str,
