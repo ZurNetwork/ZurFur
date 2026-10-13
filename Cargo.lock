@@ -241,6 +241,7 @@ dependencies = [
 name = "application"
 version = "0.1.0"
 dependencies = [
+ "adapter-mem",
  "anyhow",
  "application-macros",
  "async-trait",

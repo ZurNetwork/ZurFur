@@ -29,7 +29,7 @@
     },
     {
       "name": "den.rs",
-      "role": "identity's Den arm for an Account's directory: AccountPlace (the Account, its `characters`) and its node/child/children/mounts leaves, answering absent until the identity arms serve them",
+      "role": "identity's Den arm for `/account/<did>`: open by standing to a member when live, to its Owner when deactivated, else absent, after the same three reads for every cause; named by its stored name, else its handle; its system folders, `characters` empty until shared Characters are modeled",
       "node": false
     },
     {
@@ -108,6 +108,11 @@
       "page": 62488577,
       "title": "Board Ordering — Fractional Position Keys, Anchor Placement and One Card per Board",
       "governs": "workflow/column/** use cases: anchor (after) resolved in the domain, stale anchor → 409 anchor-not-in-column, re-placing a card is a MOVE; no read-in-transaction, no row locks"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "den.rs: an Account's system folders (D7); a deactivated Account opens to its Owner only, listed only when deleted nodes are asked for (D13); a stored name the rule refuses shows the handle (D19); one not-found (D21)"
     }
   ],
   "notes": [

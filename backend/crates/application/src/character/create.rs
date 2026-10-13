@@ -14,6 +14,7 @@ use crate::{
     account::{AccountError, ensure_handle_claimable},
     character::{CharacterResult, Characters},
     common_error::CommonError,
+    den::DenName,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,8 @@ pub struct Output {
 }
 
 impl Characters<'_> {
+    /// Creates a Character kept by the actor. A name the Den's name rule refuses is refused
+    /// before any DID is minted.
     #[use_case]
     pub async fn create(
         &self,
@@ -43,6 +46,9 @@ impl Characters<'_> {
             attributes,
             handle,
         } = cmd;
+        // The Den shows a Character by its name, so a name its rule refuses is refused here,
+        // before any DID is minted.
+        DenName::try_from(attributes.name.as_ref())?;
 
         let (did, presence) = match handle {
             Some(handle) => {
@@ -70,3 +76,6 @@ impl Characters<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

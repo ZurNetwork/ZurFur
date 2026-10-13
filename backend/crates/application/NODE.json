@@ -36,7 +36,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk)+proptest+tokio+uuid+chrono+async-trait",
       "node": false
     },
     {
@@ -61,12 +61,12 @@
     },
     {
       "name": "src/character.rs",
-      "role": "character module root — the `Characters` namespace, CharacterError, CharacterResult",
+      "role": "character module root — the `Characters` namespace, CharacterError (Common, or Name: the Den's name rule refused the name), CharacterResult",
       "node": false
     },
     {
       "name": "src/character/",
-      "role": "create.rs (mints a DID, creates the Character) + delete.rs (`todo!()` stub); den.rs — identity's Den arm for a Character's directory (CharacterPlace and its leaves)",
+      "role": "create.rs (runs the name through the Den's name rule, mints a DID, creates the Character) + delete.rs (`todo!()` stub) + den.rs (identity's Den arm for `/character/<did>`, answered from the viewer's kept Characters)",
       "node": false
     },
     {
@@ -101,7 +101,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "crate doc + module declarations, re-exports App/Ports/MissingPort, transaction(), `use_case` and `LazyUnit` (crate-private)",
+      "role": "crate doc + module declarations, re-exports App/Ports/MissingPort, transaction(), `use_case` and `LazyUnit` (crate-private); `test_ports` (cfg(test)) builds this crate's own Ports from a composition Runtime",
       "node": false
     },
     {
@@ -121,7 +121,7 @@
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; den.rs — identity's Den arm for a user's directory (UserPlace and its leaves)",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the profile cache only, its system folders, and its mounts (posts, Accounts, kept Characters)",
       "node": false
     },
     {
@@ -141,7 +141,7 @@
     },
     {
       "name": "tests/den.rs",
-      "role": "the den Query over the in-memory runtime: every malformed path is the one not-found; the root is not-found while no identity arm answers",
+      "role": "the den Query over the in-memory fixture world: every malformed path is the one not-found; the identity arms' root, Accounts, Characters, deactivated Accounts and name fallbacks; the walk that no answer names another user; the profile cache read only for the viewer, the profile source never",
       "node": false
     },
     {
@@ -190,6 +190,16 @@
       "page": 2026091901,
       "title": "Character Deletion — Facts, the Tombstone & Keeper Consent for Slotting",
       "governs": "character/delete.rs: facts decide tombstone or hard delete; commissions never block a tombstone; a shared Character is deleted by its Account"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "user/den.rs: a user's root is open only to that user, with its system folders and the posts mount of /post/<did> (rulings 14–19)"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "user/den.rs, character/den.rs, character/create.rs: a user's name is the display name, else a handle that checks out, else the DID (D6); a user's accounts folder mounts each membership (D7); a Character is Private or Public (D12); names refuse what the Den's name rule refuses, the two joiners allowed, joiners alone empty (D19); no stored level means Private (D22)"
     }
   ],
   "notes": [

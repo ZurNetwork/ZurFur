@@ -4,7 +4,7 @@ pub(crate) mod den;
 
 use crate::ports::WithPorts;
 
-use crate::common_error::CommonError;
+use crate::{common_error::CommonError, den::DenNameError};
 
 #[derive(WithPorts)]
 pub struct Characters<'a> {
@@ -23,6 +23,9 @@ impl<'a> Characters<'a> {
 pub enum CharacterError {
     #[error(transparent)]
     Common(#[from] CommonError),
+    /// The name breaks the Den's name rule.
+    #[error("the character's name is refused")]
+    Name(#[from] DenNameError),
 }
 
 impl From<anyhow::Error> for CharacterError {

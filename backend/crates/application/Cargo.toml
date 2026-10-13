@@ -44,7 +44,8 @@ async-trait = { workspace = true }
 test-support = { path = "../test-support" }
 tokio = { workspace = true }
 uuid = { workspace = true }
-# The den keys' property tests over UUIDs and DIDs.
+# The den keys' property tests over UUIDs and DIDs, and the identity arms' name
+# properties: every segment and every handle is a name.
 proptest = { workspace = true }
 # The tests' `now` + a hand-rolled failing port double.
 chrono = { workspace = true }
@@ -52,3 +53,6 @@ chrono = { workspace = true }
 # the in-memory fixture — already in the dev graph
 # transitively via `test-support` (see the dep-guard's cyclic-dev-graph note).
 composition = { path = "../composition" }
+# The fixture world the Den tests walk (`adapter_mem::fixture`); dev-only, so the
+# dep guard's normal graph stays adapter-free.
+adapter-mem = { path = "../adapter-mem" }
