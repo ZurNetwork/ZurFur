@@ -139,7 +139,7 @@ async fn complete_signin(
     q: CallbackQuery,
     presented: Option<BrowserBinding>,
 ) -> Response {
-    let public_url = &state.config.public_url;
+    let public_url = state.config.public_url.as_ref();
     // Denied: no crash, no blank page — the PDS-supplied reason isn't echoed.
     if q.error.is_some() {
         return redirect(login_location(public_url, SignInFailure::Denied));
@@ -288,7 +288,7 @@ async fn logout(State(state): State<AppState>, session: Session) -> Response {
         return Problem::internal_error("Sign-out couldn't be completed. Please try again.")
             .into_response();
     }
-    redirect(home_location(&state.config.public_url))
+    redirect(home_location(state.config.public_url.as_ref()))
 }
 
 #[cfg(test)]

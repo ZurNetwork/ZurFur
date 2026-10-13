@@ -1,4 +1,4 @@
-use super::super::reserved::{RESERVED_LABELS, RESERVED_TLDS};
+use super::super::reserved::RESERVED_TLDS;
 use super::*;
 use proptest::prelude::*;
 
@@ -17,23 +17,11 @@ fn tld() -> impl Strategy<Value = String> {
 
 /// A fully-valid, already-normalized handle string.
 fn valid() -> impl Strategy<Value = String> {
-    (prop::collection::vec(label(), 1..4), tld())
-        .prop_map(|(labels, tld)| {
-            let mut parts = labels;
-            parts.push(tld);
-            parts.join(".")
-        })
-        .prop_filter(
-            "leftmost label must not be reserved in the zurfur namespace",
-            |handle| {
-                if handle == "zurfur.app" || handle.ends_with(".zurfur.app") {
-                    let leftmost = handle.split('.').next().unwrap_or("");
-                    !RESERVED_LABELS.contains(&leftmost)
-                } else {
-                    true
-                }
-            },
-        )
+    (prop::collection::vec(label(), 1..4), tld()).prop_map(|(labels, tld)| {
+        let mut parts = labels;
+        parts.push(tld);
+        parts.join(".")
+    })
 }
 
 /// Pairs a normalized handle with a raw variant of it that should normalize

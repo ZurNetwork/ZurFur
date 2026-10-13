@@ -42,6 +42,7 @@ impl From<AccountError> for Problem {
             AccountError::UnsupportedHandle => Problem::unsupported_handle(
                 "Changing to a handle outside the Zurfur namespace isn't supported yet.",
             ),
+            AccountError::InvalidHandle(rule) => Problem::invalid_request(rule.to_string()),
             AccountError::HandleUnchanged => {
                 Problem::invalid_request("That is already the account's handle.")
             }

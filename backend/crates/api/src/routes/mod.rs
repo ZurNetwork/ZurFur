@@ -43,7 +43,7 @@ pub(crate) async fn require_first_party_origin(
     );
     if state_changing
         && let Some(origin) = request.headers().get(ORIGIN)
-        && !is_first_party(origin.as_bytes(), &state.config.public_url)
+        && !is_first_party(origin.as_bytes(), state.config.public_url.as_ref())
     {
         return Problem::cross_origin().into_response();
     }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory as _, Parser, Subcommand};
-use composition::{Config, ConnectError, Runtime};
+use composition::{Config, ConnectError, LoadError, Runtime};
 
 pub mod commands;
 mod confirm;
@@ -170,14 +170,22 @@ async fn connect(config_dir: Option<PathBuf>) -> Result<Runtime, CliError> {
     })
 }
 
-/// Render a config-load failure without echoing any value: figment prints
-/// the parsed value on a type mismatch, which for an env var can be the
-/// secret. Only shape-safe kinds pass through; everything else is a generic
-/// detail with the parser's message behind `RUST_LOG=debug`.
-fn config_problem(error: &figment::Error) -> CliError {
+/// Render a config-load failure without echoing any value. An environment
+/// refusal is value-free, so its own message is the detail, and so is the
+/// message of a key whose parser names only the rule that failed
+/// ([`VALUE_FREE_KEYS`]). figment prints the parsed value on a type mismatch,
+/// which for an env var can be the secret, so of its other errors only
+/// shape-safe kinds pass through; everything else is a generic detail with the
+/// parser's message behind `RUST_LOG=debug`.
+fn config_problem(error: &LoadError) -> CliError {
     use figment::error::Kind;
+    let error = match error {
+        LoadError::Refused(refusal) => return CliError::infra("config", refusal.to_string()),
+        LoadError::Figment(error) => error,
+    };
     let detail = match &error.kind {
         Kind::MissingField(name) => format!("missing configuration key `{name}`"),
+        Kind::Message(message) if has_value_free_message(&error.path) => message.clone(),
         Kind::UnknownVariant(found, expected) if !looks_secret(&error.path) => {
             format!(
                 "unknown value `{found}` for `{}`; expected one of {expected:?}",
@@ -193,6 +201,15 @@ fn config_problem(error: &figment::Error) -> CliError {
         }
     };
     CliError::infra("config", detail)
+}
+
+/// Keys whose own parser reports only which rule a value broke, never the
+/// value: `public_url` parses as a `BareOrigin`.
+const VALUE_FREE_KEYS: [&str; 1] = ["public_url"];
+
+/// Whether `path` is one of [`VALUE_FREE_KEYS`].
+fn has_value_free_message(path: &[String]) -> bool {
+    matches!(path, [key] if VALUE_FREE_KEYS.contains(&key.as_str()))
 }
 
 /// Keys whose values must never reach stderr, even in an "unknown variant"
@@ -222,3 +239,6 @@ pub fn finish(outcome: Result<Output, CliError>) -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
