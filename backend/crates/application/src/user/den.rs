@@ -81,9 +81,9 @@ pub(crate) async fn node(context: &DenContext<'_>, user: &UserId) -> anyhow::Res
     Ok(Some(node))
 }
 
-/// The viewer's root name: the first of the cached profile's names the name rule accepts,
-/// else the DID. Reads the profile cache only, never the profile source; a miss or a cache
-/// failure names the root by its DID and never fails the read.
+/// The viewer's root name: the first name of their own cached profile the name rule accepts,
+/// else their DID. Reads the profile cache only; a miss, a failure or a profile for another
+/// DID names the root by its DID.
 async fn root_name(context: &DenContext<'_>) -> Option<NodeName> {
     let cached = context
         .ports
@@ -92,7 +92,8 @@ async fn root_name(context: &DenContext<'_>) -> Option<NodeName> {
         .await
         .ok()
         .flatten();
-    let from_profile = cached.as_ref().and_then(|profile| {
+    let own_profile = cached.filter(|profile| &profile.did == context.viewer.did());
+    let from_profile = own_profile.as_ref().and_then(|profile| {
         profile
             .name_candidates()
             .find_map(|candidate| NodeName::try_from(candidate).ok())

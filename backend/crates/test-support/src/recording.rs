@@ -1,9 +1,6 @@
-//! Call-order recording over the in-memory fakes: wrappers that note each
-//! `begin`/`commit`/`rollback` and each external-port call in one shared
-//! [`CallLog`], then delegate. A test reads the log to prove what ran before
-//! a unit of work opened. The identity read wrappers also note which actor
-//! each read was asked about in a [`SubjectLog`], so a test can prove whose
-//! data was read and that two requests ran the same reads.
+//! Recording wrappers over the in-memory fakes: each notes its calls in a
+//! shared [`CallLog`] (and, for the identity reads, whose data each asked
+//! for in a [`SubjectLog`]), then delegates.
 
 use std::sync::{Arc, Mutex};
 

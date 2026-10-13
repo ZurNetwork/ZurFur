@@ -51,11 +51,9 @@ impl AccountPlace {
     }
 }
 
-/// The Account at `/account/<account>`, for the session's viewer: open by their standing when
-/// it is live and they hold a role in it, or when it is deactivated and they are its Owner;
-/// absent otherwise, a live Account they hold no role in included. It reads the same three
-/// stores in the same order whatever the Account's state, so an absent Account and another's
-/// can't be told apart by what runs.
+/// The Account at `/account/<account>`: open by standing to a member when live and to its Owner
+/// when deactivated, else absent. Every cause runs the same three reads in the same order, so
+/// an absent Account and another's run alike.
 pub(crate) async fn node(
     context: &DenContext<'_>,
     account: &AccountId,

@@ -237,3 +237,44 @@ async fn a_user_with_no_row_has_no_directory() {
     assert_eq!(node, None);
     assert_eq!(recorded.log.events(), ["find_user"]);
 }
+
+/// A profile cache that answers bob's profile whatever DID it is asked for.
+struct MisfiledProfileCache;
+
+#[async_trait::async_trait]
+impl domain::ports::ProfileCache for MisfiledProfileCache {
+    async fn get(
+        &self,
+        _did: &domain::elements::did::Did,
+    ) -> anyhow::Result<Option<domain::elements::profile::Profile>> {
+        let bob_s = domain::elements::profile::Profile::new(bob().did().clone(), "bob.test")
+            .with_display_name("Bob");
+        Ok(Some(bob_s))
+    }
+
+    async fn put(&self, _profile: &domain::elements::profile::Profile) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_cached_profile_for_another_did_never_names_the_root() {
+    let mut mem = test_support::runtime::mem(alice().did()).build();
+    seed_identity(&mem.backend)
+        .await
+        .expect("seeds identity's fixtures");
+    mem.runtime.profile_cache = Arc::new(MisfiledProfileCache);
+    let app = App::new(Ports::from(&mem.runtime));
+    let alice = alice();
+    let context = DenContext {
+        ports: app.ports(),
+        viewer: &alice,
+    };
+
+    let root = node(&context, &alice)
+        .await
+        .expect("no store fails")
+        .expect("alice's root");
+
+    assert_eq!(root.name.as_ref(), alice.to_string());
+}
