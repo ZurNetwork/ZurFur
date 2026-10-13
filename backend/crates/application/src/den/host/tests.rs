@@ -3,6 +3,7 @@ use domain::elements::{commission::CommissionId, did::Did};
 use uuid::Uuid;
 
 use super::*;
+use crate::test_world::World;
 
 /// A bag over the in-memory runtime's ports, built as this crate's own [`Ports`].
 fn ports() -> Ports {
@@ -392,4 +393,137 @@ async fn an_unrecorded_root_mounts_nothing() {
     let mounts = host.mounts(&viewer, &root).await.expect("no store is read");
 
     assert_eq!(mounts, Vec::new());
+}
+
+/// alice's host over the fixture world, with `include_deleted` as given, and the real paths
+/// of her commission mounts' targets after locating each.
+async fn alice_s_commission_mounts(
+    ports: &Ports,
+    alice: &UserId,
+    include_deleted: bool,
+) -> Vec<(String, Admission, Option<Option<SoftDelete>>)> {
+    let host = DenHost::new(ports, alice, include_deleted);
+    let viewer = host.viewer().clone();
+    let folder = path(&["user", "did:plc:alice", "commissions"]);
+    let commissions_place = commission::den::CommissionPlace::UserCommissions(alice.clone());
+    record(&host, &folder, Place::Commission(commissions_place));
+    let mounts = host.mounts(&viewer, &folder).await.expect("no store fails");
+    host.child(&viewer, &RealPath::default(), &segment("commission"))
+        .await
+        .expect("no store fails");
+    let mut answers = Vec::new();
+    for mount in mounts {
+        let [top_level, key] = mount.target.segments() else {
+            panic!("a mount targets a node under a top-level directory");
+        };
+        let found = host
+            .child(&viewer, &path(&[top_level.as_ref()]), key)
+            .await
+            .expect("no store fails")
+            .expect("the mounted commission exists");
+        let admission = host.admit(
+            &viewer,
+            &mount.target,
+            &found.metadata,
+            open_by_standing(),
+            Reach::Listing,
+        );
+        let word = host.soft_delete(&mount.target);
+        answers.push((found.metadata.name.to_string(), admission, word));
+    }
+    answers
+}
+
+#[tokio::test]
+async fn an_archived_commission_lists_only_when_deleted_nodes_are_asked_for() {
+    let World { ports, .. } = crate::test_world::world().await;
+    let alice = adapter_mem::fixture::alice();
+
+    let hidden = alice_s_commission_mounts(&ports, &alice, false).await;
+    let shown = alice_s_commission_mounts(&ports, &alice, true).await;
+
+    let expected_hidden = vec![
+        (
+            "Old sketch".to_owned(),
+            Admission::Refuse,
+            Some(Some(SoftDelete::Archived)),
+        ),
+        ("Untitled".to_owned(), Admission::Admit, Some(None)),
+    ];
+    let expected_shown = vec![
+        (
+            "Old sketch".to_owned(),
+            Admission::Admit,
+            Some(Some(SoftDelete::Archived)),
+        ),
+        ("Untitled".to_owned(), Admission::Admit, Some(None)),
+    ];
+    assert_eq!(hidden, expected_hidden);
+    assert_eq!(shown, expected_shown);
+}
+
+#[tokio::test]
+async fn another_user_s_commissions_folder_mounts_nothing_for_the_viewer() {
+    let World { ports, .. } = crate::test_world::world().await;
+    let alice = adapter_mem::fixture::alice();
+    let host = DenHost::new(&ports, &alice, true);
+    let viewer = host.viewer().clone();
+    let bobs_folder = path(&["user", "did:plc:bob", "commissions"]);
+    let bobs_place = commission::den::CommissionPlace::UserCommissions(adapter_mem::fixture::bob());
+    record(&host, &bobs_folder, Place::Commission(bobs_place));
+
+    let mounts = host
+        .mounts(&viewer, &bobs_folder)
+        .await
+        .expect("no store fails");
+
+    assert_eq!(mounts, Vec::new());
+}
+
+#[tokio::test]
+async fn a_recorded_archived_node_lists_only_when_deleted_nodes_are_asked_for() {
+    let ports = ports();
+    let alice = alice();
+    let archived = path(&["commission", "c1"]);
+    let mut answers = Vec::new();
+    for include_deleted in [false, true] {
+        let host = DenHost::new(&ports, &alice, include_deleted);
+        let viewer = host.viewer().clone();
+        let recorded = Recorded {
+            place: Place::TopLevel(TopLevel::Commission),
+            state: NodeState::Archived,
+        };
+        host.record().insert(archived.clone(), recorded);
+        let metadata = Metadata {
+            key: segment("c1"),
+            parent: Some(path(&["commission"])),
+            typ: type_key(DenType::Commission),
+            level: Level::Private,
+            name: NodeName::try_from("Old sketch").expect("a valid test name"),
+            symlink_target: None,
+        };
+
+        let listing = host.admit(
+            &viewer,
+            &archived,
+            &metadata,
+            open_by_standing(),
+            Reach::Listing,
+        );
+        let on_a_path = host.admit(
+            &viewer,
+            &archived,
+            &metadata,
+            open_by_standing(),
+            Reach::Path,
+        );
+
+        answers.push((include_deleted, listing, on_a_path));
+    }
+
+    let expected = vec![
+        (false, Admission::Refuse, Admission::Admit),
+        (true, Admission::Admit, Admission::Admit),
+    ];
+    assert_eq!(answers, expected);
 }

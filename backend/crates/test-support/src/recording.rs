@@ -9,7 +9,11 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     character::Character,
-    commission::{FileDownload, FileKey, FileName},
+    commission::{
+        Commission, CommissionComposition, CommissionFile, CommissionId, CommissionMarkup,
+        CommissionSummary, ElementId, FileDownload, FileKey, FileName, FileSummary, GrantLevel,
+        Seat, SeatInvitation, Slot,
+    },
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
@@ -17,11 +21,12 @@ use domain::elements::{
     role::Role,
     text::StoredText,
     user::{User, UserId},
+    workflow::{Column, ColumnId, WorkflowId},
 };
 use domain::ports::{
     AccountRepo, AccountStore, ActorIdentityWrites, ChangelogWrites, CharacterStore,
-    CharacterWrites, ColumnWrites, CommissionRepo, Database, DidMinter, FileStore, ProfileCache,
-    ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
+    CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
 };
 use tokio::io::AsyncRead;
 
@@ -431,5 +436,130 @@ impl ProfileSource for RecordingProfileSource {
         self.log.record("fetch_profile");
         self.subjects.record(did);
         self.inner.fetch(did).await
+    }
+}
+
+/// A [`CommissionStore`] that logs each read by its method name before
+/// delegating.
+pub struct RecordingCommissionStore {
+    inner: Arc<dyn CommissionStore>,
+    log: CallLog,
+}
+
+impl RecordingCommissionStore {
+    /// Wraps `inner`, recording into `log`.
+    pub fn new(inner: Arc<dyn CommissionStore>, log: CallLog) -> Self {
+        Self { inner, log }
+    }
+}
+
+#[async_trait]
+impl CommissionStore for RecordingCommissionStore {
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        self.log.record("find");
+        self.inner.find(id).await
+    }
+
+    async fn current_column_of_workflow(
+        &self,
+        commission: &CommissionId,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<Column>> {
+        self.log.record("current_column_of_workflow");
+        self.inner
+            .current_column_of_workflow(commission, workflow_id)
+            .await
+    }
+
+    async fn current_position_in_column(
+        &self,
+        commission: &CommissionId,
+        column_id: &ColumnId,
+    ) -> anyhow::Result<Option<u8>> {
+        self.log.record("current_position_in_column");
+        self.inner
+            .current_position_in_column(commission, column_id)
+            .await
+    }
+
+    async fn view_grant(
+        &self,
+        commission_id: &CommissionId,
+        user_id: &UserId,
+    ) -> anyhow::Result<Option<GrantLevel>> {
+        self.log.record("view_grant");
+        self.inner.view_grant(commission_id, user_id).await
+    }
+
+    async fn is_participant(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<bool> {
+        self.log.record("is_participant");
+        self.inner.is_participant(commission, user).await
+    }
+
+    async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
+        self.log.record("seats");
+        self.inner.seats(commission).await
+    }
+
+    async fn load_composition(
+        &self,
+        id: &CommissionId,
+    ) -> anyhow::Result<Option<CommissionComposition>> {
+        self.log.record("load_composition");
+        self.inner.load_composition(id).await
+    }
+
+    async fn find_file(
+        &self,
+        commission: &CommissionId,
+        key: FileKey,
+    ) -> anyhow::Result<Option<CommissionFile>> {
+        self.log.record("find_file");
+        self.inner.find_file(commission, key).await
+    }
+
+    async fn markups_for_file(
+        &self,
+        commission: &CommissionId,
+        file: FileKey,
+    ) -> anyhow::Result<Vec<CommissionMarkup>> {
+        self.log.record("markups_for_file");
+        self.inner.markups_for_file(commission, file).await
+    }
+
+    async fn find_pending_seat_invitation(
+        &self,
+        commission: &CommissionId,
+        seat: &ElementId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<SeatInvitation>> {
+        self.log.record("find_pending_seat_invitation");
+        self.inner
+            .find_pending_seat_invitation(commission, seat, user)
+            .await
+    }
+
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
+        self.log.record("list_owned_by");
+        self.inner.list_owned_by(owner).await
+    }
+
+    async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
+        self.log.record("list_participating");
+        self.inner.list_participating(user).await
+    }
+
+    async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>> {
+        self.log.record("files");
+        self.inner.files(commission).await
+    }
+
+    async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
+        self.log.record("slots");
+        self.inner.slots(commission).await
     }
 }

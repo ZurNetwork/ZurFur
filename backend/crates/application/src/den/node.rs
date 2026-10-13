@@ -46,7 +46,7 @@ impl Den<'_> {
         let segments = den_path(&query.path, caps)?;
         let root = viewer_root(&query.viewer)?;
         let host = DenHost::new(ports, &query.viewer, query.include_deleted);
-        let reader = Reader::new(&host, host.viewer().clone(), &host, caps);
+        let reader = Reader::over(&host, caps);
         let resolved = reader.walk(&root, &segments).await?;
         let node = reader.node(resolved.node())?;
         let crumbs = resolved.crumbs().iter().map(crumb).collect();

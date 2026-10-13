@@ -140,7 +140,7 @@ async fn file_store_put_get_delete_round_trip() {
     let store = PgFileStore::new(pool.clone());
 
     let key = FileKey::generate();
-    let filename = FileName::try_new("art.svg").unwrap();
+    let filename = FileName::try_from("art.svg").unwrap();
     let bytes = b"<svg>".to_vec();
 
     assert!(

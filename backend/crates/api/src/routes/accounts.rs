@@ -85,6 +85,7 @@ impl From<AccountError> for Problem {
             AccountError::NothingToDo => {
                 Problem::invalid_request("That change would leave everything as it is.")
             }
+            AccountError::InvalidName(e) => Problem::invalid_request(format!("Invalid name: {e}.")),
             AccountError::SystemError(err) => Problem::internal_error(err.to_string()),
         }
     }

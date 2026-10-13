@@ -39,7 +39,7 @@
     },
     {
       "name": "den.rs",
-      "role": "commission's Den arm: CommissionPlace (a commission, its entries, slots, files, and the user's and Account's `commissions` folders) and its node/child/children/mounts leaves, answering absent until the commission arms serve them",
+      "role": "commission's Den arm: CommissionPlace and its leaves — a commission by its real path (find then is_participant, always both), its four fixed entries, its files from its own file list, its slots, the viewer's commission mounts; products empty until Products can be stored; tests beside it in den/tests.rs",
       "node": false
     },
     {
@@ -97,7 +97,7 @@
     {
       "page": 3276807,
       "title": "Commission",
-      "governs": ""
+      "governs": "den.rs: a commission's stored visibility is its own Den level (Private, Listed, Public)"
     },
     {
       "page": 24150017,
@@ -128,6 +128,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "markup.rs and notes.rs are REPLACED by the comment use cases: a pin = a root Comment with a point anchor, replies carry root+parent (same commission, parent.root == root — a domain invariant), thread read by root cursor-paginated, edit author-only, delete = tombstone via the one shared read path; changelog payloads carry comment ids never text; kinds markup_added/comment_added/comment_edited/comment_deleted"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "den.rs: a commission's name is its title (D6); its fixed entries (D9); archived commissions hidden from listings unless asked (D13); one not-found (D21)"
     }
   ],
   "notes": [

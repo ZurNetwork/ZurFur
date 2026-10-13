@@ -294,6 +294,21 @@ async fn a_card_has_no_content_and_no_segments() {
 }
 
 #[tokio::test]
+async fn a_card_has_no_listing() {
+    let host = tree();
+    let viewer = Viewer::from("did:plc:alice".to_owned());
+    let reader = Reader::new(&host, viewer, &host, Caps::default());
+    let resolved = reader
+        .walk(&path("/user/alice"), &[segment("card")])
+        .await
+        .expect("the card resolves");
+
+    let listing = reader.listing(&resolved, None).await;
+
+    assert!(matches!(listing, Err(DenError::NotFound)));
+}
+
+#[tokio::test]
 async fn an_open_file_answers_a_file() {
     let host = tree();
 

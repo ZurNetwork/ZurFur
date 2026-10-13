@@ -3,7 +3,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, NewChangelogEntry,
+            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, CommissionTitleError,
+            NewChangelogEntry,
         },
         maturity::Maturity,
         user::UserId,
@@ -12,7 +13,10 @@ use domain::{
 };
 use serde_json::json;
 
-use crate::commission::{CommissionResult, Commissions};
+use crate::{
+    commission::{CommissionError, CommissionResult, Commissions},
+    den::{DenName, DenNameError},
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -38,6 +42,7 @@ impl Commissions<'_> {
             maturity,
             deadline,
         } = cmd;
+        let title = den_title(&title)?;
 
         let mut commission = Commission::create(title, actor_id.clone(), now, deadline);
         commission.maturity = maturity;
@@ -54,4 +59,13 @@ impl Commissions<'_> {
 
         Ok(Output { id: commission.id })
     }
+}
+
+/// The title as the Den's name rule keeps it: refused where the rule refuses, and stored
+/// without the characters the rule strips.
+fn den_title(title: &CommissionTitle) -> CommissionResult<CommissionTitle> {
+    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
+    name.as_ref()
+        .parse()
+        .map_err(|CommissionTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
 }

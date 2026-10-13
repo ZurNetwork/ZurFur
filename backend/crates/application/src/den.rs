@@ -5,7 +5,7 @@
 mod admission;
 mod context;
 mod den_type;
-mod host;
+pub(crate) mod host;
 mod kind;
 mod level;
 mod name;
@@ -15,7 +15,7 @@ mod output;
 mod page_token;
 mod place;
 pub(crate) mod post;
-mod read;
+pub(crate) mod read;
 pub mod root;
 mod segment;
 mod soft_delete;
@@ -32,17 +32,10 @@ pub use page_token::{PageToken, PageTokenError};
 pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 
+pub(crate) use atta::Level;
+pub(crate) use atta::NodeName;
 pub(crate) use atta::Segment;
-#[allow(
-    unused_imports,
-    reason = "the identity and commission arms name these through the den module"
-)]
-pub(crate) use atta::{Level, Lift, NodeName};
 pub(crate) use context::DenContext;
-#[allow(
-    unused_imports,
-    reason = "the identity and commission arms lift their viewers with it"
-)]
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};
 pub(crate) use state::NodeState;

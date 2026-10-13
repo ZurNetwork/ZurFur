@@ -10,10 +10,6 @@ use crate::{
 
 /// Standing over a node's whole real subtree: the lift a user has at their own root, a member
 /// at their Account, a keeper at their Character and a Participant at their commission.
-#[allow(
-    dead_code,
-    reason = "the identity and commission arms lift their viewers with it"
-)]
 pub(crate) const STANDING: Lift = Lift {
     level: Level::Public,
     scope: Scope::Subtree,
@@ -50,10 +46,6 @@ pub(crate) enum TopLevel {
 /// Where a node sits, typed: its type and the ids the arm that answers for it needs. Each
 /// variant is one team's places, defined beside that team's arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "every variant but `TopLevel` is built by its team's arms once they serve nodes"
-)]
 pub(crate) enum Place {
     /// A top-level directory, den's own.
     TopLevel(TopLevel),
@@ -224,10 +216,6 @@ pub(crate) struct Node {
 
 /// One of the viewer's mounts in a folder, as an arm answers for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "built by the identity and commission arms once they mount nodes"
-)]
 pub(crate) struct DenMount {
     /// Its segment in the folder.
     pub(crate) segment: Segment,

@@ -5,7 +5,7 @@ use domain::elements::user::UserId;
 
 use crate::den::{
     DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenType,
-    NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, names,
+    NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost, names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -92,8 +92,8 @@ pub(crate) struct Reader<'h> {
 }
 
 impl<'h> Reader<'h> {
-    /// A reader over `host` for `viewer` within `caps`, marking open nodes from
-    /// `soft_deletes`.
+    /// A reader over any `host` for `viewer` within `caps`, marking open nodes from
+    /// `soft_deletes`; the den Queries use [`Reader::over`].
     pub(crate) fn new(
         host: &'h dyn Host,
         viewer: Viewer,
@@ -105,6 +105,12 @@ impl<'h> Reader<'h> {
             resolver,
             soft_deletes,
         }
+    }
+
+    /// A reader over Zurfur's host for the viewer it was built for, marking open nodes from
+    /// that same host's record, within `caps`.
+    pub(crate) fn over(host: &'h DenHost<'h>, caps: Caps) -> Self {
+        Self::new(host, host.viewer().clone(), host, caps)
     }
 
     /// The node at `den_path` below `root`, with its crumbs.

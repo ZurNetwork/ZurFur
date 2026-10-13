@@ -105,6 +105,11 @@
       "node": false
     },
     {
+      "name": "src/test_world.rs",
+      "role": "test-only (cfg(test)): the Den arms' shared world — the identity and commission fixtures seeded in memory, this crate's Ports over them, a DenContext, and a Den read from any node directly under a top-level directory",
+      "node": false
+    },
+    {
       "name": "src/ports.rs",
       "role": "pub(crate) WithPorts<'a> — borrow the Ports bag off any use-case namespace — and the `WithPorts` derive re-exported beside it",
       "node": false
@@ -142,6 +147,11 @@
     {
       "name": "tests/den.rs",
       "role": "the den Query over the in-memory fixture world: every malformed path is the one not-found; the identity arms' root, Accounts, Characters, deactivated Accounts and name fallbacks; the walk that no answer names another user; the profile cache read only for the viewer, the profile source never",
+      "node": false
+    },
+    {
+      "name": "tests/den_names.rs",
+      "role": "names at write: a commission title, a file name, a slot title and a Workflow name the Den's name rule refuses are each refused in their use case's own error, and an accepted one is stored as the rule keeps it",
       "node": false
     },
     {

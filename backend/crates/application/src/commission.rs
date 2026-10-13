@@ -22,6 +22,7 @@ use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
+    den::DenNameError,
     transaction,
 };
 pub mod archive;
@@ -135,6 +136,9 @@ pub enum CommissionError {
     InvalidMarkup(#[source] MarkupError),
     #[error("Incorrect content")]
     IncorrectContent,
+    /// A title, file name or slot title the Den's name rule refuses.
+    #[error("Invalid name")]
+    InvalidName(#[source] DenNameError),
 }
 
 impl From<anyhow::Error> for CommissionError {

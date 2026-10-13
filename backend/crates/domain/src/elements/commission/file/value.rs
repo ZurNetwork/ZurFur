@@ -12,19 +12,28 @@ impl FileName {
     /// The length cap, in bytes — the common filesystem `NAME_MAX`.
     pub const MAX_BYTES: usize = 255;
 
+    /// The validated, trimmed filename as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for FileName {
+    type Error = FileNameError;
+
     /// Validate and wrap a filename: trim, then reject empty, over-cap, any control
     /// character, or a path separator (`/`/`\`).
     ///
     /// ```
     /// use domain::elements::commission::FileName;
     ///
-    /// assert_eq!(FileName::try_new("  ref.png  ").unwrap().as_str(), "ref.png");
-    /// assert!(FileName::try_new("   ").is_err());        // empty after trim
-    /// assert!(FileName::try_new("a\nb.png").is_err());   // control character
-    /// assert!(FileName::try_new("../etc/passwd").is_err()); // path separator
+    /// assert_eq!(FileName::try_from("  ref.png  ").unwrap().as_str(), "ref.png");
+    /// assert!(FileName::try_from("   ").is_err());        // empty after trim
+    /// assert!(FileName::try_from("a\nb.png").is_err());   // control character
+    /// assert!(FileName::try_from("../etc/passwd").is_err()); // path separator
     /// ```
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, FileNameError> {
-        let trimmed = raw.into().trim().to_owned();
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        let trimmed = raw.trim().to_owned();
         if trimmed.is_empty() {
             return Err(FileNameError::Empty);
         }
@@ -39,10 +48,21 @@ impl FileName {
         }
         Ok(Self(trimmed))
     }
+}
 
-    /// The validated, trimmed filename as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
+impl TryFrom<&str> for FileName {
+    type Error = FileNameError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::try_from(raw.to_owned())
+    }
+}
+
+impl std::str::FromStr for FileName {
+    type Err = FileNameError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_from(raw)
     }
 }
 

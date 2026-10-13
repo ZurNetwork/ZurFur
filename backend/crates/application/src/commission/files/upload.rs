@@ -15,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, files::Files},
+    den::DenName,
 };
 
 /// The acting Participant, the target commission, and the wire-optional
@@ -61,8 +62,13 @@ impl Files<'_> {
             return Err(CommissionError::NotAMember);
         }
 
-        let filename = FileName::try_new(filename.unwrap_or_default())
+        let filename = FileName::try_from(filename.unwrap_or_default())
             .map_err(CommissionError::InvalidFileName)?;
+        // Stored as the Den's name rule keeps it, without the characters the rule strips.
+        let den_name =
+            DenName::try_from(filename.as_str()).map_err(CommissionError::InvalidName)?;
+        let filename =
+            FileName::try_from(den_name.as_ref()).map_err(CommissionError::InvalidFileName)?;
         let content_type = content_type.unwrap_or_default();
         let key = FileKey::generate();
 

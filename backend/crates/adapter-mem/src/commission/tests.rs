@@ -2279,7 +2279,7 @@ async fn filename_answers_the_stored_name_or_none() {
     let backend = MemBackend::new();
     let file_store = backend.file_store();
     let key = FileKey::generate();
-    let name = FileName::try_new("ref-abco.png").unwrap();
+    let name = FileName::try_from("ref-abco.png").unwrap();
     let mut content: &[u8] = b"bytes";
     file_store
         .put(key, &name, "image/png", &mut content)

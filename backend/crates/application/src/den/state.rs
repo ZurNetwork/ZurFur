@@ -6,10 +6,6 @@ pub(crate) enum NodeState {
     /// Not soft-deleted.
     Live,
     /// An archived commission.
-    #[allow(
-        dead_code,
-        reason = "built by the commission arms once they serve archived commissions"
-    )]
     Archived,
     /// A deactivated Account, and whether the viewer is its Owner.
     Deactivated {

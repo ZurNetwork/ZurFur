@@ -1,5 +1,5 @@
 //! Use cases about [`Account`]s.
-use crate::ports::WithPorts;
+use crate::{den::DenNameError, ports::WithPorts};
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -107,6 +107,8 @@ pub enum AccountError {
     /// The requested position is past the end of the list; carries the
     /// offending index.
     IndexOutOfRange(usize),
+    /// A name the Den's name rule refuses, such as a Workflow's.
+    InvalidName(DenNameError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +192,7 @@ impl std::fmt::Display for AccountError {
             Self::IndexOutOfRange(index) => {
                 write!(f, "position {index} is past the end of the list")
             }
+            Self::InvalidName(_) => write!(f, "invalid name"),
         }
     }
 }
@@ -217,6 +220,7 @@ impl std::error::Error for AccountError {
             | Self::DuplicateName => None,
             Self::NotFound(entity) => Some(entity),
             Self::SystemError(e) => Some(e),
+            Self::InvalidName(e) => Some(e),
             AccountError::Infrastructure(e) => Some(e.as_ref()),
         }
     }

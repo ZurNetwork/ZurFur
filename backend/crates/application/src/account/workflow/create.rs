@@ -3,12 +3,13 @@ use crate::use_case;
 use domain::elements::{
     account::AccountId,
     user::UserId,
-    workflow::{Workflow, WorkflowName},
+    workflow::{Workflow, WorkflowName, WorkflowNameError},
 };
 
 use crate::{
     Ports,
     account::{AccountError, AccountResult, require_live_account, workflow::Workflows},
+    den::{DenName, DenNameError},
 };
 
 pub struct Command {
@@ -43,10 +44,24 @@ impl Workflows<'_> {
             // Only administrative roles can do
             .filter(|role| role.is_administrative())
             .ok_or(AccountError::IncorrectRole)?;
+        let workflow_name = den_workflow_name(&workflow_name)?;
 
         let uow = uow.open().await?;
         let workflow = uow.workflows().create(&workflow_name, &account_id).await?;
 
         Ok(Output { workflow })
     }
+}
+
+/// A Workflow's name as the Den's name rule keeps it: refused where the rule refuses, and
+/// stored without the characters the rule strips.
+fn den_workflow_name(workflow_name: &WorkflowName) -> AccountResult<WorkflowName> {
+    let name = DenName::try_from(workflow_name.as_ref()).map_err(AccountError::InvalidName)?;
+    name.as_ref().parse().map_err(|error| {
+        let refusal = match error {
+            WorkflowNameError::Empty => DenNameError::Empty,
+            WorkflowNameError::TooLong(_) => DenNameError::TooLong,
+        };
+        AccountError::InvalidName(refusal)
+    })
 }
