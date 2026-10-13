@@ -20,6 +20,8 @@ pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
+#[cfg(test)]
+pub(crate) mod testing;
 
 use crate::ports::WithPorts;
 
@@ -39,10 +41,6 @@ pub(crate) use atta::Segment;
 )]
 pub(crate) use atta::{Level, Lift, NodeName};
 pub(crate) use context::DenContext;
-#[allow(
-    unused_imports,
-    reason = "the identity and commission arms lift their viewers with it"
-)]
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};
 pub(crate) use state::NodeState;

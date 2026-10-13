@@ -145,6 +145,11 @@
       "node": false
     },
     {
+      "name": "tests/den_names.rs",
+      "role": "names at write: a commission title, a file name, a slot title and a Workflow name the Den's name rule refuses are each refused in their use case's own error",
+      "node": false
+    },
+    {
       "name": "tests/dep_guard.rs",
       "role": "cargo-tree witness — application must never link an adapter, composition, or an HTTP stack (normal edges only; the dev graph is deliberately cyclic)",
       "node": false

@@ -3,7 +3,7 @@
 use std::fmt::Display;
 
 use atta::{NodeName, Segment};
-use domain::elements::did::Did;
+use domain::elements::{did::Did, text::StoredText};
 
 /// A user's folder of Account memberships.
 pub(crate) const ACCOUNTS: &str = "accounts";
@@ -51,14 +51,30 @@ pub(crate) fn did_segment(did: &Did) -> Option<Segment> {
 }
 
 /// The name for stored text: the text itself when it passes the name rule, else `Unnamed`.
-#[allow(
-    dead_code,
-    reason = "the identity and commission arms name stored nodes through it"
-)]
 pub(crate) fn stored_name(text: &str) -> Option<NodeName> {
     NodeName::try_from(text)
         .ok()
         .or_else(|| fixed_name(UNNAMED))
+}
+
+/// Where a node's name comes from: a fixed word, or text a store holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Name {
+    /// One of the Den's fixed words.
+    Fixed(&'static str),
+    /// Text as the store holds it, shown as `Unnamed` when it fails the name rule.
+    Stored(StoredText),
+}
+
+impl Name {
+    /// The node's name; `None` only if a fixed word breaks the name rule, which a test rules
+    /// out for every word.
+    pub(crate) fn into_node_name(self) -> Option<NodeName> {
+        match self {
+            Name::Fixed(word) => fixed_name(word),
+            Name::Stored(text) => stored_name(text.as_str()),
+        }
+    }
 }
 
 #[cfg(test)]

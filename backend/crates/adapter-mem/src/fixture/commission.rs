@@ -221,7 +221,7 @@ async fn upload_file(
     const CONTENT_TYPE: &str = "image/png";
     let file_key = FileKey::from(key);
     let uploaded_at = time_of(key);
-    let checked_name = FileName::try_new(filename)?;
+    let checked_name = FileName::try_from(filename)?;
     let mut content: &[u8] = b"fixture image bytes";
     let byte_size = backend
         .file_store()

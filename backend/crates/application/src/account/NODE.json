@@ -64,7 +64,7 @@
     },
     {
       "name": "workflow.rs + workflow/{create,delete}.rs + workflow/column/**",
-      "role": "the account's boards — create/delete a board, add/rename/remove/reposition its columns, and place or remove a commission card in a column; workflow/den.rs is commission's Den arm for an Account's `workflows` folder and its Workflows (WorkflowPlace), answering absent until the commission arms serve them",
+      "role": "the account's boards — create/delete a board, add/rename/remove/reposition its columns, and place or remove a commission card in a column; workflow/den.rs is commission's Den arm for an Account's `workflows` folder and its Workflows (WorkflowPlace), listing an Account's Workflows from its own list, each Private",
       "node": false
     }
   ],

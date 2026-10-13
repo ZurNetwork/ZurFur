@@ -11,6 +11,7 @@ use domain::{
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, slots::Slots},
+    den::DenName,
 };
 
 pub struct SlotBody {
@@ -49,6 +50,9 @@ impl Slots<'_> {
             .await?
         {
             return Err(CommissionError::NotAMember);
+        }
+        for slot in &slots {
+            DenName::try_from(slot.title.as_str()).map_err(CommissionError::InvalidName)?;
         }
         let slots: Vec<NewSlot> = slots
             .into_iter()

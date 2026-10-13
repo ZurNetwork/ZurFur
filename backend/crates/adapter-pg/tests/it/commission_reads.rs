@@ -257,7 +257,7 @@ async fn filename_read_answers_the_stored_name() {
     let store = PgFileStore::new(pool.clone());
     let key = FileKey::generate();
     let legacy_key = FileKey::generate();
-    let name = FileName::try_new("ref-abco.png").expect("filename");
+    let name = FileName::try_from("ref-abco.png").expect("filename");
     let mut content: &[u8] = b"bytes";
     store
         .put(key, &name, "image/png", &mut content)
@@ -274,7 +274,7 @@ async fn filename_read_answers_the_stored_name() {
         .execute(&pool)
         .await
         .expect("store a filename today's rule refuses");
-    assert!(FileName::try_new("a\u{1}b.png").is_err());
+    assert!(FileName::try_from("a\u{1}b.png").is_err());
 
     let stored = store.filename(key).await.expect("filename");
     let missing = store.filename(FileKey::generate()).await.expect("filename");

@@ -154,7 +154,8 @@ pub async fn run(
                     | AccountError::DuplicateName
                     | AccountError::IncorrectNumberOfColumns
                     | AccountError::NothingToDo
-                    | AccountError::IndexOutOfRange(_) => CliError::domain("invalid_request", err),
+                    | AccountError::IndexOutOfRange(_)
+                    | AccountError::InvalidName(_) => CliError::domain("invalid_request", err),
                     AccountError::SystemError(_) => CliError::domain("internal_error", err),
                 })?;
             let body = Founded::from(founded);
@@ -234,9 +235,8 @@ pub async fn run(
                         | AccountError::DuplicateName
                         | AccountError::IncorrectNumberOfColumns
                         | AccountError::NothingToDo
-                        | AccountError::IndexOutOfRange(_) => {
-                            CliError::domain("invalid_request", err)
-                        }
+                        | AccountError::IndexOutOfRange(_)
+                        | AccountError::InvalidName(_) => CliError::domain("invalid_request", err),
                         AccountError::SystemError(_) => CliError::domain("internal_error", err),
                     })?;
             let body = Deleted::from(deleted);

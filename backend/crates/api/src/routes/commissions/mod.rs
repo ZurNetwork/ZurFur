@@ -75,6 +75,9 @@ impl From<CommissionError> for Problem {
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
+            CommissionError::InvalidName(e) => {
+                Problem::invalid_request(format!("Invalid name: {e}."))
+            }
         }
     }
 }

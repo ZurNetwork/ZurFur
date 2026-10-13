@@ -12,7 +12,10 @@ use domain::{
 };
 use serde_json::json;
 
-use crate::commission::{CommissionResult, Commissions};
+use crate::{
+    commission::{CommissionError, CommissionResult, Commissions},
+    den::DenName,
+};
 
 pub struct Command {
     pub actor_id: UserId,
@@ -38,6 +41,7 @@ impl Commissions<'_> {
             maturity,
             deadline,
         } = cmd;
+        DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
 
         let mut commission = Commission::create(title, actor_id.clone(), now, deadline);
         commission.maturity = maturity;

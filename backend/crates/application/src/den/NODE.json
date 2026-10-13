@@ -112,6 +112,11 @@
       "name": "state.rs",
       "role": "NodeState: live, archived, deactivated (with whether the viewer is the Owner)",
       "node": false
+    },
+    {
+      "name": "testing.rs",
+      "role": "test-only: the fixture world as this crate's own ports, a recording CommissionStore, and a Den read from any node under a top-level directory",
+      "node": false
     }
   ],
   "refs": [
@@ -127,7 +132,7 @@
     }
   ],
   "notes": [
-    "The identity arms (user, Account, Character) answer from slice 9; the commission arms and `/post/<did>` still answer absent, so a user's `commissions` folder lists nothing and their `posts` mount is left out by Atta until those slices land.",
+    "The identity arms (user, Account, Character) answer from slice 9; the commission arms from slice 10; `/post/<did>` still answers absent, so a user's `posts` mount is left out by Atta until that slice lands. The commission arms are also tested through the host from a commission's real path (`testing::read`).",
     "A folder's contents belong to the arm that owns its entries: a user's `commissions` folder and an Account's `commissions` folder are `CommissionPlace`s, and an Account's `workflows` folder is a `WorkflowPlace`, though identity answers each folder node as a child of its user or Account."
   ]
 }

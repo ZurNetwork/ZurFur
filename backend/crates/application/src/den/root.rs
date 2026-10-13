@@ -39,7 +39,7 @@ impl Den<'_> {
     pub async fn root(&self, #[ports] ports: &Ports, query: RootQuery) -> Result<Output, DenError> {
         let root = viewer_root(&query.viewer)?;
         let host = DenHost::new(ports, &query.viewer, query.include_deleted);
-        let reader = Reader::new(&host, host.viewer().clone(), &host, Caps::default());
+        let reader = Reader::over(&host, Caps::default());
         let resolved = reader.walk(&root, &[]).await?;
         let node = reader.node(resolved.node())?;
         let listing = reader.listing(&resolved, query.page).await?;
