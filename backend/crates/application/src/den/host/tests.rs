@@ -1,4 +1,6 @@
-use domain::elements::did::Did;
+use atta::NodeName;
+use domain::elements::{commission::CommissionId, did::Did};
+use uuid::Uuid;
 
 use super::*;
 
@@ -85,10 +87,10 @@ async fn a_folder_the_host_never_answered_for_holds_nothing() {
     let alice = alice();
     let host = DenHost::new(&ports, &alice, false);
     let viewer = host.viewer().clone();
-    let unrecorded = path(&["user"]);
+    let unrecorded = path(&["nowhere"]);
 
     let child = host
-        .child(&viewer, &unrecorded, &segment("did:plc:alice"))
+        .child(&viewer, &unrecorded, &segment("user"))
         .await
         .expect("no store is read");
     let children = host
@@ -142,7 +144,7 @@ async fn the_top_level_directories_are_public_directories_that_list_and_mount_no
 }
 
 #[tokio::test]
-async fn the_global_root_holds_the_top_level_directories_and_no_mounts() {
+async fn the_global_root_is_traverse_only_and_lists_and_mounts_nothing() {
     let ports = ports();
     let alice = alice();
     let host = DenHost::new(&ports, &alice, false);
@@ -155,11 +157,7 @@ async fn the_global_root_holds_the_top_level_directories_and_no_mounts() {
         .expect("no store is read");
     let mounts = host.mounts(&viewer, &root).await.expect("no store is read");
 
-    let keys: Vec<String> = children
-        .iter()
-        .map(|found| found.metadata.key.to_string())
-        .collect();
-    assert_eq!(keys, ["user", "account", "character", "commission", "post"]);
+    assert_eq!(children, Vec::new());
     assert_eq!(mounts, Vec::new());
 }
 
@@ -246,4 +244,112 @@ async fn admit_answers_from_the_record() {
     assert_eq!(unrecorded, Admission::Refuse);
     assert_eq!(host.soft_delete(&path(&["commission"])), Some(None));
     assert_eq!(host.soft_delete(&path(&["post"])), None);
+}
+
+#[tokio::test]
+async fn only_the_session_s_own_user_is_looked_up() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+
+    let own = host.own_user(&segment("did:plc:alice"));
+    let other = host.own_user(&segment("did:plc:bob"));
+    let malformed = host.own_user(&segment("alice"));
+
+    assert_eq!(own, Some(alice.clone()));
+    assert_eq!(other, None);
+    assert_eq!(malformed, None);
+}
+
+/// Records `place` at `at` as if an arm had answered for it, live.
+fn record(host: &DenHost<'_>, at: &RealPath, place: Place) {
+    let recorded = Recorded {
+        place,
+        state: NodeState::Live,
+    };
+    host.record().insert(at.clone(), recorded);
+}
+
+fn commission_id(bits: u128) -> CommissionId {
+    CommissionId::from(Uuid::from_u128(bits))
+}
+
+#[tokio::test]
+async fn a_folder_whose_content_is_not_shown_is_closed_to_typed_paths() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let posts = path(&["post", "did:plc:alice"]);
+    let attachments = path(&["commission", "c1", "attachments"]);
+    let poster = Did::from("did:plc:alice".to_owned());
+    record(&host, &posts, Place::Post(post::PostPlace::Posts(poster)));
+    let attachments_place = commission::den::CommissionPlace::Attachments(commission_id(1));
+    record(&host, &attachments, Place::Commission(attachments_place));
+
+    let closed = host.folder(&posts);
+    let open = host.folder(&attachments);
+
+    assert!(closed.is_none());
+    assert!(matches!(open, Some(Parent::At(_))));
+}
+
+/// A live, Private node at `place`.
+fn node_at(place: Place) -> Node {
+    Node {
+        place,
+        name: NodeName::try_from("a node").expect("a valid test name"),
+        level: Level::Private,
+        lifts: Vec::new(),
+        state: NodeState::Live,
+    }
+}
+
+/// A live node for the commission `commission`.
+fn commission_node(commission: CommissionId) -> Node {
+    let place = commission::den::CommissionPlace::Commission(commission);
+    node_at(Place::Commission(place))
+}
+
+#[tokio::test]
+async fn a_node_that_cannot_sit_in_its_folder_is_dropped_unrecorded() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let user_directory = path(&["user"]);
+    let folder = Parent::At(Place::TopLevel(TopLevel::User));
+
+    let found = host.found(&user_directory, &folder, commission_node(commission_id(7)));
+
+    assert_eq!(found, None);
+    assert_eq!(host.record().len(), 0);
+}
+
+#[tokio::test]
+async fn a_node_that_fits_its_folder_is_recorded_under_its_key() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let commission_directory = path(&["commission"]);
+    let folder = Parent::At(Place::TopLevel(TopLevel::Commission));
+    let commission = commission_id(7);
+
+    let found = host.found(&commission_directory, &folder, commission_node(commission));
+
+    let key = segment(&commission.to_string());
+    assert!(found.is_some_and(|found| found.metadata.key == key));
+    assert!(host.record().contains_key(&commission_directory.join(key)));
+}
+
+#[test]
+fn an_answer_for_another_key_is_dropped() {
+    let commission = commission_id(7);
+
+    let asked_for_it = answered_for(
+        Some(commission_node(commission)),
+        &segment(&commission.to_string()),
+    );
+    let asked_for_another = answered_for(Some(commission_node(commission)), &segment("c1"));
+
+    assert!(asked_for_it.is_some());
+    assert_eq!(asked_for_another, None);
 }

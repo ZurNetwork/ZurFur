@@ -2,11 +2,11 @@
 
 use domain::elements::did::Did;
 
-use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel};
+use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel, names};
 
 /// The places this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the posts arm builds these once it serves a poster's posts"
 )]
@@ -26,7 +26,7 @@ impl PostPlace {
     /// The node's segment in its real parent.
     pub(crate) fn key(&self) -> Option<Segment> {
         match self {
-            PostPlace::Posts(poster) => Segment::try_from(poster.as_ref()).ok(),
+            PostPlace::Posts(poster) => names::did_segment(poster),
         }
     }
 

@@ -28,6 +28,11 @@
       "node": false
     },
     {
+      "name": "den.rs",
+      "role": "identity's Den arm for an Account's directory: AccountPlace (the Account, its `characters`) and its node/child/children/mounts leaves, answering absent until the identity arms serve them",
+      "node": false
+    },
+    {
       "name": "facts.rs + facts/exist.rs",
       "role": "has-facts probe feeding delete's soft-vs-hard branch; stub, always false",
       "node": false
@@ -59,7 +64,7 @@
     },
     {
       "name": "workflow.rs + workflow/{create,delete}.rs + workflow/column/**",
-      "role": "the account's boards — create/delete a board, add/rename/remove/reposition its columns, and place or remove a commission card in a column",
+      "role": "the account's boards — create/delete a board, add/rename/remove/reposition its columns, and place or remove a commission card in a column; workflow/den.rs is commission's Den arm for an Account's `workflows` folder and its Workflows (WorkflowPlace), answering absent until the commission arms serve them",
       "node": false
     }
   ],

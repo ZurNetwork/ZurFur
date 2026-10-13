@@ -12,7 +12,9 @@
     "Every miss is the one `DenError::NotFound`; the only other answer is `DenError::Store`. No arm, helper or Query panics, unwraps or expects; an impossible conversion makes the node absent.",
     "A folder's real children and mounts are answered by the arm that owns the folder's place (`Place`); den's host matches over `Place` exhaustively, with no `_` arm.",
     "`include_deleted` lives only in the host; Atta never sees it. The viewer comes from the session only, and every host method fails closed for any other viewer.",
-    "`admit` answers from the request's record alone: no store call, no failure."
+    "`admit` answers from the request's record alone: no store call, no failure.",
+    "The host keeps an arm's answer only when its place is a child of the folder's recorded place (`Place::is_child_of`) and, for `child`, its key is the key asked for; anything else is dropped unrecorded.",
+    "A place whose type doesn't show its content is closed: `child`, `children` and `mounts` below it answer nothing, so a listing and a typed path can't disagree. `/` and the top-level directories are traverse-only and list nothing. `/user/<did>` is looked up only for the session's own DID."
   ],
   "entry_points": [
     "../den.rs",
@@ -58,7 +60,7 @@
     },
     {
       "name": "names.rs",
-      "role": "the fixed folder words, and the stored-text name with its `Unnamed` fallback",
+      "role": "the fixed folder words, the id and DID keys, and the stored-text name with its `Unnamed` fallback",
       "node": false
     },
     {
@@ -78,7 +80,7 @@
     },
     {
       "name": "place.rs",
-      "role": "Place, TopLevel, Node (an arm's answer), DenMount and the STANDING lift",
+      "role": "Place, Parent, TopLevel, Place::is_child_of, Node (an arm's answer), DenMount and the STANDING lift",
       "node": false
     },
     {
@@ -88,7 +90,7 @@
     },
     {
       "name": "read.rs",
-      "role": "the Queries' shared read: path parsing, the viewer's root, Atta's answers into output values",
+      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a SoftDeleteLookup, Atta's answers into output values",
       "node": false
     },
     {

@@ -5,12 +5,14 @@ use std::str::FromStr;
 pub struct PageToken(atta::PageToken);
 
 impl PageToken {
-    /// The engine's token this one carries.
+    /// The engine's token this one carries; inherent, because a public `Into` would put the
+    /// engine's type in this crate's API.
     pub(crate) fn into_inner(self) -> atta::PageToken {
         self.0
     }
 
-    /// Wraps a token the engine answered with.
+    /// Wraps a token the engine answered with; inherent, because a public `From` would put
+    /// the engine's type in this crate's API.
     pub(crate) fn new(token: atta::PageToken) -> Self {
         Self(token)
     }

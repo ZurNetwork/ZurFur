@@ -2,11 +2,11 @@
 
 use domain::elements::character::CharacterId;
 
-use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel};
+use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel, names};
 
 /// The places in a Character's directory that this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the identity arms build these once they serve a Character's nodes"
 )]
@@ -26,7 +26,7 @@ impl CharacterPlace {
     /// The node's segment in its real parent.
     pub(crate) fn key(&self) -> Option<Segment> {
         match self {
-            CharacterPlace::Character(character) => Segment::try_from(character.as_ref()).ok(),
+            CharacterPlace::Character(character) => names::did_segment(character.did()),
         }
     }
 

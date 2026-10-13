@@ -59,7 +59,9 @@ async fn list(
 ) -> Result<Option<Listing>, Error> {
     let resolver = resolver(host, page_size);
     let den_path: Vec<_> = folder.iter().map(|piece| segment(piece)).collect();
-    let resolved = resolver.resolve(&path("/user/alice"), &den_path).await?;
+    let resolved = resolver
+        .resolve_path(&path("/user/alice"), &den_path)
+        .await?;
     resolver.list(&resolved, page).await
 }
 
@@ -270,7 +272,7 @@ async fn a_node_resolved_for_another_viewer_is_not_listed() {
         caps: Caps::default(),
     };
     let resolved = alice
-        .resolve(&path("/user/alice"), &[segment("stuff")])
+        .resolve_path(&path("/user/alice"), &[segment("stuff")])
         .await
         .expect("the folder resolves for alice");
     let listed_for_bob = bob.list(&resolved, None).await;

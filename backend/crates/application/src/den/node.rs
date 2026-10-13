@@ -42,10 +42,11 @@ impl Den<'_> {
     /// pieces, or a piece that isn't a segment is the one not-found, before any store is read.
     #[use_case]
     pub async fn node(&self, #[ports] ports: &Ports, query: NodeQuery) -> Result<Output, DenError> {
-        let segments = den_path(&query.path, Caps::default())?;
+        let caps = Caps::default();
+        let segments = den_path(&query.path, caps)?;
         let root = viewer_root(&query.viewer)?;
         let host = DenHost::new(ports, &query.viewer, query.include_deleted);
-        let reader = Reader::new(&host);
+        let reader = Reader::new(&host, host.viewer().clone(), &host, caps);
         let resolved = reader.walk(&root, &segments).await?;
         let node = reader.node(resolved.node())?;
         let crumbs = resolved.crumbs().iter().map(crumb).collect();

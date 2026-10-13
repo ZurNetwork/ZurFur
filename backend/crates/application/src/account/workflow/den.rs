@@ -10,7 +10,7 @@ use crate::den::{
 
 /// The places this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the commission arms build these once they serve Workflow nodes"
 )]
@@ -34,7 +34,7 @@ impl WorkflowPlace {
     pub(crate) fn key(&self) -> Option<Segment> {
         match self {
             WorkflowPlace::Workflows(_) => names::fixed_segment(WORKFLOWS),
-            WorkflowPlace::Workflow(_, workflow) => Segment::try_from(workflow.to_string()).ok(),
+            WorkflowPlace::Workflow(_, workflow) => names::id_segment(workflow),
         }
     }
 

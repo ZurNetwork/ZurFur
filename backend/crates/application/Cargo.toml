@@ -44,6 +44,8 @@ async-trait = { workspace = true }
 test-support = { path = "../test-support" }
 tokio = { workspace = true }
 uuid = { workspace = true }
+# The den keys' property tests over UUIDs and DIDs.
+proptest = { workspace = true }
 # The tests' `now` + a hand-rolled failing port double.
 chrono = { workspace = true }
 # Names `composition::Runtime` so the integration tests can build an `App` over

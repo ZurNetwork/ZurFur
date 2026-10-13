@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
-use atta::{Caps, Entry, Kind, Level, RealPath, Resolved, Resolver, Segment, View};
+use atta::{Caps, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View, Viewer};
 use domain::elements::user::UserId;
 
 use crate::den::{
     DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenType,
-    NodeKind, NodeLevel, PageToken, TopLevel, host::DenHost, names,
+    NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -77,21 +77,34 @@ pub(crate) fn crumb(entry: &Entry) -> DenCrumb {
     }
 }
 
-/// A Den read for one request: the engine's resolver over Zurfur's host.
+/// Where a Den read finds the soft-deleted word of a node the host answered for.
+pub(crate) trait SoftDeleteLookup {
+    /// The word for the node at `path`, `None` when live; the outer `None` when the host
+    /// never answered for that path.
+    fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>>;
+}
+
+/// A Den read for one request: the engine's resolver over a host, and where the host keeps
+/// its soft-deleted words.
 pub(crate) struct Reader<'h> {
-    host: &'h DenHost<'h>,
     resolver: Resolver<'h>,
+    soft_deletes: &'h dyn SoftDeleteLookup,
 }
 
 impl<'h> Reader<'h> {
-    /// A reader over `host`, for the viewer it was built for, with the default caps.
-    pub(crate) fn new(host: &'h DenHost<'h>) -> Self {
-        let resolver = Resolver {
-            host,
-            viewer: host.viewer().clone(),
-            caps: Caps::default(),
-        };
-        Self { host, resolver }
+    /// A reader over `host` for `viewer` within `caps`, marking open nodes from
+    /// `soft_deletes`.
+    pub(crate) fn new(
+        host: &'h dyn Host,
+        viewer: Viewer,
+        soft_deletes: &'h dyn SoftDeleteLookup,
+        caps: Caps,
+    ) -> Self {
+        let resolver = Resolver { host, viewer, caps };
+        Self {
+            resolver,
+            soft_deletes,
+        }
     }
 
     /// The node at `den_path` below `root`, with its crumbs.
@@ -100,9 +113,8 @@ impl<'h> Reader<'h> {
         root: &RealPath,
         den_path: &[Segment],
     ) -> Result<Resolved, DenError> {
-        // Called by path, not as a method: the network guard reserves the method-call spelling
-        // for an HTTP client's DNS override, and this call reaches no network.
-        Resolver::resolve(&self.resolver, root, den_path)
+        self.resolver
+            .resolve_path(root, den_path)
             .await
             .map_err(engine_error)
     }
@@ -119,7 +131,7 @@ impl<'h> Reader<'h> {
                 kind,
                 ..
             } => {
-                let soft_delete = self.host.soft_delete(real_path).ok_or_else(|| {
+                let soft_delete = self.soft_deletes.soft_delete(real_path).ok_or_else(|| {
                     let unrecorded = anyhow::anyhow!("an open den node has no host record");
                     DenError::Store(unrecorded)
                 })?;
@@ -168,7 +180,11 @@ impl<'h> Reader<'h> {
         resolved: &Resolved,
         page: Option<PageToken>,
     ) -> Result<DenListing, DenError> {
-        if den_type(resolved.node())?.content_not_shown() {
+        let node = resolved.node();
+        let View::Open { .. } = &node.view else {
+            return Err(DenError::NotFound);
+        };
+        if den_type(node)?.content_not_shown() {
             return Ok(DenListing::default());
         }
         let page = page.map(PageToken::into_inner);
@@ -190,3 +206,6 @@ impl<'h> Reader<'h> {
         Ok(listing)
     }
 }
+
+#[cfg(test)]
+mod tests;

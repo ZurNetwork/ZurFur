@@ -1,6 +1,9 @@
 //! The Den's fixed words and the conversions every arm uses to name its nodes.
 
+use std::fmt::Display;
+
 use atta::{NodeName, Segment};
+use domain::elements::did::Did;
 
 /// A user's folder of Account memberships.
 pub(crate) const ACCOUNTS: &str = "accounts";
@@ -34,6 +37,18 @@ pub(crate) fn fixed_segment(word: &'static str) -> Option<Segment> {
 /// out for every word.
 pub(crate) fn fixed_name(word: &'static str) -> Option<NodeName> {
     NodeName::try_from(word).ok()
+}
+
+/// The key of an entity keyed by a UUID-backed id: the id's text; `None` only if that text
+/// breaks the segment rule, which a test rules out for every UUID.
+pub(crate) fn id_segment(id: impl Display) -> Option<Segment> {
+    Segment::try_from(id.to_string()).ok()
+}
+
+/// The key of an actor keyed by its DID; `None` for a DID longer than a segment allows, whose
+/// node therefore has no key and is absent.
+pub(crate) fn did_segment(did: &Did) -> Option<Segment> {
+    Segment::try_from(did.as_ref()).ok()
 }
 
 /// The name for stored text: the text itself when it passes the name rule, else `Unnamed`.

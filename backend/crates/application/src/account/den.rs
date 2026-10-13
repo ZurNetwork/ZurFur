@@ -12,7 +12,7 @@ use crate::den::{
 /// `commissions` folder is the commission arm's (`CommissionPlace::AccountCommissions`), and
 /// its `workflows` folder is the Workflow arm's (`WorkflowPlace::Workflows`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the identity arms build these once they serve an Account's nodes"
 )]
@@ -35,7 +35,7 @@ impl AccountPlace {
     /// The node's segment in its real parent.
     pub(crate) fn key(&self) -> Option<Segment> {
         match self {
-            AccountPlace::Account(account) => Segment::try_from(account.as_ref()).ok(),
+            AccountPlace::Account(account) => names::did_segment(account.did()),
             AccountPlace::Characters(_) => names::fixed_segment(CHARACTERS),
         }
     }

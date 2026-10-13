@@ -66,7 +66,7 @@
     },
     {
       "name": "src/character/",
-      "role": "create.rs (mints a DID, creates the Character) + delete.rs (`todo!()` stub)",
+      "role": "create.rs (mints a DID, creates the Character) + delete.rs (`todo!()` stub); den.rs — identity's Den arm for a Character's directory (CharacterPlace and its leaves)",
       "node": false
     },
     {
@@ -121,7 +121,7 @@
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; den.rs — identity's Den arm for a user's directory (UserPlace and its leaves)",
       "node": false
     },
     {

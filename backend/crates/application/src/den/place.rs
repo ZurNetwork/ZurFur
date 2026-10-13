@@ -122,6 +122,91 @@ impl Place {
     }
 }
 
+/// Where a folder sits: `/` itself, or a node the host answered for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Parent {
+    /// The global root, `/`.
+    Root,
+    /// A node at this place.
+    At(Place),
+}
+
+impl Place {
+    /// Whether a node at this place may be a real child of `parent`: `/` holds only the
+    /// top-level directories, a top-level directory only the nodes anchored under it, and each
+    /// directory only its own fixed entries or its own entities.
+    pub(crate) fn is_child_of(&self, parent: &Parent) -> bool {
+        let Parent::At(parent) = parent else {
+            return matches!(self, Place::TopLevel(_));
+        };
+        match parent {
+            Place::TopLevel(top_level) => self.top_level() == Some(*top_level),
+            Place::User(UserPlace::User(user)) => match self {
+                Place::User(UserPlace::Accounts(child) | UserPlace::Characters(child)) => {
+                    child == user
+                }
+                Place::Commission(CommissionPlace::UserCommissions(child)) => child == user,
+                Place::TopLevel(_)
+                | Place::User(UserPlace::User(_))
+                | Place::Account(_)
+                | Place::Character(_)
+                | Place::Commission(_)
+                | Place::Workflow(_)
+                | Place::Post(_) => false,
+            },
+            Place::Account(AccountPlace::Account(account)) => match self {
+                Place::Account(AccountPlace::Characters(child))
+                | Place::Commission(CommissionPlace::AccountCommissions(child))
+                | Place::Workflow(WorkflowPlace::Workflows(child)) => child == account,
+                Place::TopLevel(_)
+                | Place::User(_)
+                | Place::Account(AccountPlace::Account(_))
+                | Place::Character(_)
+                | Place::Commission(_)
+                | Place::Workflow(_)
+                | Place::Post(_) => false,
+            },
+            Place::Commission(CommissionPlace::Commission(commission)) => match self {
+                Place::Commission(
+                    CommissionPlace::Attachments(child)
+                    | CommissionPlace::Changelog(child)
+                    | CommissionPlace::Products(child)
+                    | CommissionPlace::Slots(child),
+                ) => child == commission,
+                Place::TopLevel(_)
+                | Place::User(_)
+                | Place::Account(_)
+                | Place::Character(_)
+                | Place::Commission(_)
+                | Place::Workflow(_)
+                | Place::Post(_) => false,
+            },
+            Place::Commission(CommissionPlace::Attachments(commission)) => {
+                matches!(self, Place::Commission(CommissionPlace::File(child, _)) if child == commission)
+            }
+            Place::Commission(CommissionPlace::Slots(commission)) => {
+                matches!(self, Place::Commission(CommissionPlace::Slot(child, _)) if child == commission)
+            }
+            Place::Workflow(WorkflowPlace::Workflows(account)) => {
+                matches!(self, Place::Workflow(WorkflowPlace::Workflow(child, _)) if child == account)
+            }
+            Place::User(UserPlace::Accounts(_) | UserPlace::Characters(_))
+            | Place::Account(AccountPlace::Characters(_))
+            | Place::Character(_)
+            | Place::Commission(
+                CommissionPlace::UserCommissions(_)
+                | CommissionPlace::AccountCommissions(_)
+                | CommissionPlace::Changelog(_)
+                | CommissionPlace::Products(_)
+                | CommissionPlace::Slot(..)
+                | CommissionPlace::File(..),
+            )
+            | Place::Workflow(WorkflowPlace::Workflow(..))
+            | Place::Post(_) => false,
+        }
+    }
+}
+
 /// A node as an arm answers for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Node {
@@ -149,3 +234,6 @@ pub(crate) struct DenMount {
     /// The node it grafts in; a place not directly under a top-level directory is dropped.
     pub(crate) target: Place,
 }
+
+#[cfg(test)]
+mod tests;

@@ -9,7 +9,8 @@ use atta::{NodeName, NodeNameError};
 pub struct DenName(NodeName);
 
 impl DenName {
-    /// Wraps a name the engine answered with.
+    /// Wraps a name the engine answered with; inherent, because a public `From` would put
+    /// the engine's type in this crate's API.
     pub(crate) fn new(name: NodeName) -> Self {
         Self(name)
     }

@@ -14,7 +14,7 @@ use crate::den::{
 
 /// The places this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the commission arms build these once they serve commission nodes"
 )]
@@ -61,15 +61,13 @@ impl CommissionPlace {
             CommissionPlace::UserCommissions(_) | CommissionPlace::AccountCommissions(_) => {
                 names::fixed_segment(COMMISSIONS)
             }
-            CommissionPlace::Commission(commission) => {
-                Segment::try_from(commission.to_string()).ok()
-            }
+            CommissionPlace::Commission(commission) => names::id_segment(commission),
             CommissionPlace::Attachments(_) => names::fixed_segment(ATTACHMENTS),
             CommissionPlace::Changelog(_) => names::fixed_segment(CHANGELOG),
             CommissionPlace::Products(_) => names::fixed_segment(PRODUCTS),
             CommissionPlace::Slots(_) => names::fixed_segment(SLOTS),
-            CommissionPlace::Slot(_, slot) => Segment::try_from(slot.to_string()).ok(),
-            CommissionPlace::File(_, file) => Segment::try_from(file.to_string()).ok(),
+            CommissionPlace::Slot(_, slot) => names::id_segment(slot),
+            CommissionPlace::File(_, file) => names::id_segment(file),
         }
     }
 

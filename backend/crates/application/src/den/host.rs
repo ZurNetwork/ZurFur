@@ -4,6 +4,14 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
+use crate::{
+    Ports, account, character, commission,
+    den::{
+        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, SoftDelete, TopLevel,
+        admission::admission, names, place::Parent, post, read::SoftDeleteLookup,
+    },
+    user,
+};
 use atta::{
     Access, Admission, Found, Host, HostError, Kind, Level, Metadata, Mount, Reach, RealPath,
     Segment, Type, Viewer,
@@ -11,28 +19,12 @@ use atta::{
 use domain::elements::{
     account::AccountId, character::CharacterId, commission::CommissionId, did::Did, user::UserId,
 };
-use strum::VariantArray;
-
-use crate::{
-    Ports, account, character, commission,
-    den::{
-        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, SoftDelete, TopLevel,
-        admission::admission, names, post,
-    },
-    user,
-};
 
 /// What the host recorded about a node it answered for in this request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Recorded {
     place: Place,
     state: NodeState,
-}
-
-/// Where a folder sits: `/` itself, or a node the host answered for earlier in this request.
-enum Parent {
-    Root,
-    At(Place),
 }
 
 /// Zurfur's one host for Atta, built per request for the session's viewer. It records every
@@ -49,6 +41,11 @@ pub(crate) struct DenHost<'a> {
 fn host_error(error: anyhow::Error) -> HostError {
     let boxed: Box<dyn std::error::Error + Send + Sync> = error.into();
     HostError::from(boxed)
+}
+
+/// An arm's answer, kept only when its place's key is the key it was asked for.
+fn answered_for(node: Option<Node>, key: &Segment) -> Option<Node> {
+    node.filter(|node| node.place.key().as_ref() == Some(key))
 }
 
 /// The engine's type key for a Den type.
@@ -85,27 +82,29 @@ impl<'a> DenHost<'a> {
         self.record.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The soft-deleted word for the node recorded at `path`; `None` when nothing is recorded
-    /// there.
-    pub(crate) fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>> {
-        let record = self.record();
-        let recorded = record.get(path)?;
-        Some(recorded.state.soft_delete())
-    }
-
-    /// Where the folder at `path` sits; `None` when the host never answered for it.
-    fn parent(&self, path: &RealPath) -> Option<Parent> {
+    /// Where the folder at `path` sits; `None` when the host never answered for it, or when
+    /// its type doesn't show its content yet, which closes typed paths below it as it empties
+    /// its listing.
+    fn folder(&self, path: &RealPath) -> Option<Parent> {
         if path.segments().is_empty() {
             return Some(Parent::Root);
         }
         let record = self.record();
         let recorded = record.get(path)?;
+        if recorded.place.den_type().content_not_shown() {
+            return None;
+        }
         Some(Parent::At(recorded.place.clone()))
     }
 
-    /// The engine's answer for an arm's node in `parent`, recorded under its real path;
-    /// `None` when its place makes no key.
-    fn found(&self, parent: &RealPath, node: Node) -> Option<Found> {
+    /// The engine's answer for an arm's node in the folder `parent` at `parent_path`, recorded
+    /// under its real path; `None` when its place can't be a child of that folder or makes no
+    /// key.
+    fn found(&self, parent_path: &RealPath, parent: &Parent, node: Node) -> Option<Found> {
+        if !node.place.is_child_of(parent) {
+            return None;
+        }
+        let parent = parent_path;
         let key = node.place.key()?;
         let metadata = Metadata {
             key: key.clone(),
@@ -141,11 +140,6 @@ impl<'a> DenHost<'a> {
     /// The top-level directory named `key` in `/`: Public, owned by the system, live.
     fn top_level(key: &Segment) -> Option<Node> {
         let top_level = TopLevel::from_str(key.as_ref()).ok()?;
-        Self::top_level_node(top_level)
-    }
-
-    /// The node for one top-level directory.
-    fn top_level_node(top_level: TopLevel) -> Option<Node> {
         let name = names::fixed_name(top_level.into())?;
         let node = Node {
             place: Place::TopLevel(top_level),
@@ -157,16 +151,23 @@ impl<'a> DenHost<'a> {
         Some(node)
     }
 
+    /// The session's own user when `key` is their DID; any other user is absent to them.
+    fn own_user(&self, key: &Segment) -> Option<UserId> {
+        let did = Did::from_str(key.as_ref()).ok()?;
+        let user = UserId::from(did);
+        (&user == self.context.viewer).then_some(user)
+    }
+
     /// The node keyed `key` directly under `top_level`, from the arm that owns its entities;
-    /// a key that isn't that arm's id is absent.
+    /// a key that isn't that arm's id is absent, and so is any user but the session's.
     async fn entity(&self, top_level: TopLevel, key: &Segment) -> anyhow::Result<Option<Node>> {
         let context = &self.context;
         match top_level {
             TopLevel::User => {
-                let Ok(did) = Did::from_str(key.as_ref()) else {
+                let Some(user) = self.own_user(key) else {
                     return Ok(None);
                 };
-                user::den::node(context, &UserId::from(did)).await
+                user::den::node(context, &user).await
             }
             TopLevel::Account => {
                 let Ok(did) = Did::from_str(key.as_ref()) else {
@@ -196,12 +197,12 @@ impl<'a> DenHost<'a> {
     }
 
     /// The node at `key` in the folder at `parent`, from the arm that owns the folder.
-    async fn child_at(&self, parent: Parent, key: &Segment) -> anyhow::Result<Option<Node>> {
+    async fn child_at(&self, parent: &Parent, key: &Segment) -> anyhow::Result<Option<Node>> {
         let context = &self.context;
         let Parent::At(place) = parent else {
             return Ok(Self::top_level(key));
         };
-        match &place {
+        match place {
             Place::TopLevel(top_level) => self.entity(*top_level, key).await,
             Place::User(place) => user::den::child(context, place, key).await,
             Place::Account(place) => account::den::child(context, place, key).await,
@@ -212,18 +213,14 @@ impl<'a> DenHost<'a> {
         }
     }
 
-    /// Every real child of the folder at `parent`, from the arm that owns the folder. `/`
-    /// holds the top-level directories, which are traverse-only and list nothing.
-    async fn children_at(&self, parent: Parent) -> anyhow::Result<Vec<Node>> {
+    /// Every real child of the folder at `parent`, from the arm that owns the folder. `/` and
+    /// the top-level directories are traverse-only and list nothing.
+    async fn children_at(&self, parent: &Parent) -> anyhow::Result<Vec<Node>> {
         let context = &self.context;
         let Parent::At(place) = parent else {
-            let top_levels = TopLevel::VARIANTS
-                .iter()
-                .filter_map(|top_level| Self::top_level_node(*top_level))
-                .collect();
-            return Ok(top_levels);
+            return Ok(Vec::new());
         };
-        match &place {
+        match place {
             Place::TopLevel(_) => Ok(Vec::new()),
             Place::User(place) => user::den::children(context, place).await,
             Place::Account(place) => account::den::children(context, place).await,
@@ -236,12 +233,12 @@ impl<'a> DenHost<'a> {
 
     /// The viewer's mounts in the folder at `parent`, from the arm that owns the folder. `/`
     /// and the top-level directories hold none.
-    async fn mounts_at(&self, parent: Parent) -> anyhow::Result<Vec<DenMount>> {
+    async fn mounts_at(&self, parent: &Parent) -> anyhow::Result<Vec<DenMount>> {
         let context = &self.context;
         let Parent::At(place) = parent else {
             return Ok(Vec::new());
         };
-        match &place {
+        match place {
             Place::TopLevel(_) => Ok(Vec::new()),
             Place::User(place) => user::den::mounts(context, place).await,
             Place::Account(place) => account::den::mounts(context, place).await,
@@ -255,7 +252,8 @@ impl<'a> DenHost<'a> {
 
 #[async_trait::async_trait]
 impl Host for DenHost<'_> {
-    /// Absent for any viewer but the session's, and in a folder the host never answered for.
+    /// Absent for any viewer but the session's, in a folder the host never answered for or
+    /// whose content isn't shown, and when the arm answers for another key.
     async fn child(
         &self,
         viewer: &Viewer,
@@ -265,39 +263,41 @@ impl Host for DenHost<'_> {
         if viewer != &self.viewer {
             return Ok(None);
         }
-        let Some(folder) = self.parent(parent) else {
+        let Some(folder) = self.folder(parent) else {
             return Ok(None);
         };
-        let node = self.child_at(folder, key).await.map_err(host_error)?;
-        let found = node.and_then(|node| self.found(parent, node));
+        let node = self.child_at(&folder, key).await.map_err(host_error)?;
+        let found = answered_for(node, key).and_then(|node| self.found(parent, &folder, node));
         Ok(found)
     }
 
-    /// Empty for any viewer but the session's, and for a folder the host never answered for.
+    /// Empty for any viewer but the session's, and for a folder the host never answered for
+    /// or whose content isn't shown.
     async fn children(&self, viewer: &Viewer, parent: &RealPath) -> Result<Vec<Found>, HostError> {
         if viewer != &self.viewer {
             return Ok(Vec::new());
         }
-        let Some(folder) = self.parent(parent) else {
+        let Some(folder) = self.folder(parent) else {
             return Ok(Vec::new());
         };
-        let nodes = self.children_at(folder).await.map_err(host_error)?;
+        let nodes = self.children_at(&folder).await.map_err(host_error)?;
         let found = nodes
             .into_iter()
-            .filter_map(|node| self.found(parent, node))
+            .filter_map(|node| self.found(parent, &folder, node))
             .collect();
         Ok(found)
     }
 
-    /// Empty for any viewer but the session's, and for a folder the host never answered for.
+    /// Empty for any viewer but the session's, and for a folder the host never answered for
+    /// or whose content isn't shown.
     async fn mounts(&self, viewer: &Viewer, folder: &RealPath) -> Result<Vec<Mount>, HostError> {
         if viewer != &self.viewer {
             return Ok(Vec::new());
         }
-        let Some(parent) = self.parent(folder) else {
+        let Some(parent) = self.folder(folder) else {
             return Ok(Vec::new());
         };
-        let mounts = self.mounts_at(parent).await.map_err(host_error)?;
+        let mounts = self.mounts_at(&parent).await.map_err(host_error)?;
         let mounts = mounts.into_iter().filter_map(Self::mount).collect();
         Ok(mounts)
     }
@@ -327,6 +327,15 @@ impl Host for DenHost<'_> {
         }
         let state = self.record().get(path).map(|recorded| recorded.state);
         admission(state, access, reach, self.include_deleted)
+    }
+}
+
+impl SoftDeleteLookup for DenHost<'_> {
+    /// The word recorded for the node this host answered for at `path`.
+    fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>> {
+        let record = self.record();
+        let recorded = record.get(path)?;
+        Some(recorded.state.soft_delete())
     }
 }
 

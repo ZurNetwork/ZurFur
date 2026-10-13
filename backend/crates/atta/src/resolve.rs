@@ -65,7 +65,7 @@ pub struct Entry {
     pub view: View,
 }
 
-/// A typed Den path, resolved for one viewer. Only [`Resolver::resolve`] builds one, and
+/// A typed Den path, resolved for one viewer. Only [`Resolver::resolve_path`] builds one, and
 /// [`Resolver::list`] lists it only for that viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
@@ -143,7 +143,11 @@ pub(crate) fn access(own_level: Level, here: &[Lift], inherited: &[Lift]) -> Acc
 impl Resolver<'_> {
     /// The node at `den_path` below the viewer's `root`, with its crumbs; any miss is
     /// [`Error::NotFound`].
-    pub async fn resolve(&self, root: &RealPath, den_path: &[Segment]) -> Result<Resolved, Error> {
+    pub async fn resolve_path(
+        &self,
+        root: &RealPath,
+        den_path: &[Segment],
+    ) -> Result<Resolved, Error> {
         if den_path.len() > self.caps.max_den_path {
             return Err(Error::NotFound);
         }

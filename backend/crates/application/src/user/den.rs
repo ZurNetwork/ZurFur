@@ -12,7 +12,7 @@ use crate::den::{
 /// folder is the commission arm's (`CommissionPlace::UserCommissions`), and their `posts`
 /// entry is a mount of `/post/<did>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
+#[allow(
     dead_code,
     reason = "the identity arms build these once they serve a user's nodes"
 )]
@@ -38,7 +38,7 @@ impl UserPlace {
     /// The node's segment in its real parent.
     pub(crate) fn key(&self) -> Option<Segment> {
         match self {
-            UserPlace::User(user) => Segment::try_from(user.as_ref()).ok(),
+            UserPlace::User(user) => names::did_segment(user.did()),
             UserPlace::Accounts(_) => names::fixed_segment(ACCOUNTS),
             UserPlace::Characters(_) => names::fixed_segment(CHARACTERS),
         }

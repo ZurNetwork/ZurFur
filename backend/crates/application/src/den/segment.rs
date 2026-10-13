@@ -6,7 +6,8 @@ use atta::Segment;
 pub struct DenSegment(Segment);
 
 impl DenSegment {
-    /// Wraps a segment Atta answered with.
+    /// Wraps a segment the engine answered with; inherent, because a public `From` would put
+    /// the engine's type in this crate's API.
     pub(crate) fn new(segment: Segment) -> Self {
         Self(segment)
     }
