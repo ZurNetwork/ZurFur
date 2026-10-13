@@ -6,10 +6,6 @@ use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel, names};
 
 /// The places this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "the posts arm builds these once it serves a poster's posts"
-)]
 pub(crate) enum PostPlace {
     /// A poster's posts, `/post/<did>`.
     Posts(Did),

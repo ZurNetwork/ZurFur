@@ -86,7 +86,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter and FileStore — tests read the order of begin/commit/rollback and external calls",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter and FileStore — tests read the order of begin/commit/rollback and external calls; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
       "node": false
     },
     {

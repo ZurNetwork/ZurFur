@@ -1,9 +1,11 @@
+use std::str::FromStr;
+
 use crate::LazyUnit;
 use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        character::{Character, CharacterAttributes, CharacterId, Presence},
+        character::{Character, CharacterAttributes, CharacterId, CharacterName, Presence},
         handle::{Handle, HandleDomain},
         user::UserId,
     },
@@ -14,6 +16,7 @@ use crate::{
     account::{AccountError, ensure_handle_claimable},
     character::{CharacterResult, Characters},
     common_error::CommonError,
+    den::{DenName, DenNameError},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +31,16 @@ pub struct Output {
     pub character: CharacterId,
 }
 
+/// The name as the Den's name rule keeps it: what the rule strips is gone, and what it refuses
+/// is refused.
+fn den_checked(name: &CharacterName) -> Result<CharacterName, DenNameError> {
+    let den_name = DenName::try_from(name.as_ref())?;
+    CharacterName::from_str(den_name.as_ref()).map_err(|_| DenNameError::Empty)
+}
+
 impl Characters<'_> {
+    /// Creates a Character kept by the actor, its name stored as the Den's name rule keeps it;
+    /// a name the rule refuses is refused before any DID is minted.
     #[use_case]
     pub async fn create(
         &self,
@@ -40,9 +52,10 @@ impl Characters<'_> {
     ) -> CharacterResult<Output> {
         let Command {
             actor_id,
-            attributes,
+            mut attributes,
             handle,
         } = cmd;
+        attributes.name = den_checked(&attributes.name)?;
 
         let (did, presence) = match handle {
             Some(handle) => {
@@ -70,3 +83,6 @@ impl Characters<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

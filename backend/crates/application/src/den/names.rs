@@ -22,7 +22,6 @@ pub(crate) const PRODUCTS: &str = "products";
 /// A commission's folder of slots.
 pub(crate) const SLOTS: &str = "slots";
 /// A user's mount of their own posts.
-#[allow(dead_code, reason = "the identity arms mount a user's posts under it")]
 pub(crate) const POSTS: &str = "posts";
 /// The name a node shows when its stored text fails the name rule.
 pub(crate) const UNNAMED: &str = "Unnamed";

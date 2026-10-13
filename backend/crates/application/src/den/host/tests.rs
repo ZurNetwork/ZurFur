@@ -353,3 +353,43 @@ fn an_answer_for_another_key_is_dropped() {
     assert!(asked_for_it.is_some());
     assert_eq!(asked_for_another, None);
 }
+
+#[tokio::test]
+async fn the_posts_mount_in_a_root_is_answered_only_for_the_session_s_viewer() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let bob = DenHost::viewer_of(&UserId::from(Did::from("did:plc:bob".to_owned())));
+    let root = path(&["user", "did:plc:alice"]);
+    record(
+        &host,
+        &root,
+        Place::User(user::den::UserPlace::User(alice.clone())),
+    );
+
+    let own = host
+        .mounts(host.viewer(), &root)
+        .await
+        .expect("no store is read");
+    let another = host.mounts(&bob, &root).await.expect("no store is read");
+
+    let posts = Mount {
+        segment: segment("posts"),
+        target: path(&["post", "did:plc:alice"]),
+    };
+    assert_eq!(own, [posts]);
+    assert_eq!(another, Vec::new());
+}
+
+#[tokio::test]
+async fn an_unrecorded_root_mounts_nothing() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let viewer = host.viewer().clone();
+    let root = path(&["user", "did:plc:alice"]);
+
+    let mounts = host.mounts(&viewer, &root).await.expect("no store is read");
+
+    assert_eq!(mounts, Vec::new());
+}

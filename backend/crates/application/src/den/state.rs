@@ -12,10 +12,6 @@ pub(crate) enum NodeState {
     )]
     Archived,
     /// A deactivated Account, and whether the viewer is its Owner.
-    #[allow(
-        dead_code,
-        reason = "built by the identity arms once they serve deactivated Accounts"
-    )]
     Deactivated {
         /// Whether the viewer is the Account's Owner.
         viewer_is_owner: bool,
