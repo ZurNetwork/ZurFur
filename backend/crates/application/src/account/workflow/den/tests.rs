@@ -1,7 +1,7 @@
 use adapter_mem::fixture::{alice, queue, supreme_arts};
 
 use super::*;
-use crate::den::testing::{self, World, segment};
+use crate::den::tests::{self as testing, World, segment};
 
 #[tokio::test]
 async fn an_account_s_workflows_folder_lists_its_workflows() {

@@ -21,7 +21,7 @@ mod segment;
 mod soft_delete;
 mod state;
 #[cfg(test)]
-pub(crate) mod testing;
+pub(crate) mod tests;
 
 use crate::ports::WithPorts;
 
@@ -34,12 +34,13 @@ pub use page_token::{PageToken, PageTokenError};
 pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 
+pub(crate) use atta::Level;
 pub(crate) use atta::Segment;
 #[allow(
     unused_imports,
-    reason = "the identity and commission arms name these through the den module"
+    reason = "the identity arms name these through the den module"
 )]
-pub(crate) use atta::{Level, Lift, NodeName};
+pub(crate) use atta::{Lift, NodeName};
 pub(crate) use context::DenContext;
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};

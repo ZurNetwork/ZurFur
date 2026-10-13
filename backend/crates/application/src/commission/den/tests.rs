@@ -5,13 +5,13 @@ use domain::{
     elements::commission::{CommissionTitle, FileKey, FileName},
     ports::UnitOfWork,
 };
-use test_support::recording::{CallLog, RecordingFileStore};
+use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
 use uuid::Uuid;
 
 use super::*;
 use crate::den::{
     DenAccess, DenContent, DenError, DenNode, NodeKind, NodeLevel, SoftDelete,
-    testing::{self, RecordingCommissions, World, path, segment},
+    tests::{self as testing, World, path, segment},
 };
 
 /// The real path of a commission.
@@ -302,10 +302,7 @@ async fn mounts_in_the_viewer_s_own_commissions_include_archived_ones() {
 async fn recorded() -> (World, CallLog) {
     let World { runtime, mut ports } = testing::world().await;
     let log = CallLog::default();
-    let commissions = RecordingCommissions {
-        inner: ports.commissions.clone(),
-        log: log.clone(),
-    };
+    let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
     ports.commissions = Arc::new(commissions);
     ports.files = Arc::new(RecordingFileStore::new(ports.files.clone(), log.clone()));
     (World { runtime, ports }, log)

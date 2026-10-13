@@ -3,7 +3,7 @@ use domain::elements::{commission::CommissionId, did::Did};
 use uuid::Uuid;
 
 use super::*;
-use crate::den::testing::World;
+use crate::den::tests::World;
 
 /// A bag over the in-memory runtime's ports, built as this crate's own [`Ports`].
 fn ports() -> Ports {
@@ -436,7 +436,7 @@ async fn alice_s_commission_mounts(
 
 #[tokio::test]
 async fn an_archived_commission_lists_only_when_deleted_nodes_are_asked_for() {
-    let World { ports, .. } = crate::den::testing::world().await;
+    let World { ports, .. } = crate::den::tests::world().await;
     let alice = adapter_mem::fixture::alice();
 
     let hidden = alice_s_commission_mounts(&ports, &alice, false).await;
@@ -464,7 +464,7 @@ async fn an_archived_commission_lists_only_when_deleted_nodes_are_asked_for() {
 
 #[tokio::test]
 async fn another_user_s_commissions_folder_mounts_nothing_for_the_viewer() {
-    let World { ports, .. } = crate::den::testing::world().await;
+    let World { ports, .. } = crate::den::tests::world().await;
     let alice = adapter_mem::fixture::alice();
     let host = DenHost::new(&ports, &alice, true);
     let viewer = host.viewer().clone();

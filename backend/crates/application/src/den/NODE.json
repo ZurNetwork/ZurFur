@@ -114,8 +114,8 @@
       "node": false
     },
     {
-      "name": "testing.rs",
-      "role": "test-only: the fixture world as this crate's own ports, a recording CommissionStore, and a Den read from any node under a top-level directory",
+      "name": "tests.rs",
+      "role": "test-only: the fixture world as this crate's own ports and a Den read from any node under a top-level directory",
       "node": false
     }
   ],
