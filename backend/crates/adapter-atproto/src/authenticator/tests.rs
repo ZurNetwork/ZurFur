@@ -1406,3 +1406,132 @@ async fn a_callback_stalled_before_its_claim_deletes_nothing_at_its_deadline() {
         "an attempt that never claimed deletes nothing"
     );
 }
+
+// ---- the port's refusal for the wrong browser ------------------------------
+
+/// Whether `refused` reaches the port as the domain's browser refusal.
+fn is_browser_mismatch(refused: &anyhow::Error) -> bool {
+    refused.is::<domain::ports::BrowserMismatch>()
+}
+
+#[tokio::test]
+async fn a_callback_without_the_cookie_reaches_the_port_as_a_browser_mismatch() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, _binding) = started(&world).await;
+
+    let refused = completed_presenting(&world, &state, None)
+        .await
+        .expect_err("no cookie, no sign-in");
+
+    assert!(is_browser_mismatch(&refused), "{refused:?}");
+    assert!(
+        matches!(failure_of(&refused), Some(SigninFailure::NoBrowserBinding)),
+        "the class is kept: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_expired_sign_in_reaches_the_port_as_a_browser_mismatch() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    aged_out(&world, &state).await;
+
+    let refused = completed(&world, &state, &binding)
+        .await
+        .expect_err("past its lifetime the sign-in is gone");
+
+    assert!(is_browser_mismatch(&refused), "{refused:?}");
+    assert!(
+        matches!(failure_of(&refused), Some(SigninFailure::StaleSignin)),
+        "the class is kept: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn another_sign_ins_cookie_reaches_the_port_as_a_browser_mismatch() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (attackers_state, _attackers_binding) = started(&world).await;
+    let (_victims_state, victims_binding) = started(&world).await;
+
+    let refused = completed(&world, &attackers_state, &victims_binding)
+        .await
+        .expect_err("another sign-in's cookie does not fit");
+
+    assert!(is_browser_mismatch(&refused), "{refused:?}");
+    assert!(
+        matches!(failure_of(&refused), Some(SigninFailure::BrowserMismatch)),
+        "the class is kept: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_claimed_sign_in_is_not_a_browser_mismatch() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (state, binding) = started(&world).await;
+    let claimed = world
+        .store
+        .claim_browser_binding(&state, &token_hash(binding.as_ref()), SIGNIN_LIFETIME)
+        .await
+        .expect("the store answers");
+    assert!(claimed, "the first callback claims the sign-in");
+
+    let refused = completed(&world, &state, &binding)
+        .await
+        .expect_err("a claimed sign-in is the claimer's");
+
+    assert!(!is_browser_mismatch(&refused), "{refused:?}");
+    assert!(
+        matches!(failure_of(&refused), Some(SigninFailure::Claimed)),
+        "refused as already claimed: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_callback_without_a_state_is_not_a_browser_mismatch() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (_state, binding) = started(&world).await;
+
+    let refused = world
+        .authenticator
+        .complete("code".into(), None, Some(ISSUER.into()), Some(binding))
+        .await
+        .expect_err("no state, no sign-in");
+
+    assert!(!is_browser_mismatch(&refused), "{refused:?}");
+    assert!(
+        matches!(failure_of(&refused), Some(SigninFailure::UnknownState)),
+        "refused as an unknown state: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn each_browser_refusal_logs_its_own_class_at_info() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let (no_cookie_state, other_binding) = started(&world).await;
+    let (expired_state, expired_binding) = started(&world).await;
+    let (wrong_cookie_state, _binding) = started(&world).await;
+    aged_out(&world, &expired_state).await;
+
+    let ((), events) = record_events(async {
+        let _ = completed_presenting(&world, &no_cookie_state, None).await;
+        let _ = completed(&world, &expired_state, &expired_binding).await;
+        let _ = completed(&world, &wrong_cookie_state, &other_binding).await;
+    })
+    .await;
+
+    let info = lines_at(&events, tracing::Level::INFO, false);
+    let expected_info = vec![
+        "message=sign-in failed failure=no browser binding ".to_string(),
+        "message=sign-in failed failure=no live bound sign-in ".to_string(),
+        "message=sign-in failed failure=browser binding mismatch ".to_string(),
+    ];
+    assert_eq!(info, expected_info);
+    for line in lines_at(&events, tracing::Level::INFO, true) {
+        for state in [&no_cookie_state, &expired_state, &wrong_cookie_state] {
+            assert!(
+                !line.contains(state.as_str()),
+                "an info line carries a state: {line}"
+            );
+        }
+    }
+}

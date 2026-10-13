@@ -12,7 +12,10 @@ use api::AppState;
 use async_trait::async_trait;
 use domain::{
     elements::{did::Did, handle::AtHandle, profile::Profile},
-    ports::{AccountMismatch, Authenticator, BrowserBinding, ResolveError, SigninStarted},
+    ports::{
+        AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, ResolveError,
+        SigninStarted,
+    },
 };
 use test_support::http::{client, sign_in};
 
@@ -30,6 +33,9 @@ enum FailAt {
     Complete,
     /// `start` succeeds but the visitor signed in to a different account.
     WrongAccount,
+    /// `start` succeeds but the callback came back to a browser the sign-in
+    /// was not bound to, or after it expired.
+    WrongBrowser,
 }
 
 /// An [`Authenticator`] that fails at a chosen point, standing in for a PDS that
@@ -56,7 +62,7 @@ impl Authenticator for FailingAuthenticator {
     async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         match self.fail_at {
             FailAt::Start(cause) => Err(cause()),
-            FailAt::Complete | FailAt::WrongAccount => Ok(started()),
+            FailAt::Complete | FailAt::WrongAccount | FailAt::WrongBrowser => Ok(started()),
         }
     }
 
@@ -69,6 +75,7 @@ impl Authenticator for FailingAuthenticator {
     ) -> anyhow::Result<Did> {
         match self.fail_at {
             FailAt::WrongAccount => Err(anyhow::Error::new(AccountMismatch)),
+            FailAt::WrongBrowser => Err(anyhow::Error::new(BrowserMismatch)),
             FailAt::Start(_) | FailAt::Complete => Err(anyhow::anyhow!("code exchange failed")),
         }
     }
@@ -567,6 +574,22 @@ async fn signin_callback_wrong_account_redirects_to_login_account_mismatch() {
         .expect("GET /signin-callback");
     assert_eq!(res.status(), 303);
     let expected = format!("{base}/login?error=account_mismatch");
+    assert_eq!(res.headers()["location"], expected.as_str());
+}
+
+#[tokio::test]
+async fn signin_callback_wrong_browser_redirects_to_login_browser_mismatch() {
+    let auth = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::WrongBrowser,
+    });
+    let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+    let res = client()
+        .get(format!("{base}/signin-callback?code=test&state=s"))
+        .send()
+        .await
+        .expect("GET /signin-callback");
+    assert_eq!(res.status(), 303);
+    let expected = format!("{base}/login?error=browser_mismatch");
     assert_eq!(res.headers()["location"], expected.as_str());
 }
 

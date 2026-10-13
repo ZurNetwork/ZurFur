@@ -56,6 +56,14 @@ pub enum PublicRecordsError {
 #[error("signed in as a different account than the handle named")]
 pub struct AccountMismatch;
 
+/// Error from an [`Authenticator::complete`](super::Authenticator::complete)
+/// refused for its browser: no binding token, no live sign-in under the
+/// `state`, or another sign-in's token. The route downcasts it to its own
+/// callback error code.
+#[derive(Debug, thiserror::Error)]
+#[error("sign-in not started in this browser, or expired")]
+pub struct BrowserMismatch;
+
 /// Why an [`IdentityResolver`](super::IdentityResolver) lookup failed. The
 /// message is terse and never echoes the handle or DID asked about; a cause
 /// rides `source()`. Only [`ResolveError::Unavailable`] is worth retrying.
