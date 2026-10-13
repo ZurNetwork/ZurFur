@@ -13,11 +13,14 @@ use async_trait::async_trait;
 use domain::{
     elements::{did::Did, handle::AtHandle, profile::Profile},
     ports::{
-        AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, ResolveError,
-        SigninStarted,
+        AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, Database, ResolveError,
+        SigninStarted, UnitOfWork,
     },
 };
 use test_support::http::{client, sign_in};
+use test_support::runtime::MemRuntime;
+use tower_sessions::session::{Id, Record};
+use tower_sessions::session_store::{self, SessionStore};
 
 mod common;
 
@@ -753,42 +756,271 @@ async fn a_callback_without_the_cookie_presents_none() {
     assert_eq!(auth.presented(), vec![None]);
 }
 
+/// Where the sign-in a [`BindingAuthenticator`] holds stands.
+#[derive(Clone, Copy)]
+enum Signin {
+    /// Within its lifetime and unclaimed.
+    Live,
+    /// Past its lifetime.
+    Expired,
+    /// Another callback has claimed it and is still running.
+    Claimed,
+}
+
+/// An [`Authenticator`] whose `complete` refuses the way the real one does: no
+/// `state`, or a sign-in another callback claimed, fails generically; no token,
+/// another token, or a sign-in past its lifetime is refused as
+/// [`BrowserMismatch`]; the bound token on a live sign-in signs in as [`DID`].
+struct BindingAuthenticator {
+    signin: Signin,
+}
+
+#[async_trait]
+impl Authenticator for BindingAuthenticator {
+    async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
+        Ok(started())
+    }
+
+    async fn complete(
+        &self,
+        _code: String,
+        state: Option<String>,
+        _iss: Option<String>,
+        browser_binding: Option<BrowserBinding>,
+    ) -> anyhow::Result<Did> {
+        if state.is_none() {
+            return Err(anyhow::anyhow!("unknown sign-in state"));
+        }
+        let presented = browser_binding.map(|binding| binding.as_ref().to_owned());
+        let bound = presented.as_deref() == Some(BINDING);
+        match self.signin {
+            Signin::Claimed => Err(anyhow::anyhow!("sign-in already claimed")),
+            Signin::Live if bound => Ok(Did::from(DID.to_string())),
+            Signin::Live | Signin::Expired => Err(anyhow::Error::new(BrowserMismatch)),
+        }
+    }
+}
+
+/// `GET /signin-callback?{query}` from a browser sending `cookie`, if any.
+async fn callback_with(base: &str, query: &str, cookie: Option<&str>) -> reqwest::Response {
+    let request = client().get(format!("{base}/signin-callback?{query}"));
+    let request = match cookie {
+        Some(cookie) => request.header(reqwest::header::COOKIE, cookie),
+        None => request,
+    };
+    request.send().await.expect("GET /signin-callback")
+}
+
+/// The browser's cookie holding the bound token.
+fn bound_cookie() -> String {
+    format!("zurfur.signin={BINDING}")
+}
+
 #[tokio::test]
-async fn every_callback_failure_clears_the_cookie() {
-    let wrong_account = Arc::new(FailingAuthenticator {
+async fn a_callback_that_matched_the_cookie_clears_it() {
+    let signs_in: Arc<dyn Authenticator> = Arc::new(BindingAuthenticator {
+        signin: Signin::Live,
+    });
+    let wrong_account: Arc<dyn Authenticator> = Arc::new(FailingAuthenticator {
         fail_at: FailAt::WrongAccount,
     });
-    let exchange_failed = Arc::new(FailingAuthenticator {
-        fail_at: FailAt::Complete,
-    });
-    let cases: [(Arc<dyn Authenticator>, &str, &str); 4] = [
-        (wrong_account, "code=test", "/login?error=account_mismatch"),
-        (exchange_failed, "code=test", "/login?error=exchange_failed"),
-        (
-            Arc::new(RecordingAuthenticator::default()),
-            "error=access_denied",
-            "/login?error=denied",
-        ),
-        (
-            Arc::new(RecordingAuthenticator::default()),
-            "state=s",
-            "/login?error=invalid_callback",
-        ),
+    let cases = [
+        (signs_in, "/"),
+        (wrong_account, "/login?error=account_mismatch"),
     ];
-    for (auth, query, location) in cases {
+    for (auth, location) in cases {
         let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
-        let res = client()
-            .get(format!("{base}/signin-callback?{query}"))
-            .header(reqwest::header::COOKIE, "zurfur.signin=from-the-browser")
-            .send()
-            .await
-            .expect("GET /signin-callback");
+
+        let res = callback_with(&base, "code=test&state=s", Some(&bound_cookie())).await;
+
         let expected = format!("{base}{location}");
         assert_eq!(res.headers()["location"], expected.as_str());
         assert_eq!(
             binding_cookies(&res),
             vec![CLEARED.to_string()],
-            "{location} clears the cookie"
+            "{location} matched the cookie, so it clears it"
         );
     }
+}
+
+#[tokio::test]
+async fn a_browser_refusal_leaves_the_cookie() {
+    let wrong_cookie = "zurfur.signin=another-sign-ins-token".to_string();
+    let cases = [
+        ("no cookie", Signin::Live, None),
+        ("a wrong cookie", Signin::Live, Some(wrong_cookie)),
+        ("an expired sign-in", Signin::Expired, Some(bound_cookie())),
+    ];
+    for (case, signin, cookie) in cases {
+        let auth = Arc::new(BindingAuthenticator { signin });
+        let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+
+        let res = callback_with(&base, "code=test&state=s", cookie.as_deref()).await;
+
+        let expected = format!("{base}/login?error=browser_mismatch");
+        assert_eq!(res.headers()["location"], expected.as_str(), "{case}");
+        assert!(
+            binding_cookies(&res).is_empty(),
+            "{case} never matched, so the cookie is left: {:?}",
+            binding_cookies(&res)
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_exchange_failure_leaves_the_cookie() {
+    let claimed: Arc<dyn Authenticator> = Arc::new(BindingAuthenticator {
+        signin: Signin::Claimed,
+    });
+    let no_state: Arc<dyn Authenticator> = Arc::new(BindingAuthenticator {
+        signin: Signin::Live,
+    });
+    let generic: Arc<dyn Authenticator> = Arc::new(FailingAuthenticator {
+        fail_at: FailAt::Complete,
+    });
+    let cases = [
+        ("a claimed state", claimed, "code=test&state=s"),
+        ("no state", no_state, "code=test"),
+        ("a generic exchange failure", generic, "code=test&state=s"),
+    ];
+    for (case, auth, query) in cases {
+        let base = serve(auth, Arc::new(MemProfileSource::new(alice_profile()))).await;
+
+        let res = callback_with(&base, query, Some(&bound_cookie())).await;
+
+        let expected = format!("{base}/login?error=exchange_failed");
+        assert_eq!(res.headers()["location"], expected.as_str(), "{case}");
+        assert!(
+            binding_cookies(&res).is_empty(),
+            "{case} proves no match, so the cookie is left: {:?}",
+            binding_cookies(&res)
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_callback_the_authenticator_never_saw_leaves_the_cookie() {
+    let cases = [
+        ("error=access_denied", "/login?error=denied"),
+        ("state=s", "/login?error=invalid_callback"),
+    ];
+    for (query, location) in cases {
+        let auth = Arc::new(RecordingAuthenticator::default());
+        let base = serve(
+            auth.clone(),
+            Arc::new(MemProfileSource::new(alice_profile())),
+        )
+        .await;
+
+        let res = callback_with(&base, query, Some(&bound_cookie())).await;
+
+        let expected = format!("{base}{location}");
+        assert_eq!(res.headers()["location"], expected.as_str(), "{query}");
+        assert!(
+            binding_cookies(&res).is_empty(),
+            "{query} left the cookie: {:?}",
+            binding_cookies(&res)
+        );
+        assert!(
+            auth.presented().is_empty(),
+            "{query} never reached the authenticator"
+        );
+    }
+}
+
+// --- the two `500`s after the authenticator accepted the browser ----------------
+
+/// A [`Database`] that cannot open a unit of work, so provisioning the User fails.
+struct DownDatabase;
+
+#[async_trait]
+impl Database for DownDatabase {
+    async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        Err(anyhow::anyhow!("the private store is down"))
+    }
+}
+
+/// A session store whose `delete` fails, so rotating the session id fails.
+#[derive(Clone, Debug)]
+struct DeleteFailingStore;
+
+#[async_trait]
+impl SessionStore for DeleteFailingStore {
+    async fn save(&self, _record: &Record) -> session_store::Result<()> {
+        Ok(())
+    }
+
+    async fn load(&self, _id: &Id) -> session_store::Result<Option<Record>> {
+        Ok(None)
+    }
+
+    async fn delete(&self, _id: &Id) -> session_store::Result<()> {
+        let down = session_store::Error::Backend("the session store is down".to_string());
+        Err(down)
+    }
+}
+
+/// Boots the app with a [`BindingAuthenticator`] on a live sign-in and its
+/// sessions in `store`, in place of the shared fixture's `MemoryStore`. Returns
+/// the base URL.
+async fn serve_with_session_store(store: impl SessionStore + Clone) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind ephemeral port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+    let MemRuntime { runtime, .. } = test_support::runtime::mem(&Did::from(DID.to_string()))
+        .public_url(base_url.clone())
+        .build();
+    let auth = Arc::new(BindingAuthenticator {
+        signin: Signin::Live,
+    });
+    let state = AppState { auth, ..runtime };
+    let router = api::app(state).layer(http_cookies::session_layer(store, false));
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    base_url
+}
+
+#[tokio::test]
+async fn a_provisioning_failure_after_an_accepted_browser_clears_the_cookie() {
+    let served = test_support::http::serve(
+        test_support::runtime::mem(&Did::from(DID.to_string())),
+        |rt| {
+            let auth = Arc::new(BindingAuthenticator {
+                signin: Signin::Live,
+            });
+            let state = AppState {
+                auth,
+                database: Arc::new(DownDatabase),
+                ..rt
+            };
+            api::app(state)
+        },
+    )
+    .await;
+
+    let res = callback_with(&served.base_url, "code=test&state=s", Some(&bound_cookie())).await;
+
+    assert_eq!(res.status(), 500);
+    assert_eq!(
+        binding_cookies(&res),
+        vec![CLEARED.to_string()],
+        "the authenticator accepted the browser, so the cookie is cleared"
+    );
+}
+
+#[tokio::test]
+async fn a_session_write_failure_after_an_accepted_browser_clears_the_cookie() {
+    let base = serve_with_session_store(DeleteFailingStore).await;
+
+    let res = callback_with(&base, "code=test&state=s", Some(&bound_cookie())).await;
+
+    assert_eq!(res.status(), 500);
+    assert_eq!(
+        binding_cookies(&res),
+        vec![CLEARED.to_string()],
+        "the authenticator accepted the browser, so the cookie is cleared"
+    );
 }
