@@ -87,7 +87,7 @@ pub async fn run(
             let me = runtime
                 .app()
                 .users()
-                .me(query, &*runtime.profile_cache, &*runtime.profile_source)
+                .me(query, &runtime.profile_lookups)
                 .await
                 .map_err(|e| match e {
                     MeError::UnknownUser(_) => CliError::domain(

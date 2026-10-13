@@ -237,7 +237,8 @@ fn redirect(location: Url) -> Response {
     Redirect::to(location.as_str()).into_response()
 }
 
-/// `GET /me` — the JSON whoami: resolves the session to a User, no PDS round trip.
+/// `GET /me` — the JSON whoami: resolves the session to a User, waiting at most
+/// [`PROFILE_WAIT`](application::user::PROFILE_WAIT) for an uncached profile.
 ///
 /// - `200` — DID plus profile fields (unresolved profile omits the keys, not an error)
 /// - `401 not_authenticated` — no/expired session, or its User no longer exists
@@ -250,7 +251,7 @@ async fn me(
     let me = state
         .app()
         .users()
-        .me(query, &*state.profile_cache, &*state.profile_source)
+        .me(query, &state.profile_lookups)
         .await
         .map_err(|err| match err {
             MeError::UnknownUser(_) => Problem::not_authenticated(),

@@ -86,6 +86,7 @@ impl MemRuntimeBuilder {
             users: backend.user_store(),
             profile_source: Arc::new(MemProfileSource::new(self.profile)),
             profile_cache: backend.profile_cache(),
+            profile_lookups: Default::default(),
             identity_resolver: Arc::new(MemIdentityResolver::new()),
             accounts: backend.account_store(),
             commissions: backend.commission_store(),
