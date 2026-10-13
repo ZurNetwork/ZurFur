@@ -13,8 +13,9 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use domain::elements::did::Did;
 use domain::elements::handle::AtHandle;
-use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
+use domain::ports::{AccountMismatch, BrowserBinding, BrowserMismatch, UnitOfWork};
 use http_cookies::{ZurfurCookie, set_cookie_header};
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -110,14 +111,18 @@ fn signin_refused() -> Problem {
 
 /// `GET /signin-callback` — completes sign-in: checks the browser-binding
 /// cookie, exchanges `code` for a DID, provisions the User (mint-or-return),
-/// rotates the session id, and stores the User's id in the session. Every
-/// answer clears the browser-binding cookie, success or failure.
+/// rotates the session id, and stores the User's id in the session. Clears the
+/// browser-binding cookie only when the authenticator proved it matched this
+/// sign-in (it accepted the browser, or `account_mismatch`); every other answer
+/// leaves it to expire, or the next sign-in replaces it.
 ///
 /// - `303 <public origin>/` — success (`Set-Cookie` on the response)
 /// - `303 <public origin>/login?error=<SignInFailure>` — failure modes;
 ///   `account_mismatch` when the visitor signed in to a different account
-///   than the handle they typed
-/// - `500 internal_error` — provisioning or session-write failure
+///   than the handle they typed, `browser_mismatch` when the sign-in expired or
+///   was started in another browser
+/// - `500 internal_error` — provisioning or session-write failure; the
+///   authenticator had accepted the browser, so the cookie is cleared
 async fn signin_callback(
     State(state): State<AppState>,
     session: Session,
@@ -126,43 +131,56 @@ async fn signin_callback(
 ) -> Response {
     let secure = state.config.env.secure_cookies();
     let presented = presented_browser_binding(&headers, secure);
-    let mut response = complete_signin(state, session, q, presented).await;
-    let cleared = ZurfurCookie::SignInBinding.cleared_header(secure);
-    response.headers_mut().append(header::SET_COOKIE, cleared);
+    let authenticated = authenticate(&state, q, presented).await;
+    // Decided on the authenticator's own answer, before anything is written.
+    let clears_binding = match &authenticated {
+        Ok(_) => true,
+        Err(failure) => failure.matched_the_binding(),
+    };
+    let mut response = match authenticated {
+        Ok(did) => establish_session(&state, session, did).await,
+        Err(failure) => redirect(login_location(state.config.public_url.as_ref(), failure)),
+    };
+    if clears_binding {
+        let cleared = ZurfurCookie::SignInBinding.cleared_header(secure);
+        response.headers_mut().append(header::SET_COOKIE, cleared);
+    }
     response
 }
 
-/// The callback itself: every outcome as a response, the cookie left to the caller.
-async fn complete_signin(
-    state: AppState,
-    session: Session,
+/// The callback's exchange: the DID the authenticator vouches for once it
+/// accepted the browser, or the failure to redirect with.
+async fn authenticate(
+    state: &AppState,
     q: CallbackQuery,
     presented: Option<BrowserBinding>,
-) -> Response {
-    let public_url = state.config.public_url.as_ref();
+) -> Result<Did, SignInFailure> {
     // Denied: no crash, no blank page — the PDS-supplied reason isn't echoed.
     if q.error.is_some() {
-        return redirect(login_location(public_url, SignInFailure::Denied));
+        return Err(SignInFailure::Denied);
     }
     let Some(code) = q.code else {
-        return redirect(login_location(public_url, SignInFailure::InvalidCallback));
+        return Err(SignInFailure::InvalidCallback);
     };
+    state
+        .auth
+        .complete(code, q.state, q.iss, presented)
+        .await
+        .map_err(|error| callback_failure(&error))
+}
 
-    let completed = state.auth.complete(code, q.state, q.iss, presented).await;
-    let did = match completed {
-        Ok(did) => did,
-        Err(error) => return redirect(login_location(public_url, callback_failure(&error))),
-    };
-
+/// Signs `did` in: provisions its User, rotates the session id and stores the
+/// User's id. A redirect home, or a `500` when either write fails.
+async fn establish_session(state: &AppState, session: Session, did: Did) -> Response {
     // Mint-or-return: recognizes rather than registers (idempotent, one DID = one User).
     let provisioned = state
         .transaction(async move |uow: &mut dyn UnitOfWork| uow.users().provision(&did).await)
         .await;
     let Ok(user) = provisioned else {
-        return Problem::internal_error(
+        let setup_failed = Problem::internal_error(
             "Your sign-in succeeded but your account couldn't be set up. Please try again.",
-        )
-        .into_response();
+        );
+        return setup_failed.into_response();
     };
 
     // Rotate the session id at this privilege change (session-fixation hardening).
@@ -172,12 +190,12 @@ async fn complete_signin(
             .await
             .is_err()
     {
-        return Problem::internal_error(
+        let session_failed = Problem::internal_error(
             "Your sign-in succeeded but the session couldn't be saved. Please try again.",
-        )
-        .into_response();
+        );
+        return session_failed.into_response();
     }
-    redirect(home_location(public_url))
+    redirect(home_location(state.config.public_url.as_ref()))
 }
 
 /// Why a sign-in callback failed, as the stable code `/login?error=` carries.
@@ -192,13 +210,32 @@ enum SignInFailure {
     ExchangeFailed,
     /// The visitor signed in to another account than the handle they typed.
     AccountMismatch,
+    /// The sign-in expired, or was started in another browser.
+    BrowserMismatch,
 }
 
-/// The failure a refused code exchange reports: its own for the wrong account,
-/// the generic one for everything else.
+impl SignInFailure {
+    /// Whether this failure proves the binding cookie matched this sign-in, so
+    /// the callback clears it: only the wrong account, which follows a claim
+    /// with a matching cookie (`ExchangeFailed` also covers failures before
+    /// any match). A code added here has to choose.
+    fn matched_the_binding(self) -> bool {
+        match self {
+            Self::AccountMismatch => true,
+            Self::Denied | Self::InvalidCallback | Self::ExchangeFailed | Self::BrowserMismatch => {
+                false
+            }
+        }
+    }
+}
+
+/// The failure a refused code exchange reports: its own for the wrong account
+/// or the wrong browser, the generic one for everything else.
 fn callback_failure(error: &anyhow::Error) -> SignInFailure {
     if error.is::<AccountMismatch>() {
         SignInFailure::AccountMismatch
+    } else if error.is::<BrowserMismatch>() {
+        SignInFailure::BrowserMismatch
     } else {
         SignInFailure::ExchangeFailed
     }
@@ -232,7 +269,8 @@ fn redirect(location: Url) -> Response {
     Redirect::to(location.as_str()).into_response()
 }
 
-/// `GET /me` — the JSON whoami: resolves the session to a User, no PDS round trip.
+/// `GET /me` — the JSON whoami: resolves the session to a User, waiting at most
+/// [`PROFILE_WAIT`](application::user::PROFILE_WAIT) for an uncached profile.
 ///
 /// - `200` — DID plus profile fields (unresolved profile omits the keys, not an error)
 /// - `401 not_authenticated` — no/expired session, or its User no longer exists
@@ -245,7 +283,7 @@ async fn me(
     let me = state
         .app()
         .users()
-        .me(query, &*state.profile_cache, &*state.profile_source)
+        .me(query, &state.profile_lookups)
         .await
         .map_err(|err| match err {
             MeError::UnknownUser(_) => Problem::not_authenticated(),

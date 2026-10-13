@@ -38,7 +38,7 @@
     },
     {
       "name": "session.rs",
-      "role": "browser sign-in: POST /signin (sets the browser-binding cookie), GET /signin-callback (hands that cookie to complete, always clears it), GET /me, POST /logout; every redirect a Url built on Config::public_url, failures as the closed SignInFailure codes",
+      "role": "browser sign-in: POST /signin (sets the browser-binding cookie), GET /signin-callback (hands that cookie to complete; clears it only when the authenticator proved it matched, decided on its own answer before provisioning: an accepted browser — success, or either 500 after it (provisioning, session write) — or account_mismatch, SignInFailure::matched_the_binding; every other answer leaves it to expire, or the next sign-in replaces it), GET /me, POST /logout; every redirect a Url built on Config::public_url, failures as the closed SignInFailure codes (denied, invalid_callback, exchange_failed, account_mismatch, browser_mismatch)",
       "node": false
     },
     {
