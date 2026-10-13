@@ -20,7 +20,8 @@ pub trait Authenticator: Send + Sync {
     /// [`BrowserMismatch`](super::BrowserMismatch) when refused for its browser:
     /// no `browser_binding`, no live sign-in under `state`, or another sign-in's
     /// token; with [`AccountMismatch`](super::AccountMismatch) when the visitor
-    /// signed in as another account than the one bound at start.
+    /// signed in as another account than the one bound at start, returned only
+    /// after the browser binding matched.
     async fn complete(
         &self,
         code: String,

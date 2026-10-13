@@ -70,3 +70,19 @@ fn a_browser_refusal_wrapping_its_class_still_maps_to_browser_mismatch() {
     let refusal = class.context(BrowserMismatch);
     assert_eq!(callback_failure(&refusal), SignInFailure::BrowserMismatch);
 }
+
+#[test]
+fn only_a_failure_that_matched_the_binding_clears_it() {
+    let clears: Vec<(&str, bool)> = SignInFailure::VARIANTS
+        .iter()
+        .map(|failure| (failure.as_ref(), failure.matched_the_binding()))
+        .collect();
+    let expected = [
+        ("denied", false),
+        ("invalid_callback", false),
+        ("exchange_failed", false),
+        ("account_mismatch", true),
+        ("browser_mismatch", false),
+    ];
+    assert_eq!(clears, expected);
+}
