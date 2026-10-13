@@ -1019,10 +1019,12 @@ dependencies = [
  "anyhow",
  "application",
  "base64",
+ "derive_more 2.1.1",
  "domain",
  "figment",
  "fluent-uri",
  "serde",
+ "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -5831,7 +5833,6 @@ dependencies = [
  "tokio",
  "tower-sessions",
  "tracing-subscriber",
- "url",
  "uuid",
 ]
 

@@ -4,10 +4,11 @@
 //!
 //! [`Handle`] is the one shared validation gate every claim source funnels
 //! through: constructing it enforces normalization, the
-//! charset/segment/length rules, an outright reject of any `xn--` punycode
-//! label, and the Zurfur reserved-label reject in a single pass. Namespace membership is
-//! [`Handle::is_in_namespace`], against a [`HandleDomain`] parsed once at config
-//! load, so the claim checks and the resolver cannot disagree. [`AtHandle`]
+//! charset/segment/length rules and an outright reject of any `xn--` punycode
+//! label in a single pass. The rules that depend on the configured namespace
+//! take a [`HandleDomain`]: membership is [`Handle::is_in_namespace`], and the
+//! reserved-label and apex reject is [`Handle::ensure_unreserved`]. A caller
+//! that gates a claim or a lookup on the namespace applies both. [`AtHandle`]
 //! shares the syntax rules and none of the claim rules.
 
 mod at_handle;

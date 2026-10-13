@@ -139,7 +139,7 @@ async fn signin_callback(
     };
     let mut response = match authenticated {
         Ok(did) => establish_session(&state, session, did).await,
-        Err(failure) => redirect(login_location(&state.config.public_url, failure)),
+        Err(failure) => redirect(login_location(state.config.public_url.as_ref(), failure)),
     };
     if clears_binding {
         let cleared = ZurfurCookie::SignInBinding.cleared_header(secure);
@@ -195,7 +195,7 @@ async fn establish_session(state: &AppState, session: Session, did: Did) -> Resp
         );
         return session_failed.into_response();
     }
-    redirect(home_location(&state.config.public_url))
+    redirect(home_location(state.config.public_url.as_ref()))
 }
 
 /// Why a sign-in callback failed, as the stable code `/login?error=` carries.
@@ -326,7 +326,7 @@ async fn logout(State(state): State<AppState>, session: Session) -> Response {
         return Problem::internal_error("Sign-out couldn't be completed. Please try again.")
             .into_response();
     }
-    redirect(home_location(&state.config.public_url))
+    redirect(home_location(state.config.public_url.as_ref()))
 }
 
 #[cfg(test)]

@@ -102,7 +102,7 @@ fn a_malformed_secret_is_never_echoed() {
     let output = zurfur()
         .args(["health", "--config-dir", "/nonexistent"])
         .env("ZURFUR_ENV", "dev")
-        .env("ZURFUR_PUBLIC_URL", "http://x")
+        .env("ZURFUR_PUBLIC_URL", "http://127.0.0.1:8080")
         .env("ZURFUR_LOG_LEVEL", "info")
         .env("DATABASE_URL", "postgres://x")
         .env("ZURFUR_DID_KEY_ROOT_KEY", "987654321012345")
@@ -119,6 +119,53 @@ fn a_malformed_secret_is_never_echoed() {
             .contains("did_key_root_key"),
         "{stderr}"
     );
+}
+
+// The environment guard's refusal is value-free, so its own message is the
+// detail, never the generic "could not be loaded".
+#[test]
+fn an_environment_refusal_shows_its_own_message() {
+    let output = zurfur()
+        .args(["health", "--config-dir", "/nonexistent"])
+        .env("ZURFUR_ENV", "dev")
+        .env("ZURFUR_PUBLIC_URL", "http://localhost:8080")
+        .env("ZURFUR_LOG_LEVEL", "info")
+        .env("DATABASE_URL", "postgres://x")
+        .env("ZURFUR_DID_KEY_ROOT_KEY", "ZmlsZQ==")
+        .assert()
+        .code(3);
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(!stderr.contains("localhost:8080"), "{stderr}");
+    let problem = problem(&output.get_output().stderr);
+    assert_eq!(problem["code"], "config");
+    let detail = problem["detail"].as_str().unwrap();
+    assert!(detail.starts_with("refusing to boot DEV"), "{detail}");
+    assert!(detail.contains("`public_url`"), "{detail}");
+}
+
+// A `public_url` that is no bare origin names the rule it broke and never
+// echoes the credentials it carried.
+#[test]
+fn a_public_url_that_is_not_a_bare_origin_names_the_rule() {
+    let output = zurfur()
+        .args(["health", "--config-dir", "/nonexistent"])
+        .env("ZURFUR_ENV", "dev")
+        .env("ZURFUR_PUBLIC_URL", "http://user:hunter2@127.0.0.1:8080")
+        .env("ZURFUR_LOG_LEVEL", "info")
+        .env("DATABASE_URL", "postgres://x")
+        .env("ZURFUR_DID_KEY_ROOT_KEY", "ZmlsZQ==")
+        .assert()
+        .code(3);
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(!stderr.contains("hunter2"), "{stderr}");
+    let problem = problem(&output.get_output().stderr);
+    assert_eq!(problem["code"], "config");
+    let detail = problem["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("`public_url` must be a bare origin"),
+        "{detail}"
+    );
+    assert!(detail.contains("credentials"), "{detail}");
 }
 
 // `session logout` needs neither config nor a database (ZMVP-203 F3).

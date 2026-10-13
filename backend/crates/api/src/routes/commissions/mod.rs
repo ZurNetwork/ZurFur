@@ -40,6 +40,7 @@ impl From<CommissionError> for Problem {
                 }
                 CommonError::DidBelongsToAnotherActor => Problem::did_belongs_to_another_actor(),
                 CommonError::HandleTaken => Problem::handle_taken(),
+                CommonError::InvalidHandle(rule) => Problem::invalid_request(rule.to_string()),
             },
             CommissionError::CommissionAlreadyAtState => {
                 Problem::invalid_request("This commission is already in this state.")
@@ -223,3 +224,6 @@ async fn require_owner(
         },
     )
 }
+
+#[cfg(test)]
+mod tests;

@@ -217,6 +217,14 @@ async fn only_the_owner_may_change_the_handle() {
         "forbidden",
     )
     .await;
+    // A withheld handle is refused before the account and role lookups: 422,
+    // not 403.
+    common::assert_problem(
+        change(&client, &base, account.id.as_ref(), "admin.zurfur.app").await,
+        422,
+        "invalid_request",
+    )
+    .await;
 }
 
 // Done-when ("same validation guarantees as the initial claim") — the change re-runs
@@ -241,6 +249,13 @@ async fn rejects_an_invalid_handle() {
     // A reserved label in the Zurfur namespace (ZMVP-45) — same gate as founding.
     common::assert_problem(
         change(&client, &base, &id, "admin.zurfur.app").await,
+        422,
+        "invalid_request",
+    )
+    .await;
+    // The namespace's apex is withheld, not a foreign namespace.
+    common::assert_problem(
+        change(&client, &base, &id, "zurfur.app").await,
         422,
         "invalid_request",
     )

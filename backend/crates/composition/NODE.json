@@ -21,12 +21,17 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64, fluent-uri",
+      "role": "deps — domain, application, adapter-pg, adapter-atproto, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64, fluent-uri, url, thiserror, derive_more",
       "node": false
     },
     {
       "name": "src/config.rs",
-      "role": "Config struct (public_url a url::Url), figment loader (Config::load/load_from), Environment enum, boot-time custody guard ensure_custody_hardened",
+      "role": "Config struct (public_url a BareOrigin), figment loader (Config::load/load_from, failing with LoadError: Figment or Refused) with the environment guard ConfigRefusal, Environment enum, boot-time custody guard ensure_custody_hardened",
+      "node": false
+    },
+    {
+      "name": "src/config/origin.rs",
+      "role": "BareOrigin (TryFrom<Url>/FromStr refusing credentials, a path, a query, a fragment or no host; is_of_origin, is_public_https) and BareOriginError; tests in src/config/origin/tests.rs",
       "node": false
     },
     {
@@ -78,6 +83,7 @@
     "`Runtime::connect` connects the pool but deliberately does NOT run migrations — the driver calls `adapter_pg::migrate` explicitly.",
     "Config layering, lowest first: `config/{profile}.toml` → the unprefixed `DATABASE_URL` (the name sqlx tooling expects) → `ZURFUR_*` env. `ZURFUR_ENV` both picks the profile file and deserializes into `Config::env`, so the two spellings must agree; it is validated as a bare name so it cannot walk out of the config dir. The config dir is anchored to `CARGO_MANIFEST_DIR`, never the CWD.",
     "`handle_domain` is parsed into a `HandleDomain` ONCE at load, so the claim checks and the `/.well-known/atproto-did` resolver cannot disagree about the namespace (DD 26607618).",
+    "`Config::load` refuses a configuration its environment may not boot with (`ConfigRefusal`, ruling R-77, 2026-10-12; S1/N4 of security's review of #277). `public_url` is a `BareOrigin` (scheme, host, optional port; credentials, path, query and fragment fail the load, value-free, naming the rule; the Engineer's review of #285, 2026-10-12), so the guard checks only scheme, host and port: `DEV` only on `http://127.0.0.1` or `http://[::1]` (`BareOrigin::is_of_origin`, any port; never `localhost`, which Bluesky refuses as a loopback redirect host) with a loopback `http_addr`; `STG`/`PROD` only on `BareOrigin::is_public_https` (https on a domain name of two or more labels, not `localhost`, no IP literal, no trailing dot, port not 0); `STG` never on production's handle domain `zurfur.app` nor any subdomain of it (ruling R-79, 2026-10-12). The refusal comes back as `LoadError::Refused(ConfigRefusal)`, whose message names the setting and never echoes its value, so the CLI prints it as is; the CLI also prints `public_url`'s own value-free parse message.",
     "`ensure_custody_hardened` is a boot-time refusal, not documentation: `PROD`/`STG` are refused outright while custody is config/env-root-backed, and PLC submission is refused under the shipped `EXAMPLE_DEV_ROOT_KEY` in any environment.",
     "`Config::DEFAULT_MAX_UPLOAD_BYTES` (50 MiB) is the one home for the upload cap. Raising it past `i32::MAX` bytes is a wire break — `byte_size` must then become an int64 decimal string (`contract/VERSIONING.md` §7.2).",
     "See also: ZMVP-200 (crate extracted from api::AppState).",

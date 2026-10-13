@@ -1,3 +1,5 @@
+use domain::elements::handle::HandleError;
+
 #[derive(Debug, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum NotFoundEntity {
@@ -18,6 +20,9 @@ pub enum CommonError {
     DidBelongsToAnotherActor,
     #[error("Handle is unavailable")]
     HandleTaken,
+    /// The configured handle namespace withholds the handle.
+    #[error("{0}")]
+    InvalidHandle(HandleError),
 }
 
 impl CommonError {

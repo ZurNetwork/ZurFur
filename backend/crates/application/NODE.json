@@ -119,6 +119,11 @@
       "node": false
     },
     {
+      "name": "tests/character.rs",
+      "role": "integration tests for Characters::create's handle claim gate",
+      "node": false
+    },
+    {
       "name": "tests/commission.rs",
       "role": "integration tests for sweep_deadlines",
       "node": false
