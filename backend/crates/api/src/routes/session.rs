@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use domain::elements::handle::AtHandle;
-use domain::ports::{AccountMismatch, BrowserBinding, UnitOfWork};
+use domain::ports::{AccountMismatch, BrowserBinding, BrowserMismatch, UnitOfWork};
 use http_cookies::{ZurfurCookie, set_cookie_header};
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -116,7 +116,8 @@ fn signin_refused() -> Problem {
 /// - `303 <public origin>/` — success (`Set-Cookie` on the response)
 /// - `303 <public origin>/login?error=<SignInFailure>` — failure modes;
 ///   `account_mismatch` when the visitor signed in to a different account
-///   than the handle they typed
+///   than the handle they typed, `browser_mismatch` when the sign-in expired or
+///   was started in another browser
 /// - `500 internal_error` — provisioning or session-write failure
 async fn signin_callback(
     State(state): State<AppState>,
@@ -192,13 +193,17 @@ enum SignInFailure {
     ExchangeFailed,
     /// The visitor signed in to another account than the handle they typed.
     AccountMismatch,
+    /// The sign-in expired, or was started in another browser.
+    BrowserMismatch,
 }
 
-/// The failure a refused code exchange reports: its own for the wrong account,
-/// the generic one for everything else.
+/// The failure a refused code exchange reports: its own for the wrong account
+/// or the wrong browser, the generic one for everything else.
 fn callback_failure(error: &anyhow::Error) -> SignInFailure {
     if error.is::<AccountMismatch>() {
         SignInFailure::AccountMismatch
+    } else if error.is::<BrowserMismatch>() {
+        SignInFailure::BrowserMismatch
     } else {
         SignInFailure::ExchangeFailed
     }

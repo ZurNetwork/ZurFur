@@ -395,8 +395,9 @@ impl Authenticator for AtprotoAuthenticator {
     /// and refused with [`AccountMismatch`]; a grant other than exactly
     /// `atproto` is refused and its session deleted. Refused before any code exchange
     /// unless `browser_binding` is this sign-in's token and no other callback
-    /// claimed the sign-in first. Runs in its own task, so a dropped request
-    /// cannot cut the cleanup short.
+    /// claimed the sign-in first; for an unclaimed sign-in, a missing, stale or
+    /// wrong token is the port's [`BrowserMismatch`](domain::ports::BrowserMismatch).
+    /// Runs in its own task, so a dropped request cannot cut the cleanup short.
     async fn complete(
         &self,
         code: String,
@@ -418,6 +419,12 @@ impl Authenticator for AtprotoAuthenticator {
         });
         finished.map_err(|failure| match failure {
             SigninFailure::AccountMismatch => anyhow::Error::new(AccountMismatch),
+            // The port's one browser refusal, the class kept beneath it.
+            refused @ (SigninFailure::NoBrowserBinding
+            | SigninFailure::StaleSignin
+            | SigninFailure::BrowserMismatch) => {
+                anyhow::Error::new(refused).context(domain::ports::BrowserMismatch)
+            }
             other => anyhow::Error::new(other),
         })
     }

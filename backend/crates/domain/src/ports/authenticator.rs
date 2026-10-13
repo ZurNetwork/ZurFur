@@ -16,10 +16,11 @@ pub trait Authenticator: Send + Sync {
     async fn start(&self, handle: &AtHandle) -> anyhow::Result<SigninStarted>;
 
     /// Complete the callback the PDS redirected back with, returning the
-    /// authenticated visitor's DID. Refused unless `browser_binding` is the
-    /// token `start` returned for this `state`; errors with
-    /// [`AccountMismatch`](super::AccountMismatch) when the visitor signed in as
-    /// another account than the one bound at start.
+    /// authenticated visitor's DID. Errors with
+    /// [`BrowserMismatch`](super::BrowserMismatch) when refused for its browser:
+    /// no `browser_binding`, no live sign-in under `state`, or another sign-in's
+    /// token; with [`AccountMismatch`](super::AccountMismatch) when the visitor
+    /// signed in as another account than the one bound at start.
     async fn complete(
         &self,
         code: String,

@@ -6,11 +6,15 @@
 // A Map (not a plain object) so a prototype name like `?error=constructor`
 // misses cleanly — a `Record` would return `Object.prototype.constructor`
 // off a bare index instead of falling back.
-const CALLBACK_ERROR_MESSAGES = new Map<string, string>([
+const CALLBACK_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>([
 	['denied', 'Sign-in was cancelled at your PDS.'],
 	['invalid_callback', 'The sign-in response was malformed. Try again.'],
 	['exchange_failed', 'Sign-in could not be completed with your PDS. Try again.'],
-	['account_mismatch', 'You signed in to a different account than the handle you typed.']
+	['account_mismatch', 'You signed in to a different account than the handle you typed.'],
+	[
+		'browser_mismatch',
+		'This sign-in expired or was started in a different browser. Please sign in again here.'
+	]
 ]);
 
 const FALLBACK_MESSAGE = 'Sign-in failed. Try again.';

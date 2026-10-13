@@ -24,6 +24,7 @@ fn each_sign_in_failure_keeps_its_wire_code() {
         "invalid_callback",
         "exchange_failed",
         "account_mismatch",
+        "browser_mismatch",
     ];
     assert_eq!(codes, expected);
 }
@@ -48,9 +49,24 @@ fn home_is_the_root_of_the_public_origin() {
 }
 
 #[test]
-fn an_exchange_failure_is_generic_unless_the_account_mismatched() {
-    let mismatch = anyhow::Error::new(AccountMismatch);
+fn an_exchange_failure_is_generic_unless_the_account_or_browser_mismatched() {
+    let account_mismatch = anyhow::Error::new(AccountMismatch);
+    let browser_mismatch = anyhow::Error::new(BrowserMismatch);
     let other = anyhow::anyhow!("the PDS refused the code");
-    assert_eq!(callback_failure(&mismatch), SignInFailure::AccountMismatch);
+    assert_eq!(
+        callback_failure(&account_mismatch),
+        SignInFailure::AccountMismatch
+    );
+    assert_eq!(
+        callback_failure(&browser_mismatch),
+        SignInFailure::BrowserMismatch
+    );
     assert_eq!(callback_failure(&other), SignInFailure::ExchangeFailed);
+}
+
+#[test]
+fn a_browser_refusal_wrapping_its_class_still_maps_to_browser_mismatch() {
+    let class = anyhow::anyhow!("no browser binding");
+    let refusal = class.context(BrowserMismatch);
+    assert_eq!(callback_failure(&refusal), SignInFailure::BrowserMismatch);
 }

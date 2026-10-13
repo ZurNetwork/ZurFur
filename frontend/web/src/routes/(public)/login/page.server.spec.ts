@@ -120,6 +120,13 @@ describe('/login load', () => {
 		);
 	});
 
+	it('maps ?error=browser_mismatch to its own message', async () => {
+		const result = await runLoad(loadEvent(undefined, '?error=browser_mismatch'));
+		expect(result.callbackError).toBe(
+			'This sign-in expired or was started in a different browser. Please sign in again here.'
+		);
+	});
+
 	it('falls back on an unknown ?error code', async () => {
 		const result = await runLoad(loadEvent(undefined, '?error=mystery'));
 		expect(result.callbackError).toBe('Sign-in failed. Try again.');
