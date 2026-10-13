@@ -3,7 +3,9 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, ElementId, NewSlot, SlotTitle, SurfaceAddress, TabId},
+        commission::{
+            CommissionId, ElementId, NewSlot, SlotTitle, SlotTitleError, SurfaceAddress, TabId,
+        },
         user::UserId,
     },
 };
@@ -11,7 +13,7 @@ use domain::{
 use crate::{
     Ports,
     commission::{CommissionError, CommissionResult, slots::Slots},
-    den::DenName,
+    den::{DenName, DenNameError},
 };
 
 pub struct SlotBody {
@@ -51,9 +53,13 @@ impl Slots<'_> {
         {
             return Err(CommissionError::NotAMember);
         }
-        for slot in &slots {
-            DenName::try_from(slot.title.as_str()).map_err(CommissionError::InvalidName)?;
-        }
+        let slots = slots
+            .into_iter()
+            .map(|slot| {
+                let title = den_title(&slot.title)?;
+                Ok(SlotBody { title, ..slot })
+            })
+            .collect::<CommissionResult<Vec<SlotBody>>>()?;
         let slots: Vec<NewSlot> = slots
             .into_iter()
             .map(|s| {
@@ -81,4 +87,13 @@ impl Slots<'_> {
         uow.commissions().declare_slots(&slots).await?;
         Ok(Output { slot_ids })
     }
+}
+
+/// A slot title as the Den's name rule keeps it: refused where the rule refuses, and stored
+/// without the characters the rule strips.
+fn den_title(title: &SlotTitle) -> CommissionResult<SlotTitle> {
+    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
+    name.as_ref()
+        .parse()
+        .map_err(|SlotTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
 }

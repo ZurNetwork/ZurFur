@@ -146,7 +146,7 @@
     },
     {
       "name": "tests/den_names.rs",
-      "role": "names at write: a commission title, a file name, a slot title and a Workflow name the Den's name rule refuses are each refused in their use case's own error",
+      "role": "names at write: a commission title, a file name, a slot title and a Workflow name the Den's name rule refuses are each refused in their use case's own error, and an accepted one is stored as the rule keeps it",
       "node": false
     },
     {
