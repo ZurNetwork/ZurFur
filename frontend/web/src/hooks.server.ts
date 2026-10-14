@@ -30,6 +30,14 @@ if (mockModeMisconfigured()) {
 const DEFAULT_API_UPSTREAM = 'http://127.0.0.1:8081';
 
 /**
+ * The run-time environment, where any variable may be unset. `svelte-kit sync`
+ * types a variable it finds set as always present, so reads go through this view.
+ */
+function runtimeEnv(): Readonly<Record<string, string | undefined>> {
+	return env;
+}
+
+/**
  * Server-side `fetch` rewrite so in-app `fetch('/api/...')` is ONE code path in
  * the browser and during SSR.
  *
@@ -40,7 +48,7 @@ const DEFAULT_API_UPSTREAM = 'http://127.0.0.1:8081';
  * a worktree's own port is honored at runtime.
  */
 export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
-	const apiUpstream = env.ZURFUR_API_UPSTREAM ?? DEFAULT_API_UPSTREAM;
+	const apiUpstream = runtimeEnv().ZURFUR_API_UPSTREAM ?? DEFAULT_API_UPSTREAM;
 	const incomingCookie = event.request.headers.get('cookie') ?? undefined;
 
 	const proxied = rewriteApiRequest({
