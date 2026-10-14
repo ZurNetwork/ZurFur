@@ -1,11 +1,7 @@
 //! Commission's part of the fixture world: the commission "Untitled" (two
 //! Participants, two files, four open Slots), the archived "Old sketch" (its
-//! owner its only Participant) and the Workflow "Queue" on an Account's board.
-//!
-//! Every id the Den reads is fixed, and each row's time is the one its UUIDv7
-//! id carries, so seeding twice gives the same listings, files, Slots,
-//! changelog and Workflows. The skeleton tab ids are the exception: the write
-//! port mints them, they differ per seed, and the Den never shows them.
+//! owner its only Participant) and the Workflow "Queue" on an Account's board,
+//! each at a fixed id, so seeding twice reads the same.
 
 use chrono::{DateTime, TimeDelta};
 use domain::{

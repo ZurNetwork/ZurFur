@@ -1,3 +1,6 @@
+//! The Den read's shared steps: the viewer's root, the Den path, and the node, listing and
+//! crumbs the use cases answer with.
+
 use std::str::FromStr;
 
 use atta::{Caps, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View, Viewer};
