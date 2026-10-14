@@ -7,7 +7,14 @@ use domain::{
     ports::{ProfileCache, ProfileSource},
 };
 
-use crate::{Ports, user::Users};
+use crate::{
+    Ports,
+    den::{
+        DenError,
+        access::{ServedNode, may_open},
+    },
+    user::Users,
+};
 
 /// The caller whose identity to report; how `user_id` was established is the
 /// driver's business.
@@ -76,8 +83,10 @@ impl std::error::Error for MeError {
     }
 }
 
-/// Load the user behind [`MeQuery::user_id`] and resolve their profile
-/// read-through ([`crate::user::resolve_profile`]).
+/// Ask den's access check about the caller's own root, then load the user
+/// behind [`MeQuery::user_id`] and resolve their profile read-through
+/// ([`crate::user::resolve_profile`]). A root the check doesn't open is
+/// [`MeError::UnknownUser`].
 impl Users<'_> {
     #[use_case]
     pub async fn me(
@@ -87,6 +96,12 @@ impl Users<'_> {
         profile_cache: &dyn ProfileCache,
         profile_source: &dyn ProfileSource,
     ) -> Result<Output, MeError> {
+        may_open(ports, &query.user_id, ServedNode::OwnRoot)
+            .await
+            .map_err(|error| match error {
+                DenError::NotFound => MeError::UnknownUser(query.user_id.clone()),
+                DenError::Store(error) => MeError::Store(error),
+            })?;
         let user = ports
             .users
             .find_by_did(query.user_id.did())

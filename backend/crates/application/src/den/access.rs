@@ -16,20 +16,28 @@ use crate::{
 /// A node a read that bypasses the Den serves, named by its typed ids; its real path never
 /// leaves the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "identity's and commission's reads name their nodes once they move onto the check"
-)]
 pub(crate) enum ServedNode {
     /// The session viewer's own root.
     OwnRoot,
     /// An Account's directory.
     Account(AccountId),
     /// A commission's directory.
+    #[allow(
+        dead_code,
+        reason = "commission's reads name their nodes once they move onto the check"
+    )]
     Commission(CommissionId),
     /// A commission's `changelog` file.
+    #[allow(
+        dead_code,
+        reason = "commission's reads name their nodes once they move onto the check"
+    )]
     Changelog(CommissionId),
     /// A file in a commission's `attachments`.
+    #[allow(
+        dead_code,
+        reason = "commission's reads name their nodes once they move onto the check"
+    )]
     File(CommissionId, FileKey),
 }
 
@@ -39,10 +47,6 @@ pub(crate) struct Opens(ServedNode);
 
 impl Opens {
     /// The node the check opened; a read serves this node, by these ids.
-    #[allow(
-        dead_code,
-        reason = "identity's and commission's reads read their ids from it once they move onto the check"
-    )]
     pub(crate) fn node(&self) -> &ServedNode {
         &self.0
     }
@@ -84,10 +88,6 @@ fn commission_anchor(commission: CommissionId) -> Place {
 /// exactly the anchor's real path plus the steps. A card, a mount, or any miss is the one
 /// [`DenError::NotFound`]; a store failure stays [`DenError::Store`]. `include_deleted` is
 /// off and doesn't matter here: a path walk's admission never reads it.
-#[allow(
-    dead_code,
-    reason = "identity's and commission's reads call it once they move onto the check"
-)]
 pub(crate) async fn may_open(
     ports: &Ports,
     viewer: &UserId,
@@ -112,7 +112,7 @@ async fn opens_at(
     anchor: &RealPath,
     steps: &[Segment],
 ) -> Result<(), DenError> {
-    let host = DenHost::new(ports, viewer, false);
+    let host = DenHost::for_check(ports, viewer);
     let reader = Reader::over(&host, Caps::default());
     let resolved = reader.walk(anchor, steps).await?;
     let View::Open { real_path, .. } = &resolved.node().view else {

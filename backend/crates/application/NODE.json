@@ -126,7 +126,7 @@
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; profile_lookup.rs — ProfileLookups, one background profile lookup per DID: `profile` (every miss joins and waits up to PROFILE_WAIT) and the Den's `profile_unless_busy` (only the miss that starts a lookup waits; a running lookup or a failure within FAILED_LOOKUP_HOLD answers None at once); den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the viewer's own profile through `profile_unless_busy`, its system folders, and its mounts (posts, Accounts, kept Characters)",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; asks den's access check about the caller's own root first (not-found is UnknownUser); profile_lookup.rs — ProfileLookups, one background profile lookup per DID: `profile` (every miss joins and waits up to PROFILE_WAIT) and the Den's `profile_unless_busy` (only the miss that starts a lookup waits; a running lookup or a failure within FAILED_LOOKUP_HOLD answers None at once); den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the viewer's own profile through `profile_unless_busy`, or from the cache alone when den's access check reads it, its system folders, and its mounts (posts, Accounts, kept Characters)",
       "node": false
     },
     {

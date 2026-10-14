@@ -68,6 +68,7 @@ async fn another_user_s_directory_is_absent_before_any_store_is_read() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let node = node(&context, &bob()).await.expect("no store fails");
@@ -83,6 +84,7 @@ async fn another_user_s_folders_hold_nothing_and_read_no_store() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
     let places = [
         UserPlace::User(bob()),
@@ -111,6 +113,7 @@ async fn the_viewer_s_root_is_private_lifted_by_standing_and_live() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let root = node(&context, &alice)
@@ -136,6 +139,7 @@ async fn the_viewer_s_root_holds_three_system_folders_found_by_key_without_a_sto
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
     let root = UserPlace::User(alice.clone());
 
@@ -174,6 +178,7 @@ async fn the_viewer_s_root_mounts_their_posts_without_a_store() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let mounts = mounts(&context, &UserPlace::User(alice.clone()))
@@ -195,6 +200,7 @@ async fn the_viewer_s_mounts_are_read_with_their_own_id_only() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let accounts = mounts(&context, &UserPlace::Accounts(alice.clone()))
@@ -230,6 +236,7 @@ async fn a_user_with_no_row_has_no_directory() {
     let context = DenContext {
         ports: recorded.app.ports(),
         viewer: &carol,
+        root_naming: RootNaming::LookUp,
     };
 
     let node = node(&context, &carol).await.expect("no store fails");
@@ -269,6 +276,7 @@ async fn a_cached_profile_for_another_did_never_names_the_root() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let root = node(&context, &alice)
@@ -303,6 +311,7 @@ async fn only_the_viewer_s_own_did_is_ever_fetched() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &carol,
+        root_naming: RootNaming::LookUp,
     };
 
     let bob_s = node(&context, &bob()).await.expect("no store fails");

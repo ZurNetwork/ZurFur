@@ -11,7 +11,7 @@ use domain::elements::{
 use test_support::recording::{CallLog, RecordingCharacterStore, SubjectLog};
 
 use super::*;
-use crate::{App, Ports};
+use crate::{App, Ports, den::RootNaming};
 
 /// A Character kept by `keeper`, named `name`, at `presence`.
 fn character(keeper: UserId, did: &str, name: &str, presence: Presence) -> Character {
@@ -75,6 +75,7 @@ async fn a_kept_character_opens_by_its_keeper_s_standing_at_its_own_level() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let kept_ember = node(&context, &ember()).await.expect("no store fails");
@@ -100,6 +101,7 @@ async fn a_stored_name_the_rule_refuses_shows_unnamed() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let flipped = node(&context, &id("did:plc:flipped"))
@@ -117,6 +119,7 @@ async fn another_s_a_tombstoned_and_a_missing_character_are_absent_after_the_sam
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     for character in [abco(), id("did:plc:gone"), id("did:plc:nope")] {
@@ -139,6 +142,7 @@ async fn bob_reaches_only_the_character_he_keeps() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &bob,
+        root_naming: RootNaming::LookUp,
     };
 
     let abco = node(&context, &abco()).await.expect("no store fails");
@@ -158,6 +162,7 @@ async fn a_character_holds_nothing_yet() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
     let place = CharacterPlace::Character(ember());
     let key = Segment::try_from("art").expect("a valid segment");

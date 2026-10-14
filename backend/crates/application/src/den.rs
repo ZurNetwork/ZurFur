@@ -36,7 +36,7 @@ pub use soft_delete::SoftDelete;
 pub(crate) use atta::Level;
 pub(crate) use atta::NodeName;
 pub(crate) use atta::Segment;
-pub(crate) use context::DenContext;
+pub(crate) use context::{DenContext, RootNaming};
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};
 pub(crate) use state::NodeState;

@@ -3,15 +3,15 @@
 //! so every answer here is for the session's viewer alone; another user's DID is absent
 //! before any store is read.
 
-use domain::elements::{account::ListingScope, user::UserId};
+use domain::elements::{account::ListingScope, profile::Profile, user::UserId};
 
 use crate::{
     account::den::AccountPlace,
     character::den::CharacterPlace,
     commission::den::CommissionPlace,
     den::{
-        DenContext, DenMount, DenType, Level, Node, NodeName, NodeState, Place, STANDING, Segment,
-        TopLevel,
+        DenContext, DenMount, DenType, Level, Node, NodeName, NodeState, Place, RootNaming,
+        STANDING, Segment, TopLevel,
         names::{self, ACCOUNTS, CHARACTERS, COMMISSIONS, POSTS},
         post::PostPlace,
     },
@@ -82,19 +82,11 @@ pub(crate) async fn node(context: &DenContext<'_>, user: &UserId) -> anyhow::Res
 }
 
 /// The viewer's root name: the first name of their own profile the name rule accepts, else
-/// their DID. The profile comes from the cache, else from one lookup of the viewer's own DID
-/// that only the first read waits on; a miss, a failure, a busy lookup or a profile for
-/// another DID names the root by its DID.
+/// their DID. The profile comes from the cache, else, unless the read names from the cache
+/// only, from one lookup of the viewer's own DID that only the first read waits on; a miss,
+/// a failure, a busy lookup or a profile for another DID names the root by its DID.
 async fn root_name(context: &DenContext<'_>) -> Option<NodeName> {
-    let ports = context.ports;
-    let profile = ports
-        .profile_lookups
-        .profile_unless_busy(
-            &ports.profile_cache,
-            &ports.profile_source,
-            context.viewer.did(),
-        )
-        .await;
+    let profile = viewer_profile(context).await;
     let own_profile = profile.filter(|profile| &profile.did == context.viewer.did());
     let from_profile = own_profile.as_ref().and_then(|profile| {
         profile
@@ -102,6 +94,22 @@ async fn root_name(context: &DenContext<'_>) -> Option<NodeName> {
             .find_map(|candidate| NodeName::try_from(candidate).ok())
     });
     from_profile.or_else(|| NodeName::try_from(context.viewer.as_ref()).ok())
+}
+
+/// The viewer's profile as the read's root naming allows: the cache, then a lookup only when
+/// the read may look up.
+async fn viewer_profile(context: &DenContext<'_>) -> Option<Profile> {
+    let ports = context.ports;
+    let did = context.viewer.did();
+    match context.root_naming {
+        RootNaming::LookUp => {
+            ports
+                .profile_lookups
+                .profile_unless_busy(&ports.profile_cache, &ports.profile_source, did)
+                .await
+        }
+        RootNaming::CacheOnly => ports.profile_cache.get(did).await.ok().flatten(),
+    }
 }
 
 /// The node at `key` in the folder `place`: one of the viewer's system folders, matched by
