@@ -12,11 +12,12 @@ import type { ContractViolation, NetworkFailure } from './errors';
 /** Run the den page program for `address` over the live port, every read answered by `body`. */
 function runPage(
 	address: string,
-	respond: () => Response
+	respond: (url: string) => Response,
+	withAncestors = false
 ): Promise<DenPageResult | NetworkFailure | ContractViolation> {
 	const url = new URL(address, 'http://127.0.0.1:5174');
 	const { fetch } = fetchStub(respond);
-	const program = denPage(url.pathname, url.searchParams, false).pipe(
+	const program = denPage(url.pathname, url.searchParams, withAncestors).pipe(
 		Effect.either,
 		Effect.map((either) => (either._tag === 'Right' ? either.right : either.left)),
 		Effect.provide(ZurfurApiLive),
@@ -143,6 +144,31 @@ describe('the tolerant reader: content', () => {
 		const withToken = { ...body, listing: { entries: [entry], nextPageToken: '' } };
 		const page = await pageOf('/den/commissions', withToken);
 		expect(page.view === 'open' && page.body.body === 'listing' && page.body.more).toBeUndefined();
+	});
+
+	it('links a listing’s next page through its page token', async () => {
+		const body = folderBody([entry]);
+		const withToken = { ...body, listing: { entries: [entry], nextPageToken: 'p1.50' } };
+		const page = await pageOf('/den/commissions', withToken);
+		expect(page.view === 'open' && page.body.body === 'listing' && page.body.more).toBe(
+			'/den/commissions?pageToken=p1.50'
+		);
+	});
+
+	it('links a folder above the item to its next page too', async () => {
+		const rootBody = {
+			node: { ...openNode, segments: [], name: 'Alice' },
+			listing: { entries: [openNode], nextPageToken: 'p1.25' }
+		};
+		const result = await runPage(
+			'/den/commissions',
+			(url) => Response.json(url === '/api/v1/den' ? rootBody : folderBody([entry])),
+			true
+		);
+		if (!('result' in result) || result.result !== 'page') throw new Error('expected a page');
+		expect(result.data.ancestors).toEqual([
+			expect.objectContaining({ folder: '/den', more: '/den?pageToken=p1.25' })
+		]);
 	});
 
 	it('gives the root no crumbs', async () => {

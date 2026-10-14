@@ -75,7 +75,9 @@
 		<span class="tree-item__hint">not shown yet</span>
 	{/if}
 	{#if typeWord !== undefined}
-		<span class="tree-item__hint" data-testid="card-type">{typeWord}</span>
+		<span class="visually-hidden">, </span><span class="tree-item__hint" data-testid="card-type"
+			>{typeWord}</span
+		>
 	{/if}
 	{#if look === 'cantOpen' && sayCantOpen}
 		<span class="visually-hidden">Can't be opened</span>

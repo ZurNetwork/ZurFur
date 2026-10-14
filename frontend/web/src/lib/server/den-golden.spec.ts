@@ -8,9 +8,9 @@ import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import { render } from 'svelte/server';
 import type { JsonValue } from '@bufbuild/protobuf';
-import { cardTypeWord, type DenEntry, type DenPage } from '$lib/api/den';
+import { cardTypeWord, type CardEntry, type DenEntry, type DenPage } from '$lib/api/den';
 import { fetchStub } from '$lib/testing/http';
-import { denHref, did } from '$lib/types/brand';
+import { denHref, denName, denType, did, pageToken } from '$lib/types/brand';
 import EntryList from '$lib/components/explorer/EntryList.svelte';
 import NodeHeader from '$lib/components/explorer/NodeHeader.svelte';
 import Tree from '$lib/components/explorer/Tree.svelte';
@@ -18,7 +18,11 @@ import { TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
 import { denPage, type DenPageResult } from './den';
 import { decodeContract, RequestFetch, ZurfurApiLive } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
+import type { DenQuery } from './api/den-read';
+import { segmentPath } from './path-builder';
+import { denApiPathOf, denHrefOf, denPathFromPathname, denQueryFromSearch } from './den/den-path';
 import {
+	type DenNode,
 	GetDenNodeResponseSchema,
 	GetDenRootResponseSchema
 } from './api/generated/zurfur/api/v1/den_pb';
@@ -57,18 +61,70 @@ function bodyText(entry: GoldenEntry): string {
 	return readFileSync(new URL(entry.file, GOLDEN_DIR), 'utf8');
 }
 
-/** The recorded node name and entry names, decoded through the contract. */
-function recorded(entry: GoldenEntry): { name: string; entries: string[] | undefined } {
-	const raw = JSON.parse(bodyText(entry)) as JsonValue;
-	const message =
-		entry.message === 'GetDenRootResponse'
-			? decodeContract(GetDenRootResponseSchema, raw)
-			: decodeContract(GetDenNodeResponseSchema, raw);
-	const listing = message.content.case === 'listing' ? message.content.value : undefined;
+/** The query every link in a page carries: the flag, never a page token. */
+function linkQueryOf(address: string): DenQuery {
+	const query = denQueryFromSearch(new URL(address, 'http://127.0.0.1:5174').searchParams);
+	return { includeDeleted: query.includeDeleted, pageToken: undefined };
+}
+
+/** The link to `segments` under `query`, built by the path builder as the den program does. */
+function hrefOf(segments: readonly string[], query: DenQuery): string | undefined {
+	const path = segmentPath(segments);
+	return path === undefined ? undefined : denHrefOf(path, query);
+}
+
+/** The row the den program must make of a recorded node, built from the recording alone. */
+function expectedRow(node: DenNode, query: DenQuery): object {
+	if (node.access.case !== 'open')
+		return { view: 'card', name: node.name, type: node.type, mounted: node.mount };
+	const open = node.access.value;
 	return {
-		name: message.node?.name ?? '',
-		entries: listing?.entries.map((node) => node.name)
+		view: 'open',
+		href: hrefOf(node.segments, query),
+		name: node.name,
+		type: node.type,
+		kind: node.kind,
+		mounted: node.mount,
+		ownLevel: open.ownLevel,
+		contentNotShown: open.contentNotShown,
+		removed: open.softDelete === '' ? undefined : open.softDelete
 	};
+}
+
+/** The page the den program must make of `entry`'s recorded body, built from the recording alone. */
+function expectedPage(entry: GoldenEntry): object {
+	const raw = JSON.parse(bodyText(entry)) as JsonValue;
+	const query = linkQueryOf(entry.path);
+	const root = entry.message === 'GetDenRootResponse';
+	const message = root
+		? decodeContract(GetDenRootResponseSchema, raw)
+		: decodeContract(GetDenNodeResponseSchema, raw);
+	if (message.node === undefined) throw new Error(`${entry.file} has no node`);
+	const crumbs = (root ? [] : decodeContract(GetDenNodeResponseSchema, raw).crumbs).map(
+		(crumb) => ({ href: hrefOf(crumb.segments, query), name: crumb.name })
+	);
+	const node = expectedRow(message.node, query);
+	if (message.node.access.case !== 'open') return { view: 'card', node, crumbs };
+	const content = message.content;
+	const token = content.case === 'listing' ? pageToken(content.value.nextPageToken) : undefined;
+	const more =
+		token === undefined ? undefined : hrefOf(message.node.segments, { ...query, pageToken: token });
+	const entries =
+		content.case === 'listing' ? content.value.entries.map((row) => expectedRow(row, query)) : [];
+	const body =
+		content.case === 'listing'
+			? { body: 'listing', entries, more }
+			: { body: content.case ?? 'notShown' };
+	return { view: 'open', node, crumbs, body };
+}
+
+/** The API request the web makes for a browser address: its allowlisted query only. */
+function requestOf(address: string): string {
+	const url = new URL(address, 'http://127.0.0.1:5174');
+	const path = denPathFromPathname(url.pathname);
+	const apiPath =
+		path === undefined ? undefined : denApiPathOf(path, denQueryFromSearch(url.searchParams));
+	return `/api/v1${apiPath ?? ''}`;
 }
 
 /** The den program for `address`, every read answered by `entry`'s recorded body. */
@@ -121,13 +177,7 @@ describe('the Den golden responses', () => {
 					if (!('result' in result) || result.result !== 'page') throw new Error('expected a page');
 					const outcome = result.data.outcome;
 					if (outcome.outcome !== 'page') throw new Error('expected a page outcome');
-					const want = recorded(entry);
-					expect(outcome.page.node.name).toBe(want.name);
-					const names =
-						outcome.page.view === 'open' && outcome.page.body.body === 'listing'
-							? outcome.page.body.entries.map((row) => row.name)
-							: undefined;
-					expect(names).toEqual(want.entries);
+					expect(outcome.page).toEqual(expectedPage(entry));
 					break;
 				}
 				case 404:
@@ -143,6 +193,9 @@ describe('the Den golden responses', () => {
 				case 400:
 				case 422:
 					expect('_tag' in result && result._tag).toBe('ContractViolation');
+					// The web sends only its allowlisted query, never what the address carried.
+					expect(calls).toEqual([requestOf(entry.path)]);
+					expect(calls).not.toEqual([`/api/v1${entry.path}`]);
 					break;
 				default:
 					throw new Error(`no expectation for status ${String(entry.status)}`);
@@ -213,5 +266,34 @@ describe('the Den golden responses: what the fixtures prove', () => {
 		expect(header).toContain('data-testid="card-type">Commission<');
 		expect(header).toContain("Can't open");
 		expect(header).not.toContain('href');
+	});
+});
+
+describe('a card of a type this build doesn’t know', () => {
+	const card: CardEntry = {
+		view: 'card',
+		name: denName('Locked characters'),
+		type: denType('account.characters'),
+		mounted: false
+	};
+
+	it('shows no type word in the pane, the tree or the header', () => {
+		const pane = render(EntryList, { props: { entries: [card], more: undefined } }).body;
+		expect(pane).toContain('Locked characters');
+		expect(pane).not.toContain('data-testid="card-type"');
+
+		const root = denHref('/den');
+		const memory = new TreeMemory(did('did:plc:alice'));
+		memory.loaded(root, [card], undefined);
+		memory.expanded.add(root);
+		const current = { href: undefined, parentHref: undefined, entry: undefined };
+		const tree = render(Tree, { props: { memory, current, fallbackRootHref: root } }).body;
+		expect(tree).toContain('Locked characters');
+		expect(tree).not.toContain('data-testid="card-type"');
+
+		const header = render(NodeHeader, { props: { node: card } }).body;
+		expect(header).toContain('Locked characters');
+		expect(header).not.toContain('data-testid="card-type"');
+		expect(header).not.toContain('account.characters');
 	});
 });

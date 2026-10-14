@@ -414,6 +414,23 @@ describe('denPage: at most four Den reads in flight', () => {
 		expect(seen[0]?.path).toEqual(deep);
 		expect(most).toBe(4);
 	});
+
+	it('hands the node read’s permit back, so the folders run four at once once the node is read', async () => {
+		let foldersInFlight = 0;
+		let most = 0;
+		const { layer } = denPort((path) =>
+			Effect.gen(function* () {
+				if (path.length === deep.length) return folderRead(path, []);
+				foldersInFlight += 1;
+				most = Math.max(most, foldersInFlight);
+				for (let turn = 0; turn < 8; turn += 1) yield* Effect.yieldNow();
+				foldersInFlight -= 1;
+				return folderRead(path, []);
+			})
+		);
+		pageData(await run(layer, `/den/${deep.join('/')}`, true));
+		expect(most).toBe(4);
+	});
 });
 
 describe('denPage: a Den read that runs out, through the live port', () => {
