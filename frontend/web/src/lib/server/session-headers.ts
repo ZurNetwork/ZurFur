@@ -1,5 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
-import { extractSessionCookie } from './api-proxy';
+import { carriesSessionCookie } from './api-proxy';
 
 /**
  * The `Cache-Control` every signed-in response carries: the API's `no-store`,
@@ -21,11 +21,12 @@ export const SESSION_REFERRER_POLICY = 'same-origin';
 /**
  * Whether the request carries the session cookie. It is the only credential
  * `handleFetch` forwards to the backend, so every signed-in render had it; a
- * stale one is treated as signed in too.
+ * stale one is treated as signed in too, and so are two pairs, which
+ * `handleFetch` refuses to forward.
  */
 function carriesSession(request: Request): boolean {
 	const cookieHeader = request.headers.get('cookie') ?? undefined;
-	return extractSessionCookie(cookieHeader) !== undefined;
+	return carriesSessionCookie(cookieHeader);
 }
 
 /**

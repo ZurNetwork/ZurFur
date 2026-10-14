@@ -217,13 +217,23 @@ pub(crate) async fn seed_alice_s(
 
 /// Seeds a file into `commission`, uploaded by alice, under a fresh key.
 pub(crate) async fn seed_file(world: &World, commission: CommissionId) -> FileKey {
-    let key = FileKey::from(Uuid::now_v7());
     let name = FileName::try_from("seeded.png").expect("a valid file name");
+    seed_file_named(world, commission, &name).await
+}
+
+/// Seeds a file named `name` into `commission`, uploaded by alice, under a fresh key,
+/// straight through the file store, so no use case checks the name.
+pub(crate) async fn seed_file_named(
+    world: &World,
+    commission: CommissionId,
+    name: &FileName,
+) -> FileKey {
+    let key = FileKey::from(Uuid::now_v7());
     let mut bytes: &[u8] = b"bytes of a seeded file";
     world
         .ports
         .files
-        .put(key, &name, "image/png", &mut bytes)
+        .put(key, name, "image/png", &mut bytes)
         .await
         .expect("the file stores");
     let file = CommissionFile {

@@ -66,12 +66,12 @@
     },
     {
       "name": "src/pg.rs",
-      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test",
+      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test; TestDb::psql_command, the command line that runs psql inside the container on one clone",
       "node": false
     },
     {
       "name": "src/pg_app.rs",
-      "role": "the PostgreSQL test setup: pg_app::serve boots the app on composition's live PostgreSQL wiring over a fresh_db clone, sessions in PostgreSQL; PgServed::sign_in(Profile) drives the real sign-in routes; pg_app::den_world seeds the den world on top",
+      "role": "the PostgreSQL test setup: pg_app::serve boots the app on composition's live PostgreSQL wiring over a fresh_db clone, sessions in PostgreSQL; PgServed::sign_in(Profile) drives the real sign-in routes, and sign_in_with_cookie also hands back the raw zurfur.sid value (SignedIn); pg_app::den_world seeds the den world on top",
       "node": false
     },
     {
@@ -96,7 +96,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS) + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
       "node": false
     },
     {
@@ -134,7 +134,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair"
+      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair; store_legacy_title and store_legacy_filename store names from before the name rule, which read as Unnamed (D19) and stay the one not-found for a stranger (D21)"
     }
   ],
   "notes": [

@@ -3,9 +3,12 @@
 //! only; the use case lives in `application::commission::files`, this file
 //! adapts axum's multipart/body types to the streaming `FileStore` seam.
 
-use application::commission::{
-    CommissionError,
-    files::{download, upload},
+use application::{
+    commission::{
+        CommissionError,
+        files::{download, upload},
+    },
+    den::DenName,
 };
 use axum::{
     Json,
@@ -96,7 +99,8 @@ pub(super) async fn upload_file(
 
 /// Retrieves a file entry's bytes. Any-Participant-gated; `404
 /// file_not_found` for a key not in this commission. Always serves
-/// `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` so
+/// `Content-Disposition: attachment`, named with the save name the use case
+/// hands over (the file's Den name), and `X-Content-Type-Options: nosniff` so
 /// a stored SVG/HTML can never execute in the app origin.
 pub(super) async fn download_file(
     State(state): State<AppState>,
@@ -109,14 +113,15 @@ pub(super) async fn download_file(
         file_id: file_key,
     };
 
-    let download::Output { result: download } =
-        state.app().commissions().files().download(query).await?;
+    let download::Output {
+        result: download,
+        save_name,
+    } = state.app().commissions().files().download(query).await?;
 
     let content_type = HeaderValue::from_str(&download.metadata.content_type)
         .unwrap_or_else(|_| HeaderValue::from_static(FileMetadata::DEFAULT_CONTENT_TYPE));
-    let disposition =
-        HeaderValue::from_str(&content_disposition(download.metadata.filename.as_str()))
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
+    let disposition = HeaderValue::from_str(&content_disposition(&save_name))
+        .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
 
     Ok((
         [
@@ -141,13 +146,15 @@ struct UploadPart<'a> {
     field: Field<'a>,
 }
 
-/// Builds a `Content-Disposition: attachment` header value carrying the
-/// filename safely across the ASCII-only header boundary (RFC 6266 + 5987).
-fn content_disposition(filename: &str) -> String {
+/// Builds a `Content-Disposition: attachment` header value carrying the save
+/// name across the ASCII-only header boundary (RFC 6266 + 5987). The Den's name
+/// rule has already refused controls and bidi overrides; this only encodes.
+fn content_disposition(save_name: &DenName) -> String {
+    let filename = save_name.as_ref();
     let fallback: String = filename
         .chars()
         .map(|c| {
-            if c.is_ascii() && !c.is_ascii_control() && c != '"' && c != '\\' {
+            if c.is_ascii() && !c.is_ascii_control() && !matches!(c, '"' | '\\' | '%') {
                 c
             } else {
                 '_'

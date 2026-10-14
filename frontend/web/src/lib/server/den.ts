@@ -1,12 +1,13 @@
 /**
  * The den page's program over the {@link import('./api/zurfur-api').ZurfurApi}
  * port: read the node an address asks for (and, on a full page load, the
- * folders above it), then map the read to the web's own Den view, building
- * every link through the Den path builder. Pages run it through
+ * folders above it), name each Account node it shows by the Account's own
+ * name, then map the read to the web's own Den view, building every link
+ * through the Den path builder. Pages run it through
  * {@link import('./runtime').runApi}.
  */
 
-import { Effect } from 'effect';
+import { Effect, Either } from 'effect';
 import type {
 	DenBody,
 	DenCrumb,
@@ -29,6 +30,7 @@ import type { DenQuery, DenRead, DenReadContent, DenReadNode } from './api/den-r
 import { DEN_ROUTES } from './api/den-wire';
 import { ZurfurApi, type DenReadError } from './api/zurfur-api';
 import type { SegmentPath } from './path-builder';
+import { accountNamesFor, withAccountNames, type AccountNames } from './den/account-names';
 import {
 	denHrefOf,
 	denPathFromPathname,
@@ -206,36 +208,56 @@ function readDen(path: SegmentPath, query: DenQuery) {
 	});
 }
 
+/** One folder above the node, and what reading it answered. */
+interface AncestorRead {
+	readonly folder: SegmentPath;
+	readonly read: DenRead;
+}
+
 /**
- * The listings of the folders above `path` — the root and each prefix; for
- * the root itself, the root — read in parallel under `permits`, with the
- * first page and no page token. A folder that fails to read is left out; the
- * tree fills it in later.
+ * The reads of the folders above `path` — the root and each prefix; for the
+ * root itself, the root — in parallel under `permits`, with the first page
+ * and no page token. A folder that fails to read is left out; the tree fills
+ * it in later.
  */
 function readAncestors(
 	path: SegmentPath,
 	query: DenQuery,
 	permits: Effect.Semaphore
-): Effect.Effect<readonly DenListing[], never, ZurfurApi> {
+): Effect.Effect<readonly AncestorRead[], never, ZurfurApi> {
 	const prefixes = path.slice(0, -1).map((_, index) => path.slice(0, index + 1));
 	const folders: SegmentPath[] = [[], ...prefixes];
 	const plain = linkQuery(query);
 	const reads = folders.map((folder) => {
 		const guarded = permits.withPermits(1)(readDen(folder, plain));
 		return guarded.pipe(
-			Effect.map((read): DenListing | undefined => {
-				const folderHref = denHrefOf(folder, plain);
-				if (folderHref === undefined || read.node.access.access !== 'open') return undefined;
-				const body = toBody(read.content, folder, plain);
-				if (body.body !== 'listing') return undefined;
-				return { folder: folderHref, entries: body.entries, more: body.more };
-			}),
+			Effect.map((read): AncestorRead | undefined => ({ folder, read })),
 			Effect.catchAll(() => Effect.succeed(undefined))
 		);
 	});
 	return Effect.all(reads, { concurrency: 'unbounded' }).pipe(
-		Effect.map((listings) => listings.filter((listing) => listing !== undefined))
+		Effect.map((reads) => reads.filter((read) => read !== undefined))
 	);
+}
+
+/**
+ * The listings of the folders above the node, each Account node in them named
+ * by `names`. A folder that isn't open, or holds no listing, is left out.
+ */
+function ancestorListings(
+	ancestors: readonly AncestorRead[],
+	query: DenQuery,
+	names: AccountNames
+): readonly DenListing[] {
+	const plain = linkQuery(query);
+	return ancestors.flatMap(({ folder, read }) => {
+		const folderHref = denHrefOf(folder, plain);
+		if (folderHref === undefined || read.node.access.access !== 'open') return [];
+		const body = toBody(withAccountNames(read, names).content, folder, plain);
+		if (body.body !== 'listing') return [];
+		const listing: DenListing = { folder: folderHref, entries: body.entries, more: body.more };
+		return [listing];
+	});
 }
 
 /** The path bar for a page: `~`, each crumb below the root, then the node itself. */
@@ -341,13 +363,22 @@ export function denPage(
 		// permit before any folder read can start.
 		const permits = yield* Effect.makeSemaphore(DEN_READS_IN_FLIGHT);
 		yield* permits.take(1);
-		const nodeRead = readDen(path, query).pipe(Effect.ensuring(permits.release(1)));
+		const nodeRead = readDen(path, query).pipe(Effect.ensuring(permits.release(1)), Effect.either);
 		const ancestorsRead =
-			withAncestors && needsAncestors ? readAncestors(path, query, permits) : Effect.succeed([]);
-		const [read, ancestors] = yield* Effect.all(
-			[readOutcome(nodeRead, path, query), ancestorsRead],
-			{ concurrency: 'unbounded' }
-		);
+			withAncestors && needsAncestors
+				? readAncestors(path, query, permits)
+				: Effect.succeed<readonly AncestorRead[]>([]);
+		const [nodeAnswer, ancestorReads] = yield* Effect.all([nodeRead, ancestorsRead], {
+			concurrency: 'unbounded'
+		});
+
+		// One place names every Account node the page shows, after all its reads.
+		const nodeReads = Either.isRight(nodeAnswer) ? [nodeAnswer.right] : [];
+		const shown = [...nodeReads, ...ancestorReads.map((ancestor) => ancestor.read)];
+		const names = yield* accountNamesFor(shown);
+		const named = Either.map(nodeAnswer, (read) => withAccountNames(read, names));
+		const read = yield* readOutcome(named, path, query);
+		const ancestors = ancestorListings(ancestorReads, query, names);
 
 		if ('signedOut' in read) return { result: 'signedOut' } satisfies DenPageResult;
 		if ('reload' in read) {

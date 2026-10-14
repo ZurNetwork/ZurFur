@@ -56,7 +56,7 @@
     },
     {
       "name": "src/name.rs",
-      "role": "NodeName: input at most 2048 bytes, no / and no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word",
+      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length)",
       "node": false
     },
     {

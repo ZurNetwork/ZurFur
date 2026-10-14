@@ -13,7 +13,7 @@ fn upload_file_response_serializes_to_a_bare_id_object() {
 
 #[test]
 fn content_disposition_is_attachment_and_encodes_safely() {
-    let value = content_disposition("réf sheet.png");
+    let value = content_disposition(&save_name("réf sheet.png"));
     assert!(
         value.starts_with("attachment; "),
         "always attachment: {value}"
@@ -32,40 +32,51 @@ fn rfc5987_leaves_attr_chars_and_escapes_the_rest() {
     assert_eq!(rfc5987_encode("\""), "%22");
 }
 
-// A stored filename is served as written, so this header builder is the only
-// barrier: control characters, quotes, backslashes, `;` and bidi overrides
-// never reach the header raw. The value is a valid header, the quoted fallback
-// holds only printable ASCII without `"` or `\`, and `filename*` percent-encodes
-// every byte outside RFC 5987's `attr-char` set.
-#[test]
-fn content_disposition_neutralizes_hostile_filenames() {
-    let hostile = "a\r\nSet-Cookie: x\"\\;\u{1}\u{7f}\u{202e}gnp.exe";
+/// The save name `text`, which the Den's name rule accepts.
+fn save_name(text: &str) -> DenName {
+    DenName::try_from(text).expect("the Den's name rule accepts it")
+}
 
-    let value = content_disposition(hostile);
+// The Den's name rule refuses control characters and bidi overrides before a
+// name reaches the header builder, so `DenName` is the barrier; the builder only
+// encodes. The value is a valid header, the quoted fallback holds only printable
+// ASCII without `"`, `\` or `%`, and `filename*` percent-encodes every byte
+// outside RFC 5987's `attr-char` set.
+#[test]
+fn the_den_s_name_rule_refuses_what_would_disguise_or_split_the_header() {
+    for hostile in [
+        "a\r\nSet-Cookie: x",
+        "photo\u{202E}gpj.exe",
+        "a\u{1}\u{7f}b",
+    ] {
+        assert!(DenName::try_from(hostile).is_err(), "{hostile:?}");
+    }
+}
+
+#[test]
+fn content_disposition_encodes_quotes_backslashes_and_semicolons_into_one_valid_header() {
+    let awkward = save_name("x\"\\; réf.png");
+
+    let value = content_disposition(&awkward);
 
     assert!(
         HeaderValue::from_str(&value).is_ok(),
         "a valid header value: {value:?}"
     );
     assert!(value.is_ascii(), "nothing outside ASCII: {value:?}");
-    assert!(
-        !value.chars().any(|c| c.is_ascii_control()),
-        "no control characters, CR and LF included: {value:?}"
-    );
-    let fallback = value
-        .strip_prefix("attachment; filename=\"")
-        .and_then(|rest| rest.split_once("\"; filename*=UTF-8''"))
-        .map(|(fallback, _)| fallback)
-        .expect("the attachment, fallback, extended layout");
-    assert!(
-        fallback.chars().all(|c| c.is_ascii_graphic() || c == ' ')
-            && !fallback.contains('"')
-            && !fallback.contains('\\'),
-        "the quoted fallback is printable ASCII without quotes: {fallback:?}"
-    );
-    let expected_extended = "a%0D%0ASet-Cookie%3A%20x%22%5C%3B%01%7F%E2%80%AEgnp.exe";
-    assert!(
-        value.ends_with(&format!("filename*=UTF-8''{expected_extended}")),
-        "every unsafe byte percent-encoded: {value:?}"
-    );
+    let expected =
+        "attachment; filename=\"x__; r_f.png\"; filename*=UTF-8''x%22%5C%3B%20r%C3%A9f.png";
+    assert_eq!(value, expected);
+}
+
+// RFC 6266 Appendix D: a `%` and two hex digits in `filename` may be decoded as
+// an escape by a user agent that ignores `filename*`.
+#[test]
+fn content_disposition_keeps_percent_escapes_out_of_the_quoted_fallback() {
+    let spelled_out = save_name("photo%E2%80%AEgpj.exe");
+
+    let value = content_disposition(&spelled_out);
+
+    let expected = "attachment; filename=\"photo_E2_80_AEgpj.exe\"; filename*=UTF-8''photo%25E2%2580%25AEgpj.exe";
+    assert_eq!(value, expected);
 }

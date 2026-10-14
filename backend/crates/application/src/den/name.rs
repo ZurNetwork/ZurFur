@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use atta::{NodeName, NodeNameError};
+use atta::{NodeName, NodeNameError, ShowableNameError};
 
 /// A node's display name: text the Den's name rule accepts. Parsed from user-typed text on
 /// every write that names a node, and answered for every node a read shows.
@@ -49,6 +49,12 @@ fn refusal(error: NodeNameError) -> DenNameError {
         NodeNameError::Separator => DenNameError::Separator,
         NodeNameError::Reserved => DenNameError::Reserved,
     }
+}
+
+/// The engine's refusal of a name safe to show, named in this crate's own terms: a name that
+/// may hold a `/` refuses for the same reasons a node's name does, but the `/`.
+pub(crate) fn showable_refusal(error: ShowableNameError) -> DenNameError {
+    refusal(NodeNameError::from(error))
 }
 
 impl TryFrom<String> for DenName {

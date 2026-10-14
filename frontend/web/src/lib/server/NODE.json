@@ -31,7 +31,7 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); the request leaving the server carries the signal it is given directly, never one followed through the rebuilt requests in between; forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
+      "role": "pure rewriteApiRequest + extractSessionCookie + carriesSessionCookie, used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); the request leaving the server carries the signal it is given directly, never one followed through the rebuilt requests in between; forwards a sole zurfur.sid only, none when the header carries two or more pairs, and never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
       "node": false
     },
     {
@@ -51,12 +51,12 @@
     },
     {
       "name": "den.ts",
-      "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings), at most 4 Den reads in flight per page load with the node read first, map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
+      "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings), at most 4 Den reads in flight per page load with the node read first, name each Account node the page shows by the Account's own name (den/account-names.ts, after every read), map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
       "node": false
     },
     {
       "name": "den/",
-      "role": "den-path.ts — the Den path builder: browser pathname → segments (decoded once, allowlisted, ≤16), allowlisted query (includeDeleted, pageToken), the only DenHref mint, the API path",
+      "role": "den-path.ts — the Den path builder: browser pathname → segments (decoded once, allowlisted, ≤16), allowlisted query (includeDeleted, pageToken), the only DenHref mint, the API path; account-names.ts — an Account node (type account, keyed by its DID) named from the viewer's GET /accounts list, read once per page that shows one, none otherwise; an unlisted DID or a failed list keeps the Den's name",
       "node": false
     },
     {
@@ -101,7 +101,7 @@
     },
     {
       "name": "session-headers.ts",
-      "role": "pure sessionHeaders handle hook used by hooks.server.ts: marks every response to a request carrying the session cookie Cache-Control: private, no-store and Referrer-Policy: same-origin",
+      "role": "pure sessionHeaders handle hook used by hooks.server.ts: marks every response to a request carrying any session cookie pair (two included) Cache-Control: private, no-store and Referrer-Policy: same-origin",
       "node": false
     },
     {

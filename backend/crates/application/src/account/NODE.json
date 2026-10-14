@@ -19,7 +19,7 @@
     },
     {
       "name": "create.rs",
-      "role": "found an Account — the Den's name rule on its name (refused names answer InvalidName before any handle check or mint; accepted ones stored as the rule keeps them), handle uniqueness + quarantine checks, mints a DID, seats the founder as Owner",
+      "role": "found an Account — its name checked by the rule for a name safe to show, Atta's ShowableName (the Den's name rule without its / clause, so \"AC/DC Studio\" is founded): a refused name answers InvalidName before any handle check or mint, an accepted one is stored as the rule keeps it; handle uniqueness + quarantine checks, mints a DID, seats the founder as Owner",
       "node": false
     },
     {

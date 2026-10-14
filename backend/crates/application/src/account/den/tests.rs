@@ -213,6 +213,33 @@ async fn a_stored_name_the_rule_refuses_shows_the_handle() {
 }
 
 #[tokio::test]
+async fn a_stored_name_with_a_slash_shows_the_handle() {
+    let (app, _backend, _log, _subjects) = recorded().await;
+    let slashed = AccountId::from(Did::from("did:plc:s1ashedfixtureaaaaaaaaa".to_owned()));
+    seed_account(
+        &app,
+        slashed.clone(),
+        "AC/DC Studio",
+        "acdc.zurfur.app",
+        false,
+    )
+    .await;
+    let alice = alice();
+    let context = DenContext {
+        ports: app.ports(),
+        viewer: &alice,
+        root_naming: RootNaming::LookUp,
+    };
+
+    let account = node(&context, &slashed)
+        .await
+        .expect("no store fails")
+        .expect("alice's Account");
+
+    assert_eq!(account.name.as_ref(), "acdc.zurfur.app");
+}
+
+#[tokio::test]
 async fn an_account_holds_its_three_system_folders_found_by_key() {
     let (app, _backend, log, _subjects) = recorded().await;
     let alice = alice();
