@@ -13,6 +13,9 @@ edition = "2024"
 http = { workspace = true }
 # The session layer and its re-exported `cookie` crate.
 tower-sessions = { workspace = true }
+# The cookie guard ahead of the session layer, as a tower layer and service.
+tower-layer = { workspace = true }
+tower-service = { workspace = true }
 # `VariantArray` over the cookie vocabulary.
 strum = { workspace = true }
 

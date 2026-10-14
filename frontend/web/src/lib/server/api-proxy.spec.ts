@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rewriteApiRequest } from './api-proxy';
+import { carriesSessionCookie, extractSessionCookie, rewriteApiRequest } from './api-proxy';
 
 // The browser-visible origin SvelteKit resolves in-app `fetch('/api/v1/...')` calls
 // against (Caddy, in the real deployment). The function is origin-agnostic — it
@@ -216,5 +216,61 @@ describe('rewriteApiRequest', () => {
 		expect(result.credentials).toBe('omit');
 		expect(result.headers.get('x-custom')).toBe('kept');
 		expect(result.headers.get('cookie')).toBeNull();
+	});
+});
+
+describe('two zurfur.sid pairs fail closed', () => {
+	// A sibling host under the app's domain can plant a second `zurfur.sid` with a
+	// longer path, which the browser lists first. Which pair is the visitor's
+	// can't be told, so none is forwarded and the request is signed out.
+	const VALID = 'zurfur.sid=s3ss10n==';
+	const JUNK = 'zurfur.sid=planted';
+
+	it('forwards the one pair a header carries', () => {
+		const forwarded = extractSessionCookie(`theme=dark; ${VALID}; other=1`);
+
+		expect(forwarded).toBe(VALID);
+	});
+
+	it.each([
+		['valid then junk', `${VALID}; ${JUNK}`],
+		['junk then valid', `${JUNK}; ${VALID}`],
+		['two identical pairs', `${VALID}; ${VALID}`],
+		['two pairs among other cookies', `theme=dark; ${JUNK}; other=1; ${VALID}`],
+		['three pairs', `${VALID}; ${JUNK}; zurfur.sid=`]
+	])('forwards none for %s', (_case, incomingCookie) => {
+		const forwarded = extractSessionCookie(incomingCookie);
+
+		expect(forwarded).toBeUndefined();
+	});
+
+	it.each([
+		['valid then junk', `${VALID}; ${JUNK}`],
+		['junk then valid', `theme=dark; ${JUNK}; ${VALID}; zurfur.signin=tok`],
+		['two identical pairs', `${VALID}; ${VALID}`]
+	])('sends the upstream no cookie header at all for %s', (_case, incomingCookie) => {
+		const request = sameOriginRequest('/api/v1/me', { headers: { cookie: 'stray=leak' } });
+
+		const rewritten = rewriteApiRequest({ request, eventOrigin, incomingCookie, apiUpstream });
+
+		expect(rewritten.headers.get('cookie')).toBeNull();
+	});
+
+	it('still counts a lookalike name as no session pair', () => {
+		const forwarded = extractSessionCookie(`zurfur.sidx=1; ${VALID}; xzurfur.sid=2`);
+
+		expect(forwarded).toBe(VALID);
+	});
+
+	it('still sees a session cookie in a header carrying two pairs', () => {
+		const carried = carriesSessionCookie(`${VALID}; ${JUNK}`);
+
+		expect(carried).toBe(true);
+	});
+
+	it('sees no session cookie in a header without one', () => {
+		const carried = carriesSessionCookie('theme=dark; zurfur.sidx=1');
+
+		expect(carried).toBe(false);
 	});
 });

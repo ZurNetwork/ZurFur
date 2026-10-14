@@ -31,7 +31,7 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
+      "role": "pure rewriteApiRequest + extractSessionCookie + carriesSessionCookie, used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); forwards a sole zurfur.sid only, none when the header carries two or more pairs, and never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "session-headers.ts",
-      "role": "pure sessionHeaders handle hook used by hooks.server.ts: marks every response to a request carrying the session cookie Cache-Control: private, no-store and Referrer-Policy: same-origin",
+      "role": "pure sessionHeaders handle hook used by hooks.server.ts: marks every response to a request carrying any session cookie pair (two included) Cache-Control: private, no-store and Referrer-Policy: same-origin",
       "node": false
     },
     {

@@ -2423,6 +2423,8 @@ dependencies = [
  "reqwest 0.13.4",
  "strum",
  "tokio",
+ "tower-layer",
+ "tower-service",
  "tower-sessions",
 ]
 
