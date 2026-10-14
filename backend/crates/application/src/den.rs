@@ -2,6 +2,7 @@
 //! Zurfur's one host. Atta's types stay inside this module; its use cases take and answer
 //! the application's own values.
 
+pub(crate) mod access;
 mod admission;
 mod context;
 mod den_type;
