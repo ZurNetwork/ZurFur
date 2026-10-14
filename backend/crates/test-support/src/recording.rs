@@ -21,12 +21,12 @@ use domain::elements::{
     role::Role,
     text::StoredText,
     user::{User, UserId},
-    workflow::{Column, ColumnId, WorkflowId},
+    workflow::{Column, ColumnId, Workflow, WorkflowId, WorkflowSummary},
 };
 use domain::ports::{
     AccountRepo, AccountStore, ActorIdentityWrites, ChangelogWrites, CharacterStore,
     CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
+    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
 };
 use tokio::io::AsyncRead;
 
@@ -561,5 +561,45 @@ impl CommissionStore for RecordingCommissionStore {
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         self.log.record("slots");
         self.inner.slots(commission).await
+    }
+}
+
+/// A [`WorkflowStore`] that logs each read before delegating: `find` as `find_workflow`, so
+/// it reads apart from the commission store's `find` in a shared log, the others by name.
+pub struct RecordingWorkflowStore {
+    inner: Arc<dyn WorkflowStore>,
+    log: CallLog,
+}
+
+impl RecordingWorkflowStore {
+    /// Wraps `inner`, recording into `log`.
+    pub fn new(inner: Arc<dyn WorkflowStore>, log: CallLog) -> Self {
+        Self { inner, log }
+    }
+}
+
+#[async_trait]
+impl WorkflowStore for RecordingWorkflowStore {
+    async fn find(&self, workflow_id: &WorkflowId) -> anyhow::Result<Option<Workflow>> {
+        self.log.record("find_workflow");
+        self.inner.find(workflow_id).await
+    }
+
+    async fn owning_account_of(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> anyhow::Result<Option<AccountId>> {
+        self.log.record("owning_account_of");
+        self.inner.owning_account_of(workflow_id).await
+    }
+
+    async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
+        self.log.record("columns");
+        self.inner.columns(workflow_id).await
+    }
+
+    async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>> {
+        self.log.record("list_for_account");
+        self.inner.list_for_account(account).await
     }
 }

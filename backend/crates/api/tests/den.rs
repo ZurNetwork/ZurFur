@@ -36,6 +36,7 @@ use domain::{
 };
 use serde_json::{Value, json};
 use test_support::{
+    den::{Answer, PRIVATE_NO_STORE, cache_control, entry_names, get, ok_json},
     http::{client, serve, sign_in},
     log_capture::CapturedLog,
 };
@@ -49,9 +50,6 @@ const CLOSED_STUDIO_DID: &str = "did:plc:c1osedstudiofixtureaaaaa";
 
 /// A well-formed page token, far past the end of any fixture listing.
 const PAST_THE_END: &str = "0100000000000003e8";
-
-/// The cache header every Den answer carries.
-const PRIVATE_NO_STORE: &str = "private, no-store";
 
 /// The Den's engine, which the API reaches only through the application.
 const ENGINE: &str = "atta";
@@ -112,68 +110,6 @@ async fn as_alice() -> (String, reqwest::Client) {
     let alice = client();
     sign_in(&alice, &base, "alice.test").await;
     (base, alice)
-}
-
-/// `GET {base}{path}`.
-async fn get(client: &reqwest::Client, base: &str, path: &str) -> reqwest::Response {
-    client
-        .get(format!("{base}{path}"))
-        .send()
-        .await
-        .expect("the request is answered")
-}
-
-/// A `200` answer's JSON body, after checking its cache header.
-async fn ok_json(response: reqwest::Response) -> Value {
-    assert_eq!(response.status(), 200, "{}", response.url());
-    assert_eq!(cache_control(&response), PRIVATE_NO_STORE);
-    response.json().await.expect("a JSON body")
-}
-
-/// The answer's `Cache-Control` header.
-fn cache_control(response: &reqwest::Response) -> String {
-    let header = response
-        .headers()
-        .get(reqwest::header::CACHE_CONTROL)
-        .expect("a Cache-Control header");
-    header.to_str().expect("an ASCII header").to_owned()
-}
-
-/// Everything a client can tell an answer by: its status, every header but `date`, sorted,
-/// and its body's bytes.
-#[derive(Debug, PartialEq, Eq)]
-struct Answer {
-    status: u16,
-    headers: Vec<(String, Vec<u8>)>,
-    body: Vec<u8>,
-}
-
-impl Answer {
-    async fn read(response: reqwest::Response) -> Self {
-        let status = response.status().as_u16();
-        let mut headers: Vec<(String, Vec<u8>)> = response
-            .headers()
-            .iter()
-            .filter(|(name, _)| *name != reqwest::header::DATE)
-            .map(|(name, value)| (name.to_string(), value.as_bytes().to_vec()))
-            .collect();
-        headers.sort();
-        let body = response.bytes().await.expect("a body").to_vec();
-        Self {
-            status,
-            headers,
-            body,
-        }
-    }
-}
-
-/// The names of a listing's entries, in order.
-fn entry_names(listing: &Value) -> Vec<String> {
-    let entries = listing["entries"].as_array().expect("an entries array");
-    entries
-        .iter()
-        .map(|entry| entry["name"].as_str().expect("a name").to_owned())
-        .collect()
 }
 
 #[tokio::test]

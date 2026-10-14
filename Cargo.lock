@@ -5829,6 +5829,7 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "async-trait",
  "atrium-crypto",
  "axum",

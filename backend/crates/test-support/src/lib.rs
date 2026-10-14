@@ -7,6 +7,7 @@
 //! guarantees, and the container-reuse escape hatch.
 
 pub mod contract;
+pub mod den;
 mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
