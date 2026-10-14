@@ -7,14 +7,18 @@ mod den_world;
 mod in_process_pds;
 mod pairs;
 mod served;
+mod statements;
 
 pub use den_world::{
-    DenWorld, SeededCommission, absent_account, absent_commission, absent_file, absent_slot,
-    absent_workflow, den_world, stranger,
+    DenWorld, ProfileCacheState, SeededCommission, absent_account, absent_commission, absent_file,
+    absent_slot, absent_workflow, den_world, den_world_recording, stranger,
 };
 pub use in_process_pds::InProcessPds;
 pub use pairs::{
-    MissPair, commission_read_stranger_pairs, download_participant_pair, public_live_download_pair,
-    stranger_targets,
+    COMMISSION_NOT_FOUND, FILE_NOT_FOUND, MissPair, archived_participant_pairs,
+    commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
+    den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
+    download_participant_pair, public_live_download_pair, stranger_targets,
 };
-pub use served::{PgServed, serve};
+pub use served::{PgServed, serve, serve_recording};
+pub use statements::{Statement, StatementLog, record_statements};

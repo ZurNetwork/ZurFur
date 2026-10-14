@@ -9,77 +9,11 @@ use serde_json::json;
 use test_support::{
     den::{Answer, PRIVATE_NO_STORE, entry_names, get, ok_json},
     pg_app::{
-        self, DenWorld, MissPair, SeededCommission, absent_commission, absent_file, absent_slot,
-        absent_workflow, stranger_targets,
+        self, DenWorld, MissPair, absent_commission, den_participant_pairs, den_stranger_pairs,
+        den_stranger_targets,
     },
     recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
 };
-
-/// The stranger's pairs against `target`, a commission they take part in nothing of: the
-/// commission itself, its `changelog`, and its file.
-fn stranger_pairs(target: &SeededCommission) -> [MissPair; 3] {
-    let absent = absent_commission();
-    let commission = target.id;
-    let file = target.file;
-    let absent_file = absent_file();
-    let commission_path = format!("/den/commissions/{commission}");
-    let changelog_path = format!("/den/commissions/{commission}/changelog");
-    let file_path = format!("/den/commissions/{commission}/attachments/{file}");
-    let commission_pair = MissPair {
-        label: "the commission",
-        absent: format!("/den/commissions/{absent}"),
-        not_yours: commission_path.clone(),
-        home: commission_path,
-    };
-    let changelog_pair = MissPair {
-        label: "its changelog",
-        absent: format!("/den/commissions/{absent}/changelog"),
-        not_yours: changelog_path.clone(),
-        home: changelog_path,
-    };
-    let file_pair = MissPair {
-        label: "its file",
-        absent: format!("/den/commissions/{absent}/attachments/{absent_file}"),
-        not_yours: file_path.clone(),
-        home: file_path,
-    };
-    [commission_pair, changelog_pair, file_pair]
-}
-
-/// bob's pairs as a Participant of "Untitled": a missing file key against "Old sketch"'s
-/// real one under "Untitled", a missing slot against "Old sketch"'s, and in his own
-/// Account's `workflows`, a missing Workflow against alice's Account's.
-fn participant_pairs(world: &DenWorld) -> [MissPair; 3] {
-    let untitled = world.untitled.id;
-    let old_sketch = world.old_sketch.id;
-    let night_shift = world.night_shift.to_string();
-    let supreme_arts = world.supreme_arts.to_string();
-    let foreign_file = world.old_sketch.file;
-    let foreign_slot = world.old_sketch.slot;
-    let foreign_workflow = world.queue;
-    let absent_file = absent_file();
-    let absent_slot = absent_slot();
-    let absent_workflow = absent_workflow();
-    let file_pair = MissPair {
-        label: "a file key",
-        absent: format!("/den/commissions/{untitled}/attachments/{absent_file}"),
-        not_yours: format!("/den/commissions/{untitled}/attachments/{foreign_file}"),
-        home: format!("/den/commissions/{old_sketch}/attachments/{foreign_file}"),
-    };
-    let slot_pair = MissPair {
-        label: "a slot",
-        absent: format!("/den/commissions/{untitled}/slots/{absent_slot}"),
-        not_yours: format!("/den/commissions/{untitled}/slots/{foreign_slot}"),
-        home: format!("/den/commissions/{old_sketch}/slots/{foreign_slot}"),
-    };
-    let workflow_pair = MissPair {
-        label: "a Workflow",
-        absent: format!("/den/accounts/{night_shift}/workflows/{absent_workflow}"),
-        not_yours: format!("/den/accounts/{night_shift}/workflows/{foreign_workflow}"),
-        home: format!("/den/accounts/{supreme_arts}/workflows/{foreign_workflow}"),
-    };
-    [file_pair, slot_pair, workflow_pair]
-}
 
 /// Asserts alice opens `pair`'s real node at its home, so the pair never compares two
 /// absent nodes.
@@ -329,7 +263,7 @@ async fn a_stranger_gets_the_one_404_for_an_absent_commission_and_one_not_theirs
     let world = pg_app::den_world(api::app).await;
     let expected = the_one_404(&world).await;
 
-    for (target, visibility) in stranger_targets(&world) {
+    for (target, visibility) in den_stranger_targets(&world) {
         world.set_visibility(target.id, visibility.clone()).await;
         let commission_path = format!("/den/commissions/{}", target.id);
         let commission = ok_json(get(&world.alice, world.base_url(), &commission_path).await).await;
@@ -338,7 +272,7 @@ async fn a_stranger_gets_the_one_404_for_an_absent_commission_and_one_not_theirs
             visibility.to_string(),
             "the pairs run at the level just set"
         );
-        for pair in stranger_pairs(&target) {
+        for pair in den_stranger_pairs(&target) {
             assert_alice_opens_its_home(&world, &pair).await;
 
             assert_pair_is_the_one_404(&world.stranger, &world, &pair, &expected).await;
@@ -366,7 +300,7 @@ async fn a_participant_gets_the_one_404_for_an_absent_key_and_another_commission
         let opened = get(&world.bob, world.base_url(), &path).await;
         assert_eq!(opened.status(), 200, "{path}");
     }
-    for pair in participant_pairs(&world) {
+    for pair in den_participant_pairs(&world) {
         assert_alice_opens_its_home(&world, &pair).await;
 
         assert_pair_is_the_one_404(&world.bob, &world, &pair, &expected).await;
@@ -387,9 +321,9 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_never_read_the_row_by_key()
     })
     .await;
 
-    for (target, visibility) in stranger_targets(&world) {
+    for (target, visibility) in den_stranger_targets(&world) {
         world.set_visibility(target.id, visibility.clone()).await;
-        for pair in stranger_pairs(&target) {
+        for pair in den_stranger_pairs(&target) {
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &pair).await;
 
             let label = format!("{visibility}, {}", pair.label);
@@ -402,7 +336,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_never_read_the_row_by_key()
             );
         }
     }
-    for pair in participant_pairs(&world) {
+    for pair in den_participant_pairs(&world) {
         let reads = reads_of_each_cause(&log, &world.bob, &world, &pair).await;
 
         let label = pair.label;
@@ -455,10 +389,10 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
 
     world.store_unparsable_visibility(world.old_sketch.id).await;
 
-    for pair in stranger_pairs(&world.old_sketch) {
+    for pair in den_stranger_pairs(&world.old_sketch) {
         assert_pair_is_the_one_404(&world.stranger, &world, &pair, &expected).await;
     }
-    for pair in participant_pairs(&world) {
+    for pair in den_participant_pairs(&world) {
         assert_pair_is_the_one_404(&world.bob, &world, &pair, &expected).await;
     }
 }

@@ -5,12 +5,11 @@
 
 use std::sync::Arc;
 
-use domain::elements::commission::Visibility;
 use test_support::{
     den::{Answer, get},
     pg_app::{
-        self, DenWorld, MissPair, commission_read_stranger_pairs, download_participant_pair,
-        public_live_download_pair, stranger_targets,
+        self, COMMISSION_NOT_FOUND, DenWorld, FILE_NOT_FOUND, MissPair, commission_read_live_pairs,
+        commission_read_stranger_pairs, download_participant_pair, stranger_targets,
     },
     recording::{
         CallLog, NEVER_FOR_A_MISSING_FILE, NEVER_FOR_A_STRANGER, RecordingChangelogStore,
@@ -40,7 +39,7 @@ fn assert_not_found_with(answer: &Answer, code: &str, label: &str) {
 }
 
 /// The problem code both of a stranger's causes answer with, on either read.
-const STRANGER_CODE: &str = "commission_not_found";
+const STRANGER_CODE: &str = COMMISSION_NOT_FOUND;
 
 #[tokio::test]
 async fn a_stranger_s_absent_commission_and_one_not_theirs_answer_alike_through_both_reads() {
@@ -74,7 +73,7 @@ async fn bob_s_absent_key_and_another_commission_s_answer_alike_through_the_down
 
     let [absent, not_yours] = answers_of(&world.bob, &world, &pair).await;
 
-    assert_not_found_with(&absent, "file_not_found", pair.label);
+    assert_not_found_with(&absent, FILE_NOT_FOUND, pair.label);
     assert_eq!(not_yours, absent);
 }
 
@@ -88,26 +87,11 @@ async fn bob_reads_untitled_s_changelog() {
     assert_eq!(read.status(), 200);
 }
 
-/// The live levels a stranger can reach a commission's node at, or a card of it, and each
-/// read's pair there with the problem code both of its causes answer: the changelog's
-/// `changelog` stays closed at both; the download opens the node at Public, so its pair is an
-/// absent key against the real one under it, and refuses it at Listed.
-fn live_pairs(world: &DenWorld) -> [(Visibility, MissPair, &'static str); 4] {
-    let [changelog, download] = commission_read_stranger_pairs(&world.untitled);
-    let public_download = public_live_download_pair(&world.untitled);
-    [
-        (Visibility::Public, changelog.clone(), STRANGER_CODE),
-        (Visibility::Public, public_download, "file_not_found"),
-        (Visibility::Listed, changelog, STRANGER_CODE),
-        (Visibility::Listed, download, STRANGER_CODE),
-    ]
-}
-
 #[tokio::test]
 async fn on_a_live_public_or_listed_commission_a_stranger_s_causes_answer_alike() {
     let world = pg_app::den_world(api::app).await;
 
-    for (visibility, pair, code) in live_pairs(&world) {
+    for (visibility, pair, code) in commission_read_live_pairs(&world) {
         world
             .set_visibility(world.untitled.id, visibility.clone())
             .await;
@@ -134,7 +118,7 @@ async fn with_old_sketch_s_visibility_unreadable_a_stranger_s_causes_still_answe
     }
     let pair = download_participant_pair(&world);
     let [absent, not_yours] = answers_of(&world.bob, &world, &pair).await;
-    assert_not_found_with(&absent, "file_not_found", pair.label);
+    assert_not_found_with(&absent, FILE_NOT_FOUND, pair.label);
     assert_eq!(not_yours, absent, "{}", pair.label);
 }
 
@@ -244,7 +228,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
             assert_reads_none_of(&reads.absent, &NEVER_FOR_A_STRANGER, &label);
         }
     }
-    for (visibility, pair, code) in live_pairs(&world) {
+    for (visibility, pair, code) in commission_read_live_pairs(&world) {
         world
             .set_visibility(world.untitled.id, visibility.clone())
             .await;

@@ -12,7 +12,7 @@ use domain::elements::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{PgServed, serve};
+use super::{PgServed, StatementLog, serve, serve_recording};
 
 mod identity;
 
@@ -35,6 +35,17 @@ const ABSENT_FILE: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0
 const ABSENT_SLOT: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a03);
 /// A Workflow id no seed writes.
 const ABSENT_WORKFLOW: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a04);
+
+/// The profile cache's state a read starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::VariantArray)]
+pub enum ProfileCacheState {
+    /// Every signed-in user's profile cached afresh: each root is named from the cache.
+    #[strum(serialize = "warm cache")]
+    Warm,
+    /// The cache empty: each root's name is looked up, and the lookup fills the cache.
+    #[strum(serialize = "cold cache")]
+    Cold,
+}
 
 /// A commission the world seeds: its id, the one file uploaded to it and its one slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,12 +88,27 @@ pub struct DenWorld {
 /// Serves `app` on a fresh PostgreSQL database and seeds the [`DenWorld`] through the app's
 /// routes and use cases. Two writes no route makes yet are test-only: bob's participation in
 /// "Untitled", and any visibility other than Private ([`DenWorld::set_visibility`]).
+pub async fn den_world(app: impl FnOnce(Runtime) -> Router) -> DenWorld {
+    let served = serve(app).await;
+    seed(served).await
+}
+
+/// As [`den_world`], with every statement the app executes on PostgreSQL logged into
+/// `statements`, the seeding's included.
+pub async fn den_world_recording(
+    app: impl FnOnce(Runtime) -> Router,
+    statements: &StatementLog,
+) -> DenWorld {
+    let served = serve_recording(app, statements).await;
+    seed(served).await
+}
+
+/// Seeds the [`DenWorld`] on `served`.
 #[expect(
     clippy::let_and_return,
     reason = "the style rulebook names a multi-line construction before returning it"
 )]
-pub async fn den_world(app: impl FnOnce(Runtime) -> Router) -> DenWorld {
-    let served = serve(app).await;
+async fn seed(served: PgServed) -> DenWorld {
     let alice = sign_in(&served, alice_profile()).await;
     let bob = sign_in(&served, bob_profile()).await;
     let stranger = sign_in(&served, stranger_profile()).await;
@@ -168,6 +194,57 @@ impl DenWorld {
             .await
             .expect("update the commission's lifecycle");
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Makes bob a Participant of the archived "Old sketch" too, a test-only insert as for
+    /// "Untitled". Opt-in: the world's other pairs use "Old sketch" as a commission bob isn't in.
+    pub async fn add_bob_to_old_sketch(&self) {
+        let bob_did = adapter_mem::fixture::bob().to_string();
+        adapter_pg::queries::commission::add_participant(
+            &self.served.runtime.pool,
+            Uuid::from(self.old_sketch.id),
+            &bob_did,
+            Utc::now(),
+        )
+        .await
+        .expect("bob joins Old sketch as a Participant");
+    }
+
+    /// `"archived"` for "Old sketch", `"live"` for any other seeded commission, for labels.
+    pub fn archived_or_live(&self, commission: &SeededCommission) -> &'static str {
+        if *commission == self.old_sketch {
+            "archived"
+        } else {
+            "live"
+        }
+    }
+
+    /// Puts the profile cache in `state` for alice, bob and the stranger alike.
+    pub async fn set_profile_cache(&self, state: ProfileCacheState) {
+        match state {
+            ProfileCacheState::Warm => self.warm_profile_cache().await,
+            ProfileCacheState::Cold => self.empty_profile_cache().await,
+        }
+    }
+
+    /// Caches alice's, bob's and the stranger's profiles afresh, as their PDS answers them.
+    async fn warm_profile_cache(&self) {
+        let runtime = &self.served.runtime;
+        for profile in [alice_profile(), bob_profile(), stranger_profile()] {
+            runtime
+                .profile_cache
+                .put(&profile)
+                .await
+                .expect("the profile is cached");
+        }
+    }
+
+    /// Empties the profile cache.
+    async fn empty_profile_cache(&self) {
+        sqlx::query("DELETE FROM profile_cache")
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("empty the profile cache");
     }
 
     /// Writes `token` as `commission`'s visibility.
