@@ -74,9 +74,12 @@ async fn profile_app(config: Config) -> anyhow::Result<axum::Router> {
     Ok(app)
 }
 
-/// The dev profile: the in-memory fixture world, which refuses to start
-/// outside `ZURFUR_ENV=dev`.
+/// The dev profile: the in-memory fixture world. Refuses to start unless
+/// `ZURFUR_ENV` is set (by the environment or `.env`) and names dev, whatever
+/// the config would default to.
 #[cfg(feature = "dev-profile")]
 async fn profile_app(config: Config) -> anyhow::Result<axum::Router> {
+    let zurfur_env = std::env::var_os(composition::PROFILE_ENV);
+    api::dev_profile::ensure_dev_variable(zurfur_env.as_deref())?;
     api::dev_profile::app(config).await
 }

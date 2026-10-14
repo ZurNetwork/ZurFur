@@ -100,8 +100,9 @@ jobs:
       # not a re-resolve of its tag); a stale lockfile fails loudly here.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The dev profile sits behind a feature no default build turns on, so it
-      # is linted on its own; the test job runs its guard tests.
-      - run: cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
+      # is linted on its own (in its own target dir, as `just gate` does); the
+      # test job runs its guard tests. scripts/dev-profile-pins.test.sh pins both.
+      - run: CARGO_TARGET_DIR=target/dev-profile cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
 
   test:
     name: test
@@ -118,7 +119,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
       # The dev profile's locks and sessions, built with its feature.
-      - run: cargo test -p api --locked --features dev-profile --test dev_profile
+      - run: CARGO_TARGET_DIR=target/dev-profile cargo test -p api --locked --features dev-profile --lib --test dev_profile
 
   contract:
     name: contract

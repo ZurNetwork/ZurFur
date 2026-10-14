@@ -99,3 +99,50 @@ async fn a_binding_completes_one_sign_in_only() {
 
     assert!(second.is_err(), "a used binding signs no one in again");
 }
+
+/// A sign-in whose bindings expire at once.
+fn expiring_sign_in() -> FixedSignIn {
+    FixedSignIn {
+        lifetime: Duration::ZERO,
+        ..sign_in()
+    }
+}
+
+#[tokio::test]
+async fn an_expired_binding_is_refused() {
+    let fixed = expiring_sign_in();
+    let started = fixed.start(&handle("alice.test")).await.unwrap();
+
+    let completed = fixed
+        .complete(
+            CALLBACK_CODE.to_string(),
+            None,
+            None,
+            Some(started.browser_binding),
+        )
+        .await;
+
+    assert!(completed.is_err(), "an expired binding signs no one in");
+}
+
+#[tokio::test]
+async fn a_start_prunes_the_bindings_that_expired_unused() {
+    let fixed = expiring_sign_in();
+    fixed.start(&handle("alice.test")).await.unwrap();
+    fixed.start(&handle("alice.test")).await.unwrap();
+
+    let kept = fixed.issued.lock().unwrap().len();
+
+    assert_eq!(kept, 1, "only the binding just issued is kept");
+}
+
+#[tokio::test]
+async fn a_live_binding_survives_another_start() {
+    let fixed = sign_in();
+    fixed.start(&handle("alice.test")).await.unwrap();
+    fixed.start(&handle("alice.test")).await.unwrap();
+
+    let kept = fixed.issued.lock().unwrap().len();
+
+    assert_eq!(kept, 2, "unexpired bindings stay");
+}

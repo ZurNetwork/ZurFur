@@ -2,6 +2,7 @@
 //! fixture world, its sessions in memory, and every sign-in alice. Compiled
 //! only with the `dev-profile` feature; it refuses every environment but `DEV`.
 
+use std::ffi::OsStr;
 use std::sync::Arc;
 
 use adapter_mem::fixture::{alice, bob, seed_commission, seed_identity, supreme_arts};
@@ -14,19 +15,46 @@ use crate::{AppState, Config, Environment};
 /// The pool's URL: `.invalid` never resolves, so nothing here reaches a database.
 const UNREACHABLE_DATABASE_URL: &str = "postgres://dev-profile.invalid/none";
 
-/// Why the dev profile would not start: the environment is not `DEV`.
+/// Why the dev profile would not start: it signs everyone in as a fixture
+/// user, so it starts only with `ZURFUR_ENV` set to dev.
 #[derive(Debug, thiserror::Error)]
-#[error(
-    "refusing to start the dev profile in {0:?}: it signs everyone in as a fixture user, \
-     so it starts only with ZURFUR_ENV=dev"
-)]
-pub struct OutsideDev(Environment);
+pub enum OutsideDev {
+    /// `ZURFUR_ENV` is not set at all.
+    #[error(
+        "refusing to start the dev profile with ZURFUR_ENV unset: it signs everyone in as a \
+         fixture user, so it starts only with ZURFUR_ENV=dev"
+    )]
+    Unset,
+    /// `ZURFUR_ENV` names another environment.
+    #[error(
+        "refusing to start the dev profile with ZURFUR_ENV={0:?}: it signs everyone in as a \
+         fixture user, so it starts only with ZURFUR_ENV=dev"
+    )]
+    Named(String),
+    /// The resolved configuration is not `DEV`.
+    #[error(
+        "refusing to start the dev profile in {0:?}: it signs everyone in as a fixture user, \
+         so it starts only with ZURFUR_ENV=dev"
+    )]
+    Resolved(Environment),
+}
+
+/// `Ok` only when `zurfur_env`, the raw `ZURFUR_ENV`, is set and names dev
+/// (`dev` or `DEV`, the spellings the config accepts).
+pub fn ensure_dev_variable(zurfur_env: Option<&OsStr>) -> Result<(), OutsideDev> {
+    let zurfur_env = zurfur_env.ok_or(OutsideDev::Unset)?;
+    if zurfur_env == "dev" || zurfur_env == "DEV" {
+        Ok(())
+    } else {
+        Err(OutsideDev::Named(zurfur_env.to_string_lossy().into_owned()))
+    }
+}
 
 /// The dev profile's app, its in-memory session layer included. Refuses with
 /// [`OutsideDev`] before anything else unless `config.env` is `DEV`.
 pub async fn app(config: Config) -> anyhow::Result<Router> {
     ensure_dev(&config.env)?;
-    tracing::info!(
+    tracing::warn!(
         "dev profile: the in-memory fixture world, where every sign-in is a fixture user"
     );
 
@@ -42,7 +70,7 @@ fn ensure_dev(env: &Environment) -> Result<(), OutsideDev> {
     if matches!(env, Environment::DEV) {
         Ok(())
     } else {
-        Err(OutsideDev(env.clone()))
+        Err(OutsideDev::Resolved(env.clone()))
     }
 }
 

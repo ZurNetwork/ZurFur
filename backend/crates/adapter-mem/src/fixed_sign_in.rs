@@ -1,9 +1,9 @@
 //! The fixed sign-in: an [`Authenticator`] that signs every browser in as one
 //! DID, through the same browser-binding handshake the real one keeps.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use domain::elements::did::Did;
@@ -18,14 +18,18 @@ const SIGN_IN_LIFETIME: Duration = Duration::from_secs(600);
 
 /// An [`Authenticator`] whose every completed sign-in is one fixed DID,
 /// whatever handle was typed. `start` sends the browser straight back to the
-/// callback with a fresh browser binding; `complete` takes each binding once.
+/// callback with a fresh browser binding; `complete` takes each binding once,
+/// within its lifetime.
 pub struct FixedSignIn {
     /// The DID every completed sign-in answers.
     did: Did,
     /// The absolute sign-in callback URL `start` redirects to.
     callback: String,
-    /// Bindings `start` handed out that no `complete` has taken yet.
-    issued: Mutex<HashSet<String>>,
+    /// How long a binding stays valid after `start` issues it.
+    lifetime: Duration,
+    /// Bindings `start` handed out that no `complete` has taken yet, each with
+    /// when it was issued.
+    issued: Mutex<HashMap<String, Instant>>,
 }
 
 impl FixedSignIn {
@@ -35,8 +39,14 @@ impl FixedSignIn {
         Self {
             did,
             callback: callback.into(),
-            issued: Mutex::new(HashSet::new()),
+            lifetime: SIGN_IN_LIFETIME,
+            issued: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether a binding issued at `issued_at` is still valid at `now`.
+    fn is_live(&self, issued_at: Instant, now: Instant) -> bool {
+        now.duration_since(issued_at) < self.lifetime
     }
 }
 
@@ -44,14 +54,20 @@ impl FixedSignIn {
 impl Authenticator for FixedSignIn {
     async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         let binding = uuid::Uuid::now_v7().to_string();
-        self.issued
-            .lock()
-            .expect("FixedSignIn issued mutex poisoned")
-            .insert(binding.clone());
+        let now = Instant::now();
+        {
+            let mut issued = self
+                .issued
+                .lock()
+                .expect("FixedSignIn issued mutex poisoned");
+            // Every start prunes the bindings that expired unused.
+            issued.retain(|_, issued_at| self.is_live(*issued_at, now));
+            issued.insert(binding.clone(), now);
+        }
         let started = SigninStarted {
             authorization_url: format!("{}?code={CALLBACK_CODE}", self.callback),
             browser_binding: BrowserBinding::from(binding),
-            lifetime: SIGN_IN_LIFETIME,
+            lifetime: self.lifetime,
         };
         Ok(started)
     }
@@ -65,13 +81,16 @@ impl Authenticator for FixedSignIn {
     ) -> anyhow::Result<Did> {
         let binding = browser_binding
             .ok_or_else(|| anyhow::anyhow!("the browser presented no sign-in binding"))?;
-        let was_issued = self
+        let issued_at = self
             .issued
             .lock()
             .expect("FixedSignIn issued mutex poisoned")
-            .remove(binding.as_ref());
-        if !was_issued {
-            anyhow::bail!("the browser's sign-in binding was not issued, or was already used");
+            .remove(binding.as_ref())
+            .ok_or_else(|| {
+                anyhow::anyhow!("the browser's sign-in binding was not issued, or was already used")
+            })?;
+        if !self.is_live(issued_at, Instant::now()) {
+            anyhow::bail!("the browser's sign-in binding has expired");
         }
         Ok(self.did.clone())
     }

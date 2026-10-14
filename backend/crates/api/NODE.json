@@ -14,7 +14,7 @@
     "A namespace boundary is a policy boundary: cookie-surface routers sit under the first-party-Origin CSRF layer; `/health` and a future bearer `/plugin/v1` mount outside it by construction.",
     "Session→identity resolution is one axum extractor, `extract::CallingUser`, never a per-module helper.",
     "Parity tests (`create_account_parity.rs`, `delete_account_parity.rs`, `whoami_parity.rs`) pin this driver's projections identical to the CLI's until the contract moves to a leaf crate.",
-    "The `dev-profile` Cargo feature alone chooses the dev profile (never config or `.env`); `dev_profile::app` refuses every environment but `DEV` before anything starts. `just gate`, gate-light and CI lint and test the feature, since no default build compiles it."
+    "The `dev-profile` Cargo feature alone chooses the dev profile (never config or `.env`). Two locks: `main` refuses unless `ZURFUR_ENV` is set and names dev, and `dev_profile::app` refuses a resolved environment other than `DEV`, both before anything starts. `just gate`, gate-light and CI lint and test the feature in `target/dev-profile` (so `target/debug/api` is never the profile), pinned by `scripts/dev-profile-pins.test.sh`."
   ],
   "entry_points": [
     "src/main.rs",

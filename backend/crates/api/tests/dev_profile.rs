@@ -129,19 +129,29 @@ fn no_default_build_enables_the_dev_profile() {
         "api's default features never include {FEATURE}: {default_closure:?}"
     );
 
-    let forwarded = [format!("api/{FEATURE}"), format!("api?/{FEATURE}")];
     for package in packages {
         let name = &package["name"];
         let dependencies = package["dependencies"]
             .as_array()
             .expect("a dependency list");
-        for dependency in dependencies.iter().filter(|d| d["name"] == "api") {
+        // `name` is the package depended on; `rename` is the key it goes by
+        // in this manifest, which is what a forwarding feature spells.
+        let on_api: Vec<&serde_json::Value> = dependencies
+            .iter()
+            .filter(|dependency| dependency["name"] == "api")
+            .collect();
+        for dependency in &on_api {
             let requested = dependency["features"].as_array().expect("a feature list");
             assert!(
                 !requested.iter().any(|feature| feature == FEATURE),
                 "{name} depends on api with {FEATURE}"
             );
         }
+        let forwarded: Vec<String> = on_api
+            .iter()
+            .map(|dependency| dependency["rename"].as_str().unwrap_or("api"))
+            .flat_map(|key| [format!("{key}/{FEATURE}"), format!("{key}?/{FEATURE}")])
+            .collect();
         let features = package["features"].as_object().expect("a feature table");
         for (feature, enables) in features {
             let enables = enables.as_array().expect("a feature's list");
@@ -180,7 +190,6 @@ mod with_the_feature {
     use super::*;
 
     use api::{Config, Environment};
-    use domain::elements::did::Did;
     use domain::elements::profile::Profile;
     use reqwest::StatusCode;
     use reqwest::header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE};
@@ -284,14 +293,15 @@ mod with_the_feature {
         (browser, cookie)
     }
 
-    /// Signs carol in to the PostgreSQL stack through its ordinary routes;
-    /// the session cookie she was given.
-    async fn sign_in_to_postgres_stack(pg: &PgServed) -> String {
-        let carol_did = Did::from("did:plc:carolpgstackaaaaaaaaaaaa".to_string());
-        let carol = Profile::new(carol_did, "carol.test");
-        pg.pds.register(carol);
+    /// Signs alice in to the PostgreSQL stack through its ordinary routes,
+    /// under the fixture DID and handle the dev profile signs in; the session
+    /// cookie she was given. Alice then exists on both stacks, so only the
+    /// stores' separation can refuse a cookie from the other one.
+    async fn sign_alice_in_to_postgres_stack(pg: &PgServed) -> String {
+        let alice = Profile::new(adapter_mem::fixture::alice().did().clone(), "alice.test");
+        pg.pds.register(alice);
         let browser = client();
-        let authorization_url = start_sign_in(&browser, &pg.base_url, "carol.test").await;
+        let authorization_url = start_sign_in(&browser, &pg.base_url, "alice.test").await;
 
         let callback = browser
             .get(format!("{}{authorization_url}", pg.base_url))
@@ -384,7 +394,7 @@ mod with_the_feature {
     async fn a_postgres_stack_session_is_no_dev_profile_session() {
         let pg = pg_app::serve(api::app).await;
         let dev_profile = serve_dev_profile().await;
-        let postgres_cookie = sign_in_to_postgres_stack(&pg).await;
+        let postgres_cookie = sign_alice_in_to_postgres_stack(&pg).await;
 
         assert_eq!(
             me_status(&pg.base_url, &postgres_cookie).await,
@@ -402,6 +412,7 @@ mod with_the_feature {
     async fn a_dev_profile_session_is_no_postgres_stack_session() {
         let pg = pg_app::serve(api::app).await;
         let dev_profile = serve_dev_profile().await;
+        sign_alice_in_to_postgres_stack(&pg).await;
         let (_browser, dev_cookie) = sign_in_to_dev_profile(&dev_profile).await;
 
         assert_eq!(
@@ -418,23 +429,38 @@ mod with_the_feature {
 
     #[tokio::test]
     async fn the_binary_refuses_to_start_outside_dev() {
-        for env in ["stg", "prod"] {
-            let exited = run_to_exit(&[("ZURFUR_ENV", env)]).await;
+        let cases: [(&[(&str, &str)], &str); 3] = [
+            (&[], "ZURFUR_ENV unset"),
+            (&[("ZURFUR_ENV", "stg")], "ZURFUR_ENV=\"stg\""),
+            (&[("ZURFUR_ENV", "prod")], "ZURFUR_ENV=\"prod\""),
+        ];
+        for (vars, why) in cases {
+            let exited = run_to_exit(vars).await;
 
-            assert!(!exited.success, "{env}: the binary refuses to start");
+            assert!(!exited.success, "{why}: the binary refuses to start");
             assert!(
                 exited.stderr.contains("refusing to start the dev profile"),
-                "{env}: the refusal is the environment lock: {}",
+                "{why}: the refusal is the environment lock: {}",
+                exited.stderr
+            );
+            assert!(
+                exited.stderr.contains(why),
+                "{why}: the refusal says which: {}",
                 exited.stderr
             );
             assert!(
                 exited.stderr.contains("fixture user"),
-                "{env}: the refusal names its reason: {}",
+                "{why}: the refusal names its reason: {}",
                 exited.stderr
             );
+            let everything = format!("{}{}", exited.stdout, exited.stderr);
             assert!(
-                !exited.stdout.contains("starting HTTP server"),
-                "{env}: nothing was served"
+                !everything.contains("dev profile:"),
+                "{why}: refused before the profile started: {everything}"
+            );
+            assert!(
+                !everything.contains("starting HTTP server"),
+                "{why}: nothing was served"
             );
         }
     }
@@ -505,16 +531,19 @@ mod with_the_feature {
 
         assert!(
             log.lines()
-                .any(|line| line.contains("INFO") && line.contains("dev profile")),
+                .any(|line| line.contains("WARN") && line.contains("dev profile:")),
             "the start says it is the dev profile: {log}"
         );
-        let alice = adapter_mem::fixture::alice();
-        let bob = adapter_mem::fixture::bob();
         let people = [
-            alice.did().to_string(),
-            bob.did().to_string(),
+            adapter_mem::fixture::alice().did().to_string(),
+            adapter_mem::fixture::bob().did().to_string(),
+            adapter_mem::fixture::supreme_arts().did().to_string(),
+            adapter_mem::fixture::abco().did().to_string(),
+            adapter_mem::fixture::ember().did().to_string(),
+            adapter_mem::fixture::kael_sona().did().to_string(),
             "alice.test".to_string(),
             "bob.test".to_string(),
+            "supreme-arts.zurfur.app".to_string(),
         ];
         for person in people {
             assert!(!log.contains(&person), "the log names {person}: {log}");

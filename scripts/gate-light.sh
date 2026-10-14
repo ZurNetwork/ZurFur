@@ -113,8 +113,9 @@ step() {
 
 step cargo fmt --all --check
 step cargo clippy --workspace --all-targets --locked -- -D warnings
-# The dev profile is behind a feature no default build turns on; lint it too.
-step cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
+# The dev profile is behind a feature no default build turns on; lint it too,
+# in its own target dir so target/debug/api is never the profile.
+CARGO_TARGET_DIR=target/dev-profile step cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
 step typos
 step just design-index-check
 
@@ -132,7 +133,7 @@ fi
 
 # api builds on every crate, so any crate change can break the dev profile.
 if [ "$whole_workspace" = 1 ] || [ "${#crates[@]}" -gt 0 ]; then
-    INSTA_UPDATE=no step cargo test -p api --locked --features dev-profile --test dev_profile
+    CARGO_TARGET_DIR=target/dev-profile INSTA_UPDATE=no step cargo test -p api --locked --features dev-profile --lib --test dev_profile
 fi
 
 if [ "$web" = 1 ]; then
