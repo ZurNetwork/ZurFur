@@ -145,15 +145,9 @@ const FORMAT_CHARACTERS: &[(u32, u32)] = &[
 ];
 
 /// A name safe to show: text with nothing in it that hides, fakes or reorders what a reader
-/// sees, and that may hold a `/`.
-///
-/// Parsed by hand because the parse is the rule. Blank characters are stripped from both ends
-/// (a joiner or selector right after the last character stays), with any combining mark that
-/// leads, and fillers and zero-width spaces from inside; the stripped form is what the name holds.
-/// The input is at most [`MAX_NAME_BYTES`] bytes with no line or paragraph separator, no
-/// noncharacter and no object replacement character, and the stripped form is not empty and
-/// holds no control character, no unassigned default-ignorable, and no format character but the
-/// two joiners, a subdivision flag's tags and a vowel separator inside a Mongolian word.
+/// sees, and that may hold a `/`. Parsed by hand because the parse is the rule: refused when too
+/// long or holding a separator or noncharacter, then stripped of blank and invisible characters,
+/// and refused when nothing is left or it holds a control or unkept format character.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, derive_more::AsRef,
 )]
@@ -184,10 +178,8 @@ pub enum ShowableNameError {
 }
 
 /// A node's display name, taken from what the node holds and never its key: a
-/// [`ShowableName`] with no `/`.
-///
-/// Parsed by hand because the `/` clause is a rule of its own, checked after the length rule
-/// and before every other.
+/// [`ShowableName`] with no `/`, parsed by hand because the `/` clause is checked after the
+/// length rule and before every other.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, derive_more::AsRef,
 )]

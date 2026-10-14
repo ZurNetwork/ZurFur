@@ -1,3 +1,6 @@
+//! Den's access check for the reads that bypass the Den: may this viewer open the node a
+//! read serves? Answered by Atta's own resolve, as "opens" or the one not-found.
+
 use atta::{Caps, RealPath, Segment, View};
 use domain::elements::{
     account::AccountId,

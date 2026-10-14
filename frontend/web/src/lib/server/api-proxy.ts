@@ -71,12 +71,10 @@ function sessionCookieValues(incomingCookie: string | undefined): readonly strin
 }
 
 /**
- * The `zurfur.sid` pair to forward from a raw `cookie` header: the one pair,
- * or `undefined` when there is none or more than one. Two pairs mean another
- * path or a sibling host planted one beside the visitor's, and which is theirs
- * can't be told, so the request is treated as signed out. Never the whole
- * header: cookies are host-scoped by hostname and NOT by port, so on
- * `127.0.0.1` every other local dev tool's cookies share the jar.
+ * The `zurfur.sid` pair to forward from a raw `cookie` header: the one pair, or
+ * `undefined` when there is none or more than one, since a planted second pair
+ * can't be told from the visitor's. Never the whole header: cookies are scoped
+ * by hostname, not port, so every other local dev tool's cookies share the jar.
  */
 export function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
 	const [value, ...others] = sessionCookieValues(incomingCookie);

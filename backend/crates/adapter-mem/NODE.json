@@ -159,6 +159,7 @@
     "Element addressing: every element write goes through `require_address` → `require_tab`, in that order, so an address wrong in both ways refuses as `UnknownTab`, not `UnknownSurface` — a parity test pins the order. Lock order is always `tabs` before `elements`.",
     "Placement lives only in `workflow.rs`: a card on a column IS a commission's placement, and the commission side never learns of it (DD 29130754).",
     "Rows that are never removed anywhere: `actor_identities`; changelog entries, `participants` and `markups` go only with their commission's delete.",
-    "See also: memory `project_transaction_unit_of_work`."
+    "See also: memory `project_transaction_unit_of_work`.",
+    "The commission fixture (`src/fixture/commission.rs`) fixes every id the Den reads and takes each row's time from its UUIDv7 id, so seeding twice gives the same listings, files, Slots, changelog and Workflows. The skeleton tab ids are the exception: the write port mints them, they differ per seed, and the Den never shows them."
   ]
 }

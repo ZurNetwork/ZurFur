@@ -1,3 +1,6 @@
+//! Zurfur's one host for Atta: an exhaustive match over the Den's places, each arm delegating
+//! to the module that owns the place's type.
+
 use std::{
     collections::HashMap,
     str::FromStr,
