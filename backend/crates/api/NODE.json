@@ -141,7 +141,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "tests/not_found_statements.rs and tests/not_found_timing.rs: D21's one not-found as equal statements per pair of causes on PostgreSQL, and the clock times its equal-timing row defers to the security review"
+      "governs": "tests/not_found_statements.rs and tests/not_found_timing.rs: D21's one not-found as equal statements per pair of causes on PostgreSQL, and the clock times its equal-timing row defers to the security review; tests/den_postgres.rs and tests/commission_reads_postgres.rs: a title or file name stored before the name rule lists, opens and downloads as Unnamed for a Participant, the changelog keeps its record verbatim, and a stranger still gets the one not-found (D6, D19, D21)"
     }
   ],
   "notes": [

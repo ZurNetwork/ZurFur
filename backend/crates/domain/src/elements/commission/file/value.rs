@@ -1,11 +1,11 @@
 use super::FileNameError;
 use crate::elements::text::StoredText;
 
-/// A file entry's filename — the save-name hint served back in the download's
-/// `Content-Disposition` header. Enforced here: trimmed, non-empty, at most
-/// [`MAX_BYTES`](Self::MAX_BYTES) bytes, no control characters (they would be
-/// header injection), no `/` or `\`, no leading `.` (a dotfile is configuration).
-/// Non-ASCII is allowed, stored verbatim.
+/// A file entry's filename — the save-name hint behind the download's
+/// `Content-Disposition` header, which serves it as the Den names it. Enforced
+/// here: trimmed, non-empty, at most [`MAX_BYTES`](Self::MAX_BYTES) bytes, no
+/// control characters (they would be header injection), no `/` or `\`, no
+/// leading `.` (a dotfile is configuration). Non-ASCII is allowed, stored verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileName(String);
 

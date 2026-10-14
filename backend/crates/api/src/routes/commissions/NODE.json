@@ -164,6 +164,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "markup.rs (POST …/files/{file_id}/markup) and notes.rs are replaced by the comment routes: place a pin, comment, reply, edit, delete, read a thread (cursor), read the pins of a file entry; every create returns the id"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "files.rs: the download names its Content-Disposition with the file's Den name, as the use case hands it over (D6, D19)"
     }
   ],
   "notes": [

@@ -134,7 +134,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair"
+      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair; store_legacy_title and store_legacy_filename store names from before the name rule, which read as Unnamed (D19) and stay the one not-found for a stranger (D21)"
     }
   ],
   "notes": [

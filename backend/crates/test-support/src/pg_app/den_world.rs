@@ -27,6 +27,13 @@ const UNPARSABLE_VISIBILITY: &str = "not-a-visibility";
 /// The lifecycle token no parser reads, for the row only the whole-commission read parses.
 const UNPARSABLE_LIFECYCLE: &str = "not-a-lifecycle";
 
+/// A name stored before today's name rule, which the rule now refuses: its right-to-left
+/// override shows it as `photoexe.jpg`.
+pub const LEGACY_NAME: &str = "photo\u{202E}gpj.exe";
+
+/// The name the Den shows, and the download serves, for a stored name the rule refuses.
+pub const UNNAMED: &str = "Unnamed";
+
 /// A commission id no seed writes: a UUIDv7 from 2025, before any row's.
 const ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a01);
 /// A file key no seed writes.
@@ -194,6 +201,62 @@ impl DenWorld {
             .await
             .expect("update the commission's lifecycle");
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Stores [`LEGACY_NAME`] as `commission`'s title, as a commission named before today's
+    /// rule holds it: on its row and in its created entry's payload. Test-only updates in one
+    /// transaction, which alone switches the changelog's append-only trigger off.
+    pub async fn store_legacy_title(&self, commission: CommissionId) {
+        let mut tx = self
+            .served
+            .runtime
+            .pool
+            .begin()
+            .await
+            .expect("begin a transaction");
+        let titled = sqlx::query("UPDATE commission SET title = $1 WHERE id = $2")
+            .bind(LEGACY_NAME)
+            .bind(Uuid::from(commission))
+            .execute(&mut *tx)
+            .await
+            .expect("update the commission's title");
+        sqlx::query(
+            "ALTER TABLE commission_changelog DISABLE TRIGGER commission_changelog_append_only",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("switch the append-only trigger off");
+        let recorded = sqlx::query(
+            "UPDATE commission_changelog \
+             SET payload = jsonb_set(payload, '{title}', to_jsonb($1::text)) \
+             WHERE commission_id = $2 AND kind = 'created'",
+        )
+        .bind(LEGACY_NAME)
+        .bind(Uuid::from(commission))
+        .execute(&mut *tx)
+        .await
+        .expect("update the created entry's payload");
+        sqlx::query(
+            "ALTER TABLE commission_changelog ENABLE TRIGGER commission_changelog_append_only",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("switch the append-only trigger back on");
+        tx.commit().await.expect("commit the legacy title");
+        assert_eq!(titled.rows_affected(), 1, "one commission row is updated");
+        assert_eq!(recorded.rows_affected(), 1, "one created entry is updated");
+    }
+
+    /// Stores [`LEGACY_NAME`] as `file`'s name, as a file uploaded before today's rule holds
+    /// it. A test-only update.
+    pub async fn store_legacy_filename(&self, file: FileKey) {
+        let renamed = sqlx::query("UPDATE file_blob SET filename = $1 WHERE key = $2")
+            .bind(LEGACY_NAME)
+            .bind(Uuid::from(file))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("update the file's name");
+        assert_eq!(renamed.rows_affected(), 1, "one blob is renamed");
     }
 
     /// Makes bob a Participant of the archived "Old sketch" too, a test-only insert as for

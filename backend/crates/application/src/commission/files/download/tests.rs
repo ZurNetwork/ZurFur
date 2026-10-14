@@ -18,8 +18,8 @@ use crate::{
     commission::Commissions,
     common_error::CommonError,
     test_world::{
-        self, World, absent_commission, absent_file, recorded, seed_alice_s, seed_file, stranger,
-        stranger_targets,
+        self, World, absent_commission, absent_file, recorded, seed_alice_s, seed_file,
+        seed_file_named, stranger, stranger_targets,
     },
 };
 
@@ -129,6 +129,44 @@ async fn bob_a_participant_downloads_untitled_s_file() {
         downloaded.result.metadata.filename.as_str(),
         "sketch-01.png"
     );
+}
+
+/// Downloads, as alice, a file of "Untitled" stored under `stored`, which no use case checks.
+async fn download_stored_as(world: &World, stored: &str) -> Output {
+    let name = FileName::try_from(stored).expect("the file name rule accepts it");
+    let file = seed_file_named(world, untitled(), &name).await;
+    download(world, &alice(), untitled(), file)
+        .await
+        .expect("alice downloads the file")
+}
+
+#[tokio::test]
+async fn an_ordinary_stored_name_is_the_save_name_unchanged() {
+    let world = test_world::world().await;
+
+    let downloaded = download_stored_as(&world, "ref sheet, v2.png").await;
+
+    assert_eq!(downloaded.save_name.as_ref(), "ref sheet, v2.png");
+}
+
+#[tokio::test]
+async fn a_stored_name_the_den_s_rule_refuses_is_saved_as_unnamed() {
+    let world = test_world::world().await;
+    let legacy = "photo\u{202E}gpj.exe";
+
+    let downloaded = download_stored_as(&world, legacy).await;
+
+    assert_eq!(downloaded.save_name.as_ref(), "Unnamed");
+    assert_eq!(downloaded.result.metadata.filename.as_str(), legacy);
+}
+
+#[tokio::test]
+async fn a_stored_name_is_saved_as_the_den_names_it_with_what_the_rule_strips_left_out() {
+    let world = test_world::world().await;
+
+    let downloaded = download_stored_as(&world, "ref\u{200B}abco.png").await;
+
+    assert_eq!(downloaded.save_name.as_ref(), "refabco.png");
 }
 
 #[tokio::test]

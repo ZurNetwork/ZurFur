@@ -88,7 +88,10 @@ async fn a_participant_uploads_then_downloads_the_exact_bytes() {
         commission_id,
         file_id: uploaded.id,
     };
-    let download::Output { result: download } = app
+    let download::Output {
+        result: download,
+        save_name,
+    } = app
         .commissions()
         .files()
         .download(query)
@@ -96,6 +99,7 @@ async fn a_participant_uploads_then_downloads_the_exact_bytes() {
         .expect("download succeeds");
 
     assert_eq!(download.metadata.filename.as_str(), "ref.png");
+    assert_eq!(save_name.as_ref(), "ref.png");
     assert_eq!(download.metadata.content_type, "image/png");
     assert_eq!(download.metadata.byte_size, bytes.len() as i64);
     assert_eq!(
