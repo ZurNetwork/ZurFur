@@ -4,7 +4,8 @@ use crate::elements::text::StoredText;
 /// A file entry's filename — the save-name hint served back in the download's
 /// `Content-Disposition` header. Enforced here: trimmed, non-empty, at most
 /// [`MAX_BYTES`](Self::MAX_BYTES) bytes, no control characters (they would be
-/// header injection), no `/` or `\`. Non-ASCII is allowed, stored verbatim.
+/// header injection), no `/` or `\`, no leading `.` (a dotfile is configuration).
+/// Non-ASCII is allowed, stored verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileName(String);
 
@@ -22,7 +23,7 @@ impl TryFrom<String> for FileName {
     type Error = FileNameError;
 
     /// Validate and wrap a filename: trim, then reject empty, over-cap, any control
-    /// character, or a path separator (`/`/`\`).
+    /// character, a path separator (`/`/`\`), or a leading `.`.
     ///
     /// ```
     /// use domain::elements::commission::FileName;
@@ -31,6 +32,8 @@ impl TryFrom<String> for FileName {
     /// assert!(FileName::try_from("   ").is_err());        // empty after trim
     /// assert!(FileName::try_from("a\nb.png").is_err());   // control character
     /// assert!(FileName::try_from("../etc/passwd").is_err()); // path separator
+    /// assert!(FileName::try_from(".theme.yaml").is_err());  // leading dot
+    /// assert!(FileName::try_from("a.b.png").is_ok());       // an interior dot is fine
     /// ```
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         let trimmed = raw.trim().to_owned();
@@ -45,6 +48,9 @@ impl TryFrom<String> for FileName {
         }
         if trimmed.contains('/') || trimmed.contains('\\') {
             return Err(FileNameError::PathSeparator);
+        }
+        if trimmed.starts_with('.') {
+            return Err(FileNameError::LeadingDot);
         }
         Ok(Self(trimmed))
     }

@@ -8,6 +8,7 @@
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
 use std::io::Cursor;
+use std::sync::Arc;
 
 use application::{
     commission::{
@@ -19,11 +20,12 @@ use application::{
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{Commission, CommissionId, CommissionTitle, FileKey},
+        commission::{Commission, CommissionId, CommissionTitle, FileKey, FileNameError},
         did::Did,
     },
     ports::{Database, UnitOfWork},
 };
+use test_support::recording::{CallLog, RecordingDatabase, RecordingFileStore};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Seeds a committed commission owned by a freshly provisioned `owner_did`.
@@ -306,6 +308,62 @@ async fn an_invalid_filename_is_rejected() {
         0,
         "filename validation runs before any blob is written"
     );
+}
+
+// A dotfile is configuration, never an ordinary upload: a name that starts with a dot is
+// `InvalidFileName(LeadingDot)`, and so is one that starts with a dot only once the Den's
+// name rule strips its zero-width space. Neither reaches the blob store or opens a unit, so
+// no changelog entry is written.
+#[tokio::test]
+async fn an_upload_named_with_a_leading_dot_is_refused_before_any_write() {
+    let owner_did = Did::from("did:plc:dotfile-artist".to_string());
+    let mut runtime = test_support::runtime::mem(&owner_did).build().runtime;
+    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let owner = runtime
+        .users
+        .find_by_did(&owner_did)
+        .await
+        .unwrap()
+        .unwrap();
+    let log = CallLog::default();
+    let database = RecordingDatabase::new(runtime.database.clone(), log.clone());
+    runtime.database = Arc::new(database);
+    let files = RecordingFileStore::new(runtime.files.clone(), log.clone());
+    runtime.files = Arc::new(files);
+
+    for filename in [".theme.yaml", "\u{200B}.theme.yaml"] {
+        let command = upload::Command {
+            actor_id: owner.id.clone(),
+            commission_id,
+            filename: Some(filename.to_string()),
+            content_type: Some("text/yaml".to_string()),
+        };
+        let result = runtime
+            .app()
+            .commissions()
+            .files()
+            .upload(command, Cursor::new(b"x".to_vec()), 1024, Utc::now())
+            .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(CommissionError::InvalidFileName(FileNameError::LeadingDot))
+            ),
+            "{filename:?}: got {result:?}"
+        );
+    }
+    assert_eq!(
+        log.events(),
+        Vec::<&str>::new(),
+        "no blob was put and no unit was opened"
+    );
+    let entries = runtime
+        .changelog
+        .entries(&commission_id)
+        .await
+        .expect("read changelog");
+    assert!(entries.is_empty(), "nothing was appended: {entries:?}");
 }
 
 // Downloading a key nothing was ever stored under is `FileNotFound`.

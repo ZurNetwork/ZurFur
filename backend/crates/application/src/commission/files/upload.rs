@@ -35,7 +35,8 @@ pub struct Output {
 
 impl Files<'_> {
     /// Uploads a file entry: any Participant, any time, never a status side
-    /// effect. Authorizes before a byte of `content` is read, caps it at
+    /// effect. Authorizes, then checks the filename as it will be stored (a
+    /// dotfile is refused), before a byte of `content` is read; caps it at
     /// `max_upload_bytes`, and deletes the orphaned blob before refusing.
     /// Commits the [`CommissionFile`] link and its changelog entry atomically.
     #[use_case]
@@ -64,7 +65,8 @@ impl Files<'_> {
 
         let filename = FileName::try_from(filename.unwrap_or_default())
             .map_err(CommissionError::InvalidFileName)?;
-        // Stored as the Den's name rule keeps it, without the characters the rule strips.
+        // Stored as the Den's name rule keeps it, without the characters the rule strips;
+        // checked again, so a name that only starts with a dot once stripped is refused too.
         let den_name =
             DenName::try_from(filename.as_str()).map_err(CommissionError::InvalidName)?;
         let filename =

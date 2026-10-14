@@ -5,8 +5,9 @@
 
 use std::sync::Arc;
 
+use domain::elements::commission::CommissionId;
 use test_support::{
-    den::{Answer, get},
+    den::{Answer, entry_names, get, ok_json},
     pg_app::{
         self, COMMISSION_NOT_FOUND, DenWorld, FILE_NOT_FOUND, MissPair, commission_read_live_pairs,
         commission_read_stranger_pairs, download_participant_pair, stranger_targets,
@@ -36,6 +37,46 @@ fn assert_not_found_with(answer: &Answer, code: &str, label: &str) {
     let body: serde_json::Value = serde_json::from_slice(&answer.body).expect("a JSON body");
     assert_eq!(answer.status, 404, "{label}: {body}");
     assert_eq!(body["code"], code, "{label}: {body}");
+}
+
+/// Uploads a few bytes named `filename` to `commission` as `uploader`, through
+/// `POST /commissions/{id}/files`.
+async fn upload(
+    world: &DenWorld,
+    uploader: &reqwest::Client,
+    commission: CommissionId,
+    filename: &str,
+) -> reqwest::Response {
+    let part = reqwest::multipart::Part::bytes(b"accent: red".to_vec())
+        .file_name(filename.to_owned())
+        .mime_str("text/yaml")
+        .expect("a valid content type");
+    let form = reqwest::multipart::Form::new().part("file", part);
+    uploader
+        .post(format!(
+            "{}/commissions/{commission}/files",
+            world.base_url()
+        ))
+        .multipart(form)
+        .send()
+        .await
+        .expect("the upload is answered")
+}
+
+/// How many `commission_file` rows `commission` has, and how many blobs the store holds.
+async fn stored_file_counts(world: &DenWorld, commission: CommissionId) -> (i64, i64) {
+    let pool = &world.served.runtime.pool;
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM commission_file WHERE commission_id = $1")
+            .bind(uuid::Uuid::from(commission))
+            .fetch_one(pool)
+            .await
+            .expect("count the commission's file rows");
+    let blobs: i64 = sqlx::query_scalar("SELECT count(*) FROM file_blob")
+        .fetch_one(pool)
+        .await
+        .expect("count the stored blobs");
+    (rows, blobs)
 }
 
 /// The problem code both of a stranger's causes answer with, on either read.
@@ -246,4 +287,48 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
     assert!(reads.absent.contains(&"files"), "{:?}", reads.absent);
     assert_eq!(reads.not_yours, reads.absent);
     assert_reads_none_of(&reads.absent, &NEVER_FOR_A_MISSING_FILE, pair.label);
+}
+
+#[tokio::test]
+async fn an_upload_named_with_a_leading_dot_is_refused_and_stores_nothing() {
+    let world = pg_app::den_world(api::app).await;
+    let commission = world.untitled.id;
+    let before = stored_file_counts(&world, commission).await;
+
+    let response = upload(&world, &world.alice, commission, ".theme.yaml").await;
+
+    let answer = Answer::read(response).await;
+    let body: serde_json::Value = serde_json::from_slice(&answer.body).expect("a JSON body");
+    assert_eq!(answer.status, 422, "{body}");
+    assert_eq!(body["code"], "invalid_request", "{body}");
+    assert_eq!(stored_file_counts(&world, commission).await, before);
+}
+
+#[tokio::test]
+async fn a_dotfile_stored_before_the_rule_still_lists_and_downloads_for_a_participant() {
+    let world = pg_app::den_world(api::app).await;
+    let commission = world.untitled.id;
+    let file = world.untitled.file;
+    let renamed = sqlx::query("UPDATE file_blob SET filename = '.theme.yaml' WHERE key = $1")
+        .bind(uuid::Uuid::from(file))
+        .execute(&world.served.runtime.pool)
+        .await
+        .expect("store a dotfile's name, bypassing the filename rule");
+    assert_eq!(renamed.rows_affected(), 1, "one blob is renamed");
+    let attachments_path = format!("/den/commissions/{commission}/attachments");
+    let download_path = format!("/commissions/{commission}/files/{file}");
+
+    let attachments = ok_json(get(&world.bob, world.base_url(), &attachments_path).await).await;
+    let download = get(&world.bob, world.base_url(), &download_path).await;
+
+    assert_eq!(entry_names(&attachments["listing"]), [".theme.yaml"]);
+    assert_eq!(download.status(), 200);
+    let disposition = download
+        .headers()
+        .get("content-disposition")
+        .expect("a Content-Disposition header")
+        .to_str()
+        .expect("an ASCII header")
+        .to_owned();
+    assert!(disposition.contains(".theme.yaml"), "{disposition}");
 }
