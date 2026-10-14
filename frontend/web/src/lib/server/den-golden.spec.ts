@@ -216,6 +216,24 @@ describe('the Den golden responses: what the fixtures prove', () => {
 		expect(page.crumbs).toEqual([]);
 	});
 
+	it('bob’s Den: the four folders, no Account, Abco and Untitled', async () => {
+		const root = await pageOf(golden('bob/root.json'));
+		const accounts = await pageOf(golden('bob/accounts.json'));
+		const characters = await pageOf(golden('bob/characters.json'));
+		const commissions = await pageOf(golden('bob/commissions.json'));
+
+		expect(root.node).toMatchObject({ name: 'bob.test' });
+		expect(entriesOf(root).map((row) => row.name)).toEqual([
+			'accounts',
+			'characters',
+			'commissions',
+			'posts'
+		]);
+		expect(entriesOf(accounts)).toEqual([]);
+		expect(entriesOf(characters).map((row) => row.name)).toEqual(['Abco']);
+		expect(entriesOf(commissions).map((row) => row.name)).toEqual(['Untitled']);
+	});
+
 	it('shows "Old sketch" archived, and only under includeDeleted', async () => {
 		const plain = entriesOf(await pageOf(golden('alice/commissions.json')));
 		const flagged = entriesOf(await pageOf(golden('alice/commissions-include-deleted.json')));
