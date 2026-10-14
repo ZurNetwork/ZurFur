@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 use super::{PgServed, serve};
 
+mod identity;
+
+pub use identity::{absent_account, stranger};
+
 /// The stranger's DID: a user who signs in and takes part in nothing.
 const STRANGER_DID: &str = "did:plc:s5trstrangerfixtureaaaaa";
 

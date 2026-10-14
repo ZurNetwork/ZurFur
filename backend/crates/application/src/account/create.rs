@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        account::{Account, AccountId, AccountName},
+        account::{Account, AccountId, AccountName, AccountNameError},
         handle::{Handle, HandleDomain},
         user::UserId,
     },
@@ -11,7 +11,8 @@ use domain::{
 
 use crate::{
     Ports,
-    account::{AccountResult, Accounts, ensure_handle_claimable},
+    account::{AccountError, AccountResult, Accounts, ensure_handle_claimable},
+    den::{DenName, DenNameError},
 };
 
 pub struct Command {
@@ -40,6 +41,7 @@ impl Accounts<'_> {
             handle,
             name,
         } = cmd;
+        let name = den_account_name(&name)?;
         ensure_handle_claimable(ports, &handle, handle_domain, None, now).await?;
 
         let did = ports.did_minter.mint(&handle).await?;
@@ -53,4 +55,17 @@ impl Accounts<'_> {
             name: account.name,
         })
     }
+}
+
+/// An Account's name as the Den's name rule keeps it: refused where the rule refuses, and
+/// stored without the characters the rule strips.
+fn den_account_name(name: &AccountName) -> AccountResult<AccountName> {
+    let kept = DenName::try_from(name.as_str()).map_err(AccountError::InvalidName)?;
+    kept.as_ref().parse().map_err(|error| {
+        let refusal = match error {
+            AccountNameError::Empty => DenNameError::Empty,
+            AccountNameError::TooLong(_) => DenNameError::TooLong,
+        };
+        AccountError::InvalidName(refusal)
+    })
 }
