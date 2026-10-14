@@ -1,15 +1,15 @@
 //! The Zurfur backend binary: the boot sequence and the live adapter wiring
 //! (the only place that names production adapters). [`main`] loads
-//! [`Config`], stands up Postgres, runs migrations, assembles [`AppState`],
-//! mounts [`api::app`], and serves.
+//! [`Config`], builds the profile's app, and serves. The everyday profile
+//! stands up Postgres and runs migrations; the `dev-profile` feature swaps in
+//! the in-memory fixture world instead, and nothing else chooses it.
 
-use api::{AppState, Config};
-use tower_sessions::session_store::ExpiredDeletion;
+use api::Config;
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
 
-/// Boots the server: load config, init tracing, connect the pool, run
-/// migrations, build the session layer, assemble [`AppState`], then
-/// `axum::serve` forever. Fails fast on any setup error.
+/// Boots the server: load config, init tracing, build the profile's app, then
+/// `axum::serve` forever on the configured address. Fails fast on any setup
+/// error.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -20,13 +20,30 @@ async fn main() -> anyhow::Result<()> {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
     api::logging::subscriber(filter, std::io::stdout).init();
 
+    let http_addr = config.http_addr;
+    let env = config.env.clone();
+    let app = profile_app(config).await?;
+
+    let listener = tokio::net::TcpListener::bind(http_addr).await?;
+    let bound_addr = listener.local_addr()?;
+    tracing::info!(addr = %bound_addr, env = ?env, "starting HTTP server");
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// The everyday profile: the live Postgres and atproto adapters, migrations
+/// applied, sessions in Postgres, and the deadline sweeper and session reaper
+/// running.
+#[cfg(not(feature = "dev-profile"))]
+async fn profile_app(config: Config) -> anyhow::Result<axum::Router> {
+    use api::AppState;
+    use tower_sessions::session_store::ExpiredDeletion;
+
     // Migrations are the driver's explicit call, so one never runs by accident.
     let app_state: AppState = composition::Runtime::connect(config).await?;
     adapter_pg::migrate(&app_state.pool).await?;
     tracing::info!("migrations applied");
-    let http_addr = app_state.config.http_addr;
-    let listener = tokio::net::TcpListener::bind(http_addr).await?;
-    tracing::info!(addr = %http_addr, env = ?app_state.config.env, "starting HTTP server");
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
     let secure_cookies = app_state.config.env.secure_cookies();
@@ -54,7 +71,15 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = api::app(app_state).layer(session_layer);
+    Ok(app)
+}
 
-    axum::serve(listener, app).await?;
-    Ok(())
+/// The dev profile: the in-memory fixture world. Refuses to start unless
+/// `ZURFUR_ENV` is set (by the environment or `.env`) and names dev, whatever
+/// the config would default to.
+#[cfg(feature = "dev-profile")]
+async fn profile_app(config: Config) -> anyhow::Result<axum::Router> {
+    let zurfur_env = std::env::var_os(composition::PROFILE_ENV);
+    api::dev_profile::ensure_dev_variable(zurfur_env.as_deref())?;
+    api::dev_profile::app(config).await
 }

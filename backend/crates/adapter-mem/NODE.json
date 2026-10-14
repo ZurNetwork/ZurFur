@@ -46,6 +46,11 @@
       "node": false
     },
     {
+      "name": "src/fixed_sign_in.rs",
+      "role": "FixedSignIn — the dev profile's Authenticator: every completed sign-in is one fixed DID, still through a single-use browser binding; start redirects straight to the absolute callback",
+      "node": false
+    },
+    {
       "name": "src/fixture.rs",
       "role": "the fixture world façade: each team seeds its own leaf; fixture/identity.rs = alice, bob, Supreme Arts, Abco, Ember, Kael-sona (all characters Private), typed DID accessors + seed_identity; fixture/commission.rs = \"Untitled\", the archived \"Old sketch\", the Workflow \"Queue\", fixed ids, seeded through the write ports (identity people/Account passed in)",
       "node": false
@@ -57,7 +62,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "shared MemBackend (incl. markups map) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource, MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
+      "role": "shared MemBackend (incl. markups map) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
       "node": false
     },
     {

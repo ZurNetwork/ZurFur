@@ -11,6 +11,7 @@ mod actor_identity;
 mod character;
 mod commission;
 mod file_store;
+mod fixed_sign_in;
 pub mod fixture;
 mod identity_resolver;
 mod public_records;
@@ -21,6 +22,7 @@ pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
+pub use fixed_sign_in::FixedSignIn;
 pub use identity_resolver::MemIdentityResolver;
 pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
@@ -903,6 +905,15 @@ impl MemProfileSource {
     pub fn new(profile: Profile) -> Self {
         Self {
             profile: Mutex::new(Some(profile)),
+            fetches: AtomicUsize::new(0),
+        }
+    }
+
+    /// A source whose PDS never answers, so every `fetch` errors. Named, as no
+    /// std constructor says "unreachable".
+    pub fn unreachable() -> Self {
+        Self {
+            profile: Mutex::new(None),
             fetches: AtomicUsize::new(0),
         }
     }

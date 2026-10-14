@@ -924,3 +924,14 @@ async fn the_deactivated_read_orders_by_account_did() {
     let expected_ids = vec![&first.id, &second.id];
     assert_eq!(ids, expected_ids);
 }
+
+// An unreachable source answers no DID at all, and still counts the attempt.
+#[tokio::test]
+async fn an_unreachable_profile_source_answers_no_one() {
+    let source = MemProfileSource::unreachable();
+
+    let fetched = source.fetch(&did("did:plc:alice")).await;
+
+    assert!(fetched.is_err(), "an unreachable PDS answers nothing");
+    assert_eq!(source.fetch_count(), 1);
+}
