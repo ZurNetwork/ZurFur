@@ -15,4 +15,7 @@ pub enum FileNameError {
     /// Contains a path separator (`/` or `\`).
     #[error("filename must not contain a path separator")]
     PathSeparator,
+    /// Starts with a dot once trimmed: a dotfile is configuration, never an ordinary file.
+    #[error("filename must not start with a dot")]
+    LeadingDot,
 }

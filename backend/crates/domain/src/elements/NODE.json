@@ -323,6 +323,11 @@
       "page": 2026101202,
       "title": "Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core",
       "governs": "commission/changelog: the Linked Channel pointer stays opaque; Zurfur's page offers 'Open chat' when it holds a Telegram chat reference and hands it to Unofficial Mini Telegram as-is (D6, D9); the Telegram login never touches Zurfur (D4)"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type"
     }
   ],
   "notes": [

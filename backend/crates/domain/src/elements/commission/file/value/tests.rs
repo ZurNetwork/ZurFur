@@ -31,3 +31,23 @@ fn filename_trims_and_rejects_unsafe_input() {
         );
     }
 }
+
+#[test]
+fn filename_refuses_a_leading_dot() {
+    for bad in [".theme.yaml", ".", "..", "  .theme.yaml"] {
+        assert_eq!(
+            FileName::try_from(bad),
+            Err(FileNameError::LeadingDot),
+            "a dotfile is refused: {bad:?}",
+        );
+    }
+}
+
+#[test]
+fn filename_accepts_a_dot_anywhere_but_first() {
+    for good in ["theme.yaml", "a.b.png", "x."] {
+        let filename = FileName::try_from(good).expect("an interior or trailing dot is fine");
+
+        assert_eq!(filename.as_str(), good);
+    }
+}
