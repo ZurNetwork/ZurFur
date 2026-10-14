@@ -152,7 +152,7 @@ impl StoredCommission {
             id,
             title: self.title.clone(),
             visibility: self.visibility.clone(),
-            archived_at: self.archived_at,
+            archived: self.archived_at.is_some(),
         }
     }
 
@@ -1037,6 +1037,17 @@ impl CommissionStore for MemCommissionStore {
             .lock()
             .expect("MemBackend commissions mutex poisoned");
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
+    }
+
+    /// The listing's slim projection of the commission `id` names, or `None`.
+    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
+        let id = *id;
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        Ok(commissions.get(&id).map(|stored| stored.summarize(id)))
     }
 
     /// The [`GrantLevel`] `user` holds on `commission`, or `None`. A key is

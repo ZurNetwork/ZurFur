@@ -20,6 +20,9 @@ const STRANGER_DID: &str = "did:plc:s5trstrangerfixtureaaaaa";
 /// The visibility token no parser reads, for the row a stored token can't be parsed from.
 const UNPARSABLE_VISIBILITY: &str = "not-a-visibility";
 
+/// The lifecycle token no parser reads, for the row only the whole-commission read parses.
+const UNPARSABLE_LIFECYCLE: &str = "not-a-lifecycle";
+
 /// A commission id no seed writes: a UUIDv7 from 2025, before any row's.
 const ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a01);
 /// A file key no seed writes.
@@ -150,6 +153,17 @@ impl DenWorld {
     pub async fn store_unparsable_visibility(&self, commission: CommissionId) {
         self.store_visibility(commission, UNPARSABLE_VISIBILITY)
             .await;
+    }
+
+    /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update.
+    pub async fn store_unparsable_lifecycle(&self, commission: CommissionId) {
+        let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
+            .bind(UNPARSABLE_LIFECYCLE)
+            .bind(Uuid::from(commission))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("update the commission's lifecycle");
+        assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
     /// Writes `token` as `commission`'s visibility.

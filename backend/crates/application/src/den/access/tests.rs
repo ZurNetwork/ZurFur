@@ -252,7 +252,7 @@ async fn a_stranger_s_absent_and_not_theirs_changelog_run_the_same_reads() {
     let for_not_theirs =
         reads_for(&world, &log, &stranger, ServedNode::Changelog(untitled())).await;
 
-    assert_eq!(for_absent, ["find", "is_participant"]);
+    assert_eq!(for_absent, ["find_summary", "is_participant"]);
     assert_eq!(for_not_theirs, for_absent);
 }
 
@@ -267,7 +267,7 @@ async fn an_absent_and_another_commission_s_file_key_run_the_same_reads() {
     let for_elsewhere =
         reads_for(&world, &log, &bob, ServedNode::File(untitled(), elsewhere)).await;
 
-    assert_eq!(for_absent, ["find", "is_participant", "files"]);
+    assert_eq!(for_absent, ["find_summary", "is_participant", "files"]);
     assert_eq!(for_elsewhere, for_absent);
 }
 

@@ -48,7 +48,7 @@ pub struct NewCommission {
 }
 
 /// One commission as a listing reads it: its id, stored title, own visibility
-/// and archive time. Nothing else of the commission crosses this read.
+/// and whether it is archived. Nothing else of the commission crosses this read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommissionSummary {
     /// The commission's id.
@@ -57,14 +57,14 @@ pub struct CommissionSummary {
     pub title: StoredText,
     /// The commission's own visibility.
     pub visibility: Visibility,
-    /// When it was archived, or `None` while active.
-    pub archived_at: Option<DateTimeUtc>,
+    /// Whether it carries an archive time; the time itself isn't read.
+    pub archived: bool,
 }
 
 impl CommissionSummary {
-    /// Whether the commission is archived: true once it carries an archive time.
+    /// Whether the commission is archived.
     pub fn is_archived(&self) -> bool {
-        self.archived_at.is_some()
+        self.archived
     }
 }
 

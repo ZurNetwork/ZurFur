@@ -677,9 +677,27 @@ impl From<sql::CommissionRow> for CommissionFields {
     }
 }
 
+/// Reads a stored visibility token. A token outside the vocabulary counts as
+/// [`Visibility::Private`], so an unreadable row fails closed instead of failing the read,
+/// and logs one fixed warning that names nothing of the row.
+/// Not `From<&str>`: only stored rows read leniently; `TryFrom<&str>` stays the strict parse.
+fn stored_visibility(token: &str) -> Visibility {
+    Visibility::try_from(token).unwrap_or_else(|_| {
+        tracing::warn!("a stored commission visibility is outside the vocabulary; read as private");
+        Visibility::Private
+    })
+}
+
+/// Reads a summary's `archived_at IS NOT NULL` column. Postgres never answers NULL there, but
+/// the generated row can't know it; a `None` would read as archived, the closed state.
+fn archived_flag(archived: Option<bool>) -> bool {
+    archived.unwrap_or(true)
+}
+
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
-/// surfaces as an `Err`, never a panic or silent default.
+/// surfaces as an `Err`, never a panic or silent default. The one exception is
+/// the visibility, which [`stored_visibility`] reads as Private.
 fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
     let maturity = match (fields.maturity, fields.graphic) {
         (None, None) => None,
@@ -715,8 +733,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
         title: StoredText::from(fields.title),
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
-        visibility: Visibility::try_from(fields.visibility.as_str())
-            .map_err(|_| anyhow::anyhow!("unknown visibility token {:?}", fields.visibility))?,
+        visibility: stored_visibility(&fields.visibility),
         deadline: fields.deadline,
         maturity,
         direction_status: fields
@@ -792,6 +809,19 @@ impl CommissionStore for PgCommissionStore {
             return Ok(None);
         };
         to_commission(*id, row.into()).map(Some)
+    }
+
+    /// Reads only the title, the visibility and whether it is archived; the visibility
+    /// through [`stored_visibility`], the title as stored. `None` if absent.
+    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
+        let row = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
+        let summary = row.map(|row| CommissionSummary {
+            id: *id,
+            title: StoredText::from(row.title),
+            visibility: stored_visibility(&row.visibility),
+            archived: archived_flag(row.archived),
+        });
+        Ok(summary)
     }
 
     /// Which column of `workflow_id` currently holds this commission, if any.
@@ -1016,25 +1046,20 @@ impl CommissionStore for PgCommissionStore {
     }
 
     /// One join from the participant record onto `commission`, seeking the
-    /// by-user index; archived rows included. Each visibility token is
-    /// re-validated; the title is carried as stored.
+    /// by-user index; archived rows included. Each visibility token is read
+    /// through [`stored_visibility`]; the title is carried as stored.
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
-        sql::list_participating(&self.pool, user.as_ref())
-            .await?
+        let rows = sql::list_participating(&self.pool, user.as_ref()).await?;
+        let summaries = rows
             .into_iter()
-            .map(|row| {
-                let visibility = Visibility::try_from(row.visibility.as_str()).map_err(|_| {
-                    anyhow::anyhow!("unknown visibility token {:?}", row.visibility)
-                })?;
-                let summary = CommissionSummary {
-                    id: CommissionId::from(row.id),
-                    title: StoredText::from(row.title),
-                    visibility,
-                    archived_at: row.archived_at,
-                };
-                Ok(summary)
+            .map(|row| CommissionSummary {
+                id: CommissionId::from(row.id),
+                title: StoredText::from(row.title),
+                visibility: stored_visibility(&row.visibility),
+                archived: archived_flag(row.archived),
             })
-            .collect()
+            .collect();
+        Ok(summaries)
     }
 
     /// The commission's file entries in key (upload) order; the query selects
