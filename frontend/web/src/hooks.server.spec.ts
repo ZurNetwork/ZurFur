@@ -145,6 +145,29 @@ describe('handle, when Zurfur doesn’t answer', () => {
 	});
 });
 
+describe('handle, when Zurfur doesn’t answer a request with no session cookie', () => {
+	it('still answers the gate’s page never stored, and sending no Referer off the site', async () => {
+		const request = new Request('http://127.0.0.1:5174/accounts');
+		const event = {
+			route: { id: '/(session)/accounts' },
+			url: new URL(request.url),
+			request,
+			fetch: () => Promise.reject(new TypeError('fetch failed')),
+			locals: {},
+			isDataRequest: false
+		} as unknown as RequestEvent;
+		const resolve = vi.fn(() => Promise.resolve(new Response('PRIVATE-PAGE')));
+
+		const response = await handle({ event, resolve });
+
+		expect(response.status).toBe(503);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(response.headers.get('referrer-policy')).toBe(SESSION_REFERRER_POLICY);
+		expect(response.headers.get('x-frame-options')).toBe(X_FRAME_OPTIONS);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
 describe('handleError', () => {
 	it('is wired to log the route template only and return a fixed message', async () => {
 		const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);

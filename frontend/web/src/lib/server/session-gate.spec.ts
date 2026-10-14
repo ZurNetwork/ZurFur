@@ -119,6 +119,26 @@ describe('sessionGate', () => {
 		expect(resolved).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		['a 5xx problem', () => problemResponse(503, 'service_unavailable')],
+		['a 500 problem', () => problemResponse(500, 'internal_error')],
+		['a body that is not JSON', () => new Response('not json', { status: 200 })]
+	])('throws when /me answers %s, and nothing behind it runs', async (_, me) => {
+		const { fetch } = fetchStub(me);
+		const gated = startGate({
+			routeId: '/(session)/accounts',
+			address: '/accounts',
+			method: 'POST',
+			fetch
+		});
+		const { outcome, actionRan, resolved } = await gated.outcome;
+
+		expect(outcome).toBeInstanceOf(Error);
+		expect(isRedirect(outcome)).toBe(false);
+		expect(actionRan.ran).toBe(false);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
 	it('answers a /me that never comes with its page at the session check’s 5 s', async () => {
 		vi.useFakeTimers();
 		let settled = false;

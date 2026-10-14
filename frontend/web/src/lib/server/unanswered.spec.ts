@@ -41,6 +41,23 @@ describe('unansweredResponse', () => {
 		});
 	});
 
+	it.each([
+		['the page', new Request('http://127.0.0.1:5174/accounts')],
+		[
+			'the action result',
+			new Request('http://127.0.0.1:5174/accounts', {
+				method: 'POST',
+				headers: { 'x-sveltekit-action': 'true' }
+			})
+		]
+	])('marks %s never stored, sending no Referer off the site, and sets no cookie', (_, request) => {
+		const response = unansweredResponse(request);
+
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
+		expect(response.headers.has('set-cookie')).toBe(false);
+	});
+
 	it('answers a GET carrying the action header with the page: only a post is an action', async () => {
 		const request = new Request('http://127.0.0.1:5174/accounts', {
 			headers: { 'x-sveltekit-action': 'true' }

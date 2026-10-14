@@ -5,6 +5,7 @@ import { HttpStatus } from '$lib/api/http-status';
 import { NetworkFailure } from './api/errors';
 import type { ZurfurApi } from './api/zurfur-api';
 import { runApi } from './runtime';
+import { SESSION_REFERRER_POLICY } from './session-headers';
 
 /**
  * The sign-in gate's own page for when Zurfur doesn't answer: fixed HTML with
@@ -43,14 +44,20 @@ function isEnhancedFormPost(request: Request): boolean {
  * The gate's answer when Zurfur doesn't answer, status 503: an enhanced form
  * post gets an error action result, which the client shows as the frame's
  * error view; anything else (a page, a `__data.json` request, a plain form
- * post) gets {@link UNANSWERED_PAGE}. It sets no cookie.
+ * post) gets {@link UNANSWERED_PAGE}. Either is never stored and sends no
+ * `Referer` off the site, with or without a session cookie; it sets no cookie.
  */
 export function unansweredResponse(request: Request): Response {
 	const status = HttpStatus.ServiceUnavailable;
+	const headers = new Headers({
+		'cache-control': 'no-store',
+		'referrer-policy': SESSION_REFERRER_POLICY
+	});
 	if (isEnhancedFormPost(request)) {
-		return Response.json({ type: 'error', error: { message: UNANSWERED_MESSAGE } }, { status });
+		const result = { type: 'error', error: { message: UNANSWERED_MESSAGE } };
+		return Response.json(result, { status, headers });
 	}
-	const headers = { 'content-type': 'text/html; charset=utf-8' };
+	headers.set('content-type', 'text/html; charset=utf-8');
 	return new Response(UNANSWERED_PAGE, { status, headers });
 }
 

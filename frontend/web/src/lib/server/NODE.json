@@ -111,7 +111,7 @@
     },
     {
       "name": "unanswered.ts",
-      "role": "what the web does when Zurfur doesn't answer: UNANSWERED_PAGE, the sign-in gate's fixed HTML (503, \"Zurfur isn't answering right now.\", a \"Try again\" href=\"\" that writes nothing from the request, no script — the one HTML written outside Svelte); unansweredResponse (an enhanced form post gets a 503 error action result instead); runRead, runApi for a page's own reads, failing a NetworkFailure to error(503)",
+      "role": "what the web does when Zurfur doesn't answer: UNANSWERED_PAGE, the sign-in gate's fixed HTML (503, \"Zurfur isn't answering right now.\", a \"Try again\" href=\"\" that writes nothing from the request, no script — the one HTML written outside Svelte); unansweredResponse (an enhanced form post gets a 503 error action result instead; both carry Cache-Control: no-store and Referrer-Policy: same-origin themselves, session cookie or not); runRead, runApi for a page's own reads, failing a NetworkFailure to error(503)",
       "node": false
     }
   ],

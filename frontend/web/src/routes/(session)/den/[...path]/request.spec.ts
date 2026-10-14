@@ -102,14 +102,14 @@ afterEach(() => {
 });
 
 describe('/den on the live port, when the folders above it never answer', () => {
-	/** Seven folders deep: the open item answers, and the seven folders above it hang. */
-	const SEGMENTS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+	/** Sixteen folders deep: the open item answers, and the sixteen folders above it hang. */
+	const SEGMENTS = 'abcdefghijklmnop'.split('');
 
-	it('ends at the request’s 15 s deadline, each folder read stopping at its own 10 s first', async () => {
-		vi.useFakeTimers();
+	/** A full page load of the item through the real hooks and kit's real `event.fetch`, `/me` answered by `me`. */
+	function requestDeepItem(me: () => Response | Promise<Response>) {
 		const { fetch: backend, calls } = hangingFetch((url) => {
 			const path = new URL(url).pathname;
-			if (path === '/me') return Response.json({ did: 'did:plc:alice' });
+			if (path === '/me') return me();
 			if (path === `/den/${SEGMENTS.join('/')}`) return Response.json(denNodeBody(SEGMENTS));
 			return undefined;
 		});
@@ -125,26 +125,58 @@ describe('/den on the live port, when the folders above it never answer', () => 
 			isDataRequest: false,
 			fetch: kitEventFetch({ url, request, locals }, handleFetch)
 		} as unknown as RequestEvent;
-		let den: DenPageData | undefined;
+		const page: { den: DenPageData | undefined; settled: boolean } = {
+			den: undefined,
+			settled: false
+		};
 		const resolve = async (resolved: RequestEvent): Promise<Response> => {
 			const data = (await load(resolved as unknown as LoadEvent)) as { den: DenPageData };
-			den = data.den;
+			page.den = data.den;
 			return new Response('page');
 		};
-		let settled = false;
-		const answered = Promise.resolve(handle({ event, resolve })).finally(() => (settled = true));
+		const answered = Promise.resolve(handle({ event, resolve })).finally(() => {
+			page.settled = true;
+		});
+		return { answered, calls, page };
+	}
+
+	it('ends at the request’s 15 s deadline, each folder read stopping at its own 10 s first', async () => {
+		vi.useFakeTimers();
+		const { answered, calls, page } = requestDeepItem(() =>
+			Response.json({ did: 'did:plc:alice' })
+		);
 
 		await vi.advanceTimersByTimeAsync(9_999);
 		expect(calls).toHaveLength(6);
 		await vi.advanceTimersByTimeAsync(1);
-		expect(calls).toHaveLength(9);
+		expect(calls).toHaveLength(10);
 		await vi.advanceTimersByTimeAsync(4_999);
-		expect(settled).toBe(false);
+		expect(page.settled).toBe(false);
 		await vi.advanceTimersByTimeAsync(1);
 		const response = await answered;
 
 		expect(response.status).toBe(200);
-		expect(den?.outcome).toMatchObject({ outcome: 'page' });
-		expect(den?.ancestors).toEqual([]);
+		expect(calls).toHaveLength(18);
+		expect(page.den?.outcome).toMatchObject({ outcome: 'page' });
+		expect(page.den?.ancestors).toEqual([]);
+	});
+
+	it('counts the deadline from the request’s start, the sign-in gate’s /me included', async () => {
+		vi.useFakeTimers();
+		const slowMe = () =>
+			new Promise<Response>((answer) => {
+				setTimeout(() => {
+					answer(Response.json({ did: 'did:plc:alice' }));
+				}, 4_900);
+			});
+		const { answered, page } = requestDeepItem(slowMe);
+
+		await vi.advanceTimersByTimeAsync(14_999);
+		expect(page.settled).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+		const response = await answered;
+
+		expect(response.status).toBe(200);
+		expect(page.den?.ancestors).toEqual([]);
 	});
 });

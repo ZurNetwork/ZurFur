@@ -73,12 +73,21 @@ function signalOf(input: RequestInfo | URL, init?: RequestInit): AbortSignal | u
 	return input instanceof Request ? input.signal : undefined;
 }
 
+/** The error a fetch rejects with once `signal` aborts: its reason, as undici does. */
+function abortReason(signal: AbortSignal): Error {
+	const reason: unknown = signal.reason;
+	return reason instanceof Error ? reason : new Error('aborted');
+}
+
 /**
  * A `fetch` stub for a backend that accepts and never answers: each call
  * stays pending until its signal aborts, then rejects with the signal's
- * reason, as undici does. `answer` may answer some URLs instead.
+ * reason, and a call whose signal is already aborted rejects at once, as
+ * undici does. `answer` may answer some URLs instead, at once or later.
  */
-export function hangingFetch(answer: (url: string) => Response | undefined = () => undefined): {
+export function hangingFetch(
+	answer: (url: string) => Response | Promise<Response> | undefined = () => undefined
+): {
 	fetch: FetchFunction;
 	calls: string[];
 } {
@@ -86,13 +95,13 @@ export function hangingFetch(answer: (url: string) => Response | undefined = () 
 	const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
 		const url = requestUrl(input);
 		calls.push(url);
+		const signal = signalOf(input, init);
+		if (signal?.aborted === true) return Promise.reject(abortReason(signal));
 		const answered = answer(url);
 		if (answered !== undefined) return Promise.resolve(answered);
-		const signal = signalOf(input, init);
 		return new Promise<Response>((_answer, reject) => {
 			signal?.addEventListener('abort', () => {
-				const reason: unknown = signal.reason;
-				reject(reason instanceof Error ? reason : new Error('aborted'));
+				reject(abortReason(signal));
 			});
 		});
 	}) as FetchFunction;

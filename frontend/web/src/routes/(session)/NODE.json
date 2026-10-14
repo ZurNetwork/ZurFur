@@ -37,12 +37,12 @@
     },
     {
       "name": "accounts/",
-      "role": "listing + create action; [id]/ detail with typed-handle delete confirmation; the create superform applies an error result (onError: 'apply'), so the gate's 503 answer to its enhanced post shows the frame's error view (gate-answer.svelte.spec.ts)",
+      "role": "listing + create action; [id]/ detail with typed-handle delete confirmation; the create superform applies an error result (onError: 'apply'), so the gate's 503 answer to its enhanced post shows the frame's error view (gate-answer.svelte.spec.ts); the delete form is enhanced (kit's enhance, applyAction in place), so a failed delete shows its problem without the page's reads running again and a completed one starts the tree over (delete-enhance.svelte.spec.ts)",
       "node": false
     },
     {
       "name": "den/",
-      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port, and a page whose folder reads all hang ending at the 15 s request deadline through kit's real event.fetch. +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
+      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port, and a page whose sixteen folder reads hang ending at the 15 s request deadline, counted from the request's start (the gate's /me included), through kit's real event.fetch. +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
       "node": false
     },
     {
