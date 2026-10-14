@@ -3,8 +3,10 @@ use super::LABEL_MAX_LEN;
 
 /// Why a string was rejected as a [`Handle`] or an [`AtHandle`](super::AtHandle)
 /// — one variant per failure class, each rendering a human message via
-/// [`Display`](std::fmt::Display). Both parsers share the syntax variants; the
-/// last two are claim rules only a `Handle` applies.
+/// [`Display`](std::fmt::Display). Both parsers share the syntax variants.
+/// Only a `Handle` refuses a punycode label, at its parse; a reserved label and
+/// the namespace's apex are refused at the claim, by
+/// [`Handle::ensure_unreserved`] against the configured namespace.
 ///
 /// ```
 /// use domain::elements::handle::{Handle, HandleError};
@@ -46,24 +48,37 @@ pub enum HandleError {
     /// namespaces; an `AtHandle` accepts it.
     #[error("punycode (`xn--`) handle labels are not allowed")]
     PunycodeLabel,
-    /// The leftmost label of a `*.zurfur.app` handle is reserved; carries it.
-    /// Only a [`Handle`] refuses it.
-    #[error("`{0}` is a reserved label in the .zurfur.app namespace")]
+    /// A member of the configured namespace whose leftmost label is reserved;
+    /// carries that label. Only a [`Handle`] refuses it, through
+    /// [`Handle::ensure_unreserved`].
+    #[error("`{0}` is a reserved label in Zurfur's handle namespace")]
     ReservedLabel(String),
+    /// The configured namespace's own apex, which no one claims. Only a
+    /// [`Handle`] refuses it, through [`Handle::ensure_unreserved`].
+    #[error("the apex of Zurfur's handle namespace cannot be claimed as a handle")]
+    NamespaceApex,
 }
 
 /// Why a string was rejected as a [`HandleDomain`].
 ///
 /// ```
-/// use domain::elements::handle::{HandleDomain, HandleDomainError};
+/// use domain::elements::handle::{HandleDomain, HandleDomainError, HandleError};
 ///
 /// assert_eq!("  . ".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+/// assert_eq!(
+///     "*.zurfur.app".parse::<HandleDomain>(),
+///     Err(HandleDomainError::NotAHostname(HandleError::InvalidChar('*')))
+/// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HandleDomainError {
     /// Empty once normalized.
     #[error("the handle domain must not be empty")]
     Empty,
+    /// Not a hostname a handle can live under: it breaks a [`Handle`] syntax
+    /// rule; carries the rule.
+    #[error("the handle domain must be a bare hostname: {0}")]
+    NotAHostname(HandleError),
 }
 
 #[cfg(test)]

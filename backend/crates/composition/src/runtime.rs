@@ -41,8 +41,9 @@ pub struct Runtime {
     /// Pool-backed both ways — a documented exception to the unit-of-work
     /// write rule, since the fill carries no transactional invariant.
     pub profile_cache: Arc<dyn ProfileCache>,
-    /// The profile lookups running behind the Den's root name, one per DID,
-    /// shared by every clone of this runtime so concurrent misses start one fetch.
+    /// The profile lookups running behind `me` and the Den's root name, one
+    /// per DID, shared by every clone of this runtime so concurrent misses
+    /// start one fetch.
     pub profile_lookups: application::user::ProfileLookups,
     /// Account, membership and invitation reads; every account write lives on
     /// the [`UnitOfWork`](domain::ports::UnitOfWork).
@@ -116,8 +117,8 @@ impl Runtime {
     /// The pure-construction half of [`connect`](Runtime::connect), over an
     /// already-connected pool.
     fn wire(config: Config, pool: PgPool) -> anyhow::Result<Self> {
-        let callback = config
-            .public_url
+        let public_url: &url::Url = config.public_url.as_ref();
+        let callback = public_url
             .join("/signin-callback")
             .map_err(|e| anyhow::anyhow!("invalid public_url, cannot build redirect URI: {e}"))?;
         let redirect_uri = Uri::parse(String::from(callback)).map_err(|(e, uri)| {

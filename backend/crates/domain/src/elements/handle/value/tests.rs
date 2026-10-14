@@ -157,26 +157,120 @@ fn rejects_punycode_anywhere_and_mixed_case() {
     );
 }
 
-// ---- Reserved labels (ZMVP-45) ----------------------------------------
+// ---- Reserved labels -----------------------------------------------------
+
+fn handle(raw: &str) -> Handle {
+    raw.parse().expect("a valid handle")
+}
+
+// Parsing is context-free: a reserved label only fails at the claim, against
+// the configured namespace.
+#[test]
+fn parsing_accepts_a_reserved_label() {
+    assert_eq!(handle("admin.zurfur.app").as_str(), "admin.zurfur.app");
+    assert_eq!(handle("zurfur.app").as_str(), "zurfur.app");
+}
 
 #[test]
-fn rejects_reserved_labels_in_zurfur_namespace() {
-    for label in ["api", "admin", "www"] {
-        assert_eq!(
-            format!("{label}.zurfur.app").parse::<Handle>(),
-            Err(HandleError::ReservedLabel(label.into())),
-            "{label}.zurfur.app should be reserved"
-        );
+fn refuses_reserved_labels_in_the_configured_namespace() {
+    for namespace in ["zurfur.app", "zurfur.foo"] {
+        let configured = domain(namespace);
+        for label in RESERVED_LABELS {
+            let reserved = handle(&format!("{label}.{namespace}"));
+            let reserved_label_error = HandleError::ReservedLabel((*label).into());
+            assert_eq!(
+                reserved.ensure_unreserved(&configured),
+                Err(reserved_label_error),
+                "{reserved} should be reserved under {namespace}"
+            );
+        }
     }
 }
 
-// The platform root handle is reserved too — the leading-dot suffix check
-// alone would let the bare apex slip past.
+// Zurfur Studio is served from `studio.zurfur.app`, so no one may claim it.
 #[test]
-fn rejects_the_bare_platform_apex() {
+fn rejects_the_studio_product_host() {
+    let studio = handle("studio.zurfur.app");
+    let reserved_label_error = HandleError::ReservedLabel("studio".into());
     assert_eq!(
-        "zurfur.app".parse::<Handle>(),
-        Err(HandleError::ReservedLabel("zurfur".into()))
+        studio.ensure_unreserved(&domain("zurfur.app")),
+        Err(reserved_label_error)
+    );
+}
+
+// Staging's namespace gates its own handles, not production's: under
+// `zurfur.foo`, an `admin.zurfur.app` is a BYO handle like any other.
+#[test]
+fn the_gate_follows_the_configured_namespace() {
+    let staging = domain("zurfur.foo");
+    let production_admin = handle("admin.zurfur.app");
+    assert_eq!(production_admin.ensure_unreserved(&staging), Ok(()));
+    let staging_admin = handle("admin.zurfur.foo");
+    let reserved_label_error = HandleError::ReservedLabel("admin".into());
+    assert_eq!(
+        staging_admin.ensure_unreserved(&staging),
+        Err(reserved_label_error)
+    );
+}
+
+// The leftmost label is the one gated, however deep the member.
+#[test]
+fn refuses_a_reserved_leftmost_label_on_a_deeper_member() {
+    let deep = handle("api.alice.zurfur.app");
+    let reserved_label_error = HandleError::ReservedLabel("api".into());
+    assert_eq!(
+        deep.ensure_unreserved(&domain("zurfur.app")),
+        Err(reserved_label_error)
+    );
+    let nested_ordinary = handle("alice.api.zurfur.app");
+    assert_eq!(
+        nested_ordinary.ensure_unreserved(&domain("zurfur.app")),
+        Ok(())
+    );
+}
+
+// The namespace's root handle is withheld whatever its label: no one claims
+// the platform apex.
+#[test]
+fn refuses_the_bare_apex_of_the_configured_namespace() {
+    assert_eq!(
+        handle("zurfur.app").ensure_unreserved(&domain("zurfur.app")),
+        Err(HandleError::NamespaceApex)
+    );
+    assert_eq!(
+        handle("stage-example.net").ensure_unreserved(&domain("stage-example.net")),
+        Err(HandleError::NamespaceApex)
+    );
+}
+
+// The apex has its own message: it is not "a reserved label".
+#[test]
+fn the_apex_refusal_names_the_apex_not_a_label() {
+    let apex = handle("zurfur.app");
+    let Err(refusal) = apex.ensure_unreserved(&domain("zurfur.app")) else {
+        panic!("the apex must be refused");
+    };
+    let message = refusal.to_string();
+    assert!(message.contains("apex"), "{message}");
+    assert!(!message.contains("reserved label"), "{message}");
+}
+
+#[test]
+fn accepts_an_ordinary_member_and_a_reserved_word_on_a_byo_domain() {
+    let configured = domain("zurfur.app");
+    assert_eq!(
+        handle("alice.zurfur.app").ensure_unreserved(&configured),
+        Ok(())
+    );
+    // The reserved set guards only the configured namespace.
+    assert_eq!(
+        handle("api.example.com").ensure_unreserved(&configured),
+        Ok(())
+    );
+    // A look-alike is not a member, so it is not gated either.
+    assert_eq!(
+        handle("api.notzurfur.app").ensure_unreserved(&configured),
+        Ok(())
     );
 }
 
@@ -185,15 +279,6 @@ fn accepts_a_normal_zurfur_subdomain() {
     assert_eq!(
         "alice.zurfur.app".parse::<Handle>().unwrap().as_str(),
         "alice.zurfur.app"
-    );
-}
-
-#[test]
-fn accepts_reserved_word_on_byo_domain() {
-    // The reserved set guards only the *.zurfur.app namespace.
-    assert_eq!(
-        "api.example.com".parse::<Handle>().unwrap().as_str(),
-        "api.example.com"
     );
 }
 
@@ -236,11 +321,9 @@ fn namespace_membership_is_a_strict_subdomain() {
 #[test]
 fn namespace_membership_refuses_the_apex_and_lookalikes() {
     let zurfur = domain("zurfur.app");
-    // The apex is not a member of its own namespace. `zurfur.app` is not a
-    // constructible Handle, so another domain stands in for the shape.
-    let apex_domain = domain("example.com");
-    let apex = "example.com".parse::<Handle>().expect("a valid handle");
-    assert!(!apex.is_in_namespace(&apex_domain));
+    // The apex is not a member of its own namespace.
+    let apex = "zurfur.app".parse::<Handle>().expect("a valid handle");
+    assert!(!apex.is_in_namespace(&zurfur));
     // A look-alike that ends with the domain's *text* but not on a label
     // boundary is refused — the leading dot is the boundary.
     for look_alike in ["notzurfur.app", "evil-zurfur.app", "xzurfur.app"] {

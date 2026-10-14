@@ -67,6 +67,8 @@
 - 2026091901 decided — Character Deletion — Facts, the Tombstone & Keeper Consent for Slotting
 - 2026093001 decided — The Den — a Tree of Typed Files, Peer Views and Atta
 - 2026100701 decided — My Den — Rulings from the First Slice's Design Study
+- 2026101201 decided — Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers
+- 2026101202 decided — Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core
 
 ## entities/
 - 786439 current — User

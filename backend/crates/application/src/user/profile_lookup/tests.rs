@@ -60,6 +60,20 @@ fn empty_cache() -> Arc<dyn ProfileCache> {
     adapter_mem::MemBackend::new().profile_cache()
 }
 
+/// A profile cache that has nothing and stores nothing: every `put` fails.
+struct RefusingCache;
+
+#[async_trait]
+impl ProfileCache for RefusingCache {
+    async fn get(&self, _did: &Did) -> anyhow::Result<Option<Profile>> {
+        Ok(None)
+    }
+
+    async fn put(&self, _profile: &Profile) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("the cache refused (test)"))
+    }
+}
+
 fn carol() -> Did {
     Did::from("did:plc:profile-lookup-carol".to_owned())
 }
@@ -259,4 +273,37 @@ async fn a_success_releases_the_hold() {
     timed_me_read(&lookups, &cache, &pds, &carol()).await;
 
     assert!(!lookups.failures.holds(&carol()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_profile_the_cache_refuses_is_answered_and_then_held() {
+    let lookups = ProfileLookups::default();
+    let cache: Arc<dyn ProfileCache> = Arc::new(RefusingCache);
+    let pds = ScriptedPds::answering(Answer::After(Duration::ZERO, carol_s_profile()));
+
+    let (first, _) = timed_den_read(&lookups, &cache, &pds, &carol()).await;
+    let (held, held_wait) = timed_den_read(&lookups, &cache, &pds, &carol()).await;
+    let fetches_within_the_hold = pds.fetches();
+    tokio::time::advance(FAILED_LOOKUP_HOLD).await;
+    let (after_the_hold, _) = timed_den_read(&lookups, &cache, &pds, &carol()).await;
+
+    assert_eq!(first, Some(carol_s_profile()));
+    assert_eq!(held, None);
+    assert_eq!(held_wait, Duration::ZERO);
+    assert_eq!(fetches_within_the_hold, 1);
+    assert_eq!(after_the_hold, Some(carol_s_profile()));
+    assert_eq!(pds.fetches(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn me_s_mode_answers_a_profile_the_cache_refuses_every_time() {
+    let lookups = ProfileLookups::default();
+    let cache: Arc<dyn ProfileCache> = Arc::new(RefusingCache);
+    let pds = ScriptedPds::answering(Answer::After(Duration::ZERO, carol_s_profile()));
+    timed_den_read(&lookups, &cache, &pds, &carol()).await;
+
+    let (profile, _) = timed_me_read(&lookups, &cache, &pds, &carol()).await;
+
+    assert_eq!(profile, Some(carol_s_profile()));
+    assert_eq!(pds.fetches(), 2);
 }

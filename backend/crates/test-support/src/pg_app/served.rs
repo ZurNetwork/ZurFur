@@ -129,13 +129,13 @@ impl PgServed {
 
 /// A dev-profile [`Config`] on `database_url`, served at `public_url`: the
 /// shipped example root key with PLC submission off, so minting stays local.
-/// Panics when `public_url` is not a URL.
+/// Panics when `public_url` is not a bare origin.
 fn config(public_url: &str, database_url: &str) -> Config {
     let root_key = base64::engine::general_purpose::STANDARD.encode(EXAMPLE_DEV_ROOT_KEY);
     Config {
         env: Environment::DEV,
         http_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
-        public_url: url::Url::parse(public_url).expect("a URL"),
+        public_url: public_url.parse().expect("a bare origin"),
         database_url: database_url.to_string(),
         log_level: "info".to_string(),
         handle_domain: "zurfur.app".parse().expect("a valid handle domain"),

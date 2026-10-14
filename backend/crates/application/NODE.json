@@ -10,7 +10,7 @@
   "conventions": [
     "One `#[use_case] pub async fn` per use case, a method on its namespace (`app.accounts().role().grant(cmd)`), no mediator.",
     "Each use case is its own file exporting `Command` (or `Query`) + `Output` + the `impl Namespace<'_>` block holding the method; sub-facets (`account::invitation`, `commission::deadline::status`, …) nest as directories of such files under the parent module.",
-    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[lazy_unit] uow: &mut LazyUnit<'_>` (or `#[unit] uow: Unit<'_>`), then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now`.",
+    "Parameter order: `&self`, `#[ports] ports: &Ports`, `#[lazy_unit] uow: &mut LazyUnit<'_>` (or `#[unit] uow: Unit<'_>`), then the caller's params. The macro strips the injected ones from the public signature, so drivers pass only `cmd`/`query`, runtime config and `now` (and, for `me`, the process-wide `&ProfileLookups`).",
     "A write takes `#[lazy_unit]`: the body does its `ports` reads and external calls first, then `let uow = uow.open().await?;` right before its first write; the wrapper commits on `Ok` and rolls back on `Err` only if the unit was opened. `#[unit]` (opened before the body) is legal only where the body cannot read through the pool, and the macro refuses it beside `#[ports]`. A read takes `#[ports]` only. `clippy.toml` bans a hand-written `begin`/`commit`/`rollback` in this crate, tests included; the sanctioned doors are the wrapper, `LazyUnit` and `transaction()`.",
     "A namespace is a struct deriving `WithPorts` (re-exported from `crate::ports`): a root holds `#[ports(is_root = true)] ports: &'a Ports`, a facet holds `#[ports]` on a reference to its parent and gets its accessor on the parent for free.",
     "The module root file keeps the namespace, the terse-`Display` error enum (never interpolates the cause — it stays on `source()`) and the `Result` alias.",
@@ -36,7 +36,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk, and the fake PDS the profile-wait tests slow down)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid+chrono+async-trait",
       "node": false
     },
     {
@@ -121,12 +121,12 @@
     },
     {
       "name": "src/user.rs",
-      "role": "user module root — the `Users` root namespace, resolve_profile (me's read-through), and the re-export of ProfileLookups with PROFILE_WAIT, LOOKUP_CAP and FAILED_LOOKUP_HOLD",
+      "role": "user module root — the `Users` root namespace; re-exports ProfileLookups, PROFILE_WAIT, LOOKUP_CAP and FAILED_LOOKUP_HOLD",
       "node": false
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; asks den's access check about the caller's own root first (not-found is UnknownUser); profile_lookup.rs — ProfileLookups, one background profile lookup per DID: `profile` (every miss joins and waits up to PROFILE_WAIT) and the Den's `profile_unless_busy` (only the miss that starts a lookup waits; a running lookup or a failure within FAILED_LOOKUP_HOLD answers None at once); den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the viewer's own profile through `profile_unless_busy`, or from the cache alone when den's access check reads it, its system folders, and its mounts (posts, Accounts, kept Characters)",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; asks den's access check about the caller's own root first (not-found is UnknownUser), then reads the profile through ProfileLookups::profile; profile_lookup.rs — ProfileLookups, one background profile lookup per DID, capped at LOOKUP_CAP, that fills the cache: `profile` (every miss joins and waits up to PROFILE_WAIT, 2 s) and the Den's `profile_unless_busy` (only the miss that starts a lookup waits; a running lookup, or a failure or failed cache fill within FAILED_LOOKUP_HOLD, answers None at once); den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the viewer's own profile through `profile_unless_busy`, or from the cache alone when den's access check reads it, its system folders, and its mounts (posts, Accounts, kept Characters)",
       "node": false
     },
     {
@@ -137,6 +137,11 @@
     {
       "name": "tests/atta_exposure.rs",
       "role": "the guard that no public item re-exports or names an Atta type (parsed with syn), with planted-exposure self-tests",
+      "node": false
+    },
+    {
+      "name": "tests/character.rs",
+      "role": "integration tests for Characters::create's handle claim gate",
       "node": false
     },
     {
@@ -171,7 +176,7 @@
     },
     {
       "name": "tests/user.rs",
-      "role": "integration tests for the me use case",
+      "role": "integration tests for the me use case, its bounded profile wait included (paused tokio clock)",
       "node": false
     },
     {

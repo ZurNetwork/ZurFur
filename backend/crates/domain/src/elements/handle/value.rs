@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use super::HandleDomain;
 use super::HandleError;
-use super::reserved::{RESERVED_LABELS, RESERVED_TLDS, ZURFUR_NAMESPACE_SUFFIX};
+use super::reserved::{RESERVED_LABELS, RESERVED_TLDS};
 use super::syntax;
 
 /// A validated, normalized atproto-style Account handle. The stored value is
@@ -20,11 +20,6 @@ use super::syntax;
 ///
 /// // Punycode labels are rejected outright.
 /// assert!("xn--80ak6aa92e.zurfur.app".parse::<Handle>().is_err());
-///
-/// // Reserved labels in the *.zurfur.app namespace are rejected...
-/// assert!("api.zurfur.app".parse::<Handle>().is_err());
-/// // ...but the same word is claimable on a BYO domain.
-/// assert!("api.example.com".parse::<Handle>().is_ok());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handle(String);
@@ -32,19 +27,17 @@ pub struct Handle(String);
 impl FromStr for Handle {
     type Err = HandleError;
 
-    /// Validate and wrap a handle, enforcing every rule in one pass: normalize
-    /// (trim, lowercase ASCII, strip one trailing dot), then check length, segment
-    /// count and shape, charset, the `xn--` reject, the TLD rules, and — in the
-    /// Zurfur namespace only, apex included — the reserved leftmost label.
+    /// Validate and wrap a handle, enforcing every context-free rule in one
+    /// pass: normalize (trim, lowercase ASCII, strip one trailing dot), then
+    /// check length, segment count and shape, charset, the `xn--` reject and the
+    /// TLD rules. The reserved labels depend on the configured namespace, so
+    /// [`Handle::ensure_unreserved`] checks them at the claim.
     ///
     /// ```
     /// use domain::elements::handle::{Handle, HandleError};
     ///
     /// assert_eq!("alice.zurfur.app".parse::<Handle>().unwrap().as_str(), "alice.zurfur.app");
     /// assert_eq!("XN--abc.com".parse::<Handle>(), Err(HandleError::PunycodeLabel)); // case-insensitive
-    /// assert_eq!("admin.zurfur.app".parse::<Handle>(), Err(HandleError::ReservedLabel("admin".into())));
-    /// // The bare platform apex is reserved too — no one claims the Zurfur root handle.
-    /// assert_eq!("zurfur.app".parse::<Handle>(), Err(HandleError::ReservedLabel("zurfur".into())));
     /// ```
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         // 1. NORMALIZE: trim, lowercase ASCII only (the spec's `A-Z` to `a-z`, so
@@ -66,20 +59,6 @@ impl FromStr for Handle {
 
         // 6–7. The rightmost (top-level) segment: no leading digit, not reserved.
         syntax::check_top_level(&labels, &RESERVED_TLDS)?;
-
-        // 8. Reserved labels — the Zurfur namespace only (ZMVP-45), leftmost label.
-        // The bare platform apex `zurfur.app` has no label in front of it, so it
-        // never matches the leading-dot suffix on its own — but its own leftmost
-        // label is "zurfur", which is already in RESERVED_LABELS. Folding the apex
-        // into the same namespace test (the suffix minus its leading dot) routes it
-        // through the one gate instead of adding a parallel special case.
-        let zurfur_apex = &ZURFUR_NAMESPACE_SUFFIX[1..];
-        if normalized == zurfur_apex || normalized.ends_with(ZURFUR_NAMESPACE_SUFFIX) {
-            let leftmost = labels[0];
-            if RESERVED_LABELS.contains(&leftmost) {
-                return Err(HandleError::ReservedLabel(leftmost.to_owned()));
-            }
-        }
 
         Ok(Self(normalized))
     }
@@ -109,6 +88,37 @@ impl Handle {
         self.0
             .strip_suffix(domain.as_str())
             .is_some_and(|prefix| prefix.ends_with('.'))
+    }
+
+    /// Refuse a handle `domain` withholds: its bare apex, or a member whose
+    /// leftmost label is reserved. A BYO handle passes. A method, not a parse:
+    /// the rule needs the configured namespace.
+    ///
+    /// ```
+    /// use domain::elements::handle::{Handle, HandleDomain, HandleError};
+    ///
+    /// let staging: HandleDomain = "zurfur.foo".parse().unwrap();
+    /// let admin: Handle = "admin.zurfur.foo".parse().unwrap();
+    /// assert_eq!(admin.ensure_unreserved(&staging), Err(HandleError::ReservedLabel("admin".into())));
+    /// // No one claims the namespace's root handle.
+    /// let apex: Handle = "zurfur.foo".parse().unwrap();
+    /// assert_eq!(apex.ensure_unreserved(&staging), Err(HandleError::NamespaceApex));
+    /// // The same word is claimable on a BYO domain.
+    /// let byo: Handle = "admin.example.com".parse().unwrap();
+    /// assert_eq!(byo.ensure_unreserved(&staging), Ok(()));
+    /// ```
+    pub fn ensure_unreserved(&self, domain: &HandleDomain) -> Result<(), HandleError> {
+        if self.0 == domain.as_str() {
+            return Err(HandleError::NamespaceApex);
+        }
+        if !self.is_in_namespace(domain) {
+            return Ok(());
+        }
+        let leftmost = self.0.split('.').next().unwrap_or_default();
+        if RESERVED_LABELS.contains(&leftmost) {
+            return Err(HandleError::ReservedLabel(leftmost.to_owned()));
+        }
+        Ok(())
     }
 }
 

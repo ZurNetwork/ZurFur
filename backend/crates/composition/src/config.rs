@@ -1,4 +1,8 @@
-//! The runtime [`Config`], its figment loader, and the boot-time custody guard.
+//! The runtime [`Config`], its figment loader with the environment guard
+//! ([`ConfigRefusal`]), the [`BareOrigin`] its `public_url` must be, and the
+//! boot-time custody guard.
+
+mod origin;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -9,7 +13,8 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Deserializer, de};
-use url::Url;
+
+pub use origin::{BareOrigin, BareOriginError};
 
 /// The environment variable naming the config profile (`dev`/`stg`/`prod`).
 pub const PROFILE_ENV: &str = "ZURFUR_ENV";
@@ -29,7 +34,8 @@ pub const ROOT_KEY_ENV: &str = "ZURFUR_DID_KEY_ROOT_KEY";
 /// change, not config.
 #[derive(Clone, Debug, Deserialize)]
 pub enum Environment {
-    /// Local development: plain HTTP on loopback, non-`Secure` cookies.
+    /// Local development: plain HTTP on loopback, non-`Secure` cookies. Boots
+    /// only on this machine; see [`ConfigRefusal`].
     #[serde(alias = "dev")]
     DEV,
     /// Staging: HTTPS, `Secure` cookies.
@@ -55,12 +61,16 @@ impl Environment {
 pub struct Config {
     /// The deployment profile; see [`Environment`].
     pub env: Environment,
-    /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`.
+    /// The socket the HTTP server binds. Defaults to `127.0.0.1:3621`; `DEV`
+    /// refuses a non-loopback address.
     #[serde(default = "default_http_addr")]
     pub http_addr: SocketAddr,
     /// Externally-visible origin (scheme + host + port). Every redirect and the
-    /// OAuth redirect URI are built on it; boot aborts if the latter can't be.
-    pub public_url: Url,
+    /// OAuth redirect URI are built on it. The load refuses anything but a
+    /// [`BareOrigin`], and one that does not fit [`env`](Config::env); see
+    /// [`ConfigRefusal`].
+    #[serde(deserialize_with = "deserialize_public_url")]
+    pub public_url: BareOrigin,
     /// Postgres connection string for the pool built at boot. Read from the
     /// unprefixed `DATABASE_URL`, the name sqlx tooling expects.
     pub database_url: String,
@@ -68,7 +78,8 @@ pub struct Config {
     pub log_level: String,
     /// The DNS suffix Zurfur issues Account handles under, e.g. `zurfur.app`.
     /// Parsed once here, so an invalid namespace fails the boot and the claim
-    /// checks and the well-known resolver cannot disagree.
+    /// checks and the well-known resolver cannot disagree. `STG` refuses
+    /// production's namespace, the default, and every subdomain of it.
     #[serde(
         default = "default_handle_domain",
         deserialize_with = "deserialize_handle_domain"
@@ -133,6 +144,25 @@ where
     raw.parse::<HandleDomain>().map_err(de::Error::custom)
 }
 
+/// Deserialize [`Config::public_url`] as a [`BareOrigin`] without echoing the
+/// value: a URL can carry credentials, so the error names only the rule that
+/// failed.
+fn deserialize_public_url<'de, D>(deserializer: D) -> Result<BareOrigin, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    raw.parse::<BareOrigin>().map_err(|refusal| {
+        de::Error::custom(format!(
+            "`public_url` must be a bare origin (a scheme, a host and an optional port): {refusal}"
+        ))
+    })
+}
+
+/// The origins `DEV` may boot on, any port: the loopback return addresses an
+/// atproto authorization server accepts.
+const LOOPBACK: [&str; 2] = ["http://127.0.0.1", "http://[::1]"];
+
 /// Serde default for [`Config::plc_directory_endpoint`]: a local placeholder,
 /// never the canonical public log.
 fn default_plc_directory_endpoint() -> String {
@@ -191,8 +221,10 @@ impl Config {
     /// Load and validate the runtime [`Config`], selecting the profile from
     /// `ZURFUR_ENV` (default `dev`). Layered lowest-first:
     /// `config/{profile}.toml`, the unprefixed `DATABASE_URL`, then `ZURFUR_*`
-    /// env. The TOML file is optional; a missing required key fails the load.
-    pub fn load() -> Result<Self, Box<figment::Error>> {
+    /// env. The TOML file is optional; a missing required key fails the load,
+    /// and so does a configuration its environment refuses
+    /// ([`LoadError::Refused`]).
+    pub fn load() -> Result<Self, LoadError> {
         Self::load_from(None)
     }
 
@@ -200,7 +232,7 @@ impl Config {
     /// `None` falls back to `ZURFUR_CONFIG_DIR`, then to this crate's
     /// `CARGO_MANIFEST_DIR`-anchored `backend/config` — never the CWD, since
     /// cargo, cargo-watch and `just` each run from a different one.
-    pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, Box<figment::Error>> {
+    pub fn load_from(config_dir: Option<PathBuf>) -> Result<Self, LoadError> {
         let profile = std::env::var(PROFILE_ENV).unwrap_or_else(|_| "dev".into());
         // The profile names a file; keep it a bare name so `ZURFUR_ENV=../x`
         // can never walk out of the config dir.
@@ -209,9 +241,10 @@ impl Config {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
-            return Err(Box::new(figment::Error::from(format!(
+            let profile_error = figment::Error::from(format!(
                 "{PROFILE_ENV} must be a bare profile name (letters, digits, '-'), got {profile:?}"
-            ))));
+            ));
+            return Err(LoadError::from(Box::new(profile_error)));
         }
 
         let config_dir = config_dir
@@ -219,13 +252,111 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config")));
         let profile_file = config_dir.join(format!("{profile}.toml"));
 
-        Figment::new()
+        let config: Self = Figment::new()
             .merge(Toml::file(profile_file))
             .merge(Env::raw().only(&[DATABASE_URL_ENV]))
             .merge(Env::prefixed(ENV_PREFIX))
             .extract()
-            .map_err(Box::new)
+            .map_err(Box::new)?;
+        config.ensure_fits_environment()?;
+        Ok(config)
     }
+
+    /// Refuse a configuration its [`env`](Config::env) may not boot with:
+    /// `DEV` only on this machine, `STG` and `PROD` only on an `https` origin
+    /// named by a public domain, and `STG` never on or under production's
+    /// handle namespace.
+    fn ensure_fits_environment(&self) -> Result<(), ConfigRefusal> {
+        match self.env {
+            Environment::DEV => {
+                if !self.public_url.is_of_origin(&LOOPBACK) {
+                    return Err(ConfigRefusal::DevPublicUrlNotLoopback);
+                }
+                if !self.http_addr.ip().to_canonical().is_loopback() {
+                    return Err(ConfigRefusal::DevHttpAddrNotLoopback);
+                }
+            }
+            Environment::STG | Environment::PROD => {
+                if !self.public_url.is_public_https() {
+                    let not_https_error = ConfigRefusal::PublicUrlNotHttpsOrigin {
+                        env: self.env.clone(),
+                    };
+                    return Err(not_https_error);
+                }
+            }
+        }
+        let staging_on_production_namespace = matches!(self.env, Environment::STG)
+            && is_on_or_under_production_namespace(&self.handle_domain);
+        if staging_on_production_namespace {
+            return Err(ConfigRefusal::StagingOnProductionHandleDomain);
+        }
+        Ok(())
+    }
+}
+
+/// Why [`Config::load`] failed: the layered sources would not extract into a
+/// [`Config`], or its environment refused what they gave.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError {
+    /// A source could not be read, or did not deserialize into a [`Config`].
+    #[error(transparent)]
+    Figment(#[from] Box<figment::Error>),
+    /// The configuration loaded, but its environment may not boot with it.
+    #[error(transparent)]
+    Refused(#[from] ConfigRefusal),
+}
+
+/// Why [`Config::load`] refused a configuration for its environment. Each
+/// message names the setting at fault and never echoes its value.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConfigRefusal {
+    /// `DEV`'s `public_url` is not a loopback origin a sign-in can return to.
+    #[error(
+        "refusing to boot DEV off this machine: `public_url` must be `http://127.0.0.1` or \
+         `http://[::1]` (any port); `localhost` is refused because Bluesky refuses it as a \
+         sign-in return address"
+    )]
+    DevPublicUrlNotLoopback,
+    /// `DEV`'s `http_addr` listens beyond loopback.
+    #[error("refusing to boot DEV off this machine: `http_addr` must be a loopback address")]
+    DevHttpAddrNotLoopback,
+    /// A deployed environment's `public_url` is not an `https` origin named by
+    /// a public domain.
+    #[error(
+        "refusing to boot {env:?}: `public_url` must be an `https` origin on a domain name \
+         of two or more labels without a trailing dot, with an optional non-zero port; \
+         no `localhost` and no IP address"
+    )]
+    PublicUrlNotHttpsOrigin {
+        /// The environment that demanded HTTPS.
+        env: Environment,
+    },
+    /// `STG`'s `handle_domain` is production's namespace or a subdomain of it.
+    #[error(
+        "refusing to boot STG: `handle_domain` is production's namespace \
+         `{DEFAULT_HANDLE_DOMAIN}` or a subdomain of it; set staging's own"
+    )]
+    StagingOnProductionHandleDomain,
+}
+
+impl ConfigRefusal {
+    /// The configuration key the refusal is about.
+    pub fn setting(&self) -> &'static str {
+        match self {
+            Self::DevPublicUrlNotLoopback | Self::PublicUrlNotHttpsOrigin { .. } => "public_url",
+            Self::DevHttpAddrNotLoopback => "http_addr",
+            Self::StagingOnProductionHandleDomain => "handle_domain",
+        }
+    }
+}
+
+/// Whether `handle_domain` is production's namespace, [`DEFAULT_HANDLE_DOMAIN`],
+/// or a subdomain of it.
+fn is_on_or_under_production_namespace(handle_domain: &HandleDomain) -> bool {
+    let namespace = handle_domain.as_str();
+    namespace
+        .strip_suffix(DEFAULT_HANDLE_DOMAIN)
+        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
 }
 
 #[cfg(test)]

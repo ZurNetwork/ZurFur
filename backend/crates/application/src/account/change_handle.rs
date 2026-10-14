@@ -45,6 +45,9 @@ impl<'a> Accounts<'a> {
             actor_id,
             handle,
         } = cmd;
+        handle
+            .ensure_unreserved(handle_domain)
+            .map_err(AccountError::InvalidHandle)?;
         if !handle.is_in_namespace(handle_domain) {
             return Err(AccountError::UnsupportedHandle);
         };

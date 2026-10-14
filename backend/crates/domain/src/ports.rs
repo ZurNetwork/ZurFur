@@ -30,7 +30,8 @@ pub use commission::{
     UnknownSurface, UnknownTab,
 };
 pub use errors::{
-    AccountMismatch, DidBelongsToAnotherActor, HandleTaken, PublicRecordsError, ResolveError,
+    AccountMismatch, BrowserMismatch, DidBelongsToAnotherActor, HandleTaken, PublicRecordsError,
+    ResolveError,
 };
 pub use file::FileStore;
 pub use identity::{DidMinter, DidOperations, KeyStore, PlcOperationLog};

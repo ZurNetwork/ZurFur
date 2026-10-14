@@ -73,6 +73,11 @@
       "node": false
     },
     {
+      "name": "src/tests.rs",
+      "role": "unit tests for lib.rs's config_problem (the value-free config-error rendering)",
+      "node": false
+    },
+    {
       "name": "tests/account.rs",
       "role": "in-process/process tests for account create/delete",
       "node": false

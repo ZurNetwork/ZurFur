@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use domain::elements::did::Did;
 use domain::elements::handle::AtHandle;
-use domain::ports::{Authenticator, BrowserBinding, SigninStarted};
+use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, SigninStarted};
 
 /// The code the fixed sign-in's callback carries; `complete` never reads it.
 const CALLBACK_CODE: &str = "fixed-sign-in";
@@ -19,7 +19,7 @@ const SIGN_IN_LIFETIME: Duration = Duration::from_secs(600);
 /// An [`Authenticator`] whose every completed sign-in is one fixed DID,
 /// whatever handle was typed. `start` sends the browser straight back to the
 /// callback with a fresh browser binding; `complete` takes each binding once,
-/// within its lifetime.
+/// within its lifetime, and refuses any other with [`BrowserMismatch`].
 pub struct FixedSignIn {
     /// The DID every completed sign-in answers.
     did: Did,
@@ -79,18 +79,15 @@ impl Authenticator for FixedSignIn {
         _iss: Option<String>,
         browser_binding: Option<BrowserBinding>,
     ) -> anyhow::Result<Did> {
-        let binding = browser_binding
-            .ok_or_else(|| anyhow::anyhow!("the browser presented no sign-in binding"))?;
+        let binding = browser_binding.ok_or(BrowserMismatch)?;
         let issued_at = self
             .issued
             .lock()
             .expect("FixedSignIn issued mutex poisoned")
             .remove(binding.as_ref())
-            .ok_or_else(|| {
-                anyhow::anyhow!("the browser's sign-in binding was not issued, or was already used")
-            })?;
+            .ok_or(BrowserMismatch)?;
         if !self.is_live(issued_at, Instant::now()) {
-            anyhow::bail!("the browser's sign-in binding has expired");
+            return Err(BrowserMismatch.into());
         }
         Ok(self.did.clone())
     }

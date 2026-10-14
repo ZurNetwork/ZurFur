@@ -8,9 +8,8 @@ use std::sync::Arc;
 use adapter_mem::{
     MemAuthenticator, MemBackend, MemDidMinter, MemIdentityResolver, MemProfileSource,
 };
-use composition::{Config, Environment, Runtime};
+use composition::{BareOrigin, Config, Environment, Runtime};
 use domain::elements::{did::Did, profile::Profile};
-use url::Url;
 
 /// The `Config::database_url` the fixture carries — what an identity file's
 /// fingerprint must be taken against to match this runtime.
@@ -27,7 +26,7 @@ pub struct MemRuntime {
 pub struct MemRuntimeBuilder {
     did: Did,
     profile: Profile,
-    public_url: Url,
+    public_url: BareOrigin,
     max_upload_bytes: u64,
 }
 
@@ -38,7 +37,7 @@ pub fn mem(did: &Did) -> MemRuntimeBuilder {
     MemRuntimeBuilder {
         did: did.clone(),
         profile: Profile::new(did.clone(), "fixture.bsky.social"),
-        public_url: Url::parse("http://127.0.0.1:0").expect("a URL"),
+        public_url: "http://127.0.0.1:0".parse().expect("a bare origin"),
         max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
     }
 }
@@ -51,9 +50,9 @@ impl MemRuntimeBuilder {
     }
 
     /// The externally-visible origin (`Config::public_url`); panics when
-    /// `public_url` is not a URL.
+    /// `public_url` is not a bare origin.
     pub fn public_url(mut self, public_url: impl AsRef<str>) -> Self {
-        self.public_url = Url::parse(public_url.as_ref()).expect("a URL");
+        self.public_url = public_url.as_ref().parse().expect("a bare origin");
         self
     }
 

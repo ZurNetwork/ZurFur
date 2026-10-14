@@ -56,8 +56,9 @@ chrono = { workspace = true }
 # the in-memory fixture — already in the dev graph
 # transitively via `test-support` (see the dep-guard's cyclic-dev-graph note).
 composition = { path = "../composition" }
-# The fixture world the Den tests walk (`adapter_mem::fixture`); dev-only, so the
-# dep guard's normal graph stays adapter-free.
+# The fixture world the Den tests walk (`adapter_mem::fixture`), and the fake
+# PDS whose latency the profile-wait tests set; dev-only, so the dep guard's
+# normal graph stays adapter-free.
 adapter-mem = { path = "../adapter-mem" }
 # The engine-exposure guard parses the crate's own sources.
 syn = { workspace = true }

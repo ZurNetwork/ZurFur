@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "domain + async-trait + cid/sha2 (real CIDv1 addressing in the fake) + tokio io-util for the streaming FileStore seam",
+      "role": "domain + async-trait + cid/sha2 (real CIDv1 addressing in the fake) + tokio io-util for the streaming FileStore seam, time for MemProfileSource's slow and silent PDS",
       "node": false
     },
     {
@@ -47,7 +47,7 @@
     },
     {
       "name": "src/fixed_sign_in.rs",
-      "role": "FixedSignIn — the dev profile's Authenticator: every completed sign-in is one fixed DID, still through a single-use browser binding; start redirects straight to the absolute callback",
+      "role": "FixedSignIn — the dev profile's Authenticator: every completed sign-in is one fixed DID, still through a single-use browser binding, refusing any other with BrowserMismatch; start redirects straight to the absolute callback",
       "node": false
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "shared MemBackend (incl. markups map) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
+      "role": "shared MemBackend (incl. markups map) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one; answer_after / never_answer latency), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
       "node": false
     },
     {

@@ -4,7 +4,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         account::{Account, AccountId},
-        handle::{Handle, HandleDomain},
+        handle::{Handle, HandleDomain, HandleError},
         workflow::WorkflowError,
     },
     ports::{DidBelongsToAnotherActor, DidMinter, HandleTaken},
@@ -78,6 +78,9 @@ pub enum AccountError {
     HandleTaken,
     /// The handle's namespace isn't supported for this operation.
     UnsupportedHandle,
+    /// The configured handle namespace withholds the handle; carries the rule
+    /// it broke.
+    InvalidHandle(HandleError),
     /// A port failed; nothing was persisted, the caller may retry.
     Infrastructure(anyhow::Error),
     /// The actor's role doesn't carry the needed authority — no role included.
@@ -155,6 +158,7 @@ impl std::fmt::Display for AccountError {
                 f,
                 "This handle's namespace isn't supported for this operation"
             ),
+            AccountError::InvalidHandle(rule) => write!(f, "{rule}"),
             AccountError::Infrastructure(_) => write!(f, "an infrastructure port failed"),
             AccountError::IncorrectRole => write!(f, "This role can't perform this action"),
             AccountError::HandleUnchanged => write!(f, "Nothing to do"),
@@ -202,6 +206,7 @@ impl std::error::Error for AccountError {
         match self {
             AccountError::HandleTaken
             | AccountError::UnsupportedHandle
+            | AccountError::InvalidHandle(_)
             | AccountError::IncorrectRole
             | AccountError::RenamedTooRecently
             | AccountError::HandleUnchanged
@@ -260,10 +265,11 @@ pub(crate) async fn require_live_account(
         .ok_or(AccountError::NotFound(AccountEntity::Account))
 }
 
-/// The one handle-claim gate: refuse with `HandleTaken` when a live account
-/// already holds `handle`, or when, inside the Zurfur namespace, another
-/// account vacated it within the quarantine window. `exempt` names the account
-/// whose own vacated handle does not count against it.
+/// The one handle-claim gate: refuse with `InvalidHandle` when `handle_domain`
+/// withholds `handle` (its apex or a reserved label), and with `HandleTaken`
+/// when a live account already holds it, or when, inside the Zurfur namespace,
+/// another account vacated it within the quarantine window. `exempt` names the
+/// account whose own vacated handle does not count against it.
 // TODO(Engineer): Characters claim through this gate too once their handle
 // namespace is ruled. A namespace shared with Accounts needs a taken-check that
 // spans both actor kinds, not `AccountStore` alone.
@@ -274,6 +280,9 @@ pub(crate) async fn ensure_handle_claimable(
     exempt: Option<&AccountId>,
     now: DateTimeUtc,
 ) -> AccountResult<()> {
+    handle
+        .ensure_unreserved(handle_domain)
+        .map_err(AccountError::InvalidHandle)?;
     if ports.accounts.find_did_by_handle(handle).await?.is_some() {
         return Err(AccountError::HandleTaken);
     }

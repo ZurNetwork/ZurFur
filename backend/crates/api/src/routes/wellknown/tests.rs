@@ -46,6 +46,17 @@ fn a_trailing_dot_or_cased_handle_domain_still_resolves() {
     assert_eq!(h.as_str(), "alice.zurfur.app");
 }
 
+// A handle the namespace withholds never reaches the store.
+#[test]
+fn refuses_a_reserved_label() {
+    assert!(handle_from_host("admin.zurfur.app", &domain("zurfur.app")).is_none());
+    assert!(handle_from_host("studio.zurfur.app:443", &domain("zurfur.app")).is_none());
+    // The gate follows the configured namespace.
+    assert!(handle_from_host("admin.zurfur.foo", &domain("zurfur.foo")).is_none());
+    let ordinary = handle_from_host("alice.zurfur.foo", &domain("zurfur.foo"));
+    assert!(ordinary.is_some());
+}
+
 #[test]
 fn refuses_a_foreign_authority() {
     assert!(handle_from_host("alice.example.com", &domain("zurfur.app")).is_none());

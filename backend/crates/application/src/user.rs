@@ -1,38 +1,12 @@
 //! Use cases about the acting User.
 
 use crate::ports::WithPorts;
-use domain::elements::{did::Did, profile::Profile};
-use domain::ports::{ProfileCache, ProfileSource};
 
 pub(crate) mod den;
 pub mod me;
 mod profile_lookup;
 
 pub use profile_lookup::{FAILED_LOOKUP_HOLD, LOOKUP_CAP, PROFILE_WAIT, ProfileLookups};
-
-/// Read-through resolution of a visitor's profile: a cache hit is served
-/// without waking the PDS, a miss reads the PDS and caches the result, and a
-/// PDS failure degrades to `None` rather than erroring.
-///
-/// The cache fill is pool-backed and best-effort — a documented exception to
-/// the compile-enforced Unit of Work, and a `put` failure is
-/// swallowed so a cache hiccup never fails the read.
-pub(crate) async fn resolve_profile(
-    cache: &dyn ProfileCache,
-    source: &dyn ProfileSource,
-    did: &Did,
-) -> Option<Profile> {
-    if let Ok(Some(profile)) = cache.get(did).await {
-        return Some(profile);
-    }
-    match source.fetch(did).await {
-        Ok(profile) => {
-            let _ = cache.put(&profile).await;
-            Some(profile)
-        }
-        Err(_) => None,
-    }
-}
 
 /// User use cases, with the ports already bound.
 #[derive(Clone, Copy, WithPorts)]
