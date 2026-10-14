@@ -39,6 +39,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -874,7 +875,7 @@ impl Authenticator for MemAuthenticator {
         let started = SigninStarted {
             authorization_url: "/signin-callback?code=test".to_string(),
             browser_binding: BrowserBinding::from("mem-browser-binding".to_string()),
-            lifetime: std::time::Duration::from_secs(600),
+            lifetime: Duration::from_secs(600),
         };
         Ok(started)
     }
@@ -891,13 +892,27 @@ impl Authenticator for MemAuthenticator {
 }
 
 /// In-memory [`ProfileSource`]: returns a fixed profile, counts its calls, and
-/// can be flipped to unreachable for graceful-degradation tests.
+/// can be flipped to unreachable, slow or silent for degradation tests.
 pub struct MemProfileSource {
     /// The profile handed back for any DID; `None` after
     /// [`MemProfileSource::set_unreachable`] makes `fetch` error instead.
     profile: Mutex<Option<Profile>>,
+    /// When `fetch` answers; set by [`MemProfileSource::answer_after`] and
+    /// [`MemProfileSource::never_answer`].
+    latency: Mutex<Latency>,
     /// Count of `fetch` calls, read via [`MemProfileSource::fetch_count`].
     fetches: AtomicUsize,
+}
+
+/// When a [`MemProfileSource`] answers a `fetch`.
+#[derive(Clone, Copy)]
+enum Latency {
+    /// At once.
+    Immediate,
+    /// After this long, on the tokio clock.
+    After(Duration),
+    /// Never: the fetch stays pending until it is dropped.
+    Never,
 }
 
 impl MemProfileSource {
@@ -905,6 +920,7 @@ impl MemProfileSource {
     pub fn new(profile: Profile) -> Self {
         Self {
             profile: Mutex::new(Some(profile)),
+            latency: Mutex::new(Latency::Immediate),
             fetches: AtomicUsize::new(0),
         }
     }
@@ -914,8 +930,25 @@ impl MemProfileSource {
     pub fn unreachable() -> Self {
         Self {
             profile: Mutex::new(None),
+            latency: Mutex::new(Latency::Immediate),
             fetches: AtomicUsize::new(0),
         }
+    }
+
+    /// Make every later `fetch` answer only after `delay`, a slow PDS.
+    pub fn answer_after(&self, delay: Duration) {
+        *self
+            .latency
+            .lock()
+            .expect("MemProfileSource mutex poisoned") = Latency::After(delay);
+    }
+
+    /// Make every later `fetch` hang forever, a PDS that never answers.
+    pub fn never_answer(&self) {
+        *self
+            .latency
+            .lock()
+            .expect("MemProfileSource mutex poisoned") = Latency::Never;
     }
 
     /// Flip the fake PDS to unreachable; subsequent `fetch` calls error.
@@ -934,10 +967,20 @@ impl MemProfileSource {
 
 #[async_trait]
 impl ProfileSource for MemProfileSource {
-    /// Return the configured profile and bump the call counter; errors once the
-    /// fake is unreachable. The DID is ignored.
+    /// Bump the call counter, wait out the configured latency, then return the
+    /// configured profile; errors once the fake is unreachable. The DID is
+    /// ignored.
     async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
         self.fetches.fetch_add(1, Ordering::SeqCst);
+        let latency = *self
+            .latency
+            .lock()
+            .expect("MemProfileSource mutex poisoned");
+        match latency {
+            Latency::Immediate => {}
+            Latency::After(delay) => tokio::time::sleep(delay).await,
+            Latency::Never => std::future::pending::<()>().await,
+        }
         self.profile
             .lock()
             .expect("MemProfileSource mutex poisoned")

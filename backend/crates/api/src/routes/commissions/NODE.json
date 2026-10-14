@@ -102,6 +102,11 @@
       "name": "status.rs",
       "role": "PUT/DELETE /{id}/status/direction → commission::status::direction::set / clear",
       "node": false
+    },
+    {
+      "name": "tests.rs",
+      "role": "unit tests for mod.rs's CommissionError→Problem mapping",
+      "node": false
     }
   ],
   "refs": [

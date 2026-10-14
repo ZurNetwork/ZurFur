@@ -127,6 +127,7 @@ pub async fn run(
                     }
                     // Unreachable from founding; mapped to keep the match exhaustive.
                     AccountError::NotFound(_) => CliError::domain("not_found", err),
+                    AccountError::InvalidHandle(_) => CliError::domain("invalid_request", err),
                     // Unreachable from founding — the namespace check is change_handle's own.
                     AccountError::UnsupportedHandle => CliError::domain("unsupported_handle", err),
                     // Unreachable from founding — both are change_handle-only outcomes.
@@ -200,6 +201,8 @@ pub async fn run(
                         }
                         // Unreachable from delete (no handle is claimed here).
                         AccountError::HandleTaken => CliError::domain("handle_taken", err),
+                        // Unreachable from delete — no handle is claimed here.
+                        AccountError::InvalidHandle(_) => CliError::domain("invalid_request", err),
                         // Unreachable from delete — no handle-namespace check runs here.
                         AccountError::UnsupportedHandle => {
                             CliError::domain("unsupported_handle", err)

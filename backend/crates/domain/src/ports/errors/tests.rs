@@ -57,3 +57,13 @@ fn resolve_error_carries_the_cause_as_its_source() {
     let expected_unavailable = Some(format!("timed out reaching {ASKED_ABOUT}"));
     assert_eq!(unavailable_source, expected_unavailable);
 }
+
+#[test]
+fn the_sign_in_refusals_have_terse_fixed_messages() {
+    let messages = [AccountMismatch.to_string(), BrowserMismatch.to_string()];
+    let expected = [
+        "signed in as a different account than the handle named",
+        "sign-in not started in this browser, or expired",
+    ];
+    assert_eq!(messages, expected);
+}

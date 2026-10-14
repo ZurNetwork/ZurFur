@@ -86,7 +86,7 @@
     },
     {
       "name": "src/pg_app/in_process_pds.rs",
-      "role": "InProcessPds — the sign-in (Authenticator) and profile (ProfileSource) ports answered in-process for registered profiles; unknown handles/DIDs refused, and a callback without the browser binding its sign-in started with",
+      "role": "InProcessPds — the sign-in (Authenticator) and profile (ProfileSource) ports answered in-process for registered profiles; unknown handles/DIDs refused, and a callback without the browser binding its sign-in started with (BrowserMismatch)",
       "node": false
     },
     {

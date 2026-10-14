@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
-use super::HandleDomainError;
+use super::{Handle, HandleDomainError};
 
 /// The DNS namespace Zurfur issues Account handles under, as deployment
-/// configures it — normalized (trimmed, lowercased, outer dots stripped) and
-/// parsed once at config load so no call site re-normalizes it. Only an empty
-/// result is rejected; stricter DNS-label validation is an open follow-up.
+/// configures it — normalized (trimmed, ASCII-lowercased, outer dots stripped) and
+/// parsed once at config load so no call site re-normalizes it. It must be a
+/// bare hostname that itself parses as a [`Handle`].
 ///
 /// ```
 /// use domain::elements::handle::HandleDomain;
@@ -20,22 +20,28 @@ pub struct HandleDomain(String);
 impl FromStr for HandleDomain {
     type Err = HandleDomainError;
 
-    /// Normalize and wrap a configured handle namespace: trim, lowercase, and
-    /// strip leading and trailing dots. Only an empty result is rejected — an
-    /// empty namespace would make every handle look like a member. Stricter
-    /// DNS-label validation is an open follow-up.
+    /// Normalize and wrap a configured handle namespace: trim, lowercase ASCII
+    /// only (as a [`Handle`] does), and
+    /// strip leading and trailing dots, then refuse an empty result and
+    /// anything that is not a hostname a [`Handle`] could be (a wildcard, a
+    /// port, a scheme, a path, an IP literal).
     ///
     /// ```
-    /// use domain::elements::handle::{HandleDomain, HandleDomainError};
+    /// use domain::elements::handle::{HandleDomain, HandleDomainError, HandleError};
     ///
     /// assert_eq!(".zurfur.app.".parse::<HandleDomain>().unwrap().as_str(), "zurfur.app");
     /// assert_eq!("".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
+    /// let with_port = "zurfur.app:443".parse::<HandleDomain>();
+    /// assert_eq!(with_port, Err(HandleDomainError::NotAHostname(HandleError::InvalidChar(':'))));
     /// ```
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let normalized = raw.trim().trim_matches('.').to_lowercase();
+        let normalized = raw.trim().trim_matches('.').to_ascii_lowercase();
         if normalized.is_empty() {
             return Err(HandleDomainError::Empty);
         }
+        normalized
+            .parse::<Handle>()
+            .map_err(HandleDomainError::NotAHostname)?;
         Ok(Self(normalized))
     }
 }

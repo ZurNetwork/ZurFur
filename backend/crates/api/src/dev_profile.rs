@@ -81,7 +81,8 @@ async fn runtime(config: Config) -> anyhow::Result<AppState> {
     seed_identity(&backend).await?;
     seed_commission(&backend, &alice(), &bob(), &supreme_arts()).await?;
 
-    let callback = config.public_url.join("/signin-callback")?;
+    let public_url: &url::Url = config.public_url.as_ref();
+    let callback = public_url.join("/signin-callback")?;
     let sign_in = FixedSignIn::new(alice().did().clone(), callback);
     let runtime = AppState {
         config,

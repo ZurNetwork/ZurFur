@@ -57,8 +57,10 @@ const RESOLVER_OPTIONS_FILE: &str = "adapter-atproto/src/authenticator/jacquard_
 /// Tokens forbidden in every scanned file, the guarded client's own included:
 /// jacquard's resolver, clients and sessions (each hard-wired to a bare reqwest
 /// or able to reach Bluesky), its convenience constructors that pick their own
-/// transport or Google's DNS, the Bluesky fallback host, and the named ways to
-/// weaken TLS or to reopen a proxy, a redirect or a pinned address past the DNS filter.
+/// transport or Google's DNS, its default loopback client (which asks for
+/// write access to the visitor's repo), the Bluesky fallback host, and the named
+/// ways to weaken TLS or to reopen a proxy, a redirect or a pinned address past
+/// the DNS filter.
 const FORBIDDEN_EVERYWHERE: &[&str] = &[
     "JacquardResolver",
     "BasicClient",
@@ -71,6 +73,7 @@ const FORBIDDEN_EVERYWHERE: &[&str] = &[
     "new_dns",
     "with_system_dns",
     "slingshot_resolver_default",
+    "default_localhost",
     "public.api.bsky.app",
     "danger_accept_invalid",
     "add_root_certificate",
@@ -428,6 +431,7 @@ fn detector_flags_each_door() {
         "JacquardResolver::new_dns(http, opts)",
         "resolver.with_system_dns()",
         "slingshot_resolver_default()",
+        "let config = AtprotoClientMetadata::default_localhost();",
         "let url = \"https://public.api.bsky.app\";",
         "builder.danger_accept_invalid_certs(true)",
         "builder.add_root_certificate(cert)",

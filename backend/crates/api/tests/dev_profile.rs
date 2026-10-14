@@ -205,7 +205,7 @@ mod with_the_feature {
         Config {
             env,
             http_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
-            public_url: url::Url::parse(public_url).expect("a URL"),
+            public_url: public_url.parse().expect("a bare origin"),
             database_url: UNREACHABLE_DATABASE_URL.to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
@@ -381,7 +381,7 @@ mod with_the_feature {
             .expect("GET the sign-in callback");
 
         assert_eq!(callback.status(), StatusCode::SEE_OTHER);
-        let refused = format!("{base}/login?error=exchange_failed");
+        let refused = format!("{base}/login?error=browser_mismatch");
         assert_eq!(location(&callback), refused);
         assert_eq!(
             session_cookie(&callback),
@@ -429,10 +429,18 @@ mod with_the_feature {
 
     #[tokio::test]
     async fn the_binary_refuses_to_start_outside_dev() {
+        // The deployed environments get a configuration their own boot checks
+        // accept, so the refusal each meets is the dev profile's.
+        let deployed = [
+            ("ZURFUR_PUBLIC_URL", "https://zurfur.foo"),
+            ("ZURFUR_HANDLE_DOMAIN", "zurfur.foo"),
+        ];
+        let staging = [("ZURFUR_ENV", "stg"), deployed[0], deployed[1]];
+        let production = [("ZURFUR_ENV", "prod"), deployed[0], deployed[1]];
         let cases: [(&[(&str, &str)], &str); 3] = [
             (&[], "ZURFUR_ENV unset"),
-            (&[("ZURFUR_ENV", "stg")], "ZURFUR_ENV=\"stg\""),
-            (&[("ZURFUR_ENV", "prod")], "ZURFUR_ENV=\"prod\""),
+            (&staging, "ZURFUR_ENV=\"stg\""),
+            (&production, "ZURFUR_ENV=\"prod\""),
         ];
         for (vars, why) in cases {
             let exited = run_to_exit(vars).await;
@@ -463,6 +471,54 @@ mod with_the_feature {
                 "{why}: nothing was served"
             );
         }
+    }
+
+    /// Asserts the binary refused to boot DEV off this machine, naming
+    /// `setting`, before anything was served.
+    fn assert_refused_off_this_machine(exited: &Exited, setting: &str) {
+        assert!(!exited.success, "{setting}: the binary refuses to start");
+        assert!(
+            exited
+                .stderr
+                .contains("refusing to boot DEV off this machine"),
+            "{setting}: the refusal is the loopback check: {}",
+            exited.stderr
+        );
+        assert!(
+            exited.stderr.contains(setting),
+            "{setting}: the refusal names the setting: {}",
+            exited.stderr
+        );
+        let everything = format!("{}{}", exited.stdout, exited.stderr);
+        assert!(
+            !everything.contains("dev profile:"),
+            "{setting}: refused before the profile started: {everything}"
+        );
+        assert!(
+            !everything.contains("starting HTTP server"),
+            "{setting}: nothing was served"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_binary_refuses_to_listen_beyond_loopback() {
+        let vars = [("ZURFUR_ENV", "dev"), ("ZURFUR_HTTP_ADDR", "0.0.0.0:0")];
+
+        let exited = run_to_exit(&vars).await;
+
+        assert_refused_off_this_machine(&exited, "`http_addr`");
+    }
+
+    #[tokio::test]
+    async fn the_binary_refuses_a_public_url_beyond_loopback() {
+        let vars = [
+            ("ZURFUR_ENV", "dev"),
+            ("ZURFUR_PUBLIC_URL", "http://192.0.2.1:8180"),
+        ];
+
+        let exited = run_to_exit(&vars).await;
+
+        assert_refused_off_this_machine(&exited, "`public_url`");
     }
 
     #[tokio::test]

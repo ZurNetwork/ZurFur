@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use domain::elements::{did::Did, handle::AtHandle, profile::Profile};
-use domain::ports::{Authenticator, BrowserBinding, ProfileSource, SigninStarted};
+use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, ProfileSource, SigninStarted};
 
 /// An in-process stand-in for each visitor's PDS: it signs in the handles
 /// registered with it, as their DIDs, and answers their profiles. A handle or
@@ -66,12 +66,10 @@ impl Authenticator for InProcessPds {
         let did = self
             .did_for(&code)
             .ok_or_else(|| anyhow::anyhow!("the in-process PDS issued no code {code}"))?;
-        let presented = browser_binding
-            .ok_or_else(|| anyhow::anyhow!("the callback for {code} carries no browser binding"))?;
-        anyhow::ensure!(
-            presented.as_ref() == binding_for(&code).as_str(),
-            "the callback for {code} carries another sign-in's browser binding"
-        );
+        let presented = browser_binding.ok_or(BrowserMismatch)?;
+        if presented.as_ref() != binding_for(&code).as_str() {
+            return Err(BrowserMismatch.into());
+        }
         Ok(did)
     }
 }

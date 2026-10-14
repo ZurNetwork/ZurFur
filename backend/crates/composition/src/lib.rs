@@ -1,5 +1,6 @@
 //! The composition root shared by every driving adapter (`api`, `cli`): the
-//! figment-loaded [`Config`], the boot-time custody guard
+//! figment-loaded [`Config`] (its load refuses a configuration its environment
+//! may not boot with, [`LoadError::Refused`]), the boot-time custody guard
 //! [`ensure_custody_hardened`], the [`logging`] filter every driver installs,
 //! and [`Runtime`] — the bag of `Arc<dyn Port>`s
 //! wired by [`Runtime::connect`]. HTTP-free by construction
@@ -12,7 +13,8 @@ pub mod ports;
 pub(crate) mod runtime;
 
 pub use config::{
-    CONFIG_DIR_ENV, Config, DATABASE_URL_ENV, ENV_PREFIX, EXAMPLE_DEV_ROOT_KEY, Environment,
-    PROFILE_ENV, ROOT_KEY_ENV, ensure_custody_hardened,
+    BareOrigin, BareOriginError, CONFIG_DIR_ENV, Config, ConfigRefusal, DATABASE_URL_ENV,
+    ENV_PREFIX, EXAMPLE_DEV_ROOT_KEY, Environment, LoadError, PROFILE_ENV, ROOT_KEY_ENV,
+    ensure_custody_hardened,
 };
 pub use runtime::{ConnectError, Runtime};

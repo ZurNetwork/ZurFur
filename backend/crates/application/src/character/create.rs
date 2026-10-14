@@ -63,6 +63,7 @@ impl Characters<'_> {
                     .await
                     .map_err(|e| match e {
                         AccountError::HandleTaken => CommonError::HandleTaken,
+                        AccountError::InvalidHandle(rule) => CommonError::InvalidHandle(rule),
                         AccountError::Infrastructure(cause) => CommonError::Infrastructure(cause),
                         other => CommonError::Infrastructure(anyhow::Error::from(other)),
                     })?;

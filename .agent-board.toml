@@ -10,6 +10,8 @@
 #   posts       lead Bowerbird · programmers Kestrel, Ibis, Puffin · QA Kea
 #   moderation  lead Meerkat  · programmers Mastiff, Goose, Alpaca · QA Lapwing
 #   plugin      lead Octopus  · programmers Hermit, Remora, Cuttle · QA Mantis
+#   plugin/studio lead Chameleon · programmers Peacock, Kingfisher, Lorikeet · QA Mandrill
+#   plugin/telegram lead Pigeon · programmers Swift, Tern, Petrel · QA Plover
 #   internal    lead Beaver   · programmers Weaver, Pika, Coati · QA Hoopoe
 #   compliance  lead Tortoise · reviewers Pangolin, Armadillo · QA Avocet
 #   architects  lead Termite  · reviewers Caddis, Oriole · QA Grebe
@@ -203,6 +205,30 @@ lead = "lead"
 # its report goes to `.understand/releases/<version>/security.md`.
 [teams.security]
 mission = "Whole-system security review at the end of every release and after big merges"
+owns = []
+lead = "lead"
+
+# The Zurfur Studio team (the Engineer, 2026-10-12) builds Zurfur Studio, the
+# in-browser Rust painting app forked from PhotoCraft (~/code/zurfur-studio):
+# Lightweight in the alpha, Artist in the beta, Full at release. Studio is a core
+# plugin, so the team is a subteam of the plugin team and answers to its lead as
+# well as to the Orchestrator. Its repo is out of reach of this board's path locks,
+# so it owns no paths here yet (it claims Zurfur paths when its first slice there
+# needs them); its agents use advisory locks named `studio-<area>`.
+[teams."plugin/studio"]
+mission = "Zurfur Studio: the in-browser Rust painting app, a core plugin"
+owns = []
+lead = "lead"
+
+# The Telegram team (2026-10-12) builds Unofficial Rusty Telegram, the Telegram
+# desktop client ported to Rust from tdesktop (PC only), and Unofficial Mini
+# Telegram, a single-chat client in a browser frame, from one Rust core in their
+# own GPL-3.0 repository. The Telegram login lives in the user's browser, never on
+# Zurfur's servers. Mini Telegram is a plugin, so the team is a subteam of the
+# plugin team and answers to its lead as well as to the Orchestrator. It owns no
+# paths here; its agents use advisory locks named `telegram-<area>`.
+[teams."plugin/telegram"]
+mission = "Unofficial Rusty and Mini Telegram: Rust Telegram clients, a plugin"
 owns = []
 lead = "lead"
 

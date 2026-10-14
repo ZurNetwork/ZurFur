@@ -6,6 +6,11 @@ fn fixed_did() -> Did {
     Did::from("did:plc:fixedsigninaaaaaaaaaaaaa".to_string())
 }
 
+/// Whether `completed` is a refusal for its browser, as the port names it.
+fn refused_for_its_browser(completed: anyhow::Result<Did>) -> bool {
+    completed.is_err_and(|refused| refused.is::<BrowserMismatch>())
+}
+
 fn sign_in() -> FixedSignIn {
     FixedSignIn::new(fixed_did(), CALLBACK)
 }
@@ -62,7 +67,7 @@ async fn a_callback_without_a_binding_is_refused() {
         .complete(CALLBACK_CODE.to_string(), None, None, None)
         .await;
 
-    assert!(completed.is_err(), "no binding, no sign-in");
+    assert!(refused_for_its_browser(completed), "no binding, no sign-in");
 }
 
 #[tokio::test]
@@ -75,7 +80,10 @@ async fn a_binding_start_never_issued_is_refused() {
         .complete(CALLBACK_CODE.to_string(), None, None, Some(forged))
         .await;
 
-    assert!(completed.is_err(), "a forged binding signs no one in");
+    assert!(
+        refused_for_its_browser(completed),
+        "a forged binding signs no one in"
+    );
 }
 
 #[tokio::test]
@@ -97,7 +105,10 @@ async fn a_binding_completes_one_sign_in_only() {
         .complete(CALLBACK_CODE.to_string(), None, None, Some(replayed))
         .await;
 
-    assert!(second.is_err(), "a used binding signs no one in again");
+    assert!(
+        refused_for_its_browser(second),
+        "a used binding signs no one in again"
+    );
 }
 
 /// A sign-in whose bindings expire at once.
@@ -122,7 +133,10 @@ async fn an_expired_binding_is_refused() {
         )
         .await;
 
-    assert!(completed.is_err(), "an expired binding signs no one in");
+    assert!(
+        refused_for_its_browser(completed),
+        "an expired binding signs no one in"
+    );
 }
 
 #[tokio::test]

@@ -51,7 +51,7 @@ http-cookies = { path = "../http-cookies" }
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.
 atrium-crypto = { workspace = true }
-# The runtime fixture's `Config::public_url`, and the statement proxy's database URL.
+# The statement proxy's database URL.
 url = { workspace = true }
 # `pg_app::ProfileCacheState`: its names and its VARIANTS.
 strum = { workspace = true }

@@ -4,9 +4,6 @@ pub const HANDLE_MAX_LEN: usize = 253;
 /// The longest a single handle label (dot-separated segment) may be.
 pub const LABEL_MAX_LEN: usize = 63;
 
-/// The Zurfur-issued handle namespace, gated by [`RESERVED_LABELS`].
-pub(super) const ZURFUR_NAMESPACE_SUFFIX: &str = ".zurfur.app";
-
 /// Top-level domains the atproto handle spec disallows: reserved or
 /// non-resolvable names that must fail resolution. An [`AtHandle`](super::AtHandle)
 /// refuses these.
@@ -37,8 +34,9 @@ const fn with_test(disallowed: [&'static str; 8]) -> [&'static str; 9] {
     reserved
 }
 
-/// Labels Zurfur withholds from its own `*.zurfur.app` namespace. Checked
-/// against the leftmost label only; a BYO domain is never gated by this set.
+/// Labels Zurfur withholds from its own handle namespace, the configured
+/// [`HandleDomain`](super::HandleDomain). Checked against the leftmost label
+/// only; a BYO domain is never gated by this set.
 pub(super) const RESERVED_LABELS: &[&str] = &[
     // infra / service
     "api",
@@ -53,6 +51,8 @@ pub(super) const RESERVED_LABELS: &[&str] = &[
     "status",
     "health",
     "metrics",
+    // product surfaces: hosts Zurfur serves its own apps from
+    "studio",
     // auth / identity
     "auth",
     "login",

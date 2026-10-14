@@ -11,9 +11,11 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: zurfur
     ports:
+      # Bound to loopback: a published port with no host IP listens on every
+      # interface, and these dev credentials and keys are public.
       # Host port is env-driven so two worktrees can each run their own DB.
       # Defaults to 5432 for the primary checkout.
-      - "${ZURFUR_DB_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${ZURFUR_DB_HOST_PORT:-5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 
@@ -78,8 +80,8 @@ services:
       # Reconciles onto the SAME endpoint the did:plc minter (ZMVP-49) already
       # points at (ZURFUR_PLC_DIRECTORY_ENDPOINT, http://localhost:2582) —
       # not a second/different PLC. Host port is env-driven for worktree
-      # isolation (scripts/worktree-init.sh).
-      - "${ZURFUR_PLC_HOST_PORT:-2582}:2582"
+      # isolation (scripts/worktree-init.sh). Loopback-only, like `db`.
+      - "127.0.0.1:${ZURFUR_PLC_HOST_PORT:-2582}:2582"
     networks:
       - pds_net
 
@@ -94,7 +96,8 @@ services:
     depends_on:
       - plc
     ports:
-      - "${ZURFUR_PDS_HOST_PORT:-2583}:3000"
+      # Loopback-only, like `db`.
+      - "127.0.0.1:${ZURFUR_PDS_HOST_PORT:-2583}:3000"
     environment:
       PDS_HOSTNAME: localhost
       # PDS_DEV_MODE relaxes the OAuth protected-resource metadata's

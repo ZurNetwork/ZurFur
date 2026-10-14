@@ -24,6 +24,9 @@ use test_support::{
     den::{Answer, get},
     http::{client, serve, sign_in},
     pg_app::{self, DenWorld},
+    recording::{
+        CallLog, RecordingProfileCache, RecordingProfileSource, SubjectLog, assert_reads_none_of,
+    },
     store_doubles::{
         AccountRead, AccountsScript, ScriptedAccounts, ScriptedUsers, UserAnswer, UserRead,
         UsersScript,
@@ -342,6 +345,45 @@ async fn me_is_401_through_the_check_when_the_root_s_user_row_is_gone_in_memory(
 #[tokio::test]
 async fn me_is_401_through_the_check_when_the_root_s_user_row_is_gone_on_postgres() {
     assert_a_gone_root_is_401(pg_stack().await).await;
+}
+
+/// `runtime` with its profile cache and source recording into `log`, and its user store
+/// behind a double scripted by `users`.
+fn recording_profiles(
+    mut runtime: composition::Runtime,
+    users: &UsersScript,
+    log: &CallLog,
+) -> composition::Runtime {
+    let subjects = SubjectLog::default();
+    let cache = RecordingProfileCache::new(runtime.profile_cache, log.clone(), subjects.clone());
+    let source = RecordingProfileSource::new(runtime.profile_source, log.clone(), subjects);
+    let scripted_users = ScriptedUsers::new(Arc::clone(&runtime.users), users.clone());
+    runtime.profile_cache = Arc::new(cache);
+    runtime.profile_source = Arc::new(source);
+    runtime.users = Arc::new(scripted_users);
+    runtime
+}
+
+#[tokio::test]
+async fn a_me_the_check_refuses_reads_no_profile_in_memory() {
+    let users = UsersScript::default();
+    let log = CallLog::default();
+    let builder = test_support::runtime::mem(alice().did());
+    let (script_users, recorder) = (users.clone(), log.clone());
+    let served = serve(builder, move |runtime| {
+        api::app(recording_profiles(runtime, &script_users, &recorder))
+    })
+    .await;
+    let alice_client = client();
+    sign_in(&alice_client, &served.base_url, "alice.test").await;
+    users.answer(UserRead::Find, UserAnswer::Gone);
+    let before = log.events().len();
+
+    let response = get(&alice_client, &served.base_url, "/me").await;
+
+    assert_problem(response, 401, "not_authenticated").await;
+    let reads = log.events().split_off(before);
+    assert_reads_none_of(&reads, &["get_profile", "fetch_profile"], "a refused /me");
 }
 
 #[tokio::test]

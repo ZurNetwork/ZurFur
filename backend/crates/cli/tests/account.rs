@@ -3,11 +3,13 @@
 //! with the same keys.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use cli::{BackendCommand, ExitClass, commands::account::AccountOp, identity};
 use composition::Runtime;
 use domain::elements::{account::AccountId, did::Did};
 use domain::ports::UnitOfWork;
+use test_support::recording::{CallLog, RecordingDidMinter};
 use test_support::runtime::DATABASE_URL;
 use uuid::Uuid;
 
@@ -138,6 +140,27 @@ async fn a_bad_handle_is_invalid_request_before_anything_is_minted() {
 
     assert_eq!(error.class(), ExitClass::Domain);
     assert_eq!(error.code(), "invalid_request");
+}
+
+// The configured namespace withholds its reserved labels and its apex: the
+// claim is refused as `invalid_request` and no DID is minted for it.
+#[tokio::test]
+async fn a_reserved_handle_is_invalid_request_before_anything_is_minted() {
+    let mut runtime = mem_runtime();
+    let (_dir, path) = signed_in(&runtime).await;
+    let log = CallLog::default();
+    let recording_minter = RecordingDidMinter::new(runtime.did_minter.clone(), log.clone());
+    runtime.did_minter = Arc::new(recording_minter);
+
+    for withheld in ["admin.zurfur.app", "zurfur.app"] {
+        let error = cli::dispatch(&runtime, &path, create("Acme", withheld))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.class(), ExitClass::Domain, "{withheld}");
+        assert_eq!(error.code(), "invalid_request", "{withheld}");
+    }
+    assert!(log.events().is_empty(), "minted: {:?}", log.events());
 }
 
 #[tokio::test]
