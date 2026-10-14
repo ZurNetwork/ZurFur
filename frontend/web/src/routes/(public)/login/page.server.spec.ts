@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchStub, hangingFetch, problemResponse, unreachableFetch } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { Session } from '$lib/api/session';
@@ -209,5 +209,31 @@ describe('/login signin action', () => {
 		expect(failure.status).toBe(422);
 		expect(failure.data.form.message).toMatchObject({ code: 'invalid_request' });
 		expect(failure.data.form.data.handle).toBe('valid.example');
+	});
+});
+
+describe('/login action when Zurfur doesn’t answer', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** What the login form says when a sign-in start isn't answered. */
+	const NOT_ANSWERING = "Zurfur isn't answering right now. Please try again.";
+
+	it('says so on the form when the sign-in start runs out, at 10 s', async () => {
+		vi.useFakeTimers();
+		const { fetch } = hangingFetch();
+		const pending = signinAction(fetch, 'alice.zurfur.app');
+		await vi.advanceTimersByTimeAsync(10_000);
+		const failure = await pending;
+
+		expect(failure.status).toBe(503);
+		expect(failure.data.form.message).toMatchObject({ detail: NOT_ANSWERING, status: 503 });
+		expect(failure.data.form.data.handle).toBe('alice.zurfur.app');
+	});
+
+	it('says so on the form when the backend can’t be reached', async () => {
+		const failure = await signinAction(unreachableFetch(), 'alice.zurfur.app');
+		expect(failure.data.form.message?.detail).toBe(NOT_ANSWERING);
 	});
 });

@@ -12,6 +12,8 @@ declare global {
 		interface Locals {
 			/** The signed-in visitor, set by the sign-in gate on every `(session)` route. */
 			session?: Session | undefined;
+			/** The request's one deadline, set by the first hook: every backend call it makes stops by then. */
+			deadline?: AbortSignal | undefined;
 		}
 
 		/** What any page may hand the frame. */

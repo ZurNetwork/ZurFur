@@ -1,5 +1,6 @@
 import { accountsOutcome, createAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
+import { runRead } from '$lib/server/unanswered';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import type { DeleteOutcome } from '$lib/api/account';
@@ -39,10 +40,10 @@ const ACCOUNTS_TRAIL: Trail = [{ step: 'named', label: 'Accounts', href: undefin
  * redirects back with — narrowed against {@link DeleteOutcome} so the page
  * renders from the declared vocabulary, not from raw query text — and a
  * pristine {@link createAccountForm} superform for the create form below it,
- * and the frame's path.
+ * and the frame's path. A backend that doesn't answer fails to the error view.
  */
 export const load: PageServerLoad = async ({ fetch, url }) => {
-	const outcome = await runApi(fetch, accountsOutcome);
+	const outcome = await runRead(fetch, accountsOutcome);
 	const form = await superValidate(effect(createAccountForm));
 	const deleted = DELETE_OUTCOME_BY_PARAM.get(url.searchParams.get('deleted') ?? '');
 
@@ -57,7 +58,8 @@ export const actions = {
 	 * Found an account: validate locally against {@link createAccountForm},
 	 * then POST /accounts. A local validation failure fails 422 with the
 	 * superform (field errors render per-input); a backend problem rides back
-	 * as the same form's `message` via superforms' `message()`; success
+	 * as the same form's `message` via superforms' `message()`, and so does
+	 * no answer, saying the Account may have been founded; success
 	 * redirects to the clean listing (PRG). One channel throughout — values,
 	 * field errors, and the backend `Problem` all ride the superform.
 	 */

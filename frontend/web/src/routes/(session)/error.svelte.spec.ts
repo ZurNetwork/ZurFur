@@ -59,6 +59,17 @@ describe('(session) error page', () => {
 		expect(document.body.textContent).not.toContain('secret');
 	});
 
+	it('says Zurfur isn’t answering for a 503', async () => {
+		errorState.status = 503;
+		errorState.routeId = '/(session)/accounts';
+		render(ErrorPage);
+
+		await expect
+			.element(page.getByRole('heading', { name: "Zurfur isn't answering right now" }))
+			.toBeInTheDocument();
+		await expect.element(page.getByText('Try again in a moment.')).toBeInTheDocument();
+	});
+
 	it('leads back to My Den, never to the start', async () => {
 		errorState.status = 404;
 		errorState.routeId = '/(session)/accounts/[id]';

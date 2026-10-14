@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { isHttpError } from '@sveltejs/kit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchStub, hangingFetch, problemResponse, unreachableFetch } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
@@ -168,5 +169,43 @@ describe('/accounts load: the frame’s path', () => {
 		const { fetch } = fetchStub(() => Response.json({ accounts: [aliceStudio] }));
 		const result = await runLoad(loadEvent(fetch));
 		expect(result.trail).toEqual([{ step: 'named', label: 'Accounts', href: undefined }]);
+	});
+});
+
+describe('/accounts when Zurfur doesn’t answer', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** The founding words for a call that may have gone through. */
+	const MAY_HAVE_FOUNDED =
+		"Zurfur didn't answer in time. Your Account may have been founded: check your Accounts before you try again.";
+
+	it('fails the listing to the error view as “isn’t answering” (503)', async () => {
+		const failure = await Promise.resolve()
+			.then(() => load(loadEvent(unreachableFetch())))
+			.catch((thrown: unknown) => thrown);
+		expect(isHttpError(failure, 503)).toBe(true);
+	});
+
+	it('says a founding that ran out may have gone through, the typed values riding the form', async () => {
+		vi.useFakeTimers();
+		const { fetch } = hangingFetch();
+		const pending = createAction(fetch, 'New Studio', 'new.zurfur.app');
+		await vi.advanceTimersByTimeAsync(10_000);
+		const failure = await pending;
+
+		expect(failure.status).toBe(503);
+		expect(failure.data.form.message).toMatchObject({
+			code: 'service_unavailable',
+			detail: MAY_HAVE_FOUNDED,
+			status: 503
+		});
+		expect(failure.data.form.data).toMatchObject({ name: 'New Studio', handle: 'new.zurfur.app' });
+	});
+
+	it('says the same when the backend can’t be reached', async () => {
+		const failure = await createAction(unreachableFetch(), 'New Studio', 'new.zurfur.app');
+		expect(failure.data.form.message?.detail).toBe(MAY_HAVE_FOUNDED);
 	});
 });

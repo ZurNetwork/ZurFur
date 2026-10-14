@@ -5,6 +5,7 @@ import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
 import { logUnexpectedError } from '$lib/server/error-log';
 import { refuseFraming } from '$lib/server/frame-headers';
 import { handleChain } from '$lib/server/handle-chain';
+import { requestDeadline, withinDeadline } from '$lib/server/request-deadline';
 import { sessionGate } from '$lib/server/session-gate';
 import { sessionHeaders } from '$lib/server/session-headers';
 
@@ -39,7 +40,8 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
 
 /**
  * Server-side `fetch` rewrite so in-app `fetch('/api/...')` is ONE code path in
- * the browser and during SSR.
+ * the browser and during SSR. Every request leaving the server is also bound
+ * by the request's deadline, on top of the call's own time limit.
  *
  * In the browser these calls ride Caddy. During SSR there is no Caddy, so we
  * point same-origin `/api/*` at the internal axum origin (prefix stripped) and
@@ -52,7 +54,7 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	const incomingCookie = event.request.headers.get('cookie') ?? undefined;
 
 	const proxied = rewriteApiRequest({
-		request,
+		request: withinDeadline(request, event.locals.deadline),
 		eventOrigin: event.url.origin,
 		incomingCookie,
 		apiUpstream
@@ -62,11 +64,17 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 };
 
 /**
- * Every response refuses to be framed; signed-in responses are never stored
- * and never leak their address (`private, no-store`, `Referrer-Policy:
- * same-origin`); and no `(session)` load or action runs without a session.
+ * Every request gets one deadline for all its backend calls; every response
+ * refuses to be framed; signed-in responses are never stored and never leak
+ * their address (`private, no-store`, `Referrer-Policy: same-origin`); and no
+ * `(session)` load or action runs without a session.
  */
-export const handle: Handle = handleChain(refuseFraming, sessionHeaders, sessionGate);
+export const handle: Handle = handleChain(
+	requestDeadline,
+	refuseFraming,
+	sessionHeaders,
+	sessionGate
+);
 
 /** An unexpected server error is logged by its route template only, and pages get a fixed message. */
 export const handleError: HandleServerError = logUnexpectedError;

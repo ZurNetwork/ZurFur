@@ -43,7 +43,11 @@ export const ProblemKind = {
 	AccountNotFound: { type: 'urn:zurfur:error:account-not-found', code: 'account_not_found' },
 	NotAuthenticated: { type: 'urn:zurfur:error:not-authenticated', code: 'not_authenticated' },
 	Forbidden: { type: 'urn:zurfur:error:forbidden', code: 'forbidden' },
-	NodeNotFound: { type: 'urn:zurfur:error:node-not-found', code: 'node_not_found' }
+	NodeNotFound: { type: 'urn:zurfur:error:node-not-found', code: 'node_not_found' },
+	ServiceUnavailable: {
+		type: 'urn:zurfur:error:service-unavailable',
+		code: 'service_unavailable'
+	}
 } as const satisfies Record<string, Pick<Problem, 'type' | 'code'>>;
 
 /** The union of every locally-mintable kind (a `{type, code}` pair). */
@@ -130,6 +134,20 @@ export function invalidRequestProblem(detail: string): Problem {
 		title: 'Invalid request',
 		detail,
 		status: HttpStatus.UnprocessableContent
+	};
+}
+
+/**
+ * Field-for-field the backend's own `Problem::service_unavailable(detail)`, a
+ * factory like {@link invalidRequestProblem}: the web mints it when Zurfur
+ * didn't answer a call in time, `detail` saying what that means for the form.
+ */
+export function serviceUnavailableProblem(detail: string): Problem {
+	return {
+		...ProblemKind.ServiceUnavailable,
+		title: 'Service unavailable',
+		detail,
+		status: HttpStatus.ServiceUnavailable
 	};
 }
 

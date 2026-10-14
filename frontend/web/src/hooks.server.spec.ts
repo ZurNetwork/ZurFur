@@ -1,12 +1,10 @@
 import { isRedirect, type HandleFetch, type RequestEvent } from '@sveltejs/kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-// SvelteKit's real server-side `event.fetch`, reached through its internals on
-// purpose: which cookies it re-attaches is source-only behaviour, so a kit bump
-// that changes `create_fetch` must break this spec loudly.
-// @ts-expect-error -- kit internal, untyped
-import { create_fetch } from '../node_modules/@sveltejs/kit/src/runtime/server/fetch.js';
-// @ts-expect-error -- kit internal, untyped
-import { get_cookies } from '../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
+import { hangingFetch } from '$lib/testing/http';
+import { kitEventFetch } from '$lib/testing/kit-fetch';
+import { FRAME_ANCESTORS_POLICY, X_FRAME_OPTIONS } from '$lib/server/frame-headers';
+import { SESSION_CACHE_CONTROL, SESSION_REFERRER_POLICY } from '$lib/server/session-headers';
+import { UNANSWERED_PAGE } from '$lib/server/unanswered';
 import { handle, handleError, handleFetch } from './hooks.server';
 
 type HandleInput = Parameters<typeof handle>[0];
@@ -21,31 +19,25 @@ const VISITOR_COOKIE = 'foo=bar; zurfur.sid=abc; other=secret';
 const passThrough: HandleFetch = ({ request, fetch }) => fetch(request);
 
 /** `event.fetch` as SvelteKit builds it for a visitor carrying `VISITOR_COOKIE`. */
-function eventFetch(hook: HandleFetch): typeof fetch {
+function eventFetch(hook: HandleFetch, locals: App.Locals = {}): typeof fetch {
 	const url = new URL(`${APP_ORIGIN}/`);
 	const request = new Request(url, { headers: { cookie: VISITOR_COOKIE } });
-	/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- kit internals are untyped */
-	const { get_cookie_header, set_internal, set_trailing_slash } = get_cookies(request, url);
-	set_trailing_slash('never');
-	return create_fetch({
-		event: { url, request },
-		options: { hooks: { handleFetch: hook } },
-		manifest: { assets: new Set(), _: { server_assets: {} }, mimeTypes: {} },
-		state: { depth: 0 },
-		get_cookie_header,
-		set_internal
-	});
-	/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+	return kitEventFetch({ url, request, locals }, hook);
 }
 
 /** Fetch `target` through `hook`; resolves to the request that left the server. */
-async function requestLeaving(hook: HandleFetch, target: string): Promise<Request> {
+async function requestLeaving(
+	hook: HandleFetch,
+	target: string,
+	init?: RequestInit,
+	locals: App.Locals = {}
+): Promise<Request> {
 	const sent: Request[] = [];
 	vi.stubGlobal('fetch', (request: Request) => {
 		sent.push(request);
 		return Promise.resolve(new Response('{}'));
 	});
-	await eventFetch(hook)(target);
+	await eventFetch(hook, locals)(target, init);
 	const [leaving] = sent;
 	if (leaving === undefined) throw new Error('no request left the server');
 	return leaving;
@@ -53,6 +45,7 @@ async function requestLeaving(hook: HandleFetch, target: string): Promise<Reques
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 describe('handle', () => {
@@ -60,7 +53,7 @@ describe('handle', () => {
 		const request = new Request('http://127.0.0.1:5174/', {
 			headers: { cookie: 'zurfur.sid=s3ss10n' }
 		});
-		const event = { route: { id: '/' }, request } as unknown as RequestEvent;
+		const event = { route: { id: '/' }, request, locals: {} } as unknown as RequestEvent;
 		const resolve = () => Promise.resolve(new Response('<p>private</p>'));
 		const input: HandleInput = { event, resolve };
 
@@ -74,7 +67,11 @@ describe('handle', () => {
 
 	it('refuses framing on an anonymous response too', async () => {
 		const request = new Request('http://127.0.0.1:5174/login');
-		const event = { route: { id: '/(public)/login' }, request } as unknown as RequestEvent;
+		const event = {
+			route: { id: '/(public)/login' },
+			request,
+			locals: {}
+		} as unknown as RequestEvent;
 		const resolve = () => Promise.resolve(new Response('<p>sign in</p>'));
 		const response = await handle({ event, resolve });
 
@@ -113,6 +110,37 @@ describe('handle', () => {
 			.catch((thrown: unknown) => thrown);
 
 		expect(isRedirect(outcome) && outcome.location).toBe('/login');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe('handle, when Zurfur doesn’t answer', () => {
+	it('answers a signed-in page whose /me never comes with the gate’s page, stamped as signed in', async () => {
+		vi.useFakeTimers();
+		const request = new Request('http://127.0.0.1:5174/den', {
+			headers: { cookie: 'zurfur.sid=s3ss10n' }
+		});
+		const event = {
+			route: { id: '/(session)/den/[...path]' },
+			url: new URL(request.url),
+			request,
+			fetch: hangingFetch().fetch,
+			locals: {},
+			isDataRequest: false
+		} as unknown as RequestEvent;
+		const resolve = vi.fn(() => Promise.resolve(new Response('PRIVATE-PAGE')));
+
+		const answered = Promise.resolve(handle({ event, resolve }));
+		await vi.advanceTimersByTimeAsync(5_000);
+		const response = await answered;
+
+		expect(response.status).toBe(503);
+		expect(await response.text()).toBe(UNANSWERED_PAGE);
+		expect(response.headers.get('cache-control')).toBe(SESSION_CACHE_CONTROL);
+		expect(response.headers.get('referrer-policy')).toBe(SESSION_REFERRER_POLICY);
+		expect(response.headers.get('content-security-policy')).toBe(FRAME_ANCESTORS_POLICY);
+		expect(response.headers.get('x-frame-options')).toBe(X_FRAME_OPTIONS);
+		expect(response.headers.has('set-cookie')).toBe(false);
 		expect(resolve).not.toHaveBeenCalled();
 	});
 });
@@ -162,5 +190,33 @@ describe('handleFetch under SvelteKit’s server fetch', () => {
 
 		expect(leaving.url).toBe('http://127.0.0.1:8081/me');
 		expect(leaving.headers.get('cookie')).toBeNull();
+	});
+
+	it('stops the request leaving the server when the call’s own limit runs out', async () => {
+		const limit = new AbortController();
+		const deadline = new AbortController();
+
+		const leaving = await requestLeaving(
+			handleFetch,
+			'/api/v1/me',
+			{ signal: limit.signal },
+			{ deadline: deadline.signal }
+		);
+		limit.abort(new DOMException('limit', 'TimeoutError'));
+
+		expect(leaving.signal.aborted).toBe(true);
+		expect((leaving.signal.reason as DOMException).name).toBe('TimeoutError');
+	});
+
+	it('stops the request leaving the server when the request’s deadline passes', async () => {
+		const deadline = new AbortController();
+
+		const leaving = await requestLeaving(handleFetch, '/api/v1/den', undefined, {
+			deadline: deadline.signal
+		});
+		deadline.abort(new DOMException('deadline', 'TimeoutError'));
+
+		expect(leaving.signal.aborted).toBe(true);
+		expect((leaving.signal.reason as DOMException).message).toBe('deadline');
 	});
 });

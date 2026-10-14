@@ -66,3 +66,35 @@ export function problemResponse(status: number, code: string, detail?: string): 
 	const headers = { 'content-type': 'application/problem+json' };
 	return new Response(JSON.stringify(body), { status, headers });
 }
+
+/** The signal a fetch call carries, from its init or from the `Request` it was given. */
+function signalOf(input: RequestInfo | URL, init?: RequestInit): AbortSignal | undefined {
+	if (init?.signal) return init.signal;
+	return input instanceof Request ? input.signal : undefined;
+}
+
+/**
+ * A `fetch` stub for a backend that accepts and never answers: each call
+ * stays pending until its signal aborts, then rejects with the signal's
+ * reason, as undici does. `answer` may answer some URLs instead.
+ */
+export function hangingFetch(answer: (url: string) => Response | undefined = () => undefined): {
+	fetch: FetchFunction;
+	calls: string[];
+} {
+	const calls: string[] = [];
+	const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+		const url = requestUrl(input);
+		calls.push(url);
+		const answered = answer(url);
+		if (answered !== undefined) return Promise.resolve(answered);
+		const signal = signalOf(input, init);
+		return new Promise<Response>((_answer, reject) => {
+			signal?.addEventListener('abort', () => {
+				const reason: unknown = signal.reason;
+				reject(reason instanceof Error ? reason : new Error('aborted'));
+			});
+		});
+	}) as FetchFunction;
+	return { fetch, calls };
+}

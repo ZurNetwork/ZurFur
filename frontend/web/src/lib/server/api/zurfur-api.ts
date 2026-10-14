@@ -51,6 +51,7 @@ import { DEN_ROUTES, denReadFromNode, denReadFromRoot, type DenRoute } from './d
 import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
 import { denApiPathOf } from '../den/den-path';
 import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
+import { countdown, TIME_LIMITS } from '../time-limits';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -86,8 +87,8 @@ export interface ZurfurApiShape {
 		handle: string
 	) => Effect.Effect<StartedSignin, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
-	 * `POST /logout` — end the session backend-side, waiting at most
-	 * {@link SIGNOUT_TIMEOUT_MS} (a timeout fails `NetworkFailure`); succeeds with the cookie
+	 * `POST /logout` — end the session backend-side, waiting at most sign-out's
+	 * own time limit (a timeout fails `NetworkFailure`); succeeds with the cookie
 	 * names the backend cleared (for mirroring onto the browser's response —
 	 * the SSR proxy rewrites the host, so SvelteKit won't pass `set-cookie`
 	 * through on its own).
@@ -169,16 +170,40 @@ function networkFailureOf(rejection: unknown): NetworkFailure {
 	}
 }
 
-/** A fetch that reaches the backend or fails `NetworkFailure` — never throws through. */
+/** What a backend call may set on its fetch: everything but the signal, which its time limit owns. */
+type BackendInit = Omit<RequestInit, 'signal'>;
+
+/** `response` with its body read into memory, so nothing more is read from the network. */
+async function readWhole(response: Response): Promise<Response> {
+	const stream = response.body ?? undefined;
+	const body = stream === undefined ? undefined : await response.arrayBuffer();
+	return new Response(body, response);
+}
+
+/**
+ * A call to the backend, answered whole (the body read too) within `limit`
+ * ms, or failed `NetworkFailure`: a call that runs out is a `timeout`, and an
+ * interrupted one stops its fetch. Never throws through.
+ */
 function backendFetch(
 	fetch: FetchFunction,
 	path: string,
-	init?: RequestInit
+	init: BackendInit = {},
+	limit: number = TIME_LIMITS.call
 ): Effect.Effect<Response, NetworkFailure> {
-	return Effect.tryPromise({
-		try: () => fetch(`${API_PREFIX}${path}`, init),
-		catch: networkFailureOf
-	});
+	return Effect.acquireUseRelease(
+		Effect.sync(() => countdown(limit)),
+		(clock) =>
+			Effect.tryPromise({
+				try: async (interrupted) => {
+					const signal = AbortSignal.any([clock.signal, interrupted]);
+					const response = await fetch(`${API_PREFIX}${path}`, { ...init, signal });
+					return readWhole(response);
+				},
+				catch: networkFailureOf
+			}),
+		(clock) => Effect.sync(clock.stop)
+	);
 }
 
 /**
@@ -250,7 +275,7 @@ function isRedirectStatus(status: number): boolean {
 
 const liveMe = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
-		const response = yield* backendFetch(fetch, '/me');
+		const response = yield* backendFetch(fetch, '/me', {}, TIME_LIMITS.session);
 		if (!response.ok) return yield* problemFailure(response, '/me');
 		const raw = yield* parsedBody(response, '/me');
 		// Decode through the generated schema, then map the message to the PLAIN
@@ -300,7 +325,7 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		const form = new URLSearchParams({ handle });
 		// redirect:'manual' exposing the real 303 + Location is server-only (undici)
 		// behavior — a browser fetch would see an opaque status-0 redirect instead.
-		const init: RequestInit = { method: 'POST', body: form, redirect: 'manual' };
+		const init: BackendInit = { method: 'POST', body: form, redirect: 'manual' };
 		const response = yield* backendFetch(fetch, '/signin', init);
 		if (isRedirectStatus(response.status)) {
 			const location = response.headers.get('location') ?? undefined;
@@ -330,28 +355,11 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		);
 	});
 
-/**
- * How long sign-out waits for the backend, in ms. A backend that accepts the
- * connection and never answers must not hold the sign-out (and the browser's
- * cookie) forever: past this, the call is aborted and reads as unreachable.
- */
-export const SIGNOUT_TIMEOUT_MS = 5_000;
-
 const liveSignout = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
-		const controller = new AbortController();
-		const timer = setTimeout(() => {
-			controller.abort();
-		}, SIGNOUT_TIMEOUT_MS);
 		// Server-only undici semantics again: the 303 + Set-Cookie stay readable.
-		const init: RequestInit = { method: 'POST', redirect: 'manual', signal: controller.signal };
-		const response = yield* backendFetch(fetch, '/logout', init).pipe(
-			Effect.ensuring(
-				Effect.sync(() => {
-					clearTimeout(timer);
-				})
-			)
-		);
+		const init: BackendInit = { method: 'POST', redirect: 'manual' };
+		const response = yield* backendFetch(fetch, '/logout', init, TIME_LIMITS.signout);
 		if (!isRedirectStatus(response.status)) {
 			return yield* new SignoutFailed({ status: response.status });
 		}
@@ -412,7 +420,7 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 		// the backend decodes absent and empty identically, so the meaning is
 		// unchanged.
 		const request = create(CreateAccountRequestSchema, { name, handle });
-		const init: RequestInit = {
+		const init: BackendInit = {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(toJson(CreateAccountRequestSchema, request))

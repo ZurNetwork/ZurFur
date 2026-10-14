@@ -21,12 +21,12 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log); den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered); den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
       "name": "accounts.ts",
-      "role": "account programs (accountsOutcome, accountOutcome, create/deleteAccountOutcome); the delete's API path goes through path-builder.ts",
+      "role": "account programs (accountsOutcome, accountOutcome, create/deleteAccountOutcome); the delete's API path goes through path-builder.ts; a create or delete that isn't answered becomes a 503 problem saying it may have gone through",
       "node": false
     },
     {
@@ -80,13 +80,18 @@
       "node": false
     },
     {
+      "name": "request-deadline.ts",
+      "role": "requestDeadline, the first handle hook: one 15 s deadline per request, handed to handleFetch through locals and stopped once the response is ready; withinDeadline binds a request leaving the server to the earlier of its own signal and that deadline",
+      "node": false
+    },
+    {
       "name": "runtime.ts",
       "role": "THE SEAM — process-wide ManagedRuntime; runApi is the only Effect→Promise crossing",
       "node": false
     },
     {
       "name": "session-gate.ts",
-      "role": "the sign-in gate, the one real one: a handle hook that, for every (session) route (page, __data.json whatever it skips, form action), asks the backend who is signed in and redirects to /login if nobody is, before any load or action runs; hands the session to the root layout through locals. The sign-out action is let through, so it can always clear the browser's session",
+      "role": "the sign-in gate, the one real one: a handle hook that, for every (session) route (page, __data.json whatever it skips, form action), asks the backend who is signed in and redirects to /login if nobody is (a 401), or answers with its own \"isn't answering\" page (unanswered.ts) when the backend can't be reached or runs out of time — returned, so the outer hooks stamp it — before any load or action runs; hands the session to the root layout through locals. The sign-out action is let through, so it can always clear the browser's session",
       "node": false
     },
     {
@@ -96,7 +101,17 @@
     },
     {
       "name": "session.ts",
-      "role": "session programs (sessionOrAnonymous, optionalSession, signinOutcome — the PDS URL plus the browser-binding cookie to relay, signoutOutcome)",
+      "role": "session programs (sessionCheck — the gate's signedIn / signedOut / unanswered —, sessionOrAnonymous, optionalSession, signinOutcome — the PDS URL plus the browser-binding cookie to relay, or a problem to render, a start that isn't answered included —, signoutOutcome)",
+      "node": false
+    },
+    {
+      "name": "time-limits.ts",
+      "role": "TIME_LIMITS — how long the web waits for the API: the session check 5 s, any other call 10 s, sign-out 5 s, the whole request 15 s — and countdown, a stoppable timer whose signal aborts with a TimeoutError (fake timers drive it in specs)",
+      "node": false
+    },
+    {
+      "name": "unanswered.ts",
+      "role": "what the web does when Zurfur doesn't answer: UNANSWERED_PAGE, the sign-in gate's fixed HTML (503, \"Zurfur isn't answering right now.\", a \"Try again\" href=\"\" that writes nothing from the request, no script — the one HTML written outside Svelte); unansweredResponse (an enhanced form post gets a 503 error action result instead); runRead, runApi for a page's own reads, failing a NetworkFailure to error(503)",
       "node": false
     }
   ],

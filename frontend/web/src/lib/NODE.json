@@ -33,7 +33,7 @@
     },
     {
       "name": "components/",
-      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState, TreeItem, Toggle, Badge, VisibilityMarker, Skeleton); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, ErrorView with its fixed copy in error-copy.ts) and the tree's memory, model and loader",
+      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState, TreeItem, Toggle, Badge, VisibilityMarker, Skeleton — each placeholder row as tall as --row-height); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, ErrorView with its fixed copy in error-copy.ts) and the tree's memory, model and loader",
       "node": false
     },
     {
@@ -58,7 +58,7 @@
     },
     {
       "name": "testing/",
-      "role": "spec-only harnesses: fetch stub, problem-body builder, redirect assert, superform prop stub",
+      "role": "spec-only harnesses: fetch stub, hanging fetch (a backend that never answers until the signal aborts), kit-fetch (SvelteKit's real server event.fetch, through its internals), problem-body builder, redirect assert, superform prop stub",
       "node": false
     },
     {

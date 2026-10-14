@@ -1,9 +1,10 @@
 import { isRedirect, type RequestEvent } from '@sveltejs/kit';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DenPageData } from '$lib/api/den';
 import { FRAME_ANCESTORS_POLICY, X_FRAME_OPTIONS } from '$lib/server/frame-headers';
 import { SESSION_CACHE_CONTROL, SESSION_REFERRER_POLICY } from '$lib/server/session-headers';
-import { fetchStub, problemResponse } from '$lib/testing/http';
+import { fetchStub, hangingFetch, problemResponse } from '$lib/testing/http';
+import { kitEventFetch } from '$lib/testing/kit-fetch';
 
 /** Mock mode pinned off, so every Den read goes through the live port whatever the process env says. */
 vi.mock('$lib/server/api/zurfur-api-mock', async (importActual) => {
@@ -11,7 +12,7 @@ vi.mock('$lib/server/api/zurfur-api-mock', async (importActual) => {
 	return { ...actual, mockModeEnabled: () => false };
 });
 
-const { handle } = await import('../../../../hooks.server');
+const { handle, handleFetch } = await import('../../../../hooks.server');
 const { load } = await import('./+page.server');
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -83,5 +84,67 @@ describe('/den on the live port, as a request', () => {
 
 		expect(isRedirect(outcome) && outcome.location).toBe('/login');
 		expect(calls).toEqual(['/api/v1/me']);
+	});
+});
+
+/** The Den node at `segments` as the backend answers it: an empty folder, with its crumbs. */
+function denNodeBody(segments: readonly string[]) {
+	return {
+		node: { segments, name: segments.at(-1) ?? 'Alice', kind: 'directory', open: {} },
+		crumbs: segments.map((_, index) => ({ segments: segments.slice(0, index), name: 'up' })),
+		listing: { entries: [] }
+	};
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
+});
+
+describe('/den on the live port, when the folders above it never answer', () => {
+	/** Seven folders deep: the open item answers, and the seven folders above it hang. */
+	const SEGMENTS = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+
+	it('ends at the request’s 15 s deadline, each folder read stopping at its own 10 s first', async () => {
+		vi.useFakeTimers();
+		const { fetch: backend, calls } = hangingFetch((url) => {
+			const path = new URL(url).pathname;
+			if (path === '/me') return Response.json({ did: 'did:plc:alice' });
+			if (path === `/den/${SEGMENTS.join('/')}`) return Response.json(denNodeBody(SEGMENTS));
+			return undefined;
+		});
+		vi.stubGlobal('fetch', backend);
+		const url = new URL(`http://127.0.0.1:5174/den/${SEGMENTS.join('/')}`);
+		const request = new Request(url, { headers: { cookie: 'zurfur.sid=s3ss10n' } });
+		const locals: App.Locals = {};
+		const event = {
+			route: { id: '/(session)/den/[...path]' },
+			url,
+			request,
+			locals,
+			isDataRequest: false,
+			fetch: kitEventFetch({ url, request, locals }, handleFetch)
+		} as unknown as RequestEvent;
+		let den: DenPageData | undefined;
+		const resolve = async (resolved: RequestEvent): Promise<Response> => {
+			const data = (await load(resolved as unknown as LoadEvent)) as { den: DenPageData };
+			den = data.den;
+			return new Response('page');
+		};
+		let settled = false;
+		const answered = Promise.resolve(handle({ event, resolve })).finally(() => (settled = true));
+
+		await vi.advanceTimersByTimeAsync(9_999);
+		expect(calls).toHaveLength(6);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(calls).toHaveLength(9);
+		await vi.advanceTimersByTimeAsync(4_999);
+		expect(settled).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+		const response = await answered;
+
+		expect(response.status).toBe(200);
+		expect(den?.outcome).toMatchObject({ outcome: 'page' });
+		expect(den?.ancestors).toEqual([]);
 	});
 });
