@@ -105,7 +105,7 @@ describe('cardTypeWord', () => {
 		expect(cardTypeWord(denType(type))).toBe(word);
 	});
 
-	it.each(['account.characters', 'user.commissions', 'Commission', 'post', '', 'commission '])(
+	it.each(['account.characters', 'user.commissions', 'Commission', 'posts', '', 'commission '])(
 		'shows no word for the type %j, which this build doesn’t know',
 		(type) => {
 			expect(cardTypeWord(denType(type))).toBeUndefined();

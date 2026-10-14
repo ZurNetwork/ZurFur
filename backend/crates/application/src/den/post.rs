@@ -19,7 +19,7 @@ impl PostPlace {
     /// The type of the node at this place.
     pub(crate) fn den_type(&self) -> DenType {
         match self {
-            PostPlace::Posts(_) => DenType::Post,
+            PostPlace::Posts(_) => DenType::Posts,
         }
     }
 

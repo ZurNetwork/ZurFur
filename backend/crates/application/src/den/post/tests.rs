@@ -63,7 +63,7 @@ async fn the_stub_opens_named_posts_public_with_its_content_not_shown_and_an_emp
         soft_delete: None,
     };
     assert_eq!(read.node.name.to_string(), POSTS);
-    assert_eq!(read.node.den_type, DenType::Post);
+    assert_eq!(read.node.den_type, DenType::Posts);
     assert_eq!(read.node.access, expected_access);
     assert_eq!(
         read.content,

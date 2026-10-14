@@ -198,7 +198,7 @@ fn tree() -> FakeHost {
         .node("/user", DenType::TopLevel, Level::Public, &[])
         .node("/commission", DenType::TopLevel, Level::Public, &[])
         .node("/user/alice", DenType::User, Level::Private, &[STANDING])
-        .node("/user/alice/flagged", DenType::Post, Level::Private, &[])
+        .node("/user/alice/flagged", DenType::Posts, Level::Private, &[])
         .node(
             "/user/alice/flagged/inside",
             DenType::File,

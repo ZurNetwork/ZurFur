@@ -7,7 +7,7 @@ use super::*;
 /// Every type with its kind and whether its content is shown, written out by hand.
 const FACTS: [(DenType, NodeKind, bool); 19] = [
     (DenType::TopLevel, NodeKind::Directory, false),
-    (DenType::Post, NodeKind::Directory, true),
+    (DenType::Posts, NodeKind::Directory, true),
     (DenType::User, NodeKind::Directory, false),
     (DenType::UserAccounts, NodeKind::Directory, false),
     (DenType::UserCharacters, NodeKind::Directory, false),
@@ -36,7 +36,7 @@ fn every_type_has_its_word() {
 
     let expected_words = [
         "top_level",
-        "post",
+        "posts",
         "user",
         "user.accounts",
         "user.characters",
