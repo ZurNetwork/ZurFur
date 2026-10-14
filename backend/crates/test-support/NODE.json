@@ -80,6 +80,11 @@
       "node": false
     },
     {
+      "name": "src/pg_app/den_world/identity.rs",
+      "role": "identity's half of the den world's seeding, opt-in: add_bob_as_member (through the invitation routes), seed_closed_studio (alice's Account with bob a Member, deactivated by a test-only soft-delete call), seed_account_with_stored_name (a test-only name write); absent_account and stranger ids",
+      "node": false
+    },
+    {
       "name": "src/pg_app/in_process_pds.rs",
       "role": "InProcessPds — the sign-in (Authenticator) and profile (ProfileSource) ports answered in-process for registered profiles; unknown handles/DIDs refused, and a callback without the browser binding its sign-in started with",
       "node": false

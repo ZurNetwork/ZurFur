@@ -1,12 +1,12 @@
-//! Names at write: creating a commission, uploading a file, declaring a slot and creating a
-//! Workflow refuse a name the Den's name rule refuses, in each use case's own error, and
-//! store an accepted name as the rule keeps it.
+//! Names at write: creating a commission, uploading a file, declaring a slot, creating a
+//! Workflow and founding an Account refuse a name the Den's name rule refuses, in each use
+//! case's own error, and store an accepted name as the rule keeps it.
 
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use adapter_mem::fixture::{alice, seed_commission, seed_identity, supreme_arts, untitled};
 use application::{
-    account::{AccountError, workflow},
+    account::{self, AccountError, workflow},
     commission::{
         CommissionError, create,
         files::upload,
@@ -18,7 +18,9 @@ use chrono::Utc;
 use domain::elements::{
     commission::{SurfaceAddress, TabId},
     did::Did,
+    handle::{Handle, HandleDomain},
 };
+use test_support::recording::{CallLog, RecordingDidMinter};
 use uuid::Uuid;
 
 /// A name made only of the zero-width joiner, which the Den's rule counts as empty.
@@ -29,6 +31,12 @@ const WITH_A_ZERO_WIDTH_SPACE: &str = "Ref\u{200B}sheet";
 
 /// The same name as the Den's rule keeps it.
 const AS_KEPT: &str = "Refsheet";
+
+/// A name holding a right-to-left override, a bidirectional control the Den's rule refuses.
+const WITH_A_BIDI_OVERRIDE: &str = "Studio\u{202E}gnp.exe";
+
+/// The handle each Account founded here asks for.
+const FOUNDED_HANDLE: &str = "named.zurfur.app";
 
 /// The in-memory runtime with the fixture world seeded.
 async fn world() -> composition::Runtime {
@@ -288,5 +296,87 @@ async fn a_workflow_name_is_stored_as_the_den_s_rule_keeps_it() {
         .find(|summary| summary.id == created.workflow.id)
         .expect("the Workflow is stored");
 
+    assert_eq!(stored.name.as_str(), AS_KEPT);
+}
+
+/// The command founding an Account named `name` as alice, under [`FOUNDED_HANDLE`].
+fn founding(name: &str) -> account::create::Command {
+    account::create::Command {
+        actor_id: alice(),
+        name: name.parse().expect("the Account name type keeps it"),
+        handle: FOUNDED_HANDLE.parse().expect("a valid handle"),
+    }
+}
+
+/// The Zurfur handle namespace the founded handles sit under.
+fn handle_domain() -> HandleDomain {
+    "zurfur.app".parse().expect("a valid handle domain")
+}
+
+#[tokio::test]
+async fn an_account_named_with_a_joiner_alone_is_refused_as_empty() {
+    let runtime = world().await;
+
+    let app = runtime.app();
+    let founded = app
+        .accounts()
+        .create(founding(JOINER_ALONE), &handle_domain(), Utc::now())
+        .await;
+
+    assert!(matches!(
+        founded,
+        Err(AccountError::InvalidName(DenNameError::Empty))
+    ));
+}
+
+#[tokio::test]
+async fn an_account_named_with_a_bidi_override_is_refused_before_any_did_is_minted() {
+    let mut runtime = world().await;
+    let log = CallLog::default();
+    let minter = RecordingDidMinter::new(Arc::clone(&runtime.did_minter), log.clone());
+    runtime.did_minter = Arc::new(minter);
+
+    let app = runtime.app();
+    let founded = app
+        .accounts()
+        .create(founding(WITH_A_BIDI_OVERRIDE), &handle_domain(), Utc::now())
+        .await;
+
+    assert!(matches!(
+        founded,
+        Err(AccountError::InvalidName(DenNameError::Invisible))
+    ));
+    assert_eq!(log.events(), Vec::<&str>::new());
+    let handle: Handle = FOUNDED_HANDLE.parse().expect("a valid handle");
+    let claimed = runtime
+        .accounts
+        .find_did_by_handle(&handle)
+        .await
+        .expect("no store fails");
+    assert!(claimed.is_none(), "a refused name founds nothing");
+}
+
+#[tokio::test]
+async fn an_account_name_is_stored_as_the_den_s_rule_keeps_it() {
+    let runtime = world().await;
+
+    let app = runtime.app();
+    let founded = app
+        .accounts()
+        .create(
+            founding(WITH_A_ZERO_WIDTH_SPACE),
+            &handle_domain(),
+            Utc::now(),
+        )
+        .await
+        .expect("the Account is founded");
+    let stored = runtime
+        .accounts
+        .find(&founded.account_id)
+        .await
+        .expect("no store fails")
+        .expect("the Account is stored");
+
+    assert_eq!(founded.name.as_str(), AS_KEPT);
     assert_eq!(stored.name.as_str(), AS_KEPT);
 }

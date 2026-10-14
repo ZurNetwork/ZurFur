@@ -9,8 +9,8 @@ mod pairs;
 mod served;
 
 pub use den_world::{
-    DenWorld, SeededCommission, absent_commission, absent_file, absent_slot, absent_workflow,
-    den_world,
+    DenWorld, SeededCommission, absent_account, absent_commission, absent_file, absent_slot,
+    absent_workflow, den_world, stranger,
 };
 pub use in_process_pds::InProcessPds;
 pub use pairs::{

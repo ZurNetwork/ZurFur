@@ -197,7 +197,8 @@ async fn list_accounts(
 ///
 /// - `201 { "id", "did", "handle", "name" }`
 /// - `401` — not signed in
-/// - `422 invalid_request` — missing/malformed body, blank name, or bad handle
+/// - `422 invalid_request` — missing/malformed body, a blank name or one the Den's name
+///   rule refuses, or a bad handle
 /// - `409 handle_taken` — handle already claimed (live or tombstoned)
 async fn create_account(
     State(state): State<AppState>,
