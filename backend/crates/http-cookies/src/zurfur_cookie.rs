@@ -1,10 +1,13 @@
 use std::borrow::Cow;
 
 use http::HeaderValue;
+use tower_layer::Stack;
 use tower_sessions::{
     Expiry, SessionManagerLayer, SessionStore,
     cookie::{Cookie, SameSite, time},
 };
+
+use crate::SingleSessionCookieLayer;
 
 /// How long a session lives without a request before it expires.
 const SESSION_INACTIVITY: time::Duration = time::Duration::days(7);
@@ -90,18 +93,27 @@ pub fn set_cookie_header(cookie: &Cookie<'_>) -> Option<HeaderValue> {
     HeaderValue::from_str(&cookie.to_string()).ok()
 }
 
+/// The session middleware behind the guard that signs out a request carrying
+/// two session cookie pairs.
+pub type SessionLayer<S> = Stack<SessionManagerLayer<S>, SingleSessionCookieLayer>;
+
 /// The session middleware over `store`, issuing [`ZurfurCookie::Session`]
 /// with its name and attributes, renewed for [`SESSION_INACTIVITY`] on each
-/// request that touches the session.
-pub fn session_layer<S: SessionStore>(store: S, secure: bool) -> SessionManagerLayer<S> {
+/// request that touches the session. A request carrying two or more session
+/// pairs reaches it with none.
+pub fn session_layer<S: SessionStore>(store: S, secure: bool) -> SessionLayer<S> {
     let session = ZurfurCookie::Session;
-    SessionManagerLayer::new(store)
+    let manager = SessionManagerLayer::new(store)
         .with_name(session.name(secure))
         .with_http_only(session.http_only())
         .with_same_site(session.same_site())
         .with_secure(secure)
         .with_path(session.path())
-        .with_expiry(Expiry::OnInactivity(SESSION_INACTIVITY))
+        .with_expiry(Expiry::OnInactivity(SESSION_INACTIVITY));
+    let guard = SingleSessionCookieLayer {
+        name: session.name(secure),
+    };
+    Stack::new(manager, guard)
 }
 
 #[cfg(test)]
