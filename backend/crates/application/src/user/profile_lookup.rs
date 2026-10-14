@@ -1,6 +1,7 @@
 //! The profile read-through with a bounded wait: a cache miss starts one
 //! background lookup per DID, which every concurrent miss joins and which runs
-//! to its end whether or not anyone still waits.
+//! to its end whether or not anyone still waits. The Den's mode joins nothing:
+//! a miss while a lookup runs, or soon after one failed, answers at once.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -9,6 +10,7 @@ use std::time::Duration;
 use domain::elements::{did::Did, profile::Profile};
 use domain::ports::{ProfileCache, ProfileSource};
 use tokio::sync::watch;
+use tokio::time::Instant;
 
 /// How long a caller waits for a profile the cache did not have.
 pub const PROFILE_WAIT: Duration = Duration::from_secs(2);
@@ -16,6 +18,10 @@ pub const PROFILE_WAIT: Duration = Duration::from_secs(2);
 /// The longest one background lookup runs, the fetch and the cache fill
 /// together.
 pub const LOOKUP_CAP: Duration = Duration::from_secs(30);
+
+/// How long after a lookup failed or ran out [`ProfileLookups::profile_unless_busy`]
+/// answers `None` at once rather than look again.
+pub const FAILED_LOOKUP_HOLD: Duration = Duration::from_secs(30);
 
 /// The running lookups, keyed by the DID each one reads.
 type Running = Arc<Mutex<HashMap<Did, watch::Receiver<Lookup>>>>;
@@ -46,6 +52,7 @@ impl Lookup {
 #[derive(Clone, Default)]
 pub struct ProfileLookups {
     running: Running,
+    failures: Failures,
 }
 
 impl ProfileLookups {
@@ -91,8 +98,67 @@ impl ProfileLookups {
             running: self.running.clone(),
             did: did.clone(),
         };
-        tokio::spawn(run_lookup(cache.clone(), source.clone(), entry, ended));
+        tokio::spawn(run_lookup(
+            cache.clone(),
+            source.clone(),
+            entry,
+            ended,
+            self.failures.clone(),
+        ));
         lookup
+    }
+
+    /// `did`'s profile from `cache`, else from a lookup for `did` started here
+    /// and waited on for at most [`PROFILE_WAIT`]. `None` at once, starting
+    /// nothing, while a lookup for `did` is running or within
+    /// [`FAILED_LOOKUP_HOLD`] of one failing.
+    pub async fn profile_unless_busy(
+        &self,
+        cache: &Arc<dyn ProfileCache>,
+        source: &Arc<dyn ProfileSource>,
+        did: &Did,
+    ) -> Option<Profile> {
+        if let Ok(Some(profile)) = cache.get(did).await {
+            return Some(profile);
+        }
+        let mut lookup = self.start_unless_busy(cache, source, did)?;
+        let waited = tokio::time::timeout(PROFILE_WAIT, lookup.wait_for(Lookup::has_ended)).await;
+        let Ok(Ok(ended)) = waited else {
+            return None;
+        };
+        ended.profile()
+    }
+
+    /// A new lookup for `did`, spawned here, unless one is running or `did` is
+    /// held after a failure.
+    fn start_unless_busy(
+        &self,
+        cache: &Arc<dyn ProfileCache>,
+        source: &Arc<dyn ProfileSource>,
+        did: &Did,
+    ) -> Option<watch::Receiver<Lookup>> {
+        let (ended, lookup) = {
+            let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+            if running.contains_key(did) || self.failures.holds(did) {
+                return None;
+            }
+            let (ended, lookup) = watch::channel(Lookup::Running);
+            running.insert(did.clone(), lookup.clone());
+            (ended, lookup)
+        };
+        // Spawned with the lock released, as in `join_or_start`.
+        let entry = RunningEntry {
+            running: self.running.clone(),
+            did: did.clone(),
+        };
+        tokio::spawn(run_lookup(
+            cache.clone(),
+            source.clone(),
+            entry,
+            ended,
+            self.failures.clone(),
+        ));
+        Some(lookup)
     }
 }
 
@@ -103,6 +169,7 @@ async fn run_lookup(
     source: Arc<dyn ProfileSource>,
     entry: RunningEntry,
     ended: watch::Sender<Lookup>,
+    failures: Failures,
 ) {
     let fetched = tokio::time::timeout(LOOKUP_CAP, fetch_and_fill(&*cache, &*source, &entry.did))
         .await
@@ -110,6 +177,8 @@ async fn run_lookup(
             tracing::info!("a profile lookup ran out of time");
             None
         });
+    // Settled before the entry retires, so no read between the two looks again.
+    failures.settle(&entry.did, fetched.is_some());
     // Retired before the joiners hear, so a miss after them starts afresh.
     drop(entry);
     ended.send_replace(Lookup::Ended(fetched));
@@ -142,3 +211,41 @@ impl Drop for RunningEntry {
             .remove(&self.did);
     }
 }
+
+/// When each DID's last lookup failed or ran out, kept only for
+/// [`FAILED_LOOKUP_HOLD`]. Every clone shares the same record.
+#[derive(Clone, Default)]
+struct Failures {
+    failed_at: Arc<Mutex<HashMap<Did, Instant>>>,
+}
+
+impl Failures {
+    /// Note how `did`'s lookup ended: a failure holds `did` from now, a success
+    /// releases it. Holds that have run out are dropped on the way, so the
+    /// record grows only with the DIDs that failed within one hold.
+    fn settle(&self, did: &Did, succeeded: bool) {
+        let now = Instant::now();
+        let mut failed_at = self
+            .failed_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        failed_at.retain(|_, at| now.duration_since(*at) < FAILED_LOOKUP_HOLD);
+        if succeeded {
+            failed_at.remove(did);
+        } else {
+            failed_at.insert(did.clone(), now);
+        }
+    }
+
+    /// Whether `did`'s last lookup failed less than [`FAILED_LOOKUP_HOLD`] ago.
+    fn holds(&self, did: &Did) -> bool {
+        self.failed_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(did)
+            .is_some_and(|at| at.elapsed() < FAILED_LOOKUP_HOLD)
+    }
+}
+
+#[cfg(test)]
+mod tests;

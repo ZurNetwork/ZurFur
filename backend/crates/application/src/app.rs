@@ -10,7 +10,12 @@ use domain::ports::{
     character::CharacterStore,
 };
 
-use crate::{account::Accounts, commission::Commissions, den::Den, user::Users};
+use crate::{
+    account::Accounts,
+    commission::Commissions,
+    den::Den,
+    user::{ProfileLookups, Users},
+};
 
 /// Every port the orchestrator may use, built once by the composition root.
 /// Reads are pool-side; writes and in-unit reads come from [`Database::begin`].
@@ -23,6 +28,9 @@ pub struct Ports {
     pub changelog: Arc<dyn ChangelogStore>,
     pub profile_source: Arc<dyn ProfileSource>,
     pub profile_cache: Arc<dyn ProfileCache>,
+    /// The process's running profile lookups, shared with the runtime that
+    /// built this bag.
+    pub profile_lookups: ProfileLookups,
     pub identity_resolver: Arc<dyn IdentityResolver>,
     pub did_minter: Arc<dyn DidMinter>,
     pub files: Arc<dyn FileStore>,

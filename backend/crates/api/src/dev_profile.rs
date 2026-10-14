@@ -92,6 +92,7 @@ async fn runtime(config: Config) -> anyhow::Result<AppState> {
         // The fixture profiles sit in the cache; a miss shows a bare DID, never another's profile.
         profile_source: Arc::new(MemProfileSource::unreachable()),
         profile_cache: backend.profile_cache(),
+        profile_lookups: Default::default(),
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
         changelog: backend.changelog_store(),

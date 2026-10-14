@@ -278,3 +278,40 @@ async fn a_cached_profile_for_another_did_never_names_the_root() {
 
     assert_eq!(root.name.as_ref(), alice.to_string());
 }
+
+#[tokio::test]
+async fn only_the_viewer_s_own_did_is_ever_fetched() {
+    let mut mem = test_support::runtime::mem(alice().did()).build();
+    seed_identity(&mem.backend)
+        .await
+        .expect("seeds identity's fixtures");
+    let carol = UserId::from(domain::elements::did::Did::from(
+        "did:plc:carol-den".to_owned(),
+    ));
+    mem.backend
+        .provision(carol.did())
+        .await
+        .expect("recognizes carol");
+    let log = CallLog::default();
+    let subjects = SubjectLog::default();
+    mem.runtime.profile_source = Arc::new(RecordingProfileSource::new(
+        mem.runtime.profile_source.clone(),
+        log.clone(),
+        subjects.clone(),
+    ));
+    let app = App::new(Ports::from(&mem.runtime));
+    let context = DenContext {
+        ports: app.ports(),
+        viewer: &carol,
+    };
+
+    let bob_s = node(&context, &bob()).await.expect("no store fails");
+    let alice_s = node(&context, &alice()).await.expect("no store fails");
+    let own = node(&context, &carol).await.expect("no store fails");
+
+    assert_eq!(bob_s, None);
+    assert_eq!(alice_s, None);
+    assert!(own.is_some(), "carol's own root");
+    assert_eq!(log.events(), ["fetch_profile"]);
+    assert_eq!(subjects.subjects(), [carol.to_string()]);
+}

@@ -24,13 +24,15 @@ strum = { workspace = true }
 tracing = { workspace = true }
 # Changelog entry payloads are `serde_json::Value` (the domain's own type).
 serde_json = { workspace = true }
-# `rt` for the task-local that guards against nested units of work.
+# `rt` for the task-local that guards against nested units of work, and for
+# the background profile lookup's `spawn`; `time` and `sync` for that lookup's
+# bounded wait and the `watch` its joiners share.
 # `commission::files::upload`'s streaming seam: `AsyncRead`/`AsyncReadExt::take`
 # over the caller-supplied content (ZMVP-88/205) — the neutral vocabulary that
 # keeps this crate ignorant of axum's multipart types. Hand-pinned at the same
 # version as `workspace.dependencies.tokio` (see `domain/Cargo.toml`'s note —
 # `workspace = true` cannot itself drop `default-features` here).
-tokio = { version = "1.49.0", default-features = false, features = ["io-util", "rt"] }
+tokio = { version = "1.49.0", default-features = false, features = ["io-util", "rt", "sync", "time"] }
 application-macros = { path = "../application-macros" }
 # The Den's engine: the den module implements its one host trait and calls its
 # resolver. Imported only inside `src/den*`; no driver sees an Atta type.
@@ -42,7 +44,8 @@ async-trait = { workspace = true }
 # The shared in-memory runtime (ZMVP-207) — dev-only; the dep guard checks
 # normal edges, so the adapters stay out of the crate proper.
 test-support = { path = "../test-support" }
-tokio = { workspace = true }
+# `test-util` for the profile-wait tests' paused clock.
+tokio = { workspace = true, features = ["test-util"] }
 uuid = { workspace = true }
 # The den keys' property tests over UUIDs and DIDs, and the identity arms' name
 # properties: every segment and every handle is a name.

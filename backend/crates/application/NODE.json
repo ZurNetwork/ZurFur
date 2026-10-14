@@ -36,7 +36,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk)+proptest+tokio+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid+chrono+async-trait",
       "node": false
     },
     {
@@ -121,12 +121,12 @@
     },
     {
       "name": "src/user.rs",
-      "role": "user module root — the `Users` root namespace, resolve_profile",
+      "role": "user module root — the `Users` root namespace, resolve_profile (me's read-through), and the re-export of ProfileLookups with PROFILE_WAIT, LOOKUP_CAP and FAILED_LOOKUP_HOLD",
       "node": false
     },
     {
       "name": "src/user/",
-      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the profile cache only, its system folders, and its mounts (posts, Accounts, kept Characters)",
+      "role": "me.rs — the `me` read: MeQuery, Output, MeProfile, MeError; profile_lookup.rs — ProfileLookups, one background profile lookup per DID: `profile` (every miss joins and waits up to PROFILE_WAIT) and the Den's `profile_unless_busy` (only the miss that starts a lookup waits; a running lookup or a failure within FAILED_LOOKUP_HOLD answers None at once); den.rs — identity's Den arm for the viewer's own root `/user/<did>`: its name from the viewer's own profile through `profile_unless_busy`, its system folders, and its mounts (posts, Accounts, kept Characters)",
       "node": false
     },
     {
@@ -151,7 +151,7 @@
     },
     {
       "name": "tests/den.rs",
-      "role": "the den Query over the in-memory fixture world: every malformed path is the one not-found; the identity arms' root, Accounts, Characters, deactivated Accounts and name fallbacks; the walk that no answer names another user; the profile cache read only for the viewer, the profile source never",
+      "role": "the den Query over the in-memory fixture world: every malformed path is the one not-found; the identity arms' root, Accounts, Characters, deactivated Accounts and name fallbacks; the walk that no answer names another user; a cached viewer's walk reads the profile cache only for the viewer and never the profile source",
       "node": false
     },
     {
@@ -172,6 +172,11 @@
     {
       "name": "tests/user.rs",
       "role": "integration tests for the me use case",
+      "node": false
+    },
+    {
+      "name": "tests/user_root_name.rs",
+      "role": "the viewer's root named from their own PDS through the den Query on a paused clock: a silent PDS names the DID within the wait, a deep page waits once (one shared lookup set across `runtime.app()` requests and runtime clones), a failure holds, a slow PDS fills the cache, and the name rule's order",
       "node": false
     },
     {

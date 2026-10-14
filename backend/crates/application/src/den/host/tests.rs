@@ -17,6 +17,7 @@ fn ports() -> Ports {
         changelog: runtime.changelog.clone(),
         profile_source: runtime.profile_source.clone(),
         profile_cache: runtime.profile_cache.clone(),
+        profile_lookups: crate::user::ProfileLookups::default(),
         identity_resolver: runtime.identity_resolver.clone(),
         did_minter: runtime.did_minter.clone(),
         files: runtime.files.clone(),

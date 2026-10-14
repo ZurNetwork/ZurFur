@@ -59,8 +59,8 @@ impl UserPlace {
 }
 
 /// The user at `/user/<user>`: the viewer's own root, Private and lifted by their standing,
-/// named from the profile cache. Absent for any other user, with no store call, and when the
-/// viewer has no user row.
+/// named from their own profile. Absent for any other user, with no store or profile call,
+/// and when the viewer has no user row.
 pub(crate) async fn node(context: &DenContext<'_>, user: &UserId) -> anyhow::Result<Option<Node>> {
     if user != context.viewer {
         return Ok(None);
@@ -81,18 +81,21 @@ pub(crate) async fn node(context: &DenContext<'_>, user: &UserId) -> anyhow::Res
     Ok(Some(node))
 }
 
-/// The viewer's root name: the first name of their own cached profile the name rule accepts,
-/// else their DID. Reads the profile cache only; a miss, a failure or a profile for another
-/// DID names the root by its DID.
+/// The viewer's root name: the first name of their own profile the name rule accepts, else
+/// their DID. The profile comes from the cache, else from one lookup of the viewer's own DID
+/// that only the first read waits on; a miss, a failure, a busy lookup or a profile for
+/// another DID names the root by its DID.
 async fn root_name(context: &DenContext<'_>) -> Option<NodeName> {
-    let cached = context
-        .ports
-        .profile_cache
-        .get(context.viewer.did())
-        .await
-        .ok()
-        .flatten();
-    let own_profile = cached.filter(|profile| &profile.did == context.viewer.did());
+    let ports = context.ports;
+    let profile = ports
+        .profile_lookups
+        .profile_unless_busy(
+            &ports.profile_cache,
+            &ports.profile_source,
+            context.viewer.did(),
+        )
+        .await;
+    let own_profile = profile.filter(|profile| &profile.did == context.viewer.did());
     let from_profile = own_profile.as_ref().and_then(|profile| {
         profile
             .name_candidates()

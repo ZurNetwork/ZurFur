@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use adapter_mem::{
-    MemBackend,
+    MemBackend, MemProfileSource,
     fixture::{
         abco, alice, bob, ember, kael_sona, old_sketch, seed_commission, seed_identity,
         supreme_arts, untitled, untitled_slots,
@@ -485,8 +485,9 @@ async fn a_handle_that_did_not_check_out_falls_back_to_the_did() {
 }
 
 #[tokio::test]
-async fn a_cache_miss_names_the_root_by_its_did() {
-    let (runtime, backend) = world().await;
+async fn a_cache_miss_with_the_pds_down_names_the_root_by_its_did() {
+    let (mut runtime, backend) = world().await;
+    runtime.profile_source = Arc::new(MemProfileSource::unreachable());
     let carol = Did::from("did:plc:carol-den".to_owned());
     backend.provision(&carol).await.expect("recognizes carol");
 
@@ -515,6 +516,7 @@ impl ProfileCache for FailingProfileCache {
 async fn a_failing_cache_names_the_root_by_its_did_and_never_fails_the_read() {
     let (mut runtime, _backend) = world().await;
     runtime.profile_cache = Arc::new(FailingProfileCache);
+    runtime.profile_source = Arc::new(MemProfileSource::unreachable());
 
     let output = root(&runtime, alice(), false).await.expect("alice's root");
 
