@@ -99,6 +99,9 @@ jobs:
       # --locked: build exactly what Cargo.lock pins (a git dep's locked SHA,
       # not a re-resolve of its tag); a stale lockfile fails loudly here.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The dev profile sits behind a feature no default build turns on, so it
+      # is linted on its own; the test job runs its guard tests.
+      - run: cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
 
   test:
     name: test
@@ -114,6 +117,8 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
+      # The dev profile's locks and sessions, built with its feature.
+      - run: cargo test -p api --locked --features dev-profile --test dev_profile
 
   contract:
     name: contract

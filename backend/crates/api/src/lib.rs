@@ -19,6 +19,11 @@ pub use composition::{Config, Environment, Runtime as AppState};
 /// the `contract_current` test.
 pub mod generated;
 
+/// The dev profile: the server on the in-memory fixture world, every sign-in
+/// alice. Only the `dev-profile` feature compiles it in.
+#[cfg(feature = "dev-profile")]
+pub mod dev_profile;
+
 mod extract;
 
 /// The server's log subscriber, which keeps the DNS client's own events out.

@@ -63,6 +63,11 @@ expect_plan "docs only skips the tests and web" "no crate changed" "skipping the
 new_repo
 change backend/crates/thing/src/lib.rs "fn main() { }"
 expect_plan "a crate change tests that crate" "cargo test --locked -p thing-pkg"
+expect_plan "a crate change tests the dev profile" "cargo test -p api --locked --features dev-profile --test dev_profile"
+
+new_repo
+change docs/notes.md "hello"
+expect_plan "every plan lints the dev profile" "cargo clippy -p api --all-targets --locked --features dev-profile"
 
 new_repo
 change frontend/web/app.ts "export {}"

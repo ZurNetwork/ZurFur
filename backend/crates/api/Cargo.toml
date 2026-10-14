@@ -54,6 +54,16 @@ url = { workspace = true }
 # The Den routes' own parse errors and newtypes (path-qualified derives).
 thiserror = { workspace = true }
 derive_more = { workspace = true }
+# The dev profile's in-memory stores, fixture world and fixed sign-in; only
+# the `dev-profile` feature pulls it into the binary.
+adapter-mem = { path = "../adapter-mem", optional = true }
+
+[features]
+# The dev profile: the server on adapter-mem's stores seeded with the fixture
+# world, sessions in memory, every sign-in alice. Never a default; the
+# binary built with it refuses to start outside ZURFUR_ENV=dev.
+dev-profile = ["dep:adapter-mem"]
+
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }
