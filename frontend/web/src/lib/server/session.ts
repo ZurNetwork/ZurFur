@@ -5,7 +5,7 @@
  */
 
 import { Effect } from 'effect';
-import type { Problem } from '$lib/api/problem';
+import { serviceUnavailableProblem, type Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { type BrowserBindingCookie, ZurfurApi } from './api/zurfur-api';
 import type { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
@@ -23,6 +23,25 @@ export const optionalSession: Effect.Effect<
 	const api = yield* ZurfurApi;
 	return yield* api.me;
 }).pipe(Effect.catchTag('NotAuthenticated', () => Effect.succeed(undefined)));
+
+/**
+ * What the sign-in gate learns from the backend: who is signed in, that
+ * nobody is (a `401`), or that the backend didn't answer (unreachable or out
+ * of time), which is never read as signed out.
+ */
+export type SessionCheck =
+	| { readonly check: 'signedIn'; readonly session: Session }
+	| { readonly check: 'signedOut' }
+	| { readonly check: 'unanswered' };
+
+/** {@link optionalSession} as the gate reads it; a broken contract or another problem stays in the error channel. */
+export const sessionCheck: Effect.Effect<SessionCheck, ApiProblem | ContractViolation, ZurfurApi> =
+	optionalSession.pipe(
+		Effect.map((session): SessionCheck =>
+			session === undefined ? { check: 'signedOut' } : { check: 'signedIn', session }
+		),
+		Effect.catchTag('NetworkFailure', () => Effect.succeed<SessionCheck>({ check: 'unanswered' }))
+	);
 
 /**
  * {@link optionalSession}, degrading an unreachable backend to anonymous too —
@@ -44,16 +63,22 @@ export type SigninOutcome =
 	| { readonly location: string; readonly browserBinding: BrowserBindingCookie }
 	| { readonly problem: Problem };
 
+/** What the login form says when a sign-in start can't reach Zurfur or runs out of time. */
+export const SIGNIN_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
+	"Zurfur isn't answering right now. Please try again."
+);
+
 /**
  * Start the atproto OAuth flow: the backend's 303 becomes `{location,
  * browserBinding}` (the PDS authorize URL to relay as a real navigation, and
  * the cookie to set on the browser's response), a rejected handle becomes
- * `{problem}` for the page to render. Broken contract / dead backend stay in
- * the error channel — the action's 500s, as before Effect.
+ * `{problem}` for the page to render, and so does a backend that doesn't
+ * answer ({@link SIGNIN_UNANSWERED_PROBLEM}). A broken contract stays in the
+ * error channel — the action's 500.
  */
 export function signinOutcome(
 	handle: string
-): Effect.Effect<SigninOutcome, NetworkFailure | ContractViolation, ZurfurApi> {
+): Effect.Effect<SigninOutcome, ContractViolation, ZurfurApi> {
 	const started = Effect.gen(function* () {
 		const api = yield* ZurfurApi;
 		const started = yield* api.startSignin(handle);
@@ -63,7 +88,10 @@ export function signinOutcome(
 		} satisfies SigninOutcome;
 	});
 	return started.pipe(
-		Effect.catchTag('ApiProblem', ({ problem }) => Effect.succeed<SigninOutcome>({ problem }))
+		Effect.catchTags({
+			ApiProblem: ({ problem }) => Effect.succeed<SigninOutcome>({ problem }),
+			NetworkFailure: () => Effect.succeed<SigninOutcome>({ problem: SIGNIN_UNANSWERED_PROBLEM })
+		})
 	);
 }
 

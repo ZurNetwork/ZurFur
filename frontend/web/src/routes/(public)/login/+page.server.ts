@@ -44,8 +44,8 @@ export const actions = {
 	 * then proxy the sign-in start through SSR (the browser cannot read the
 	 * 303's Location cross-fetch): backend 303 → set the browser-binding cookie
 	 * on this response and relay the PDS authorize URL as a real navigation;
-	 * backend problem → rides back as the same form's `message` via
-	 * {@link problemMessage}. One channel throughout — the typed handle, field
+	 * backend problem, or a sign-in start that isn't answered → rides back as
+	 * the same form's `message` via {@link problemMessage}. One channel throughout — the typed handle, field
 	 * errors, and the backend `Problem` all ride the superform.
 	 */
 	default: async ({ request, fetch, cookies }) => {

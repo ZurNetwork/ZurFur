@@ -64,10 +64,18 @@ describe('/den load on the live port', () => {
 		expect(data.den.outcome.outcome).toBe('page');
 	});
 
-	it('fails to the error view when the Den doesn’t answer, never "Nothing here"', async () => {
-		const failure = await runLiveLoad('/den', () => {
-			throw new DOMException('The operation timed out.', 'TimeoutError');
-		});
+	it.each(['TimeoutError', 'TypeError'])(
+		'fails to the error view as “isn’t answering” (503) when the Den doesn’t answer (%s), never "Nothing here"',
+		async (name) => {
+			const failure = await runLiveLoad('/den', () => {
+				throw new DOMException('The operation failed.', name);
+			});
+			expect(isHttpError(failure, 503)).toBe(true);
+		}
+	);
+
+	it('still fails a broken answer as an unexpected error, not as “isn’t answering”', async () => {
+		const failure = await runLiveLoad('/den', () => new Response('not json'));
 		expect(failure).toBeInstanceOf(Error);
 		expect(isHttpError(failure)).toBe(false);
 	});

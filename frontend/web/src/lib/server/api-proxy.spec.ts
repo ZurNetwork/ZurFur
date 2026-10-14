@@ -274,3 +274,25 @@ describe('two zurfur.sid pairs fail closed', () => {
 		expect(carried).toBe(false);
 	});
 });
+
+describe('rewriteApiRequest keeps the request’s signal, so its time limits still stop it', () => {
+	it.each([
+		['an /api/v1 call', `${eventOrigin}/api/v1/me`],
+		['a cross-origin request', 'https://cdn.example/x.json']
+	])('on %s', (_, address) => {
+		const limit = new AbortController();
+		const request = new Request(address, { signal: limit.signal });
+
+		const rewritten = rewriteApiRequest({
+			request,
+			eventOrigin,
+			incomingCookie: 'zurfur.sid=abc',
+			apiUpstream
+		});
+		limit.abort(new DOMException('limit', 'TimeoutError'));
+
+		expect(rewritten).not.toBe(request);
+		expect(rewritten.signal.aborted).toBe(true);
+		expect((rewritten.signal.reason as DOMException).name).toBe('TimeoutError');
+	});
+});

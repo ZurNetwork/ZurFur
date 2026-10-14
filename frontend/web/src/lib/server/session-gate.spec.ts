@@ -1,7 +1,9 @@
 import { isRedirect, type RequestEvent } from '@sveltejs/kit';
-import { describe, expect, it, vi } from 'vitest';
-import { fetchStub, problemResponse } from '$lib/testing/http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { FetchFunction } from '$lib/api/client';
+import { fetchStub, hangingFetch, problemResponse } from '$lib/testing/http';
 import { isSessionRoute, sessionGate } from './session-gate';
+import { UNANSWERED_PAGE } from './unanswered';
 
 type HandleInput = Parameters<typeof sessionGate>[0];
 
@@ -22,22 +24,61 @@ async function gateWith(
 	isDataRequest = false
 ) {
 	const { fetch, calls } = fetchStub(me);
-	const resolved = vi.fn(() => Promise.resolve(new Response('<p>private</p>')));
+	const gated = startGate({ routeId, address, method, fetch, isDataRequest });
+	return { ...(await gated.outcome), calls };
+}
+
+/** One request through the gate. */
+interface GateRequest {
+	readonly routeId: string | null;
+	readonly address: string;
+	readonly method: string;
+	readonly fetch: FetchFunction;
+	readonly isDataRequest?: boolean;
+	readonly headers?: Record<string, string>;
+}
+
+/**
+ * Start the gate on `request`. Behind it sits an action that records whether
+ * it ran; `outcome` settles with what the gate answered (or threw).
+ */
+function startGate(request: GateRequest) {
+	const url = new URL(request.address, 'http://127.0.0.1:5174');
+	const actionRan = { ran: false };
+	const resolved = vi.fn(() => {
+		actionRan.ran = true;
+		return Promise.resolve(new Response('<p>private</p>'));
+	});
 	const locals: App.Locals = {};
 	const event = {
-		route: { id: routeId },
-		url: new URL(address, 'http://127.0.0.1:5174'),
-		request: new Request(new URL(address, 'http://127.0.0.1:5174'), { method }),
-		fetch,
+		route: { id: request.routeId },
+		url,
+		request: new Request(url, { method: request.method, headers: request.headers ?? {} }),
+		fetch: request.fetch,
 		locals,
-		isDataRequest
+		isDataRequest: request.isDataRequest ?? false
 	} as unknown as RequestEvent;
 	const input: HandleInput = { event, resolve: resolved };
-	const outcome: unknown = await Promise.resolve()
+	const outcome = Promise.resolve()
 		.then(() => sessionGate(input))
-		.catch((thrown: unknown) => thrown);
-	return { outcome, resolved, calls, locals };
+		.catch((thrown: unknown) => thrown)
+		.then((answer: unknown) => ({ outcome: answer, resolved, locals, actionRan }));
+	return { outcome };
 }
+
+/** A fetch for a backend that can't be reached at all. */
+const unreachable: FetchFunction = () => Promise.reject(new TypeError('fetch failed'));
+
+/** The response the gate answered with; fails the spec if it threw or redirected instead. */
+function answered(outcome: unknown): Response {
+	if (!(outcome instanceof Response))
+		throw new Error(`the gate did not answer: ${String(outcome)}`);
+	return outcome;
+}
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 const anonymous = () => problemResponse(401, 'not_authenticated');
 const signedIn = () => Response.json(ALICE);
@@ -61,11 +102,124 @@ describe('sessionGate', () => {
 		expect(action.resolved).not.toHaveBeenCalled();
 	});
 
-	it('refuses when the backend can’t be reached (signed-out, as the root layout reads it)', async () => {
-		const { outcome } = await gate('/(session)/accounts', '/accounts', () => {
-			throw new TypeError('fetch failed');
+	it('answers a backend it can’t reach with its own page, 503, never “signed out”', async () => {
+		const gated = startGate({
+			routeId: '/(session)/accounts',
+			address: '/accounts',
+			method: 'GET',
+			fetch: unreachable
 		});
-		expect(isRedirect(outcome)).toBe(true);
+		const { outcome, resolved } = await gated.outcome;
+
+		const response = answered(outcome);
+		expect(response.status).toBe(503);
+		expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+		expect(response.headers.has('set-cookie')).toBe(false);
+		expect(await response.text()).toBe(UNANSWERED_PAGE);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['a 5xx problem', () => problemResponse(503, 'service_unavailable')],
+		['a 500 problem', () => problemResponse(500, 'internal_error')],
+		['a body that is not JSON', () => new Response('not json', { status: 200 })]
+	])('throws when /me answers %s, and nothing behind it runs', async (_, me) => {
+		const { fetch } = fetchStub(me);
+		const gated = startGate({
+			routeId: '/(session)/accounts',
+			address: '/accounts',
+			method: 'POST',
+			fetch
+		});
+		const { outcome, actionRan, resolved } = await gated.outcome;
+
+		expect(outcome).toBeInstanceOf(Error);
+		expect(isRedirect(outcome)).toBe(false);
+		expect(actionRan.ran).toBe(false);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
+	it('answers a /me that never comes with its page at the session check’s 5 s', async () => {
+		vi.useFakeTimers();
+		let settled = false;
+		const gated = startGate({
+			routeId: '/(session)/den/[...path]',
+			address: '/den',
+			method: 'GET',
+			fetch: hangingFetch().fetch
+		});
+		void gated.outcome.then(() => (settled = true));
+
+		await vi.advanceTimersByTimeAsync(4_999);
+		expect(settled).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+		const { outcome, resolved } = await gated.outcome;
+
+		expect(answered(outcome).status).toBe(503);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
+	it('answers an enhanced form post with a 503 error result, and the action never runs', async () => {
+		const gated = startGate({
+			routeId: '/(session)/accounts',
+			address: '/accounts',
+			method: 'POST',
+			fetch: unreachable,
+			headers: { accept: 'application/json', 'x-sveltekit-action': 'true' }
+		});
+		const { outcome, actionRan } = await gated.outcome;
+
+		const response = answered(outcome);
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({
+			type: 'error',
+			error: { message: "Zurfur isn't answering right now." }
+		});
+		expect(actionRan.ran).toBe(false);
+	});
+
+	it('answers a plain form post with its page, and the action never runs', async () => {
+		const gated = startGate({
+			routeId: '/(session)/accounts/[id]',
+			address: '/accounts/a1?/delete',
+			method: 'POST',
+			fetch: unreachable
+		});
+		const { outcome, actionRan } = await gated.outcome;
+
+		expect(await answered(outcome).text()).toBe(UNANSWERED_PAGE);
+		expect(actionRan.ran).toBe(false);
+	});
+
+	it('answers a script navigation (__data.json) with its page, so the client loads it in full', async () => {
+		const gated = startGate({
+			routeId: '/(session)/den/[...path]',
+			address: '/den/__data.json?x-sveltekit-invalidated=01',
+			method: 'GET',
+			fetch: unreachable,
+			isDataRequest: true
+		});
+		const { outcome, resolved } = await gated.outcome;
+
+		const response = answered(outcome);
+		expect(response.status).toBe(503);
+		expect(await response.text()).toBe(UNANSWERED_PAGE);
+		expect(resolved).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing from the address into its page', async () => {
+		const gated = startGate({
+			routeId: '/(session)/den/[...path]',
+			address: `/den/a'b"c<script>alert(1)</script>?q='"<>`,
+			method: 'GET',
+			fetch: unreachable
+		});
+		const { outcome } = await gated.outcome;
+
+		const body = await answered(outcome).text();
+		expect(body).toBe(UNANSWERED_PAGE);
+		expect(body).not.toContain('<script>');
+		expect(body).not.toContain('alert');
 	});
 
 	it('lets the sign-out action through without a session, so it can always clear the cookie', async () => {

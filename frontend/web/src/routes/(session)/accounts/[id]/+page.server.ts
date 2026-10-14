@@ -1,5 +1,6 @@
 import { accountOutcome, deleteAccountOutcome } from '$lib/server/accounts';
 import { runApi } from '$lib/server/runtime';
+import { runRead } from '$lib/server/unanswered';
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
@@ -17,10 +18,11 @@ import type { Trail } from '$lib/api/trail';
  * keeps the backend's detail copy; an honest 404
  * status waits for a machine consumer that reads one. The frame's path
  * reads "Accounts / <handle>" (an absolute link: a load's `resolve()` may be
- * relative to the page it renders).
+ * relative to the page it renders). A backend that doesn't answer fails to
+ * the error view.
  */
 export const load: PageServerLoad = async ({ params, fetch }) => {
-	const outcome = await runApi(fetch, accountOutcome(params.id));
+	const outcome = await runRead(fetch, accountOutcome(params.id));
 	const label = 'account' in outcome ? outcome.account.handle : 'Account';
 	const trail: Trail = [
 		{ step: 'named', label: 'Accounts', href: '/accounts' },
@@ -34,7 +36,9 @@ export const actions = {
 	 * Owner-only delete, guarded in fail-closed order: role membership first
 	 * (authorization precedes validation), then the type-the-handle confirm
 	 * schema, and only then the DELETE — enforced server-side; the page's
-	 * role gate is only an affordance. A problem re-renders in place; success
+	 * role gate is only an affordance. A role read that isn't answered fails
+	 * to the error view (nothing was deleted); a DELETE that isn't answered
+	 * says the Account may have been deleted. A problem re-renders in place; success
 	 * redirects to the list carrying `?deleted=<outcome>` so it can say WHICH
 	 * deletion happened (soft vs hard).
 	 *
@@ -44,7 +48,7 @@ export const actions = {
 	 * `$lib/server/forms/problem-message`); migrate on next touch.
 	 */
 	delete: async ({ params, fetch, request }) => {
-		const callerAccountOutcome = await runApi(fetch, accountOutcome(params.id));
+		const callerAccountOutcome = await runRead(fetch, accountOutcome(params.id));
 		if ('problem' in callerAccountOutcome) {
 			const { problem } = callerAccountOutcome;
 			return fail(renderableStatus(problem), { problem });

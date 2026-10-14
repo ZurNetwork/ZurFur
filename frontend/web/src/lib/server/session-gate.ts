@@ -1,7 +1,8 @@
 import { redirect, type Handle, type RequestEvent } from '@sveltejs/kit';
 import { HttpStatus } from '$lib/api/http-status';
 import { runApi } from './runtime';
-import { sessionOrAnonymous } from './session';
+import { sessionCheck } from './session';
+import { unansweredResponse } from './unanswered';
 
 /** The route group every signed-in page, data request and form action lives in. */
 const SESSION_GROUP = '/(session)';
@@ -39,15 +40,24 @@ export function isSessionRoute(routeId: RequestEvent['route']['id']): boolean {
  * The sign-in gate, in one place: before any load or action of a `(session)`
  * route runs — page, `__data.json` (whatever loads it asks to skip) or form
  * action alike — it asks the backend who is signed in, and sends anyone who
- * isn't to `/login`. The session it found rides `locals` for the root
- * layout, so the request makes one whoami, not two. The one exception is
- * the sign-out action: it reads nothing, and must clear the browser's
- * session even when the backend is down.
+ * isn't to `/login`. A backend that doesn't answer gets the gate's own
+ * "isn't answering" page, returned so the outer hooks stamp it like any
+ * signed-in response, with nothing behind it run and the cookie untouched.
+ * The session it found rides `locals` for the root layout, so the request
+ * makes one whoami, not two. The one exception is the sign-out action: it
+ * reads nothing, and must clear the browser's session even when the backend
+ * is down.
  */
 export const sessionGate: Handle = async ({ event, resolve }) => {
 	if (!isSessionRoute(event.route.id) || isSignOutAction(event)) return resolve(event);
-	const session = await runApi(event.fetch, sessionOrAnonymous);
-	if (session === undefined) redirect(HttpStatus.SeeOther, '/login');
-	event.locals.session = session;
-	return resolve(event);
+	const answer = await runApi(event.fetch, sessionCheck);
+	switch (answer.check) {
+		case 'signedOut':
+			return redirect(HttpStatus.SeeOther, '/login');
+		case 'unanswered':
+			return unansweredResponse(event.request);
+		case 'signedIn':
+			event.locals.session = answer.session;
+			return resolve(event);
+	}
 };

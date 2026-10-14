@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { AccountMembership, CreatedAccount } from '$lib/api/account';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
-import { ApiProblem } from './api/errors';
+import { ApiProblem, NetworkFailure } from './api/errors';
 import { zurfurApiTest, type ZurfurApi } from './api/zurfur-api';
 import {
 	accountOutcome,
 	accountsOutcome,
+	CREATE_UNANSWERED_PROBLEM,
 	createAccountOutcome,
+	DELETE_UNANSWERED_PROBLEM,
 	deleteAccountOutcome
 } from './accounts';
 
@@ -152,5 +154,44 @@ describe('deleteAccountOutcome', () => {
 			deleteAccountOutcome('acct-alice')
 		);
 		expect(outcome).toEqual({ problem });
+	});
+});
+
+describe('account writes when Zurfur doesn’t answer', () => {
+	it.each(['unreachable', 'timeout'] as const)(
+		'words a founding that is %s as one that may have gone through',
+		async (reason) => {
+			const outcome = await runTest(
+				{ createAccount: () => Effect.fail(new NetworkFailure({ reason })) },
+				createAccountOutcome('New Studio', 'new.zurfur.app')
+			);
+			expect(outcome).toEqual({ problem: CREATE_UNANSWERED_PROBLEM });
+			expect(CREATE_UNANSWERED_PROBLEM.detail).toBe(
+				"Zurfur didn't answer in time. Your Account may have been founded: check your Accounts before you try again."
+			);
+		}
+	);
+
+	it.each(['unreachable', 'timeout'] as const)(
+		'words a delete that is %s as one that may have gone through',
+		async (reason) => {
+			const outcome = await runTest(
+				{ deleteAccount: () => Effect.fail(new NetworkFailure({ reason })) },
+				deleteAccountOutcome('acct-alice')
+			);
+			expect(outcome).toEqual({ problem: DELETE_UNANSWERED_PROBLEM });
+			expect(DELETE_UNANSWERED_PROBLEM.detail).toBe(
+				"Zurfur didn't answer in time. The Account may have been deleted: check your Accounts before you try again."
+			);
+		}
+	);
+
+	it('mirrors the backend’s service_unavailable problem, status 503', () => {
+		expect(CREATE_UNANSWERED_PROBLEM).toMatchObject({
+			type: 'urn:zurfur:error:service-unavailable',
+			code: 'service_unavailable',
+			title: 'Service unavailable',
+			status: 503
+		});
 	});
 });
