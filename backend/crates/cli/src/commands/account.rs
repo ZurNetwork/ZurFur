@@ -60,7 +60,7 @@ impl From<account::create::Output> for Founded {
             id: did.clone(),
             did,
             handle: founded.handle.as_str().to_owned(),
-            name: founded.name.as_str().to_owned(),
+            name: founded.name.to_string(),
         }
     }
 }

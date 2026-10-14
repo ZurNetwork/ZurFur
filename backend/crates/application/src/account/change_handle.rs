@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        account::{AccountId, AccountName},
+        account::{Account, AccountId},
         handle::{Handle, HandleDomain},
         role::Role,
         user::UserId,
@@ -14,7 +14,8 @@ use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW};
 use crate::{
     Ports,
     account::{
-        AccountError, AccountResult, Accounts, ensure_handle_claimable, require_live_account,
+        AccountError, AccountResult, Accounts, ServedName, ensure_handle_claimable,
+        require_live_account,
     },
 };
 
@@ -28,7 +29,7 @@ pub struct Command {
 pub struct Output {
     pub id: AccountId,
     pub handle: Handle,
-    pub name: AccountName,
+    pub name: ServedName,
 }
 impl<'a> Accounts<'a> {
     #[use_case]
@@ -84,10 +85,12 @@ impl<'a> Accounts<'a> {
             .change_handle(&account_id, &account.handle, &handle, now)
             .await?;
 
+        let renamed = Account { handle, ..account };
+        let name = ServedName::from(&renamed);
         Ok(Output {
-            id: account.id,
-            handle,
-            name: account.name,
+            id: renamed.id,
+            handle: renamed.handle,
+            name,
         })
     }
 }

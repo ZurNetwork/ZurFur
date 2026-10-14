@@ -1,9 +1,11 @@
 //! identity's Accounts through the Den on the PostgreSQL stores, over the den world: a
 //! deactivated Account opens only to its Owner, another's Account and a missing one answer
 //! alike with the same store calls, no Den answer names another user, a stored name the
-//! Den's rule refuses shows the Account's handle, founding refuses a name unsafe to show with
-//! today's `422`, and founding accepts a `/`, which the Den names by the Account's handle.
-//! Requires a container runtime socket.
+//! Den's rule refuses shows the Account's handle, a stored name unsafe to show is served as
+//! the Account's handle by `GET /accounts` (to its Owner and a Member) and by a handle change
+//! while its row keeps the text, founding refuses a name unsafe to show with today's `422`, and
+//! founding accepts a `/`, which the Den names by the Account's handle. Requires a container
+//! runtime socket.
 
 use std::sync::Arc;
 
@@ -349,26 +351,102 @@ async fn a_stored_name_the_rule_refuses_shows_the_account_s_handle_and_still_loa
 
     let listed = ok_json(get(&world.alice, world.base_url(), "/den/accounts").await).await;
     let opened = ok_json(get(&world.alice, world.base_url(), &account_path(&account)).await).await;
-    let accounts = world
-        .alice
-        .get(format!("{}/accounts", world.base_url()))
-        .send()
-        .await
-        .expect("GET /accounts is answered");
+    let (_raw, served) = served_names(&world, &world.alice).await;
 
     let mut names = entry_names(&listed["listing"]);
     names.sort();
     assert_eq!(names, ["Supreme Arts", handle]);
     assert_eq!(opened["node"]["name"], handle);
-    assert_eq!(accounts.status(), 200);
-    let body: Value = accounts.json().await.expect("a JSON body");
-    let stored = body["accounts"]
+    assert!(
+        served.contains(&(handle.to_owned(), handle.to_owned())),
+        "{served:?}"
+    );
+    assert_eq!(stored_name(&world, &account).await, WITH_A_BIDI_OVERRIDE);
+}
+
+/// The name `account`'s row holds, read straight from the store.
+async fn stored_name(world: &DenWorld, account: &AccountId) -> String {
+    sqlx::query_scalar("SELECT name FROM accounts WHERE id = $1")
+        .bind(account.to_string())
+        .fetch_one(&world.served.runtime.pool)
+        .await
+        .expect("the Account's row")
+}
+
+/// `GET /accounts` as `viewer`: the raw body and the name served for each handle, sorted.
+async fn served_names(
+    world: &DenWorld,
+    viewer: &reqwest::Client,
+) -> (String, Vec<(String, String)>) {
+    let response = viewer
+        .get(format!("{}/accounts", world.base_url()))
+        .send()
+        .await
+        .expect("GET /accounts is answered");
+    assert_eq!(response.status(), 200);
+    let raw = response.text().await.expect("a body");
+    let body: Value = serde_json::from_str(&raw).expect("a JSON body");
+    let mut names: Vec<(String, String)> = body["accounts"]
         .as_array()
         .expect("an accounts array")
         .iter()
-        .find(|listing| listing["handle"] == handle)
-        .expect("the Account is listed");
-    assert_eq!(stored["name"], WITH_A_BIDI_OVERRIDE);
+        .map(|listing| {
+            let handle = listing["handle"].as_str().expect("a handle").to_owned();
+            let name = listing["name"].as_str().expect("a name").to_owned();
+            (handle, name)
+        })
+        .collect();
+    names.sort();
+    (raw, names)
+}
+
+/// Whether `raw` carries a right-to-left override, raw or JSON-escaped.
+fn carries_the_override(raw: &str) -> bool {
+    raw.contains('\u{202E}') || raw.to_lowercase().contains("\\u202e")
+}
+
+#[tokio::test]
+async fn a_refused_stored_name_is_served_as_the_handle_to_the_owner_and_to_a_member() {
+    let world = pg_app::den_world(api::app).await;
+    let account = world
+        .seed_account_with_stored_name("bidi-studio", WITH_A_BIDI_OVERRIDE)
+        .await;
+    world.add_bob_as_member(&account).await;
+    let handle = "bidi-studio.zurfur.app".to_owned();
+
+    let (alice_s_raw, alice_s) = served_names(&world, &world.alice).await;
+    let (bob_s_raw, bob_s) = served_names(&world, &world.bob).await;
+
+    let as_the_handle = (handle.clone(), handle);
+    assert!(alice_s.contains(&as_the_handle), "{alice_s:?}");
+    assert!(bob_s.contains(&as_the_handle), "{bob_s:?}");
+    assert!(!carries_the_override(&alice_s_raw), "{alice_s_raw}");
+    assert!(!carries_the_override(&bob_s_raw), "{bob_s_raw}");
+}
+
+#[tokio::test]
+async fn a_handle_change_serves_a_refused_stored_name_as_the_new_handle() {
+    let world = pg_app::den_world(api::app).await;
+    let account = world
+        .seed_account_with_stored_name("bidi-studio", WITH_A_BIDI_OVERRIDE)
+        .await;
+    let change = json!({ "handle": "renamed-studio.zurfur.app" });
+
+    let response = world
+        .alice
+        .patch(format!("{}/accounts/{account}/handle", world.base_url()))
+        .json(&change)
+        .send()
+        .await
+        .expect("PATCH /accounts/{id}/handle is answered");
+
+    assert_eq!(response.status(), 200);
+    let raw = response.text().await.expect("a body");
+    let body: Value = serde_json::from_str(&raw).expect("a JSON body");
+    assert_eq!(body["handle"], "renamed-studio.zurfur.app");
+    assert_eq!(body["name"], "renamed-studio.zurfur.app");
+    assert!(!carries_the_override(&raw), "{raw}");
+    assert_eq!(stored_name(&world, &account).await, WITH_A_BIDI_OVERRIDE);
 }
 
 /// `POST /accounts` as alice, founding `name` under `<label>.zurfur.app`.

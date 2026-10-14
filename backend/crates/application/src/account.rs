@@ -20,8 +20,11 @@ pub mod invitation;
 pub mod leave;
 pub mod list;
 pub mod role;
+mod served_name;
 pub mod transfer_ownership;
 pub mod workflow;
+
+pub use served_name::ServedName;
 
 #[derive(Clone, Copy, WithPorts)]
 pub struct Accounts<'a> {

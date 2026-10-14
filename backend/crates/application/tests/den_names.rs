@@ -381,7 +381,7 @@ async fn an_account_name_is_stored_as_the_den_s_rule_keeps_it() {
         .expect("no store fails")
         .expect("the Account is stored");
 
-    assert_eq!(founded.name.as_str(), AS_KEPT);
+    assert_eq!(founded.name.to_string(), AS_KEPT);
     assert_eq!(stored.name.as_str(), AS_KEPT);
 }
 
@@ -402,7 +402,7 @@ async fn an_account_name_may_hold_a_slash_and_is_stored_as_given() {
         .expect("no store fails")
         .expect("the Account is stored");
 
-    assert_eq!(founded.name.as_str(), WITH_A_SLASH);
+    assert_eq!(founded.name.to_string(), WITH_A_SLASH);
     assert_eq!(stored.name.as_str(), WITH_A_SLASH);
 }
 

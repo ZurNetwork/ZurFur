@@ -102,7 +102,7 @@ impl From<account::list::Listing> for AccountMembership {
             did,
             role: account.role.to_string(),
             handle: account.handle.as_str().to_owned(),
-            name: account.name.as_str().to_owned(),
+            name: account.name.to_string(),
             alias: account.alias.map(|alias| alias.to_string()),
         }
     }
@@ -118,7 +118,7 @@ impl From<account::create::Output> for CreateAccountResponse {
             id: did.clone(),
             did,
             handle: founded.handle.as_str().to_owned(),
-            name: founded.name.as_str().to_owned(),
+            name: founded.name.to_string(),
         }
     }
 }
@@ -142,7 +142,7 @@ impl From<account::change_handle::Output> for ChangeHandleResponse {
             id: did.clone(),
             did,
             handle: renamed.handle.as_str().to_owned(),
-            name: renamed.name.as_str().to_owned(),
+            name: renamed.name.to_string(),
         }
     }
 }

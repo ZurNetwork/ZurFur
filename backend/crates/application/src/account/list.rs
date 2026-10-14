@@ -1,6 +1,6 @@
 use crate::use_case;
 use domain::elements::{
-    account::{AccountId, AccountMembership, AccountName, ListingScope},
+    account::{AccountId, AccountMembership, ListingScope},
     handle::Handle,
     role::{Role, RoleAlias},
     user::UserId,
@@ -8,7 +8,7 @@ use domain::elements::{
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts},
+    account::{AccountError, AccountResult, Accounts, ServedName},
     den::{
         DenError,
         access::{Opens, ServedNode, may_open},
@@ -22,7 +22,7 @@ pub struct Query {
 pub struct Listing {
     pub id: AccountId,
     pub handle: Handle,
-    pub name: AccountName,
+    pub name: ServedName,
     pub role: Role,
     pub alias: Option<RoleAlias>,
 }
@@ -73,10 +73,11 @@ fn listing(opens: &Opens, membership: AccountMembership) -> AccountResult<Listin
     if id != &membership.account.id {
         return Err(proof_mismatch());
     }
+    let name = ServedName::from(&membership.account);
     let listing = Listing {
         id: id.clone(),
         handle: membership.account.handle,
-        name: membership.account.name,
+        name,
         role: membership.role,
         alias: membership.alias,
     };
