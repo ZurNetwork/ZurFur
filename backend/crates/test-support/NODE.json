@@ -85,6 +85,11 @@
       "node": false
     },
     {
+      "name": "src/pg_app/pairs.rs",
+      "role": "the pairs of not-found causes on the den world, shared so a suite can rerun them (under statement recording, too): MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived), commission_read_stranger_pairs (the changelog read and the download) and download_participant_pair (bob: an absent key against Old sketch's under Untitled)",
+      "node": false
+    },
+    {
       "name": "src/pg_app/served.rs",
       "role": "serve + PgServed (base_url, live Runtime, the PDS) + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
       "node": false
@@ -96,7 +101,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore, CommissionStore and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore, CommissionStore, ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
       "node": false
     },
     {
