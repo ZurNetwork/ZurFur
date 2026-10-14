@@ -9,9 +9,10 @@ use strum::VariantArray as _;
 use test_support::{
     den::get,
     pg_app::{
-        self, DenWorld, MissPair, ProfileCacheState, commission_read_live_pairs,
-        commission_read_stranger_pairs, den_account_pair, den_character_pair,
-        den_participant_pairs, den_stranger_pairs, download_participant_pair, stranger_targets,
+        self, DenWorld, MissPair, ProfileCacheState, archived_participant_pairs,
+        commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
+        den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
+        download_participant_pair, stranger_targets,
     },
 };
 
@@ -154,13 +155,17 @@ async fn clock_times_of_each_pair_s_causes() {
         rows: Vec::new(),
     };
 
-    for (target, visibility) in stranger_targets(&world) {
+    for (target, visibility) in den_stranger_targets(&world) {
         world.set_visibility(target.id, visibility.clone()).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in den_stranger_pairs(&target) {
             let label = format!("stranger, den, {visibility} {lifecycle}, {}", pair.label);
             timer.time(&world.stranger, label, &pair).await;
         }
+    }
+    for (target, visibility) in stranger_targets(&world) {
+        world.set_visibility(target.id, visibility.clone()).await;
+        let lifecycle = world.archived_or_live(&target);
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("stranger, {visibility} {lifecycle}, {}", pair.label);
             timer.time(&world.stranger, label, &pair).await;
@@ -188,6 +193,11 @@ async fn clock_times_of_each_pair_s_causes() {
     let download = download_participant_pair(&world);
     let download_label = format!("bob, {}", download.label);
     timer.time(&world.bob, download_label, &download).await;
+    world.add_bob_to_old_sketch().await;
+    for pair in archived_participant_pairs(&world) {
+        let label = format!("bob, {}", pair.label);
+        timer.time(&world.bob, label, &pair).await;
+    }
 
     let load_after = load_average();
     let cpus = std::thread::available_parallelism().map_or(0, usize::from);

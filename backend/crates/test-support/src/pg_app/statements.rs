@@ -23,7 +23,24 @@ pub struct Statement {
     pub parameters: Vec<Option<Vec<u8>>>,
 }
 
+/// The text an unreadable message is logged under, followed by the message's type byte.
+const UNREADABLE: &str = "-- the statement proxy could not read a message of type ";
+
 impl Statement {
+    /// The marker logged for a message of type `kind` the proxy couldn't read.
+    fn unreadable(kind: u8) -> Self {
+        let sql = format!("{UNREADABLE}{}", char::from(kind));
+        Self {
+            sql,
+            parameters: Vec::new(),
+        }
+    }
+
+    /// Whether this is the marker of a message the proxy couldn't read.
+    pub fn is_unreadable(&self) -> bool {
+        self.sql.starts_with(UNREADABLE)
+    }
+
     /// The adapter's query file this text was read from, as `<dir>/<name>`, if it is one.
     pub fn query_name(&self) -> Option<&'static str> {
         query_names().get(self.sql.as_str()).map(String::as_str)
@@ -136,11 +153,17 @@ struct FrontendReader {
     prepared: HashMap<String, String>,
     /// The statement each portal was bound to, with its parameters, by name.
     bound: HashMap<String, Statement>,
+    /// A message length no message has was read: the stream can't be followed any further.
+    lost: bool,
 }
 
 impl FrontendReader {
-    /// Takes in `bytes` and returns the statements executed by the messages now whole.
+    /// Takes in `bytes` and returns the statements executed by the messages now whole, with an
+    /// unreadable marker for each message after the startup it can't read.
     fn feed(&mut self, bytes: &[u8]) -> Vec<Statement> {
+        if self.lost {
+            return vec![Statement::unreadable(b'?')];
+        }
         self.pending.extend_from_slice(bytes);
         let mut executed = Vec::new();
         loop {
@@ -149,20 +172,31 @@ impl FrontendReader {
                 break;
             }
             let length_at = header - 4;
-            let length = read_i32(&self.pending[length_at..header]);
-            let Ok(length) = usize::try_from(length) else {
+            let length = usize::try_from(read_i32(&self.pending[length_at..header])).ok();
+            let Some(length) = length.filter(|length| *length >= 4) else {
+                // A length no message has: the stream can't be followed past here.
+                self.lost = true;
+                executed.push(Statement::unreadable(b'?'));
                 break;
             };
             let total = length_at + length;
-            if length < 4 || self.pending.len() < total {
+            if self.pending.len() < total {
                 break;
             }
             let message: Vec<u8> = self.pending.drain(..total).collect();
-            if self.started {
-                let kind = message[0];
-                executed.extend(self.read_message(kind, &message[header..]));
-            } else {
+            if !self.started {
                 self.read_startup(&message[header..]);
+                continue;
+            }
+            let kind = message[0];
+            match self.read_message(kind, &message[header..]) {
+                Some(Executes::Statement(statement)) => executed.push(statement),
+                Some(Executes::Nothing) => {}
+                None => {
+                    // No later Execute may stand on a binding this message could have changed.
+                    self.bound.clear();
+                    executed.push(Statement::unreadable(kind));
+                }
             }
         }
         executed
@@ -176,8 +210,9 @@ impl FrontendReader {
         self.started = !asks_for_encryption;
     }
 
-    /// One typed message: the statement it executes, if it executes one.
-    fn read_message(&mut self, kind: u8, body: &[u8]) -> Option<Statement> {
+    /// One typed message: whether it executes a statement, or `None` when it can't be read,
+    /// an `Execute` of a portal nothing bound and a `Bind` of an unknown statement included.
+    fn read_message(&mut self, kind: u8, body: &[u8]) -> Option<Executes> {
         let mut message = Fields::new(body);
         match kind {
             b'Q' => {
@@ -186,13 +221,13 @@ impl FrontendReader {
                     sql,
                     parameters: Vec::new(),
                 };
-                Some(simple_query)
+                Some(Executes::Statement(simple_query))
             }
             b'P' => {
                 let name = message.text()?;
                 let sql = message.text()?;
                 self.prepared.insert(name, sql);
-                None
+                Some(Executes::Nothing)
             }
             b'B' => {
                 let portal = message.text()?;
@@ -205,11 +240,12 @@ impl FrontendReader {
                     .collect::<Option<Vec<_>>>()?;
                 let sql = self.prepared.get(&name)?.clone();
                 self.bound.insert(portal, Statement { sql, parameters });
-                None
+                Some(Executes::Nothing)
             }
             b'E' => {
                 let portal = message.text()?;
-                self.bound.get(&portal).cloned()
+                let statement = self.bound.get(&portal)?.clone();
+                Some(Executes::Statement(statement))
             }
             b'C' => {
                 let closes_a_statement = message.byte()? == b'S';
@@ -219,11 +255,19 @@ impl FrontendReader {
                 } else {
                     self.bound.remove(&name);
                 }
-                None
+                Some(Executes::Nothing)
             }
-            _ => None,
+            _ => Some(Executes::Nothing),
         }
     }
+}
+
+/// What one readable typed message does.
+enum Executes {
+    /// It executes this statement.
+    Statement(Statement),
+    /// It executes nothing.
+    Nothing,
 }
 
 /// A big-endian `i32` from exactly four bytes.

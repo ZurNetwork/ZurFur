@@ -10,7 +10,7 @@ use test_support::{
     den::{Answer, PRIVATE_NO_STORE, entry_names, get, ok_json},
     pg_app::{
         self, DenWorld, MissPair, absent_commission, den_participant_pairs, den_stranger_pairs,
-        stranger_targets,
+        den_stranger_targets,
     },
     recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
 };
@@ -263,7 +263,7 @@ async fn a_stranger_gets_the_one_404_for_an_absent_commission_and_one_not_theirs
     let world = pg_app::den_world(api::app).await;
     let expected = the_one_404(&world).await;
 
-    for (target, visibility) in stranger_targets(&world) {
+    for (target, visibility) in den_stranger_targets(&world) {
         world.set_visibility(target.id, visibility.clone()).await;
         let commission_path = format!("/den/commissions/{}", target.id);
         let commission = ok_json(get(&world.alice, world.base_url(), &commission_path).await).await;
@@ -321,7 +321,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_never_read_the_row_by_key()
     })
     .await;
 
-    for (target, visibility) in stranger_targets(&world) {
+    for (target, visibility) in den_stranger_targets(&world) {
         world.set_visibility(target.id, visibility.clone()).await;
         for pair in den_stranger_pairs(&target) {
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &pair).await;

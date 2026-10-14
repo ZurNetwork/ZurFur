@@ -146,7 +146,7 @@ fn a_parse_and_describe_without_an_execute_logs_nothing() {
 }
 
 #[test]
-fn a_closed_statement_is_forgotten() {
+fn a_closed_statement_is_forgotten_so_binding_it_is_marked() {
     let mut stream = startup_message();
     stream.extend(parse("sqlx_s_3", "SELECT 3"));
     let mut close = vec![b'S'];
@@ -158,7 +158,8 @@ fn a_closed_statement_is_forgotten() {
 
     let executed = reader.feed(&stream);
 
-    assert_eq!(executed, []);
+    let marked: Vec<bool> = executed.iter().map(Statement::is_unreadable).collect();
+    assert_eq!(marked, [true, true], "{executed:?}");
 }
 
 #[test]
@@ -175,4 +176,85 @@ fn a_statement_read_from_a_query_file_is_named_by_it() {
 
     assert_eq!(summary.to_string(), "commission/find_summary");
     assert_eq!(ad_hoc.to_string(), "SELECT 1");
+}
+
+#[test]
+fn a_parse_bind_and_execute_in_one_chunk_log_the_statement() {
+    let mut reader = FrontendReader::default();
+    reader.feed(&startup_message());
+    let mut chunk = parse("sqlx_s_4", "SELECT $1");
+    chunk.extend(bind("", "sqlx_s_4", &[Some(b"one")]));
+    chunk.extend(execute(""));
+    chunk.extend(sync());
+    chunk.extend(typed(b'Q', &text("COMMIT")));
+
+    let executed = reader.feed(&chunk);
+
+    let select = Statement {
+        sql: "SELECT $1".to_owned(),
+        parameters: vec![Some(b"one".to_vec())],
+    };
+    let commit = Statement {
+        sql: "COMMIT".to_owned(),
+        parameters: Vec::new(),
+    };
+    assert_eq!(executed, [select, commit]);
+}
+
+#[test]
+fn a_bind_it_cannot_read_is_marked_and_the_next_execute_never_replays_the_last_portal() {
+    let mut reader = FrontendReader::default();
+    reader.feed(&startup_message());
+    let mut first = parse("sqlx_s_5", "SELECT 5");
+    first.extend(bind("", "sqlx_s_5", &[]));
+    first.extend(execute(""));
+    // A Bind whose parameter count promises a value its body doesn't carry.
+    let mut broken_body = text("");
+    broken_body.extend(text("sqlx_s_5"));
+    broken_body.extend(0_i16.to_be_bytes());
+    broken_body.extend(1_i16.to_be_bytes());
+    let mut second = typed(b'B', &broken_body);
+    second.extend(execute(""));
+
+    let before = reader.feed(&first);
+    let after = reader.feed(&second);
+
+    let sql: Vec<&str> = before
+        .iter()
+        .map(|statement| statement.sql.as_str())
+        .collect();
+    assert_eq!(sql, ["SELECT 5"]);
+    let marked: Vec<bool> = after.iter().map(Statement::is_unreadable).collect();
+    assert_eq!(marked, [true, true], "{after:?}");
+}
+
+#[test]
+fn a_bind_of_an_unknown_statement_is_marked() {
+    let mut reader = FrontendReader::default();
+    reader.feed(&startup_message());
+    let mut stream = bind("", "never_parsed", &[]);
+    stream.extend(execute(""));
+
+    let executed = reader.feed(&stream);
+
+    let marked: Vec<bool> = executed.iter().map(Statement::is_unreadable).collect();
+    assert_eq!(marked, [true, true], "{executed:?}");
+}
+
+#[test]
+fn a_length_no_message_has_marks_every_later_chunk() {
+    let mut reader = FrontendReader::default();
+    reader.feed(&startup_message());
+    let mut broken = vec![b'Q'];
+    broken.extend(2_i32.to_be_bytes());
+
+    let at_the_break = reader.feed(&broken);
+    let later = reader.feed(&typed(b'Q', &text("SELECT 6")));
+
+    assert!(
+        at_the_break.iter().all(Statement::is_unreadable),
+        "{at_the_break:?}"
+    );
+    assert!(later.iter().all(Statement::is_unreadable), "{later:?}");
+    assert!(!later.is_empty());
 }

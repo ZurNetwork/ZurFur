@@ -39,6 +39,52 @@ pub fn stranger_targets(world: &DenWorld) -> [(SeededCommission, Visibility); 4]
     targets
 }
 
+/// The targets of the stranger's den-route pairs: [`stranger_targets`], then "Untitled" live
+/// at Public and at Listed.
+pub fn den_stranger_targets(world: &DenWorld) -> [(SeededCommission, Visibility); 6] {
+    let [first, second, third, fourth] = stranger_targets(world);
+    [
+        first,
+        second,
+        third,
+        fourth,
+        (world.untitled, Visibility::Public),
+        (world.untitled, Visibility::Listed),
+    ]
+}
+
+/// bob's pairs as a Participant of the archived "Old sketch", once
+/// [`DenWorld::add_bob_to_old_sketch`] has made him one: through the den routes, a missing
+/// file key against "Untitled"'s real one under "Old sketch" and a missing slot against
+/// "Untitled"'s; through the download, a missing key against "Untitled"'s.
+pub fn archived_participant_pairs(world: &DenWorld) -> [MissPair; 3] {
+    let untitled = world.untitled.id;
+    let old_sketch = world.old_sketch.id;
+    let foreign_file = world.untitled.file;
+    let foreign_slot = world.untitled.slot;
+    let absent_file = absent_file();
+    let absent_slot = absent_slot();
+    let file_pair = MissPair {
+        label: "a file key under an archived commission",
+        absent: format!("/den/commissions/{old_sketch}/attachments/{absent_file}"),
+        not_yours: format!("/den/commissions/{old_sketch}/attachments/{foreign_file}"),
+        home: format!("/den/commissions/{untitled}/attachments/{foreign_file}"),
+    };
+    let slot_pair = MissPair {
+        label: "a slot under an archived commission",
+        absent: format!("/den/commissions/{old_sketch}/slots/{absent_slot}"),
+        not_yours: format!("/den/commissions/{old_sketch}/slots/{foreign_slot}"),
+        home: format!("/den/commissions/{untitled}/slots/{foreign_slot}"),
+    };
+    let download_pair = MissPair {
+        label: "the download of a file key under an archived commission",
+        absent: format!("/commissions/{old_sketch}/files/{absent_file}"),
+        not_yours: format!("/commissions/{old_sketch}/files/{foreign_file}"),
+        home: format!("/commissions/{untitled}/files/{foreign_file}"),
+    };
+    [file_pair, slot_pair, download_pair]
+}
+
 /// The stranger's pairs through commission's two reads against `target`, a commission they
 /// take part in nothing of: `GET /commissions/{id}/changelog` and
 /// `GET /commissions/{id}/files/{key}`, each an absent commission against `target`.

@@ -10,9 +10,9 @@ use test_support::{
     den::get,
     pg_app::{
         self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, Statement, StatementLog,
-        commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
-        den_character_pair, den_participant_pairs, den_stranger_pairs, download_participant_pair,
-        stranger_targets,
+        archived_participant_pairs, commission_read_live_pairs, commission_read_stranger_pairs,
+        den_account_pair, den_character_pair, den_participant_pairs, den_stranger_pairs,
+        den_stranger_targets, download_participant_pair, stranger_targets,
     },
 };
 
@@ -41,6 +41,12 @@ const NEVER_FOR_A_STRANGER: [&str; 6] = [
 /// its name or its bytes, by key.
 const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["commission/find_file", "file/filename", "file/get"];
 
+/// The profile cache's read, by DID.
+const PROFILE_GET: &str = "profile/get";
+
+/// The profile cache's fill, after a lookup.
+const PROFILE_PUT: &str = "profile/put";
+
 /// The query directories whose statements read commission data.
 const COMMISSION_DATA: [&str; 3] = ["commission/", "file/", "changelog/"];
 
@@ -64,8 +70,12 @@ struct Reader<'a> {
 }
 
 /// The stranger, as a reader.
-async fn stranger(world: &DenWorld) -> Reader<'_> {
-    reader(&world.stranger, world).await
+fn stranger(world: &DenWorld) -> Reader<'_> {
+    let did = pg_app::stranger().did().clone();
+    Reader {
+        client: &world.stranger,
+        did,
+    }
 }
 
 /// bob, as a reader.
@@ -77,15 +87,13 @@ fn bob(world: &DenWorld) -> Reader<'_> {
     }
 }
 
-/// `client` as a reader, their DID read from `GET /me`.
-async fn reader<'a>(client: &'a reqwest::Client, world: &DenWorld) -> Reader<'a> {
-    let me = get(client, world.base_url(), "/me").await;
-    let me: serde_json::Value = me.json().await.expect("a JSON body");
-    let did = me["did"].as_str().expect("the reader's DID").to_owned();
-    Reader {
-        client,
-        did: Did::from(did),
-    }
+/// Whether a read names the viewer's root, which a cold profile cache makes it look up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Root {
+    /// The den routes: every answer names the root.
+    Named,
+    /// Commission's reads: no answer names it, so no profile is read.
+    NotNamed,
 }
 
 /// The statements `GET {path}` runs as `reader` from `cache`, after checking it is a `404`.
@@ -100,7 +108,10 @@ async fn statements_of(
     let mark = recorded.statements.mark();
     let response = get(reader.client, recorded.world.base_url(), path).await;
     assert_eq!(response.status(), 404, "{label}, {cache}: {path}");
-    recorded.statements.since(mark)
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{label}, {cache}: {:?}", names(&statements));
+    statements
 }
 
 /// The statements' query names (or SQL), for reading a failure.
@@ -116,12 +127,14 @@ fn texts(statements: &[Statement]) -> Vec<&str> {
         .collect()
 }
 
-/// Asserts each cause of `pair` runs the same statements as `reader`, from each cache state,
-/// and that every profile statement reads the reader's own DID; returns the statements the
-/// absent cause ran, by cache state.
+/// Asserts each cause of `pair` runs the same statements as `reader`, from each cache state;
+/// that every profile statement reads the reader's own DID; and, where the read names the
+/// root, that only the cold runs look its name up. Returns the absent cause's statements, by
+/// cache state.
 async fn assert_same_statements(
     recorded: &Recorded,
     reader: &Reader<'_>,
+    root: Root,
     label: &str,
     pair: &MissPair,
 ) -> Vec<Vec<Statement>> {
@@ -142,9 +155,33 @@ async fn assert_same_statements(
             names(&not_yours)
         );
         assert_profile_reads_are_the_reader_s(&absent, reader, label, cache);
+        assert_the_cache_state_shows(&absent, root, cache, label);
         by_state.push(absent);
     }
     by_state
+}
+
+/// Asserts `statements` read the profile cache as `cache` says for a read whose `root` is as
+/// given: a root named from a warm cache only reads it, from a cold one also fills it after
+/// the lookup; a read that names no root reads no profile at all.
+fn assert_the_cache_state_shows(
+    statements: &[Statement],
+    root: Root,
+    cache: ProfileCacheState,
+    label: &str,
+) {
+    let ran = names(statements);
+    let profile_reads: Vec<&str> = ran
+        .iter()
+        .map(String::as_str)
+        .filter(|name| name.starts_with("profile/"))
+        .collect();
+    let expected: &[&str] = match (root, cache) {
+        (Root::Named, ProfileCacheState::Warm) => &[PROFILE_GET],
+        (Root::Named, ProfileCacheState::Cold) => &[PROFILE_GET, PROFILE_PUT],
+        (Root::NotNamed, _) => &[],
+    };
+    assert_eq!(profile_reads, expected, "{label}, {cache}: {ran:?}");
 }
 
 /// Asserts every profile-cache statement in `statements` is keyed by `reader`'s own DID.
@@ -190,15 +227,16 @@ fn commission_data(statements: &[Statement]) -> Vec<String> {
 async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
     let recorded = recorded_world().await;
     let world = &recorded.world;
-    let stranger = stranger(world).await;
+    let stranger = stranger(world);
 
-    for (target, visibility) in stranger_targets(world) {
+    for (target, visibility) in den_stranger_targets(world) {
         world.set_visibility(target.id, visibility.clone()).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in den_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
 
-            let runs = assert_same_statements(&recorded, &stranger, &label, &pair).await;
+            let runs =
+                assert_same_statements(&recorded, &stranger, Root::Named, &label, &pair).await;
 
             for statements in runs {
                 assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
@@ -206,17 +244,24 @@ async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
         }
     }
     let account = den_account_pair(world);
-    assert_same_statements(&recorded, &stranger, account.label, &account).await;
+    assert_same_statements(&recorded, &stranger, Root::Named, account.label, &account).await;
 }
 
 #[tokio::test]
 async fn a_stranger_s_unknown_did_and_another_user_s_run_the_same_statements_under_characters() {
     let recorded = recorded_world().await;
     let world = &recorded.world;
-    let stranger = stranger(world).await;
+    let stranger = stranger(world);
     let characters = den_character_pair();
 
-    assert_same_statements(&recorded, &stranger, characters.label, &characters).await;
+    assert_same_statements(
+        &recorded,
+        &stranger,
+        Root::Named,
+        characters.label,
+        &characters,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -226,7 +271,7 @@ async fn a_participant_s_causes_run_the_same_statements_through_the_den_routes()
     let bob = bob(world);
 
     for pair in den_participant_pairs(world) {
-        let runs = assert_same_statements(&recorded, &bob, pair.label, &pair).await;
+        let runs = assert_same_statements(&recorded, &bob, Root::Named, pair.label, &pair).await;
 
         for statements in runs {
             assert_runs_none_of(&statements, &[WORKFLOW_BY_KEY], pair.label);
@@ -238,7 +283,7 @@ async fn a_participant_s_causes_run_the_same_statements_through_the_den_routes()
 async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads() {
     let recorded = recorded_world().await;
     let world = &recorded.world;
-    let stranger = stranger(world).await;
+    let stranger = stranger(world);
 
     for (target, visibility) in stranger_targets(world) {
         world.set_visibility(target.id, visibility.clone()).await;
@@ -246,7 +291,8 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
 
-            let runs = assert_same_statements(&recorded, &stranger, &label, &pair).await;
+            let runs =
+                assert_same_statements(&recorded, &stranger, Root::NotNamed, &label, &pair).await;
 
             for statements in runs {
                 assert_eq!(commission_data(&statements), STRANGER_CHECK, "{label}");
@@ -259,7 +305,8 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
             .await;
         let label = format!("{visibility}, live, {}", pair.label);
 
-        let runs = assert_same_statements(&recorded, &stranger, &label, &pair).await;
+        let runs =
+            assert_same_statements(&recorded, &stranger, Root::NotNamed, &label, &pair).await;
 
         for statements in runs {
             if code == COMMISSION_NOT_FOUND {
@@ -271,13 +318,47 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
 }
 
 #[tokio::test]
+async fn a_participant_s_causes_under_an_archived_commission_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    world.add_bob_to_old_sketch().await;
+    let bob = bob(world);
+    let old_sketch = world.old_sketch;
+    let his_own = [
+        format!(
+            "/den/commissions/{}/attachments/{}",
+            old_sketch.id, old_sketch.file
+        ),
+        format!(
+            "/den/commissions/{}/slots/{}",
+            old_sketch.id, old_sketch.slot
+        ),
+        format!("/commissions/{}/files/{}", old_sketch.id, old_sketch.file),
+    ];
+    for path in his_own {
+        let opened = get(bob.client, world.base_url(), &path).await;
+        assert_eq!(opened.status(), 200, "bob opens his own {path}");
+    }
+    let [den_file, den_slot, download] = archived_participant_pairs(world);
+
+    for pair in [den_file, den_slot] {
+        assert_same_statements(&recorded, &bob, Root::Named, pair.label, &pair).await;
+    }
+    let runs =
+        assert_same_statements(&recorded, &bob, Root::NotNamed, download.label, &download).await;
+    for statements in runs {
+        assert_runs_none_of(&statements, &NEVER_FOR_A_MISSING_FILE, download.label);
+    }
+}
+
+#[tokio::test]
 async fn a_participant_s_causes_run_the_same_statements_through_the_download() {
     let recorded = recorded_world().await;
     let world = &recorded.world;
     let bob = bob(world);
     let pair = download_participant_pair(world);
 
-    let runs = assert_same_statements(&recorded, &bob, pair.label, &pair).await;
+    let runs = assert_same_statements(&recorded, &bob, Root::NotNamed, pair.label, &pair).await;
 
     for statements in runs {
         assert_runs_none_of(&statements, &NEVER_FOR_A_MISSING_FILE, pair.label);
@@ -288,21 +369,24 @@ async fn a_participant_s_causes_run_the_same_statements_through_the_download() {
 async fn with_a_visibility_no_parser_reads_each_pair_still_runs_the_same_statements() {
     let recorded = recorded_world().await;
     let world = &recorded.world;
-    let stranger = stranger(world).await;
+    let stranger = stranger(world);
     let bob = bob(world);
     world.store_unparsable_visibility(world.old_sketch.id).await;
     world.store_unparsable_visibility(world.untitled.id).await;
 
     for target in [world.old_sketch, world.untitled] {
         for pair in den_stranger_pairs(&target) {
-            let runs = assert_same_statements(&recorded, &stranger, pair.label, &pair).await;
+            let runs =
+                assert_same_statements(&recorded, &stranger, Root::Named, pair.label, &pair).await;
 
             for statements in runs {
                 assert_runs_none_of(&statements, &[WHOLE_COMMISSION], pair.label);
             }
         }
         for pair in commission_read_stranger_pairs(&target) {
-            let runs = assert_same_statements(&recorded, &stranger, pair.label, &pair).await;
+            let runs =
+                assert_same_statements(&recorded, &stranger, Root::NotNamed, pair.label, &pair)
+                    .await;
 
             for statements in runs {
                 assert_eq!(
@@ -315,10 +399,10 @@ async fn with_a_visibility_no_parser_reads_each_pair_still_runs_the_same_stateme
         }
     }
     for pair in den_participant_pairs(world) {
-        assert_same_statements(&recorded, &bob, pair.label, &pair).await;
+        assert_same_statements(&recorded, &bob, Root::Named, pair.label, &pair).await;
     }
     let download = download_participant_pair(world);
-    assert_same_statements(&recorded, &bob, download.label, &download).await;
+    assert_same_statements(&recorded, &bob, Root::NotNamed, download.label, &download).await;
 }
 
 #[tokio::test]

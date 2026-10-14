@@ -196,6 +196,20 @@ impl DenWorld {
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
+    /// Makes bob a Participant of the archived "Old sketch" too, a test-only insert as for
+    /// "Untitled". Opt-in: the world's other pairs use "Old sketch" as a commission bob isn't in.
+    pub async fn add_bob_to_old_sketch(&self) {
+        let bob_did = adapter_mem::fixture::bob().to_string();
+        adapter_pg::queries::commission::add_participant(
+            &self.served.runtime.pool,
+            Uuid::from(self.old_sketch.id),
+            &bob_did,
+            Utc::now(),
+        )
+        .await
+        .expect("bob joins Old sketch as a Participant");
+    }
+
     /// `"archived"` for "Old sketch", `"live"` for any other seeded commission, for labels.
     pub fn archived_or_live(&self, commission: &SeededCommission) -> &'static str {
         if *commission == self.old_sketch {
