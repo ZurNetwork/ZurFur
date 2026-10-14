@@ -274,7 +274,7 @@ gate:
     just tools-check
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
-    INSTA_UPDATE=no cargo test --workspace --locked
+    INSTA_UPDATE=no DEN_GOLDEN=check cargo test --workspace --locked
     cargo deny --locked --all-features check
     typos
     just design-index-check

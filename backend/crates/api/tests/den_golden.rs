@@ -1,7 +1,7 @@
 //! The Den's golden responses under `contract/golden/den/`: the served den routes' answers on
 //! the in-memory fixture world, signed in as alice and as bob, plus hand-written card fixtures
 //! built through the generated types, each file in one canonical JSON form and listed in an
-//! index. With `DEN_GOLDEN=write` the run rewrites them; without it, it fails on any drift.
+//! index. With `DEN_GOLDEN=write` the run rewrites them; otherwise it fails on any drift.
 
 use std::{
     collections::BTreeMap,
@@ -16,7 +16,7 @@ use api::generated::{
     DenCard, DenNode, GetDenNodeResponse, GetDenRootResponse, Problem, den_node,
     get_den_node_response,
 };
-use domain::elements::{profile::Profile, user::UserId};
+use domain::elements::profile::Profile;
 use serde_json::Value;
 use test_support::http::{client, serve, sign_in};
 
@@ -39,37 +39,34 @@ const RECIPE: &str = "just den-golden";
 const GET: &str = "GET";
 
 /// Who a golden answer was read as.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, strum::Display)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
 enum Viewer {
     Alice,
     Bob,
+    /// No one signed in.
+    Anonymous,
 }
 
 impl Viewer {
-    /// The fixture user behind this viewer.
-    fn user(self) -> UserId {
+    /// The handle a signed-in viewer signs in with.
+    fn handle(self) -> Option<&'static str> {
         match self {
-            Self::Alice => alice(),
-            Self::Bob => bob(),
+            Self::Alice => Some("alice.test"),
+            Self::Bob => Some("bob.test"),
+            Self::Anonymous => None,
         }
     }
 
-    /// The handle the viewer signs in with.
-    fn handle(self) -> &'static str {
+    /// The profile the fake PDS answers for a signed-in viewer, the one the fixture world caches.
+    fn profile(self) -> Option<Profile> {
         match self {
-            Self::Alice => "alice.test",
-            Self::Bob => "bob.test",
-        }
-    }
-
-    /// The profile the fake PDS answers for the viewer, the one the fixture world caches.
-    fn profile(self) -> Profile {
-        let profile = Profile::new(self.user().did().clone(), self.handle());
-        match self {
-            Self::Alice => profile.with_display_name("Alice"),
-            Self::Bob => profile,
+            Self::Alice => {
+                let profile = Profile::new(alice().did().clone(), "alice.test");
+                Some(profile.with_display_name("Alice"))
+            }
+            Self::Bob => Some(Profile::new(bob().did().clone(), "bob.test")),
+            Self::Anonymous => None,
         }
     }
 }
@@ -85,7 +82,7 @@ enum Source {
 }
 
 /// The contract message a golden body decodes as.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, strum::Display)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 enum Message {
     GetDenRootResponse,
     GetDenNodeResponse,
@@ -117,7 +114,7 @@ fn reencode<T: serde::Serialize + serde::de::DeserializeOwned>(wire: &[u8], file
 }
 
 /// One golden file's line in the index.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IndexEntry {
     /// The file, relative to the golden folder.
@@ -133,7 +130,7 @@ struct IndexEntry {
 }
 
 /// One golden file: its index line and its body.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 struct Golden {
     entry: IndexEntry,
     body: Value,
@@ -179,12 +176,12 @@ impl Case {
 
 /// Every request the generated files record, in index order.
 fn cases() -> Vec<Case> {
-    use Viewer::{Alice, Bob};
+    use Viewer::{Alice, Anonymous, Bob};
     let supreme_arts = format!("/den/accounts/{}", supreme_arts());
     let untitled = format!("/den/commissions/{}", untitled());
     let [ref_abco, _] = untitled_files();
     let [abco_slot, ..] = untitled_slots();
-    vec![
+    let cases = vec![
         Case::ok(
             "alice/root.json",
             Alice,
@@ -287,10 +284,12 @@ fn cases() -> Vec<Case> {
         Case::node("bob/accounts.json", Bob, "/den/accounts".to_owned()),
         Case::node("bob/characters.json", Bob, "/den/characters".to_owned()),
         Case::node("bob/commissions.json", Bob, "/den/commissions".to_owned()),
-    ]
+        Case::problem("anonymous/not-authenticated.json", Anonymous, "/den", 401),
+    ];
+    cases
 }
 
-/// A served fixture world with a client signed in as `viewer`.
+/// A served fixture world with a client signed in as `viewer`, or not signed in at all.
 struct Session {
     viewer: Viewer,
     base_url: String,
@@ -298,9 +297,13 @@ struct Session {
 }
 
 impl Session {
-    /// Serves a fresh fixture world and signs `viewer` in.
+    /// Serves a fresh fixture world and signs `viewer` in, if anyone.
     async fn open(viewer: Viewer) -> Self {
-        let builder = test_support::runtime::mem(viewer.user().did()).profile(viewer.profile());
+        let builder = match viewer.profile() {
+            Some(profile) => test_support::runtime::mem(&profile.did).profile(profile),
+            // No one signs in, so the fake PDS is never asked.
+            None => test_support::runtime::mem(alice().did()),
+        };
         let served = serve(builder, api::app).await;
         seed_identity(&served.backend)
             .await
@@ -309,7 +312,9 @@ impl Session {
             .await
             .expect("seeds commission's fixtures");
         let client = client();
-        sign_in(&client, &served.base_url, viewer.handle()).await;
+        if let Some(handle) = viewer.handle() {
+            sign_in(&client, &served.base_url, handle).await;
+        }
         Self {
             viewer,
             base_url: served.base_url,
@@ -352,15 +357,17 @@ impl Session {
     }
 }
 
-/// Every generated golden, read from two fresh fixture worlds, one per viewer.
+/// Every generated golden, read from fresh fixture worlds, one per viewer.
 async fn generated() -> Vec<Golden> {
     let alice_session = Session::open(Viewer::Alice).await;
     let bob_session = Session::open(Viewer::Bob).await;
+    let anonymous_session = Session::open(Viewer::Anonymous).await;
     let mut goldens = Vec::new();
     for case in cases() {
         let session = match case.viewer {
             Viewer::Alice => &alice_session,
             Viewer::Bob => &bob_session,
+            Viewer::Anonymous => &anonymous_session,
         };
         goldens.push(session.record(case).await);
     }
@@ -435,7 +442,7 @@ fn handwritten_cards(generated: &[Golden]) -> Vec<Golden> {
         crumbs: untitled.crumbs,
         content: None,
     };
-    vec![
+    let cards = vec![
         handwritten(
             "handwritten/listing-with-card.json",
             "/den/commissions",
@@ -451,7 +458,8 @@ fn handwritten_cards(generated: &[Golden]) -> Vec<Golden> {
             "/den/commissions/hidden-commission",
             &card_node,
         ),
-    ]
+    ];
+    cards
 }
 
 /// `value` with every object's keys in sorted order, whatever map order serde_json keeps.
@@ -504,8 +512,13 @@ fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN_DIR)
 }
 
+/// Every `.json` file under `root`, by its path relative to it.
+fn committed_json(root: &Path) -> Vec<PathBuf> {
+    json_under(root, root)
+}
+
 /// Every `.json` file under `directory`, by its path relative to `root`.
-fn committed_json(root: &Path, directory: &Path) -> Vec<PathBuf> {
+fn json_under(root: &Path, directory: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Vec::new();
     };
@@ -513,7 +526,7 @@ fn committed_json(root: &Path, directory: &Path) -> Vec<PathBuf> {
     for entry in entries {
         let path = entry.expect("a directory entry").path();
         if path.is_dir() {
-            files.extend(committed_json(root, &path));
+            files.extend(json_under(root, &path));
         } else if path
             .extension()
             .is_some_and(|extension| extension == "json")
@@ -522,19 +535,19 @@ fn committed_json(root: &Path, directory: &Path) -> Vec<PathBuf> {
             files.push(relative);
         }
     }
+    files.sort();
     files
 }
 
-/// Whether this run rewrites the files.
-fn write_requested() -> bool {
-    std::env::var(WRITE_SWITCH).is_ok_and(|value| value == WRITE_VALUE)
+/// Whether the write switch's value asks the run to rewrite the files: only `write` does.
+fn writes(switch: Option<&str>) -> bool {
+    switch == Some(WRITE_VALUE)
 }
 
-/// Rewrites the golden folder's JSON to exactly `files`, removing any file the generation
-/// no longer makes.
-fn write(files: &BTreeMap<PathBuf, String>) {
-    let root = golden_dir();
-    for stale in committed_json(&root, &root) {
+/// Rewrites the JSON under `root` to exactly `files`, removing any file the generation no
+/// longer makes.
+fn write(root: &Path, files: &BTreeMap<PathBuf, String>) {
+    for stale in committed_json(root) {
         if !files.contains_key(&stale) {
             std::fs::remove_file(root.join(&stale)).expect("removes a stale golden");
         }
@@ -547,13 +560,11 @@ fn write(files: &BTreeMap<PathBuf, String>) {
     }
 }
 
-/// Every way the committed folder differs from `files`, one line each.
-fn drift(files: &BTreeMap<PathBuf, String>) -> Vec<String> {
-    let root = golden_dir();
-    let committed = committed_json(&root, &root);
+/// Every way the JSON under `root` differs from `files`, one line each.
+fn drift(root: &Path, files: &BTreeMap<PathBuf, String>) -> Vec<String> {
     let mut differences = Vec::new();
-    for file in &committed {
-        if !files.contains_key(file) {
+    for file in committed_json(root) {
+        if !files.contains_key(&file) {
             differences.push(format!(
                 "{}: committed, but no longer generated",
                 file.display()
@@ -585,11 +596,12 @@ async fn the_committed_golden_responses_are_a_fresh_generation() {
         "two generations differ: something time-dependent or random reached a golden file"
     );
 
-    if write_requested() {
-        write(&first);
+    let switch = std::env::var(WRITE_SWITCH).ok();
+    if writes(switch.as_deref()) {
+        write(&golden_dir(), &first);
         return;
     }
-    let differences = drift(&first);
+    let differences = drift(&golden_dir(), &first);
     assert!(
         differences.is_empty(),
         "the golden responses under contract/golden/den drifted; regenerate them with `{RECIPE}`, \
@@ -607,4 +619,77 @@ fn canonical_json_sorts_keys_at_every_depth_and_ends_in_a_newline() {
     let text = canonical(&value);
 
     assert_eq!(text, expected);
+}
+
+#[test]
+fn only_the_value_write_turns_the_write_switch_on() {
+    let switches = [
+        None,
+        Some("write"),
+        Some("1"),
+        Some("WRITE"),
+        Some("check"),
+        Some(""),
+    ];
+
+    let writing: Vec<bool> = switches.into_iter().map(writes).collect();
+
+    assert_eq!(writing, [false, true, false, false, false, false]);
+}
+
+/// A generation of two files, one in a subfolder.
+fn two_files() -> BTreeMap<PathBuf, String> {
+    let files = [
+        (PathBuf::from("index.json"), "{}\n".to_owned()),
+        (PathBuf::from("alice/root.json"), "[]\n".to_owned()),
+    ];
+    BTreeMap::from(files)
+}
+
+#[test]
+fn a_folder_written_from_a_generation_has_no_drift() {
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    let files = two_files();
+
+    write(folder.path(), &files);
+
+    assert!(drift(folder.path(), &files).is_empty());
+}
+
+#[test]
+fn drift_names_a_changed_a_missing_and_an_extra_file() {
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    let files = two_files();
+    write(folder.path(), &files);
+    std::fs::write(folder.path().join("index.json"), "{ }\n").expect("changes a file");
+    std::fs::remove_file(folder.path().join("alice/root.json")).expect("removes a file");
+    std::fs::create_dir_all(folder.path().join("bob")).expect("creates a subfolder");
+    std::fs::write(folder.path().join("bob/extra.json"), "{}\n").expect("adds a file");
+    let expected = [
+        "bob/extra.json: committed, but no longer generated",
+        "alice/root.json: generated, but not committed",
+        "index.json: differs from a fresh generation",
+    ];
+
+    let differences = drift(folder.path(), &files);
+
+    assert_eq!(differences, expected);
+}
+
+#[test]
+fn write_removes_a_stale_file_and_keeps_what_isn_t_json() {
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    std::fs::create_dir_all(folder.path().join("bob")).expect("creates a subfolder");
+    std::fs::write(folder.path().join("bob/stale.json"), "{}\n").expect("adds a stale file");
+    std::fs::write(folder.path().join("README.md"), "# kept\n").expect("adds a README");
+    let files = two_files();
+
+    write(folder.path(), &files);
+
+    let expected = [
+        PathBuf::from("alice/root.json"),
+        PathBuf::from("index.json"),
+    ];
+    assert_eq!(committed_json(folder.path()), expected);
+    assert!(folder.path().join("README.md").exists());
 }

@@ -117,13 +117,13 @@ step typos
 step just design-index-check
 
 if [ "$whole_workspace" = 1 ]; then
-    INSTA_UPDATE=no step cargo test --workspace --locked
+    INSTA_UPDATE=no DEN_GOLDEN=check step cargo test --workspace --locked
 elif [ "${#crates[@]}" -gt 0 ]; then
     packages=()
     for name in "${!crates[@]}"; do
         packages+=(-p "$name")
     done
-    INSTA_UPDATE=no step cargo test --locked "${packages[@]}"
+    INSTA_UPDATE=no DEN_GOLDEN=check step cargo test --locked "${packages[@]}"
 else
     echo "gate-light: no crate changed; skipping cargo test"
 fi

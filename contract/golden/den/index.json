@@ -261,6 +261,16 @@
       "viewer": "bob"
     },
     {
+      "contentType": "application/problem+json",
+      "file": "anonymous/not-authenticated.json",
+      "message": "Problem",
+      "method": "GET",
+      "path": "/den",
+      "source": "generated",
+      "status": 401,
+      "viewer": "anonymous"
+    },
+    {
       "contentType": "application/json",
       "file": "handwritten/listing-with-card.json",
       "message": "GetDenNodeResponse",
