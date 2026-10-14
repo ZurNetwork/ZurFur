@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState",
       "node": false
     },
     {
@@ -76,7 +76,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and set_visibility / store_unparsable_visibility as test-only writes; absent_* ids no seed writes",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and set_visibility / store_unparsable_visibility as test-only writes; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
       "node": false
     },
     {
@@ -91,12 +91,17 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared so a suite can rerun them (under statement recording, too): MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived), commission_read_stranger_pairs (the changelog read and the download) and download_participant_pair (bob: an absent key against Old sketch's under Untitled)",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair",
       "node": false
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + PgServed (base_url, live Runtime, the PDS) + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS) + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
+      "node": false
+    },
+    {
+      "name": "src/pg_app/statements.rs",
+      "role": "the statement proxy: record_statements(database_url, StatementLog) relays the app's PostgreSQL connections byte for byte and logs each executed statement (a simple query, or an Execute of a bound portal) with its bound values, read off the frontend protocol with TLS off; Statement displays as its adapter-pg query file (`commission/find`) or its SQL; parser unit tests in statements/tests.rs",
       "node": false
     },
     {
@@ -129,7 +134,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13)"
+      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair"
     }
   ],
   "notes": [

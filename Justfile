@@ -184,6 +184,13 @@ gen-contract:
 den-golden:
     DEN_GOLDEN=write cargo test -p api --test den_golden
 
+# Clock times of each pair of not-found causes on PostgreSQL, from a warm and a
+# cold profile cache, printed as a Markdown table for the security review. Not a
+# gate. DEN_TIMING_RUNS sets the timed runs per cause (default 200); extra
+# arguments go to cargo (e.g. `just den-timing --release`).
+den-timing *ARGS:
+    cargo test -p api --test not_found_timing {{ARGS}} -- --ignored --nocapture
+
 
 # --- The node tree (NODE.json) ---
 

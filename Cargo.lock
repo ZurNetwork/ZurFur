@@ -5844,6 +5844,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde_json",
  "sqlx",
+ "strum",
  "testcontainers",
  "testcontainers-modules",
  "tokio",

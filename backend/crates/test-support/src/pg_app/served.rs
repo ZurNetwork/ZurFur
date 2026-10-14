@@ -6,7 +6,7 @@ use base64::Engine as _;
 use composition::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime};
 use domain::elements::profile::Profile;
 
-use super::InProcessPds;
+use super::{InProcessPds, StatementLog, record_statements};
 use crate::http::client;
 use crate::pg::{TestDb, fresh_db};
 
@@ -27,14 +27,35 @@ pub struct PgServed {
 /// database, with the sign-in and profile ports answered by an
 /// [`InProcessPds`] and sessions kept in PostgreSQL.
 pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
+    serve_through(app, None).await
+}
+
+/// As [`serve`], with the app reaching its database through a proxy that logs into
+/// `statements` every statement PostgreSQL is asked to execute, seeding included.
+pub async fn serve_recording(
+    app: impl FnOnce(Runtime) -> Router,
+    statements: &StatementLog,
+) -> PgServed {
+    serve_through(app, Some(statements)).await
+}
+
+/// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given.
+async fn serve_through(
+    app: impl FnOnce(Runtime) -> Router,
+    statements: Option<&StatementLog>,
+) -> PgServed {
     let db = fresh_db().await;
+    let database_url = match statements {
+        Some(log) => record_statements(db.url(), log.clone()).await,
+        None => db.url().to_owned(),
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
 
     let pds = Arc::new(InProcessPds::default());
-    let live = Runtime::connect(config(&base_url, db.url()))
+    let live = Runtime::connect(config(&base_url, &database_url))
         .await
         .expect("the live runtime connects to the test database");
     let runtime = Runtime {
