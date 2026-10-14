@@ -11,7 +11,7 @@ use domain::{
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts, ensure_handle_claimable},
+    account::{AccountError, AccountResult, Accounts, ServedName, ensure_handle_claimable},
     den::{DenNameError, ShowableName, showable_refusal},
 };
 
@@ -23,7 +23,7 @@ pub struct Command {
 pub struct Output {
     pub account_id: AccountId,
     pub handle: Handle,
-    pub name: AccountName,
+    pub name: ServedName,
 }
 
 impl Accounts<'_> {
@@ -49,10 +49,11 @@ impl Accounts<'_> {
         let (account, owner) = Account::open(actor_id, did, handle, name, now);
         let uow = uow.open().await?;
         uow.accounts().create(&account, &owner).await?;
+        let name = ServedName::from(&account);
         Ok(Output {
             account_id: account.id,
             handle: account.handle,
-            name: account.name,
+            name,
         })
     }
 }

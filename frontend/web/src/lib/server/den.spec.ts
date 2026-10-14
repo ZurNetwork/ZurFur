@@ -603,6 +603,18 @@ describe('denPage: an Account node shows the Account’s own name', () => {
 		expect(listCalls).toHaveLength(1);
 	});
 
+	it('shows the handle the Account list serves for a stored name unsafe to show, and never the stored name', async () => {
+		const storedName = 'Studio‮gnp.exe';
+		const servedAsItsHandle: AccountMembership = { ...acdcRow, name: ACDC_HANDLE };
+		const { layer } = accountsPort(Effect.succeed([servedAsItsHandle]));
+		const listing = pageData(await run(layer, '/den/accounts'));
+		const node = pageData(await run(layer, `/den/accounts/${ACDC}`, true));
+		expect(entryNames(listing)).toEqual([ACDC_HANDLE, 'unlisted.zurfur.app']);
+		expect(openPage(node).node.name).toBe(ACDC_HANDLE);
+		expect(JSON.stringify([listing, node])).not.toContain(storedName);
+		expect(JSON.stringify([listing, node])).not.toContain('‮');
+	});
+
 	it('never names a node of another type, even one keyed by a listed Account’s DID', async () => {
 		const impostor = folder(['commissions', ACDC], 'Untitled', { type: 'commission' });
 		const shape: Partial<ZurfurApiShape> = {

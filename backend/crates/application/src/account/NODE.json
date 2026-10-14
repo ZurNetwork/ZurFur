@@ -58,6 +58,11 @@
       "node": false
     },
     {
+      "name": "served_name.rs + served_name/tests.rs",
+      "role": "ServedName, an Account's name as every Account output serves it (the list, founding, a handle change): the stored name as Atta's ShowableName keeps it, else the Account's handle; built only From<&Account>, so a stored name never leaves as-is while the row keeps its text",
+      "node": false
+    },
+    {
       "name": "transfer_ownership.rs",
       "role": "reassign the Owner role to another member",
       "node": false

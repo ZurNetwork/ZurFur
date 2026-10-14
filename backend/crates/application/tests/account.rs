@@ -59,7 +59,7 @@ async fn founding_persists_the_account_and_seats_the_founder_as_owner() {
         .expect("founds");
 
     assert_eq!(founded.handle.as_str(), "acme.zurfur.app");
-    assert_eq!(founded.name.as_str(), "Acme Studio");
+    assert_eq!(founded.name.to_string(), "Acme Studio");
     let stored = runtime
         .accounts
         .find(&founded.account_id)
