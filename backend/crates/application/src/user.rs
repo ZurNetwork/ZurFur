@@ -6,6 +6,9 @@ use domain::ports::{ProfileCache, ProfileSource};
 
 pub(crate) mod den;
 pub mod me;
+mod profile_lookup;
+
+pub use profile_lookup::{FAILED_LOOKUP_HOLD, LOOKUP_CAP, PROFILE_WAIT, ProfileLookups};
 
 /// Read-through resolution of a visitor's profile: a cache hit is served
 /// without waking the PDS, a miss reads the PDS and caches the result, and a

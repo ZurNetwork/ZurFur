@@ -114,6 +114,7 @@ fn recording_ports() -> (Ports, CallLog) {
         changelog: runtime.changelog,
         profile_source: runtime.profile_source,
         profile_cache: runtime.profile_cache,
+        profile_lookups: crate::user::ProfileLookups::default(),
         identity_resolver: runtime.identity_resolver,
         did_minter: runtime.did_minter,
         files: runtime.files,
