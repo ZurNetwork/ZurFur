@@ -1,8 +1,12 @@
-//! Den's arm for a poster's posts, `/post/<did>`.
+//! Den's arm for a poster's posts, `/post/<did>`: an empty, always-public stub that answers
+//! the same for every DID. It takes no ports, so it can read no store and call no host.
 
 use domain::elements::did::Did;
 
-use crate::den::{DenContext, DenMount, DenType, Node, Segment, TopLevel, names};
+use crate::den::{
+    DenMount, DenType, Level, Node, NodeState, Place, Segment, TopLevel,
+    names::{self, POSTS},
+};
 
 /// The places this arm answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,33 +38,34 @@ impl PostPlace {
     }
 }
 
-/// The posts of `poster` at `/post/<poster>`, for the session's viewer. Not served yet:
-/// always absent.
-pub(crate) async fn node(_context: &DenContext<'_>, _poster: &Did) -> anyhow::Result<Option<Node>> {
-    Ok(None)
+/// The posts of `poster` at `/post/<poster>`: named by the fixed word `posts`, Public, with
+/// no lifts, and live, for any DID and any viewer.
+pub(crate) fn node(poster: &Did) -> Option<Node> {
+    let name = names::fixed_name(POSTS)?;
+    let node = Node {
+        place: Place::Post(PostPlace::Posts(poster.clone())),
+        name,
+        level: Level::Public,
+        lifts: Vec::new(),
+        state: NodeState::Live,
+    };
+    Some(node)
 }
 
-/// The node at `key` in `place`. Not served yet: always absent.
-pub(crate) async fn child(
-    _context: &DenContext<'_>,
-    _place: &PostPlace,
-    _key: &Segment,
-) -> anyhow::Result<Option<Node>> {
-    Ok(None)
+/// The node at `key` in `place`: always absent, since the stub holds nothing.
+pub(crate) fn child(_place: &PostPlace, _key: &Segment) -> Option<Node> {
+    None
 }
 
-/// Every real child of `place`. Not served yet: always empty.
-pub(crate) async fn children(
-    _context: &DenContext<'_>,
-    _place: &PostPlace,
-) -> anyhow::Result<Vec<Node>> {
-    Ok(Vec::new())
+/// Every real child of `place`: always empty, since the stub holds nothing.
+pub(crate) fn children(_place: &PostPlace) -> Vec<Node> {
+    Vec::new()
 }
 
-/// The viewer's mounts in `place`. Not served yet: always empty.
-pub(crate) async fn mounts(
-    _context: &DenContext<'_>,
-    _place: &PostPlace,
-) -> anyhow::Result<Vec<DenMount>> {
-    Ok(Vec::new())
+/// The viewer's mounts in `place`: always empty, since the stub holds nothing.
+pub(crate) fn mounts(_place: &PostPlace) -> Vec<DenMount> {
+    Vec::new()
 }
+
+#[cfg(test)]
+mod tests;

@@ -191,6 +191,16 @@
       "viewer": "alice"
     },
     {
+      "contentType": "application/json",
+      "file": "alice/posts.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/posts",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
       "contentType": "application/problem+json",
       "file": "alice/not-found.json",
       "message": "Problem",

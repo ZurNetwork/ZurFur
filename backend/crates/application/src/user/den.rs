@@ -182,8 +182,7 @@ fn mount_at_key(target: Place) -> Option<DenMount> {
     Some(mount)
 }
 
-/// The viewer's `posts` mount of `/post/<their DID>`. Until den serves that node, Atta finds
-/// no target and leaves the entry out.
+/// The viewer's `posts` mount of `/post/<their DID>`, den's empty posts stub.
 fn posts_mount(context: &DenContext<'_>) -> Vec<DenMount> {
     let Some(segment) = names::fixed_segment(POSTS) else {
         return Vec::new();

@@ -215,7 +215,7 @@ async fn a_viewer_with_no_user_row_has_no_root() {
 }
 
 #[tokio::test]
-async fn alice_s_root_is_named_alice_and_holds_her_three_open_private_folders() {
+async fn alice_s_root_is_named_alice_and_holds_her_three_open_private_folders_and_posts() {
     let (runtime, _backend) = world().await;
 
     let output = root(&runtime, alice(), false).await.expect("alice's root");
@@ -225,25 +225,43 @@ async fn alice_s_root_is_named_alice_and_holds_her_three_open_private_folders() 
     assert_eq!(open(&output.node), OPEN_PRIVATE_FOLDER);
     assert_eq!(
         names(&output.listing),
-        ["accounts", "characters", "commissions"]
+        ["accounts", "characters", "commissions", "posts"]
     );
-    for entry in &output.listing.entries {
+    let (folders, posts) = output.listing.entries.split_at(3);
+    for entry in folders {
         assert_eq!(open(entry), OPEN_PRIVATE_FOLDER, "{}", entry.name);
         assert!(!entry.mount, "{}", entry.name);
     }
+    assert!(posts[0].mount);
     assert_eq!(output.listing.next_page, None);
 }
 
-/// `posts` is a mount of `/post/<did>`, which den doesn't serve yet, so Atta leaves it out.
+/// `posts` is a mount of `/post/<did>`: open, Public, its content not shown, and empty.
 #[tokio::test]
-async fn the_posts_mount_is_left_out_until_its_target_is_served() {
+async fn the_posts_mount_opens_public_and_empty_with_its_content_not_shown() {
     let (runtime, _backend) = world().await;
 
     let output = root(&runtime, alice(), false).await.expect("alice's root");
-    let posts = read(&runtime, alice(), &["posts"], false).await;
+    let posts = read(&runtime, alice(), &["posts"], false)
+        .await
+        .expect("alice's posts");
+    let below = read(&runtime, alice(), &["posts", "anything"], false).await;
 
-    assert!(!names(&output.listing).contains(&"posts".to_owned()));
-    assert!(matches!(posts, Err(DenError::NotFound)));
+    let public_not_shown = (NodeKind::Directory, NodeLevel::Public, true, None);
+    let entry = output
+        .listing
+        .entries
+        .iter()
+        .find(|entry| entry.name.to_string() == "posts")
+        .expect("the root lists posts");
+    assert!(entry.mount);
+    assert_eq!(path_of(entry), ["posts"]);
+    assert_eq!(open(entry), public_not_shown);
+    assert_eq!(posts.node.name.to_string(), "posts");
+    assert!(posts.node.mount);
+    assert_eq!(open(&posts.node), public_not_shown);
+    assert_eq!(listing(posts), DenListing::default());
+    assert!(matches!(below, Err(DenError::NotFound)));
 }
 
 #[tokio::test]

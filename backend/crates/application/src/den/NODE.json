@@ -90,7 +90,7 @@
     },
     {
       "name": "post.rs",
-      "role": "den's arm for /post/<did>; absent until the posts slice",
+      "role": "den's arm for /post/<did>: the empty posts stub, named `posts`, Public, the same for every DID; it takes no ports, so it reads no store and calls no host; nothing below it",
       "node": false
     },
     {
@@ -123,7 +123,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "host.rs, place.rs: the global root and its traverse-only top-level directories, actor and commission keys, users' and Accounts' system folders, mounts, commission entries (rulings 14–21)"
+      "governs": "host.rs, place.rs: the global root and its traverse-only top-level directories, actor and commission keys, users' and Accounts' system folders, mounts, commission entries (rulings 14–21); post.rs: /post/<did> is always public (decisions 5 and 20), and a user's posts is a mount of it (ruling 16); whether each post below it is public is still open (the Open table, Posts that aren't public)"
     },
     {
       "page": 2026100701,
@@ -132,7 +132,7 @@
     }
   ],
   "notes": [
-    "The identity arms (user, Account, Character) answer from slice 9; the commission arms from slice 10; `/post/<did>` still answers absent, so a user's `posts` mount is left out by Atta until that slice lands. The commission arms are also tested through the host from a commission's real path (`test_world::read`).",
+    "The identity arms (user, Account, Character) answer from slice 9; the commission arms from slice 10; the `/post/<did>` stub from slice 16, so a user's `posts` mount opens Public, its content not shown and its listing empty, and every path below it is the one not-found. The commission arms and the stub are also tested through the host from their real paths (`test_world::read`).",
     "A folder's contents belong to the arm that owns its entries: a user's `commissions` folder and an Account's `commissions` folder are `CommissionPlace`s, and an Account's `workflows` folder is a `WorkflowPlace`, though identity answers each folder node as a child of its user or Account."
   ]
 }

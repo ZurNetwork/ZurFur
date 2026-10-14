@@ -266,13 +266,21 @@ async fn each_piece_is_decoded_once_after_the_split() {
 }
 
 #[tokio::test]
-async fn alice_s_root_is_hers_and_holds_her_three_open_folders() {
+async fn alice_s_root_is_hers_and_holds_her_three_open_folders_and_posts() {
     let (base, alice) = as_alice().await;
     let expected_node = json!({
         "name": "Alice",
         "type": "user",
         "kind": "directory",
         "open": { "ownLevel": "private" },
+    });
+    let expected_posts = json!({
+        "segments": ["posts"],
+        "name": "posts",
+        "type": "post",
+        "kind": "directory",
+        "mount": true,
+        "open": { "ownLevel": "public", "contentNotShown": true },
     });
 
     let root = ok_json(get(&alice, &base, "/den").await).await;
@@ -281,15 +289,58 @@ async fn alice_s_root_is_hers_and_holds_her_three_open_folders() {
     let listing = &root["listing"];
     assert_eq!(
         entry_names(listing),
-        ["accounts", "characters", "commissions"]
+        ["accounts", "characters", "commissions", "posts"]
     );
     assert!(listing.get("nextPageToken").is_none(), "{listing}");
-    for entry in listing["entries"].as_array().expect("entries") {
+    let entries = listing["entries"].as_array().expect("entries");
+    let (folders, posts) = entries.split_at(3);
+    for entry in folders {
         let name = entry["name"].clone();
         assert_eq!(entry["segments"], json!([name]), "{entry}");
         assert_eq!(entry["kind"], "directory", "{entry}");
         assert_eq!(entry["open"]["ownLevel"], "private", "{entry}");
         assert!(entry.get("mount").is_none(), "{entry}");
+    }
+    assert_eq!(posts, [expected_posts]);
+}
+
+#[tokio::test]
+async fn alice_s_posts_open_public_and_empty_with_their_content_not_shown() {
+    let (base, alice) = as_alice().await;
+    let expected_node = json!({
+        "segments": ["posts"],
+        "name": "posts",
+        "type": "post",
+        "kind": "directory",
+        "mount": true,
+        "open": { "ownLevel": "public", "contentNotShown": true },
+    });
+    let expected_crumbs = json!([{ "name": "Alice" }]);
+
+    let posts = ok_json(get(&alice, &base, "/den/posts").await).await;
+
+    assert_eq!(posts["node"], expected_node);
+    assert_eq!(posts["crumbs"], expected_crumbs);
+    assert_eq!(posts["listing"], json!({}));
+}
+
+#[tokio::test]
+async fn every_path_below_posts_is_the_one_404_byte_for_byte() {
+    let alice_did = alice().to_string();
+    let (base, alice) = as_alice().await;
+    let below = [
+        "/den/posts/anything".to_owned(),
+        "/den/posts/anything/deeper".to_owned(),
+        format!("/den/posts/{alice_did}"),
+        "/den/posts/anything?includeDeleted=true".to_owned(),
+    ];
+    let not_found = Answer::read(get(&alice, &base, "/den/nope").await).await;
+
+    assert_eq!(not_found.status, 404);
+    for path in below {
+        let answer = Answer::read(get(&alice, &base, &path).await).await;
+
+        assert_eq!(answer, not_found, "{path}");
     }
 }
 

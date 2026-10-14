@@ -262,6 +262,7 @@ fn cases() -> Vec<Case> {
             Alice,
             format!("/den/commissions/{}", old_sketch()),
         ),
+        Case::node("alice/posts.json", Alice, "/den/posts".to_owned()),
         Case::problem("alice/not-found.json", Alice, "/den/nope", 404),
         Case::problem(
             "alice/unknown-parameter.json",
