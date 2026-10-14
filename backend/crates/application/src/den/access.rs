@@ -33,9 +33,20 @@ pub(crate) enum ServedNode {
     File(CommissionId, FileKey),
 }
 
-/// Proof that the viewer opens the node they asked about; only [`may_open`] makes one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Opens(());
+/// Proof that the viewer opens the node it carries; only [`may_open`] makes one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Opens(ServedNode);
+
+impl Opens {
+    /// The node the check opened; a read serves this node, by these ids.
+    #[allow(
+        dead_code,
+        reason = "identity's and commission's reads read their ids from it once they move onto the check"
+    )]
+    pub(crate) fn node(&self) -> &ServedNode {
+        &self.0
+    }
+}
 
 impl ServedNode {
     /// The node's anchor, directly under a top-level directory, and the places of the steps
@@ -71,7 +82,8 @@ fn commission_anchor(commission: CommissionId) -> Place {
 
 /// Whether `viewer` opens `node`: Atta's own resolve from the node's anchor, landing open on
 /// exactly the anchor's real path plus the steps. A card, a mount, or any miss is the one
-/// [`DenError::NotFound`]; a store failure stays [`DenError::Store`].
+/// [`DenError::NotFound`]; a store failure stays [`DenError::Store`]. `include_deleted` is
+/// off and doesn't matter here: a path walk's admission never reads it.
 #[allow(
     dead_code,
     reason = "identity's and commission's reads call it once they move onto the check"
@@ -79,7 +91,7 @@ fn commission_anchor(commission: CommissionId) -> Place {
 pub(crate) async fn may_open(
     ports: &Ports,
     viewer: &UserId,
-    node: &ServedNode,
+    node: ServedNode,
 ) -> Result<Opens, DenError> {
     let (anchor, steps) = node.places(viewer);
     let anchor = anchor.anchored_path().ok_or(DenError::NotFound)?;
@@ -88,17 +100,29 @@ pub(crate) async fn may_open(
         .map(Place::key)
         .collect::<Option<Vec<Segment>>>()
         .ok_or(DenError::NotFound)?;
+    opens_at(ports, viewer, &anchor, &steps).await?;
+    Ok(Opens(node))
+}
+
+/// Whether `viewer` opens the node at `steps` below `anchor`, a real path directly under a
+/// top-level directory: resolved open, on exactly `anchor` plus `steps`.
+async fn opens_at(
+    ports: &Ports,
+    viewer: &UserId,
+    anchor: &RealPath,
+    steps: &[Segment],
+) -> Result<(), DenError> {
     let host = DenHost::new(ports, viewer, false);
     let reader = Reader::over(&host, Caps::default());
-    let resolved = reader.walk(&anchor, &steps).await?;
+    let resolved = reader.walk(anchor, steps).await?;
     let View::Open { real_path, .. } = &resolved.node().view else {
         return Err(DenError::NotFound);
     };
-    let served: RealPath = anchor.segments().iter().chain(&steps).cloned().collect();
+    let served: RealPath = anchor.segments().iter().chain(steps).cloned().collect();
     if real_path != &served {
         return Err(DenError::NotFound);
     }
-    Ok(Opens(()))
+    Ok(())
 }
 
 #[cfg(test)]

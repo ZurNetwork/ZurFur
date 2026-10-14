@@ -5,14 +5,18 @@ use domain::{
     elements::{
         commission::{Commission, CommissionFile, CommissionTitle, FileName, Visibility},
         did::Did,
+        user::User,
     },
-    ports::UnitOfWork,
+    ports::{UnitOfWork, UserStore},
 };
 use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
 use uuid::Uuid;
 
 use super::*;
-use crate::test_world::{self, World};
+use crate::{
+    den::names::ACCOUNTS,
+    test_world::{self, World, path, segment},
+};
 
 /// A commission id nothing is stored under.
 fn nowhere() -> CommissionId {
@@ -27,7 +31,7 @@ fn stranger() -> UserId {
 
 /// Whether the check answers "opens".
 fn opened(answer: &Result<Opens, DenError>) -> bool {
-    matches!(answer, Ok(Opens(())))
+    answer.is_ok()
 }
 
 /// Whether the check answers the one not-found.
@@ -80,7 +84,7 @@ async fn seed_old_sketch_file(world: &World) -> FileKey {
 
 /// Whether `viewer` opens `node` in `world`.
 async fn check(world: &World, viewer: &UserId, node: ServedNode) -> Result<Opens, DenError> {
-    may_open(&world.ports, viewer, &node).await
+    may_open(&world.ports, viewer, node).await
 }
 
 #[tokio::test]
@@ -265,4 +269,65 @@ async fn an_absent_and_another_commission_s_file_key_run_the_same_reads() {
 
     assert_eq!(for_absent, ["find", "is_participant", "files"]);
     assert_eq!(for_elsewhere, for_absent);
+}
+
+#[tokio::test]
+async fn the_proof_carries_the_node_it_was_checked_for() {
+    let world = test_world::world().await;
+    let [ref_abco, _] = untitled_files();
+    let file = ServedNode::File(untitled(), ref_abco);
+
+    let opens = check(&world, &alice(), file.clone())
+        .await
+        .expect("alice opens a file of Untitled");
+
+    assert_eq!(opens.node(), &file);
+}
+
+#[tokio::test]
+async fn a_node_reached_through_a_mount_does_not_count_as_opening() {
+    let world = test_world::world().await;
+    let alice = alice();
+    let anchor = path(&format!("/user/{alice}"));
+    let account = supreme_arts();
+    let steps = [segment(ACCOUNTS), segment(account.as_ref())];
+    let host = DenHost::new(&world.ports, &alice, false);
+    let reader = Reader::over(&host, Caps::default());
+    let resolved = reader
+        .walk(&anchor, &steps)
+        .await
+        .expect("alice walks to Supreme Arts through her accounts");
+
+    let answer = opens_at(&world.ports, &alice, &anchor, &steps).await;
+
+    let landed_at_the_account = path(&format!("/account/{account}"));
+    assert!(matches!(
+        &resolved.node().view,
+        View::Open { real_path, .. } if real_path == &landed_at_the_account
+    ));
+    assert!(matches!(answer, Err(DenError::NotFound)));
+}
+
+/// A user store whose every read fails.
+struct FailingUsers;
+
+#[async_trait::async_trait]
+impl UserStore for FailingUsers {
+    async fn find(&self, _id: &UserId) -> anyhow::Result<Option<User>> {
+        Err(anyhow::anyhow!("the user store is down"))
+    }
+
+    async fn find_by_did(&self, _did: &Did) -> anyhow::Result<Option<User>> {
+        Err(anyhow::anyhow!("the user store is down"))
+    }
+}
+
+#[tokio::test]
+async fn a_store_failure_stays_a_store_failure() {
+    let World { mut ports, .. } = test_world::world().await;
+    ports.users = Arc::new(FailingUsers);
+
+    let answer = may_open(&ports, &alice(), ServedNode::OwnRoot).await;
+
+    assert!(matches!(answer, Err(DenError::Store(_))));
 }
