@@ -1,0 +1,166 @@
+// The tolerant reader, fail closed: every fallback den.proto states, driven
+// through the live port's decode and the den program, so each one is proven
+// where the page reads it.
+import { describe, expect, it } from 'vitest';
+import { Effect } from 'effect';
+import { cardTypeWord, type DenEntry, type DenPage } from '$lib/api/den';
+import { fetchStub } from '$lib/testing/http';
+import { denPage, type DenPageResult } from '../den';
+import { RequestFetch, ZurfurApiLive } from './zurfur-api';
+import type { ContractViolation, NetworkFailure } from './errors';
+
+/** Run the den page program for `address` over the live port, every read answered by `body`. */
+function runPage(
+	address: string,
+	respond: () => Response
+): Promise<DenPageResult | NetworkFailure | ContractViolation> {
+	const url = new URL(address, 'http://127.0.0.1:5174');
+	const { fetch } = fetchStub(respond);
+	const program = denPage(url.pathname, url.searchParams, false).pipe(
+		Effect.either,
+		Effect.map((either) => (either._tag === 'Right' ? either.right : either.left)),
+		Effect.provide(ZurfurApiLive),
+		Effect.provideService(RequestFetch, fetch)
+	);
+	return Effect.runPromise(program);
+}
+
+/** The page a body renders as, or a thrown test failure. */
+async function pageOf(address: string, body: unknown): Promise<DenPage> {
+	const result = await runPage(address, () => Response.json(body));
+	if (!('result' in result) || result.result !== 'page')
+		throw new Error(`expected a page, got ${JSON.stringify(result)}`);
+	const outcome = result.data.outcome;
+	if (outcome.outcome !== 'page') throw new Error(`expected a page, got ${outcome.outcome}`);
+	return outcome.page;
+}
+
+/** The listing entries of an open page, or a thrown test failure. */
+function entriesOf(page: DenPage): readonly DenEntry[] {
+	if (page.view !== 'open' || page.body.body !== 'listing') throw new Error('expected a listing');
+	return page.body.entries;
+}
+
+const openNode = {
+	segments: ['commissions'],
+	name: 'commissions',
+	type: 'user.commissions',
+	kind: 'directory',
+	open: { ownLevel: 'private' }
+};
+
+/** A folder answer at `/den/commissions` holding `entries`. */
+function folderBody(entries: readonly unknown[], extra: object = {}): object {
+	return { node: openNode, crumbs: [{ name: 'Alice' }], listing: { entries }, ...extra };
+}
+
+const entry = {
+	segments: ['commissions', 'c1'],
+	name: 'Untitled',
+	type: 'commission',
+	kind: 'directory',
+	open: { ownLevel: 'private' }
+};
+
+describe('the tolerant reader: unknown fields', () => {
+	it('ignores an unknown field at the top level and inside a node', async () => {
+		const body = folderBody([{ ...entry, fromTheFuture: 1, open: { ownLevel: 'private', x: 2 } }], {
+			aFieldFromTheFuture: 'later'
+		});
+		const [first] = entriesOf(await pageOf('/den/commissions', body));
+		expect(first).toMatchObject({ view: 'open', name: 'Untitled', ownLevel: 'private' });
+	});
+});
+
+describe('the tolerant reader: unknown words', () => {
+	it('gives an unknown kind a generic marker, an unknown level no level and an unknown soft-delete a generic mark', async () => {
+		const odd = { ...entry, kind: 'portal', open: { ownLevel: 'secret', softDelete: 'shelved' } };
+		const [first] = entriesOf(await pageOf('/den/commissions', folderBody([odd])));
+		expect(first).toMatchObject({
+			view: 'open',
+			kind: 'unknown',
+			ownLevel: 'unknown',
+			removed: 'unknown'
+		});
+	});
+
+	it('marks no soft-delete for an empty one', async () => {
+		const [first] = entriesOf(await pageOf('/den/commissions', folderBody([entry])));
+		expect(first).toMatchObject({ view: 'open', removed: undefined });
+	});
+
+	it('shows no type word on a card of a type this build doesn’t know', async () => {
+		const card = { name: 'Locked', type: 'account.characters', card: {} };
+		const [first] = entriesOf(await pageOf('/den/commissions', folderBody([card])));
+		expect(first?.view).toBe('card');
+		if (first?.view === 'card') expect(cardTypeWord(first.type)).toBeUndefined();
+	});
+});
+
+describe('the tolerant reader: access fails closed', () => {
+	it.each([
+		['unset', { name: 'No access', type: 'commission', segments: ['commissions', 'c2'] }],
+		[
+			'null',
+			{ name: 'Null access', type: 'commission', segments: ['commissions', 'c2'], open: null }
+		]
+	])('shows an %s access as a card with no link', async (_, node) => {
+		const [first] = entriesOf(await pageOf('/den/commissions', folderBody([node])));
+		expect(first).toEqual({ view: 'card', name: node.name, type: 'commission', mounted: false });
+	});
+
+	it('shows a node page whose access is unset as a card page', async () => {
+		const body = { node: { name: 'No access', type: 'commission' }, crumbs: [{ name: 'Alice' }] };
+		const page = await pageOf('/den/commissions/c2', body);
+		expect(page.view).toBe('card');
+	});
+
+	it.each([
+		['card first', { card: {}, open: { ownLevel: 'public' } }],
+		['open first', { open: { ownLevel: 'public' }, card: {} }]
+	])('never opens a node with both access members set (%s)', async (_, access) => {
+		const result = await runPage('/den/commissions', () =>
+			Response.json(folderBody([{ ...entry, ...access }]))
+		);
+		expect('_tag' in result && result._tag).toBe('ContractViolation');
+	});
+});
+
+describe('the tolerant reader: content', () => {
+	it('shows an unknown content case as "content not shown yet", never an empty folder', async () => {
+		const body = { node: openNode, crumbs: [{ name: 'Alice' }], gallery: { items: [] } };
+		const page = await pageOf('/den/commissions', body);
+		expect(page.view === 'open' && page.body).toEqual({ body: 'notShown' });
+	});
+
+	it('shows an open node with no content as "content not shown yet"', async () => {
+		const page = await pageOf('/den/commissions', { node: openNode, crumbs: [{ name: 'Alice' }] });
+		expect(page.view === 'open' && page.body).toEqual({ body: 'notShown' });
+	});
+
+	it('reads an empty page token as the last page', async () => {
+		const body = folderBody([entry]);
+		const withToken = { ...body, listing: { entries: [entry], nextPageToken: '' } };
+		const page = await pageOf('/den/commissions', withToken);
+		expect(page.view === 'open' && page.body.body === 'listing' && page.body.more).toBeUndefined();
+	});
+
+	it('gives the root no crumbs', async () => {
+		const body = { node: { ...openNode, segments: [], name: 'Alice' }, listing: { entries: [] } };
+		const page = await pageOf('/den', body);
+		expect(page.crumbs).toEqual([]);
+	});
+});
+
+describe('the tolerant reader: broken answers', () => {
+	it.each([
+		['an answer with no node', () => Response.json({ crumbs: [], listing: { entries: [] } })],
+		['a body that isn’t JSON', () => new Response('<html>', { status: 200 })],
+		['a node of the wrong shape', () => Response.json({ node: { segments: 'commissions' } })]
+	])('is a contract violation for %s', async (_, respond) => {
+		const root = await runPage('/den', respond);
+		const node = await runPage('/den/commissions', respond);
+		expect('_tag' in root && root._tag).toBe('ContractViolation');
+		expect('_tag' in node && node._tag).toBe('ContractViolation');
+	});
+});

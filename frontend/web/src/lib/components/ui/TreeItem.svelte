@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DenKind, DenRemoved } from '$lib/api/den';
+	import type { CardTypeWord, DenKind, DenRemoved } from '$lib/api/den';
 	import Badge from './Badge.svelte';
 	import Icon from './Icon.svelte';
 	import type { IconName } from './icons';
@@ -11,7 +11,7 @@
 	/**
 	 * The face of one tree row or list row: its kind marker, its name (cut
 	 * with an ellipsis, isolated for right-to-left text), the mounted marker,
-	 * the soft-delete word and the "not shown yet" hint. The interactive
+	 * the soft-delete word, the "not shown yet" hint and a card's type word. The interactive
 	 * element around it (link, tree item) belongs to the caller.
 	 */
 	let {
@@ -21,6 +21,7 @@
 		mounted = false,
 		removed,
 		notShown = false,
+		typeWord,
 		sayCantOpen = true
 	}: {
 		look: TreeItemLook;
@@ -29,6 +30,8 @@
 		mounted?: boolean;
 		removed?: DenRemoved | undefined;
 		notShown?: boolean;
+		/** A card's type as a word, when this build knows the type. */
+		typeWord?: CardTypeWord | undefined;
 		/** Whether to tell screen readers "Can't be opened" (off where the row already says so). */
 		sayCantOpen?: boolean;
 	} = $props();
@@ -70,6 +73,9 @@
 	{/if}
 	{#if notShown}
 		<span class="tree-item__hint">not shown yet</span>
+	{/if}
+	{#if typeWord !== undefined}
+		<span class="tree-item__hint" data-testid="card-type">{typeWord}</span>
 	{/if}
 	{#if look === 'cantOpen' && sayCantOpen}
 		<span class="visually-hidden">Can't be opened</span>

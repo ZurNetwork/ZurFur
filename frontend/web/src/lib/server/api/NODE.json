@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "port specs + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec",
+      "role": "port specs (the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, through the live port and the den program) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec",
       "node": false
     },
     {
@@ -31,7 +31,12 @@
     },
     {
       "name": "den-read.ts",
-      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock produces it now, the live decode later",
+      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it",
+      "node": false
+    },
+    {
+      "name": "den-wire.ts",
+      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined); DEN_ROUTES, the route templates Den failures name",
       "node": false
     },
     {
@@ -51,7 +56,7 @@
     },
     {
       "name": "zurfur-api.ts",
-      "role": "the port: every backend call as one service (Den reads denRoot/denNode answer DenNotConnected live until den.proto is wired), decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts",
+      "role": "the port: every backend call as one service (Den reads denRoot/denNode call GET /den and /den/{path}, decode through den-wire.ts, and name only the route template in any failure; a path the builder refuses is the one not-found with no fetch), decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts",
       "node": false
     }
   ],

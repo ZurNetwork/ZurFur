@@ -19,6 +19,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	NODE_NOT_FOUND_PROBLEM,
 	PROBLEM_CONTENT_TYPE,
 	type Problem,
 	ProblemKind
@@ -35,6 +36,10 @@ import {
 import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
+	GetDenNodeResponseSchema,
+	GetDenRootResponseSchema
+} from './generated/zurfur/api/v1/den_pb';
+import {
 	ApiProblem,
 	ContractViolation,
 	DenNotConnected,
@@ -43,7 +48,9 @@ import {
 	SignoutFailed
 } from './errors';
 import type { DenQuery, DenRead } from './den-read';
+import { DEN_ROUTES, denReadFromNode, denReadFromRoot, type DenRoute } from './den-wire';
 import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
+import { denApiPathOf } from '../den/den-path';
 import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
 
 /**
@@ -108,8 +115,8 @@ export interface ZurfurApiShape {
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
 	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
-	 * Fails `ApiProblem` `node_not_found` for every miss, `DenNotConnected` while
-	 * this build has no live Den behind it.
+	 * Fails `ApiProblem` `node_not_found` for every miss, `NotAuthenticated`
+	 * for an ended session; a failure names only the route template.
 	 */
 	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
@@ -454,13 +461,48 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 	});
 
 /**
- * The live port's Den reads, until the Den contract is wired: every read
- * answers `DenNotConnected`, so a live run shows a notice, never an empty Den
- * or the not-found.
+ * A Den read over HTTP: `path` is the built API path, `route` the template
+ * every failure names instead. A 401 stays `NotAuthenticated`; an answer
+ * with no node, or one that doesn't decode, is a `ContractViolation`.
  */
-const liveDenNotConnected: Effect.Effect<never, DenNotConnected> = Effect.fail(
-	new DenNotConnected()
-);
+function liveDenRead(
+	fetch: FetchFunction,
+	path: string,
+	route: DenRoute,
+	decode: (raw: JsonValue) => DenRead | undefined
+): Effect.Effect<DenRead, DenReadError> {
+	return Effect.gen(function* () {
+		const response = yield* backendFetch(fetch, path);
+		if (!response.ok) return yield* problemFailure(response, route);
+		const raw = yield* parsedBody(response, route);
+		const violation = (detail: string) =>
+			new ContractViolation({ path: route, status: response.status, detail });
+		const read = yield* Effect.try({
+			try: () => decode(raw),
+			catch: () => violation('malformed den payload')
+		});
+		if (read === undefined) return yield* violation('an answer with no node');
+		return read;
+	});
+}
+
+/** `GET /den`: the viewer's own root. */
+const liveDenRoot = (fetch: FetchFunction, query: DenQuery) => {
+	const path = denApiPathOf([], query);
+	if (path === undefined) return Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
+	return liveDenRead(fetch, path, DEN_ROUTES.root, (raw) =>
+		denReadFromRoot(decodeContract(GetDenRootResponseSchema, raw))
+	);
+};
+
+/** `GET /den/{path}`: a path the builder refuses is the one not-found, with no fetch. */
+const liveDenNode = (fetch: FetchFunction, denPath: SegmentPath, query: DenQuery) => {
+	const path = denApiPathOf(denPath, query);
+	if (path === undefined) return Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
+	return liveDenRead(fetch, path, DEN_ROUTES.node, (raw) =>
+		denReadFromNode(decodeContract(GetDenNodeResponseSchema, raw))
+	);
+};
 
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
@@ -474,8 +516,8 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
 			deleteAccount: (id) => liveDeleteAccount(fetch, id),
-			denRoot: () => liveDenNotConnected,
-			denNode: () => liveDenNotConnected
+			denRoot: (query) => liveDenRoot(fetch, query),
+			denNode: (path, query) => liveDenNode(fetch, path, query)
 		});
 	})
 );

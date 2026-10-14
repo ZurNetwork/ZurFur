@@ -59,13 +59,36 @@ describe('/den load on the everyday stack (no Den served)', () => {
 	});
 });
 
-describe('/den load on a served but unwired live port', () => {
-	it('answers "not connected yet", never an empty Den or the not-found', async () => {
+describe('/den load on a served live port', () => {
+	/** Run the load for `address` over the live port, every Den read answered by `respond`. */
+	async function runLiveLoad(address: string, respond: () => Response): Promise<unknown> {
 		seam.mock = false;
 		seam.servedLive = true;
-		const data = await runLoad('/den');
-		expect(data.den.outcome).toEqual({ outcome: 'notConnected' });
+		const url = new URL(address, 'http://127.0.0.1:5174');
+		const { fetch } = fetchStub(respond);
+		const event = { url, fetch, isDataRequest: true } as unknown as LoadEvent;
+		const settled: unknown = await Promise.resolve()
+			.then(() => load(event))
+			.catch((thrown: unknown) => thrown);
 		seam.servedLive = false;
+		return settled;
+	}
+
+	it('reads the Den through the API and hands the page what it answered', async () => {
+		const body = {
+			node: { name: 'Alice', type: 'user', kind: 'directory', open: { ownLevel: 'private' } },
+			listing: { entries: [] }
+		};
+		const data = (await runLiveLoad('/den', () => Response.json(body))) as DenLoadData;
+		expect(data.den.outcome.outcome).toBe('page');
+	});
+
+	it('fails to the error view when the Den doesn’t answer, never "Nothing here"', async () => {
+		const failure = await runLiveLoad('/den', () => {
+			throw new DOMException('The operation timed out.', 'TimeoutError');
+		});
+		expect(failure).toBeInstanceOf(Error);
+		expect(isHttpError(failure)).toBe(false);
 	});
 });
 

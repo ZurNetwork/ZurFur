@@ -264,3 +264,20 @@ export function foldersFirst(entries: readonly DenEntry[]): readonly DenEntry[] 
 	const isFolder = (entry: DenEntry) => entry.view === 'open' && entry.kind === 'directory';
 	return [...entries.filter(isFolder), ...entries.filter((entry) => !isFolder(entry))];
 }
+
+/** The word a card shows for a type this build knows. */
+export type CardTypeWord = 'Account' | 'Character' | 'Commission';
+
+/** The word a card shows for its type: exactly the types this build knows, and no word for any other. */
+export function cardTypeWord(type: DenType): CardTypeWord | undefined {
+	switch (type) {
+		case 'account':
+			return 'Account';
+		case 'character':
+			return 'Character';
+		case 'commission':
+			return 'Commission';
+		default:
+			return undefined;
+	}
+}

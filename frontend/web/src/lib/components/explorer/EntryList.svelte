@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DenEntry } from '$lib/api/den';
+	import { cardTypeWord, type DenEntry } from '$lib/api/den';
 	import TreeItem from '$lib/components/ui/TreeItem.svelte';
 	import VisibilityMarker from '$lib/components/ui/VisibilityMarker.svelte';
 	import type { DenHref } from '$lib/types/brand';
@@ -7,7 +7,8 @@
 	/**
 	 * The open folder's entries in the pane: folders first, then the rest,
 	 * each in the server's order. An entry the viewer can open is a link with
-	 * its own visibility; a card is a quiet row that isn't a link. "More"
+	 * its own visibility; a card is a quiet row that isn't a link, with its
+	 * type as a word when this build knows it. "More"
 	 * links to the next page; with the page's script, `onMore` appends it in
 	 * place instead.
 	 */
@@ -54,7 +55,13 @@
 				</a>
 			{:else}
 				<div class="entry-row entry-row--inert" data-testid="entry-card" tabindex="-1">
-					<TreeItem look="cantOpen" name={entry.name} mounted={entry.mounted} sayCantOpen={false} />
+					<TreeItem
+						look="cantOpen"
+						name={entry.name}
+						mounted={entry.mounted}
+						typeWord={cardTypeWord(entry.type)}
+						sayCantOpen={false}
+					/>
 					<span class="entry-row__level entry-row__cant">Can't open</span>
 				</div>
 			{/if}

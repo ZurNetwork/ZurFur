@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { DenOutcome, DenPageData } from '$lib/api/den';
 import { invalidRequestProblem, NODE_NOT_FOUND_PROBLEM, type Problem } from '$lib/api/problem';
+import type { FetchFunction } from '$lib/api/client';
+import { requestUrl } from '$lib/testing/http';
 import { denPage, type DenPageResult } from './den';
-import { zurfurApiTest, type DenReadError, type ZurfurApiShape } from './api/zurfur-api';
+import {
+	RequestFetch,
+	ZurfurApiLive,
+	zurfurApiTest,
+	type DenReadError,
+	type ZurfurApiShape
+} from './api/zurfur-api';
 import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
 import { ApiProblem, ContractViolation, DenNotConnected, NotAuthenticated } from './api/errors';
 import type { SegmentPath } from './path-builder';
@@ -384,4 +392,84 @@ describe('denPage: failures', () => {
 		const data = pageData(await run(problemPort(problem).layer, '/den'));
 		expect(data.outcome).toEqual({ outcome: 'problem', problem });
 	});
+});
+
+describe('denPage: at most four Den reads in flight', () => {
+	const deep = Array.from({ length: 16 }, (_, index) => `f${String(index)}`);
+
+	it('shares one cap of four between the node read and the sixteen folders above it, the node first', async () => {
+		let inFlight = 0;
+		let most = 0;
+		const { layer, seen } = denPort((path) =>
+			Effect.gen(function* () {
+				inFlight += 1;
+				most = Math.max(most, inFlight);
+				for (let turn = 0; turn < 8; turn += 1) yield* Effect.yieldNow();
+				inFlight -= 1;
+				return folderRead(path, []);
+			})
+		);
+		pageData(await run(layer, `/den/${deep.join('/')}`, true));
+		expect(seen).toHaveLength(17);
+		expect(seen[0]?.path).toEqual(deep);
+		expect(most).toBe(4);
+	});
+});
+
+describe('denPage: a Den read that runs out, through the live port', () => {
+	/** A fetch that rejects as an aborted or timed-out fetch does for `failing`, and answers the rest. */
+	function runningOut(failing: (url: string) => boolean, name: 'AbortError' | 'TimeoutError') {
+		const calls: string[] = [];
+		const fetch: FetchFunction = (input) => {
+			const url = requestUrl(input);
+			calls.push(url);
+			if (failing(url)) return Promise.reject(new DOMException('The operation timed out.', name));
+			const segments = url
+				.replace(/^\/api\/v1\/den\/?/, '')
+				.split('/')
+				.filter(Boolean);
+			const body = {
+				node: { segments, name: segments.at(-1) ?? 'Alice', kind: 'directory', open: {} },
+				crumbs: segments.map((_, index) => ({ segments: segments.slice(0, index), name: 'up' })),
+				listing: { entries: [] }
+			};
+			return Promise.resolve(Response.json(body));
+		};
+		return { fetch, calls };
+	}
+
+	/** The den page program for `address` over the live port, its failure as a value. */
+	function runLive(address: string, fetch: FetchFunction) {
+		const url = new URL(address, 'http://127.0.0.1:5174');
+		return Effect.runPromise(
+			denPage(url.pathname, url.searchParams, true).pipe(
+				Effect.either,
+				Effect.provide(ZurfurApiLive),
+				Effect.provideService(RequestFetch, fetch)
+			)
+		);
+	}
+
+	it.each(['AbortError', 'TimeoutError'] as const)(
+		'fails the load to the error view when the open item’s read fails so (%s), never "Nothing here"',
+		async (name) => {
+			const { fetch } = runningOut((url) => url === '/api/v1/den/accounts/a1', name);
+			const result = await runLive('/den/accounts/a1', fetch);
+			expect(result._tag).toBe('Left');
+			if (result._tag === 'Left') expect(result.left._tag).toBe('NetworkFailure');
+		}
+	);
+
+	it.each(['AbortError', 'TimeoutError'] as const)(
+		'drops a folder above the item whose read fails so (%s), and still renders the page',
+		async (name) => {
+			const { fetch, calls } = runningOut((url) => url === '/api/v1/den/accounts', name);
+			const result = await runLive('/den/accounts/a1', fetch);
+			if (result._tag !== 'Right') throw new Error('expected a page');
+			const data = pageData(result.right);
+			expect(data.outcome.outcome).toBe('page');
+			expect(calls).toContain('/api/v1/den/accounts');
+			expect(data.ancestors.map((listing) => listing.folder)).toEqual(['/den']);
+		}
+	);
 });
