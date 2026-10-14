@@ -1,0 +1,70 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "accounts",
+      "segments": [
+        "accounts"
+      ]
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "characters",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts",
+          "did:plc:t7nesupremeartsfixtureaa",
+          "characters"
+        ],
+        "type": "account.characters"
+      },
+      {
+        "kind": "directory",
+        "name": "commissions",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts",
+          "did:plc:t7nesupremeartsfixtureaa",
+          "commissions"
+        ],
+        "type": "account.commissions"
+      },
+      {
+        "kind": "directory",
+        "name": "workflows",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts",
+          "did:plc:t7nesupremeartsfixtureaa",
+          "workflows"
+        ],
+        "type": "account.workflows"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "mount": true,
+    "name": "Supreme Arts",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts",
+      "did:plc:t7nesupremeartsfixtureaa"
+    ],
+    "type": "account"
+  }
+}

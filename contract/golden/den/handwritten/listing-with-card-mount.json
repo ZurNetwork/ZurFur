@@ -1,0 +1,41 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "card": {},
+        "mount": true,
+        "name": "Locked Studio",
+        "type": "account"
+      },
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Supreme Arts",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts",
+          "did:plc:t7nesupremeartsfixtureaa"
+        ],
+        "type": "account"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "accounts",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts"
+    ],
+    "type": "user.accounts"
+  }
+}

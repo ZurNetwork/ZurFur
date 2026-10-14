@@ -1,0 +1,7 @@
+{
+  "code": "not_authenticated",
+  "detail": "You must be signed in to do that.",
+  "status": 401,
+  "title": "Not authenticated",
+  "type": "urn:zurfur:error:not-authenticated"
+}

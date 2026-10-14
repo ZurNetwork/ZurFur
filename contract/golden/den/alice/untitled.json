@@ -1,0 +1,83 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "attachments",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "attachments"
+        ],
+        "type": "commission.attachments"
+      },
+      {
+        "kind": "file",
+        "name": "changelog",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "changelog"
+        ],
+        "type": "commission.changelog"
+      },
+      {
+        "kind": "directory",
+        "name": "products",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "products"
+        ],
+        "type": "commission.products"
+      },
+      {
+        "kind": "directory",
+        "name": "slots",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "slots"
+        ],
+        "type": "commission.slots"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "mount": true,
+    "name": "Untitled",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions",
+      "01a0ef9c-4e00-7a00-8000-000000000001"
+    ],
+    "type": "commission"
+  }
+}

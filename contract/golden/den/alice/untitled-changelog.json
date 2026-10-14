@@ -1,0 +1,35 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    },
+    {
+      "name": "Untitled",
+      "segments": [
+        "commissions",
+        "01a0ef9c-4e00-7a00-8000-000000000001"
+      ]
+    }
+  ],
+  "file": {},
+  "node": {
+    "kind": "file",
+    "name": "changelog",
+    "open": {
+      "contentNotShown": true,
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions",
+      "01a0ef9c-4e00-7a00-8000-000000000001",
+      "changelog"
+    ],
+    "type": "commission.changelog"
+  }
+}

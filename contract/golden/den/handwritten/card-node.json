@@ -1,0 +1,18 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    }
+  ],
+  "node": {
+    "card": {},
+    "name": "Hidden commission",
+    "type": "commission"
+  }
+}

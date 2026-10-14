@@ -1,0 +1,19 @@
+{
+  "crumbs": [
+    {
+      "name": "bob.test"
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "name": "accounts",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts"
+    ],
+    "type": "user.accounts"
+  }
+}

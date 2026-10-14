@@ -1,0 +1,7 @@
+{
+  "code": "unknown_parameter",
+  "detail": "The request carries a query parameter this endpoint doesn't accept.",
+  "status": 400,
+  "title": "Bad request",
+  "type": "urn:zurfur:error:bad-request"
+}

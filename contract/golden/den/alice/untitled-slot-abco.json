@@ -1,0 +1,44 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    },
+    {
+      "name": "Untitled",
+      "segments": [
+        "commissions",
+        "01a0ef9c-4e00-7a00-8000-000000000001"
+      ]
+    },
+    {
+      "name": "slots",
+      "segments": [
+        "commissions",
+        "01a0ef9c-4e00-7a00-8000-000000000001",
+        "slots"
+      ]
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "name": "Abco",
+    "open": {
+      "contentNotShown": true,
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions",
+      "01a0ef9c-4e00-7a00-8000-000000000001",
+      "slots",
+      "01a0ef9c-6000-7a00-8000-000000000021"
+    ],
+    "type": "slot"
+  }
+}

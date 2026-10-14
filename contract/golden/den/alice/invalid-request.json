@@ -1,0 +1,7 @@
+{
+  "code": "invalid_request",
+  "detail": "The request's query string carries a value this endpoint can't use.",
+  "status": 422,
+  "title": "Invalid request",
+  "type": "urn:zurfur:error:invalid-request"
+}
