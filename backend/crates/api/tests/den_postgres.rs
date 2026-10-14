@@ -5,29 +5,15 @@
 
 use std::sync::Arc;
 
-use domain::elements::commission::Visibility;
 use serde_json::json;
 use test_support::{
     den::{Answer, PRIVATE_NO_STORE, entry_names, get, ok_json},
     pg_app::{
-        self, DenWorld, SeededCommission, absent_commission, absent_file, absent_slot,
-        absent_workflow,
+        self, DenWorld, MissPair, SeededCommission, absent_commission, absent_file, absent_slot,
+        absent_workflow, stranger_targets,
     },
     recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
 };
-
-/// Two causes of one miss at the same depth: a path to nothing, and a path to a real node
-/// that isn't the viewer's to open. Each must answer the one 404.
-struct MissPair {
-    /// What the pair is, for assertion messages.
-    label: &'static str,
-    /// The path to nothing.
-    absent: String,
-    /// The path to a real node the viewer may not open.
-    not_yours: String,
-    /// The same real node at its home in alice's Den, where she opens it.
-    home: String,
-}
 
 /// The stranger's pairs against `target`, a commission they take part in nothing of: the
 /// commission itself, its `changelog`, and its file.
@@ -58,22 +44,6 @@ fn stranger_pairs(target: &SeededCommission) -> [MissPair; 3] {
         home: file_path,
     };
     [commission_pair, changelog_pair, file_pair]
-}
-
-/// The commissions the stranger's pairs run against, each at the visibility the pair needs:
-/// "Untitled" Private and live, then the archived "Old sketch" Private, Public and Listed.
-#[expect(
-    clippy::let_and_return,
-    reason = "the style rulebook names a multi-line construction before returning it"
-)]
-fn stranger_targets(world: &DenWorld) -> [(SeededCommission, Visibility); 4] {
-    let targets = [
-        (world.untitled, Visibility::Private),
-        (world.old_sketch, Visibility::Private),
-        (world.old_sketch, Visibility::Public),
-        (world.old_sketch, Visibility::Listed),
-    ];
-    targets
 }
 
 /// bob's pairs as a Participant of "Untitled": a missing file key against "Old sketch"'s

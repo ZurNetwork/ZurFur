@@ -5,6 +5,7 @@
 
 mod den_world;
 mod in_process_pds;
+mod pairs;
 mod served;
 
 pub use den_world::{
@@ -12,4 +13,8 @@ pub use den_world::{
     den_world,
 };
 pub use in_process_pds::InProcessPds;
+pub use pairs::{
+    MissPair, commission_read_stranger_pairs, download_participant_pair, public_live_download_pair,
+    stranger_targets,
+};
 pub use served::{PgServed, serve};

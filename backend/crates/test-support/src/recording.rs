@@ -1,6 +1,7 @@
 //! Recording wrappers over the in-memory fakes: each notes its calls in a
 //! shared [`CallLog`] (and, for the identity reads, whose data each asked
-//! for in a [`SubjectLog`]), then delegates.
+//! for in a [`SubjectLog`]), then delegates; plus the lists of reads a refused
+//! read must never make.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,9 +11,9 @@ use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     character::Character,
     commission::{
-        Commission, CommissionComposition, CommissionFile, CommissionId, CommissionMarkup,
-        CommissionSummary, ElementId, FileDownload, FileKey, FileName, FileSummary, GrantLevel,
-        Seat, SeatInvitation, Slot,
+        ChangelogEntry, Commission, CommissionComposition, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionSummary, ElementId, FileDownload, FileKey, FileName,
+        FileSummary, GrantLevel, Seat, SeatInvitation, Slot,
     },
     did::Did,
     handle::Handle,
@@ -24,9 +25,10 @@ use domain::elements::{
     workflow::{Column, ColumnId, Workflow, WorkflowId, WorkflowSummary},
 };
 use domain::ports::{
-    AccountRepo, AccountStore, ActorIdentityWrites, ChangelogWrites, CharacterStore,
-    CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
-    ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+    AccountRepo, AccountStore, ActorIdentityWrites, ChangelogStore, ChangelogWrites,
+    CharacterStore, CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database,
+    DidMinter, FileStore, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    WorkflowStore, WorkflowWrites,
 };
 use tokio::io::AsyncRead;
 
@@ -43,6 +45,22 @@ impl CallLog {
     /// Everything recorded so far, in order.
     pub fn events(&self) -> Vec<&'static str> {
         self.0.lock().expect("call log lock").clone()
+    }
+}
+
+/// The recorded reads a stranger refused at a commission must never make: the whole row,
+/// anything by key, and the changelog's entries.
+pub const NEVER_FOR_A_STRANGER: [&str; 6] =
+    ["find", "files", "find_file", "filename", "get", "entries"];
+
+/// The recorded reads a file the viewer's check can't find must never make: its row, its name
+/// or its bytes, by key.
+pub const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["find_file", "filename", "get"];
+
+/// Asserts `reads` hold none of `never`, naming `label` and the offending read.
+pub fn assert_reads_none_of(reads: &[&'static str], never: &[&str], label: &str) {
+    for read in never {
+        assert!(!reads.contains(read), "{label}: {read} in {reads:?}");
     }
 }
 
@@ -566,6 +584,27 @@ impl CommissionStore for RecordingCommissionStore {
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         self.log.record("slots");
         self.inner.slots(commission).await
+    }
+}
+
+/// A [`ChangelogStore`] that logs `entries` before delegating.
+pub struct RecordingChangelogStore {
+    inner: Arc<dyn ChangelogStore>,
+    log: CallLog,
+}
+
+impl RecordingChangelogStore {
+    /// Wraps `inner`, recording into `log`.
+    pub fn new(inner: Arc<dyn ChangelogStore>, log: CallLog) -> Self {
+        Self { inner, log }
+    }
+}
+
+#[async_trait]
+impl ChangelogStore for RecordingChangelogStore {
+    async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
+        self.log.record("entries");
+        self.inner.entries(commission).await
     }
 }
 

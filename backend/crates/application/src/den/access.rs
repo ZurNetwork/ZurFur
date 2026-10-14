@@ -22,22 +22,10 @@ pub(crate) enum ServedNode {
     /// An Account's directory.
     Account(AccountId),
     /// A commission's directory.
-    #[allow(
-        dead_code,
-        reason = "commission's reads name their nodes once they move onto the check"
-    )]
     Commission(CommissionId),
     /// A commission's `changelog` file.
-    #[allow(
-        dead_code,
-        reason = "commission's reads name their nodes once they move onto the check"
-    )]
     Changelog(CommissionId),
     /// A file in a commission's `attachments`.
-    #[allow(
-        dead_code,
-        reason = "commission's reads name their nodes once they move onto the check"
-    )]
     File(CommissionId, FileKey),
 }
 

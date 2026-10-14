@@ -25,7 +25,7 @@
   "fs": [
     {
       "name": "access.rs",
-      "role": "den's access check: may this viewer open the node a read that bypasses the Den serves, named by typed ids; Atta's own resolve, open on exactly its real path, else the one not-found",
+      "role": "den's access check: may this viewer open the node a read that bypasses the Den serves, named by typed ids; Atta's own resolve, open on exactly its real path, else the one not-found. Commission's download and changelog read call it; identity's reads (the viewer's own root, an Account) are next",
       "node": false
     },
     {

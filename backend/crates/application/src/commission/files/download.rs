@@ -6,7 +6,8 @@ use domain::elements::{
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, files::Files},
+    commission::{CommissionError, CommissionResult, den_refusal, files::Files},
+    den::access::{ServedNode, may_open},
 };
 
 pub struct Query {
@@ -20,9 +21,10 @@ pub struct Output {
 }
 
 impl Files<'_> {
-    /// Retrieves a file entry's metadata and a live reader over its bytes.
-    /// Participant-gated; `FileNotFound` whether the key is absent or belongs
-    /// to another commission, so retrieval is never an existence oracle.
+    /// Retrieves a file entry's metadata and a live reader over its bytes, once den's check
+    /// opens the commission (else `NotAMember`) and then the file under it (else
+    /// `FileNotFound`, whether the key is absent or another commission's). Before both pass,
+    /// nothing is read by key but the names of the files in the commission's own list.
     #[use_case]
     pub async fn download(&self, #[ports] ports: &Ports, query: Query) -> CommissionResult<Output> {
         let Query {
@@ -31,13 +33,15 @@ impl Files<'_> {
             file_id,
         } = query;
 
-        if !ports
-            .commissions
-            .is_participant(&commission_id, &actor_id)
-            .await?
-        {
-            return Err(CommissionError::NotAMember);
-        }
+        may_open(ports, &actor_id, ServedNode::Commission(commission_id))
+            .await
+            .map_err(|refusal| den_refusal(refusal, CommissionError::NotAMember))?;
+        let opens = may_open(ports, &actor_id, ServedNode::File(commission_id, file_id))
+            .await
+            .map_err(|refusal| den_refusal(refusal, CommissionError::FileNotFound))?;
+        let &ServedNode::File(commission_id, file_id) = opens.node() else {
+            return Err(CommissionError::FileNotFound);
+        };
 
         ports
             .commissions
@@ -54,3 +58,6 @@ impl Files<'_> {
         Ok(Output { result })
     }
 }
+
+#[cfg(test)]
+mod tests;
