@@ -4,6 +4,11 @@ fn alice() -> Profile {
     Profile::new(Did::from("did:plc:alice".to_string()), "alice.test")
 }
 
+/// Whether `completed` is a refusal for its browser, as the port names it.
+fn refused_for_its_browser(completed: anyhow::Result<Did>) -> bool {
+    completed.is_err_and(|refused| refused.is::<BrowserMismatch>())
+}
+
 /// `raw` as the handle a visitor typed.
 fn handle(raw: &str) -> AtHandle {
     raw.parse().expect("a valid handle")
@@ -108,7 +113,10 @@ async fn a_callback_without_its_browser_binding_is_refused() {
         .complete(code, None, None, Some(started.browser_binding))
         .await;
 
-    assert!(bare.is_err(), "no binding, no sign-in");
-    assert!(crossed.is_err(), "another sign-in's binding is refused");
+    assert!(refused_for_its_browser(bare), "no binding, no sign-in");
+    assert!(
+        refused_for_its_browser(crossed),
+        "another sign-in's binding is refused"
+    );
     assert!(own.is_ok(), "its own binding completes the sign-in");
 }
