@@ -45,6 +45,8 @@
 	--color-surface: var(--palette-ink-900);
 	--color-surface-raised: var(--palette-ink-850);
 	--color-border: var(--palette-ink-700);
+	/* A control's identifying edge (a text box, a button, a toggle's track): 3:1 against what it meets. */
+	--color-control-edge: var(--color-text-muted);
 	--color-text: var(--palette-ink-100);
 	--color-text-muted: var(--palette-ink-300);
 	--color-accent: var(--palette-accent-400);

@@ -1,0 +1,53 @@
+{
+  "path": "frontend/web/src/lib/styles",
+  "charted": "2026-10-13",
+  "short": "Design tokens, base styles and the contrast gate",
+  "is": "The two global stylesheets the root layout imports once (tokens.css, base.css), and the contrast gate: a declared list of the dark theme's colour pairs that a node spec checks against WCAG 2.2 AA on every gate.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Components name a semantic `--color-*` token, never a palette step; a control's identifying edge (text box, secondary or form button, toggle track) uses `--color-control-edge`, and `--color-border` stays for decoration.",
+    "Every token painted as a text, icon, edge, outline, fill, stroke or ring colour has a pair in `contrast-pairs.ts` (or a commented entry in its decorative list); the contrast spec fails a new use that has neither.",
+    "The pairs cover the dark `:root` block only — the theme 0.1 ships; light and the `prefers-contrast: more` overrides are not checked.",
+    "A failing pair is fixed in the token, not in the test: the palette is a placeholder until the design sync."
+  ],
+  "entry_points": [
+    "tokens.css",
+    "contrast-pairs.ts"
+  ],
+  "fs": [
+    {
+      "name": "base.css",
+      "role": "element defaults, text-box and form-button edges, the focus ring, .visually-hidden, the one 48rem phone breakpoint behind .desktop-only/.phone-only and --shell-columns",
+      "node": false
+    },
+    {
+      "name": "contrast-pairs.ts",
+      "role": "the declared pairs (foreground token, the backgrounds it sits on, text | largeText | nonText, where it is used), the thresholds per kind, and the decorative-token list",
+      "node": false
+    },
+    {
+      "name": "contrast.spec.ts",
+      "role": "node spec: the arithmetic against known values, one test per declared pair at its threshold, and the completeness guard that scans every .svelte style block and .css file for colour declarations naming an undeclared token",
+      "node": false
+    },
+    {
+      "name": "contrast.ts",
+      "role": "contrast arithmetic: reads the dark :root block, follows var() chains, parses hex and rgb() colours, composites a translucent colour, and computes relative luminance and the contrast ratio",
+      "node": false
+    },
+    {
+      "name": "tokens.css",
+      "role": "palette → semantic → layout custom properties; dark on :root, light under [data-theme='light'], reduced-motion and more-contrast overrides",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": [
+    "Why the edge token points at `--color-text-muted` rather than a palette step: the light theme stays untouched yet still gets an edge that follows its own muted text; under `prefers-contrast: more` the edge brightens with it.",
+    "The decorative list is per token, so a decorative token reused as a control edge escapes the guard; the convention above (control edges use `--color-control-edge`) is what keeps that from happening."
+  ]
+}
