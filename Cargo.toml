@@ -136,3 +136,10 @@ url = { version = "2.5.8", features = ["serde"] }
 # Test-only: a TLS server whose certificate the guarded client must refuse.
 # Default features off, so it rides the ring provider reqwest already uses.
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }
+
+[profile.dev]
+# Debug info goes to .dwo files beside the objects instead of into every linked
+# binary: each test-binary link needs about half the memory and target/ about
+# 60% less disk, while backtraces and debugger locals stay. Moving target/
+# loses the locals; stale .dwo files stay until `cargo clean`.
+split-debuginfo = "unpacked"
