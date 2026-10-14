@@ -191,7 +191,7 @@ impl<'a> DenHost<'a> {
                 let Ok(poster) = Did::from_str(key.as_ref()) else {
                     return Ok(None);
                 };
-                post::node(context, &poster).await
+                Ok(post::node(&poster))
             }
         }
     }
@@ -209,7 +209,7 @@ impl<'a> DenHost<'a> {
             Place::Character(place) => character::den::child(context, place, key).await,
             Place::Commission(place) => commission::den::child(context, place, key).await,
             Place::Workflow(place) => account::workflow::den::child(context, place, key).await,
-            Place::Post(place) => post::child(context, place, key).await,
+            Place::Post(place) => Ok(post::child(place, key)),
         }
     }
 
@@ -227,7 +227,7 @@ impl<'a> DenHost<'a> {
             Place::Character(place) => character::den::children(context, place).await,
             Place::Commission(place) => commission::den::children(context, place).await,
             Place::Workflow(place) => account::workflow::den::children(context, place).await,
-            Place::Post(place) => post::children(context, place).await,
+            Place::Post(place) => Ok(post::children(place)),
         }
     }
 
@@ -245,7 +245,7 @@ impl<'a> DenHost<'a> {
             Place::Character(place) => character::den::mounts(context, place).await,
             Place::Commission(place) => commission::den::mounts(context, place).await,
             Place::Workflow(place) => account::workflow::den::mounts(context, place).await,
-            Place::Post(place) => post::mounts(context, place).await,
+            Place::Post(place) => Ok(post::mounts(place)),
         }
     }
 }

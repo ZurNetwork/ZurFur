@@ -139,13 +139,21 @@ async fn assert_pair_is_the_one_404(
 }
 
 #[tokio::test]
-async fn alice_s_root_is_hers_and_holds_her_three_open_folders() {
+async fn alice_s_root_is_hers_and_holds_her_three_open_folders_and_posts() {
     let world = pg_app::den_world(api::app).await;
     let expected_node = json!({
         "name": "Alice",
         "type": "user",
         "kind": "directory",
         "open": { "ownLevel": "private" },
+    });
+    let expected_posts = json!({
+        "segments": ["posts"],
+        "name": "posts",
+        "type": "post",
+        "kind": "directory",
+        "mount": true,
+        "open": { "ownLevel": "public", "contentNotShown": true },
     });
 
     let root = ok_json(get(&world.alice, world.base_url(), "/den").await).await;
@@ -154,16 +162,19 @@ async fn alice_s_root_is_hers_and_holds_her_three_open_folders() {
     let listing = &root["listing"];
     assert_eq!(
         entry_names(listing),
-        ["accounts", "characters", "commissions"]
+        ["accounts", "characters", "commissions", "posts"]
     );
     assert!(listing.get("nextPageToken").is_none(), "{listing}");
-    for entry in listing["entries"].as_array().expect("entries") {
+    let entries = listing["entries"].as_array().expect("entries");
+    let (folders, posts) = entries.split_at(3);
+    for entry in folders {
         let name = entry["name"].clone();
         assert_eq!(entry["segments"], json!([name]), "{entry}");
         assert_eq!(entry["kind"], "directory", "{entry}");
         assert_eq!(entry["open"], json!({ "ownLevel": "private" }), "{entry}");
         assert!(entry.get("mount").is_none(), "{entry}");
     }
+    assert_eq!(posts, [expected_posts]);
 }
 
 #[tokio::test]

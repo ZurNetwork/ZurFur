@@ -1,11 +1,5 @@
-use std::sync::Arc;
-
 use adapter_mem::fixture::alice;
 use domain::elements::user::UserId;
-use test_support::recording::{
-    CallLog, RecordingAccountStore, RecordingCharacterStore, RecordingCommissionStore,
-    RecordingProfileCache, RecordingProfileSource, RecordingUserStore, SubjectLog,
-};
 
 use super::*;
 use crate::{
@@ -77,59 +71,15 @@ async fn the_stub_opens_named_posts_public_with_its_content_not_shown_and_an_emp
     );
 }
 
-/// The fixture world's ports with every store an arm could read recording its calls.
-fn recording_ports(world: &mut World, log: &CallLog) -> Ports {
-    let subjects = SubjectLog::default();
-    let runtime = &mut world.runtime;
-    runtime.users = Arc::new(RecordingUserStore::new(
-        runtime.users.clone(),
-        log.clone(),
-        subjects.clone(),
-    ));
-    runtime.accounts = Arc::new(RecordingAccountStore::new(
-        runtime.accounts.clone(),
-        log.clone(),
-        subjects.clone(),
-    ));
-    runtime.characters = Arc::new(RecordingCharacterStore::new(
-        runtime.characters.clone(),
-        log.clone(),
-        subjects.clone(),
-    ));
-    runtime.commissions = Arc::new(RecordingCommissionStore::new(
-        runtime.commissions.clone(),
-        log.clone(),
-    ));
-    runtime.profile_cache = Arc::new(RecordingProfileCache::new(
-        runtime.profile_cache.clone(),
-        log.clone(),
-        subjects.clone(),
-    ));
-    runtime.profile_source = Arc::new(RecordingProfileSource::new(
-        runtime.profile_source.clone(),
-        log.clone(),
-        subjects,
-    ));
-    Ports::from(&world.runtime)
-}
-
-#[tokio::test]
-async fn the_arm_answers_any_did_and_holds_nothing_without_a_store_call() {
-    let mut world = test_world::world().await;
-    let log = CallLog::default();
-    let ports = recording_ports(&mut world, &log);
-    let alice = alice();
-    let context = test_world::context(&ports, &alice);
-
-    for poster in [alice.did().clone(), no_user()] {
+#[test]
+fn the_arm_answers_any_did_the_same_and_holds_nothing() {
+    for poster in [alice().did().clone(), no_user()] {
         let place = PostPlace::Posts(poster.clone());
 
-        let answer = node(&context, &poster).await.expect("no store is read");
-        let child = child(&context, &place, &segment("anything"))
-            .await
-            .expect("no store is read");
-        let children = children(&context, &place).await.expect("no store is read");
-        let mounts = mounts(&context, &place).await.expect("no store is read");
+        let answer = node(&poster);
+        let child = child(&place, &segment("anything"));
+        let children = children(&place);
+        let mounts = mounts(&place);
 
         let expected = Node {
             place: Place::Post(place),
@@ -143,5 +93,4 @@ async fn the_arm_answers_any_did_and_holds_nothing_without_a_store_call() {
         assert_eq!(children, Vec::new(), "{poster}");
         assert_eq!(mounts, Vec::new(), "{poster}");
     }
-    assert_eq!(log.events(), Vec::<&str>::new());
 }
