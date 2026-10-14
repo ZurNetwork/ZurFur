@@ -313,6 +313,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "commission/markup.rs (Markup, MarkupShape, MarkupKey, CommissionMarkup) is REPLACED by the Comment entity: CommentId, text (trim + non-empty + 2000), optional anchor (closed envelope, alpha vocabulary point {x,y} normalized 0–1), optional root+parent with the same-commission and parent.root == root invariants; changelog kinds MarkupAdded {comment_id,file_id,anchor}, CommentAdded, CommentEdited, CommentDeleted"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type"
     }
   ],
   "notes": [
