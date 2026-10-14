@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isDenLink, isDenPageData } from './den';
+import { denType } from '$lib/types/brand';
+import { cardTypeWord, isDenLink, isDenPageData } from './den';
 
 /** A well-formed den page answer, as plain JSON (what a preload hands back). */
 function pageData(entryHref: unknown = '/den/commissions/c1'): object {
@@ -91,6 +92,23 @@ describe('isDenLink', () => {
 		'refuses %s, which URL resolution would move',
 		(link) => {
 			expect(isDenLink(link)).toBe(false);
+		}
+	);
+});
+
+describe('cardTypeWord', () => {
+	it.each([
+		['account', 'Account'],
+		['character', 'Character'],
+		['commission', 'Commission']
+	])('names the %s type "%s"', (type, word) => {
+		expect(cardTypeWord(denType(type))).toBe(word);
+	});
+
+	it.each(['account.characters', 'user.commissions', 'Commission', 'post', '', 'commission '])(
+		'shows no word for the type %j, which this build doesn’t know',
+		(type) => {
+			expect(cardTypeWord(denType(type))).toBeUndefined();
 		}
 	);
 });

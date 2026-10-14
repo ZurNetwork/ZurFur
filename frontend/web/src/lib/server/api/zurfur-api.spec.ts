@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
+import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
 import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { pageToken } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
-import type { ZurfurApiError } from './errors';
-import { segmentPath } from '../path-builder';
+import type { DenQuery } from './den-read';
+import { ApiProblem, type ZurfurApiError } from './errors';
+import { segmentPath, type SegmentPath } from '../path-builder';
+
+/** A problem-typed response carrying `body` as it is. */
+function problemResponseWith(status: number, body: object): Response {
+	const headers = { 'content-type': 'application/problem+json' };
+	return new Response(JSON.stringify(body), { status, headers });
+}
 
 /** Run a program against the LIVE layer over a stubbed fetch. */
 function runLive<A, E>(fetch: FetchFunction, program: Effect.Effect<A, E, ZurfurApi>): Promise<A> {
@@ -314,19 +323,79 @@ describe('ZurfurApi.deleteAccount (live): the path builder guards the id', () =>
 	});
 });
 
-describe('ZurfurApi den reads (live, before the Den contract is wired)', () => {
+describe('ZurfurApi den reads (live)', () => {
 	const plain = { includeDeleted: false, pageToken: undefined };
-	const denRoot = Effect.flatMap(ZurfurApi, (api) => api.denRoot(plain));
-	const commissions = segmentPath(['commissions']) ?? [];
-	const denNode = Effect.flatMap(ZurfurApi, (api) => api.denNode(commissions, plain));
+	const flagged = { includeDeleted: true, pageToken: pageToken('p1.50') };
+	const privatePath = segmentPath(['accounts', 'did:plc:secretstudio']) ?? [];
+	const denRoot = (query: DenQuery = plain) =>
+		Effect.flatMap(ZurfurApi, (api) => api.denRoot(query));
+	const denNode = (path: SegmentPath, query: DenQuery = plain) =>
+		Effect.flatMap(ZurfurApi, (api) => api.denNode(path, query));
+	const rootBody = {
+		node: { name: 'Alice', type: 'user', kind: 'directory', open: { ownLevel: 'private' } },
+		listing: { entries: [] }
+	};
 
-	it('answers DenNotConnected for the root and for a node, without calling the backend', async () => {
-		const { fetch, calls } = fetchStub(() => Response.json({}));
-		const rootFailure = await runLive(fetch, failureOf(denRoot));
-		const nodeFailure = await runLive(fetch, failureOf(denNode));
-		expect(rootFailure._tag).toBe('DenNotConnected');
-		expect(nodeFailure._tag).toBe('DenNotConnected');
+	it('reads the root at /den and a node at /den/{path}, with only the allowlisted query', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json(rootBody));
+		await runLive(fetch, denRoot());
+		await runLive(fetch, denRoot(flagged));
+		await runLive(fetch, denNode(privatePath, flagged));
+		expect(calls).toEqual([
+			'/api/v1/den',
+			'/api/v1/den?includeDeleted=true&pageToken=p1.50',
+			'/api/v1/den/accounts/did:plc:secretstudio?includeDeleted=true&pageToken=p1.50'
+		]);
+	});
+
+	it('answers a path the builder refuses with the one not-found, without calling the backend', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json(rootBody));
+		// Forged past the mint: no real segment path reaches here refused.
+		const refused = ['..'] as unknown as SegmentPath;
+		const failure = await runLive(fetch, failureOf(denNode(refused)));
+		expect(failure).toEqual(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
 		expect(calls).toEqual([]);
+	});
+
+	it('fails NotAuthenticated on the 401 problem', async () => {
+		const { fetch } = fetchStub(() => problemResponse(401, 'not_authenticated'));
+		const failure = await runLive(fetch, failureOf(denNode(privatePath)));
+		expect(failure._tag).toBe('NotAuthenticated');
+	});
+
+	it('fails ApiProblem on any other problem, carrying it whole', async () => {
+		const { fetch } = fetchStub(() => problemResponse(404, 'node_not_found'));
+		const failure = await runLive(fetch, failureOf(denNode(privatePath)));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('node_not_found');
+	});
+
+	it('fails NetworkFailure when the backend is unreachable', async () => {
+		const failure = await runLive(unreachableFetch(), failureOf(denRoot()));
+		expect(failure._tag).toBe('NetworkFailure');
+	});
+
+	it.each([
+		['a non-problem error', () => new Response('bad gateway', { status: 502 })],
+		['a malformed problem', () => problemResponseWith(500, { code: 7 })],
+		['a body that is not JSON', () => new Response('not json', { status: 200 })],
+		['a payload that does not decode', () => Response.json({ node: { name: 7 } })],
+		['an answer with no node', () => Response.json({ crumbs: [] })]
+	])('fails ContractViolation on %s, naming only the route template', async (_, respond) => {
+		const { fetch } = fetchStub(respond);
+		const nodeFailure = await runLive(fetch, failureOf(denNode(privatePath, flagged)));
+		const rootFailure = await runLive(fetch, failureOf(denRoot(flagged)));
+		expect(nodeFailure._tag).toBe('ContractViolation');
+		expect(rootFailure._tag).toBe('ContractViolation');
+		if (nodeFailure._tag === 'ContractViolation') expect(nodeFailure.path).toBe('/den/{path}');
+		if (rootFailure._tag === 'ContractViolation') expect(rootFailure.path).toBe('/den');
+		for (const failure of [nodeFailure, rootFailure]) {
+			const logged = `${failure.message} ${JSON.stringify(failure)}`;
+			expect(logged).not.toContain('secretstudio');
+			expect(logged).not.toContain('accounts');
+			expect(logged).not.toContain('p1.50');
+			expect(logged).not.toContain('includeDeleted');
+		}
 	});
 });
 

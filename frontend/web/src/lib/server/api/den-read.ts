@@ -1,8 +1,8 @@
 /**
  * What the `ZurfurApi` port's Den reads answer: the Den contract's shape as
  * plain data — segments as the backend sends them and vocabularies as raw
- * strings. The mock produces it now; the live port's contract decode
- * produces it later. The den program (`lib/server/den.ts`) maps it to the
+ * strings. The mock and the live port's contract decode (`den-wire.ts`)
+ * both produce it. The den program (`lib/server/den.ts`) maps it to the
  * web's own view, building every link through the path builder.
  */
 

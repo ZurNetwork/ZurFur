@@ -26,7 +26,8 @@ import type { Trail, TrailStep } from '$lib/api/trail';
 import { denName, denType, pageToken, type DenHref } from '$lib/types/brand';
 import { ContractViolation, type NetworkFailure } from './api/errors';
 import type { DenQuery, DenRead, DenReadContent, DenReadNode } from './api/den-read';
-import { ZurfurApi } from './api/zurfur-api';
+import { DEN_ROUTES } from './api/den-wire';
+import { ZurfurApi, type DenReadError } from './api/zurfur-api';
 import type { SegmentPath } from './path-builder';
 import {
 	denHrefOf,
@@ -37,7 +38,10 @@ import {
 } from './den/den-path';
 
 /** The template a Den contract error names, never the real path. */
-export const DEN_ROUTE_TEMPLATE = '/den/{path}';
+export const DEN_ROUTE_TEMPLATE = DEN_ROUTES.node;
+
+/** At most this many Den reads are in flight for one page load. */
+export const DEN_READS_IN_FLIGHT = 4;
 
 /** How the den page's load should answer. */
 export type DenPageResult =
@@ -204,19 +208,21 @@ function readDen(path: SegmentPath, query: DenQuery) {
 
 /**
  * The listings of the folders above `path` — the root and each prefix; for
- * the root itself, the root — read in parallel with the first page and no
- * page token. A folder that fails to read is left out; the tree fills it in
- * later.
+ * the root itself, the root — read in parallel under `permits`, with the
+ * first page and no page token. A folder that fails to read is left out; the
+ * tree fills it in later.
  */
 function readAncestors(
 	path: SegmentPath,
-	query: DenQuery
+	query: DenQuery,
+	permits: Effect.Semaphore
 ): Effect.Effect<readonly DenListing[], never, ZurfurApi> {
 	const prefixes = path.slice(0, -1).map((_, index) => path.slice(0, index + 1));
 	const folders: SegmentPath[] = [[], ...prefixes];
 	const plain = linkQuery(query);
-	const reads = folders.map((folder) =>
-		readDen(folder, plain).pipe(
+	const reads = folders.map((folder) => {
+		const guarded = permits.withPermits(1)(readDen(folder, plain));
+		return guarded.pipe(
 			Effect.map((read): DenListing | undefined => {
 				const folderHref = denHrefOf(folder, plain);
 				if (folderHref === undefined || read.node.access.access !== 'open') return undefined;
@@ -225,8 +231,8 @@ function readAncestors(
 				return { folder: folderHref, entries: body.entries, more: body.more };
 			}),
 			Effect.catchAll(() => Effect.succeed(undefined))
-		)
-	);
+		);
+	});
 	return Effect.all(reads, { concurrency: 'unbounded' }).pipe(
 		Effect.map((listings) => listings.filter((listing) => listing !== undefined))
 	);
@@ -251,8 +257,9 @@ function pageTrail(rootHref: DenHref, outcome: DenOutcome): Trail {
  */
 export const DEN_TITLE = 'My Den · Zurfur';
 
-/** The outcome of reading `path`, or how the load must answer instead. */
+/** The outcome of `read`, the read of `path`, or how the load must answer instead. */
 function readOutcome(
+	read: Effect.Effect<DenRead, DenReadError, ZurfurApi>,
 	path: SegmentPath,
 	query: DenQuery
 ): Effect.Effect<
@@ -260,7 +267,7 @@ function readOutcome(
 	NetworkFailure | ContractViolation,
 	ZurfurApi
 > {
-	return readDen(path, query).pipe(
+	return read.pipe(
 		Effect.flatMap((read) => toPage(read, path, query)),
 		Effect.flatMap((page) => {
 			const on = denHrefOf(path, { includeDeleted: true, pageToken: undefined });
@@ -296,8 +303,9 @@ function readOutcome(
  * The den page for a browser address: the node at its path, read through the
  * port, mapped to the web's view. `withAncestors` (a full page load) also
  * reads the folders above it (on a later page of the root, the root's first
- * page), in parallel, so the first paint shows the tree opened down to the
- * node. A refused address is the not-found without any read.
+ * page), so the first paint shows the tree opened down to the node; at most
+ * {@link DEN_READS_IN_FLIGHT} reads run at once. A refused address is the
+ * not-found without any read.
  */
 export function denPage(
 	pathname: string,
@@ -330,11 +338,17 @@ export function denPage(
 		// A later page of the root brings the tree no first page of the root, so
 		// that first page is read as if it were an ancestor.
 		const needsAncestors = path.length > 0 || query.pageToken !== undefined;
+		// One cap for the node read and the reads above it; the node takes its
+		// permit before any folder read can start.
+		const permits = yield* Effect.makeSemaphore(DEN_READS_IN_FLIGHT);
+		yield* permits.take(1);
+		const nodeRead = readDen(path, query).pipe(Effect.ensuring(permits.release(1)));
 		const ancestorsRead =
-			withAncestors && needsAncestors ? readAncestors(path, query) : Effect.succeed([]);
-		const [read, ancestors] = yield* Effect.all([readOutcome(path, query), ancestorsRead], {
-			concurrency: 'unbounded'
-		});
+			withAncestors && needsAncestors ? readAncestors(path, query, permits) : Effect.succeed([]);
+		const [read, ancestors] = yield* Effect.all(
+			[readOutcome(nodeRead, path, query), ancestorsRead],
+			{ concurrency: 'unbounded' }
+		);
 
 		if ('signedOut' in read) return { result: 'signedOut' } satisfies DenPageResult;
 		if ('reload' in read) {

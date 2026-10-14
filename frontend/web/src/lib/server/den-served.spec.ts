@@ -1,4 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+/** How long the one cold import may take on a loaded machine. */
+const WARM_IMPORT_TIMEOUT_MS = 60_000;
+
+// Pay the cold transform of the module graph once, under its own timeout, so
+// each test's fresh import after `vi.resetModules()` is only an evaluation.
+beforeAll(async () => {
+	await import('./den-served');
+}, WARM_IMPORT_TIMEOUT_MS);
 
 /** `denServed` from a fresh module graph, with mock mode requested or not, in a dev build or not. */
 async function denServedWith(options: { mock: boolean; dev: boolean }): Promise<boolean> {

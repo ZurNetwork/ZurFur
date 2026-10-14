@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log); den/den-path.spec.ts holds the path-handling security cases",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log); den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "name": "den.ts",
-      "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings in parallel), map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
+      "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings), at most 4 Den reads in flight per page load with the node read first, map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
       "node": false
     },
     {
