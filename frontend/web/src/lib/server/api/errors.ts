@@ -18,9 +18,12 @@ export class ApiProblem extends Data.TaggedError('ApiProblem')<{
 	readonly problem: Problem;
 }> {}
 
+/** Why a fetch to the backend rejected: never the rejection itself, which may name the URL. */
+export type NetworkFailureReason = 'unreachable' | 'timeout' | 'aborted';
+
 /** The backend could not be reached at all (the fetch itself rejected). */
 export class NetworkFailure extends Data.TaggedError('NetworkFailure')<{
-	readonly cause: unknown;
+	readonly reason: NetworkFailureReason;
 }> {}
 
 /** A response that fits neither the success shape nor `application/problem+json`. */

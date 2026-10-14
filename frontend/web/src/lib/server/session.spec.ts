@@ -35,7 +35,7 @@ describe('optionalSession', () => {
 
 describe('sessionOrAnonymous', () => {
 	it('degrades an unreachable backend to anonymous', async () => {
-		const unreachableMe = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const unreachableMe = Effect.fail(new NetworkFailure({ reason: 'unreachable' }));
 		const session = await runTest({ me: unreachableMe }, sessionOrAnonymous);
 		expect(session).toBeUndefined();
 	});
@@ -92,7 +92,7 @@ describe('signoutOutcome', () => {
 	});
 
 	it('is unconfirmed (unreachable) when the backend can’t be reached', async () => {
-		const unreachable = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const unreachable = Effect.fail(new NetworkFailure({ reason: 'unreachable' }));
 		const outcome = await runTest({ signout: unreachable }, signoutOutcome);
 		expect(outcome).toEqual({ unconfirmed: 'unreachable' });
 	});

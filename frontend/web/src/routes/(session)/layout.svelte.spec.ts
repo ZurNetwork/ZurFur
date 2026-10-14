@@ -12,8 +12,15 @@ interface Nav {
 	callbacks: (() => void)[];
 	preloaded: string[];
 	den: unknown;
+	/** This test's preloads still answering, and the most there ever were at once. */
+	load: { inFlight: number; most: number };
 }
-const nav = vi.hoisted((): Nav => ({ callbacks: [], preloaded: [], den: undefined }));
+const nav = vi.hoisted((): Nav => ({
+	callbacks: [],
+	preloaded: [],
+	den: undefined,
+	load: { inFlight: 0, most: 0 }
+}));
 
 vi.mock('$app/navigation', () => ({
 	afterNavigate: (callback: (navigation: { type: string }) => void) => {
@@ -22,9 +29,14 @@ vi.mock('$app/navigation', () => ({
 		});
 	},
 	goto: () => Promise.resolve(),
-	preloadData: (href: string) => {
+	preloadData: async (href: string) => {
 		nav.preloaded.push(href);
-		return Promise.resolve({ type: 'loaded', status: 500, data: {} });
+		const { load } = nav;
+		load.inFlight += 1;
+		load.most = Math.max(load.most, load.inFlight);
+		await new Promise((settle) => setTimeout(settle, 1));
+		load.inFlight -= 1;
+		return { type: 'loaded', status: 500, data: {} };
 	}
 }));
 
@@ -88,6 +100,7 @@ afterEach(() => {
 	nav.callbacks.length = 0;
 	nav.preloaded.length = 0;
 	nav.den = undefined;
+	nav.load = { inFlight: 0, most: 0 };
 	trees.built.length = 0;
 });
 
@@ -197,6 +210,42 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		for (const callback of nav.callbacks) callback();
 
 		await expect.poll(() => [...nav.preloaded].sort()).toEqual(['/den', '/den/commissions']);
+	});
+
+	it('fetches the folders above a deep item at most four at a time', async () => {
+		const segments = Array.from({ length: 16 }, (_, depth) => `d${String(depth)}`);
+		const crumbs = segments.map((_, depth) => ({
+			href: ['/den', ...segments.slice(0, depth)].join('/'),
+			name: depth === 0 ? 'Alice' : `d${String(depth - 1)}`
+		}));
+		const address = ['/den', ...segments].join('/');
+		nav.den = {
+			kind: 'denPage',
+			address,
+			outcome: {
+				outcome: 'page',
+				page: {
+					view: 'card',
+					node: { view: 'card', name: 'Deep', type: 'x', mounted: false },
+					crumbs
+				},
+				flagLinks: { on: address, off: address }
+			},
+			rootHref: '/den',
+			includeDeleted: false,
+			continued: false,
+			ancestors: [],
+			title: 'My Den · Zurfur',
+			trail: []
+		};
+		renderLayout();
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		for (const callback of nav.callbacks) callback();
+
+		await expect.poll(() => nav.preloaded.length).toBe(16);
+		await expect.poll(() => nav.load.inFlight).toBe(0);
+		expect(nav.load.most).toBe(4);
 	});
 
 	it('fetches the folders the tree lacks after a navigation to a page with no Den data', async () => {

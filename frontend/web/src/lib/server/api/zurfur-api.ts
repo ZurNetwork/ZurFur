@@ -153,6 +153,22 @@ export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApi
  */
 export class RequestFetch extends Context.Tag('web/RequestFetch')<RequestFetch, FetchFunction>() {}
 
+/**
+ * Why a fetch rejected, read from the rejection's name alone: a timeout, an
+ * abort, or anything else as unreachable. The rejection is never kept.
+ */
+function networkFailureOf(rejection: unknown): NetworkFailure {
+	if (!(rejection instanceof Error)) return new NetworkFailure({ reason: 'unreachable' });
+	switch (rejection.name) {
+		case 'TimeoutError':
+			return new NetworkFailure({ reason: 'timeout' });
+		case 'AbortError':
+			return new NetworkFailure({ reason: 'aborted' });
+		default:
+			return new NetworkFailure({ reason: 'unreachable' });
+	}
+}
+
 /** A fetch that reaches the backend or fails `NetworkFailure` — never throws through. */
 function backendFetch(
 	fetch: FetchFunction,
@@ -161,7 +177,7 @@ function backendFetch(
 ): Effect.Effect<Response, NetworkFailure> {
 	return Effect.tryPromise({
 		try: () => fetch(`${API_PREFIX}${path}`, init),
-		catch: (cause) => new NetworkFailure({ cause })
+		catch: networkFailureOf
 	});
 }
 
@@ -531,7 +547,7 @@ const anonymousProblem: Problem = {
 /** Anonymous-by-default stub behaviors for {@link zurfurApiTest}. */
 const anonymousDefaults: ZurfurApiShape = {
 	me: Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
-	startSignin: () => Effect.fail(new NetworkFailure({ cause: new TypeError('no signin stubbed') })),
+	startSignin: () => Effect.fail(new NetworkFailure({ reason: 'unreachable' })),
 	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
