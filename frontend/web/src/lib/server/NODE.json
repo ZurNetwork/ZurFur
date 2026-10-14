@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered); den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
@@ -31,13 +31,18 @@
     },
     {
       "name": "api-proxy.ts",
-      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
+      "role": "pure rewriteApiRequest + extractSessionCookie used by hooks.server.ts and session-headers.ts (no $env, unit-tests standalone); the request leaving the server carries the signal it is given directly, never one followed through the rebuilt requests in between; forwards zurfur.sid only, never the sign-in browser-binding cookie (it reaches axum only on /signin-callback, through Caddy)",
       "node": false
     },
     {
       "name": "api/",
       "role": "the backend port + tagged error union + generated protobuf messages",
       "node": true
+    },
+    {
+      "name": "bounded-fetch.ts",
+      "role": "the pieces of a bounded backend call: settleBy (a call fails by its signal's abort on its own timer, whether or not the abort reaches the fetch), firstAbortOf (a combined signal held by listeners, not AbortSignal.any), readWhole (the body read into memory), whileHeld (the Requests of a call held until it ends: undici's Request follows another signal through a WeakRef to its own controller, so a collected Request stops passing the abort on)",
+      "node": false
     },
     {
       "name": "cookies.ts",
@@ -81,7 +86,7 @@
     },
     {
       "name": "request-deadline.ts",
-      "role": "requestDeadline, the first handle hook: one 15 s deadline per request, handed to handleFetch through locals and stopped once the response is ready; withinDeadline binds a request leaving the server to the earlier of its own signal and that deadline",
+      "role": "requestDeadline, the first handle hook: one 15 s deadline per request, handed to handleFetch through locals and stopped once the response is ready",
       "node": false
     },
     {

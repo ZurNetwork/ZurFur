@@ -52,6 +52,7 @@ import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
 import { denApiPathOf } from '../den/den-path';
 import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
 import { countdown, TIME_LIMITS } from '../time-limits';
+import { firstAbortOf, readWhole, settleBy } from '../bounded-fetch';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -173,17 +174,11 @@ function networkFailureOf(rejection: unknown): NetworkFailure {
 /** What a backend call may set on its fetch: everything but the signal, which its time limit owns. */
 type BackendInit = Omit<RequestInit, 'signal'>;
 
-/** `response` with its body read into memory, so nothing more is read from the network. */
-async function readWhole(response: Response): Promise<Response> {
-	const stream = response.body ?? undefined;
-	const body = stream === undefined ? undefined : await response.arrayBuffer();
-	return new Response(body, response);
-}
-
 /**
  * A call to the backend, answered whole (the body read too) within `limit`
- * ms, or failed `NetworkFailure`: a call that runs out is a `timeout`, and an
- * interrupted one stops its fetch. Never throws through.
+ * ms, or failed `NetworkFailure`: a call that runs out is a `timeout` on time
+ * even if the abort never reaches the fetch, and an interrupted one stops its
+ * fetch. Never throws through.
  */
 function backendFetch(
 	fetch: FetchFunction,
@@ -195,10 +190,10 @@ function backendFetch(
 		Effect.sync(() => countdown(limit)),
 		(clock) =>
 			Effect.tryPromise({
-				try: async (interrupted) => {
-					const signal = AbortSignal.any([clock.signal, interrupted]);
-					const response = await fetch(`${API_PREFIX}${path}`, { ...init, signal });
-					return readWhole(response);
+				try: (interrupted) => {
+					const signal = firstAbortOf([clock.signal, interrupted]);
+					const url = `${API_PREFIX}${path}`;
+					return settleBy(signal, () => fetch(url, { ...init, signal }).then(readWhole));
 				},
 				catch: networkFailureOf
 			}),

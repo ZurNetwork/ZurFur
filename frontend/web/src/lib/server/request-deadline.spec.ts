@@ -1,6 +1,6 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { requestDeadline, withinDeadline } from './request-deadline';
+import { requestDeadline } from './request-deadline';
 
 type HandleInput = Parameters<typeof requestDeadline>[0];
 
@@ -46,49 +46,5 @@ describe('requestDeadline', () => {
 
 		expect(locals.deadline?.aborted).toBe(false);
 		expect(vi.getTimerCount()).toBe(0);
-	});
-});
-
-describe('withinDeadline', () => {
-	it('aborts a request when its own signal aborts', () => {
-		const own = new AbortController();
-		const deadline = new AbortController();
-		const bound = withinDeadline(
-			new Request('http://127.0.0.1:8081/me', { signal: own.signal }),
-			deadline.signal
-		);
-
-		own.abort(new DOMException('own limit', 'TimeoutError'));
-
-		expect(bound.signal.aborted).toBe(true);
-		expect((bound.signal.reason as DOMException).message).toBe('own limit');
-	});
-
-	it('aborts a request when the deadline passes first', () => {
-		const deadline = new AbortController();
-		const bound = withinDeadline(new Request('http://127.0.0.1:8081/me'), deadline.signal);
-
-		deadline.abort(new DOMException('deadline', 'TimeoutError'));
-
-		expect(bound.signal.aborted).toBe(true);
-		expect((bound.signal.reason as DOMException).message).toBe('deadline');
-	});
-
-	it('keeps the request as it is when there is no deadline', () => {
-		const request = new Request('http://127.0.0.1:8081/me');
-		expect(withinDeadline(request, undefined)).toBe(request);
-	});
-
-	it('keeps the method and body', async () => {
-		const deadline = new AbortController();
-		const request = new Request('http://127.0.0.1:8081/signin', {
-			method: 'POST',
-			body: new URLSearchParams({ handle: 'alice.test' })
-		});
-
-		const bound = withinDeadline(request, deadline.signal);
-
-		expect(bound.method).toBe('POST');
-		expect(await bound.text()).toBe('handle=alice.test');
 	});
 });

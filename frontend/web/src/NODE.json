@@ -41,7 +41,7 @@
     },
     {
       "name": "hooks.server.ts",
-      "role": "handle — one chain (lib/server/handle-chain.ts): every request gets one 15 s deadline for its backend calls (request-deadline.ts); every response refuses framing (frame-headers.ts); every signed-in response leaves Cache-Control: private, no-store and Referrer-Policy: same-origin (session-headers.ts); every (session) load, data request and action requires a session (session-gate.ts); handleError — logs an unexpected error by route template and status only, fixed message to the page (error-log.ts); handleFetch — binds every request leaving the server to that deadline, points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
+      "role": "handle — one chain (lib/server/handle-chain.ts): every request gets one 15 s deadline for its backend calls (request-deadline.ts); every response refuses framing (frame-headers.ts); every signed-in response leaves Cache-Control: private, no-store and Referrer-Policy: same-origin (session-headers.ts); every (session) load, data request and action requires a session (session-gate.ts); handleError — logs an unexpected error by route template and status only, fixed message to the page (error-log.ts); handleFetch — binds every request leaving the server to that deadline (answered whole or failed by then, its requests held until it ends: bounded-fetch.ts), points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
       "node": false
     },
     {

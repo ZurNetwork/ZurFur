@@ -5,7 +5,8 @@ import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
 import { logUnexpectedError } from '$lib/server/error-log';
 import { refuseFraming } from '$lib/server/frame-headers';
 import { handleChain } from '$lib/server/handle-chain';
-import { requestDeadline, withinDeadline } from '$lib/server/request-deadline';
+import { requestDeadline } from '$lib/server/request-deadline';
+import { firstAbortOf, readWhole, settleBy, whileHeld } from '$lib/server/bounded-fetch';
 import { sessionGate } from '$lib/server/session-gate';
 import { sessionHeaders } from '$lib/server/session-headers';
 
@@ -41,7 +42,8 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
 /**
  * Server-side `fetch` rewrite so in-app `fetch('/api/...')` is ONE code path in
  * the browser and during SSR. Every request leaving the server is also bound
- * by the request's deadline, on top of the call's own time limit.
+ * by the request's deadline, on top of the call's own time limit: it is
+ * answered whole or fails by then, and both requests stay held until it ends.
  *
  * In the browser these calls ride Caddy. During SSR there is no Caddy, so we
  * point same-origin `/api/*` at the internal axum origin (prefix stripped) and
@@ -53,14 +55,21 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	const apiUpstream = runtimeEnv().ZURFUR_API_UPSTREAM ?? DEFAULT_API_UPSTREAM;
 	const incomingCookie = event.request.headers.get('cookie') ?? undefined;
 
+	const deadline = event.locals.deadline;
+	const signal = firstAbortOf(
+		deadline === undefined ? [request.signal] : [request.signal, deadline]
+	);
 	const proxied = rewriteApiRequest({
-		request: withinDeadline(request, event.locals.deadline),
+		request,
 		eventOrigin: event.url.origin,
 		incomingCookie,
-		apiUpstream
+		apiUpstream,
+		signal
 	});
 
-	return fetch(proxied);
+	return whileHeld([request, proxied], () =>
+		settleBy(signal, () => fetch(proxied).then(readWhole))
+	);
 };
 
 /**

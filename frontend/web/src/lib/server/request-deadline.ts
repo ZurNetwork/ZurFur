@@ -15,9 +15,3 @@ export const requestDeadline: Handle = async ({ event, resolve }) => {
 		clock.stop();
 	}
 };
-
-/** `request`, aborted by the earlier of its own signal and `deadline` (when there is one). */
-export function withinDeadline(request: Request, deadline: AbortSignal | undefined): Request {
-	if (deadline === undefined) return request;
-	return new Request(request, { signal: AbortSignal.any([request.signal, deadline]) });
-}

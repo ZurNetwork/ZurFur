@@ -36,6 +36,12 @@ export interface RewriteApiRequestInput {
 	incomingCookie: string | undefined;
 	/** The internal axum origin (`ZURFUR_API_UPSTREAM`, e.g. `http://127.0.0.1:8081`). */
 	apiUpstream: string;
+	/**
+	 * The signal a request leaving the server carries, set on it directly
+	 * rather than followed through the rebuilt requests in between; the
+	 * request's own signal when absent.
+	 */
+	signal?: AbortSignal | undefined;
 }
 
 /**
@@ -81,6 +87,7 @@ export function extractSessionCookie(incomingCookie: string | undefined): string
  */
 export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	const { request, eventOrigin, incomingCookie, apiUpstream } = input;
+	const signal = input.signal ?? request.signal;
 
 	const requestUrl = new URL(request.url);
 
@@ -90,7 +97,7 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	// the app's or a subdomain of it.
 	const isSameOrigin = requestUrl.origin === eventOrigin;
 	if (!isSameOrigin) {
-		return new Request(request, { credentials: 'omit' });
+		return new Request(request, { credentials: 'omit', signal });
 	}
 
 	// Only `/api` exactly or a path under `/api/` is an API call. `/apifoo` is a
@@ -116,7 +123,7 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	// `credentials: 'omit'` stops SvelteKit's server fetch from re-attaching the
 	// whole incoming cookie jar when the upstream's hostname matches the app's
 	// (both 127.0.0.1 in dev); the explicit header below still goes out.
-	const rewritten = new Request(new Request(upstreamUrl, request), { credentials: 'omit' });
+	const rewritten = new Request(new Request(upstreamUrl, request), { credentials: 'omit', signal });
 	rewritten.headers.delete('cookie');
 	const sessionCookie = extractSessionCookie(incomingCookie);
 	if (sessionCookie !== undefined) {

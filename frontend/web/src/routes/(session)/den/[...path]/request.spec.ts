@@ -156,7 +156,8 @@ describe('/den on the live port, when the folders above it never answer', () => 
 		const response = await answered;
 
 		expect(response.status).toBe(200);
-		expect(calls).toHaveLength(18);
+		// The eight folder reads queued past the deadline never leave the server.
+		expect(calls).toHaveLength(10);
 		expect(page.den?.outcome).toMatchObject({ outcome: 'page' });
 		expect(page.den?.ancestors).toEqual([]);
 	});
