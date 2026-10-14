@@ -43,7 +43,7 @@
     },
     {
       "name": "navigation.ts",
-      "role": "loadFullPage — leave for a location by a full page load, never the client router (a seam specs mock)",
+      "role": "loadFullPage — leave for an http(s) location by a full page load, never the client router; any other address is refused (a seam specs mock; navigation.spec.ts)",
       "node": false
     },
     {

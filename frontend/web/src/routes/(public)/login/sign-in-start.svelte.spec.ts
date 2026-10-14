@@ -4,7 +4,9 @@ import { render } from 'vitest-browser-svelte';
 import { formStub } from '$lib/testing/superforms';
 
 /** Every full page load the page asks for, instead of the window leaving the spec. */
-const navigation = vi.hoisted(() => ({ loadFullPage: vi.fn<(location: string) => void>() }));
+const navigation = vi.hoisted(() => ({
+	loadFullPage: vi.fn<(location: string) => 'left' | 'refused'>(() => 'left')
+}));
 vi.mock('$lib/navigation', () => navigation);
 
 /** The options the page handed superForm, captured so the spec can play a result through them. */
@@ -69,15 +71,17 @@ describe('/login: the sign-in start', () => {
 	});
 
 	it.each([
-		['failure', { type: 'failure', status: 422, data: { form: data.form } }],
-		['success', { type: 'success', status: 200, data: { form: data.form } }],
-		['error', { type: 'error', status: 500, error: new Error('boom') }]
-	])('leaves a %s result to superforms', async (_type, result) => {
+		['redirect', true, { type: 'redirect', status: 303, location: CALLBACK }],
+		['failure', false, { type: 'failure', status: 422, data: { form: data.form } }],
+		['success', false, { type: 'success', status: 200, data: { form: data.form } }],
+		['error', false, { type: 'error', status: 500, error: new Error('boom') }]
+	])('the %s result: superforms’ handling cancelled is %s', async (type, cancels, result) => {
 		render(Login, { data });
 
 		const cancelled = await playResult(result);
 
-		expect(cancelled).toBe(false);
-		expect(navigation.loadFullPage).not.toHaveBeenCalled();
+		expect(cancelled).toBe(cancels);
+		const leaves = type === 'redirect' ? [[CALLBACK]] : [];
+		expect(navigation.loadFullPage.mock.calls).toEqual(leaves);
 	});
 });

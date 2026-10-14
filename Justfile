@@ -70,7 +70,9 @@ dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
 # which runs in the foreground like `dev-web`; Ctrl-C stops both. Run
 # `just dev-profile` in another terminal, then browse http://127.0.0.1:8180 and
 # sign in (every sign-in is alice). The defaults mirror `dev-profile`'s, so it
-# runs beside `just dev` without colliding. Needs .env (`just setup`): compose
+# runs beside `just dev` without colliding, though cookies don't isolate by
+# port: signing in here signs `just dev`'s browser session out (neither stack
+# accepts the other's session). Needs .env (`just setup`): compose
 # reads it, and so does the API. Other ports, with the API to match:
 # `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
 # `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
