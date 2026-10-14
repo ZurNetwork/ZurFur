@@ -110,7 +110,8 @@ pub enum AccountError {
     /// The requested position is past the end of the list; carries the
     /// offending index.
     IndexOutOfRange(usize),
-    /// A name the Den's name rule refuses, such as a Workflow's.
+    /// A name the Den's name rule refuses, such as a Workflow's, or an Account name that isn't
+    /// safe to show.
     InvalidName(DenNameError),
 }
 

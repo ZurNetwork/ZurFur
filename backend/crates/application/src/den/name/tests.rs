@@ -73,3 +73,17 @@ fn a_refusal_carries_no_part_of_the_text() {
 
     assert!(refusal.is_some_and(|message| !message.contains("secret")));
 }
+
+#[test]
+fn each_showable_refusal_names_the_same_den_refusal() {
+    let pairs = [
+        (ShowableNameError::Empty, DenNameError::Empty),
+        (ShowableNameError::TooLong, DenNameError::TooLong),
+        (ShowableNameError::Invisible, DenNameError::Invisible),
+        (ShowableNameError::Separator, DenNameError::Separator),
+        (ShowableNameError::Reserved, DenNameError::Reserved),
+    ];
+    for (showable, den) in pairs {
+        assert_eq!(showable_refusal(showable), den);
+    }
+}

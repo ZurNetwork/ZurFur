@@ -60,7 +60,7 @@
     },
     {
       "name": "name.rs",
-      "role": "DenName and DenNameError: the Den's name rule, the write-side check every naming write calls",
+      "role": "DenName and DenNameError: the Den's name rule, the write-side check every naming write calls; showable_refusal names Atta's ShowableName refusals (Account founding) in the same DenNameError",
       "node": false
     },
     {

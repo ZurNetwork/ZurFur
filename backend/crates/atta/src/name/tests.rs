@@ -992,3 +992,124 @@ fn the_combining_mark_table_matches_its_known_edges() {
         assert!(!is_combining_mark(character), "{character:?}");
     }
 }
+
+#[test]
+fn a_showable_name_may_hold_a_slash() {
+    for name in ["AC/DC Studio", "a/b", "/", "Ref sheets / 2026"] {
+        let parsed = ShowableName::try_from(name);
+        assert_eq!(
+            parsed.map(|name| name.to_string()),
+            Ok(name.to_owned()),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_node_name_still_refuses_what_a_showable_name_keeps_with_a_slash() {
+    let showable = ShowableName::try_from("AC/DC Studio");
+    let node = NodeName::try_from("AC/DC Studio");
+
+    assert!(showable.is_ok());
+    assert_eq!(node, Err(NodeNameError::Slash));
+}
+
+#[test]
+fn every_node_name_refusal_but_the_slash_refuses_a_showable_name() {
+    let too_long = "a".repeat(MAX_NAME_BYTES + 1);
+    let refused = [
+        ("", ShowableNameError::Empty, NodeNameError::Empty),
+        ("\u{200D}", ShowableNameError::Empty, NodeNameError::Empty),
+        (" \u{3164} ", ShowableNameError::Empty, NodeNameError::Empty),
+        (
+            &too_long,
+            ShowableNameError::TooLong,
+            NodeNameError::TooLong,
+        ),
+        (
+            "a\u{202E}b",
+            ShowableNameError::Invisible,
+            NodeNameError::Invisible,
+        ),
+        (
+            "a\u{2066}b",
+            ShowableNameError::Invisible,
+            NodeNameError::Invisible,
+        ),
+        (
+            "a\0b",
+            ShowableNameError::Invisible,
+            NodeNameError::Invisible,
+        ),
+        (
+            "a\u{2028}b",
+            ShowableNameError::Separator,
+            NodeNameError::Separator,
+        ),
+        (
+            "a\u{2029}b",
+            ShowableNameError::Separator,
+            NodeNameError::Separator,
+        ),
+        (
+            "a\u{FFFC}b",
+            ShowableNameError::Reserved,
+            NodeNameError::Reserved,
+        ),
+        (
+            "a\u{FDD0}b",
+            ShowableNameError::Reserved,
+            NodeNameError::Reserved,
+        ),
+        (
+            "a\u{FFFF}b",
+            ShowableNameError::Reserved,
+            NodeNameError::Reserved,
+        ),
+    ];
+    for (name, showable, node) in refused {
+        assert_eq!(ShowableName::try_from(name), Err(showable), "{name:?}");
+        assert_eq!(NodeName::try_from(name), Err(node), "{name:?}");
+    }
+}
+
+#[test]
+fn a_showable_name_strips_what_a_node_name_strips() {
+    let showable = ShowableName::try_from(" Ref\u{200B}sheet / 2\u{3164} ");
+    let stored = showable.map(|name| name.to_string());
+    let as_kept = "Refsheet / 2".to_owned();
+
+    assert_eq!(stored, Ok(as_kept));
+}
+
+#[test]
+fn the_slash_clause_outranks_every_rule_but_the_length() {
+    let too_long_with_a_slash = format!("/{}", "a".repeat(MAX_NAME_BYTES));
+    let outranked = ["/\u{2028}", "/\u{FFFC}", "/\u{202E}", "\u{200D}/"];
+
+    assert_eq!(
+        NodeName::try_from(too_long_with_a_slash),
+        Err(NodeNameError::TooLong)
+    );
+    for name in outranked {
+        assert_eq!(
+            NodeName::try_from(name),
+            Err(NodeNameError::Slash),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn each_showable_refusal_maps_to_the_same_node_name_refusal() {
+    let pairs = [
+        (ShowableNameError::Empty, NodeNameError::Empty),
+        (ShowableNameError::TooLong, NodeNameError::TooLong),
+        (ShowableNameError::Invisible, NodeNameError::Invisible),
+        (ShowableNameError::Separator, NodeNameError::Separator),
+        (ShowableNameError::Reserved, NodeNameError::Reserved),
+    ];
+    for (showable, node) in pairs {
+        assert_eq!(NodeNameError::from(showable), node);
+    }
+}
