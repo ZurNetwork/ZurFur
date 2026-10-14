@@ -145,6 +145,12 @@ gen-contract:
     cargo run -p contract-gen
     cd contract && buf generate
 
+# Regenerate the Den's golden responses under contract/golden/den/ from the
+# in-memory fixture world. Run after a contract or fixture change, then commit;
+# the den_golden test (in `just gate` and CI) fails while they are stale.
+den-golden:
+    DEN_GOLDEN=write cargo test -p api --test den_golden
+
 
 # --- The node tree (NODE.json) ---
 

@@ -1,0 +1,35 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "accounts",
+      "segments": [
+        "accounts"
+      ]
+    },
+    {
+      "name": "Supreme Arts",
+      "segments": [
+        "accounts",
+        "did:plc:t7nesupremeartsfixtureaa"
+      ]
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "name": "commissions",
+    "open": {
+      "contentNotShown": true,
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts",
+      "did:plc:t7nesupremeartsfixtureaa",
+      "commissions"
+    ],
+    "type": "account.commissions"
+  }
+}

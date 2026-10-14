@@ -1,0 +1,7 @@
+{
+  "code": "node_not_found",
+  "detail": "No such node.",
+  "status": 404,
+  "title": "Node not found",
+  "type": "urn:zurfur:error:node-not-found"
+}

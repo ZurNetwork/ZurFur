@@ -1,0 +1,34 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    },
+    {
+      "name": "Untitled",
+      "segments": [
+        "commissions",
+        "01a0ef9c-4e00-7a00-8000-000000000001"
+      ]
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "name": "products",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions",
+      "01a0ef9c-4e00-7a00-8000-000000000001",
+      "products"
+    ],
+    "type": "commission.products"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Old sketch",
+        "open": {
+          "ownLevel": "private",
+          "softDelete": "archived"
+        },
+        "segments": [
+          "commissions",
+          "019e830e-1a00-7a00-8000-000000000002"
+        ],
+        "type": "commission"
+      },
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Untitled",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001"
+        ],
+        "type": "commission"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "commissions",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions"
+    ],
+    "type": "user.commissions"
+  }
+}
