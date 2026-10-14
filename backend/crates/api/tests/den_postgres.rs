@@ -9,8 +9,8 @@ use serde_json::json;
 use test_support::{
     den::{Answer, PRIVATE_NO_STORE, entry_names, get, ok_json},
     pg_app::{
-        self, DenWorld, MissPair, absent_commission, den_participant_pairs, den_stranger_pairs,
-        den_stranger_targets,
+        self, DenWorld, MissPair, UNNAMED, absent_commission, den_participant_pairs,
+        den_stranger_pairs, den_stranger_targets,
     },
     recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
 };
@@ -443,4 +443,64 @@ async fn with_old_sketch_s_lifecycle_unreadable_its_typed_path_still_opens() {
 
     assert_eq!(old_sketch["node"]["name"], "Old sketch");
     assert_eq!(old_sketch["node"]["open"]["softDelete"], "archived");
+}
+
+#[tokio::test]
+async fn a_title_stored_before_the_rule_lists_and_opens_as_unnamed_for_each_participant() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_legacy_title(world.untitled.id).await;
+    let typed_path = format!("/den/commissions/{}", world.untitled.id);
+
+    for (viewer, label) in [(&world.alice, "alice"), (&world.bob, "bob")] {
+        let commissions = ok_json(get(viewer, world.base_url(), "/den/commissions").await).await;
+        let opened = ok_json(get(viewer, world.base_url(), &typed_path).await).await;
+
+        assert_eq!(entry_names(&commissions["listing"]), [UNNAMED], "{label}");
+        assert_eq!(opened["node"]["name"], UNNAMED, "{label}");
+        assert_eq!(opened["node"]["type"], "commission", "{label}");
+    }
+}
+
+#[tokio::test]
+async fn a_title_stored_before_the_rule_is_still_the_one_404_for_a_stranger() {
+    let world = pg_app::den_world(api::app).await;
+    let expected = the_one_404(&world).await;
+    world.store_legacy_title(world.untitled.id).await;
+
+    for pair in den_stranger_pairs(&world.untitled) {
+        assert_alice_opens_its_home(&world, &pair).await;
+
+        assert_pair_is_the_one_404(&world.stranger, &world, &pair, &expected).await;
+    }
+}
+
+#[tokio::test]
+async fn an_archived_title_stored_before_the_rule_lists_as_unnamed_and_marked_archived() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_legacy_title(world.old_sketch.id).await;
+    let old_sketch_segments = json!(["commissions", world.old_sketch.id.to_string()]);
+    let typed_path = format!("/den/commissions/{}", world.old_sketch.id);
+
+    let everything = ok_json(
+        get(
+            &world.alice,
+            world.base_url(),
+            "/den/commissions?includeDeleted=true",
+        )
+        .await,
+    )
+    .await;
+    let opened = ok_json(get(&world.alice, world.base_url(), &typed_path).await).await;
+
+    let entries = everything["listing"]["entries"]
+        .as_array()
+        .expect("entries");
+    let old_sketch = entries
+        .iter()
+        .find(|entry| entry["segments"] == old_sketch_segments)
+        .unwrap_or_else(|| panic!("Old sketch is listed: {everything}"));
+    assert_eq!(old_sketch["name"], UNNAMED, "{old_sketch}");
+    assert_eq!(old_sketch["open"]["softDelete"], "archived", "{old_sketch}");
+    assert_eq!(opened["node"]["name"], UNNAMED);
+    assert_eq!(opened["node"]["open"]["softDelete"], "archived");
 }

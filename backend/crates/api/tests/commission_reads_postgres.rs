@@ -9,8 +9,9 @@ use domain::elements::commission::CommissionId;
 use test_support::{
     den::{Answer, entry_names, get, ok_json},
     pg_app::{
-        self, COMMISSION_NOT_FOUND, DenWorld, FILE_NOT_FOUND, MissPair, commission_read_live_pairs,
-        commission_read_stranger_pairs, download_participant_pair, stranger_targets,
+        self, COMMISSION_NOT_FOUND, DenWorld, FILE_NOT_FOUND, LEGACY_NAME, MissPair, UNNAMED,
+        commission_read_live_pairs, commission_read_stranger_pairs, download_participant_pair,
+        stranger_targets,
     },
     recording::{
         CallLog, NEVER_FOR_A_MISSING_FILE, NEVER_FOR_A_STRANGER, RecordingChangelogStore,
@@ -323,12 +324,70 @@ async fn a_dotfile_stored_before_the_rule_still_lists_and_downloads_for_a_partic
 
     assert_eq!(entry_names(&attachments["listing"]), [".theme.yaml"]);
     assert_eq!(download.status(), 200);
-    let disposition = download
+    let disposition = content_disposition(&download);
+    assert!(disposition.contains(".theme.yaml"), "{disposition}");
+}
+
+/// The `Content-Disposition` header of `response`, as text.
+fn content_disposition(response: &reqwest::Response) -> String {
+    response
         .headers()
         .get("content-disposition")
         .expect("a Content-Disposition header")
         .to_str()
         .expect("an ASCII header")
-        .to_owned();
-    assert!(disposition.contains(".theme.yaml"), "{disposition}");
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_title_stored_before_the_rule_keeps_its_changelog_read_and_record_verbatim() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_legacy_title(world.untitled.id).await;
+    let path = format!("/commissions/{}/changelog", world.untitled.id);
+
+    for (viewer, label) in [(&world.alice, "alice"), (&world.bob, "bob")] {
+        let read = get(viewer, world.base_url(), &path).await;
+
+        assert_eq!(read.status(), 200, "{label}");
+        let entries: serde_json::Value = read.json().await.expect("a JSON body");
+        let created = &entries[0];
+        assert_eq!(created["kind"], "created", "{label}: {entries}");
+        assert_eq!(
+            created["payload"]["title"], LEGACY_NAME,
+            "{label}: {created}"
+        );
+    }
+    for pair in commission_read_stranger_pairs(&world.untitled) {
+        let [absent, not_yours] = answers_of(&world.stranger, &world, &pair).await;
+
+        assert_not_found_with(&absent, STRANGER_CODE, pair.label);
+        assert_eq!(not_yours, absent, "{}", pair.label);
+    }
+}
+
+#[tokio::test]
+async fn a_file_name_stored_before_the_rule_lists_and_downloads_as_unnamed() {
+    let world = pg_app::den_world(api::app).await;
+    let commission = world.untitled.id;
+    let file = world.untitled.file;
+    world.store_legacy_filename(file).await;
+    let attachments_path = format!("/den/commissions/{commission}/attachments");
+    let download_path = format!("/commissions/{commission}/files/{file}");
+    let expected_disposition =
+        format!("attachment; filename=\"{UNNAMED}\"; filename*=UTF-8''{UNNAMED}");
+
+    for (viewer, label) in [(&world.alice, "alice"), (&world.bob, "bob")] {
+        let attachments = ok_json(get(viewer, world.base_url(), &attachments_path).await).await;
+        let download = get(viewer, world.base_url(), &download_path).await;
+
+        assert_eq!(entry_names(&attachments["listing"]), [UNNAMED], "{label}");
+        assert_eq!(download.status(), 200, "{label}");
+        assert_eq!(
+            content_disposition(&download),
+            expected_disposition,
+            "{label}"
+        );
+        let bytes = download.bytes().await.expect("the file's bytes");
+        assert_eq!(bytes.as_ref(), b"den world image bytes", "{label}");
+    }
 }

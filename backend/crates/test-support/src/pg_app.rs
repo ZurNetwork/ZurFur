@@ -10,8 +10,9 @@ mod served;
 mod statements;
 
 pub use den_world::{
-    DenWorld, ProfileCacheState, SeededCommission, absent_account, absent_commission, absent_file,
-    absent_slot, absent_workflow, den_world, den_world_recording, stranger,
+    DenWorld, LEGACY_NAME, ProfileCacheState, SeededCommission, UNNAMED, absent_account,
+    absent_commission, absent_file, absent_slot, absent_workflow, den_world, den_world_recording,
+    stranger,
 };
 pub use in_process_pds::InProcessPds;
 pub use pairs::{
