@@ -57,7 +57,7 @@
     },
     {
       "name": "layout.svelte.spec.ts",
-      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts in the drawer, no sideways scroll at 320 px",
+      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts and a visible Sign out in the drawer, no sideways scroll at 320 px; the tree memory built for the session's DID and told the current DID on each navigation; missing folders fetched after a navigation to a page with no Den data",
       "node": false
     },
     {

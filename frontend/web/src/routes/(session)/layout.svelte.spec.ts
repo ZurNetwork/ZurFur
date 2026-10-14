@@ -4,7 +4,8 @@ import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet } from 'svelte';
-import { did, handleFromTrusted } from '$lib/types/brand';
+import type { DenPageData } from '$lib/api/den';
+import { denHref, did, handleFromTrusted, type DenHref, type Did } from '$lib/types/brand';
 
 /** The callbacks the layout registered with `afterNavigate`, to fire as a navigation would. */
 interface Nav {
@@ -43,6 +44,31 @@ vi.mock('$app/state', () => ({
 	}
 }));
 
+/** Every tree memory the layout built, with the owner it was built for and each owner it was told on a navigation. */
+interface Built {
+	memory: { restart: (fallbackRoot: DenHref) => void };
+	owner: Did;
+	navigatedAs: Did[];
+}
+const trees = vi.hoisted((): { built: Built[] } => ({ built: [] }));
+
+vi.mock('$lib/components/explorer/tree-memory.svelte', async (importActual) => {
+	const actual = await importActual<typeof import('$lib/components/explorer/tree-memory.svelte')>();
+	class RecordedTreeMemory extends actual.TreeMemory {
+		readonly #record: Built;
+		constructor(owner: Did) {
+			super(owner);
+			this.#record = { memory: this, owner, navigatedAs: [] };
+			trees.built.push(this.#record);
+		}
+		override navigated(owner: Did, data: DenPageData | undefined): readonly DenHref[] {
+			this.#record.navigatedAs.push(owner);
+			return super.navigated(owner, data);
+		}
+	}
+	return { ...actual, TreeMemory: RecordedTreeMemory };
+});
+
 const { default: Layout } = await import('./+layout.svelte');
 
 const session = {
@@ -62,6 +88,7 @@ afterEach(() => {
 	nav.callbacks.length = 0;
 	nav.preloaded.length = 0;
 	nav.den = undefined;
+	trees.built.length = 0;
 });
 
 describe('(session) layout: the frame around every signed-in page', () => {
@@ -126,6 +153,16 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		expect(accountsLinks).toHaveLength(1);
 	});
 
+	it('shows Sign out in the drawer at 320 px', async () => {
+		await page.viewport(320, 640);
+		renderLayout();
+		await page.getByTestId('open-drawer').click();
+
+		await expect
+			.element(page.getByRole('dialog').getByRole('button', { name: 'Sign out' }))
+			.toBeVisible();
+	});
+
 	it('never scrolls sideways at 320 px', async () => {
 		await page.viewport(320, 640);
 		renderLayout();
@@ -162,12 +199,31 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.poll(() => [...nav.preloaded].sort()).toEqual(['/den', '/den/commissions']);
 	});
 
-	it('keeps the handle shown beside the avatar on a desktop', async () => {
-		await page.viewport(1280, 800);
+	it('fetches the folders the tree lacks after a navigation to a page with no Den data', async () => {
+		nav.den = undefined;
 		renderLayout();
-		const handle = page.getByRole('banner').getByTestId('session-handle');
-		await expect.element(handle).toBeVisible();
-		expect(getComputedStyle(handle.element()).position).not.toBe('absolute');
-		expect(handle.element().getBoundingClientRect().width).toBeGreaterThan(1);
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		trees.built[0]?.memory.restart(denHref('/den'));
+		for (const callback of nav.callbacks) callback();
+
+		await expect.poll(() => [...nav.preloaded]).toEqual(['/den']);
+	});
+
+	it('keys the tree memory by the signed-in visitor’s DID, on every navigation', async () => {
+		const bob = {
+			...session,
+			did: did('did:plc:bob'),
+			handle: handleFromTrusted('bob.zurfur.app')
+		};
+		const { rerender } = renderLayout();
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		for (const callback of nav.callbacks) callback();
+		await rerender({ data: { session: bob }, children });
+		for (const callback of nav.callbacks) callback();
+
+		expect(trees.built.map((built) => built.owner)).toEqual([session.did]);
+		expect(trees.built[0]?.navigatedAs).toEqual([session.did, bob.did]);
 	});
 });
