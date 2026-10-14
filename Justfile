@@ -100,6 +100,12 @@ logs:
 db-shell:
     docker compose exec db psql -U admin -d zurfur
 
+# Fill your Den on `just dev` with two commissions, one archived, as you: sign
+# in, then paste your zurfur.sid cookie's value at the hidden prompt. Run it
+# once: each run adds two more commissions.
+den-fill:
+    bash scripts/den-fill.sh
+
 # Create a new migration file in adapter-pg (applied automatically on app boot)
 migrate-add name:
     cd backend/crates/adapter-pg && sqlx migrate add {{ name }}
@@ -244,14 +250,14 @@ hooks-test:
     exit "$status"
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait and tools-check (the
+# the dev-profile pins, pr-wait, tools-check and den-fill (the
 # design-index check's own tests run under `design-index-check-test`). CI
 # runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

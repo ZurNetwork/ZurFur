@@ -1,19 +1,29 @@
 //! `GET /den` and `GET /den/{*path}` on the PostgreSQL stores, over the den world seeded
 //! through the app's routes: alice's root, her membership mount, the archived "Old sketch",
 //! and the one 404, byte for byte, for every cause, the stranger's and the Participant's
-//! pairs of causes included. Requires a container runtime socket.
+//! pairs of causes included; and `scripts/den-fill.sh` filling a signed-in user's Den
+//! through the routes. Requires a container runtime socket, and the `docker` CLI, `bash`,
+//! `curl` and `jq` for the fill script.
 
-use std::sync::Arc;
+use std::{process::Stdio, sync::Arc};
 
-use serde_json::json;
+use domain::elements::{did::Did, profile::Profile};
+use serde_json::{Value, json};
 use test_support::{
     den::{Answer, PRIVATE_NO_STORE, entry_names, get, ok_json},
     pg_app::{
-        self, DenWorld, MissPair, UNNAMED, absent_commission, den_participant_pairs,
+        self, DenWorld, MissPair, SignedIn, UNNAMED, absent_commission, den_participant_pairs,
         den_stranger_pairs, den_stranger_targets,
     },
     recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
 };
+use tokio::{io::AsyncWriteExt as _, process::Command};
+
+/// The fill script, from the repository's root.
+const DEN_FILL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../scripts/den-fill.sh");
+
+/// The fill script's user: a DID no other fixture uses.
+const FILLER_DID: &str = "did:plc:denfillfixtureaaaaaaaaaa";
 
 /// Asserts alice opens `pair`'s real node at its home, so the pair never compares two
 /// absent nodes.
@@ -503,4 +513,137 @@ async fn an_archived_title_stored_before_the_rule_lists_as_unnamed_and_marked_ar
     assert_eq!(old_sketch["open"]["softDelete"], "archived", "{old_sketch}");
     assert_eq!(opened["node"]["name"], UNNAMED);
     assert_eq!(opened["node"]["open"]["softDelete"], "archived");
+}
+
+/// What the fill script printed, and whether it succeeded.
+struct FillRun {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// Runs `scripts/den-fill.sh` against `served` with `cookie` written to its stdin, as a user
+/// pastes it at the hidden prompt.
+async fn run_den_fill(served: &pg_app::PgServed, cookie: &str) -> FillRun {
+    let mut child = Command::new("bash")
+        .arg(DEN_FILL)
+        .env("ZURFUR_API_UPSTREAM", &served.base_url)
+        .env("ZURFUR_FILL_PSQL", served.psql_command())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bash runs the fill script");
+    let mut stdin = child.stdin.take().expect("the script's stdin");
+    let pasted = format!("{cookie}\n");
+    stdin
+        .write_all(pasted.as_bytes())
+        .await
+        .expect("the cookie is written to the script's stdin");
+    drop(stdin);
+    let output = child
+        .wait_with_output()
+        .await
+        .expect("the fill script finishes");
+    FillRun {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+/// The path of the listing entry named `name` in `body`.
+fn entry_path(body: &Value, name: &str) -> String {
+    let entries = body["listing"]["entries"].as_array().expect("entries");
+    let entry = entries
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is listed: {body}"));
+    let segments = entry["segments"].as_array().expect("segments");
+    let pieces: Vec<&str> = segments
+        .iter()
+        .map(|segment| segment.as_str().expect("a text segment"))
+        .collect();
+    format!("/den/{}", pieces.join("/"))
+}
+
+/// `entry_names` of the listing at `path`, sorted, as `signed_in` reads it.
+async fn sorted_names(signed_in: &SignedIn, served: &pg_app::PgServed, path: &str) -> Vec<String> {
+    let body = ok_json(get(&signed_in.client, &served.base_url, path).await).await;
+    let mut names = entry_names(&body["listing"]);
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn the_fill_script_fills_the_signed_in_den_with_a_live_and_an_archived_commission() {
+    let served = pg_app::serve(api::app).await;
+    let filler = Profile::new(Did::from(FILLER_DID.to_owned()), "filler.test");
+    let signed_in = served.sign_in_with_cookie(filler).await;
+
+    let run = run_den_fill(&served, &signed_in.session_cookie).await;
+
+    assert!(run.success, "the fill script fails: {}", run.stderr);
+    assert!(
+        !run.stdout.contains(&signed_in.session_cookie),
+        "stdout holds the cookie"
+    );
+    assert!(
+        !run.stderr.contains(&signed_in.session_cookie),
+        "stderr holds the cookie"
+    );
+    assert!(run.stdout.contains("Sign out"), "{}", run.stdout);
+
+    let live = ok_json(get(&signed_in.client, &served.base_url, "/den/commissions").await).await;
+    let everything = ok_json(
+        get(
+            &signed_in.client,
+            &served.base_url,
+            "/den/commissions?includeDeleted=true",
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(entry_names(&live["listing"]), ["Sketch request"]);
+    assert_eq!(
+        entry_names(&everything["listing"]),
+        ["Old badge", "Sketch request"]
+    );
+    let old_badge = &everything["listing"]["entries"][0];
+    let sketch_request = &everything["listing"]["entries"][1];
+    assert_eq!(old_badge["open"]["softDelete"], "archived", "{old_badge}");
+    assert!(
+        sketch_request["open"].get("softDelete").is_none(),
+        "{sketch_request}"
+    );
+
+    let filled = [
+        (
+            "Sketch request",
+            ["pose.png", "reference.png"],
+            vec!["Main character", "Second character"],
+        ),
+        (
+            "Old badge",
+            ["badge-draft.png", "badge-final.png"],
+            vec!["Badge wearer"],
+        ),
+    ];
+    for (title, files, slots) in filled {
+        let commission = entry_path(&everything, title);
+        let attachments_path = format!("{commission}/attachments");
+        let slots_path = format!("{commission}/slots");
+
+        let entries = sorted_names(&signed_in, &served, &commission).await;
+        let attachments = sorted_names(&signed_in, &served, &attachments_path).await;
+        let declared = sorted_names(&signed_in, &served, &slots_path).await;
+
+        assert_eq!(
+            entries,
+            ["attachments", "changelog", "products", "slots"],
+            "{title}"
+        );
+        assert_eq!(attachments, files, "{title}");
+        assert_eq!(declared, slots, "{title}");
+    }
 }
