@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
+import { fetchStub } from '$lib/testing/http';
 import { handleFromTrusted } from '$lib/types/brand';
 import { accountsOutcome, createAccountOutcome, deleteAccountOutcome } from '../accounts';
 import { optionalSession, signinOutcome, signoutOutcome } from '../session';
@@ -28,6 +29,8 @@ const me = Effect.gen(function* () {
 interface MockEnvStub {
 	/** Defaults to `true` — most cases below care about the flag, not the dev/build state. */
 	dev?: boolean;
+	/** Defaults to `false`: a running server, not `vite build`'s postbuild phase. */
+	building?: boolean;
 	flag: string | undefined;
 }
 
@@ -39,16 +42,32 @@ interface MockEnvStub {
  * actually running the test suite.
  */
 async function loadFreshMockModule(stub: MockEnvStub) {
+	stubEnvironment(stub);
+	return import('./zurfur-api-mock');
+}
+
+/** Start a fresh module graph whose `$app/environment` and `$env/dynamic/private` say exactly `stub`. */
+function stubEnvironment(stub: MockEnvStub): void {
 	vi.resetModules();
 	vi.doMock('$app/environment', () => ({
 		dev: stub.dev ?? true,
-		building: false,
+		building: stub.building ?? false,
 		browser: false,
 		version: 'test'
 	}));
 	vi.doMock('$env/dynamic/private', () => ({ env: { ZURFUR_WEB_MOCK: stub.flag } }));
-	return import('./zurfur-api-mock');
 }
+
+/** How long the one cold import may take on a loaded machine. */
+const WARM_IMPORT_TIMEOUT_MS = 60_000;
+
+// Pay the cold transform of the module graph once, under its own timeout, so
+// each test's fresh import after `vi.resetModules()` is only an evaluation.
+beforeAll(async () => {
+	await import('./zurfur-api-mock');
+	await import('../runtime');
+	await import('../session');
+}, WARM_IMPORT_TIMEOUT_MS);
 
 afterEach(() => {
 	vi.doUnmock('$app/environment');
@@ -182,6 +201,47 @@ describe('mockModeRequested', () => {
 		const mod = await loadFreshMockModule({ flag });
 		expect(mod.mockModeRequested()).toBe(requested);
 	});
+});
+
+describe('mockModeEnabled', () => {
+	it.each([
+		{ dev: true, flag: '1', enabled: true },
+		{ dev: true, flag: undefined, enabled: false },
+		{ dev: false, flag: '1', enabled: false },
+		{ dev: false, flag: undefined, enabled: false }
+	])('dev=$dev, ZURFUR_WEB_MOCK=$flag → enabled=$enabled', async ({ dev, flag, enabled }) => {
+		const mod = await loadFreshMockModule({ dev, flag });
+		expect(mod.mockModeEnabled()).toBe(enabled);
+	});
+
+	it('leaves a non-dev server with the flag set on the live API, never the fixture world', async () => {
+		stubEnvironment({ dev: false, flag: '1' });
+		const { runApi } = await import('../runtime');
+		const { optionalSession } = await import('../session');
+		const { fetch, calls } = fetchStub(() =>
+			Response.json({ did: 'did:plc:bob', handle: 'bob.zurfur.app' })
+		);
+
+		const session = await runApi(fetch, optionalSession);
+
+		expect(calls).toEqual(['/api/v1/me']);
+		expect(session?.did).toBe('did:plc:bob');
+	});
+});
+
+describe('mockModeMisconfigured', () => {
+	it.each([
+		{ dev: false, building: false, flag: '1', misconfigured: true },
+		{ dev: true, building: false, flag: '1', misconfigured: false },
+		{ dev: false, building: true, flag: '1', misconfigured: false },
+		{ dev: false, building: false, flag: undefined, misconfigured: false }
+	])(
+		'dev=$dev, building=$building, ZURFUR_WEB_MOCK=$flag → misconfigured=$misconfigured',
+		async ({ dev, building, flag, misconfigured }) => {
+			const mod = await loadFreshMockModule({ dev, building, flag });
+			expect(mod.mockModeMisconfigured()).toBe(misconfigured);
+		}
+	);
 });
 
 describe('mockSignin', () => {

@@ -13,7 +13,7 @@ import {
 	type ZurfurApiShape
 } from './api/zurfur-api';
 import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
-import { ApiProblem, ContractViolation, DenNotConnected, NotAuthenticated } from './api/errors';
+import { ApiProblem, ContractViolation, NotAuthenticated } from './api/errors';
 import type { SegmentPath } from './path-builder';
 
 /** Every Den read the stubbed port saw: the path (empty for the root) and the query. */
@@ -309,12 +309,6 @@ describe('denPage: ancestors', () => {
 });
 
 describe('denPage: failures', () => {
-	it('answers notConnected while the live port has no Den', async () => {
-		const { layer } = denPort(() => Effect.fail(new DenNotConnected()));
-		const data = pageData(await run(layer, '/den'));
-		expect(data.outcome).toEqual({ outcome: 'notConnected' });
-	});
-
 	it('gives a refused address and a backend miss the same title and path bar', async () => {
 		const refused = pageData(await run(listingPort().layer, '/den/a%2Fb'));
 		const missed = pageData(await run(problemPort(NODE_NOT_FOUND_PROBLEM).layer, '/den/nope'));

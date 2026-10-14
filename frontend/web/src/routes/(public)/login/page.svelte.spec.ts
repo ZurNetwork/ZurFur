@@ -21,7 +21,7 @@ function loginData(
 	callbackError?: string,
 	signoutUnconfirmed = false
 ) {
-	return { session: undefined, denServed: false, callbackError, form, signoutUnconfirmed };
+	return { session: undefined, callbackError, form, signoutUnconfirmed };
 }
 
 describe('/login page', () => {

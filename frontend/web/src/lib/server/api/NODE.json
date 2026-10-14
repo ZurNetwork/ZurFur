@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "port specs (the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, through the live port and the den program) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec",
+      "role": "port specs (the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, through the live port and the den program) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec (mock mode only in a dev build, the live API otherwise; the boot guard's misconfiguration cases)",
       "node": false
     },
     {
@@ -41,7 +41,7 @@
     },
     {
       "name": "errors.ts",
-      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed, DenNotConnected)",
+      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed); NetworkFailure carries only its reason (unreachable, timeout, aborted), never the fetch's rejection",
       "node": false
     },
     {

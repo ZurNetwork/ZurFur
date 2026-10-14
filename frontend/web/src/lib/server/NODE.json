@@ -45,11 +45,6 @@
       "node": false
     },
     {
-      "name": "den-served.ts",
-      "role": "denServed(): whether this run can show a Den — the mock only, for now; fails closed (false) on the everyday stack, so the frame shows no sidebar, tree or My Den links there",
-      "node": false
-    },
-    {
       "name": "den.ts",
       "role": "the den page's program: read the node at an address through the port (and, on a full page load, its ancestors' listings), at most 4 Den reads in flight per page load with the node read first, map the read to the web's Den view with every link built by the path builder; outcomes: page / reload (stale token) / signedOut",
       "node": false

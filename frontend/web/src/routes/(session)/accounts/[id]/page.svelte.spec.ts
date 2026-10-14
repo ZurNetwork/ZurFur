@@ -40,11 +40,11 @@ const notFoundProblem: Problem = {
 };
 
 function accountData(account: AccountMembership) {
-	return { session: alice, denServed: false, account, trail };
+	return { session: alice, account, trail };
 }
 
 function problemData(problem: Problem) {
-	return { session: alice, denServed: false, problem, trail };
+	return { session: alice, problem, trail };
 }
 
 describe('/accounts/[id] page', () => {

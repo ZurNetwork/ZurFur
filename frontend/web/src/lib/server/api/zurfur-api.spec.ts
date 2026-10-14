@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
-import { fetchStub, problemResponse, unreachableFetch } from '$lib/testing/http';
+import { fetchStub, problemResponse, requestUrl, unreachableFetch } from '$lib/testing/http';
 import { pageToken } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
 import type { DenQuery } from './den-read';
@@ -373,6 +373,35 @@ describe('ZurfurApi den reads (live)', () => {
 	it('fails NetworkFailure when the backend is unreachable', async () => {
 		const failure = await runLive(unreachableFetch(), failureOf(denRoot()));
 		expect(failure._tag).toBe('NetworkFailure');
+	});
+
+	it('keeps no part of a rejection that names the Den path, in the failure or its rejection', async () => {
+		const leaky: FetchFunction = (input) =>
+			Promise.reject(
+				new TypeError(`fetch failed: ${requestUrl(input)}`, {
+					cause: new Error(`connect ECONNREFUSED ${requestUrl(input)}`)
+				})
+			);
+		const failure = await runLive(leaky, failureOf(denNode(privatePath)));
+		const rejection = await runLive(leaky, denNode(privatePath)).then(
+			() => 'resolved',
+			(rejected: unknown) => `${String(rejected)} ${JSON.stringify(rejected)}`
+		);
+
+		expect(failure).toMatchObject({ _tag: 'NetworkFailure', reason: 'unreachable' });
+		expect(`${String(failure)} ${JSON.stringify(failure)}`).not.toContain('secretstudio');
+		expect(rejection).toContain('NetworkFailure');
+		expect(rejection).not.toContain('secretstudio');
+	});
+
+	it.each([
+		['TimeoutError', 'timeout'],
+		['AbortError', 'aborted'],
+		['SyntaxError', 'unreachable']
+	])('reads a %s rejection as %s', async (name, reason) => {
+		const rejecting: FetchFunction = () => Promise.reject(new DOMException('gone', name));
+		const failure = await runLive(rejecting, failureOf(denRoot()));
+		expect(failure).toMatchObject({ _tag: 'NetworkFailure', reason });
 	});
 
 	it.each([

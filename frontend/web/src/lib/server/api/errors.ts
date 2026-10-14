@@ -18,9 +18,12 @@ export class ApiProblem extends Data.TaggedError('ApiProblem')<{
 	readonly problem: Problem;
 }> {}
 
+/** Why a fetch to the backend rejected: never the rejection itself, which may name the URL. */
+export type NetworkFailureReason = 'unreachable' | 'timeout' | 'aborted';
+
 /** The backend could not be reached at all (the fetch itself rejected). */
 export class NetworkFailure extends Data.TaggedError('NetworkFailure')<{
-	readonly cause: unknown;
+	readonly reason: NetworkFailureReason;
 }> {}
 
 /** A response that fits neither the success shape nor `application/problem+json`. */
@@ -39,14 +42,6 @@ export class SignoutFailed extends Data.TaggedError('SignoutFailed')<{
 	readonly status: number;
 }> {}
 
-/** This build's live port has no Den behind it yet: My Den shows a notice instead of a Den. */
-export class DenNotConnected extends Data.TaggedError('DenNotConnected')<Record<never, never>> {}
-
 /** Everything a {@link import('./zurfur-api').ZurfurApi} call can fail with. */
 export type ZurfurApiError =
-	| NotAuthenticated
-	| ApiProblem
-	| NetworkFailure
-	| ContractViolation
-	| SignoutFailed
-	| DenNotConnected;
+	NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation | SignoutFailed;

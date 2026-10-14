@@ -4,15 +4,23 @@ import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet } from 'svelte';
-import { did, handleFromTrusted } from '$lib/types/brand';
+import type { DenPageData } from '$lib/api/den';
+import { denHref, did, handleFromTrusted, type DenHref, type Did } from '$lib/types/brand';
 
 /** The callbacks the layout registered with `afterNavigate`, to fire as a navigation would. */
 interface Nav {
 	callbacks: (() => void)[];
 	preloaded: string[];
 	den: unknown;
+	/** This test's preloads still answering, and the most there ever were at once. */
+	load: { inFlight: number; most: number };
 }
-const nav = vi.hoisted((): Nav => ({ callbacks: [], preloaded: [], den: undefined }));
+const nav = vi.hoisted((): Nav => ({
+	callbacks: [],
+	preloaded: [],
+	den: undefined,
+	load: { inFlight: 0, most: 0 }
+}));
 
 vi.mock('$app/navigation', () => ({
 	afterNavigate: (callback: (navigation: { type: string }) => void) => {
@@ -21,9 +29,14 @@ vi.mock('$app/navigation', () => ({
 		});
 	},
 	goto: () => Promise.resolve(),
-	preloadData: (href: string) => {
+	preloadData: async (href: string) => {
 		nav.preloaded.push(href);
-		return Promise.resolve({ type: 'loaded', status: 500, data: {} });
+		const { load } = nav;
+		load.inFlight += 1;
+		load.most = Math.max(load.most, load.inFlight);
+		await new Promise((settle) => setTimeout(settle, 1));
+		load.inFlight -= 1;
+		return { type: 'loaded', status: 500, data: {} };
 	}
 }));
 
@@ -43,6 +56,31 @@ vi.mock('$app/state', () => ({
 	}
 }));
 
+/** Every tree memory the layout built, with the owner it was built for and each owner it was told on a navigation. */
+interface Built {
+	memory: { restart: (fallbackRoot: DenHref) => void };
+	owner: Did;
+	navigatedAs: Did[];
+}
+const trees = vi.hoisted((): { built: Built[] } => ({ built: [] }));
+
+vi.mock('$lib/components/explorer/tree-memory.svelte', async (importActual) => {
+	const actual = await importActual<typeof import('$lib/components/explorer/tree-memory.svelte')>();
+	class RecordedTreeMemory extends actual.TreeMemory {
+		readonly #record: Built;
+		constructor(owner: Did) {
+			super(owner);
+			this.#record = { memory: this, owner, navigatedAs: [] };
+			trees.built.push(this.#record);
+		}
+		override navigated(owner: Did, data: DenPageData | undefined): readonly DenHref[] {
+			this.#record.navigatedAs.push(owner);
+			return super.navigated(owner, data);
+		}
+	}
+	return { ...actual, TreeMemory: RecordedTreeMemory };
+});
+
 const { default: Layout } = await import('./+layout.svelte');
 
 const session = {
@@ -54,14 +92,16 @@ const session = {
 
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderLayout(denServed = true) {
-	return render(Layout, { data: { session, denServed }, children });
+function renderLayout() {
+	return render(Layout, { data: { session }, children });
 }
 
 afterEach(() => {
 	nav.callbacks.length = 0;
 	nav.preloaded.length = 0;
 	nav.den = undefined;
+	nav.load = { inFlight: 0, most: 0 };
+	trees.built.length = 0;
 });
 
 describe('(session) layout: the frame around every signed-in page', () => {
@@ -126,23 +166,20 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		expect(accountsLinks).toHaveLength(1);
 	});
 
+	it('shows Sign out in the drawer at 320 px', async () => {
+		await page.viewport(320, 640);
+		renderLayout();
+		await page.getByTestId('open-drawer').click();
+
+		await expect
+			.element(page.getByRole('dialog').getByRole('button', { name: 'Sign out' }))
+			.toBeVisible();
+	});
+
 	it('never scrolls sideways at 320 px', async () => {
 		await page.viewport(320, 640);
 		renderLayout();
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
-		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
-	});
-
-	it('keeps Sign out and Accounts reachable at 320 px on the everyday stack (no drawer)', async () => {
-		await page.viewport(320, 640);
-		renderLayout(false);
-		await expect.element(page.getByRole('banner')).toBeInTheDocument();
-
-		await expect.element(page.getByTestId('open-drawer')).not.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('banner').getByRole('button', { name: 'Sign out' }))
-			.toBeVisible();
-		await expect.element(page.getByTestId('accounts-link')).toBeVisible();
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 	});
 
@@ -167,7 +204,7 @@ describe('(session) layout: the frame around every signed-in page', () => {
 			title: 'My Den · Zurfur',
 			trail: []
 		};
-		renderLayout(true);
+		renderLayout();
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
 		for (const callback of nav.callbacks) callback();
@@ -175,36 +212,67 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.poll(() => [...nav.preloaded].sort()).toEqual(['/den', '/den/commissions']);
 	});
 
-	it('fetches nothing on the everyday stack', async () => {
-		nav.den = undefined;
-		renderLayout(false);
+	it('fetches the folders above a deep item at most four at a time', async () => {
+		const segments = Array.from({ length: 16 }, (_, depth) => `d${String(depth)}`);
+		const crumbs = segments.map((_, depth) => ({
+			href: ['/den', ...segments.slice(0, depth)].join('/'),
+			name: depth === 0 ? 'Alice' : `d${String(depth - 1)}`
+		}));
+		const address = ['/den', ...segments].join('/');
+		nav.den = {
+			kind: 'denPage',
+			address,
+			outcome: {
+				outcome: 'page',
+				page: {
+					view: 'card',
+					node: { view: 'card', name: 'Deep', type: 'x', mounted: false },
+					crumbs
+				},
+				flagLinks: { on: address, off: address }
+			},
+			rootHref: '/den',
+			includeDeleted: false,
+			continued: false,
+			ancestors: [],
+			title: 'My Den · Zurfur',
+			trail: []
+		};
+		renderLayout();
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
 		for (const callback of nav.callbacks) callback();
-		expect(nav.preloaded).toEqual([]);
+
+		await expect.poll(() => nav.preloaded.length).toBe(16);
+		await expect.poll(() => nav.load.inFlight).toBe(0);
+		expect(nav.load.most).toBe(4);
 	});
 
-	it('shows the avatar alone at 320 px on the everyday stack, the handle still its name, and Sign out on one line', async () => {
-		await page.viewport(320, 640);
-		renderLayout(false);
-		const handle = page.getByRole('banner').getByTestId('session-handle');
-		await expect.element(handle).toBeInTheDocument();
+	it('fetches the folders the tree lacks after a navigation to a page with no Den data', async () => {
+		nav.den = undefined;
+		renderLayout();
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
-		const shown = getComputedStyle(handle.element());
-		expect([shown.position, shown.clipPath]).toEqual(['absolute', 'inset(50%)']);
-		expect(handle.element().textContent).toBe('alice.zurfur.app');
-		expect(handle.element().closest('[title]')?.getAttribute('title')).toBe('alice.zurfur.app');
-		const signOut = page.getByRole('banner').getByRole('button', { name: 'Sign out' });
-		await expect.element(signOut).toBeVisible();
-		expect(getComputedStyle(signOut.element()).whiteSpace).toBe('nowrap');
-		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+		trees.built[0]?.memory.restart(denHref('/den'));
+		for (const callback of nav.callbacks) callback();
+
+		await expect.poll(() => [...nav.preloaded]).toEqual(['/den']);
 	});
 
-	it('keeps the handle shown beside the avatar on a desktop', async () => {
-		await page.viewport(1280, 800);
-		renderLayout(false);
-		const handle = page.getByRole('banner').getByTestId('session-handle');
-		await expect.element(handle).toBeVisible();
-		expect(getComputedStyle(handle.element()).position).not.toBe('absolute');
-		expect(handle.element().getBoundingClientRect().width).toBeGreaterThan(1);
+	it('keys the tree memory by the signed-in visitor’s DID, on every navigation', async () => {
+		const bob = {
+			...session,
+			did: did('did:plc:bob'),
+			handle: handleFromTrusted('bob.zurfur.app')
+		};
+		const { rerender } = renderLayout();
+		await expect.element(page.getByRole('banner')).toBeInTheDocument();
+
+		for (const callback of nav.callbacks) callback();
+		await rerender({ data: { session: bob }, children });
+		for (const callback of nav.callbacks) callback();
+
+		expect(trees.built.map((built) => built.owner)).toEqual([session.did]);
+		expect(trees.built[0]?.navigatedAs).toEqual([session.did, bob.did]);
 	});
 });

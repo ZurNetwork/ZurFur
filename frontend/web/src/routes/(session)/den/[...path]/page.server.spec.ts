@@ -7,9 +7,7 @@ import type { DenPageData } from '$lib/api/den';
 import type { Trail } from '$lib/api/trail';
 
 /** Whether this spec's `runApi` answers from the mock Den world instead of the live port. */
-const seam = vi.hoisted(() => ({ mock: false, servedLive: false }));
-
-vi.mock('$lib/server/den-served', () => ({ denServed: () => seam.mock || seam.servedLive }));
+const seam = vi.hoisted(() => ({ mock: false }));
 
 vi.mock('$lib/server/runtime', async (importActual) => {
 	const actual = await importActual<typeof import('$lib/server/runtime')>();
@@ -44,33 +42,16 @@ async function runLoad(address: string, isDataRequest = false): Promise<DenLoadD
 	return (await load(event)) as DenLoadData;
 }
 
-describe('/den load on the everyday stack (no Den served)', () => {
-	it('is the ordinary 404, with no Den call', async () => {
-		seam.mock = false;
-		seam.servedLive = false;
-		const url = new URL('/den', 'http://127.0.0.1:5174');
-		const { fetch, calls } = fetchStub(() => Response.json({}));
-		const event = { url, fetch, isDataRequest: false } as unknown as LoadEvent;
-		const failure: unknown = await Promise.resolve()
-			.then(() => load(event))
-			.catch((thrown: unknown) => thrown);
-		expect(isHttpError(failure, 404)).toBe(true);
-		expect(calls).toEqual([]);
-	});
-});
-
-describe('/den load on a served live port', () => {
+describe('/den load on the live port', () => {
 	/** Run the load for `address` over the live port, every Den read answered by `respond`. */
 	async function runLiveLoad(address: string, respond: () => Response): Promise<unknown> {
 		seam.mock = false;
-		seam.servedLive = true;
 		const url = new URL(address, 'http://127.0.0.1:5174');
 		const { fetch } = fetchStub(respond);
 		const event = { url, fetch, isDataRequest: true } as unknown as LoadEvent;
 		const settled: unknown = await Promise.resolve()
 			.then(() => load(event))
 			.catch((thrown: unknown) => thrown);
-		seam.servedLive = false;
 		return settled;
 	}
 
