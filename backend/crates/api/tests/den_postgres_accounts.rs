@@ -1,8 +1,9 @@
 //! identity's Accounts through the Den on the PostgreSQL stores, over the den world: a
 //! deactivated Account opens only to its Owner, another's Account and a missing one answer
 //! alike with the same store calls, no Den answer names another user, a stored name the
-//! Den's rule refuses shows the Account's handle, and founding refuses that name with
-//! today's `422`. Requires a container runtime socket.
+//! Den's rule refuses shows the Account's handle, founding refuses a name unsafe to show with
+//! today's `422`, and founding accepts a `/`, which the Den names by the Account's handle.
+//! Requires a container runtime socket.
 
 use std::sync::Arc;
 
@@ -27,6 +28,15 @@ const WITH_A_ZERO_WIDTH_SPACE: &str = "Ref\u{200B}sheet";
 
 /// The same name as the Den's rule keeps it.
 const AS_KEPT: &str = "Refsheet";
+
+/// A name holding a line separator, which founding refuses.
+const WITH_A_LINE_SEPARATOR: &str = "Ref\u{2028}sheet";
+
+/// A name holding U+FFFC OBJECT REPLACEMENT CHARACTER, which founding refuses.
+const WITH_AN_OBJECT_REPLACEMENT: &str = "Ref\u{FFFC}sheet";
+
+/// A name holding a `/`, which founding accepts and the Den's rule refuses.
+const WITH_A_SLASH: &str = "AC/DC Studio";
 
 /// The one not-found, as `viewer` reads it at a path that names nothing.
 async fn the_one_404(world: &DenWorld, viewer: &reqwest::Client) -> Answer {
@@ -398,6 +408,8 @@ async fn founding_refuses_what_the_rule_refuses_with_today_s_422_and_founds_noth
 
     let bidi = refusal(found(&world, WITH_A_BIDI_OVERRIDE, "refused").await).await;
     let joiner = refusal(found(&world, JOINER_ALONE, "refused").await).await;
+    let separator = refusal(found(&world, WITH_A_LINE_SEPARATOR, "refused").await).await;
+    let object = refusal(found(&world, WITH_AN_OBJECT_REPLACEMENT, "refused").await).await;
     let afterwards = found(&world, "Ref sheet", "refused").await;
 
     assert_eq!(blank.0, 422, "{blank:?}");
@@ -405,6 +417,8 @@ async fn founding_refuses_what_the_rule_refuses_with_today_s_422_and_founds_noth
     assert_eq!(blank.2["code"], "invalid_request", "{blank:?}");
     assert_eq!(bidi, blank);
     assert_eq!(joiner, blank);
+    assert_eq!(separator, blank);
+    assert_eq!(object, blank);
     assert_eq!(afterwards.status(), 201, "the refusals claimed no handle");
 }
 
@@ -421,4 +435,38 @@ async fn founding_stores_an_accepted_name_as_the_rule_keeps_it() {
     let path = format!("/den/accounts/{did}");
     let opened = ok_json(get(&world.alice, world.base_url(), &path).await).await;
     assert_eq!(opened["node"]["name"], AS_KEPT);
+}
+
+#[tokio::test]
+async fn founding_accepts_a_slash_and_the_den_names_the_account_by_its_handle() {
+    let world = pg_app::den_world(api::app).await;
+    let handle = "acdc.zurfur.app";
+
+    let founded = found(&world, WITH_A_SLASH, "acdc").await;
+
+    assert_eq!(founded.status(), 201);
+    let body: Value = founded.json().await.expect("a JSON body");
+    assert_eq!(body["name"], WITH_A_SLASH);
+    let did = body["did"].as_str().expect("the founded DID");
+    let path = format!("/den/accounts/{did}");
+    let opened = ok_json(get(&world.alice, world.base_url(), &path).await).await;
+    let listed = ok_json(get(&world.alice, world.base_url(), "/den/accounts").await).await;
+    let accounts = world
+        .alice
+        .get(format!("{}/accounts", world.base_url()))
+        .send()
+        .await
+        .expect("GET /accounts is answered");
+    assert_eq!(opened["node"]["name"], handle);
+    let mut names = entry_names(&listed["listing"]);
+    names.sort();
+    assert_eq!(names, ["Supreme Arts", handle]);
+    let accounts: Value = accounts.json().await.expect("a JSON body");
+    let stored = accounts["accounts"]
+        .as_array()
+        .expect("an accounts array")
+        .iter()
+        .find(|listing| listing["did"] == did)
+        .expect("the Account is listed");
+    assert_eq!(stored["name"], WITH_A_SLASH);
 }

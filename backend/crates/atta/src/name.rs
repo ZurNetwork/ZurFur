@@ -4,7 +4,7 @@ use combining_marks::is_combining_mark;
 
 mod combining_marks;
 
-/// The most bytes a node's name may hold.
+/// The most bytes a name may hold.
 pub const MAX_NAME_BYTES: usize = 2048;
 
 /// U+200C ZERO WIDTH NON-JOINER, the one format character besides the joiner a name may hold.
@@ -144,21 +144,55 @@ const FORMAT_CHARACTERS: &[(u32, u32)] = &[
     (0xE0020, 0xE007F),
 ];
 
-/// A node's display name, taken from what the node holds and never its key.
+/// A name safe to show: text with nothing in it that hides, fakes or reorders what a reader
+/// sees, and that may hold a `/`.
 ///
 /// Parsed by hand because the parse is the rule. Blank characters are stripped from both ends
 /// (a joiner or selector right after the last character stays), with any combining mark that
 /// leads, and fillers and zero-width spaces from inside; the stripped form is what the name holds.
-/// The input is at most [`MAX_NAME_BYTES`] bytes with no `/`, no line or paragraph separator, no
-/// noncharacter and no object replacement character, and the stripped form
-/// is not empty and holds no control character, no unassigned default-ignorable, and no format
-/// character but the two joiners, a subdivision flag's tags and a vowel separator inside a
-/// Mongolian word.
+/// The input is at most [`MAX_NAME_BYTES`] bytes with no line or paragraph separator, no
+/// noncharacter and no object replacement character, and the stripped form is not empty and
+/// holds no control character, no unassigned default-ignorable, and no format character but the
+/// two joiners, a subdivision flag's tags and a vowel separator inside a Mongolian word.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, derive_more::AsRef,
 )]
 #[as_ref(str)]
-pub struct NodeName(String);
+pub struct ShowableName(String);
+
+/// Why a piece of text is not a [`ShowableName`]. Carries no part of the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ShowableNameError {
+    /// The name is empty once its blank characters are stripped. The length and separator rules
+    /// are checked first, and win.
+    #[error("a name is empty")]
+    Empty,
+    /// The name is longer than [`MAX_NAME_BYTES`].
+    #[error("a name is longer than {MAX_NAME_BYTES} bytes")]
+    TooLong,
+    /// Once stripped, the name holds a control character, an unassigned default-ignorable, or a
+    /// format character the rule doesn't keep.
+    #[error("a name holds a control or format character")]
+    Invisible,
+    /// The name holds a line or paragraph separator.
+    #[error("a name holds a line or paragraph separator")]
+    Separator,
+    /// The name holds a noncharacter or U+FFFC OBJECT REPLACEMENT CHARACTER, which stand for no
+    /// text of their own.
+    #[error("a name holds a noncharacter or an object replacement character")]
+    Reserved,
+}
+
+/// A node's display name, taken from what the node holds and never its key: a
+/// [`ShowableName`] with no `/`.
+///
+/// Parsed by hand because the `/` clause is a rule of its own, checked after the length rule
+/// and before every other.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, derive_more::AsRef,
+)]
+#[as_ref(str)]
+pub struct NodeName(ShowableName);
 
 /// Why a piece of text is not a [`NodeName`]. Carries no part of the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -184,6 +218,19 @@ pub enum NodeNameError {
     /// text of their own.
     #[error("a node name holds a noncharacter or an object replacement character")]
     Reserved,
+}
+
+impl From<ShowableNameError> for NodeNameError {
+    /// The same refusal, as a node name's.
+    fn from(error: ShowableNameError) -> Self {
+        match error {
+            ShowableNameError::Empty => Self::Empty,
+            ShowableNameError::TooLong => Self::TooLong,
+            ShowableNameError::Invisible => Self::Invisible,
+            ShowableNameError::Separator => Self::Separator,
+            ShowableNameError::Reserved => Self::Reserved,
+        }
+    }
 }
 
 /// Whether `character` is in Unicode's general category Cf.
@@ -412,33 +459,65 @@ fn strip_inside(units: Vec<&str>) -> Vec<&str> {
     kept
 }
 
-/// Checks `text` against the name rule and returns the stripped form the name holds.
-fn normalize(text: &str) -> Result<String, NodeNameError> {
+/// Checks `text` against the rule for a name safe to show and returns the stripped form the
+/// name holds.
+fn normalize(text: &str) -> Result<String, ShowableNameError> {
     if text.len() > MAX_NAME_BYTES {
-        return Err(NodeNameError::TooLong);
-    }
-    if text.contains('/') {
-        return Err(NodeNameError::Slash);
+        return Err(ShowableNameError::TooLong);
     }
     if text.contains([LINE_SEPARATOR, PARAGRAPH_SEPARATOR]) {
-        return Err(NodeNameError::Separator);
+        return Err(ShowableNameError::Separator);
     }
     if text.chars().any(is_reserved) {
-        return Err(NodeNameError::Reserved);
+        return Err(ShowableNameError::Reserved);
     }
-    let trimmed = trim_blank(text).ok_or(NodeNameError::Empty)?;
+    let trimmed = trim_blank(text).ok_or(ShowableNameError::Empty)?;
     let stripped = strip_inside(trimmed);
     if (0..stripped.len()).any(|index| is_invisible(&stripped, index)) {
-        return Err(NodeNameError::Invisible);
+        return Err(ShowableNameError::Invisible);
     }
     Ok(stripped.concat())
+}
+
+/// Checks `text` against the node name rule: the `/` clause, which only the length rule
+/// outranks, then the rule for a name safe to show.
+fn node_name(text: &str) -> Result<ShowableName, NodeNameError> {
+    if text.len() <= MAX_NAME_BYTES && text.contains('/') {
+        return Err(NodeNameError::Slash);
+    }
+    let name = ShowableName::try_from(text)?;
+    Ok(name)
+}
+
+impl TryFrom<String> for ShowableName {
+    type Error = ShowableNameError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        normalize(&text).map(Self)
+    }
+}
+
+impl TryFrom<&str> for ShowableName {
+    type Error = ShowableNameError;
+
+    fn try_from(text: &str) -> Result<Self, Self::Error> {
+        normalize(text).map(Self)
+    }
+}
+
+impl FromStr for ShowableName {
+    type Err = ShowableNameError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::try_from(text)
+    }
 }
 
 impl TryFrom<String> for NodeName {
     type Error = NodeNameError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
-        normalize(&text).map(Self)
+        node_name(&text).map(Self)
     }
 }
 
@@ -446,7 +525,7 @@ impl TryFrom<&str> for NodeName {
     type Error = NodeNameError;
 
     fn try_from(text: &str) -> Result<Self, Self::Error> {
-        normalize(text).map(Self)
+        node_name(text).map(Self)
     }
 }
 

@@ -1,6 +1,7 @@
-//! Names at write: creating a commission, uploading a file, declaring a slot, creating a
-//! Workflow and founding an Account refuse a name the Den's name rule refuses, in each use
-//! case's own error, and store an accepted name as the rule keeps it.
+//! Names at write: creating a commission, uploading a file, declaring a slot and creating a
+//! Workflow refuse a name the Den's name rule refuses, and founding an Account refuses a name
+//! that isn't safe to show while it accepts a `/`, in each use case's own error; each stores
+//! an accepted name as its rule keeps it.
 
 use std::{io::Cursor, sync::Arc};
 
@@ -34,6 +35,9 @@ const AS_KEPT: &str = "Refsheet";
 
 /// A name holding a right-to-left override, a bidirectional control the Den's rule refuses.
 const WITH_A_BIDI_OVERRIDE: &str = "Studio\u{202E}gnp.exe";
+
+/// An Account name holding a `/`, which founding accepts and stores as given.
+const WITH_A_SLASH: &str = "AC/DC Studio";
 
 /// The handle each Account founded here asks for.
 const FOUNDED_HANDLE: &str = "named.zurfur.app";
@@ -379,4 +383,49 @@ async fn an_account_name_is_stored_as_the_den_s_rule_keeps_it() {
 
     assert_eq!(founded.name.as_str(), AS_KEPT);
     assert_eq!(stored.name.as_str(), AS_KEPT);
+}
+
+#[tokio::test]
+async fn an_account_name_may_hold_a_slash_and_is_stored_as_given() {
+    let runtime = world().await;
+
+    let app = runtime.app();
+    let founded = app
+        .accounts()
+        .create(founding(WITH_A_SLASH), &handle_domain(), Utc::now())
+        .await
+        .expect("the Account is founded");
+    let stored = runtime
+        .accounts
+        .find(&founded.account_id)
+        .await
+        .expect("no store fails")
+        .expect("the Account is stored");
+
+    assert_eq!(founded.name.as_str(), WITH_A_SLASH);
+    assert_eq!(stored.name.as_str(), WITH_A_SLASH);
+}
+
+#[tokio::test]
+async fn an_account_name_unsafe_to_show_is_still_refused() {
+    let refused = [
+        ("Line\u{2028}break", DenNameError::Separator),
+        ("Object\u{FFFC}", DenNameError::Reserved),
+        ("AC/DC\u{202E}oiduts", DenNameError::Invisible),
+        ("\u{200D}", DenNameError::Empty),
+    ];
+    for (name, refusal) in refused {
+        let runtime = world().await;
+
+        let app = runtime.app();
+        let founded = app
+            .accounts()
+            .create(founding(name), &handle_domain(), Utc::now())
+            .await;
+
+        let Err(AccountError::InvalidName(refused_as)) = founded else {
+            panic!("{name:?} is not refused as an invalid name");
+        };
+        assert_eq!(refused_as, refusal, "{name:?}");
+    }
 }

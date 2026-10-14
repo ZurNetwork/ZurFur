@@ -13,7 +13,9 @@ import {
 	type ZurfurApiShape
 } from './api/zurfur-api';
 import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
-import { ApiProblem, ContractViolation, NotAuthenticated } from './api/errors';
+import { ApiProblem, ContractViolation, NetworkFailure, NotAuthenticated } from './api/errors';
+import type { AccountMembership } from '$lib/api/account';
+import { accountId, did, handleFromTrusted } from '$lib/types/brand';
 import type { SegmentPath } from './path-builder';
 
 /** Every Den read the stubbed port saw: the path (empty for the root) and the query. */
@@ -483,4 +485,131 @@ describe('denPage: a Den read that runs out, through the live port', () => {
 			expect(data.ancestors.map((listing) => listing.folder)).toEqual(['/den']);
 		}
 	);
+});
+
+describe('denPage: an Account node shows the Account’s own name', () => {
+	const ACDC = 'did:plc:acdcstudioaaaaaaaaaaaaaa';
+	const ACDC_HANDLE = 'acdc.zurfur.app';
+	const UNLISTED = 'did:plc:unlistedaaaaaaaaaaaaaaaa';
+
+	/** The viewer's `GET /accounts` row for AC/DC Studio. */
+	const acdcRow: AccountMembership = {
+		id: accountId(ACDC),
+		did: did(ACDC),
+		handle: handleFromTrusted(ACDC_HANDLE),
+		name: 'AC/DC Studio',
+		role: 'owner'
+	};
+
+	/** An Account node keyed by `key`, named as the Den names it. */
+	function account(key: string, name: string): DenReadNode {
+		return folder(['accounts', key], name, { type: 'account', mount: true });
+	}
+
+	/**
+	 * A port whose `accounts` folder lists AC/DC Studio (named by its handle)
+	 * and an unlisted Account, whose AC/DC Studio node is that Account, and
+	 * whose `GET /accounts` answers `accounts`, counting each call.
+	 */
+	function accountsPort(
+		accounts: Effect.Effect<readonly AccountMembership[], ApiProblem | NetworkFailure>
+	) {
+		const entries = [account(ACDC, ACDC_HANDLE), account(UNLISTED, 'unlisted.zurfur.app')];
+		const listCalls: number[] = [];
+		const seen: string[][] = [];
+		const answer = (path: SegmentPath): DenRead => {
+			seen.push([...path]);
+			if (path.length === 2 && path[1] === ACDC) {
+				const read: DenRead = {
+					node: account(ACDC, ACDC_HANDLE),
+					crumbs: [
+						{ segments: [], name: 'Alice' },
+						{ segments: ['accounts'], name: 'accounts' }
+					],
+					content: { content: 'listing', entries: [], nextPageToken: undefined }
+				};
+				return read;
+			}
+			const inAccounts = path.length === 1 && path[0] === 'accounts';
+			return folderRead(path, inAccounts ? entries : []);
+		};
+		const shape: Partial<ZurfurApiShape> = {
+			denRoot: () => Effect.succeed(answer([])),
+			denNode: (path) => Effect.succeed(answer(path)),
+			listAccounts: Effect.suspend(() => {
+				listCalls.push(1);
+				return accounts;
+			})
+		};
+		return { layer: zurfurApiTest(shape), listCalls, seen };
+	}
+
+	/** The open page of a `page` result, or a thrown test failure. */
+	function openPage(data: DenPageData) {
+		const outcome = data.outcome;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open')
+			throw new Error('expected an open page');
+		return outcome.page;
+	}
+
+	/** The names of a listing page's entries. */
+	function entryNames(data: DenPageData): string[] {
+		const body = openPage(data).body;
+		if (body.body !== 'listing') throw new Error('expected a listing');
+		return body.entries.map((entry) => entry.name);
+	}
+
+	it('names a listed Account by its own name in a listing, and an unlisted one as the Den does', async () => {
+		const { layer, listCalls } = accountsPort(Effect.succeed([acdcRow]));
+		const data = pageData(await run(layer, '/den/accounts'));
+		expect(entryNames(data)).toEqual(['AC/DC Studio', 'unlisted.zurfur.app']);
+		expect(listCalls).toHaveLength(1);
+	});
+
+	it('names the Account node itself, in its header and its path bar', async () => {
+		const { layer, listCalls } = accountsPort(Effect.succeed([acdcRow]));
+		const data = pageData(await run(layer, `/den/accounts/${ACDC}`));
+		expect(openPage(data).node.name).toBe('AC/DC Studio');
+		expect(data.trail.at(-1)).toEqual({ step: 'named', label: 'AC/DC Studio', href: undefined });
+		expect(listCalls).toHaveLength(1);
+	});
+
+	it('names the Account in the folders above the node with the same one list read', async () => {
+		const { layer, listCalls } = accountsPort(Effect.succeed([acdcRow]));
+		const data = pageData(await run(layer, `/den/accounts/${ACDC}`, true));
+		const accounts = data.ancestors.find((listing) => listing.folder === '/den/accounts');
+		expect(accounts?.entries.map((entry) => entry.name)).toEqual([
+			'AC/DC Studio',
+			'unlisted.zurfur.app'
+		]);
+		expect(openPage(data).node.name).toBe('AC/DC Studio');
+		expect(listCalls).toHaveLength(1);
+	});
+
+	it('reads no Account list for a page that shows no Account node', async () => {
+		const { layer, listCalls } = accountsPort(Effect.succeed([acdcRow]));
+		pageData(await run(layer, '/den/commissions'));
+		pageData(await run(layer, '/den'));
+		expect(listCalls).toHaveLength(0);
+	});
+
+	it.each([
+		['a problem', Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }))],
+		['a network failure', Effect.fail(new NetworkFailure({ reason: 'timeout' }))]
+	] as const)('keeps the Den’s names when the Account list answers %s', async (_, accounts) => {
+		const { layer, listCalls } = accountsPort(accounts);
+		const data = pageData(await run(layer, '/den/accounts'));
+		expect(entryNames(data)).toEqual([ACDC_HANDLE, 'unlisted.zurfur.app']);
+		expect(listCalls).toHaveLength(1);
+	});
+
+	it('never names a node of another type, even one keyed by a listed Account’s DID', async () => {
+		const impostor = folder(['commissions', ACDC], 'Untitled', { type: 'commission' });
+		const shape: Partial<ZurfurApiShape> = {
+			denNode: (path) => Effect.succeed(folderRead(path, [account(ACDC, ACDC_HANDLE), impostor])),
+			listAccounts: Effect.succeed([acdcRow])
+		};
+		const data = pageData(await run(zurfurApiTest(shape), '/den/commissions'));
+		expect(entryNames(data)).toEqual(['AC/DC Studio', 'Untitled']);
+	});
 });

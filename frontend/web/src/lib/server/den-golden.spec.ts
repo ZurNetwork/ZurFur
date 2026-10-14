@@ -14,6 +14,7 @@ import { denHref, denName, denType, did, pageToken } from '$lib/types/brand';
 import EntryList from '$lib/components/explorer/EntryList.svelte';
 import NodeHeader from '$lib/components/explorer/NodeHeader.svelte';
 import Tree from '$lib/components/explorer/Tree.svelte';
+import PathBar from '$lib/components/ui/PathBar.svelte';
 import { TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
 import { denPage, type DenPageResult } from './den';
 import { decodeContract, RequestFetch, ZurfurApiLive } from './api/zurfur-api';
@@ -127,18 +128,38 @@ function requestOf(address: string): string {
 	return `/api/v1${apiPath ?? ''}`;
 }
 
-/** The den program for `address`, every read answered by `entry`'s recorded body. */
+/** The web's `GET /accounts` call, which names the Account nodes a page shows. */
+const ACCOUNTS_CALL = '/api/v1/accounts';
+
+/** Whether `entry`'s recorded body shows an Account node keyed by a DID: the node or a row. */
+function showsAnAccount(entry: GoldenEntry): boolean {
+	const raw = JSON.parse(bodyText(entry)) as JsonValue;
+	const message =
+		entry.message === 'GetDenRootResponse'
+			? decodeContract(GetDenRootResponseSchema, raw)
+			: decodeContract(GetDenNodeResponseSchema, raw);
+	const rows = message.content.case === 'listing' ? message.content.value.entries : [];
+	const nodes = message.node === undefined ? rows : [message.node, ...rows];
+	return nodes.some((node) => node.type === 'account' && node.segments.length > 0);
+}
+
+/**
+ * The den program for `address`, every Den read answered by `entry`'s recorded
+ * body and `GET /accounts` by `accounts` (none listed unless a test says so).
+ */
 async function serve(
 	entry: GoldenEntry,
-	address = entry.path
+	address = entry.path,
+	accounts: object = { accounts: [] }
 ): Promise<{ result: DenPageResult | NetworkFailure | ContractViolation; calls: string[] }> {
 	const url = new URL(address, 'http://127.0.0.1:5174');
-	const { fetch, calls } = fetchStub(
-		() =>
-			new Response(bodyText(entry), {
-				status: entry.status,
-				headers: { 'content-type': entry.contentType }
-			})
+	const { fetch, calls } = fetchStub((url) =>
+		url === ACCOUNTS_CALL
+			? Response.json(accounts)
+			: new Response(bodyText(entry), {
+					status: entry.status,
+					headers: { 'content-type': entry.contentType }
+				})
 	);
 	const program = denPage(url.pathname, url.searchParams, false).pipe(
 		Effect.either,
@@ -150,8 +171,12 @@ async function serve(
 }
 
 /** The page `entry` renders as, or a thrown test failure. */
-async function pageOf(entry: GoldenEntry, address = entry.path): Promise<DenPage> {
-	const { result } = await serve(entry, address);
+async function pageOf(
+	entry: GoldenEntry,
+	address = entry.path,
+	accounts: object = { accounts: [] }
+): Promise<DenPage> {
+	const { result } = await serve(entry, address, accounts);
 	if (!('result' in result) || result.result !== 'page') throw new Error('expected a page');
 	if (result.data.outcome.outcome !== 'page') throw new Error('expected a page outcome');
 	return result.data.outcome.page;
@@ -173,7 +198,8 @@ describe('the Den golden responses', () => {
 			const { result, calls } = await serve(entry);
 			switch (entry.status) {
 				case 200: {
-					expect(calls).toEqual([`/api/v1${entry.path}`]);
+					const named = showsAnAccount(entry) ? [ACCOUNTS_CALL] : [];
+					expect(calls).toEqual([`/api/v1${entry.path}`, ...named]);
 					if (!('result' in result) || result.result !== 'page') throw new Error('expected a page');
 					const outcome = result.data.outcome;
 					if (outcome.outcome !== 'page') throw new Error('expected a page outcome');
@@ -313,5 +339,51 @@ describe('a card of a type this build doesn’t know', () => {
 		expect(header).toContain('Locked characters');
 		expect(header).not.toContain('data-testid="card-type"');
 		expect(header).not.toContain('account.characters');
+	});
+});
+
+describe('an Account node through the live port shows the Account’s own name', () => {
+	const SUPREME_ARTS = 'did:plc:t7nesupremeartsfixtureaa';
+
+	/** `GET /accounts` on the wire, listing the fixture Account under `name`. */
+	function listed(name: string): object {
+		const row = {
+			id: SUPREME_ARTS,
+			did: SUPREME_ARTS,
+			handle: 'supreme-arts.zurfur.app',
+			name,
+			role: 'owner'
+		};
+		return { accounts: [row] };
+	}
+
+	it('names the Account by its listed name in alice’s accounts folder and on the node', async () => {
+		const folder = await pageOf(golden('alice/accounts.json'), undefined, listed('AC/DC Studio'));
+		const node = await pageOf(golden('alice/supreme-arts.json'), undefined, listed('AC/DC Studio'));
+		expect(entriesOf(folder).map((row) => row.name)).toEqual(['AC/DC Studio']);
+		expect(node.node.name).toBe('AC/DC Studio');
+	});
+
+	it('keeps the Den’s name for an Account the list doesn’t hold', async () => {
+		const folder = await pageOf(golden('alice/accounts.json'), undefined, { accounts: [] });
+		expect(entriesOf(folder).map((row) => row.name)).toEqual(['Supreme Arts']);
+	});
+
+	it('shows a listed name as text, never as markup', async () => {
+		const markup = '<img src=x onerror=alert(1)>AC/DC';
+		const folder = await pageOf(golden('alice/accounts.json'), undefined, listed(markup));
+		const node = await pageOf(golden('alice/supreme-arts.json'), undefined, listed(markup));
+
+		const { result } = await serve(golden('alice/supreme-arts.json'), undefined, listed(markup));
+		if (!('result' in result) || result.result !== 'page') throw new Error('expected a page');
+
+		const pane = render(EntryList, { props: { entries: entriesOf(folder), more: undefined } }).body;
+		const header = render(NodeHeader, { props: { node: node.node } }).body;
+		const bar = render(PathBar, { props: { trail: result.data.trail } }).body;
+		expect(result.data.trail.at(-1)).toMatchObject({ step: 'named', label: markup });
+		for (const html of [pane, header, bar]) {
+			expect(html).not.toContain('<img');
+			expect(html).toContain('&lt;img src=x onerror=alert(1)>AC/DC');
+		}
 	});
 });

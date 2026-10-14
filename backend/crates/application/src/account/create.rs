@@ -12,7 +12,7 @@ use domain::{
 use crate::{
     Ports,
     account::{AccountError, AccountResult, Accounts, ensure_handle_claimable},
-    den::{DenName, DenNameError},
+    den::{DenNameError, ShowableName, showable_refusal},
 };
 
 pub struct Command {
@@ -41,7 +41,7 @@ impl Accounts<'_> {
             handle,
             name,
         } = cmd;
-        let name = den_account_name(&name)?;
+        let name = showable_account_name(&name)?;
         ensure_handle_claimable(ports, &handle, handle_domain, None, now).await?;
 
         let did = ports.did_minter.mint(&handle).await?;
@@ -57,10 +57,11 @@ impl Accounts<'_> {
     }
 }
 
-/// An Account's name as the Den's name rule keeps it: refused where the rule refuses, and
-/// stored without the characters the rule strips.
-fn den_account_name(name: &AccountName) -> AccountResult<AccountName> {
-    let kept = DenName::try_from(name.as_str()).map_err(AccountError::InvalidName)?;
+/// An Account's name as the rule for a name safe to show keeps it: refused where that rule
+/// refuses, a `/` allowed, and stored without the characters the rule strips.
+fn showable_account_name(name: &AccountName) -> AccountResult<AccountName> {
+    let kept = ShowableName::try_from(name.as_str())
+        .map_err(|error| AccountError::InvalidName(showable_refusal(error)))?;
     kept.as_ref().parse().map_err(|error| {
         let refusal = match error {
             AccountNameError::Empty => DenNameError::Empty,
