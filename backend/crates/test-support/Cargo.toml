@@ -32,10 +32,13 @@ adapter-pg = { path = "../adapter-pg" }
 # 2026-08-25): every driver's in-process suite boots the same fakes.
 adapter-mem = { path = "../adapter-mem" }
 composition = { path = "../composition" }
+# `pg_app::den_world` creates its Workflows through the create use case: no route does yet.
+application = { path = "../application" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
-# 0.13 + cookies so http::client() is the type the api tests use
-reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
+# 0.13 + cookies so http::client() is the type the api tests use; multipart for
+# `pg_app::den_world`'s uploads
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }
 # `log_capture`: a writer a driver's log test reads its own subscriber back from.
 tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests

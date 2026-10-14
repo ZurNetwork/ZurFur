@@ -2,7 +2,7 @@
   "path": "backend/crates/test-support",
   "charted": "2026-09-13",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
-  "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`), and the cross-adapter PublicRecords conformance suite.",
+  "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
   "tags": [
     "category:tests",
@@ -21,12 +21,17 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads",
       "node": false
     },
     {
       "name": "src/contract.rs",
       "role": "the generic PublicRecords conformance suite (mem + atproto)",
+      "node": false
+    },
+    {
+      "name": "src/den.rs",
+      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
       "node": false
     },
     {
@@ -66,7 +71,12 @@
     },
     {
       "name": "src/pg_app.rs",
-      "role": "the PostgreSQL test setup: pg_app::serve boots the app on composition's live PostgreSQL wiring over a fresh_db clone, sessions in PostgreSQL; PgServed::sign_in(Profile) drives the real sign-in routes",
+      "role": "the PostgreSQL test setup: pg_app::serve boots the app on composition's live PostgreSQL wiring over a fresh_db clone, sessions in PostgreSQL; PgServed::sign_in(Profile) drives the real sign-in routes; pg_app::den_world seeds the den world on top",
+      "node": false
+    },
+    {
+      "name": "src/pg_app/den_world.rs",
+      "role": "den_world(app) -> DenWorld: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and set_visibility / store_unparsable_visibility as test-only writes; absent_* ids no seed writes",
       "node": false
     },
     {
@@ -86,7 +96,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore and CommissionStore — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore, CommissionStore and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
       "node": false
     },
     {
@@ -100,7 +110,13 @@
       "node": false
     }
   ],
-  "refs": [],
+  "refs": [
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13)"
+    }
+  ],
   "notes": [
     "src/lib.rs — full usage recipe (moved from the module doc, 2026-09-12)\n\nWriting a PDS-backed integration test:\n\n```no_run\n# async fn demo() -> anyhow::Result<()> {\nuse test_support::{ActingCredential, ThrowawayPds};\n\nlet pds = ThrowawayPds::boot().await?;                    // fresh, empty, hermetic\nlet account = pds.provision_account(\"alice.test\").await?; // acting-identity seam\nlet token = match &account.credential {\n    ActingCredential::PdsSession { access_jwt, .. } => access_jwt.clone(),\n    _ => unreachable!(\"new credential variants opt in explicitly\"),\n};\n// ... send `Authorization: Bearer {token}` to `account.endpoint`, acting as `account.did` ...\ndrop(pds);                                                // container + state gone\n# Ok(())\n# }\n```\n\n**Hermeticity.** The rig makes zero requests to the public atproto network. Each `ThrowawayPds` owns an in-process stub PLC directory on an ephemeral loopback port; the container reaches it through the Docker `host-gateway` alias, so identity minting (`did:plc` genesis operations) lands at the stub and nowhere else — `ThrowawayPds::published_plc_dids` exposes what arrived, letting tests assert the publication was local. No appview, crawler, or report-service endpoint is ever configured.\n\n**Container reuse (escape hatch, off by default).** One PDS boots per `ThrowawayPds::boot()`. If CI boot time ever hurts, share one instance per test binary instead of changing CI infrastructure: `ThrowawayPds` is `Send + Sync`, so a `tokio::sync::OnceCell<ThrowawayPds>` in a test's common module (with per-test unique handles) is the intended lever — the same reuse escape hatch the Postgres harness leaves available.",
     "src/pg.rs — lifecycle (moved from the module doc, 2026-09-12): Replaces the container-per-test pattern (a boot + full migration replay per test function) with a clone that costs tens of milliseconds, without weakening isolation: every test still gets its own pristine database.",
