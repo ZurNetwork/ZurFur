@@ -135,9 +135,7 @@ fn every_declared_route_is_served() {
 
     // The cookie-surface routes axum serves, post-strip, in axum's syntax.
     // Transcribed from `routes/session.rs`, `routes/accounts.rs`,
-    // `routes/commissions/mod.rs`. The two den routes are pinned together with
-    // `den.proto`, which declares them; their handlers mount on the same
-    // feature branch before it reaches `main`.
+    // `routes/commissions/mod.rs` and `routes/den/router.rs`.
     let served: BTreeSet<(String, String)> = [
         ("GET", "/me"),
         ("POST", "/signin"),

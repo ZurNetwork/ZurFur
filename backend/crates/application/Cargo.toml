@@ -56,3 +56,6 @@ composition = { path = "../composition" }
 # The fixture world the Den tests walk (`adapter_mem::fixture`); dev-only, so the
 # dep guard's normal graph stays adapter-free.
 adapter-mem = { path = "../adapter-mem" }
+# The engine-exposure guard parses the crate's own sources.
+syn = { workspace = true }
+quote = { workspace = true }

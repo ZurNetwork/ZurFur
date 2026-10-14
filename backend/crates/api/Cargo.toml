@@ -51,6 +51,9 @@ futures-util = { workspace = true }
 strum = { workspace = true }
 # Redirects built on the public origin (`Config::public_url`).
 url = { workspace = true }
+# The Den routes' own parse errors and newtypes (path-qualified derives).
+thiserror = { workspace = true }
+derive_more = { workspace = true }
 [dev-dependencies]
 # The drift gate: contract_current regenerates into a temp dir and diffs.
 contract-gen = { path = "../contract-gen" }
