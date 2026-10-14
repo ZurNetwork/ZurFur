@@ -1,6 +1,6 @@
 /**
  * Contrast arithmetic over the colours `tokens.css` declares: read the dark
- * `:root` block, follow `var()` chains to a colour, parse hex and `rgb()`
+ * `:root` blocks, follow `var()` chains to a colour, parse hex and `rgb()`
  * values, composite a translucent colour over the one beneath it, and compute
  * relative luminance and contrast ratio as WCAG 2.2 defines them.
  */
@@ -30,8 +30,9 @@ const COMMENT = /\/\*[\s\S]*?\*\//g;
 
 const CUSTOM_PROPERTY = /(--[\w-]+)\s*:\s*([^;]+);/g;
 
-/** The body of the first top-level rule whose selector is exactly `:root`: no attribute, outside any at-rule. */
-function topLevelRootBody(css: string): string | undefined {
+/** The bodies of every top-level rule whose selector is exactly `:root` (no attribute, outside any at-rule), in order. */
+function topLevelRootBodies(css: string): readonly string[] {
+	const bodies: string[] = [];
 	let depth = 0;
 	let ruleStart = 0;
 	let bodyStart: number | undefined;
@@ -42,20 +43,27 @@ function topLevelRootBody(css: string): string | undefined {
 			depth += 1;
 		} else if (character === '}') {
 			depth -= 1;
-			if (depth === 0 && bodyStart !== undefined) return css.slice(bodyStart, index);
-			if (depth === 0) ruleStart = index + 1;
+			if (depth === 0 && bodyStart !== undefined) bodies.push(css.slice(bodyStart, index));
+			if (depth === 0) {
+				bodyStart = undefined;
+				ruleStart = index + 1;
+			}
+		} else if (character === ';' && depth === 0) {
+			ruleStart = index + 1;
 		}
 	}
-	return undefined;
+	return bodies;
 }
 
-/** The custom properties the dark `:root` block declares, by name. */
+/** The custom properties the dark theme declares, by name: every top-level `:root` block, a later one winning as in the cascade. */
 export function darkRootProperties(css: string): Read<ReadonlyMap<string, string>> {
-	const body = topLevelRootBody(css.replace(COMMENT, ''));
-	if (body === undefined) return unreadable('no top-level :root block');
+	const bodies = topLevelRootBodies(css.replace(COMMENT, ''));
+	if (bodies.length === 0) return unreadable('no top-level :root block');
 	const properties = new Map<string, string>();
-	for (const [, name, value] of body.matchAll(CUSTOM_PROPERTY)) {
-		if (name !== undefined && value !== undefined) properties.set(name, value.trim());
+	for (const body of bodies) {
+		for (const [, name, value] of body.matchAll(CUSTOM_PROPERTY)) {
+			if (name !== undefined && value !== undefined) properties.set(name, value.trim());
+		}
 	}
 	return read(properties);
 }

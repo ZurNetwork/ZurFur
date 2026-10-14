@@ -17,8 +17,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	BACKGROUND_TOKENS,
 	CONTRAST_PAIRS,
 	DECORATIVE_TOKENS,
+	FILLED_PARTS,
 	minimumRatio,
 	type Background,
 	type ColorToken
@@ -95,15 +97,21 @@ describe('reading tokens.css', () => {
 		@media (prefers-contrast: more) {
 			:root { --b: #111; }
 		}
+		.elsewhere { --d: #222; }
+		:root { --b: #333; }
 	`;
 	const properties = valueOf(darkRootProperties(sample));
 
-	it('reads only the top-level :root block, without its comments', () => {
+	it('reads every top-level :root block and nothing else, without comments', () => {
 		expect([...properties.keys()]).toEqual(['--a', '--b', '--loop']);
 	});
 
+	it('lets a later top-level :root block win, as the cascade does', () => {
+		expect(valueOf(resolveProperty(properties, '--b'))).toBe('#333');
+	});
+
 	it('follows var() to the value', () => {
-		expect(valueOf(resolveProperty(properties, '--a'))).toBe('#fff');
+		expect(valueOf(resolveProperty(properties, '--a'))).toBe('#333');
 	});
 
 	it('reports a missing or circular reference', () => {
@@ -161,6 +169,15 @@ describe('the dark theme meets WCAG 2.2 AA', () => {
 	}
 });
 
+/*
+ * The completeness guard. It sees `--color-*` tokens named in a colour
+ * declaration of a `.svelte` style block or a `.css` file, and token
+ * definitions outside tokens.css. It does not see palette steps or literal
+ * colours named outside tokens.css, paint properties outside its two lists
+ * (such as `-webkit-text-fill-color` or `background-image`), or `opacity`
+ * lowering a painted colour. None is used today.
+ */
+
 /** Every stylesheet that paints with the tokens, by path under `src/`; tokens.css only defines them. */
 const SOURCES: ReadonlyMap<string, string> = new Map(
 	readdirSync(SOURCE_ROOT, { recursive: true, encoding: 'utf8' })
@@ -176,7 +193,9 @@ const BACKGROUND_PROPERTY = /^background(-color)?$/;
 
 const STYLE_BLOCK = /<style[^>]*>([\s\S]*?)<\/style>/g;
 
-const DECLARATION = /([-a-z]+)\s*:\s*([^;{}]+)(?=[;}])/g;
+const DECLARATION = /([-\w]+)\s*:\s*([^;{}]+)(?=[;}])/g;
+
+const TOKEN_DEFINITION = /^--(color|palette)-/;
 
 const TOKEN_REFERENCE = /var\(\s*(--color-[\w-]+)/g;
 
@@ -201,13 +220,17 @@ const tokenUses: readonly TokenUse[] = [...SOURCES].flatMap(([file, source]) =>
 
 const declaredForegrounds = new Set<string>(CONTRAST_PAIRS.map((pair) => pair.foreground));
 
-const declaredBackgrounds = new Set<string>(
-	CONTRAST_PAIRS.flatMap((pair) =>
-		pair.backgrounds.flatMap((background) =>
-			typeof background === 'string' ? [background] : [background.layer, background.over]
-		)
+const backgroundTokens = new Set<string>(BACKGROUND_TOKENS);
+
+const pairBackgroundTokens = CONTRAST_PAIRS.flatMap((pair) =>
+	pair.backgrounds.flatMap((background) =>
+		typeof background === 'string' ? [background] : [background.layer, background.over]
 	)
 );
+
+function isFilledPart(use: TokenUse): boolean {
+	return FILLED_PARTS.some((part) => part.token === use.token && part.file === use.file);
+}
 
 const decorative = new Set<string>(DECORATIVE_TOKENS.map((entry) => entry.token));
 
@@ -238,18 +261,43 @@ describe('every colour token in use is declared', () => {
 		).toEqual([]);
 	});
 
-	it('pairs every token painted as a background, unless it is decorative', () => {
+	it('fills only with a declared background or a filled part, unless it is decorative', () => {
 		const undeclared = tokenUses.filter(
 			(use) =>
 				BACKGROUND_PROPERTY.test(use.property) &&
-				!declaredBackgrounds.has(use.token) &&
-				!declaredForegrounds.has(use.token) &&
+				!backgroundTokens.has(use.token) &&
+				!isFilledPart(use) &&
 				!decorative.has(use.token)
 		);
 		expect(
 			undeclared,
-			`colour tokens filled with no declared pair:\n${describeUses(undeclared)}`
+			`colour tokens filled that are not declared backgrounds:\n${describeUses(undeclared)}`
 		).toEqual([]);
+	});
+
+	it('sets every pair on declared backgrounds only', () => {
+		const strays = pairBackgroundTokens.filter((token) => !backgroundTokens.has(token));
+		expect(strays).toEqual([]);
+	});
+
+	it('checks every filled part with a non-text pair of its own token', () => {
+		const unchecked = FILLED_PARTS.filter(
+			(part) =>
+				!CONTRAST_PAIRS.some((pair) => pair.foreground === part.token && pair.kind === 'nonText')
+		);
+		expect(unchecked).toEqual([]);
+	});
+
+	it('defines colour and palette tokens nowhere but tokens.css', () => {
+		const definitions = [...SOURCES].flatMap(([file, source]) =>
+			[...stylesheetText(file, source).matchAll(DECLARATION)]
+				.map(([, property = '']) => property)
+				.filter((property) => TOKEN_DEFINITION.test(property))
+				.map((property) => `${property} in ${file}`)
+		);
+		expect(definitions, `tokens defined outside tokens.css:\n${definitions.join('\n')}`).toEqual(
+			[]
+		);
 	});
 
 	it('lists as decorative only tokens still in use, and none that a pair already covers', () => {

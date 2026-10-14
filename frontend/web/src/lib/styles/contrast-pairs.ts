@@ -22,6 +22,13 @@ export interface ContrastPair {
 	readonly where: string;
 }
 
+/** A foreground token that paints a part with `background`, the one file that does it, and what the part is. */
+export interface FilledPart {
+	readonly token: ColorToken;
+	readonly file: string;
+	readonly part: string;
+}
+
 /** A token used in a colour declaration that no pair needs to cover, and why. */
 export interface DecorativeToken {
 	readonly token: ColorToken;
@@ -69,17 +76,18 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
 			'--color-surface',
 			'--color-surface-raised',
 			'--color-hover',
-			SELECTED_ON_SURFACE
+			SELECTED_ON_SURFACE,
+			SELECTED_ON_BG
 		],
 		kind: 'text',
 		where:
-			"labels, the node header's facts, inert entries, empty states and badges in the pane; the path bar, section links, tree icons and hints, and View options in the bars; a text box's value"
+			"labels, the node header's facts, inert entries, empty states and badges in the pane; the path bar, section links, tree icons and hints, and View options in the bars; a text box's value; selected"
 	},
 	{
 		foreground: '--color-accent',
-		backgrounds: ['--color-bg', '--color-surface'],
+		backgrounds: ['--color-bg', '--color-surface', SELECTED_ON_BG, SELECTED_ON_SURFACE],
 		kind: 'text',
-		where: 'links on the page, and the View options link in the sidebar and drawer'
+		where: 'links on the page, and the View options link in the sidebar and drawer; selected'
 	},
 	{
 		foreground: '--color-on-accent',
@@ -95,21 +103,21 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
 	},
 	{
 		foreground: '--color-visibility-private',
-		backgrounds: ['--color-bg', '--color-hover'],
+		backgrounds: ['--color-bg', '--color-hover', SELECTED_ON_BG],
 		kind: 'text',
-		where: 'the visibility marker in the node header and on entry rows, hovered too'
+		where: 'the visibility marker in the node header and on entry rows, hovered or selected'
 	},
 	{
 		foreground: '--color-visibility-listed',
-		backgrounds: ['--color-bg', '--color-hover'],
+		backgrounds: ['--color-bg', '--color-hover', SELECTED_ON_BG],
 		kind: 'text',
-		where: 'the visibility marker in the node header and on entry rows, hovered too'
+		where: 'the visibility marker in the node header and on entry rows, hovered or selected'
 	},
 	{
 		foreground: '--color-visibility-public',
-		backgrounds: ['--color-bg', '--color-hover'],
+		backgrounds: ['--color-bg', '--color-hover', SELECTED_ON_BG],
 		kind: 'text',
-		where: 'the visibility marker in the node header and on entry rows, hovered too'
+		where: 'the visibility marker in the node header and on entry rows, hovered or selected'
 	},
 	{
 		foreground: '--color-control-edge',
@@ -133,10 +141,10 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
 	},
 	{
 		foreground: '--color-accent',
-		backgrounds: ['--color-surface', SELECTED_ON_SURFACE],
+		backgrounds: ['--color-surface', SELECTED_ON_SURFACE, '--color-hover'],
 		kind: 'nonText',
 		where:
-			"the current tree row's bar, beside the sidebar and on its own row; a checked toggle's track"
+			"the current tree row's bar, beside the sidebar and on its own row, hovered too; a checked toggle's track"
 	},
 	{
 		foreground: '--color-on-accent',
@@ -161,5 +169,29 @@ export const DECORATIVE_TOKENS: readonly DecorativeToken[] = [
 	{
 		token: '--color-backdrop',
 		why: 'dims the page behind an open dialog; the dialog carries its own surface'
+	}
+];
+
+/** Every token a pair may sit on, and the only tokens a `background` may name besides a filled part. */
+export const BACKGROUND_TOKENS: readonly ColorToken[] = [
+	'--color-bg',
+	'--color-surface',
+	'--color-surface-raised',
+	'--color-hover',
+	'--color-selected',
+	'--color-accent'
+];
+
+/** Non-text parts painted with `background`, each checked by its foreground's non-text pair; paths are under `src/`. */
+export const FILLED_PARTS: readonly FilledPart[] = [
+	{
+		token: '--color-text-muted',
+		file: 'lib/components/ui/Toggle.svelte',
+		part: "an unchecked toggle's thumb"
+	},
+	{
+		token: '--color-on-accent',
+		file: 'lib/components/ui/Toggle.svelte',
+		part: "a checked toggle's thumb"
 	}
 ];
