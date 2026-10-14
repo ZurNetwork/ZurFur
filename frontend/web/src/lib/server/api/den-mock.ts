@@ -225,7 +225,7 @@ function denRoot(session: Session, accounts: readonly AccountMembership[]): Mock
 				...FOLDER,
 				key: 'posts',
 				name: 'posts',
-				type: 'post',
+				type: 'posts',
 				level: 'public',
 				mount: true,
 				contentNotShown: true

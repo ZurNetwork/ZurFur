@@ -18,8 +18,8 @@ pub enum DenType {
     #[strum(serialize = "top_level")]
     TopLevel,
     /// A poster's posts, `/post/<did>`.
-    #[strum(serialize = "post")]
-    Post,
+    #[strum(serialize = "posts")]
+    Posts,
     /// A user's own directory, the viewer's root.
     #[strum(serialize = "user")]
     User,
@@ -79,7 +79,7 @@ impl DenType {
         match self {
             DenType::CommissionChangelog | DenType::File => NodeKind::File,
             DenType::TopLevel
-            | DenType::Post
+            | DenType::Posts
             | DenType::User
             | DenType::UserAccounts
             | DenType::UserCharacters
@@ -102,7 +102,7 @@ impl DenType {
     /// never read from a node's data.
     pub fn content_not_shown(self) -> bool {
         match self {
-            DenType::Post
+            DenType::Posts
             | DenType::AccountCommissions
             | DenType::Workflow
             | DenType::Slot

@@ -277,7 +277,7 @@ async fn alice_s_root_is_hers_and_holds_her_three_open_folders_and_posts() {
     let expected_posts = json!({
         "segments": ["posts"],
         "name": "posts",
-        "type": "post",
+        "type": "posts",
         "kind": "directory",
         "mount": true,
         "open": { "ownLevel": "public", "contentNotShown": true },
@@ -310,7 +310,7 @@ async fn alice_s_posts_open_public_and_empty_with_their_content_not_shown() {
     let expected_node = json!({
         "segments": ["posts"],
         "name": "posts",
-        "type": "post",
+        "type": "posts",
         "kind": "directory",
         "mount": true,
         "open": { "ownLevel": "public", "contentNotShown": true },
