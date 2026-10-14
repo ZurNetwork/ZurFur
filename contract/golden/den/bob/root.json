@@ -33,6 +33,19 @@
           "commissions"
         ],
         "type": "user.commissions"
+      },
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "posts",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "public"
+        },
+        "segments": [
+          "posts"
+        ],
+        "type": "post"
       }
     ]
   },
