@@ -7,8 +7,8 @@ use std::{
 use crate::{
     Ports, account, character, commission,
     den::{
-        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, SoftDelete, TopLevel,
-        admission::admission, names, place::Parent, post, read::SoftDeleteLookup,
+        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, RootNaming, SoftDelete,
+        TopLevel, admission::admission, names, place::Parent, post, read::SoftDeleteLookup,
     },
     user,
 };
@@ -58,7 +58,27 @@ impl<'a> DenHost<'a> {
     /// A host for `viewer`, the session's user, reading through `ports`; `include_deleted` is
     /// the request's own and never reaches the engine.
     pub(crate) fn new(ports: &'a Ports, viewer: &'a UserId, include_deleted: bool) -> Self {
-        let context = DenContext { ports, viewer };
+        Self::naming(ports, viewer, include_deleted, RootNaming::LookUp)
+    }
+
+    /// A host for den's access check: it names the viewer's root without a profile lookup,
+    /// so the check never waits on a name it throws away.
+    pub(in crate::den) fn for_check(ports: &'a Ports, viewer: &'a UserId) -> Self {
+        Self::naming(ports, viewer, false, RootNaming::CacheOnly)
+    }
+
+    /// A host whose reads name the viewer's root as `root_naming` says.
+    fn naming(
+        ports: &'a Ports,
+        viewer: &'a UserId,
+        include_deleted: bool,
+        root_naming: RootNaming,
+    ) -> Self {
+        let context = DenContext {
+            ports,
+            viewer,
+            root_naming,
+        };
         Self {
             viewer: Self::viewer_of(context.viewer),
             context,

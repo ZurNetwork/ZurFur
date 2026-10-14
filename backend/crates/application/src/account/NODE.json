@@ -49,7 +49,7 @@
     },
     {
       "name": "list.rs",
-      "role": "the caller's own memberships (self-view scope)",
+      "role": "the caller's own memberships (self-view scope); keeps only the memberships whose Account den's access check opens (a not-found drops it, a store failure fails the read), each listing named by the check's proof",
       "node": false
     },
     {

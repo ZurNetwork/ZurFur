@@ -35,7 +35,7 @@
     },
     {
       "name": "context.rs",
-      "role": "DenContext: the ports and the session viewer every arm receives",
+      "role": "DenContext: the ports, the session viewer and the read's RootNaming (look up, or the cache only) every arm receives",
       "node": false
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "host.rs",
-      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm",
+      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
       "node": false
     },
     {

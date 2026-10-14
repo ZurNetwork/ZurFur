@@ -18,6 +18,7 @@ pub mod pg_app;
 mod plc_stub;
 pub mod recording;
 pub mod runtime;
+pub mod store_doubles;
 
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;

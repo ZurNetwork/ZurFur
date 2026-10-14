@@ -105,6 +105,11 @@
       "node": false
     },
     {
+      "name": "src/store_doubles.rs",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, or a user row read as gone; tests seed first, then script",
+      "node": false
+    },
+    {
       "name": "tests/throwaway_pds.rs",
       "role": "self-test incl. the image/.env.example drift assertion",
       "node": false

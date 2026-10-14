@@ -15,7 +15,7 @@ use domain::{
 use test_support::recording::{CallLog, RecordingAccountStore, SubjectLog};
 
 use super::*;
-use crate::{App, Ports};
+use crate::{App, Ports, den::RootNaming};
 
 /// The deactivated Account "Closed Studio": alice its Owner, bob a Member.
 fn closed_studio() -> AccountId {
@@ -86,6 +86,7 @@ async fn calls_for(viewer: &UserId, account: &AccountId) -> (Vec<&'static str>, 
     let context = DenContext {
         ports: app.ports(),
         viewer,
+        root_naming: RootNaming::LookUp,
     };
     node(&context, account).await.expect("no store fails");
     (log.events(), subjects.subjects())
@@ -123,6 +124,7 @@ async fn a_member_opens_a_live_account_by_standing() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let account = node(&context, &supreme_arts())
@@ -146,6 +148,7 @@ async fn the_owner_opens_a_deactivated_account_marked() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let account = node(&context, &closed_studio())
@@ -171,6 +174,7 @@ async fn a_stranger_a_non_owner_and_a_missing_account_are_all_absent() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &bob,
+        root_naming: RootNaming::LookUp,
     };
     let missing = AccountId::from(Did::from("did:plc:nope".to_owned()));
 
@@ -197,6 +201,7 @@ async fn a_stored_name_the_rule_refuses_shows_the_handle() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
 
     let account = node(&context, &flipped)
@@ -214,6 +219,7 @@ async fn an_account_holds_its_three_system_folders_found_by_key() {
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
     let account = AccountPlace::Account(supreme_arts());
 
@@ -254,6 +260,7 @@ async fn an_account_s_characters_folder_is_empty_until_shared_characters_are_mod
     let context = DenContext {
         ports: app.ports(),
         viewer: &alice,
+        root_naming: RootNaming::LookUp,
     };
     let characters = AccountPlace::Characters(supreme_arts());
 

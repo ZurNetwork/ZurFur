@@ -7,7 +7,7 @@ use domain::elements::{did::Did, user::UserId};
 use crate::{
     Ports,
     den::{
-        DenContent, DenContext, DenError, DenNode,
+        DenContent, DenContext, DenError, DenNode, RootNaming,
         host::DenHost,
         read::{Reader, crumb},
     },
@@ -41,7 +41,11 @@ pub(crate) async fn world() -> World {
 
 /// A context for `viewer` over `ports`, as the host hands its arms.
 pub(crate) fn context<'a>(ports: &'a Ports, viewer: &'a UserId) -> DenContext<'a> {
-    DenContext { ports, viewer }
+    DenContext {
+        ports,
+        viewer,
+        root_naming: RootNaming::LookUp,
+    }
 }
 
 /// A segment from test text.

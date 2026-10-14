@@ -1,15 +1,23 @@
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use adapter_mem::fixture::{alice, bob, old_sketch, supreme_arts, untitled, untitled_files};
 use domain::{
     elements::{
         commission::{Commission, CommissionFile, CommissionTitle, FileName, Visibility},
         did::Did,
+        profile::Profile,
         user::User,
     },
-    ports::{UnitOfWork, UserStore},
+    ports::{ProfileSource, UnitOfWork, UserStore},
 };
 use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
+use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::*;
@@ -330,4 +338,53 @@ async fn a_store_failure_stays_a_store_failure() {
     let answer = may_open(&ports, &alice(), ServedNode::OwnRoot).await;
 
     assert!(matches!(answer, Err(DenError::Store(_))));
+}
+
+/// A PDS that never answers, counting every fetch it is asked for.
+#[derive(Default)]
+struct SilentPds {
+    fetches: AtomicUsize,
+}
+
+impl SilentPds {
+    fn fetches(&self) -> usize {
+        self.fetches.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl ProfileSource for SilentPds {
+    async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        std::future::pending().await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_check_names_a_cold_root_without_starting_or_waiting_on_a_lookup() {
+    let World { mut ports, runtime } = test_world::world().await;
+    let carol = Did::from("did:plc:den-access-carol".to_owned());
+    let provisioned = carol.clone();
+    runtime
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.users().provision(&provisioned).await
+        })
+        .await
+        .expect("carol signs up");
+    let pds = Arc::new(SilentPds::default());
+    ports.profile_source = pds.clone();
+    let carol = UserId::from(carol);
+    let started = Instant::now();
+
+    let opens = may_open(&ports, &carol, ServedNode::OwnRoot)
+        .await
+        .expect("carol opens her own root");
+
+    let waited = started.elapsed();
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(opens.node(), &ServedNode::OwnRoot);
+    assert_eq!(waited, Duration::ZERO, "the check never waits on a name");
+    assert_eq!(pds.fetches(), 0, "the check never starts a lookup");
 }
