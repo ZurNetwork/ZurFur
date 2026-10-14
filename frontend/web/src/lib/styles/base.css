@@ -111,7 +111,7 @@ form button:not([class]):hover {
 
 :focus-visible {
 	outline: var(--focus-ring-width) solid var(--color-focus);
-	outline-offset: 2px;
+	outline-offset: var(--focus-ring-offset);
 }
 
 ::selection {

@@ -101,6 +101,7 @@
 	--elevation-2: 0 0.5rem 1.5rem rgb(0 0 0 / 0.45);
 	--border-width: 1px;
 	--focus-ring-width: 2px;
+	--focus-ring-offset: 2px;
 
 	/* Semantic: motion. */
 	--duration-fast: 120ms;

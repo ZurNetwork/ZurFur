@@ -45,13 +45,19 @@
 		font-size: var(--text-sm);
 	}
 
+	/*
+	 * The list clips what does not fit, so it keeps a focus ring's worth of
+	 * room on every side (taken back by the margin) for a step's ring to show whole.
+	 */
 	ol {
+		--ring-room: calc(var(--focus-ring-width) + var(--focus-ring-offset));
+
 		display: flex;
 		flex-wrap: nowrap;
 		align-items: center;
 		gap: var(--space-1);
-		margin: 0;
-		padding: 0;
+		margin: calc(-1 * var(--ring-room));
+		padding: var(--ring-room);
 		list-style: none;
 		overflow: hidden;
 	}
@@ -63,8 +69,9 @@
 		white-space: nowrap;
 	}
 
+	/* The separator is drawn, not read: its alternative text is empty. */
 	li + li::before {
-		content: '/';
+		content: '/' / '';
 		margin-right: var(--space-1);
 		color: var(--color-text-muted);
 	}
@@ -93,8 +100,13 @@
 		align-items: center;
 		gap: var(--space-1);
 		max-width: 100%;
+		white-space: nowrap;
+	}
+
+	/* A flex item: the name itself shrinks and ends in "…". */
+	.path-bar--back a > :global(bdi) {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 </style>
