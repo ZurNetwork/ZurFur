@@ -91,7 +91,7 @@
     },
     {
       "name": "Justfile",
-      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool)",
+      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool)",
       "node": false
     },
     {
@@ -116,7 +116,7 @@
     },
     {
       "name": "docker-compose.yml",
-      "role": "dev stack db/pds/plc/caddy, namespaced by COMPOSE_PROJECT_NAME",
+      "role": "dev stack db/pds/plc/caddy, namespaced by COMPOSE_PROJECT_NAME; caddy-dev-profile (the dev profile's one origin) only under the `dev-profile` compose profile",
       "node": false
     },
     {

@@ -64,6 +64,24 @@ dev-mock:
 dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
     ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile cargo run -p api --features dev-profile
 
+# The dev profile in a browser: its one origin (the `caddy-dev-profile` compose
+# service, the same Caddyfile, loopback only) on `proxy_port`, in front of the
+# dev-profile API at `api_upstream` and the web's vite dev server on `web_port`,
+# which runs in the foreground like `dev-web`; Ctrl-C stops both. Run
+# `just dev-profile` in another terminal, then browse http://127.0.0.1:8180 and
+# sign in (every sign-in is alice). The defaults mirror `dev-profile`'s, so it
+# runs beside `just dev` without colliding. Needs .env (`just setup`): compose
+# reads it, and so does the API. Other ports, with the API to match:
+# `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
+# `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
+dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port="5184":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
+    trap 'docker compose --profile dev-profile down caddy-dev-profile' EXIT
+    docker compose --profile dev-profile up -d caddy-dev-profile
+    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" yarn dev)
+
 # --- Docker ---
 
 up:

@@ -42,6 +42,11 @@
       "node": false
     },
     {
+      "name": "navigation.ts",
+      "role": "loadFullPage — leave for a location by a full page load, never the client router (a seam specs mock)",
+      "node": false
+    },
+    {
       "name": "server/",
       "role": "the Effect half — runtime, API port, programs, form schemas",
       "node": true
