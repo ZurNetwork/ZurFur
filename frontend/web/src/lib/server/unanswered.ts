@@ -8,9 +8,8 @@ import { runApi } from './runtime';
 import { SESSION_REFERRER_POLICY } from './session-headers';
 
 /**
- * The sign-in gate's own page for when Zurfur doesn't answer: fixed HTML with
- * no script, and nothing from the request written into it. "Try again" is
- * `href=""`, which the browser resolves to the address it is already on.
+ * The sign-in gate's page for when Zurfur doesn't answer: fixed HTML, no script, nothing
+ * from the request. "Try again" (`href=""`) opens the current address again with a GET.
  */
 export const UNANSWERED_PAGE = `<!doctype html>
 <html lang="en">

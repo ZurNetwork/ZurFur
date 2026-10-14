@@ -1,8 +1,7 @@
-//! An Account's name as the account routes serve it, on the in-memory stores: a stored name
-//! the rule for a name safe to show refuses is served as the Account's handle, one it strips
-//! is served in its kept form, and one it accepts unchanged is served as stored, on
-//! `GET /accounts` (to the Owner and to a Member), on `PATCH /accounts/{id}/handle`, and never
-//! in a founding refusal.
+//! The account routes on the in-memory stores serve a stored name as the safe-to-show rule
+//! keeps it: a refused name as the Account's handle, a stripped one in its kept form, an
+//! accepted one as stored; on `GET /accounts` (Owner and Member) and
+//! `PATCH /accounts/{id}/handle`, and never in a founding refusal.
 
 use adapter_mem::MemBackend;
 use chrono::Utc;
