@@ -47,12 +47,12 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     let state: AppState = runtime;
     // The session layer backs the cookie with Postgres, so the row survives the
     // "restart" simulated below by tearing down this app and building another.
-    let app = api::app(state).layer(http_cookies::session_layer(
-        PgSessionStore::new(pool),
-        false,
-    ));
+    let sessions = http_cookies::session_layer(PgSessionStore::new(pool), false);
+    let app = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        http_stack::serve(listener, app, std::future::pending())
+            .await
+            .unwrap();
     });
     format!("http://{addr}")
 }

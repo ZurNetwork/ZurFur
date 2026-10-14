@@ -125,3 +125,26 @@ fn invalid_query_is_one_fixed_422() {
 
     assert_eq!(problem, expected);
 }
+
+/// The body and headers of `response`, its body parsed as JSON.
+async fn rendered(response: Response) -> (StatusCode, Option<HeaderValue>, serde_json::Value) {
+    let status = response.status();
+    let content_type = response.headers().get(CONTENT_TYPE).cloned();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    let json = serde_json::from_slice(&body).expect("JSON");
+    (status, content_type, json)
+}
+
+// A handler that panics answers what any failed dependency answers: the
+// detach layer's panic answer is the registry's internal error, unchanged.
+#[tokio::test]
+async fn the_panic_answer_is_the_internal_error_problem() {
+    let failure = anyhow::anyhow!("a port failed");
+    let internal_error = Problem::from(failure).into_response();
+
+    let panic_answer = rendered(http_stack::panic_answer()).await;
+
+    assert_eq!(panic_answer, rendered(internal_error).await);
+}

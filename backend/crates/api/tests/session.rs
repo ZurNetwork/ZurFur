@@ -976,9 +976,12 @@ async fn serve_with_session_store(store: impl SessionStore + Clone) -> String {
         signin: Signin::Live,
     });
     let state = AppState { auth, ..runtime };
-    let router = api::app(state).layer(http_cookies::session_layer(store, false));
+    let sessions = http_cookies::session_layer(store, false);
+    let router = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        http_stack::serve(listener, router, std::future::pending())
+            .await
+            .unwrap();
     });
     base_url
 }

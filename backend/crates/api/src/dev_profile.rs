@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use adapter_mem::fixture::{alice, bob, seed_commission, seed_identity, supreme_arts};
 use adapter_mem::{FixedSignIn, MemBackend, MemDidMinter, MemIdentityResolver, MemProfileSource};
-use axum::Router;
+use http_stack::{Detach, Stacked};
 use tower_sessions::MemoryStore;
 
 use crate::{AppState, Config, Environment};
@@ -50,9 +50,9 @@ pub fn ensure_dev_variable(zurfur_env: Option<&OsStr>) -> Result<(), OutsideDev>
     }
 }
 
-/// The dev profile's app, its in-memory session layer included. Refuses with
-/// [`OutsideDev`] before anything else unless `config.env` is `DEV`.
-pub async fn app(config: Config) -> anyhow::Result<Router> {
+/// The dev profile's app as served, its in-memory session layer included.
+/// Refuses with [`OutsideDev`] before anything else unless `config.env` is `DEV`.
+pub async fn app(config: Config) -> anyhow::Result<Stacked> {
     ensure_dev(&config.env)?;
     tracing::warn!(
         "dev profile: the in-memory fixture world, where every sign-in is a fixture user"
@@ -61,7 +61,7 @@ pub async fn app(config: Config) -> anyhow::Result<Router> {
     let secure_cookies = config.env.secure_cookies();
     let runtime = runtime(config).await?;
     let sessions = http_cookies::session_layer(MemoryStore::default(), secure_cookies);
-    let app = crate::app(runtime).layer(sessions);
+    let app = http_stack::stack(crate::app(runtime), sessions, Detach::default());
     Ok(app)
 }
 

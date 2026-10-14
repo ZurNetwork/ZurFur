@@ -29,8 +29,28 @@ pub struct Output {
 }
 
 impl<'a> Accounts<'a> {
+    /// Deletes the account, then, once that delete has committed, tombstones the DID of a
+    /// hard-deleted one. A tombstone failure is logged and the delete stands.
     #[use_case]
-    pub async fn delete(
+    pub async fn delete(&self, #[ports] ports: &Ports, cmd: Command) -> AccountResult<Output> {
+        let account_id = cmd.account_id.clone();
+        let removed = self.remove(cmd).await?;
+        if let DeleteOutcome::Hard = removed.outcome
+            && let Err(err) = ports.did_minter.tombstone(account_id.did()).await
+        {
+            tracing::warn!(
+                error = ?err,
+                did = %AsRef::<str>::as_ref(&account_id),
+                "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
+            )
+        };
+        Ok(removed)
+    }
+
+    /// Removes the account in one unit: soft when it bears facts, hard otherwise. The
+    /// unit commits when this returns `Ok`.
+    #[use_case]
+    async fn remove(
         &self,
         #[ports] ports: &Ports,
         #[lazy_unit] uow: &mut LazyUnit<'_>,
@@ -64,13 +84,6 @@ impl<'a> Accounts<'a> {
             DeleteOutcome::Soft
         } else {
             uow.accounts().hard_delete(&account_id).await?;
-            if let Err(err) = ports.did_minter.tombstone(account_id.did()).await {
-                tracing::warn!(
-                    error = ?err,
-                    did = %AsRef::<str>::as_ref(&account_id),
-                    "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
-                )
-            };
             DeleteOutcome::Hard
         };
         Ok(Output { outcome })

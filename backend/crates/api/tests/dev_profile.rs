@@ -227,7 +227,9 @@ mod with_the_feature {
             .await
             .expect("the dev profile starts in dev");
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            http_stack::serve(listener, app, std::future::pending())
+                .await
+                .unwrap();
         });
         base_url
     }

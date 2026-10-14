@@ -6,6 +6,7 @@ use base64::Engine as _;
 use composition::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime};
 use domain::elements::profile::Profile;
 use http_cookies::ZurfurCookie;
+use http_stack::{Detach, Stacked};
 use reqwest::header::SET_COOKIE;
 
 use super::{InProcessPds, StatementLog, record_statements};
@@ -21,6 +22,8 @@ pub struct PgServed {
     pub runtime: Runtime,
     /// The in-process PDS behind the sign-in and profile ports.
     pub pds: Arc<InProcessPds>,
+    /// The detach layer the server runs its requests in.
+    pub detach: Detach,
     /// Keeps the private database, and the shared container, alive.
     db: TestDb,
 }
@@ -38,7 +41,15 @@ pub struct SignedIn {
 /// database, with the sign-in and profile ports answered by an
 /// [`InProcessPds`] and sessions kept in PostgreSQL.
 pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
-    serve_through(app, None).await
+    serve_through(app, None, |stacked| stacked).await
+}
+
+/// As [`serve`], with `wrap` adding layers outside the whole stack.
+pub async fn serve_wrapped(
+    app: impl FnOnce(Runtime) -> Router,
+    wrap: impl FnOnce(Stacked) -> Stacked,
+) -> PgServed {
+    serve_through(app, None, wrap).await
 }
 
 /// As [`serve`], with the app reaching its database through a proxy that logs into
@@ -47,13 +58,15 @@ pub async fn serve_recording(
     app: impl FnOnce(Runtime) -> Router,
     statements: &StatementLog,
 ) -> PgServed {
-    serve_through(app, Some(statements)).await
+    serve_through(app, Some(statements), |stacked| stacked).await
 }
 
-/// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given.
+/// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given,
+/// with `wrap` adding layers outside the whole stack.
 async fn serve_through(
     app: impl FnOnce(Runtime) -> Router,
     statements: Option<&StatementLog>,
+    wrap: impl FnOnce(Stacked) -> Stacked,
 ) -> PgServed {
     let db = fresh_db().await;
     let database_url = match statements {
@@ -76,17 +89,49 @@ async fn serve_through(
     };
 
     let sessions = http_cookies::session_layer(PgSessionStore::new(runtime.pool.clone()), false);
-    let router = app(runtime.clone()).layer(sessions);
+    let stacked = wrap(http_stack::stack(
+        app(runtime.clone()),
+        sessions,
+        Detach::default(),
+    ));
+    let detach = stacked.detach().clone();
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        http_stack::serve(listener, stacked, std::future::pending())
+            .await
+            .unwrap();
     });
 
     PgServed {
         base_url,
         runtime,
         pds,
+        detach,
         db,
     }
+}
+
+/// The composition root's live wiring over a fresh migrated database, served
+/// nowhere: for a test that drives use cases on PostgreSQL directly.
+pub struct PgRuntime {
+    /// The live runtime: PostgreSQL stores over `runtime.pool`.
+    pub runtime: Runtime,
+    /// Keeps the private database, and the shared container, alive while held.
+    _db: TestDb,
+}
+
+/// A [`PgRuntime`] with the sign-in and profile ports answered by an [`InProcessPds`].
+pub async fn pg_runtime() -> PgRuntime {
+    let db = fresh_db().await;
+    let pds = Arc::new(InProcessPds::default());
+    let live = Runtime::connect(config("http://localhost", db.url()))
+        .await
+        .expect("the live runtime connects to the test database");
+    let runtime = Runtime {
+        auth: pds.clone(),
+        profile_source: pds,
+        ..live
+    };
+    PgRuntime { runtime, _db: db }
 }
 
 impl PgServed {

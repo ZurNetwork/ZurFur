@@ -1,3 +1,4 @@
 disallowed-methods = [
     { path = "tower_sessions::SessionManagerLayer::new", reason = "mount sessions through `http_cookies::session_layer`, which puts the single-session-cookie guard in front; a bare layer reads whichever of two planted pairs comes last" },
+    { path = "axum::serve", reason = "serve the app through `http_stack::serve`, which runs every request to its end inside the detach layer" },
 ]

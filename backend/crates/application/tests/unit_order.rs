@@ -108,6 +108,38 @@ async fn changing_a_handle_updates_the_did_document_before_the_unit_opens() {
 }
 
 #[tokio::test]
+async fn deleting_an_account_tombstones_its_did_after_the_unit_commits() {
+    let did = Did::from("did:plc:order-delete".to_string());
+    let mut runtime = test_support::runtime::mem(&did).build().runtime;
+    let user = recognized(&*runtime.database, &did).await;
+    let founding = account::create::Command {
+        actor_id: user.id.clone(),
+        name: "Acme Studio".parse().expect("a valid name"),
+        handle: "acme.zurfur.app".parse().expect("a valid handle"),
+    };
+    let founded = runtime
+        .app()
+        .accounts()
+        .create(founding, &handle_domain(), Utc::now())
+        .await
+        .expect("founds");
+    let log = record_calls(&mut runtime);
+
+    let deleting = account::delete::Command {
+        actor_id: user.id,
+        account_id: founded.account_id,
+    };
+    runtime
+        .app()
+        .accounts()
+        .delete(deleting)
+        .await
+        .expect("deletes");
+
+    assert_eq!(log.events(), vec!["begin", "commit", "tombstone"]);
+}
+
+#[tokio::test]
 async fn creating_a_character_mints_the_did_before_the_unit_opens() {
     let did = Did::from("did:plc:order-character".to_string());
     let mut runtime = test_support::runtime::mem(&did).build().runtime;
