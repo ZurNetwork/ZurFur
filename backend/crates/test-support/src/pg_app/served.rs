@@ -5,6 +5,8 @@ use axum::Router;
 use base64::Engine as _;
 use composition::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime};
 use domain::elements::profile::Profile;
+use http_cookies::ZurfurCookie;
+use reqwest::header::SET_COOKIE;
 
 use super::{InProcessPds, StatementLog, record_statements};
 use crate::http::client;
@@ -20,7 +22,16 @@ pub struct PgServed {
     /// The in-process PDS behind the sign-in and profile ports.
     pub pds: Arc<InProcessPds>,
     /// Keeps the private database, and the shared container, alive.
-    _db: TestDb,
+    db: TestDb,
+}
+
+/// A user signed in through the app's routes: the client holding the session, and the raw
+/// `zurfur.sid` value, for a caller that hands the session on as a browser user would.
+pub struct SignedIn {
+    /// A client whose cookie jar carries the session.
+    pub client: reqwest::Client,
+    /// The `zurfur.sid` cookie's value, as devtools shows it.
+    pub session_cookie: String,
 }
 
 /// Boots `app` on the composition root's live wiring over a fresh migrated
@@ -74,7 +85,7 @@ async fn serve_through(
         base_url,
         runtime,
         pds,
-        _db: db,
+        db,
     }
 }
 
@@ -82,6 +93,17 @@ impl PgServed {
     /// Registers `profile` with the in-process PDS, then signs it in through
     /// the app's own sign-in routes. Returns a client holding the session.
     pub async fn sign_in(&self, profile: Profile) -> reqwest::Client {
+        let signed_in = self.sign_in_with_cookie(profile).await;
+        signed_in.client
+    }
+
+    /// The command line that runs `psql` on this app's database inside its container.
+    pub fn psql_command(&self) -> String {
+        self.db.psql_command()
+    }
+
+    /// As [`PgServed::sign_in`], also returning the `zurfur.sid` value the callback set.
+    pub async fn sign_in_with_cookie(&self, profile: Profile) -> SignedIn {
         let handle = profile.handle.to_string();
         self.pds.register(profile);
         let browser = client();
@@ -122,8 +144,13 @@ impl PgServed {
             home.as_str(),
             "sign-in lands on the home page, not an error"
         );
+        let session_cookie =
+            set_session_cookie(&callback).expect("the sign-in callback sets the session cookie");
 
-        browser
+        SignedIn {
+            client: browser,
+            session_cookie,
+        }
     }
 }
 
@@ -145,4 +172,18 @@ fn config(public_url: &str, database_url: &str) -> Config {
         deadline_sweep_interval_secs: 60,
         max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
     }
+}
+
+/// The value of the `zurfur.sid` cookie `response` sets, if it sets a non-empty one.
+fn set_session_cookie(response: &reqwest::Response) -> Option<String> {
+    let prefix = format!("{}=", ZurfurCookie::Session.name(false));
+    response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|header| header.to_str().ok())
+        .filter_map(|header| header.split(';').next())
+        .filter_map(|pair| pair.strip_prefix(prefix.as_str()))
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
 }

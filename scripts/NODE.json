@@ -11,7 +11,7 @@
     "`ZURFUR_*` env convention (env wins over `.env.example` defaults); each smoke script proves the dev loop itself at the shell/`just` level, distinct from the automated per-test-throwaway integration harness."
   ],
   "entry_points": [
-    "../Justfile (the pds-provision, pds-smoke, web-smoke, worktree-init, nodes-install recipes call these)",
+    "../Justfile (the pds-provision, pds-smoke, web-smoke, den-fill, worktree-init, nodes-install recipes call these)",
     "nodes-fmt-hook.sh (run by .claude/settings.json on every Write|Edit)"
   ],
   "fs": [
@@ -23,6 +23,11 @@
     {
       "name": "ci-paths.sh",
       "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
+      "node": false
+    },
+    {
+      "name": "den-fill.sh",
+      "role": "fills your Den on just dev with two commissions, one archived, as you, through the commission routes (one read-only SELECT for the skeleton tab id); the session cookie reaches curl only on stdin (just den-fill; tested by den-fill.test.sh and api/tests/den_postgres.rs)",
       "node": false
     },
     {

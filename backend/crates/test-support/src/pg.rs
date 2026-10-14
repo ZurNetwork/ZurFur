@@ -29,6 +29,8 @@ struct SharedPg {
     _container: ContainerAsync<Postgres>,
     /// Admin URL (the stock `postgres` database) used for `CREATE DATABASE`.
     admin_url: String,
+    /// The container's id, for running a client inside it.
+    container_id: String,
     /// Serializes clones: Postgres rejects concurrent copies of one template.
     create: tokio::sync::Mutex<()>,
 }
@@ -48,13 +50,24 @@ static BOOT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// container.
 pub struct TestDb {
     url: String,
-    _shared: Arc<SharedPg>,
+    /// The database's name inside the shared container.
+    name: String,
+    /// Keeps the shared container alive, and names it.
+    shared: Arc<SharedPg>,
 }
 
 impl TestDb {
     /// Connection URL of this test's private database.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// The command line that runs `psql` inside the container on this database, reading
+    /// SQL from stdin and printing bare, unaligned tuples. Needs the `docker` CLI.
+    pub fn psql_command(&self) -> String {
+        let container = &self.shared.container_id;
+        let name = &self.name;
+        format!("docker exec -i {container} psql -U postgres -d {name} -tA")
     }
 }
 
@@ -96,7 +109,8 @@ async fn create_db(template: Option<&str>) -> TestDb {
         .expect("admin url has a database segment");
     TestDb {
         url: format!("{base}/{name}"),
-        _shared: shared,
+        name,
+        shared,
     }
 }
 
@@ -151,9 +165,11 @@ async fn shared() -> Arc<SharedPg> {
     adapter_pg::migrate(&pool).await.expect("migrations run");
     pool.close().await;
 
+    let container_id = container.id().to_owned();
     let live = Arc::new(SharedPg {
         _container: container,
         admin_url,
+        container_id,
         create: tokio::sync::Mutex::new(()),
     });
     *SHARED.lock().expect("shared pg lock") = Arc::downgrade(&live);
