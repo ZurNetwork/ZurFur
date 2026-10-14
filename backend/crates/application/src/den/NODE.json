@@ -24,6 +24,11 @@
   ],
   "fs": [
     {
+      "name": "access.rs",
+      "role": "den's access check: may this viewer open the node a read that bypasses the Den serves, named by typed ids; Atta's own resolve, open on exactly its real path, else the one not-found",
+      "node": false
+    },
+    {
       "name": "admission.rs",
       "role": "the admit table: live, archived and deactivated nodes by access, reach and include_deleted",
       "node": false
