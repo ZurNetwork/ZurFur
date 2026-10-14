@@ -21,5 +21,7 @@ pub use pairs::{
     den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
     download_participant_pair, public_live_download_pair, stranger_targets,
 };
-pub use served::{PgServed, SignedIn, serve, serve_recording};
+pub use served::{
+    PgRuntime, PgServed, SignedIn, pg_runtime, serve, serve_recording, serve_wrapped,
+};
 pub use statements::{Statement, StatementLog, record_statements};

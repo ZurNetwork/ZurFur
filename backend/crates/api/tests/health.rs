@@ -62,9 +62,12 @@ async fn health_is_green_against_fresh_postgres() {
         // /health resolves no identity; an empty in-memory world keeps DNS out.
         identity_resolver: Arc::new(adapter_mem::MemIdentityResolver::new()),
     };
-    let app = api::app(state);
+    let sessions = http_cookies::session_layer(tower_sessions::MemoryStore::default(), false);
+    let app = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        http_stack::serve(listener, app, std::future::pending())
+            .await
+            .unwrap();
     });
 
     let response = reqwest::get(format!("http://{addr}/health"))

@@ -217,6 +217,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "http-cookies",
+ "http-stack",
  "insta",
  "pbjson",
  "pbjson-types",
@@ -2426,6 +2427,25 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tower-sessions",
+]
+
+[[package]]
+name = "http-stack"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-util",
+ "http-cookies",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "tower-layer",
+ "tower-service",
+ "tower-sessions",
+ "tracing",
 ]
 
 [[package]]
@@ -5844,6 +5864,7 @@ dependencies = [
  "data-encoding",
  "domain",
  "http-cookies",
+ "http-stack",
  "rand 0.8.6",
  "reqwest 0.13.4",
  "serde_json",
@@ -5852,6 +5873,8 @@ dependencies = [
  "testcontainers",
  "testcontainers-modules",
  "tokio",
+ "tower-layer",
+ "tower-service",
  "tower-sessions",
  "tracing-subscriber",
  "url",

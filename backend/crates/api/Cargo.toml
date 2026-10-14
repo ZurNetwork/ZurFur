@@ -31,6 +31,9 @@ tracing-subscriber = { workspace = true }
 tower-sessions = { workspace = true }
 # Every cookie name and attribute, and the session layer `main` mounts.
 http-cookies = { path = "../http-cookies" }
+# The served stack: the detach layer around the session layer, and the server
+# with its graceful shutdown.
+http-stack = { path = "../http-stack" }
 # `SetResponseHeaderLayer` (set-header feature) — the no-store cache header layer
 # over the cookie surface in `app()` (ZMVP-151, CWE-525).
 tower-http = { workspace = true }

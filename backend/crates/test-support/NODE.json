@@ -30,6 +30,11 @@
       "node": false
     },
     {
+      "name": "src/cut.rs",
+      "role": "a client that goes away mid-request (send_raw) and DropWitness, the layer outside the stack that signals a request's future was dropped unfinished",
+      "node": false
+    },
+    {
       "name": "src/den.rs",
       "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
       "node": false
@@ -41,7 +46,12 @@
     },
     {
       "name": "src/http.rs",
-      "role": "serve / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, the real session layer (http-cookies), router passed as a closure so test-support never depends on api)",
+      "role": "serve / serve_wrapped / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, serves through http-stack's stack with the real session layer (http-cookies), router passed as a closure so test-support never depends on api; Served carries the Detach)",
+      "node": false
+    },
+    {
+      "name": "src/http/tests.rs",
+      "role": "pins the served rig running a cut request to its end through the detach layer",
       "node": false
     },
     {
@@ -96,7 +106,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL",
       "node": false
     },
     {

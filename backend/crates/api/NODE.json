@@ -23,7 +23,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "wires domain + adapter-pg + composition + application + shared, tokio-util/futures-util for upload streaming glue (adapter-mem/test-support/contract-gen/cli as dev-deps); sqlx only for the sweeper's advisory lock; the `dev-profile` feature (off by default) makes adapter-mem a real dependency and builds the dev profile into the binary",
+      "role": "wires domain + adapter-pg + composition + application + shared, http-stack for the served stack, tokio-util/futures-util for upload streaming glue (adapter-mem/test-support/contract-gen/cli as dev-deps); sqlx only for the sweeper's advisory lock; the `dev-profile` feature (off by default) makes adapter-mem a real dependency and builds the dev profile into the binary",
       "node": false
     },
     {

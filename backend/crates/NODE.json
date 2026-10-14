@@ -79,6 +79,11 @@
       "node": true
     },
     {
+      "name": "http-stack/",
+      "role": "the one HTTP stack every mount serves through: the detach layer around the session layer, and the server with its graceful shutdown; consumed by api and test-support",
+      "node": true
+    },
+    {
       "name": "query-codegen/",
       "role": "sqlx-rust-codegen runner (`just gen-queries`): boots a container, migrates, rewrites both adapters' src/queries.rs",
       "node": true

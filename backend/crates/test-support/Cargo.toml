@@ -47,6 +47,11 @@ tower-sessions = { workspace = true }
 base64 = { workspace = true }
 # ...built by the driver's own `session_layer`, so tests run the real session cookie
 http-cookies = { path = "../http-cookies" }
+# The served rigs mount the app through the stack `main` serves.
+http-stack = { path = "../http-stack" }
+# `cut::DropWitness`, a tower layer outside the detach layer.
+tower-layer = { workspace = true }
+tower-service = { workspace = true }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.

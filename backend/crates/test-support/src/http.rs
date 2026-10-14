@@ -5,6 +5,7 @@
 use adapter_mem::MemBackend;
 use axum::Router;
 use composition::Runtime;
+use http_stack::{Detach, Stacked};
 use reqwest::redirect::Policy;
 use tower_sessions::MemoryStore;
 
@@ -15,12 +16,23 @@ use crate::runtime::{MemRuntime, MemRuntimeBuilder};
 pub struct Served {
     pub base_url: String,
     pub backend: MemBackend,
+    /// The detach layer the server runs its requests in.
+    pub detach: Detach,
 }
 
-/// Boots `app` against an in-memory [`Runtime`] built from `builder`,
-/// wrapping it in a fresh session layer issuing the real session cookie, and returns the running server's
-/// [`Served`] handle.
+/// Boots `app` against an in-memory [`Runtime`] built from `builder`, through
+/// the served stack with a fresh session layer issuing the real session
+/// cookie, and returns the running server's [`Served`] handle.
 pub async fn serve(builder: MemRuntimeBuilder, app: impl FnOnce(Runtime) -> Router) -> Served {
+    serve_wrapped(builder, app, |stacked| stacked).await
+}
+
+/// As [`serve`], with `wrap` adding layers outside the whole stack.
+pub async fn serve_wrapped(
+    builder: MemRuntimeBuilder,
+    app: impl FnOnce(Runtime) -> Router,
+    wrap: impl FnOnce(Stacked) -> Stacked,
+) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
@@ -30,14 +42,22 @@ pub async fn serve(builder: MemRuntimeBuilder, app: impl FnOnce(Runtime) -> Rout
 
     // The served app speaks plain HTTP, so its cookies are not `Secure`.
     let session_layer = http_cookies::session_layer(MemoryStore::default(), false);
-    let router = app(runtime).layer(session_layer);
+    let stacked = wrap(http_stack::stack(
+        app(runtime),
+        session_layer,
+        Detach::default(),
+    ));
+    let detach = stacked.detach().clone();
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        http_stack::serve(listener, stacked, std::future::pending())
+            .await
+            .unwrap();
     });
 
     Served {
         base_url: format!("http://{addr}"),
         backend,
+        detach,
     }
 }
 
@@ -72,3 +92,6 @@ pub async fn sign_in(client: &reqwest::Client, base: &str, handle: &str) -> reqw
 
     res
 }
+
+#[cfg(test)]
+mod tests;
