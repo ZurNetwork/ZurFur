@@ -21,8 +21,7 @@
 	 * in browser storage). After each navigation the drawer closes and any
 	 * open folder the tree lacks is fetched through its server-built link. A
 	 * flip of "Show archived" starts the memory over, and so does a form
-	 * action's success (the page that ran it says so), keeping `~` open. The sidebar, the tree and the drawer appear only where
-	 * this run serves a Den.
+	 * action's success (the page that ran it says so), keeping `~` open.
 	 */
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 
@@ -36,7 +35,6 @@
 	afterNavigate(() => {
 		drawerOpen = false;
 		const missing = memory.navigated(data.session.did, page.data.den);
-		if (!data.denServed) return;
 		for (const folder of missing) void loadFolder(memory, folder);
 	});
 
@@ -57,7 +55,7 @@
 	const flagLinks = $derived(den?.outcome.outcome === 'page' ? den.outcome.flagLinks : undefined);
 </script>
 
-<AppShell session={data.session} {trail} {section} denServed={data.denServed} bind:drawerOpen>
+<AppShell session={data.session} {trail} {section} bind:drawerOpen>
 	{#snippet navigation()}
 		<nav class="frame-nav" aria-label="My Den">
 			<Tree {memory} {current} fallbackRootHref={denRootFallback()} />

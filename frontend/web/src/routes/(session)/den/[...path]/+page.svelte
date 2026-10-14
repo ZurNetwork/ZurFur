@@ -65,8 +65,6 @@
 				return outcome.page.crumbs.length === 0 ? 'My Den' : outcome.page.node.name;
 			case 'notFound':
 				return 'Nothing here';
-			case 'notConnected':
-				return "My Den isn't connected yet";
 			case 'problem':
 				return 'Something went wrong';
 		}

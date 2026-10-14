@@ -9,8 +9,7 @@ const LEAKY_MESSAGE =
 /** What `$app/state`'s page holds while this error page renders. */
 const errorState = vi.hoisted(() => ({
 	status: 500,
-	routeId: '/(session)/accounts',
-	denServed: false
+	routeId: '/(session)/accounts'
 }));
 
 vi.mock('$app/state', () => ({
@@ -22,9 +21,7 @@ vi.mock('$app/state', () => ({
 			return { id: errorState.routeId };
 		},
 		error: { message: LEAKY_MESSAGE },
-		get data() {
-			return { denServed: errorState.denServed };
-		},
+		data: {},
 		url: new URL('http://127.0.0.1:5174/den/accounts/did:plc:secretsecret')
 	}
 }));
@@ -62,22 +59,13 @@ describe('(session) error page', () => {
 		expect(document.body.textContent).not.toContain('secret');
 	});
 
-	it('leads back to My Den only where a Den is served', async () => {
+	it('leads back to My Den, never to the start', async () => {
 		errorState.status = 404;
 		errorState.routeId = '/(session)/accounts/[id]';
-		errorState.denServed = true;
 		render(ErrorPage);
 		await expect.element(page.getByRole('link', { name: 'Back to My Den' })).toBeInTheDocument();
-	});
-
-	it('leads back to the start on the everyday stack, never to My Den', async () => {
-		errorState.status = 404;
-		errorState.routeId = '/(session)/accounts/[id]';
-		errorState.denServed = false;
-		render(ErrorPage);
-		await expect.element(page.getByRole('link', { name: 'Back to the start' })).toBeInTheDocument();
 		await expect
-			.element(page.getByRole('link', { name: 'Back to My Den' }))
+			.element(page.getByRole('link', { name: 'Back to the start' }))
 			.not.toBeInTheDocument();
 	});
 });

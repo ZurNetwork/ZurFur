@@ -179,13 +179,6 @@ describe('DenPane', () => {
 			.toHaveAttribute('href', '/den');
 	});
 
-	it('shows "not connected yet" on a live run', async () => {
-		render(DenPane, { data: data({ outcome: 'notConnected' }) });
-		await expect
-			.element(page.getByTestId('den-not-connected'))
-			.toHaveTextContent("My Den isn't connected to the backend yet.");
-	});
-
 	it('renders an API problem with the one problem note', async () => {
 		const problem = {
 			type: 'urn:zurfur:error:rate-limited',

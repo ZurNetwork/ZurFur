@@ -278,7 +278,6 @@ function readOutcome(
 			return Effect.succeed(outcome);
 		}),
 		Effect.catchTags({
-			DenNotConnected: () => Effect.succeed<DenOutcome>({ outcome: 'notConnected' }),
 			NotAuthenticated: () => Effect.succeed({ signedOut: true } as const),
 			ApiProblem: ({ problem }) => {
 				if (problem.code === ProblemKind.NodeNotFound.code)

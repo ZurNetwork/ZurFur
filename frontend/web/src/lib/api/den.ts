@@ -80,8 +80,6 @@ export type DenOutcome =
 	  }
 	/** Every not-found, whatever its cause, looks the same. */
 	| { readonly outcome: 'notFound' }
-	/** This build has no live Den behind it yet. */
-	| { readonly outcome: 'notConnected' }
 	| { readonly outcome: 'problem'; readonly problem: Problem };
 
 /** One folder's listing, as the tree keeps it. */
@@ -222,7 +220,6 @@ function isDenOutcome(value: unknown): boolean {
 			);
 		}
 		case 'notFound':
-		case 'notConnected':
 			return true;
 		case 'problem':
 			return field(value, 'problem') instanceof Object;

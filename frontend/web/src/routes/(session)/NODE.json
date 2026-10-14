@@ -13,7 +13,7 @@
     "New signed-in routes JOIN this group rather than re-implementing the check.",
     "Detail pages derive from the caller's own listing — there is no fetch-by-id rpc in v1; destructive actions require typed confirmation (WCAG 3.3.4).",
     "Each page's load returns `trail` (App.PageData) for the frame's path bar; the frame itself reads nothing from the backend.",
-    "The sidebar, the drawer and every way into My Den appear only when the root layout's `denServed` is true (the mock today); the everyday stack shows the top bar and the pane only."
+    "The sidebar, the drawer and every way into My Den show on every signed-in page, on every stack; there is no switch for a run without a Den."
   ],
   "entry_points": [
     "+layout.server.ts (the gate)",
@@ -42,12 +42,12 @@
     },
     {
       "name": "den/",
-      "role": "My Den: `[...path]` serves /den and every Den path below it; on the everyday stack (no Den served) it is the ordinary 404 with no Den call (a signed-in visitor makes only the usual /me call). +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
+      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port. +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
       "node": false
     },
     {
       "name": "error.svelte.spec.ts",
-      "role": "proves the in-frame error page never shows the error's message and that a failed sign-out says so ($app/state mocked)",
+      "role": "proves the in-frame error page never shows the error's message, that a failed sign-out says so, and that its way back is My Den ($app/state mocked)",
       "node": false
     },
     {

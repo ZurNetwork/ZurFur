@@ -42,7 +42,6 @@ import {
 import {
 	ApiProblem,
 	ContractViolation,
-	DenNotConnected,
 	NetworkFailure,
 	NotAuthenticated,
 	SignoutFailed
@@ -142,8 +141,7 @@ export interface StartedSignin {
 }
 
 /** Every way a Den read fails. */
-export type DenReadError =
-	DenNotConnected | NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
+export type DenReadError = NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
 
 /** The port tag — programs ask for `ZurfurApi`, the seam decides which Layer answers. */
 export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApiShape>() {}

@@ -54,8 +54,8 @@ const session = {
 
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderLayout(denServed = true) {
-	return render(Layout, { data: { session, denServed }, children });
+function renderLayout() {
+	return render(Layout, { data: { session }, children });
 }
 
 afterEach(() => {
@@ -133,19 +133,6 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 	});
 
-	it('keeps Sign out and Accounts reachable at 320 px on the everyday stack (no drawer)', async () => {
-		await page.viewport(320, 640);
-		renderLayout(false);
-		await expect.element(page.getByRole('banner')).toBeInTheDocument();
-
-		await expect.element(page.getByTestId('open-drawer')).not.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('banner').getByRole('button', { name: 'Sign out' }))
-			.toBeVisible();
-		await expect.element(page.getByTestId('accounts-link')).toBeVisible();
-		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
-	});
-
 	it('fetches every folder above the open item that the tree lacks, after an in-app navigation', async () => {
 		const crumb = (href: string, name: string) => ({ href, name });
 		nav.den = {
@@ -167,7 +154,7 @@ describe('(session) layout: the frame around every signed-in page', () => {
 			title: 'My Den · Zurfur',
 			trail: []
 		};
-		renderLayout(true);
+		renderLayout();
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
 		for (const callback of nav.callbacks) callback();
@@ -175,33 +162,9 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.poll(() => [...nav.preloaded].sort()).toEqual(['/den', '/den/commissions']);
 	});
 
-	it('fetches nothing on the everyday stack', async () => {
-		nav.den = undefined;
-		renderLayout(false);
-		await expect.element(page.getByRole('banner')).toBeInTheDocument();
-		for (const callback of nav.callbacks) callback();
-		expect(nav.preloaded).toEqual([]);
-	});
-
-	it('shows the avatar alone at 320 px on the everyday stack, the handle still its name, and Sign out on one line', async () => {
-		await page.viewport(320, 640);
-		renderLayout(false);
-		const handle = page.getByRole('banner').getByTestId('session-handle');
-		await expect.element(handle).toBeInTheDocument();
-
-		const shown = getComputedStyle(handle.element());
-		expect([shown.position, shown.clipPath]).toEqual(['absolute', 'inset(50%)']);
-		expect(handle.element().textContent).toBe('alice.zurfur.app');
-		expect(handle.element().closest('[title]')?.getAttribute('title')).toBe('alice.zurfur.app');
-		const signOut = page.getByRole('banner').getByRole('button', { name: 'Sign out' });
-		await expect.element(signOut).toBeVisible();
-		expect(getComputedStyle(signOut.element()).whiteSpace).toBe('nowrap');
-		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
-	});
-
 	it('keeps the handle shown beside the avatar on a desktop', async () => {
 		await page.viewport(1280, 800);
-		renderLayout(false);
+		renderLayout();
 		const handle = page.getByRole('banner').getByTestId('session-handle');
 		await expect.element(handle).toBeVisible();
 		expect(getComputedStyle(handle.element()).position).not.toBe('absolute');

@@ -6,7 +6,7 @@ import { did, handleFromTrusted } from '$lib/types/brand';
 
 describe('/ landing', () => {
 	it('shows the sign-in CTA when signed out', async () => {
-		render(Landing, { data: { session: undefined, denServed: false } });
+		render(Landing, { data: { session: undefined } });
 
 		await expect.element(page.getByTestId('signin-cta')).toHaveAttribute('href', '/login');
 	});
@@ -18,7 +18,7 @@ describe('/ landing', () => {
 			displayName: 'Alice',
 			avatarUrl: undefined
 		};
-		render(Landing, { data: { session: alice, denServed: false } });
+		render(Landing, { data: { session: alice } });
 
 		await expect
 			.element(page.getByTestId('signed-in-as'))
@@ -32,21 +32,8 @@ describe('/ landing', () => {
 			displayName: 'Alice',
 			avatarUrl: undefined
 		};
-		render(Landing, { data: { session: alice, denServed: true } });
+		render(Landing, { data: { session: alice } });
 
 		await expect.element(page.getByTestId('open-my-den')).toHaveAttribute('href', '/den');
-	});
-
-	it('offers no way into My Den where this run serves none', async () => {
-		const alice = {
-			did: did('did:plc:alice'),
-			handle: handleFromTrusted('alice.zurfur.app'),
-			displayName: 'Alice',
-			avatarUrl: undefined
-		};
-		render(Landing, { data: { session: alice, denServed: false } });
-
-		await expect.element(page.getByTestId('signed-in-as')).toBeInTheDocument();
-		await expect.element(page.getByTestId('open-my-den')).not.toBeInTheDocument();
 	});
 });

@@ -4,21 +4,18 @@
 	import type { Session } from '$lib/api/session';
 
 	/**
-	 * The public pages' signed-in/out corner: the My Den link (only where this
-	 * run serves a Den) and Accounts, handle + avatar + sign-out
-	 * when a session exists (falling back to the DID when the profile could
-	 * not be resolved — the `/me` contract's absent-handle case), a sign-in
-	 * link otherwise.
+	 * The public pages' signed-in/out corner: the My Den and Accounts links,
+	 * handle + avatar + sign-out when a session exists (falling back to the
+	 * DID when the profile could not be resolved — the `/me` contract's
+	 * absent-handle case), a sign-in link otherwise.
 	 */
-	let { session, denServed }: { session: Session | undefined; denServed: boolean } = $props();
+	let { session }: { session: Session | undefined } = $props();
 </script>
 
 <header>
 	{#if session !== undefined}
 		<nav>
-			{#if denServed}
-				<a href={denRootPath()} data-testid="den-link">My Den</a>
-			{/if}
+			<a href={denRootPath()} data-testid="den-link">My Den</a>
 			<a href={resolve('/accounts')} data-testid="accounts-link">Accounts</a>
 		</nav>
 		{#if session.avatarUrl !== undefined}

@@ -41,7 +41,7 @@
     },
     {
       "name": "errors.ts",
-      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed, DenNotConnected)",
+      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed)",
       "node": false
     },
     {

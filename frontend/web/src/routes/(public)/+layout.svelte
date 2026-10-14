@@ -7,7 +7,7 @@
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 </script>
 
-<SessionHeader session={data.session} denServed={data.denServed} />
+<SessionHeader session={data.session} />
 
 <main class="public-page">
 	{@render children()}
