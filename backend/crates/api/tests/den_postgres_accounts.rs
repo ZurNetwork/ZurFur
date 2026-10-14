@@ -1,11 +1,7 @@
-//! identity's Accounts through the Den on the PostgreSQL stores, over the den world: a
-//! deactivated Account opens only to its Owner, another's Account and a missing one answer
-//! alike with the same store calls, no Den answer names another user, a stored name the
-//! Den's rule refuses shows the Account's handle, a stored name unsafe to show is served as
-//! the Account's handle by `GET /accounts` (to its Owner and a Member) and by a handle change
-//! while its row keeps the text, founding refuses a name unsafe to show with today's `422`, and
-//! founding accepts a `/`, which the Den names by the Account's handle. Requires a container
-//! runtime socket.
+//! identity's Accounts through the Den on PostgreSQL: a deactivated Account opens only to its
+//! Owner, another's and a missing Account answer alike, and a stored name unsafe to show is
+//! served as the Account's handle by the Den, `GET /accounts` and a handle change, while
+//! founding refuses it with a `422`. Requires a container runtime socket.
 
 use std::sync::Arc;
 
