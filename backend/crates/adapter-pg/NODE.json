@@ -148,7 +148,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only"
+      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_visibility: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21)"
     }
   ],
   "notes": [

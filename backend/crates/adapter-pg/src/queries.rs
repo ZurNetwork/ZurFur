@@ -1041,6 +1041,14 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct FindSummaryRow {
+        pub title: String,
+        pub visibility: String,
+        pub archived: Option<bool>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct LapsedDeadlinesRow {
         pub id: uuid::Uuid,
         pub deadline: chrono::DateTime<chrono::Utc>,
@@ -1053,7 +1061,7 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub title: String,
         pub visibility: String,
-        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        pub archived: Option<bool>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1450,6 +1458,21 @@ pub mod commission {
         .await
     }
 
+    /// `queries/commission/find_summary.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// One commission's summary: its title as stored, its own visibility and
+    /// whether it is archived, and nothing else of the row. The archive time itself
+    /// is never decoded. Archived commissions are found.
+    pub async fn find_summary(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Option<FindSummaryRow>> {
+        sqlx::query_as(include_str!("../queries/commission/find_summary.sql"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await
+    }
+
     /// `queries/commission/grant_view.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Issue (or re-issue) one view grant. At most one key per (commission, grantee):
@@ -1521,7 +1544,8 @@ pub mod commission {
     /// The commissions a User is a Participant of, read from the same
     /// `commission_participant` record `is_participant` reads. Archived commissions
     /// are included; hiding them is the caller's. Seeks the by-user index; ordered
-    /// by commission id (UUIDv7 sorts as creation order).
+    /// by commission id (UUIDv7 sorts as creation order). The archive time itself
+    /// is never decoded, only whether there is one.
     pub async fn list_participating(
         conn: impl sqlx::PgExecutor<'_>,
         user_id: &str,

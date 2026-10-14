@@ -1,7 +1,8 @@
 //! The My Den read ports over PostgreSQL, against a throwaway container: the
 //! participant listing (archived rows included) and its by-user index, a
 //! commission's file list, the name-only file read, a commission's Slots and
-//! an Account's Workflows. Names load as stored text, never re-checked, so a
+//! an Account's Workflows, and one commission's summary. A visibility no parser reads
+//! counts as Private on every read of it. Names load as stored text, never re-checked, so a
 //! row written under an older rule still reads. One named test per read.
 //! Requires a container runtime socket.
 
@@ -11,11 +12,12 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         commission::{
-            Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileName, NewSlot,
-            SlotTitle, SurfaceAddress, SurfaceName, Visibility,
+            Commission, CommissionFile, CommissionId, CommissionSummary, CommissionTitle, FileKey,
+            FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, Visibility,
         },
         did::Did,
         handle::Handle,
+        text::StoredText,
         user::User,
         workflow::{WorkflowId, WorkflowName},
     },
@@ -67,6 +69,17 @@ async fn archive(pool: &PgPool, commission: CommissionId) {
         .await
         .expect("archive");
     uow.commit().await.expect("commit");
+}
+
+/// Store `token` as `commission`'s visibility, a test-only update.
+async fn store_visibility(pool: &PgPool, commission: CommissionId, token: &str) {
+    let updated = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
+        .bind(token)
+        .bind(uuid::Uuid::from(commission))
+        .execute(pool)
+        .await
+        .expect("update the commission's visibility");
+    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
 }
 
 /// Add `member` as a Participant by a direct insert: no route admits a second
@@ -351,4 +364,106 @@ async fn workflow_listing_holds_only_this_accounts_workflows() {
         .collect();
     assert_eq!(listed, [(queue, "Queue"), (backlog, "Backlog")]);
     assert!(nothing.is_empty());
+}
+
+// The summary read answers `None` for an id no commission carries.
+#[tokio::test]
+async fn the_summary_of_a_missing_commission_is_none() {
+    let (pool, _container) = fresh_pool().await;
+    let store = PgCommissionStore::new(pool.clone());
+    let missing = CommissionId::from(uuid::Uuid::now_v7());
+
+    let summary = store.find_summary(&missing).await.expect("find_summary");
+
+    assert_eq!(summary, None);
+}
+
+// The summary read answers the title as stored, the visibility and whether it
+// is archived, for a live commission and an archived one alike.
+#[tokio::test]
+async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:summaryowner").await;
+    let live = seed_commission(&pool, &owner, "Untitled").await;
+    let archived = seed_commission(&pool, &owner, "Old sketch").await;
+    archive(&pool, archived).await;
+    store_visibility(&pool, live, "listed").await;
+    let store = PgCommissionStore::new(pool.clone());
+
+    let live_summary = store.find_summary(&live).await.expect("find_summary");
+    let archived_summary = store.find_summary(&archived).await.expect("find_summary");
+
+    let expected_live = CommissionSummary {
+        id: live,
+        title: StoredText::from("Untitled".to_owned()),
+        visibility: Visibility::Listed,
+        archived: false,
+    };
+    let expected_archived = CommissionSummary {
+        id: archived,
+        title: StoredText::from("Old sketch".to_owned()),
+        visibility: Visibility::Private,
+        archived: true,
+    };
+    assert_eq!(live_summary, Some(expected_live));
+    assert_eq!(archived_summary, Some(expected_archived));
+}
+
+// A stored visibility no parser reads counts as Private: the summary, the whole
+// commission and the participant listing each read it so, and none fails.
+#[tokio::test]
+async fn an_unreadable_visibility_counts_as_private_on_every_read() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:unreadableowner").await;
+    let id = seed_commission(&pool, &owner, "Untitled").await;
+    store_visibility(&pool, id, "not-a-visibility").await;
+    assert!("not-a-visibility".parse::<Visibility>().is_err());
+    let store = PgCommissionStore::new(pool.clone());
+
+    let summary = store.find_summary(&id).await.expect("find_summary");
+    let found = store.find(&id).await.expect("find");
+    let listing = store
+        .list_participating(&owner.id)
+        .await
+        .expect("list_participating");
+
+    let summary = summary.expect("present");
+    let found = found.expect("present");
+    assert_eq!(summary.visibility, Visibility::Private);
+    assert_eq!(found.visibility, Visibility::Private);
+    let listed: Vec<(CommissionId, Visibility)> = listing
+        .into_iter()
+        .map(|summary| (summary.id, summary.visibility))
+        .collect();
+    assert_eq!(listed, [(id, Visibility::Private)]);
+}
+
+// An archive time chrono can't hold (`infinity`, by a test-only update) never
+// reaches a decoder: the summary and the participant listing each read the
+// commission as archived, and neither panics.
+#[tokio::test]
+async fn an_archive_time_out_of_range_reads_as_archived_without_a_panic() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:infinityowner").await;
+    let id = seed_commission(&pool, &owner, "Old sketch").await;
+    let updated = sqlx::query("UPDATE commission SET archived_at = 'infinity' WHERE id = $1")
+        .bind(uuid::Uuid::from(id))
+        .execute(&pool)
+        .await
+        .expect("store an archive time out of chrono's range");
+    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    let store = PgCommissionStore::new(pool.clone());
+
+    let summary = store.find_summary(&id).await.expect("find_summary");
+    let listing = store
+        .list_participating(&owner.id)
+        .await
+        .expect("list_participating");
+
+    assert!(summary.expect("present").is_archived());
+    let listed: Vec<(CommissionId, bool)> = listing
+        .iter()
+        .map(|summary| (summary.id, summary.is_archived()))
+        .collect();
+    assert_eq!(listed, [(id, true)]);
 }

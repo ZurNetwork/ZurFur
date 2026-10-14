@@ -6,21 +6,21 @@ fn summary(title: &str) -> CommissionSummary {
         id: CommissionId::from(uuid::Uuid::now_v7()),
         title: StoredText::from(title.to_owned()),
         visibility: Visibility::Private,
-        archived_at: None,
+        archived: false,
     }
 }
 
-// A summary without an archive time is live.
+// A summary not marked archived is live.
 #[test]
-fn a_summary_without_an_archive_time_is_not_archived() {
+fn a_summary_not_marked_archived_is_live() {
     let live = summary("Untitled");
     assert!(!live.is_archived());
 }
 
-// A summary with an archive time is archived.
+// A summary marked archived is archived.
 #[test]
-fn a_summary_with_an_archive_time_is_archived() {
+fn a_summary_marked_archived_is_archived() {
     let mut archived = summary("Old sketch");
-    archived.archived_at = Some(chrono::Utc::now());
+    archived.archived = true;
     assert!(archived.is_archived());
 }

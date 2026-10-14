@@ -492,3 +492,51 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
         assert_pair_is_the_one_404(&world.bob, &world, &pair, &expected).await;
     }
 }
+
+#[tokio::test]
+async fn with_old_sketch_s_visibility_unreadable_alice_s_commissions_list_it_at_private() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_unparsable_visibility(world.old_sketch.id).await;
+
+    let everything = ok_json(
+        get(
+            &world.alice,
+            world.base_url(),
+            "/den/commissions?includeDeleted=true",
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(
+        entry_names(&everything["listing"]),
+        ["Old sketch", "Untitled"]
+    );
+    let old_sketch = &everything["listing"]["entries"][0];
+    assert_eq!(old_sketch["open"]["ownLevel"], "private", "{old_sketch}");
+}
+
+#[tokio::test]
+async fn with_old_sketch_s_visibility_unreadable_its_typed_path_opens_archived_at_private() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_unparsable_visibility(world.old_sketch.id).await;
+    let path = format!("/den/commissions/{}", world.old_sketch.id);
+
+    let old_sketch = ok_json(get(&world.alice, world.base_url(), &path).await).await;
+
+    assert_eq!(old_sketch["node"]["name"], "Old sketch");
+    assert_eq!(old_sketch["node"]["open"]["softDelete"], "archived");
+    assert_eq!(old_sketch["node"]["open"]["ownLevel"], "private");
+}
+
+#[tokio::test]
+async fn with_old_sketch_s_lifecycle_unreadable_its_typed_path_still_opens() {
+    let world = pg_app::den_world(api::app).await;
+    world.store_unparsable_lifecycle(world.old_sketch.id).await;
+    let path = format!("/den/commissions/{}", world.old_sketch.id);
+
+    let old_sketch = ok_json(get(&world.alice, world.base_url(), &path).await).await;
+
+    assert_eq!(old_sketch["node"]["name"], "Old sketch");
+    assert_eq!(old_sketch["node"]["open"]["softDelete"], "archived");
+}

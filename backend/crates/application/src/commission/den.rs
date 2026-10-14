@@ -3,7 +3,7 @@
 
 use domain::elements::{
     account::AccountId,
-    commission::{Commission, CommissionId, ElementId, FileKey, Visibility},
+    commission::{CommissionId, CommissionSummary, ElementId, FileKey, Visibility},
     user::UserId,
 };
 
@@ -92,9 +92,9 @@ fn level_of(visibility: &Visibility) -> Level {
     }
 }
 
-/// The node for a loaded commission: its visibility as its level, standing for a
+/// The node for a commission's summary: its visibility as its level, standing for a
 /// Participant, archived or live, and its title through the name rule.
-fn commission_node(commission: &Commission, participant: bool) -> Option<Node> {
+fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<Node> {
     let name = names::stored_name(commission.title.as_str())?;
     let lifts = if participant {
         vec![STANDING]
@@ -184,14 +184,14 @@ async fn slots(
 }
 
 /// The commission at `/commission/<commission>`, for the session's viewer. Always reads the
-/// commission and then the viewer's participation, both, so an absent commission and one
-/// that isn't the viewer's run the same statements.
+/// commission's summary and then the viewer's participation, both, so an absent commission
+/// and one that isn't the viewer's run the same statements.
 pub(crate) async fn node(
     context: &DenContext<'_>,
     commission: CommissionId,
 ) -> anyhow::Result<Option<Node>> {
     let store = &context.ports.commissions;
-    let found = store.find(&commission).await?;
+    let found = store.find_summary(&commission).await?;
     let participant = store.is_participant(&commission, context.viewer).await?;
     let node = found.and_then(|found| commission_node(&found, participant));
     Ok(node)

@@ -31,6 +31,11 @@ pub trait CommissionStore: Send + Sync {
     /// found — filtering it out is a listing projection's job.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
+    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its stored title,
+    /// its own visibility and its archive time, and nothing else of the row. An archived
+    /// commission is still found.
+    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
+
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,

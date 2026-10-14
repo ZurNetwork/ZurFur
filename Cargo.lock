@@ -82,6 +82,7 @@ dependencies = [
  "time",
  "tokio",
  "tower-sessions-core",
+ "tracing",
  "uuid",
  "zeroize",
 ]

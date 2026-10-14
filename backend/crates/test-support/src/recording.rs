@@ -460,6 +460,11 @@ impl CommissionStore for RecordingCommissionStore {
         self.inner.find(id).await
     }
 
+    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
+        self.log.record("find_summary");
+        self.inner.find_summary(id).await
+    }
+
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,

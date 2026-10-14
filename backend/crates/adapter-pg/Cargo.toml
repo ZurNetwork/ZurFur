@@ -14,6 +14,8 @@ rmp-serde = { workspace = true }
 async-trait = { workspace = true }
 domain = { path = "../domain/" }
 anyhow = { workspace = true }
+# One fixed warning when a stored commission visibility is read leniently.
+tracing = { workspace = true }
 # strum: VARIANTS over the domain vocabularies
 strum = { workspace = true }
 # Mint the audit-row id for a handle change (UUIDv7), app-side like every other key.

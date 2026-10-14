@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use adapter_mem::fixture::{alice, bob, old_sketch, untitled, untitled_files, untitled_slots};
 use domain::{
-    elements::commission::{CommissionTitle, FileKey, FileName},
+    elements::commission::{Commission, CommissionTitle, FileKey, FileName},
     ports::UnitOfWork,
 };
 use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
@@ -321,8 +321,23 @@ async fn an_absent_commission_and_one_not_the_viewer_s_run_the_same_reads() {
     let for_both = log.events();
 
     let for_one_not_bobs = for_both[for_an_absent_commission.len()..].to_vec();
-    assert_eq!(for_an_absent_commission, ["find", "is_participant"]);
+    assert_eq!(for_an_absent_commission, ["find_summary", "is_participant"]);
     assert_eq!(for_one_not_bobs, for_an_absent_commission);
+}
+
+#[tokio::test]
+async fn a_participant_opening_their_commission_never_reads_the_whole_row() {
+    let (World { ports, .. }, log) = recorded().await;
+    let bob = bob();
+
+    let read = test_world::read(&ports, &bob, false, &commission_path(untitled()), &[])
+        .await
+        .expect("bob opens Untitled");
+
+    let reads = log.events();
+    assert_eq!(read.node.name.to_string(), "Untitled");
+    assert!(reads.contains(&"find_summary"), "{reads:?}");
+    assert!(!reads.contains(&"find"), "{reads:?}");
 }
 
 #[tokio::test]
