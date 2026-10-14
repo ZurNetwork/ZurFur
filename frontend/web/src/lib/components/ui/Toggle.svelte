@@ -49,7 +49,7 @@
 		width: var(--space-8);
 		height: var(--space-5);
 		margin-top: calc(var(--space-1) / 2);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-control-edge);
 		border-radius: calc(var(--space-5) / 2);
 		background: var(--color-surface-raised);
 		transition: background-color var(--duration-fast) ease;

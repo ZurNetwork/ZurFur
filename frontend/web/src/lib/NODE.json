@@ -48,8 +48,8 @@
     },
     {
       "name": "styles/",
-      "role": "tokens.css (palette → semantic → layout custom properties; dark on :root, light under [data-theme='light'], reduced-motion and more-contrast overrides) + base.css (element defaults, focus ring, .visually-hidden, the one 48rem phone breakpoint behind .desktop-only/.phone-only and --shell-columns); imported once by the root layout",
-      "node": false
+      "role": "tokens.css + base.css (imported once by the root layout) and the contrast gate: declared dark-theme colour pairs checked at WCAG 2.2 AA",
+      "node": true
     },
     {
       "name": "testing/",
