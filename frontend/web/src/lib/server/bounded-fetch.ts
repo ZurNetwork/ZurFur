@@ -37,7 +37,8 @@ export function firstAbortOf(signals: readonly AbortSignal[]): AbortSignal {
 /**
  * The call `start` makes, settled no later than `signal` aborts: from then on
  * it fails with the abort's reason, even if the abort never reaches the call
- * itself. Once the signal has aborted, the call is never started.
+ * itself. Once the signal has aborted, the call is never started; a `start`
+ * that throws fails it with what was thrown.
  */
 export function settleBy<T>(signal: AbortSignal, start: () => Promise<T>): Promise<T> {
 	if (signal.aborted) return Promise.reject(abortReason(signal));
@@ -51,7 +52,11 @@ export function settleBy<T>(signal: AbortSignal, start: () => Promise<T>): Promi
 			signal.removeEventListener('abort', onAbort);
 		};
 	});
-	return Promise.race([start(), aborted]).finally(stop);
+	// A `start` that throws rejects `call` instead, so the race still holds the abort's rejection.
+	const call = new Promise<T>((answer) => {
+		answer(start());
+	});
+	return Promise.race([call, aborted]).finally(stop);
 }
 
 /** `response` with its body read into memory, so nothing more is read from the network. */

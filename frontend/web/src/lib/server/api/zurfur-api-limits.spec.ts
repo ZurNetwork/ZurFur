@@ -75,6 +75,16 @@ describe('the time limit on every backend call', () => {
 		}
 	);
 
+	it('fails as a timeout at the limit even when the fetch ignores its signal and never ends', async () => {
+		const deaf: FetchFunction = () => new Promise<Response>(() => undefined);
+		const settled = settle(deaf, me);
+
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(await hasSettled(settled)).toBe(true);
+
+		expect(await settled).toMatchObject({ _tag: 'NetworkFailure', reason: 'timeout' });
+	});
+
 	it('bounds the body too: an answer whose body never ends fails as a timeout', async () => {
 		const fetch: FetchFunction = (_input, init) => {
 			const signal = init?.signal;

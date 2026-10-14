@@ -55,6 +55,30 @@ describe('settleBy', () => {
 		expect((failure as DOMException).name).toBe('TimeoutError');
 		expect(started).toBe(false);
 	});
+	it('fails with what a throwing start threw, leaving no rejection behind for a later abort', async () => {
+		const controller = new AbortController();
+		const unhandled: unknown[] = [];
+		const record = (reason: unknown): void => {
+			unhandled.push(reason);
+		};
+		process.on('unhandledRejection', record);
+		try {
+			const throwing = (): Promise<string> => {
+				throw new Error('refused');
+			};
+			// Called inside `then`, so a settleBy that threw through would still be measured here.
+			const failure = await settled(
+				Promise.resolve().then(() => settleBy(controller.signal, throwing))
+			);
+			controller.abort(new DOMException('limit', 'TimeoutError'));
+			await new Promise((turn) => setTimeout(turn, 0));
+
+			expect((failure as Error).message).toBe('refused');
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off('unhandledRejection', record);
+		}
+	});
 });
 
 describe('readWhole', () => {
