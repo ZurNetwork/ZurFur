@@ -116,6 +116,7 @@ pub struct PgWorkflowWrites<'a> {
 impl WorkflowWrites for PgWorkflowWrites<'_> {
     /// Mints one board for an account, born `Private` (closed-door default,
     /// never widened by omission).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(
         &mut self,
         name: &WorkflowName,
@@ -137,6 +138,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
 
     /// Deletes a board and, by cascade, its columns and cards — never the
     /// commissions they pointed at. No-op on an absent board.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
         workflow_sql::delete(&mut *self.conn, uuid::Uuid::from(*workflow_id)).await?;
         Ok(())
@@ -145,6 +147,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
     /// Persists the board's column order as the domain holds it — an upsert per
     /// column (not an update), so a new column and the neighbours its insert
     /// displaced land on the same open unit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
         for column in workflow.iter() {
             workflow_sql::upsert_column(
@@ -179,11 +182,13 @@ impl WorkflowStore for PgWorkflowStore {
     /// Rebuilds the whole board — columns in order, each with its cards — or
     /// `None`. Goes through `Workflow::loaded`, so a row set that isn't a valid
     /// board (bad keys, duplicate names) surfaces as an `Err`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, workflow_id: &WorkflowId) -> anyhow::Result<Option<Workflow>> {
         load_workflow(&self.pool, workflow_id).await
     }
 
     /// The account a board belongs to, or `None` if no such board exists.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn owning_account_of(
         &self,
         workflow_id: &WorkflowId,
@@ -194,12 +199,14 @@ impl WorkflowStore for PgWorkflowStore {
     }
 
     /// A board's columns in board order, each with its cards.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
         load_columns(&self.pool, workflow_id).await
     }
 
     /// The account's boards, id and name only, in id (creation) order; names
     /// carried as stored, never re-checked.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>> {
         let rows = workflow_sql::list_for_account(&self.pool, account.as_ref()).await?;
         let workflows = rows
@@ -223,6 +230,7 @@ pub struct PgColumnWrites<'a> {
 #[async_trait::async_trait]
 impl ColumnWrites for PgColumnWrites<'_> {
     /// Deletes one column; card edges cascade. No-op on an absent column.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
         column_sql::delete(&mut *self.conn, uuid::Uuid::from(*column_id)).await?;
         Ok(())
@@ -231,6 +239,7 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// Persists the column's card list wholesale: clear, then re-place each
     /// card at its index. Both halves run on the open unit; the
     /// `(column_id, position)` unique constraint is DEFERRABLE, checked at COMMIT.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
         column_sql::clear_cards(&mut *self.conn, uuid::Uuid::from(column.id)).await?;
 
@@ -251,6 +260,7 @@ impl ColumnWrites for PgColumnWrites<'_> {
 
     /// Renames one column; `(workflow_id, name)` is the store-level backstop
     /// for the board-level uniqueness check already made.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
         column_sql::rename(
             &mut *self.conn,
@@ -278,6 +288,7 @@ impl PgColumnStore {
 #[async_trait::async_trait]
 impl ColumnStore for PgColumnStore {
     /// One column with its cards, or `None` if no such column exists.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, column_id: &ColumnId) -> anyhow::Result<Option<Column>> {
         let Some(row) = column_sql::find(&self.pool, uuid::Uuid::from(*column_id)).await? else {
             return Ok(None);
@@ -297,6 +308,7 @@ impl ColumnStore for PgColumnStore {
     }
 
     /// Whether a column still holds any card — the gate on deleting one.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn has_commissions(&self, column_id: &ColumnId) -> anyhow::Result<bool> {
         column_sql::has_commissions(&self.pool, uuid::Uuid::from(*column_id))
             .await
@@ -306,6 +318,7 @@ impl ColumnStore for PgColumnStore {
     /// Which column of `workflow_id` holds `commission_id`, or `None`.
     /// Scoped by board: a commission sits in at most one column per board,
     /// on as many boards as position it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_column(
         &self,
         workflow_id: &WorkflowId,
@@ -337,6 +350,7 @@ impl ColumnStore for PgColumnStore {
 
     /// The account owning the board this column sits on, or `None` if no such
     /// column exists.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>> {
         let did = column_sql::owning_account(&self.pool, uuid::Uuid::from(*column_id))
             .await?
@@ -348,6 +362,7 @@ impl ColumnStore for PgColumnStore {
 
     /// The whole board a column sits on. An absent column or board is an
     /// `Err` (same reasoning as [`owning_account_of`](Self::owning_account_of)).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow> {
         let row = column_sql::find(&self.pool, uuid::Uuid::from(*column_id))
             .await?

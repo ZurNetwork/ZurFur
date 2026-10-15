@@ -10,8 +10,12 @@ edition = "2024"
 async-trait = { workspace = true }
 derive_more = { workspace = true }
 thiserror = { workspace = true }
+# The resolver's `debug` spans and its outcome events (never a path or a name).
+tracing = { workspace = true }
 
 [dev-dependencies]
+# The resolver's log tests read what a fmt subscriber wrote.
+tracing-subscriber = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

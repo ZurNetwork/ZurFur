@@ -32,6 +32,7 @@ impl PgPlcOperationLog {
 impl PlcOperationLog for PgPlcOperationLog {
     /// Inserts one operation row as `jsonb`; `seq`/`created_at` order the
     /// chain. The `cid` unique index makes a duplicate append a constraint error.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
         // The record carries the op as JSON text (`PlcOperationRecord.operation_json`
         // is a `String` by contract); parse it here so it lands as native `jsonb`.
@@ -50,12 +51,14 @@ impl PlcOperationLog for PgPlcOperationLog {
     }
 
     /// The `cid` of the DID's highest-`seq` (most recent) operation, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
         Ok(sql::latest_cid(&self.pool, did.as_ref()).await?)
     }
 
     /// The DID's most recent operation as a full record, or `None`. `operation`
     /// is re-serialized from `jsonb` to the JSON text the record carries.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
         let row = sql::latest_op(&self.pool, did.as_ref()).await?;
 

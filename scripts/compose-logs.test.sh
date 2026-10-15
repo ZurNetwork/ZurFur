@@ -1,0 +1,138 @@
+#!/bin/sh
+# Tests for scripts/compose-logs.sh against a stub `docker`: one detached
+# follower per service with its pidfile and log file, a new start stopping the
+# old follower (and never a process that isn't ours), retention, and stop.
+# Run directly, or via `just scripts-test`. Needs bash, setsid and ps.
+set -eu
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+under_test="$script_dir/compose-logs.sh"
+work="$(mktemp -d)"
+logs="$work/logs"
+mkdir -p "$work/bin" "$work/calls"
+failures=0
+
+# The stub records each `docker` call's arguments, prints a line naming the
+# service, then follows forever, as `compose logs -f` does while its container runs.
+cat >"$work/bin/docker" <<'SHIM'
+#!/bin/sh
+for service in "$@"; do :; done
+printf '%s\n' "$@" >"$STUB_CALLS/$service.$$"
+echo "stub log line for $service"
+trap 'exit 0' TERM
+while :; do sleep 0.2; done
+SHIM
+chmod +x "$work/bin/docker"
+
+compose_logs() {
+    PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$logs" STUB_CALLS="$work/calls" \
+        bash "$under_test" "$@"
+}
+bystander=""
+cleanup() {
+    compose_logs stop >/dev/null 2>&1 || true
+    [ -n "$bystander" ] && kill "$bystander" 2>/dev/null
+    rm -rf "$work"
+}
+trap cleanup EXIT
+
+ok() { echo "ok   $1"; }
+fail() {
+    echo "FAIL $1: $2"
+    failures=$((failures + 1))
+}
+alive() { kill -0 "$1" 2>/dev/null; }
+pid_of() { awk 'NR == 1 { print $1 }' "$logs/compose/$1/follower.pid" 2>/dev/null; }
+# eventually <command…>: retries for up to 5 s.
+eventually() {
+    tries=0
+    until "$@"; do
+        tries=$((tries + 1))
+        [ "$tries" -ge 50 ] && return 1
+        sleep 0.1
+    done
+}
+
+# --- one follower per service, with its pidfile --------------------------------
+mkdir -p "$logs/compose/db"
+for day in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    : >"$logs/compose/db/202610${day}T000000Z.log"
+done
+compose_logs start 2026-10-14T12:00:00Z db pds
+db_pid="$(pid_of db)"
+pds_pid="$(pid_of pds)"
+if [ -n "$db_pid" ] && [ -n "$pds_pid" ] && alive "$db_pid" && alive "$pds_pid"; then
+    ok "start leaves a running follower and a pidfile per service"
+else
+    fail "start leaves a running follower and a pidfile per service" "db '$db_pid', pds '$pds_pid'"
+fi
+leads_its_group() { [ "$(ps -o pgid= -p "$1" | tr -d ' ')" = "$1" ]; }
+if eventually leads_its_group "$db_pid"; then
+    ok "each follower leads its own process group (setsid)"
+else
+    fail "each follower leads its own process group (setsid)" "$(ps -o pid,pgid,sid -p "$db_pid")"
+fi
+expected_argv="$(printf '%s\n' compose logs -f --no-color -t --since 2026-10-14T12:00:00Z db)"
+if eventually [ -s "$work/calls/db.$db_pid" ] && [ "$(cat "$work/calls/db.$db_pid")" = "$expected_argv" ]; then
+    ok "the follower runs docker compose logs -f --no-color -t --since <since> <service>"
+else
+    fail "the follower runs docker compose logs -f --no-color -t --since <since> <service>" \
+        "$(cat "$work/calls/db.$db_pid" 2>&1)"
+fi
+link="$(readlink "$logs/latest/db.log" 2>/dev/null || true)"
+case "$link" in
+    ../compose/db/*.log) ok "latest/<service>.log links into compose/<service>/" ;;
+    *) fail "latest/<service>.log links into compose/<service>/" "it points at '$link'" ;;
+esac
+if eventually grep -q "stub log line for db" "$logs/latest/db.log"; then
+    ok "the follower's output lands in the file"
+else
+    fail "the follower's output lands in the file" "$(cat "$logs/latest/db.log" 2>&1)"
+fi
+kept="$(find "$logs/compose/db" -name '*.log' | wc -l | tr -d ' ')"
+if [ "$kept" = "10" ] && [ ! -e "$logs/compose/db/20261001T000000Z.log" ]; then
+    ok "the newest 10 files are kept per service"
+else
+    fail "the newest 10 files are kept per service" "$(ls "$logs/compose/db" | tr '\n' ' ')"
+fi
+
+# --- a new start stops the old follower first ------------------------------------
+compose_logs start 2026-10-14T12:05:00Z db
+new_db_pid="$(pid_of db)"
+if eventually sh -c "! kill -0 $db_pid 2>/dev/null" && alive "$new_db_pid" &&
+    [ "$new_db_pid" != "$db_pid" ] && alive "$pds_pid"; then
+    ok "a new start stops that service's old follower, and only that one"
+else
+    fail "a new start stops that service's old follower, and only that one" \
+        "old $db_pid, new $new_db_pid, pds $pds_pid"
+fi
+
+# --- never a process that isn't ours ------------------------------------------
+sleep 30 &
+bystander=$!
+printf '%s %s\n' "$bystander" "not-its-start-time" >"$logs/compose/pds/follower.pid"
+compose_logs start 2026-10-14T12:10:00Z pds
+if alive "$bystander" && [ "$(pid_of pds)" != "$bystander" ]; then
+    ok "a pidfile naming someone else's process never kills it"
+else
+    fail "a pidfile naming someone else's process never kills it" "bystander $bystander"
+fi
+# The pds follower from the first start is orphaned by the forged pidfile.
+kill -TERM -- "-$pds_pid" 2>/dev/null || true
+
+# --- stop ends every follower --------------------------------------------------
+db_pid="$(pid_of db)"
+pds_pid="$(pid_of pds)"
+compose_logs stop
+if eventually sh -c "! kill -0 $db_pid 2>/dev/null && ! kill -0 $pds_pid 2>/dev/null" &&
+    [ ! -e "$logs/compose/db/follower.pid" ] && [ ! -e "$logs/compose/pds/follower.pid" ]; then
+    ok "stop ends every follower and removes its pidfile"
+else
+    fail "stop ends every follower and removes its pidfile" "db $db_pid, pds $pds_pid"
+fi
+
+if [ "$failures" -gt 0 ]; then
+    echo "$failures compose-logs test(s) failed"
+    exit 1
+fi
+echo "all compose-logs tests pass"

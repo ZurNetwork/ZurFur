@@ -106,7 +106,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
       "node": false
     },
     {

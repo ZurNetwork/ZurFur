@@ -175,6 +175,11 @@
       "node": false
     },
     {
+      "name": "tests/use_case_log.rs",
+      "role": "pins #[use_case]'s log: the debug span use_case{name}, use case started, use case finished with outcome ok/err and the error by Display, the span close, never the command (alone in its binary: callsite interest)",
+      "node": false
+    },
+    {
       "name": "tests/user.rs",
       "role": "integration tests for the me use case, its bounded profile wait included (paused tokio clock)",
       "node": false

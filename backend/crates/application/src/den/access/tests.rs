@@ -313,7 +313,7 @@ async fn a_node_reached_through_a_mount_does_not_count_as_opening() {
         &resolved.node().view,
         View::Open { real_path, .. } if real_path == &landed_at_the_account
     ));
-    assert!(matches!(answer, Err(DenError::NotFound)));
+    assert!(matches!(answer, Err(Refusal::Elsewhere)));
 }
 
 /// A user store whose every read fails.
@@ -387,4 +387,97 @@ async fn the_check_names_a_cold_root_without_starting_or_waiting_on_a_lookup() {
     assert_eq!(opens.node(), &ServedNode::OwnRoot);
     assert_eq!(waited, Duration::ZERO, "the check never waits on a name");
     assert_eq!(pds.fetches(), 0, "the check never starts a lookup");
+}
+
+/// The den check's answer lines in what `run` logged at debug.
+async fn answer_lines<F: std::future::Future>(run: F) -> String {
+    let log = test_support::log_capture::CapturedLog::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_writer(log.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    run.await;
+    let text = log.text();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("den check answered"))
+        .collect();
+    lines.join("\n")
+}
+
+#[tokio::test]
+async fn each_answer_is_logged_by_its_node_kind_and_class() {
+    let world = test_world::world().await;
+    let listed = seed_alice_s(&world, "Listed piece", Visibility::Listed).await;
+    let stranger = stranger();
+
+    let lines = answer_lines(async {
+        let _ = check(&world, &alice(), ServedNode::OwnRoot).await;
+        let _ = check(&world, &stranger, ServedNode::Commission(listed)).await;
+        let _ = check(&world, &bob(), ServedNode::Account(supreme_arts())).await;
+    })
+    .await;
+
+    let lines: Vec<&str> = lines.lines().collect();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(
+        lines[0].contains("node=\"own_root\" answer=\"opens\""),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].contains("DEBUG"), "{}", lines[0]);
+    assert!(
+        lines[1].contains("node=\"commission\" answer=\"not_found.card\""),
+        "{}",
+        lines[1]
+    );
+    assert!(lines[2].contains("node=\"account\""), "{}", lines[2]);
+    assert!(lines[2].contains("answer=\"not_found."), "{}", lines[2]);
+    for line in lines {
+        for leak in [
+            alice().to_string(),
+            listed.to_string(),
+            supreme_arts().to_string(),
+        ] {
+            assert!(
+                !line.contains(&leak),
+                "the answer line carries {leak}: {line}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_store_failure_is_logged_as_store_failed() {
+    let World { mut ports, .. } = test_world::world().await;
+    ports.users = Arc::new(FailingUsers);
+
+    let lines = answer_lines(async {
+        let _ = may_open(&ports, &alice(), ServedNode::OwnRoot).await;
+    })
+    .await;
+
+    assert!(
+        lines.contains("node=\"own_root\" answer=\"store_failed\""),
+        "{lines}"
+    );
+    assert!(!lines.contains("the user store is down"), "{lines}");
+}
+
+#[tokio::test]
+async fn an_absent_commission_is_logged_as_a_walk_miss() {
+    let world = test_world::world().await;
+    let alice = alice();
+
+    let lines = answer_lines(async {
+        let _ = check(&world, &alice, ServedNode::Commission(nowhere())).await;
+    })
+    .await;
+
+    assert!(
+        lines.contains("node=\"commission\" answer=\"not_found.walk\""),
+        "{lines}"
+    );
 }

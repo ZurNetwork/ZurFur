@@ -140,10 +140,36 @@ pub(crate) fn access(own_level: Level, here: &[Lift], inherited: &[Lift]) -> Acc
     Access { level, via }
 }
 
+/// How a read ended, as the resolver's debug events name it: `open`, `card`, `not_found` or
+/// `host_error`.
+pub(crate) fn outcome_class(read: &Result<&Resolved, &Error>) -> &'static str {
+    match read {
+        Ok(resolved) => match resolved.node.view {
+            View::Open { .. } => "open",
+            View::Card => "card",
+        },
+        Err(Error::NotFound) => "not_found",
+        Err(Error::Host(_)) => "host_error",
+    }
+}
+
 impl Resolver<'_> {
     /// The node at `den_path` below the viewer's `root`, with its crumbs; any miss is
-    /// [`Error::NotFound`].
+    /// [`Error::NotFound`]. Logs its outcome class and the path's depth at debug.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub async fn resolve_path(
+        &self,
+        root: &RealPath,
+        den_path: &[Segment],
+    ) -> Result<Resolved, Error> {
+        let resolved = self.resolve_path_unlogged(root, den_path).await;
+        let outcome = outcome_class(&resolved.as_ref());
+        tracing::debug!(outcome, depth = den_path.len(), "resolved");
+        resolved
+    }
+
+    /// [`Resolver::resolve_path`]'s walk, without its log line.
+    async fn resolve_path_unlogged(
         &self,
         root: &RealPath,
         den_path: &[Segment],

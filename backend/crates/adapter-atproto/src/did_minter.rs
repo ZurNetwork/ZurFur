@@ -115,6 +115,7 @@ impl DidMinter for RealDidMinter {
     /// keypairs, sign the genesis operation with the operational key, derive the
     /// DID, custody the keys and log the op, then submit to the directory.
     /// Keys are stored before submission, so a submission retry never orphans them.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint(&self, handle: &Handle) -> anyhow::Result<Did> {
         let (cold, operational, signing) = generate_keypairs();
 
@@ -128,6 +129,7 @@ impl DidMinter for RealDidMinter {
 
     /// Mint an identity-only `did:plc` with no alias, chaining the same
     /// key-generation, custody and submission path as [`mint`](Self::mint).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint_handleless(&self) -> anyhow::Result<Did> {
         let (cold, operational, signing) = generate_keypairs();
 
@@ -142,6 +144,7 @@ impl DidMinter for RealDidMinter {
     /// key, chaining onto the DID's latest logged operation, then submit before
     /// recording — so a failed submit never advances the local chain. Fails
     /// retryably if the DID has no custody keys or no op to chain onto.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn tombstone(&self, did: &Did) -> anyhow::Result<()> {
         let keys = self.key_store.get(did).await?.ok_or_else(|| {
             anyhow::anyhow!("no custody keys to tombstone {}", AsRef::<str>::as_ref(did))
@@ -183,6 +186,7 @@ impl DidMinter for RealDidMinter {
     /// non-identity-only prior op is rejected, never rewritten. Submits before
     /// recording; an identical replay is idempotent and a competing update on the
     /// same `prev` errors rather than forking the chain.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
         // The latest op's `cid` is our `prev`; its JSON holds the public document
         // fields we preserve, never re-derived from the custodied private keys.
@@ -315,22 +319,26 @@ fn random_suffix() -> String {
 impl DidMinter for StubDidMinter {
     /// Return `did:plc:` + 24 random lowercase base32 chars. `handle` is ignored
     /// and the DID resolves nowhere; purely local, so it never fails.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
         Ok(Did::from(format!("did:plc:{}", random_suffix())))
     }
 
     /// Return `did:plc:` + 24 random lowercase base32 chars, same as
     /// [`mint`](Self::mint); the DID resolves nowhere either way.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint_handleless(&self) -> anyhow::Result<Did> {
         Ok(Did::from(format!("did:plc:{}", random_suffix())))
     }
 
     /// No-op: the stub registers no operation, so there is nothing to tombstone.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         Ok(())
     }
 
     /// No-op: the stub custodies no keys and has no `alsoKnownAs` to re-point.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
         Ok(())
     }

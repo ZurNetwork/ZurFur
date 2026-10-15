@@ -41,6 +41,7 @@ pub struct PgActorIdentityWrites<'a> {
 
 #[async_trait]
 impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()> {
         // The DID-less path by contract: intern owns DID-bearing rows.
         anyhow::ensure!(
@@ -68,6 +69,7 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn intern(
         &mut self,
         did: &Did,
@@ -90,6 +92,7 @@ impl ActorIdentityWrites for PgActorIdentityWrites<'_> {
         rebuild(row)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn cache_handle(
         &mut self,
         id: &ActorIdentityId,
@@ -115,11 +118,13 @@ impl PgActorIdentityStore {
 
 #[async_trait]
 impl ActorIdentityStore for PgActorIdentityStore {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
         let row = sql::find(&self.pool, uuid::Uuid::from(*id)).await?;
         row.map(rebuild).transpose()
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
         let row = sql::find_by_did(&self.pool, did.as_ref()).await?;
         row.map(rebuild).transpose()

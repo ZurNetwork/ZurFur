@@ -111,6 +111,7 @@ impl ProfileSource for AtprotoProfileSource {
     /// yields a handle-only [`Profile`]; any other failure, an identity outage
     /// or the deadline included, is an `Err`, so a transient fault is never
     /// cached as a stripped profile.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn fetch(&self, did: &Did) -> anyhow::Result<Profile> {
         let profile = self.read_within_deadline(did).await;
         if let Err(failure) = &profile {

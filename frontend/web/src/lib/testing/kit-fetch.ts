@@ -11,8 +11,8 @@ import { create_fetch } from '../../../node_modules/@sveltejs/kit/src/runtime/se
 // @ts-expect-error -- kit internal, untyped
 import { get_cookies } from '../../../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
 
-/** What `event.fetch` needs of the request event: its address, its request and its locals. */
-export type FetchingEvent = Pick<RequestEvent, 'url' | 'request' | 'locals'>;
+/** What `event.fetch` and the app's `handleFetch` need of the request event: its address, its request, its locals and its route. */
+export type FetchingEvent = Pick<RequestEvent, 'url' | 'request' | 'locals' | 'route'>;
 
 /** `event.fetch` as SvelteKit builds it for `event`, with `hook` as the app's `handleFetch`. */
 export function kitEventFetch(event: FetchingEvent, hook: HandleFetch): typeof fetch {

@@ -115,11 +115,13 @@ impl AtprotoIdentityResolver {
 
 #[async_trait]
 impl IdentityResolver for AtprotoIdentityResolver {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn resolve_handle(&self, handle: &AtHandle) -> Result<Did, ResolveError> {
         let (did, _document) = self.within_deadline(self.confirm_handle(handle)).await?;
         Ok(did)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn resolve_did(&self, did: &Did) -> Result<Option<AtHandle>, ResolveError> {
         let (_document, handle) = self.resolve_did_with_document(did).await?;
         Ok(handle)

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     Admission, Entry, Error, Level, Listing, PageToken, Reach, Resolved, Resolver, Segment,
     ordering::name_order,
-    resolve::{Folder, Located},
+    resolve::{Folder, Located, outcome_class},
 };
 
 /// The keys of the hash that breaks ties between cards, drawn once per process.
@@ -32,8 +32,27 @@ impl Resolver<'_> {
     /// One page of the resolved node's entries, starting at `page`: `None` unless the viewer can
     /// open the node and it is a directory, and the one not-found for a node resolved for another
     /// viewer. Entries the viewer can't see or the host refuses go before the sort and the cut,
-    /// so a page is never short and a token hints at nothing that was left out.
+    /// so a page is never short and a token hints at nothing that was left out. Logs its
+    /// outcome class, the node's depth and the page's size at debug.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub async fn list(
+        &self,
+        resolved: &Resolved,
+        page: Option<PageToken>,
+    ) -> Result<Option<Listing>, Error> {
+        let listed = self.list_unlogged(resolved, page).await;
+        let outcome = outcome_class(&listed.as_ref().map(|_| resolved));
+        let entries = listed
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .map(|listing| listing.entries.len());
+        tracing::debug!(outcome, depth = resolved.crumbs().len(), entries, "listed");
+        listed
+    }
+
+    /// [`Resolver::list`]'s page, without its log line.
+    async fn list_unlogged(
         &self,
         resolved: &Resolved,
         page: Option<PageToken>,

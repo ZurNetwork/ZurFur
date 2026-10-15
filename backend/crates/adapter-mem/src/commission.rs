@@ -349,6 +349,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// staging snapshot — so a tabless or owner-less commission is
     /// unrepresentable. Every tab is born [`VisibilityMode::Total`]; the
     /// commission's own visibility gates over the composition, never seeds it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
         {
             let mut commissions = self
@@ -401,6 +402,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// within its `(tab, surface, band)` group, behind the shared address gate.
     /// The element is born [`VisibilityMode::Total`] and its opaque payload is
     /// held verbatim.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
         insert_element(&self.0, element)
     }
@@ -410,6 +412,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// contiguous positions — all on the staging snapshot, so they commit
     /// together. An absent id and a foreign element both refuse with
     /// [`ElementNotFound`], indistinguishably. No element is protected.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn remove_element(
         &mut self,
         commission: &CommissionId,
@@ -482,6 +485,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// Record a file entry's link on the unit's staged snapshot, so it commits
     /// atomically with the caller's `file_added` changelog entry. The bytes were
     /// stored separately, before this unit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
         let mut files = self
             .0
@@ -495,6 +499,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// Record one annotation on the unit's staged snapshot, so it commits
     /// atomically with the caller's `markup_added` changelog entry. The file
     /// entry's existence stays the caller's check.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
         let mut markups = self
             .0
@@ -509,6 +514,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// [`ElementType::slot`]-typed element and the Slot lands as its
     /// `StoredSlot` satellite. The batch commits or vanishes together, so a
     /// refusal mid-batch applies nothing.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in new_slots {
             let carrier = NewElement::carrying(
@@ -542,6 +548,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// snapshot. Constant `false`: no fact-minter exists yet, so there is no fact
     /// map to scan. Whoever registers the first fact table in the pg adapter MUST
     /// add the matching map here too.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
@@ -553,6 +560,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// absent commission is a no-op. Positioning (a card on a board) does NOT
     /// cascade here, a known divergence; any future child map must. The blobs
     /// stay, as in pg: the blob store sits outside the unit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         let id = *id;
         {
@@ -643,6 +651,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// the original stamp. An absent commission answers `false` (existence is
     /// the caller's check). Staged like every write here: shared state moves
     /// only on commit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_archived(
         &mut self,
         id: &CommissionId,
@@ -668,6 +677,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// `UPDATE commission SET maturity, graphic`. Replace-only by
     /// signature (no clear arm exists); an absent commission is a no-op, per
     /// the port contract (existence is the caller's check).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         let id = *id;
         let mut commissions = self
@@ -683,6 +693,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// Declare a seat: behind the shared address gate, one `StoredElement`
     /// and one `StoredSeat` land under the same [`ElementId`], so both halves
     /// commit or vanish together. Every seat is born vacant.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         let carrier = NewElement::carrying(
             seat.id,
@@ -716,6 +727,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// same `(seat, invited_user)`, in which case this is a no-op — different
     /// Users may each hold one to the same Seat. Returns the offer that now
     /// stands: the fresh one, or the pending one already on file.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_seat_invitation(
         &mut self,
         invitation: &SeatInvitation,
@@ -751,6 +763,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Flip a pending seat invitation to revoked and stamp `updated_at`. A
     /// non-pending or absent invitation is a no-op, not an error.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         let id = *id;
         let mut invitations = self
@@ -770,6 +783,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// Repoint (or clear) the linked-channel pointer, applying only when the
     /// stored value differs — so a repeat, or an absent commission, answers
     /// `false`, which the caller's changelog append keys on.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_linked_channel(
         &mut self,
         id: &CommissionId,
@@ -793,6 +807,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Upsert the grantee's key: one per (commission, grantee), keyed by the
     /// grantee's DID, so re-granting replaces the level.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn grant_view(
         &mut self,
         commission: &CommissionId,
@@ -809,6 +824,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Remove the grantee's key (a hard delete), returning whether one existed —
     /// the bool the caller keys its `view_grant_revoked` append on.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -825,6 +841,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Repoint (or clear) the direction-axis Status; one slot, so a set replaces
     /// whole. An absent commission is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
         id: &CommissionId,
@@ -847,6 +864,7 @@ impl CommissionWrites for MemCommissionWrites {
     }
 
     /// Repoint (or clear) the stored deadline; an absent commission is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
         id: &CommissionId,
@@ -870,6 +888,7 @@ impl CommissionWrites for MemCommissionWrites {
 
     /// Repoint (or clear) the deadline-axis Status; one slot, so a set replaces
     /// whole. An absent commission is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
         id: &CommissionId,
@@ -894,6 +913,7 @@ impl CommissionWrites for MemCommissionWrites {
     /// The sweeper's candidate scan, answered on the unit's staged snapshot:
     /// deadline strictly before `now`, not already Late, lifecycle not terminal;
     /// ordered by deadline, id as tiebreak.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
         // Late is never persisted, so dedup on the changelog itself: skip only
         // if the latest `late` entry is AFTER the latest deadline change, since a
@@ -961,6 +981,7 @@ pub struct MemChangelogWrites(pub(crate) MemBackend);
 #[async_trait]
 impl ChangelogWrites for MemChangelogWrites {
     /// Push one entry, assigning the next `seq`, monotonic over the whole log.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
         let mut changelog = self
             .0
@@ -986,14 +1007,17 @@ impl ChangelogWrites for MemChangelogWrites {
 /// in process, so `find_for_update`/`tab_for_update` are their unlocked twins.
 #[async_trait]
 impl CommissionReads for MemCommissionWrites {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         MemCommissionStore(self.0.clone()).find(id).await
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         MemCommissionStore(self.0.clone()).find(id).await
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -1006,6 +1030,7 @@ impl CommissionReads for MemCommissionWrites {
 
     /// The tab row, scoped to `commission`; an absent id and a foreign tab both
     /// answer `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn tab_for_update(
         &mut self,
         commission: &CommissionId,
@@ -1029,6 +1054,7 @@ pub struct MemCommissionStore(pub(crate) MemBackend);
 #[async_trait]
 impl CommissionStore for MemCommissionStore {
     /// Rebuild a [`Commission`] from its stored parts, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let id = *id;
         let commissions = self
@@ -1040,6 +1066,7 @@ impl CommissionStore for MemCommissionStore {
     }
 
     /// The listing's slim projection of the commission `id` names, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
         let id = *id;
         let commissions = self
@@ -1052,6 +1079,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// The [`GrantLevel`] `user` holds on `commission`, or `None`. A key is
     /// issued to a User, never an Account, so account membership confers nothing.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn view_grant(
         &self,
         commission: &CommissionId,
@@ -1068,6 +1096,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// Which column of `workflow_id` holds this commission, or `None`. Scoped by
     /// board: a commission sits in at most one column per board.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -1080,6 +1109,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// This commission's index within `column_id`, or `None` if that column does
     /// not hold it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn current_position_in_column(
         &self,
         commission: &CommissionId,
@@ -1102,6 +1132,7 @@ impl CommissionStore for MemCommissionStore {
     /// filtered by commission and ordered as pg orders them. `None` when the
     /// commission has NO tabs, which means no such commission — an empty
     /// `elements` list is the ordinary state of a fresh one.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn load_composition(
         &self,
         id: &CommissionId,
@@ -1183,6 +1214,7 @@ impl CommissionStore for MemCommissionStore {
     /// owner-∪-seated union; an unknown commission answers `false`. Unaffected by
     /// placement or view grants — neither makes an account's members
     /// Participants.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &self,
         commission: &CommissionId,
@@ -1198,6 +1230,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// The commission's seat satellites in declaration order (seat ids are
     /// UUIDv7, so id order is declaration order). No seats is the empty list.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
         let commission = *commission;
         let seats = self
@@ -1223,6 +1256,7 @@ impl CommissionStore for MemCommissionStore {
     /// The lone pending seat invitation for `(commission, seat, user)`, or
     /// `None`. Accepted or revoked offers never match, and neither does another
     /// seat's or commission's — the binding lives in the lookup.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_pending_seat_invitation(
         &self,
         commission: &CommissionId,
@@ -1246,6 +1280,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// The file-entry link `key` names within `commission`; a key belonging to a
     /// different commission answers `None`, never an existence oracle.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_file(
         &self,
         commission: &CommissionId,
@@ -1265,6 +1300,7 @@ impl CommissionStore for MemCommissionStore {
     /// The annotations on one file entry, sorted by `MarkupKey` (UUIDv7, so
     /// creation order). Filtered on the commission too, so a foreign file key
     /// yields an empty vector rather than a signal.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn markups_for_file(
         &self,
         commission: &CommissionId,
@@ -1290,6 +1326,7 @@ impl CommissionStore for MemCommissionStore {
     /// Scan `commissions` for `owner`'s rows, drop archived ones, and rebuild
     /// each. Sorted by [`CommissionId`] (UUIDv7, so creation order), since the
     /// `HashMap` scan has no natural order.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         let commissions = self
             .0
@@ -1308,6 +1345,7 @@ impl CommissionStore for MemCommissionStore {
     /// Scan the participant map for `user`'s memberships and summarize each
     /// commission, archived ones included. Sorted by [`CommissionId`] (UUIDv7,
     /// so creation order), since the `HashMap` scan has no natural order.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         let participants = self
             .0
@@ -1334,6 +1372,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// The commission's file entries, key and upload time only, sorted by
     /// [`FileKey`] (UUIDv7, so upload order). An unknown commission has none.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>> {
         let files = self
             .0
@@ -1354,6 +1393,7 @@ impl CommissionStore for MemCommissionStore {
 
     /// Every Slot declared on `commission`, in declaration order (carrying
     /// element ids are UUIDv7, so id order is creation order).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         let slots = self
             .0
@@ -1377,6 +1417,7 @@ pub struct MemChangelogStore(pub(crate) MemBackend);
 impl ChangelogStore for MemChangelogStore {
     /// The commission's stream in ascending `seq`; entries are pushed in seq
     /// order, so a filter preserves it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
         let commission = *commission;
         let changelog = self

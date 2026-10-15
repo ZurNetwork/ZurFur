@@ -61,7 +61,7 @@ async fn no_log_line_names_a_session_cookie_value_from_two_pairs() {
     // Captured from here on, on the test's one thread, which also runs the server.
     let log = CapturedLog::default();
     let filter = EnvFilter::new("trace");
-    let subscriber = api::logging::subscriber(filter, log.clone());
+    let subscriber = api::logging::subscriber(&api::Environment::DEV, filter, log.clone());
     let _guard = tracing::subscriber::set_default(subscriber);
     let three_pairs = format!("zurfur.sid={live}; zurfur.sid=junkvalue; zurfur.sid={planted}");
 

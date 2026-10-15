@@ -52,6 +52,7 @@ impl FixedSignIn {
 
 #[async_trait]
 impl Authenticator for FixedSignIn {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         let binding = uuid::Uuid::now_v7().to_string();
         let now = Instant::now();
@@ -72,6 +73,7 @@ impl Authenticator for FixedSignIn {
         Ok(started)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn complete(
         &self,
         _code: String,

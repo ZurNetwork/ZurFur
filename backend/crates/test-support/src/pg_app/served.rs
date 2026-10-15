@@ -41,7 +41,16 @@ pub struct SignedIn {
 /// database, with the sign-in and profile ports answered by an
 /// [`InProcessPds`] and sessions kept in PostgreSQL.
 pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
-    serve_through(app, None, |stacked| stacked).await
+    serve_through(app, None, |stacked| stacked, |_| {}).await
+}
+
+/// As [`serve`], with `configure` changing the dev [`Config`] before the runtime connects:
+/// a test that plants its own root key, say.
+pub async fn serve_configured(
+    app: impl FnOnce(Runtime) -> Router,
+    configure: impl FnOnce(&mut Config),
+) -> PgServed {
+    serve_through(app, None, |stacked| stacked, configure).await
 }
 
 /// As [`serve`], with `wrap` adding layers outside the whole stack.
@@ -49,7 +58,7 @@ pub async fn serve_wrapped(
     app: impl FnOnce(Runtime) -> Router,
     wrap: impl FnOnce(Stacked) -> Stacked,
 ) -> PgServed {
-    serve_through(app, None, wrap).await
+    serve_through(app, None, wrap, |_| {}).await
 }
 
 /// As [`serve`], with the app reaching its database through a proxy that logs into
@@ -58,15 +67,16 @@ pub async fn serve_recording(
     app: impl FnOnce(Runtime) -> Router,
     statements: &StatementLog,
 ) -> PgServed {
-    serve_through(app, Some(statements), |stacked| stacked).await
+    serve_through(app, Some(statements), |stacked| stacked, |_| {}).await
 }
 
 /// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given,
-/// with `wrap` adding layers outside the whole stack.
+/// with `wrap` adding layers outside the whole stack and `configure` changing the config.
 async fn serve_through(
     app: impl FnOnce(Runtime) -> Router,
     statements: Option<&StatementLog>,
     wrap: impl FnOnce(Stacked) -> Stacked,
+    configure: impl FnOnce(&mut Config),
 ) -> PgServed {
     let db = fresh_db().await;
     let database_url = match statements {
@@ -79,7 +89,9 @@ async fn serve_through(
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
 
     let pds = Arc::new(InProcessPds::default());
-    let live = Runtime::connect(config(&base_url, &database_url))
+    let mut config = config(&base_url, &database_url);
+    configure(&mut config);
+    let live = Runtime::connect(config)
         .await
         .expect("the live runtime connects to the test database");
     let runtime = Runtime {

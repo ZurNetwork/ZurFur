@@ -14,7 +14,8 @@ rmp-serde = { workspace = true }
 async-trait = { workspace = true }
 domain = { path = "../domain/" }
 anyhow = { workspace = true }
-# One fixed warning when a stored commission visibility is read leniently.
+# One fixed warning when a stored commission visibility is read leniently, and
+# every port method's `debug` span (`#[tracing::instrument]`, arguments skipped).
 tracing = { workspace = true }
 # strum: VARIANTS over the domain vocabularies
 strum = { workspace = true }

@@ -37,6 +37,7 @@ impl PgProfileCache {
 impl ProfileCache for PgProfileCache {
     /// The [`ttl`](PgProfileCache::new) is applied as a `fetched_at > cutoff`
     /// predicate, so a stale entry returns `None` (a miss) and the caller refetches.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>> {
         let cutoff = Utc::now() - self.ttl;
         let row = sql::get(&self.pool, did.as_ref(), cutoff).await?;
@@ -53,6 +54,7 @@ impl ProfileCache for PgProfileCache {
     /// now()`, restarting the TTL window [`get`](PgProfileCache::get) reads.
     /// Runs on the pool, not a `UnitOfWork` — a documented exception:
     /// a best-effort cache fill on the GET path has no transactional invariant.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         sql::put(
             &self.pool,

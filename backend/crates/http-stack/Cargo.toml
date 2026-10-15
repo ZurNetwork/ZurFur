@@ -24,7 +24,8 @@ tracing = { workspace = true }
 serde_json = { workspace = true }
 # `Unfinished`, the drain's error.
 thiserror = { workspace = true }
-# `RequestBodyTimeoutLayer`: a stalled request body fails its read.
+# `RequestBodyTimeoutLayer`: a stalled request body fails its read. `TraceLayer`:
+# the request log's span and its start and finish events.
 tower-http = { workspace = true }
 # The session layer the stack mounts inside the detach layer.
 http-cookies = { path = "../http-cookies" }
@@ -37,3 +38,5 @@ futures-util = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 # The counting session store implements tower-sessions' `#[async_trait]` port.
 async-trait = { workspace = true }
+# The request log's tests read what a fmt subscriber wrote.
+tracing-subscriber = { workspace = true }

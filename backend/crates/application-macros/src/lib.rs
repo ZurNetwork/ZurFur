@@ -16,7 +16,8 @@ mod with_ports;
 /// `#[unit]` or `#[lazy_unit]` are injected and removed from the public
 /// signature. `#[unit]` opens the unit before the body, `#[lazy_unit]` leaves
 /// it to the body's `open()`; either commits on `Ok` and rolls back on `Err`.
-/// A method that injects nothing is left as written.
+/// Every use case, one that injects nothing too, runs inside a `debug` span
+/// `use_case{name}` that logs its start and its outcome.
 #[proc_macro_attribute]
 pub fn use_case(args: TokenStream, item: TokenStream) -> TokenStream {
     let _args = parse_macro_input!(args as syn::parse::Nothing);

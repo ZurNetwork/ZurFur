@@ -1,11 +1,12 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, FnArg, Ident, ItemFn, Pat, PatType};
+use syn::{Attribute, FnArg, Ident, ItemFn, Pat, PatType, ReturnType};
 
 /// Expands a `#[use_case]` method into a private `<name>_inner_injected` body
-/// and a same-named wrapper without the injected parameters. A fn that injects
-/// nothing passes through unchanged.
+/// and a same-named wrapper without the injected parameters, which runs the
+/// call inside a `debug` span `use_case{name}` and logs its start and its
+/// outcome. A fn that injects nothing keeps its signature.
 pub(crate) fn expand_use_case(function: &ItemFn) -> syn::Result<TokenStream2> {
     let ItemFn {
         attrs,
@@ -82,9 +83,12 @@ pub(crate) fn expand_use_case(function: &ItemFn) -> syn::Result<TokenStream2> {
         return Err(syn::Error::new_spanned(unit, message));
     }
 
-    if !markers.injects_anything() {
-        return Ok(quote! { #(#attrs)* #vis #sig #block });
-    }
+    let ReturnType::Type(_, output) = &sig.output else {
+        return Err(syn::Error::new_spanned(
+            &sig.ident,
+            "a `#[use_case]` fn returns a `Result`",
+        ));
+    };
 
     let mut inner_sig = sig.clone();
     inner_sig.ident = format_ident!("{}_inner_injected", sig.ident);
@@ -123,14 +127,41 @@ pub(crate) fn expand_use_case(function: &ItemFn) -> syn::Result<TokenStream2> {
     } else {
         quote! { #call.await }
     };
+    let logged_body = logged(&sig.ident, output, &wrapper_body);
 
     Ok(quote! {
         #[doc(hidden)]
         #inner_sig #block
 
         #(#attrs)*
-        #vis #outer_sig { #wrapper_body }
+        #vis #outer_sig { #logged_body }
     })
+}
+
+/// `body` run inside a `debug` span `use_case{name}`, `name` the fn's path, between a
+/// `use case started` and a `use case finished` event; the latter carries `outcome` and, on
+/// an error, the error's `Display`, never its `Debug` and never the use case's input.
+fn logged(name: &Ident, output: &syn::Type, body: &TokenStream2) -> TokenStream2 {
+    quote! {
+        let span = ::tracing::debug_span!(
+            "use_case",
+            name = ::core::concat!(::core::module_path!(), "::", ::core::stringify!(#name)),
+        );
+        let logged = async move {
+            ::tracing::debug!("use case started");
+            let outcome: #output = async { #body }.await;
+            match &outcome {
+                ::core::result::Result::Ok(_) => {
+                    ::tracing::debug!(outcome = "ok", "use case finished");
+                }
+                ::core::result::Result::Err(error) => {
+                    ::tracing::debug!(outcome = "err", error = %error, "use case finished");
+                }
+            }
+            outcome
+        };
+        ::tracing::Instrument::instrument(logged, span).await
+    }
 }
 
 enum Injection {
@@ -174,10 +205,6 @@ impl<'a> Markers<'a> {
             return Err(syn::Error::new_spanned(unit, message));
         }
         Ok(())
-    }
-
-    fn injects_anything(&self) -> bool {
-        self.ports.is_some() || self.unit.is_some() || self.lazy_unit.is_some()
     }
 }
 

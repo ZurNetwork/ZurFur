@@ -58,9 +58,10 @@ http = { version = "1.4" }
 # `set-header`: the `SetResponseHeaderLayer` that stamps `Cache-Control:
 # no-store` on the authenticated cookie surface (CWE-525, ZMVP-151). `timeout`:
 # http-stack's `RequestBodyTimeoutLayer`, a per-frame idle timeout on request
-# bodies. Already in the tree transitively (reqwest decompression) — this just
-# turns on the modules.
-tower-http = { version = "0.6", features = ["set-header", "timeout"] }
+# bodies. `trace`: http-stack's request log (`TraceLayer`, its span and its
+# start/finish events). Already in the tree transitively (reqwest
+# decompression) — this just turns on the modules.
+tower-http = { version = "0.6", features = ["set-header", "timeout", "trace"] }
 # `io`: `StreamReader`/`ReaderStream`, the axum-multipart <-> AsyncRead
 # adapters the streaming FileStore seam needs (ZMVP-88/205). `rt`: the
 # `TaskTracker` http-stack's detached requests and graceful shutdown wait on.

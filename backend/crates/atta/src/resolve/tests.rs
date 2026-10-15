@@ -431,3 +431,76 @@ fn standing_wins_a_tie_with_a_grant() {
         expected_access(Level::Public, Via::Standing)
     );
 }
+
+/// What a test subscriber wrote; clones share one buffer.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Captured {
+    fn text(&self) -> String {
+        let bytes = self.0.lock().expect("unpoisoned").clone();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("unpoisoned").extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for Captured {
+    type Writer = Self;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// The line logging `event` with `outcome`, among `text`'s.
+fn outcome_line<'t>(text: &'t str, event: &str, outcome: &str) -> Option<&'t str> {
+    let field = format!("outcome=\"{outcome}\"");
+    text.lines()
+        .find(|line| line.contains(event) && line.contains(field.as_str()))
+}
+
+#[tokio::test]
+async fn each_read_logs_its_outcome_class_and_depth_and_never_its_path() {
+    let host = world();
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_writer(captured.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let opened = resolve(&host, &["commissions", "c1"]).await;
+    let carded = resolve(&host, &["commissions", "card"]).await;
+    let missing = resolve(&host, &["nowhere"]).await;
+    let folder = resolve(&host, &["commissions"]).await.expect("opens");
+    let listed = resolver(&host).list(&folder, None).await;
+
+    assert!(opened.is_ok() && carded.is_ok() && missing.is_err() && listed.is_ok());
+    let text = captured.text();
+    let open = outcome_line(&text, "resolved", "open").unwrap_or_else(|| panic!("{text}"));
+    assert!(open.contains("depth=2") && open.contains("DEBUG"), "{open}");
+    let card = outcome_line(&text, "resolved", "card").unwrap_or_else(|| panic!("{text}"));
+    assert!(card.contains("depth=2"), "{card}");
+    let not_found =
+        outcome_line(&text, "resolved", "not_found").unwrap_or_else(|| panic!("{text}"));
+    assert!(not_found.contains("depth=1"), "{not_found}");
+    let list = outcome_line(&text, "listed", "open").unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        list.contains("depth=1") && list.contains("entries="),
+        "{list}"
+    );
+    for planted in ["alice", "commissions", "c1", "nowhere", "/commission/"] {
+        assert!(!text.contains(planted), "the log carries {planted}: {text}");
+    }
+}

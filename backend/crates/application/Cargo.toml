@@ -60,6 +60,8 @@ composition = { path = "../composition" }
 # PDS whose latency the profile-wait tests set; dev-only, so the dep guard's
 # normal graph stays adapter-free.
 adapter-mem = { path = "../adapter-mem" }
+# The use-case log tests read what a fmt subscriber wrote.
+tracing-subscriber = { workspace = true }
 # The engine-exposure guard parses the crate's own sources.
 syn = { workspace = true }
 quote = { workspace = true }

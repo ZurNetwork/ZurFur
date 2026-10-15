@@ -476,6 +476,7 @@ impl Authenticator for AtprotoAuthenticator {
     /// run the Pushed Authorization Request with the DID and a fresh browser
     /// token bound, and return the authorization URL and that token. Every
     /// failure is one error, logged by class only.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn start(&self, handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         let started = tokio::time::timeout(self.deadlines.start, self.signin.begin(handle))
             .await
@@ -490,6 +491,7 @@ impl Authenticator for AtprotoAuthenticator {
     /// bound. Refuses another browser ([`BrowserMismatch`], unless the sign-in
     /// is claimed), another account ([`AccountMismatch`]) and any grant but
     /// `atproto`; keeps no OAuth session, in a task a dropped request can't cut.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn complete(
         &self,
         code: String,

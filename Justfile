@@ -28,7 +28,18 @@ default:
 
 # --- Dev workflow ---
 
+# Every dev recipe below writes its output to logs/<name>/<UTC stamp>.log at the
+# checkout's root as well as the terminal (scripts/dev-log.sh; plain text, the
+# newest 10 kept, logs/latest/<name>.log the newest). `just up` also follows each
+# compose service into logs/compose/<service>/. `just logs-tail [name]` follows
+# them; `just logs-clean` removes them.
+
+# The whole stack: compose, then the API and the web. It logs as `dev`, and the
+# recipes it runs log for themselves too.
 dev:
+    bash scripts/dev-log.sh dev just _dev
+
+_dev:
     just up
     just _wait-for-db
     just _wait-for-pds
@@ -37,11 +48,11 @@ dev:
 dev-back:
     # -p api: the workspace has a second binary (contract-gen) since ZMVP-25;
     # a bare `run` is ambiguous and cargo-watch dies silently under `just dev`.
-    cargo watch -C backend -x 'run -p api'
+    bash scripts/dev-log.sh dev-back cargo watch -C backend -x 'run -p api'
 
 # The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
 dev-web:
-    cd frontend/web && yarn dev
+    cd frontend/web && bash ../../scripts/dev-log.sh dev-web yarn dev
 
 # Mock-mode dev loop (ZMVP-198): the SvelteKit app alone, no axum, no Docker,
 # no Caddy — ZurfurApi is served by the in-memory mock Layer (runtime.ts's
@@ -49,7 +60,7 @@ dev-web:
 # without OAuth. Deliberately skips `just up`/wait-for-*: there is nothing to
 # wait for.
 dev-mock:
-    cd frontend/web && ZURFUR_WEB_MOCK=1 yarn dev
+    cd frontend/web && ZURFUR_WEB_MOCK=1 bash ../../scripts/dev-log.sh dev-mock yarn dev
 
 # The dev profile (no Docker, no PostgreSQL, no PDS): the API on the in-memory
 # fixture world, where every sign-in is alice. The `dev-profile` Cargo feature
@@ -62,7 +73,7 @@ dev-mock:
 # so target/debug/api is never the profile. Override either:
 # `just dev-profile 127.0.0.1:9191 http://127.0.0.1:9190`.
 dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
-    ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile cargo run -p api --features dev-profile
+    ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile bash scripts/dev-log.sh dev-profile cargo run -p api --features dev-profile
 
 # The dev profile in a browser: its one origin (the `caddy-dev-profile` compose
 # service, the same Caddyfile, loopback only) on `proxy_port`, in front of the
@@ -77,6 +88,9 @@ dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
 # `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
 # `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
 dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port="5184":
+    bash scripts/dev-log.sh dev-profile-web just _dev-profile-web "$1" "$2" "$3"
+
+_dev-profile-web proxy_port api_upstream web_port:
     #!/usr/bin/env bash
     set -euo pipefail
     export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
@@ -86,14 +100,34 @@ dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port=
 
 # --- Docker ---
 
+# Compose up, then one log follower per service from just before it
+# (scripts/compose-logs.sh), replacing the services' old followers.
 up:
-    docker compose up -d
+    bash scripts/dev-log.sh up just _up
 
+_up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    docker compose up -d
+    bash scripts/compose-logs.sh start "$since"
+
+# Compose down; the services' log followers stop with it.
 down:
     docker compose down
+    bash scripts/compose-logs.sh stop
 
 logs:
     docker compose logs -f
+
+# Follow the dev logs: every logs/latest/*.log, or only <name>'s (a recipe such
+# as dev-back, or a compose service such as db). An unknown name lists the names.
+logs-tail name="":
+    bash scripts/logs.sh tail "$1"
+
+# Stop the compose log followers, then remove logs/.
+logs-clean:
+    bash scripts/logs.sh clean
 
 # --- Database ---
 
@@ -128,8 +162,12 @@ db-reset:
 # down here with `down -v` (service-scoped — `rm -v` isn't supported by every
 # compose provider; `down -v <service>` is).
 pds-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
     docker compose down -v plc pds
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     docker compose up -d plc pds
+    bash scripts/compose-logs.sh start "$since" plc pds
     just _wait-for-pds
 
 # Create (or, if it already exists, sign into) the fixture test account on the
@@ -250,14 +288,14 @@ hooks-test:
     exit "$status"
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait, tools-check and den-fill (the
+# the dev-profile pins, pr-wait, tools-check, den-fill and the dev logs (the
 # design-index check's own tests run under `design-index-check-test`). CI
 # runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

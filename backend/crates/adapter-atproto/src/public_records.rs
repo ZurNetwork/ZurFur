@@ -64,6 +64,7 @@ impl AtprotoPublicRecords {
 
 #[async_trait]
 impl PublicRecords for AtprotoPublicRecords {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_record(
         &self,
         repo: &Did,
@@ -91,6 +92,7 @@ impl PublicRecords for AtprotoPublicRecords {
         record_ref_from(output.uri.as_str(), output.cid.as_str())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put_record(
         &self,
         uri: &AtUri,
@@ -118,6 +120,7 @@ impl PublicRecords for AtprotoPublicRecords {
         record_ref_from(output.uri.as_str(), output.cid.as_str())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete_record(&self, uri: &AtUri) -> Result<(), PublicRecordsError> {
         use jacquard::api::com_atproto::repo::delete_record::DeleteRecord;
 
@@ -134,6 +137,7 @@ impl PublicRecords for AtprotoPublicRecords {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get_record(&self, uri: &AtUri) -> Result<PublicRecord, PublicRecordsError> {
         use jacquard::api::com_atproto::repo::get_record::GetRecord;
 
@@ -154,6 +158,7 @@ impl PublicRecords for AtprotoPublicRecords {
         Ok(PublicRecord::FeedPost(feed_post_from_wire(wire)?))
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn upload_blob(
         &self,
         bytes: Vec<u8>,

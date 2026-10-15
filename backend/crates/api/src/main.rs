@@ -16,9 +16,11 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load()?;
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
-    api::logging::subscriber(filter, std::io::stdout).init();
+    let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
+    let chosen = api::logging::ChosenFilter::new(rust_log.as_deref(), &config.log_level);
+    let filter_text = chosen.filter.to_string();
+    api::logging::subscriber(&config.env, chosen.filter, std::io::stdout).init();
+    tracing::info!(source = %chosen.source, filter = %filter_text, "log filter chosen");
 
     let http_addr = config.http_addr;
     let env = config.env.clone();

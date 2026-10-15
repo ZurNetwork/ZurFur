@@ -107,6 +107,7 @@ pub struct MemWorkflowWrites(pub(crate) MemBackend);
 impl WorkflowWrites for MemWorkflowWrites {
     /// Mint one board for an account; the id and the `Private` default come
     /// from `Workflow::new`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(
         &mut self,
         name: &WorkflowName,
@@ -130,6 +131,7 @@ impl WorkflowWrites for MemWorkflowWrites {
 
     /// Delete a board and its columns, never the commissions their cards
     /// pointed at. Deleting an absent board is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
         self.0
             .workflows
@@ -148,6 +150,7 @@ impl WorkflowWrites for MemWorkflowWrites {
 
     /// Persist the board's column order as the domain holds it: one upsert per
     /// column, since the caller hands the whole board over.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -182,11 +185,13 @@ pub struct MemWorkflowStore(pub(crate) MemBackend);
 #[async_trait]
 impl WorkflowStore for MemWorkflowStore {
     /// The whole board — columns in order, each with its cards — or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, workflow_id: &WorkflowId) -> anyhow::Result<Option<Workflow>> {
         workflow_of(&self.0, workflow_id)
     }
 
     /// The account a board belongs to, or `None` if no such board exists.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn owning_account_of(
         &self,
         workflow_id: &WorkflowId,
@@ -201,12 +206,14 @@ impl WorkflowStore for MemWorkflowStore {
     }
 
     /// A board's columns in board order, each with its cards.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn columns(&self, workflow_id: &WorkflowId) -> anyhow::Result<Vec<Column>> {
         columns_of(&self.0, workflow_id)
     }
 
     /// Scan the boards for `account`'s, sorted by [`WorkflowId`] (UUIDv7, so
     /// creation order), since the `HashMap` scan has no natural order.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_for_account(&self, account: &AccountId) -> anyhow::Result<Vec<WorkflowSummary>> {
         let workflows = self
             .0
@@ -233,6 +240,7 @@ pub struct MemColumnWrites(pub(crate) MemBackend);
 impl ColumnWrites for MemColumnWrites {
     /// Delete one column and its cards, never the commissions. A backstop —
     /// the caller already refuses a column that still holds cards.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
         self.0
             .columns
@@ -244,6 +252,7 @@ impl ColumnWrites for MemColumnWrites {
 
     /// Persist the column's card list as the domain holds it: a wholesale
     /// replacement, since the list has no per-card key.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -260,6 +269,7 @@ impl ColumnWrites for MemColumnWrites {
     }
 
     /// Rename one column; the duplicate-name check happens before this.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
         let mut columns = self
             .0
@@ -282,6 +292,7 @@ pub struct MemColumnStore(pub(crate) MemBackend);
 #[async_trait]
 impl ColumnStore for MemColumnStore {
     /// One column with its cards, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, column_id: &ColumnId) -> anyhow::Result<Option<Column>> {
         let columns = self
             .0
@@ -296,6 +307,7 @@ impl ColumnStore for MemColumnStore {
     }
 
     /// Whether a column still holds any card — the gate on deleting one.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn has_commissions(&self, column_id: &ColumnId) -> anyhow::Result<bool> {
         Ok(self
             .0
@@ -308,6 +320,7 @@ impl ColumnStore for MemColumnStore {
 
     /// Which column of `workflow_id` holds `commission_id`, or `None`. Scoped
     /// by board: a commission sits in at most one column per board.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_column(
         &self,
         workflow_id: &WorkflowId,
@@ -330,6 +343,7 @@ impl ColumnStore for MemColumnStore {
 
     /// The account that owns the board this column sits on, or `None` if no
     /// such column exists.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn owning_account_of(&self, column_id: &ColumnId) -> anyhow::Result<Option<AccountId>> {
         let stored_workflow_id = self
             .0
@@ -349,6 +363,7 @@ impl ColumnStore for MemColumnStore {
     }
 
     /// The whole board a column sits on; an absent column or board is an `Err`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_workflow_of(&self, column_id: &ColumnId) -> anyhow::Result<Workflow> {
         let workflow_id = {
             let columns = self

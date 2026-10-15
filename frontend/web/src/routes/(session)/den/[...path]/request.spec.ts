@@ -117,13 +117,14 @@ describe('/den on the live port, when the folders above it never answer', () => 
 		const url = new URL(`http://127.0.0.1:5174/den/${SEGMENTS.join('/')}`);
 		const request = new Request(url, { headers: { cookie: 'zurfur.sid=s3ss10n' } });
 		const locals: App.Locals = {};
+		const route = { id: '/(session)/den/[...path]' as const };
 		const event = {
-			route: { id: '/(session)/den/[...path]' },
+			route,
 			url,
 			request,
 			locals,
 			isDataRequest: false,
-			fetch: kitEventFetch({ url, request, locals }, handleFetch)
+			fetch: kitEventFetch({ url, request, locals, route }, handleFetch)
 		} as unknown as RequestEvent;
 		const page: { den: DenPageData | undefined; settled: boolean } = {
 			den: undefined,

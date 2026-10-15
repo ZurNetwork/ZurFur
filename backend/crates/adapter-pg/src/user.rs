@@ -43,6 +43,7 @@ pub struct PgUserWrites<'a> {
 
 #[async_trait::async_trait]
 impl UserStore for PgUserStore {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
         Ok(sql::find(&self.pool, id.as_ref()).await?.map(|row| User {
             id: UserId::from(Did::from(row.id)),
@@ -53,6 +54,7 @@ impl UserStore for PgUserStore {
     /// Read-only lookup by DID — no INSERT, so an unknown DID resolves to
     /// `None` rather than recognizing a new visitor (the no-mint counterpart
     /// to [`UserWrites::provision`]).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         Ok(sql::find_by_did(&self.pool, did.as_ref())
             .await?
@@ -69,6 +71,7 @@ impl UserWrites for PgUserWrites<'_> {
     /// the actor super-table, then land the `users` projection under it.
     /// Idempotent and race-safe: a repeat sign-in hits the existing row and
     /// its original `created_at` comes back unchanged.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
         let now = chrono::Utc::now();
 

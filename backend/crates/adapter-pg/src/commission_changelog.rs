@@ -28,6 +28,7 @@ pub struct PgChangelogWrites<'a> {
 impl ChangelogWrites for PgChangelogWrites<'_> {
     /// Inserts one entry; Postgres assigns `seq` (the ordering key). A `None`
     /// actor lands as SQL `NULL` (a system entry).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
         sql::append(
             &mut *self.conn,
@@ -61,6 +62,7 @@ impl PgChangelogStore {
 impl ChangelogStore for PgChangelogStore {
     /// The commission's stream in order (`seq`). Each stored `kind` token is
     /// re-validated; an unknown token is an error, never a silent skip.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn entries(&self, commission: &CommissionId) -> anyhow::Result<Vec<ChangelogEntry>> {
         let rows = sql::entries(&self.pool, uuid::Uuid::from(*commission)).await?;
 

@@ -13,7 +13,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 use tower_sessions::SessionStore;
 
-use crate::Detach;
+use crate::{Detach, request_log};
 
 /// How long shutdown waits, from its signal, for open connections and then
 /// detached requests to finish.
@@ -26,7 +26,7 @@ pub const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Only [`stack`] builds one, and [`serve`] serves nothing else.
 #[derive(Clone, Debug)]
 pub struct Stacked {
-    router: Router,
+    pub(crate) router: Router,
     detach: Detach,
 }
 
@@ -55,6 +55,8 @@ impl Stacked {
 /// `app` under `sessions`, both inside `detach`: the session layer's save
 /// after the handler runs to its end with it. A request body idle for
 /// [`BODY_IDLE_TIMEOUT`] fails its read, so a stalled body frees its permit.
+/// The [`request_log`] wraps them all, so the detached handling runs inside
+/// the request's span.
 pub fn stack<S>(app: Router, sessions: SessionLayer<S>, detach: Detach) -> Stacked
 where
     S: SessionStore + Clone,
@@ -62,7 +64,8 @@ where
     let router = app
         .layer(sessions)
         .layer(RequestBodyTimeoutLayer::new(BODY_IDLE_TIMEOUT))
-        .layer(detach.clone());
+        .layer(detach.clone())
+        .layer(request_log());
     Stacked { router, detach }
 }
 
