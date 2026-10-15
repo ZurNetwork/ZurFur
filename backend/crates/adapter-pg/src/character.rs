@@ -15,6 +15,7 @@ pub struct PgCharacterStore;
 impl CharacterStore for PgCharacterStore {
     /// Always empty: PostgreSQL stores no Character yet, so none is kept. This
     /// answer turns false when character storage lands, which replaces it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_kept_by(&self, _keeper: &UserId) -> anyhow::Result<Vec<Character>> {
         Ok(Vec::new())
     }
@@ -26,6 +27,7 @@ pub struct PgCharacterWrites;
 
 #[async_trait]
 impl CharacterWrites for PgCharacterWrites {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&self, _attributes: Character) -> anyhow::Result<Character> {
         unimplemented!("character persistence lands with the Character slice")
     }

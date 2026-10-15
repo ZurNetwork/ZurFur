@@ -142,25 +142,31 @@ pub(crate) fn expand_use_case(function: &ItemFn) -> syn::Result<TokenStream2> {
 /// `use case started` and a `use case finished` event; the latter carries `outcome` and, on
 /// an error, the error's `Display`, never its `Debug` and never the use case's input.
 fn logged(name: &Ident, output: &syn::Type, body: &TokenStream2) -> TokenStream2 {
+    // Mixed-site, as `unit` and `lazy_unit`: a parameter named `span` or `outcome` stays the
+    // parameter inside `body`.
+    let span = Ident::new("span", Span::mixed_site());
+    let logged = Ident::new("logged", Span::mixed_site());
+    let outcome = Ident::new("outcome", Span::mixed_site());
+    let error = Ident::new("error", Span::mixed_site());
     quote! {
-        let span = ::tracing::debug_span!(
+        let #span = ::tracing::debug_span!(
             "use_case",
             name = ::core::concat!(::core::module_path!(), "::", ::core::stringify!(#name)),
         );
-        let logged = async move {
+        let #logged = async move {
             ::tracing::debug!("use case started");
-            let outcome: #output = async { #body }.await;
-            match &outcome {
+            let #outcome: #output = async { #body }.await;
+            match &#outcome {
                 ::core::result::Result::Ok(_) => {
                     ::tracing::debug!(outcome = "ok", "use case finished");
                 }
-                ::core::result::Result::Err(error) => {
-                    ::tracing::debug!(outcome = "err", error = %error, "use case finished");
+                ::core::result::Result::Err(#error) => {
+                    ::tracing::debug!(outcome = "err", error = %#error, "use case finished");
                 }
             }
-            outcome
+            #outcome
         };
-        ::tracing::Instrument::instrument(logged, span).await
+        ::tracing::Instrument::instrument(#logged, #span).await
     }
 }
 

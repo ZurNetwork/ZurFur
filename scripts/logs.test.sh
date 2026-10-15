@@ -1,8 +1,8 @@
 #!/bin/sh
 # Tests for scripts/logs.sh, behind `just logs-tail` and `just logs-clean`: an
 # unknown name lists the known ones and fails, a known one is followed, and
-# clean stops the followers before it removes logs/. A stub `tail` and a stub
-# `docker` stand in. Run directly, or via `just scripts-test`. Needs bash.
+# clean stops the followers before it removes logs/, and only a root carrying
+# the wrapper's marker. A stub `tail` and a stub `docker` stand in. Run directly, or via `just scripts-test`. Needs bash.
 set -eu
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -10,6 +10,7 @@ under_test="$script_dir/logs.sh"
 work="$(mktemp -d)"
 logs="$work/logs"
 mkdir -p "$work/bin" "$logs/latest" "$logs/dev-back" "$logs/compose/db"
+: >"$logs/.zurfur-logs"
 failures=0
 
 # The stub tail prints its arguments, one per line.
@@ -66,6 +67,17 @@ else
 fi
 
 # --- clean ----------------------------------------------------------------------
+stranger="$work/someone-elses"
+mkdir -p "$stranger"
+: >"$stranger/precious.txt"
+status=0
+refused="$(PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$stranger" bash "$under_test" clean 2>&1)" || status=$?
+if [ "$status" = "1" ] && [ -f "$stranger/precious.txt" ] &&
+    printf '%s\n' "$refused" | grep -q "not removing it"; then
+    ok "clean refuses a root without the logs marker and leaves it whole"
+else
+    fail "clean refuses a root without the logs marker and leaves it whole" "status $status: $refused"
+fi
 PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$logs" bash "$script_dir/compose-logs.sh" start 2026-10-14T12:00:00Z db
 follower="$(awk '{ print $1 }' "$logs/compose/db/follower.pid")"
 said="$(logs_sh clean)"

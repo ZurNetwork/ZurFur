@@ -1,13 +1,7 @@
-//! The log canary: a whole signed-in visit on PostgreSQL, logged by the dev subscriber at
-//! `trace` with `log` records bridged, must never write a token, a cookie, the session id or
-//! a key, at any level; and no info, warn or error line may name the signed-in user's DID or
-//! handle. Alone in its own test binary: it installs the global subscriber, and tracing
-//! caches each callsite's interest. Requires a container runtime socket.
-//!
-//! The visitor's own HTTP client runs in the same process, and its libraries log what a
-//! browser holds (`cookie_store` its cookies, `reqwest` each URL). The test body is the
-//! visitor and the server runs on the runtime's workers, so the visitor's thread is left out
-//! of the capture once the server is up.
+//! The log canary: a whole signed-in visit on PostgreSQL, under the dev subscriber at `trace`
+//! with `log` records bridged, writes no token, cookie, session id or key at any level, and no
+//! DID or handle at info or above. Alone in its binary: it installs the global subscriber. The
+//! visitor's own thread stays out of the capture (the crate's NODE.json says why).
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -164,6 +158,10 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .await
         .expect("GET /signin-callback");
     let session_id = session_id_set_by(&callback).expect("the callback sets the session");
+    let session_number = session_id
+        .parse::<tower_sessions::session::Id>()
+        .map(|id| id.0.to_string())
+        .expect("the session cookie holds a session id");
     let me = browser
         .get(format!("{base}/me"))
         .send()
@@ -245,6 +243,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         ("the issuer as a query carries it", ISS_IN_A_QUERY),
         ("the browser binding", BINDING),
         ("the session id", session_id.as_str()),
+        ("the session id as a number", session_number.as_str()),
         ("the root key", ROOT_KEY),
         ("the root key's base64", ROOT_KEY_BASE64),
     ];
@@ -255,7 +254,17 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     let identity_at_info: Vec<&str> = text
         .lines()
         .filter(|line| matches!(level_of(line), Some("INFO" | "WARN" | "ERROR")))
-        .filter(|line| line.contains(USER_DID) || line.contains(USER_HANDLE))
+        .filter(|line| {
+            [
+                USER_DID,
+                USER_HANDLE,
+                ACCOUNT_HANDLE,
+                "did:plc:",
+                "did:web:",
+            ]
+            .iter()
+            .any(|identity| line.contains(identity))
+        })
         .collect();
     assert!(
         identity_at_info.is_empty(),

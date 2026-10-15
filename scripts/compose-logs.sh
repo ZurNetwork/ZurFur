@@ -49,11 +49,14 @@ stop_follower() {
 start_follower() {
     local since="$1" service="$2" directory file pid
     directory="$compose/$service"
-    mkdir -p "$directory" "$root/latest" || return 1
+    log_prepare_root "$root" || return 1
+    mkdir -p "$directory" || return 1
     stop_follower "$service"
     file="$(log_claim "$directory")" || return 1
     log_link "$root" "$service" "../compose/$service/$file"
     log_retain "$directory"
+    # Never add --verbose: podman-compose then logs its `podman run -e …` lines,
+    # which carry the PDS's secrets (its JWT secret, admin password, rotation key).
     setsid docker compose logs -f --no-color -t --since "$since" "$service" \
         >>"$directory/$file" 2>&1 </dev/null &
     pid=$!

@@ -124,11 +124,10 @@ impl From<Refusal> for DenError {
     }
 }
 
-/// Whether `viewer` opens `node`: Atta's own resolve from the node's anchor, landing open on
-/// exactly the anchor's real path plus the steps. A card, a mount, or any miss is the one
-/// [`DenError::NotFound`]; a store failure stays [`DenError::Store`]. `include_deleted` is
-/// off and doesn't matter here: a path walk's admission never reads it. Logs the node's kind
-/// and the answer's class at debug.
+/// Whether `viewer` opens `node`: Atta's resolve from its anchor, landing open on exactly the
+/// anchor's real path plus the steps (`include_deleted` off; a path walk never reads it). A
+/// card, a mount or any miss is [`DenError::NotFound`], a store failure [`DenError::Store`].
+/// Logs the node's kind and the answer's class at debug.
 pub(crate) async fn may_open(
     ports: &Ports,
     viewer: &UserId,

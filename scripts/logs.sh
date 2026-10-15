@@ -3,7 +3,8 @@
 #
 # tail: `tail -F` every logs/latest/*.log, or only <name>'s; an unknown name
 # lists the names there are and exits 1.
-# clean: stops the compose followers, then removes logs/ and says what went.
+# clean: stops the compose followers, then removes logs/ and says what went; a
+# root without the marker the wrapper writes is never removed.
 set -uo pipefail
 # shellcheck source=log-files.sh
 . "$(dirname "${BASH_SOURCE[0]}")/log-files.sh"
@@ -46,6 +47,10 @@ case "${1:-}" in
         if [ ! -e "$root" ]; then
             echo "logs-clean: nothing to remove at $root"
             exit 0
+        fi
+        if [ ! -f "$root/$LOG_ROOT_MARKER" ]; then
+            echo "logs-clean: $root has no $LOG_ROOT_MARKER marker, so it isn't a logs/ root; not removing it" >&2
+            exit 1
         fi
         count="$(find "$root" -type f -name '*.log' | wc -l | tr -d ' ')"
         rm -rf "$root"

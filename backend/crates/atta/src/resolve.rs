@@ -140,16 +140,37 @@ pub(crate) fn access(own_level: Level, here: &[Lift], inherited: &[Lift]) -> Acc
     Access { level, via }
 }
 
-/// How a read ended, as the resolver's debug events name it: `open`, `card`, `not_found` or
-/// `host_error`.
-pub(crate) fn outcome_class(read: &Result<&Resolved, &Error>) -> &'static str {
-    match read {
-        Ok(resolved) => match resolved.node.view {
-            View::Open { .. } => "open",
-            View::Card => "card",
-        },
-        Err(Error::NotFound) => "not_found",
-        Err(Error::Host(_)) => "host_error",
+/// How a read ended, by the name the resolver's debug events log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub(crate) enum Outcome {
+    /// The node opens.
+    Open,
+    /// The node shows as a card.
+    Card,
+    /// The one not-found.
+    NotFound,
+    /// The host failed.
+    HostError,
+}
+
+impl From<&Resolved> for Outcome {
+    /// Open or card, by what the viewer sees of the node.
+    fn from(resolved: &Resolved) -> Self {
+        match resolved.node.view {
+            View::Open { .. } => Self::Open,
+            View::Card => Self::Card,
+        }
+    }
+}
+
+impl From<&Error> for Outcome {
+    /// The not-found, or the host's failure.
+    fn from(error: &Error) -> Self {
+        match error {
+            Error::NotFound => Self::NotFound,
+            Error::Host(_) => Self::HostError,
+        }
     }
 }
 
@@ -163,7 +184,8 @@ impl Resolver<'_> {
         den_path: &[Segment],
     ) -> Result<Resolved, Error> {
         let resolved = self.resolve_path_unlogged(root, den_path).await;
-        let outcome = outcome_class(&resolved.as_ref());
+        let outcome = resolved.as_ref().map_or_else(Outcome::from, Outcome::from);
+        let outcome: &'static str = outcome.into();
         tracing::debug!(outcome, depth = den_path.len(), "resolved");
         resolved
     }

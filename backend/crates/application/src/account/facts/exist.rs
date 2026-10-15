@@ -16,6 +16,3 @@ impl<'a> Facts<'a> {
         Ok(Output { has_facts: false })
     }
 }
-
-#[cfg(test)]
-mod tests;

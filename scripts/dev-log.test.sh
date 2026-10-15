@@ -3,7 +3,7 @@
 # the file and its latest link, retention, plain text on the file side, the
 # terminal's bytes untouched, the exit status, a stamp collision and Ctrl-C.
 # A stub `date` pins the stamp. Run directly, or via `just scripts-test`.
-# Needs bash and perl.
+# Needs bash, perl and python3.
 set -eu
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -147,36 +147,86 @@ else
     fail "a name with a slash is refused" "status $status"
 fi
 
-# --- Ctrl-C keeps the last lines ------------------------------------------------
-# The wrapper runs in its own process group (setsid), as a terminal's foreground
-# job would; SIGINT goes to the whole group, as Ctrl-C sends it. The command
-# writes a last line from its INT trap: the file side must keep it. perl puts
-# SIGINT back to its default first: a background job of this script starts
-# with it ignored, and an ignored signal can't be trapped.
-logs="$work/logs-interrupt"
-cat >"$work/interrupted.sh" <<'CMD'
-#!/bin/sh
+# --- a latest link pointing at a directory -----------------------------------------
+logs="$work/logs-link"
+mkdir -p "$logs/latest" "$work/elsewhere"
+ln -s "$work/elsewhere" "$logs/latest/demo.log"
+run_wrapper "$logs" 20261014T120000Z demo echo linked
+if [ "$(readlink "$logs/latest/demo.log")" = "../demo/20261014T120000Z.log" ] &&
+    [ -z "$(ls -A "$work/elsewhere")" ]; then
+    ok "a latest link pointing at a directory is replaced, never written through"
+else
+    fail "a latest link pointing at a directory is replaced, never written through" \
+        "link '$(readlink "$logs/latest/demo.log")', elsewhere: $(ls -A "$work/elsewhere")"
+fi
+if [ -f "$logs/.zurfur-logs" ]; then
+    ok "the root carries the marker logs-clean looks for"
+else
+    fail "the root carries the marker logs-clean looks for" "$(ls -A "$logs")"
+fi
+
+# --- Ctrl-C --------------------------------------------------------------------
+# interrupt <logs> <script>: runs the wrapper over `sh <script>` in its own
+# session, as a terminal's foreground job, waits for the script's `started`,
+# sends SIGINT to the whole group as Ctrl-C does, and prints how the wrapper
+# ended: its exit status, or -2 when it died of SIGINT.
+interrupt() {
+    PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$1" STUB_STAMP=20261014T120000Z \
+        python3 - "$under_test" "$2" "$work/stdout" <<'PY'
+import os, signal, subprocess, sys, time
+wrapper, script, stdout = sys.argv[1:]
+with open(stdout, "wb") as out:
+    run = subprocess.Popen(["bash", wrapper, "demo", "sh", script], stdout=out,
+                           stderr=subprocess.STDOUT, start_new_session=True)
+    for _ in range(100):
+        with open(stdout, "rb") as seen:
+            if b"started" in seen.read():
+                break
+        time.sleep(0.05)
+    os.killpg(run.pid, signal.SIGINT)
+    print(run.wait(timeout=20))
+PY
+}
+
+cat >"$work/last-words.sh" <<'CMD'
 trap 'echo last words; exit 130' INT
 echo started
 while :; do sleep 0.1; done
 CMD
-PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$logs" STUB_STAMP=20261014T120000Z \
-    perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV' \
-    setsid bash "$under_test" demo sh "$work/interrupted.sh" >"$work/stdout" 2>&1 &
-wrapper=$!
-tries=0
-until grep -q started "$work/stdout" 2>/dev/null || [ "$tries" -ge 50 ]; do
-    sleep 0.1
-    tries=$((tries + 1))
-done
-kill -INT -- "-$wrapper" 2>/dev/null || true
-status=0
-wait "$wrapper" || status=$?
-if grep -qx "last words" "$logs/latest/demo.log" 2>/dev/null && [ "$status" = "130" ]; then
-    ok "Ctrl-C stops the command and the file keeps its last line"
+logs="$work/logs-last-words"
+ended="$(interrupt "$logs" "$work/last-words.sh")"
+if grep -qx "last words" "$logs/latest/demo.log" 2>/dev/null && [ "$ended" = "-2" ]; then
+    ok "Ctrl-C: the file keeps the command's last line, and the wrapper dies of SIGINT"
 else
-    fail "Ctrl-C stops the command and the file keeps its last line" \
-        "status $status, file: $(cat "$logs/latest/demo.log" 2>&1)"
+    fail "Ctrl-C: the file keeps the command's last line, and the wrapper dies of SIGINT" \
+        "ended $ended, file: $(cat "$logs/latest/demo.log" 2>&1)"
+fi
+
+cat >"$work/no-trap.sh" <<'CMD'
+echo started
+while :; do sleep 0.1; done
+CMD
+logs="$work/logs-no-trap"
+ended="$(interrupt "$logs" "$work/no-trap.sh")"
+if grep -qx started "$logs/latest/demo.log" 2>/dev/null && [ "$ended" = "-2" ]; then
+    ok "Ctrl-C: a command that dies of SIGINT makes the wrapper die of it too"
+else
+    fail "Ctrl-C: a command that dies of SIGINT makes the wrapper die of it too" \
+        "ended $ended, file: $(cat "$logs/latest/demo.log" 2>&1)"
+fi
+
+cat >"$work/graceful.sh" <<'CMD'
+trap 'echo stopped cleanly; exit 0' INT
+echo started
+while :; do sleep 0.1; done
+CMD
+logs="$work/logs-graceful"
+ended="$(interrupt "$logs" "$work/graceful.sh")"
+if grep -qx "stopped cleanly" "$logs/latest/demo.log" 2>/dev/null && [ "$ended" = "0" ]; then
+    ok "Ctrl-C: a command that shuts down cleanly passes its 0 on"
+else
+    fail "Ctrl-C: a command that shuts down cleanly passes its 0 on" \
+        "ended $ended, file: $(cat "$logs/latest/demo.log" 2>&1)"
 fi
 
 if [ "$failures" -gt 0 ]; then

@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "crate manifest: axum, tokio, tokio-util (rt: TaskTracker), tower-layer/tower-service, tower-http (timeout, trace), tracing, serde_json, thiserror, http-cookies, tower-sessions; tracing-subscriber for tests",
+      "role": "crate manifest: axum, tokio, tokio-util (rt: TaskTracker), tower-layer/tower-service, tower-http (timeout, trace), tracing, serde_json, thiserror, http-cookies, tower-sessions; tracing-subscriber for the request-log test",
       "node": false
     },
     {
@@ -46,11 +46,6 @@
       "node": false
     },
     {
-      "name": "src/request_log/tests.rs",
-      "role": "pins the route template, method, status and latency on the lines, no URI/query/cookie/authorization value, the fixed unmatched route, the detached handling inside the request span, and distinct <pid>-<n> ids carried by no response header",
-      "node": false
-    },
-    {
       "name": "src/served.rs",
       "role": "stack (the app under the session layer and the body idle timeout, inside Detach, with the request log outermost), Stacked (outer layers only outside), serve (graceful shutdown, then the drain, within SHUTDOWN_DEADLINE of the signal)",
       "node": false
@@ -58,6 +53,11 @@
     {
       "name": "src/served/tests.rs",
       "role": "pins a cut request still saving its session (the session layer inside Detach), shutdown holding while a detached request runs, and a stalled body failing its read and freeing its permit",
+      "node": false
+    },
+    {
+      "name": "tests/request_log.rs",
+      "role": "alone in its binary (callsite interest): over a served stack, pins the route template, method, status and latency, no URI/query/cookie/authorization value, the fixed unmatched route, the detached handling inside the request span, a panicking handler's 500 still logged (the log sits outside Detach), and distinct <pid>-<n> ids no response carries",
       "node": false
     }
   ],

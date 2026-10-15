@@ -23,7 +23,8 @@ pub struct NoopPlcDirectory;
 #[async_trait]
 impl PlcDirectory for NoopPlcDirectory {
     async fn submit(&self, did: &str, _operation: &serde_json::Value) -> anyhow::Result<()> {
-        tracing::info!(%did, "PLC directory submission skipped (no-op directory; ZMVP-49 C2)");
+        tracing::info!("PLC directory submission skipped (no-op directory)");
+        tracing::debug!(%did, "PLC directory submission skipped for this DID");
         Ok(())
     }
 }
@@ -57,7 +58,8 @@ impl PlcDirectory for HttpPlcDirectory {
             let text = resp.text().await.unwrap_or_default();
             anyhow::bail!("PLC directory rejected {did}: {status} {text}");
         }
-        tracing::info!(%did, "PLC directory submission accepted");
+        tracing::info!("PLC directory submission accepted");
+        tracing::debug!(%did, "PLC directory submission accepted for this DID");
         Ok(())
     }
 }

@@ -25,6 +25,7 @@ pub struct MemCharacterStore(pub(crate) MemBackend);
 #[async_trait]
 impl CharacterStore for MemCharacterStore {
     /// Scan for `keeper`'s live Characters, sorted by DID by byte value.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_kept_by(&self, keeper: &UserId) -> anyhow::Result<Vec<Character>> {
         let characters = self
             .0
@@ -51,6 +52,7 @@ pub struct MemCharacterWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl CharacterWrites for MemCharacterWrites {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&self, attributes: Character) -> anyhow::Result<Character> {
         let mut characters = self
             .0

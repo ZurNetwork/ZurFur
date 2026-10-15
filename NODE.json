@@ -56,7 +56,7 @@
     },
     {
       "name": ".gitignore",
-      "role": "also honored by /chart; ignores .env*, .idea/, .cursor/, .mcp.json, WORKSHEET.md, target/",
+      "role": "also honored by /chart; ignores .env*, /logs/ (the dev logs), .idea/, .cursor/, .mcp.json, WORKSHEET.md, target/",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "Justfile",
-      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool)",
+      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool); every dev recipe (dev, dev-back, dev-web, dev-mock, dev-profile, dev-profile-web, up) logs to logs/<name>/ through scripts/dev-log.sh, up follows each compose service into logs/compose/, and logs-tail/logs-clean read and sweep them",
       "node": false
     },
     {

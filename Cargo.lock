@@ -276,6 +276,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+ "tracing",
  "trybuild",
 ]
 
@@ -420,6 +421,7 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "serde_json",
+ "strum",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

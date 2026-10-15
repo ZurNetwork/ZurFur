@@ -3,11 +3,20 @@
 # ZURFUR_LOG_DIR says otherwise: logs/<dir>/<UTC stamp>.log, the newest 10 kept
 # per directory, and logs/latest/<name>.log linking to each name's newest file.
 
+# The marker file at a logs/ root: logs-clean removes only a root that has it.
+LOG_ROOT_MARKER=".zurfur-logs"
+
 # The logs/ root.
 log_root() {
     local checkout
     checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     printf '%s\n' "${ZURFUR_LOG_DIR:-$checkout/logs}"
+}
+
+# log_prepare_root <root>: creates <root> and its latest/, and marks <root> as a
+# logs/ root.
+log_prepare_root() {
+    mkdir -p "$1/latest" && : >>"$1/$LOG_ROOT_MARKER"
 }
 
 # log_name_ok <name>: whether <name> is a plain log name (no slash, no leading dot).
@@ -37,11 +46,12 @@ log_claim() {
 }
 
 # log_link <root> <name> <target relative to latest/>: points latest/<name>.log
-# at <target>, swapped in whole so a reader never finds it missing.
+# at <target>, swapped in whole so a reader never finds it missing. -T replaces
+# the link itself, even one pointing at a directory.
 log_link() {
     local root="$1" name="$2" target="$3"
     ln -sfn "$target" "$root/latest/.$name.log.$$" &&
-        mv -f "$root/latest/.$name.log.$$" "$root/latest/$name.log"
+        mv -fT "$root/latest/.$name.log.$$" "$root/latest/$name.log"
 }
 
 # log_retain <directory>: deletes all but the newest 10 log files there (stamps

@@ -12,6 +12,8 @@ derive_more = { workspace = true }
 thiserror = { workspace = true }
 # The resolver's `debug` spans and its outcome events (never a path or a name).
 tracing = { workspace = true }
+# The names its outcome events log (`IntoStaticStr`).
+strum = { workspace = true }
 
 [dev-dependencies]
 # The resolver's log tests read what a fmt subscriber wrote.

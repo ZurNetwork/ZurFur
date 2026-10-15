@@ -215,3 +215,48 @@ fn the_dev_profile_logs_every_server_crate_at_debug_and_dependencies_at_info() {
     let parsed = EnvFilter::try_new(&log_level);
     assert!(parsed.is_ok(), "dev.toml's log_level parses: {log_level}");
 }
+
+/// `cargo tree` of the server's normal dependencies with their enabled features, both
+/// profiles' builds included.
+fn server_features() -> String {
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--package",
+            "api",
+            "--edges",
+            "normal,features",
+            "--all-features",
+            "--prefix",
+            "none",
+            "--locked",
+        ])
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("a UTF-8 tree")
+}
+
+#[test]
+fn no_jacquard_crate_builds_with_its_tracing_feature() {
+    let tree = server_features();
+
+    assert!(
+        tree.lines()
+            .any(|line| line.starts_with("jacquard-oauth v")),
+        "cargo tree printed no jacquard-oauth:\n{tree}"
+    );
+    let traced: BTreeSet<&str> = tree
+        .lines()
+        .filter(|line| line.starts_with("jacquard"))
+        .filter(|line| line.contains(" feature \"tracing\""))
+        .collect();
+    assert!(
+        traced.is_empty(),
+        "a jacquard crate builds with tracing, which spans the OAuth callback with its state: {traced:?}"
+    );
+}

@@ -1,7 +1,7 @@
-//! What `#[use_case]` logs: each call inside a `debug` span `use_case{name}` between a
-//! `use case started` and a `use case finished` event carrying its outcome, an error by its
-//! `Display` alone, never the command. Alone in its binary: tracing caches a callsite's
-//! interest, so a sibling test running without the capture could blind it.
+//! What `#[use_case]` logs, for one that injects and one that injects nothing: each call in a
+//! `debug` span `use_case{name}` between a `use case started` and a `use case finished` event
+//! with its outcome, an error by its `Display`, never the command. Alone in its binary: tracing
+//! caches a callsite's interest, so a sibling test running without the capture could blind it.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
@@ -78,8 +78,14 @@ async fn a_use_case_logs_its_start_its_outcome_and_its_error_by_display_alone() 
         .accounts()
         .create(command(user), &handle_domain(), Utc::now())
         .await;
+    let founded_id = founded.as_ref().map(|output| output.account_id.clone());
+    let facts_query = account::facts::exist::Query {
+        account_id: founded_id.clone().expect("the first founding succeeds"),
+    };
+    let facts = app.accounts().facts().exist(facts_query).await;
 
-    assert!(founded.is_ok(), "the first founding succeeds");
+    assert!(founded_id.is_ok(), "the first founding succeeds");
+    assert!(facts.is_ok_and(|facts| !facts.has_facts));
     let Err(taken) = repeat else {
         panic!("a repeat handle must not found a second account");
     };
@@ -97,6 +103,21 @@ async fn a_use_case_logs_its_start_its_outcome_and_its_error_by_display_alone() 
         founding_lines(&text, "}: application::account::create: close time.busy").len(),
         2,
         "{text}"
+    );
+    let pass_through = "use_case{name=\"application::account::facts::exist::exist\"}";
+    let wrapped = [
+        "use case started",
+        "use case finished outcome=\"ok\"",
+        "close time.busy",
+    ]
+    .iter()
+    .all(|event| {
+        text.lines()
+            .any(|line| line.contains(pass_through) && line.contains(event))
+    });
+    assert!(
+        wrapped,
+        "a use case that injects nothing is wrapped too: {text}"
     );
     let use_case_lines = text
         .lines()

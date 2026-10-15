@@ -13,14 +13,16 @@ mkdir -p "$work/bin" "$work/calls"
 failures=0
 
 # The stub records each `docker` call's arguments, prints a line naming the
-# service, then follows forever, as `compose logs -f` does while its container runs.
+# service, then follows forever in a child process, as podman-compose runs
+# `podman logs -f` under it; the child's pid lands in <service>.<pid>.child.
 cat >"$work/bin/docker" <<'SHIM'
 #!/bin/sh
 for service in "$@"; do :; done
 printf '%s\n' "$@" >"$STUB_CALLS/$service.$$"
 echo "stub log line for $service"
-trap 'exit 0' TERM
-while :; do sleep 0.2; done
+sh -c 'trap "exit 0" TERM; while :; do sleep 0.2; done' &
+echo "$!" >"$STUB_CALLS/$service.$$.child"
+wait
 SHIM
 chmod +x "$work/bin/docker"
 
@@ -43,6 +45,11 @@ fail() {
 }
 alive() { kill -0 "$1" 2>/dev/null; }
 pid_of() { awk 'NR == 1 { print $1 }' "$logs/compose/$1/follower.pid" 2>/dev/null; }
+# child_of <follower pid> <service>: the stub's following child.
+child_of() {
+    eventually [ -s "$work/calls/$2.$1.child" ] && cat "$work/calls/$2.$1.child"
+}
+gone() { ! kill -0 "$1" 2>/dev/null; }
 # eventually <command…>: retries for up to 5 s.
 eventually() {
     tries=0
@@ -97,14 +104,21 @@ else
 fi
 
 # --- a new start stops the old follower first ------------------------------------
+old_db_child="$(child_of "$db_pid" db)"
 compose_logs start 2026-10-14T12:05:00Z db
 new_db_pid="$(pid_of db)"
-if eventually sh -c "! kill -0 $db_pid 2>/dev/null" && alive "$new_db_pid" &&
+if eventually gone "$db_pid" && alive "$new_db_pid" &&
     [ "$new_db_pid" != "$db_pid" ] && alive "$pds_pid"; then
     ok "a new start stops that service's old follower, and only that one"
 else
     fail "a new start stops that service's old follower, and only that one" \
         "old $db_pid, new $new_db_pid, pds $pds_pid"
+fi
+if [ -n "$old_db_child" ] && eventually gone "$old_db_child"; then
+    ok "a new start stops the old follower's whole process group, its child too"
+else
+    fail "a new start stops the old follower's whole process group, its child too" \
+        "child '$old_db_child' still runs"
 fi
 
 # --- never a process that isn't ours ------------------------------------------
@@ -123,7 +137,16 @@ kill -TERM -- "-$pds_pid" 2>/dev/null || true
 # --- stop ends every follower --------------------------------------------------
 db_pid="$(pid_of db)"
 pds_pid="$(pid_of pds)"
+db_child="$(child_of "$db_pid" db)"
+pds_child="$(child_of "$pds_pid" pds)"
 compose_logs stop
+if [ -n "$db_child" ] && [ -n "$pds_child" ] && eventually gone "$db_child" &&
+    eventually gone "$pds_child"; then
+    ok "stop ends each follower's whole process group, its child too"
+else
+    fail "stop ends each follower's whole process group, its child too" \
+        "children '$db_child' '$pds_child'"
+fi
 if eventually sh -c "! kill -0 $db_pid 2>/dev/null && ! kill -0 $pds_pid 2>/dev/null" &&
     [ ! -e "$logs/compose/db/follower.pid" ] && [ ! -e "$logs/compose/pds/follower.pid" ]; then
     ok "stop ends every follower and removes its pidfile"

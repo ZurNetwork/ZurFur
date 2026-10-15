@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "crate manifest — external crates only, never a workspace crate",
+      "role": "crate manifest — external crates only, never a workspace crate; tracing (the resolver's debug spans and outcome events) and strum (the outcome names); tracing-subscriber for the log test",
       "node": false
     },
     {
@@ -87,6 +87,11 @@
     {
       "name": "tests/no_workspace_dependency.rs",
       "role": "guard: atta depends on no workspace crate, of any kind (cargo metadata)",
+      "node": false
+    },
+    {
+      "name": "tests/resolve_log.rs",
+      "role": "alone in its binary (callsite interest): over its own host, each resolve and list logs its outcome class (open, card, not_found, host_error) and depth at debug, never a path, segment, viewer or host error",
       "node": false
     }
   ],

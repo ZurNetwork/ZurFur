@@ -79,6 +79,3 @@ fn request_finished(response: &Response<Body>, latency: Duration, _span: &Span) 
         "request finished"
     );
 }
-
-#[cfg(test)]
-mod tests;

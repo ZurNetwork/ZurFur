@@ -26,7 +26,7 @@ pub const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Only [`stack`] builds one, and [`serve`] serves nothing else.
 #[derive(Clone, Debug)]
 pub struct Stacked {
-    pub(crate) router: Router,
+    router: Router,
     detach: Detach,
 }
 
@@ -52,11 +52,10 @@ impl Stacked {
     }
 }
 
-/// `app` under `sessions`, both inside `detach`: the session layer's save
-/// after the handler runs to its end with it. A request body idle for
-/// [`BODY_IDLE_TIMEOUT`] fails its read, so a stalled body frees its permit.
-/// The [`request_log`] wraps them all, so the detached handling runs inside
-/// the request's span.
+/// `app` under `sessions` and a [`BODY_IDLE_TIMEOUT`] on request bodies, all
+/// inside `detach`, so the session saves after the handler runs to its end.
+/// The [`request_log`] wraps them all: the detached handling runs in the
+/// request's span, and a panic's answer is still logged.
 pub fn stack<S>(app: Router, sessions: SessionLayer<S>, detach: Detach) -> Stacked
 where
     S: SessionStore + Clone,

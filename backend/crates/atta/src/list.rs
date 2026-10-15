@@ -7,7 +7,7 @@ use std::{
 use crate::{
     Admission, Entry, Error, Level, Listing, PageToken, Reach, Resolved, Resolver, Segment,
     ordering::name_order,
-    resolve::{Folder, Located, outcome_class},
+    resolve::{Folder, Located, Outcome},
 };
 
 /// The keys of the hash that breaks ties between cards, drawn once per process.
@@ -32,8 +32,7 @@ impl Resolver<'_> {
     /// One page of the resolved node's entries, starting at `page`: `None` unless the viewer can
     /// open the node and it is a directory, and the one not-found for a node resolved for another
     /// viewer. Entries the viewer can't see or the host refuses go before the sort and the cut,
-    /// so a page is never short and a token hints at nothing that was left out. Logs its
-    /// outcome class, the node's depth and the page's size at debug.
+    /// so a page is never short and a token hints at nothing that was left out. Logs its outcome.
     #[tracing::instrument(level = "debug", skip_all)]
     pub async fn list(
         &self,
@@ -41,7 +40,10 @@ impl Resolver<'_> {
         page: Option<PageToken>,
     ) -> Result<Option<Listing>, Error> {
         let listed = self.list_unlogged(resolved, page).await;
-        let outcome = outcome_class(&listed.as_ref().map(|_| resolved));
+        let outcome = listed
+            .as_ref()
+            .map_or_else(Outcome::from, |_| Outcome::from(resolved));
+        let outcome: &'static str = outcome.into();
         let entries = listed
             .as_ref()
             .ok()
