@@ -71,9 +71,53 @@ else
         "$(mode_of "$logs/demo/20261014T120000Z.log") $(mode_of "$logs/demo") $(mode_of "$logs/latest")"
 fi
 
+if [ -f "$work/logs-file/.zurfur-logs" ]; then
+    ok "a new root carries the marker logs-clean looks for"
+else
+    fail "a new root carries the marker logs-clean looks for" "$(ls -A "$work/logs-file")"
+fi
+logs="$work/logs-empty"
+mkdir -p "$logs"
+run_wrapper "$logs" 20261014T120000Z demo echo adopted
+if [ -f "$logs/.zurfur-logs" ] && [ "$(cat "$logs/latest/demo.log")" = "adopted" ]; then
+    ok "an existing empty root is marked and used"
+else
+    fail "an existing empty root is marked and used" "$(ls -A "$logs")"
+fi
+
+# --- a populated root without the marker ---------------------------------------
+# snapshot <dir>: every path under <dir> with its mode, and every file's checksum.
+snapshot() {
+    find "$1" -exec stat -c '%n %a %s' {} + | sort
+    find "$1" -type f -exec cksum {} + | sort
+}
+logs="$work/someone-elses"
+mkdir -p "$logs/notes"
+printf 'keep me\n' >"$logs/precious.txt"
+printf 'mine\n' >"$logs/notes/todo.md"
+before="$(snapshot "$logs")"
+status=0
+run_wrapper "$logs" 20261014T120000Z demo touch "$work/the-command-ran" 2>"$work/stderr" || status=$?
+after="$(snapshot "$logs")"
+if [ "$status" != "0" ] && [ "$before" = "$after" ] && [ ! -e "$work/the-command-ran" ] &&
+    grep -q "refusing to write into it" "$work/stderr"; then
+    ok "a populated root without the marker is refused, loudly, and left untouched"
+else
+    fail "a populated root without the marker is refused, loudly, and left untouched" \
+        "status $status, stderr: $(cat "$work/stderr")"
+fi
+status=0
+ZURFUR_LOG_DIR="$logs" bash "$script_dir/logs.sh" clean >/dev/null 2>&1 || status=$?
+if [ "$status" = "1" ] && [ "$before" = "$(snapshot "$logs")" ]; then
+    ok "logs-clean still refuses that root and leaves it whole"
+else
+    fail "logs-clean still refuses that root and leaves it whole" "status $status"
+fi
+
 # --- retention ----------------------------------------------------------------
 logs="$work/logs-retention"
 mkdir -p "$logs/demo"
+: >"$logs/.zurfur-logs"
 for day in 01 02 03 04 05 06 07 08 09 10 11 12; do
     : >"$logs/demo/202610${day}T000000Z.log"
 done
@@ -150,6 +194,7 @@ fi
 # --- a latest link pointing at a directory -----------------------------------------
 logs="$work/logs-link"
 mkdir -p "$logs/latest" "$work/elsewhere"
+: >"$logs/.zurfur-logs"
 ln -s "$work/elsewhere" "$logs/latest/demo.log"
 run_wrapper "$logs" 20261014T120000Z demo echo linked
 if [ "$(readlink "$logs/latest/demo.log")" = "../demo/20261014T120000Z.log" ] &&
@@ -158,11 +203,6 @@ if [ "$(readlink "$logs/latest/demo.log")" = "../demo/20261014T120000Z.log" ] &&
 else
     fail "a latest link pointing at a directory is replaced, never written through" \
         "link '$(readlink "$logs/latest/demo.log")', elsewhere: $(ls -A "$work/elsewhere")"
-fi
-if [ -f "$logs/.zurfur-logs" ]; then
-    ok "the root carries the marker logs-clean looks for"
-else
-    fail "the root carries the marker logs-clean looks for" "$(ls -A "$logs")"
 fi
 
 # --- Ctrl-C --------------------------------------------------------------------

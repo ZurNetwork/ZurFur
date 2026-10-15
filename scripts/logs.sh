@@ -43,15 +43,15 @@ case "${1:-}" in
         exec tail -F "$root/latest/$name.log"
         ;;
     clean)
-        bash "$(dirname "${BASH_SOURCE[0]}")/compose-logs.sh" stop
         if [ ! -e "$root" ]; then
             echo "logs-clean: nothing to remove at $root"
             exit 0
         fi
-        if [ ! -f "$root/$LOG_ROOT_MARKER" ]; then
+        if ! log_is_root "$root"; then
             echo "logs-clean: $root has no $LOG_ROOT_MARKER marker, so it isn't a logs/ root; not removing it" >&2
             exit 1
         fi
+        bash "$(dirname "${BASH_SOURCE[0]}")/compose-logs.sh" stop
         count="$(find "$root" -type f -name '*.log' | wc -l | tr -d ' ')"
         rm -rf "$root"
         echo "logs-clean: removed $root ($count log files)"

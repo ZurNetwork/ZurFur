@@ -13,10 +13,24 @@ log_root() {
     printf '%s\n' "${ZURFUR_LOG_DIR:-$checkout/logs}"
 }
 
-# log_prepare_root <root>: creates <root> and its latest/, and marks <root> as a
-# logs/ root.
+# log_is_root <root>: whether <root> carries the marker.
+log_is_root() {
+    [ -f "$1/$LOG_ROOT_MARKER" ]
+}
+
+# log_prepare_root <root>: makes <root> a logs/ root and creates its latest/. A
+# root is marked only when it is missing or empty; a non-empty one without the
+# marker (a wrongly set ZURFUR_LOG_DIR, say) is refused, loudly, and left untouched.
 log_prepare_root() {
-    mkdir -p "$1/latest" && : >>"$1/$LOG_ROOT_MARKER"
+    local root="$1"
+    if ! log_is_root "$root"; then
+        if [ -e "$root" ] && [ -n "$(ls -A "$root" 2>/dev/null)" ]; then
+            echo "dev logs: $root is not empty and has no $LOG_ROOT_MARKER marker, so it isn't a logs/ root; refusing to write into it (check ZURFUR_LOG_DIR)" >&2
+            return 1
+        fi
+        mkdir -p "$root" && : >>"$root/$LOG_ROOT_MARKER" || return 1
+    fi
+    mkdir -p "$root/latest"
 }
 
 # log_name_ok <name>: whether <name> is a plain log name (no slash, no leading dot).

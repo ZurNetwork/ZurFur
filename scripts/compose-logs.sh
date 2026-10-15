@@ -49,7 +49,6 @@ stop_follower() {
 start_follower() {
     local since="$1" service="$2" directory file pid
     directory="$compose/$service"
-    log_prepare_root "$root" || return 1
     mkdir -p "$directory" || return 1
     stop_follower "$service"
     file="$(log_claim "$directory")" || return 1
@@ -83,10 +82,15 @@ case "$command" in
         [ "${#services[@]}" -gt 0 ] || services=("${default_services[@]}")
         for service in "${services[@]}"; do
             log_name_ok "$service" || usage
+        done
+        log_prepare_root "$root" || exit 1
+        for service in "${services[@]}"; do
             start_follower "$since" "$service"
         done
         ;;
     stop)
+        # No follower was ever started under a root without the marker.
+        log_is_root "$root" || exit 0
         services=("$@")
         [ "${#services[@]}" -gt 0 ] || mapfile -t services < <(followed_services)
         for service in "${services[@]}"; do

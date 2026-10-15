@@ -62,6 +62,7 @@ eventually() {
 
 # --- one follower per service, with its pidfile --------------------------------
 mkdir -p "$logs/compose/db"
+: >"$logs/.zurfur-logs"
 for day in 01 02 03 04 05 06 07 08 09 10 11 12; do
     : >"$logs/compose/db/202610${day}T000000Z.log"
 done
@@ -152,6 +153,24 @@ if eventually sh -c "! kill -0 $db_pid 2>/dev/null && ! kill -0 $pds_pid 2>/dev/
     ok "stop ends every follower and removes its pidfile"
 else
     fail "stop ends every follower and removes its pidfile" "db $db_pid, pds $pds_pid"
+fi
+
+# --- a populated root without the marker ---------------------------------------
+stranger="$work/someone-elses"
+mkdir -p "$stranger/notes"
+printf 'keep me\n' >"$stranger/precious.txt"
+listing() { find "$1" -exec stat -c '%n %a %s' {} + | sort; find "$1" -type f -exec cksum {} + | sort; }
+before="$(listing "$stranger")"
+calls_before="$(ls "$work/calls" | wc -l)"
+status=0
+PATH="$work/bin:$PATH" ZURFUR_LOG_DIR="$stranger" STUB_CALLS="$work/calls" \
+    bash "$under_test" start 2026-10-14T12:20:00Z db 2>"$work/stderr" || status=$?
+if [ "$status" != "0" ] && [ "$before" = "$(listing "$stranger")" ] &&
+    [ "$calls_before" = "$(ls "$work/calls" | wc -l)" ] && grep -q "refusing" "$work/stderr"; then
+    ok "start refuses a populated root without the marker, follows nothing and writes nothing"
+else
+    fail "start refuses a populated root without the marker, follows nothing and writes nothing" \
+        "status $status, stderr: $(cat "$work/stderr")"
 fi
 
 if [ "$failures" -gt 0 ]; then

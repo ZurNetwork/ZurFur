@@ -57,12 +57,12 @@
     },
     {
       "name": "log-files.sh",
-      "role": "sourced by dev-log.sh, compose-logs.sh and logs.sh: the logs/ root (ZURFUR_LOG_DIR overrides), a fresh stamped file per run, the latest link and the keep-10 retention",
+      "role": "sourced by dev-log.sh, compose-logs.sh and logs.sh: the logs/ root (ZURFUR_LOG_DIR overrides), marked with .zurfur-logs only when missing or empty (a populated unmarked root is refused and left untouched), a fresh stamped file per run, the latest link (mv -fT) and the keep-10 retention",
       "node": false
     },
     {
       "name": "logs.sh",
-      "role": "behind `just logs-tail [name]` (tail -F the latest files; an unknown name lists the names) and `just logs-clean` (stops the followers, removes logs/) (tested by logs.test.sh)",
+      "role": "behind `just logs-tail [name]` (tail -F the latest files; an unknown name lists the names) and `just logs-clean` (stops the followers, removes logs/, only a root carrying the .zurfur-logs marker) (tested by logs.test.sh)",
       "node": false
     },
     {
