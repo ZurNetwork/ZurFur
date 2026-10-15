@@ -22,6 +22,7 @@ use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
+    den::{DenError, DenNameError},
     transaction,
 };
 pub mod archive;
@@ -29,6 +30,7 @@ pub mod changelog;
 pub mod create;
 pub mod deadline;
 pub mod delete;
+pub(crate) mod den;
 pub mod files;
 pub mod invitations;
 pub mod list;
@@ -134,6 +136,9 @@ pub enum CommissionError {
     InvalidMarkup(#[source] MarkupError),
     #[error("Incorrect content")]
     IncorrectContent,
+    /// A title, file name or slot title the Den's name rule refuses.
+    #[error("Invalid name")]
+    InvalidName(#[source] DenNameError),
 }
 
 impl From<anyhow::Error> for CommissionError {
@@ -204,6 +209,16 @@ pub(crate) async fn require_owner(
         return Err(CommissionError::InsufficientPermissions);
     }
     Err(CommissionError::NotAMember)
+}
+
+/// Den's refusal as a commission answer: its one not-found becomes `not_found`, and a store
+/// failure stays a store failure, never a miss. Not a `From`: the not-found depends on which
+/// node was refused, and `From<anyhow::Error>`'s downcasts could turn a store failure into a 404.
+pub(crate) fn den_refusal(refusal: DenError, not_found: CommissionError) -> CommissionError {
+    match refusal {
+        DenError::NotFound => not_found,
+        DenError::Store(cause) => CommonError::Infrastructure(cause).into(),
+    }
 }
 
 /// How many commissions one [`sweep_deadlines`] pass newly recorded as Late.

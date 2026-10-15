@@ -1,0 +1,314 @@
+{
+  "files": [
+    {
+      "contentType": "application/json",
+      "file": "alice/root.json",
+      "message": "GetDenRootResponse",
+      "method": "GET",
+      "path": "/den",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/accounts.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/supreme-arts.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts/did:plc:t7nesupremeartsfixtureaa",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/supreme-arts-characters.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts/did:plc:t7nesupremeartsfixtureaa/characters",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/supreme-arts-commissions.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts/did:plc:t7nesupremeartsfixtureaa/commissions",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/supreme-arts-workflows.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts/did:plc:t7nesupremeartsfixtureaa/workflows",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/supreme-arts-queue.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts/did:plc:t7nesupremeartsfixtureaa/workflows/01a0ef9c-7000-7a00-8000-000000000031",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/characters.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/characters",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/ember.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/characters/did:plc:e3qkemberfixtureaaaaaaaa",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/commissions.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/commissions-include-deleted.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions?includeDeleted=true",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-attachments.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/attachments",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-attachment-ref-abco.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/attachments/01a0ef9c-5000-7a00-8000-000000000011",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-changelog.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/changelog",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-products.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/products",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-slots.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/slots",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/untitled-slot-abco.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/01a0ef9c-4e00-7a00-8000-000000000001/slots/01a0ef9c-6000-7a00-8000-000000000021",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/old-sketch.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/019e830e-1a00-7a00-8000-000000000002",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "alice/posts.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/posts",
+      "source": "generated",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/problem+json",
+      "file": "alice/not-found.json",
+      "message": "Problem",
+      "method": "GET",
+      "path": "/den/nope",
+      "source": "generated",
+      "status": 404,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/problem+json",
+      "file": "alice/unknown-parameter.json",
+      "message": "Problem",
+      "method": "GET",
+      "path": "/den/accounts?nope=1",
+      "source": "generated",
+      "status": 400,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/problem+json",
+      "file": "alice/invalid-request.json",
+      "message": "Problem",
+      "method": "GET",
+      "path": "/den/accounts?includeDeleted=yes",
+      "source": "generated",
+      "status": 422,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "bob/root.json",
+      "message": "GetDenRootResponse",
+      "method": "GET",
+      "path": "/den",
+      "source": "generated",
+      "status": 200,
+      "viewer": "bob"
+    },
+    {
+      "contentType": "application/json",
+      "file": "bob/accounts.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts",
+      "source": "generated",
+      "status": 200,
+      "viewer": "bob"
+    },
+    {
+      "contentType": "application/json",
+      "file": "bob/characters.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/characters",
+      "source": "generated",
+      "status": 200,
+      "viewer": "bob"
+    },
+    {
+      "contentType": "application/json",
+      "file": "bob/commissions.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions",
+      "source": "generated",
+      "status": 200,
+      "viewer": "bob"
+    },
+    {
+      "contentType": "application/problem+json",
+      "file": "anonymous/not-authenticated.json",
+      "message": "Problem",
+      "method": "GET",
+      "path": "/den",
+      "source": "generated",
+      "status": 401,
+      "viewer": "anonymous"
+    },
+    {
+      "contentType": "application/json",
+      "file": "handwritten/listing-with-card.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions",
+      "source": "handwritten",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "handwritten/listing-with-card-mount.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/accounts",
+      "source": "handwritten",
+      "status": 200,
+      "viewer": "alice"
+    },
+    {
+      "contentType": "application/json",
+      "file": "handwritten/card-node.json",
+      "message": "GetDenNodeResponse",
+      "method": "GET",
+      "path": "/den/commissions/hidden-commission",
+      "source": "handwritten",
+      "status": 200,
+      "viewer": "alice"
+    }
+  ]
+}

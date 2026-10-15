@@ -1,0 +1,60 @@
+{
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "accounts",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts"
+        ],
+        "type": "user.accounts"
+      },
+      {
+        "kind": "directory",
+        "name": "characters",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "characters"
+        ],
+        "type": "user.characters"
+      },
+      {
+        "kind": "directory",
+        "name": "commissions",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions"
+        ],
+        "type": "user.commissions"
+      },
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "posts",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "public"
+        },
+        "segments": [
+          "posts"
+        ],
+        "type": "posts"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "Alice",
+    "open": {
+      "ownLevel": "private"
+    },
+    "type": "user"
+  }
+}

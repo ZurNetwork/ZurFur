@@ -9,8 +9,13 @@ pub mod app;
 pub mod character;
 pub mod commission;
 pub mod common_error;
+pub mod den;
 mod lazy_unit;
 pub(crate) mod ports;
+#[cfg(test)]
+mod test_ports;
+#[cfg(test)]
+mod test_world;
 mod transaction;
 pub mod user;
 

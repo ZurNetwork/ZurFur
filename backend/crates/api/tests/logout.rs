@@ -29,9 +29,12 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
         .public_url(format!("http://{addr}"))
         .build();
     let state: AppState = runtime;
-    let app = api::app(state).layer(http_cookies::session_layer(MemoryStore::default(), false));
+    let sessions = http_cookies::session_layer(MemoryStore::default(), false);
+    let app = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        http_stack::serve(listener, app, std::future::pending())
+            .await
+            .unwrap();
     });
 
     // Keeps cookies (so the session survives across requests) but does not auto-follow

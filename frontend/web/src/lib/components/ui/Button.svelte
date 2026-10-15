@@ -87,7 +87,7 @@
 
 	.button--secondary {
 		background: var(--color-surface-raised);
-		border-color: var(--color-border);
+		border-color: var(--color-control-edge);
 		color: var(--color-text);
 	}
 

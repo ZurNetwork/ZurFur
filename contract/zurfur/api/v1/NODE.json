@@ -1,8 +1,8 @@
 {
   "path": "contract/zurfur/api/v1",
   "charted": "2026-09-12",
-  "short": "The v1 proto corpus (session, account, commission, problem)",
-  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, error), welded to `/api/v1`.",
+  "short": "The v1 proto corpus (session, account, commission, den, problem)",
+  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, den, error), welded to `/api/v1`.",
   "type": "code",
   "tags": [
     "category:schema"
@@ -28,7 +28,12 @@
     },
     {
       "name": "commission.proto",
-      "role": "ListCommissions, CreateCommission (owner POV), Maturity; google.protobuf.Timestamp; CommissionService",
+      "role": "CreateCommission (owner POV), Maturity; google.protobuf.Timestamp; CommissionService. The owner's list (ListCommissions) is retired.",
+      "node": false
+    },
+    {
+      "name": "den.proto",
+      "role": "GetDenRoot (GET /den), GetDenNode (GET /den/{path=**}): a signed-in viewer reads their own Den one node at a time; DenService",
       "node": false
     },
     {
@@ -72,11 +77,21 @@
       "page": 40992770,
       "title": "The API Contract",
       "governs": "decision 3: session.proto, account.proto, commission.proto: service blocks declare routes only, messages-only codegen"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "den.proto: Den paths, keys as path segments, levels, mounts and symlinks"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`"
     }
   ],
   "notes": [
     "See also: ZMVP-152 (account.proto: `DeleteAccountResponse.outcome` — the delete AC that needs the outcome distinguished).",
-    "See also: ZMVP-75 (commission.proto: `ListCommissions` stays owner-POV only; the non-participant projection is a separate, later surface).",
+    "See also: PDD 0.1 D-28 (commission.proto: the owner's list, `ListCommissions`, is retired as a declared baseline reset; the Den's `commissions` folder replaces it).",
     "See also: Engineer ruling 2026-07-24 (account.proto: `ListAccounts` returns every role the caller holds, not owned-only).",
     "See also: Engineer ruling 2026-07-25, one ruling covering several call sites: account.proto (`DeleteAccountResponse` carries the outcome instead of a bodiless `204`), commission.proto (`CreateCommissionResponse`/`CreateCommission` carry the created resource so the caller can navigate to it), problem.proto (`Problem.detail` is required, resolving a prior three-way drift across problem.rs/plugin-v1.yaml/problem.ts), session.proto (R1: lowerCamelCase wire keys, `json_name` rejected as a one-way door)."
   ]

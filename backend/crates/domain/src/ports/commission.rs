@@ -9,9 +9,9 @@ use crate::{
     elements::{
         commission::{
             ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, DeadlineStatus, DirectionStatus, ElementId, FileKey, GrantLevel,
-            LapsedDeadline, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
-            TabId, TabRow,
+            CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
+            FileKey, FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
         },
         maturity::Maturity,
         user::UserId,
@@ -30,6 +30,11 @@ pub trait CommissionStore: Send + Sync {
     /// The commission `id` names, or `None`. An archived commission is still
     /// found — filtering it out is a listing projection's job.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its stored title,
+    /// its own visibility and its archive time, and nothing else of the row. An archived
+    /// commission is still found.
+    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
 
     async fn current_column_of_workflow(
         &self,
@@ -113,6 +118,22 @@ pub trait CommissionStore: Send + Sync {
     /// projection. Archived commissions are excluded; ordered by
     /// [`CommissionId`], unpaginated.
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
+
+    /// The commissions `user` is a Participant of, read from the same
+    /// participant record as [`is_participant`](Self::is_participant). Archived
+    /// commissions are included; hiding them is the caller's. Ordered by
+    /// [`CommissionId`]; empty for a user who takes part in none.
+    async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>>;
+
+    /// Every file entry of `commission` as a [`FileSummary`] (key and upload
+    /// time, never the uploader), ordered by [`FileKey`] (upload order). Empty
+    /// for a commission with no files, and for an unknown one. The names live
+    /// behind [`FileStore::filename`](crate::ports::FileStore::filename).
+    async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>>;
+
+    /// Every Slot declared on `commission`, in declaration order. Empty for a
+    /// commission with no Slots, and for an unknown one.
+    async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
@@ -121,10 +142,11 @@ pub trait CommissionStore: Send + Sync {
 /// before any of these is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`Commission`], together with its skeleton tab
-    /// rows and its owner's participant row. Both are minted inside the
+    /// Persist a freshly created [`NewCommission`], together with its skeleton
+    /// tab rows and its owner's participant row. The title is a checked
+    /// [`CommissionTitle`](crate::elements::commission::CommissionTitle) by type. Both are minted inside the
     /// implementation, so a tabless or owner-less commission is unrepresentable.
-    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()>;
+    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one
     /// satellite row sharing the seat's id. Refuses an absent/foreign tab with

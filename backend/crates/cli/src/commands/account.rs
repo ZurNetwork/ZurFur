@@ -60,7 +60,7 @@ impl From<account::create::Output> for Founded {
             id: did.clone(),
             did,
             handle: founded.handle.as_str().to_owned(),
-            name: founded.name.as_str().to_owned(),
+            name: founded.name.to_string(),
         }
     }
 }
@@ -155,7 +155,8 @@ pub async fn run(
                     | AccountError::DuplicateName
                     | AccountError::IncorrectNumberOfColumns
                     | AccountError::NothingToDo
-                    | AccountError::IndexOutOfRange(_) => CliError::domain("invalid_request", err),
+                    | AccountError::IndexOutOfRange(_)
+                    | AccountError::InvalidName(_) => CliError::domain("invalid_request", err),
                     AccountError::SystemError(_) => CliError::domain("internal_error", err),
                 })?;
             let body = Founded::from(founded);
@@ -237,9 +238,8 @@ pub async fn run(
                         | AccountError::DuplicateName
                         | AccountError::IncorrectNumberOfColumns
                         | AccountError::NothingToDo
-                        | AccountError::IndexOutOfRange(_) => {
-                            CliError::domain("invalid_request", err)
-                        }
+                        | AccountError::IndexOutOfRange(_)
+                        | AccountError::InvalidName(_) => CliError::domain("invalid_request", err),
                         AccountError::SystemError(_) => CliError::domain("internal_error", err),
                     })?;
             let body = Deleted::from(deleted);

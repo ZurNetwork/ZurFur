@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { fetchStub, problemResponse } from '$lib/testing/http';
+import { isHttpError } from '@sveltejs/kit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	fetchStub,
+	hangingFetch,
+	problemResponse,
+	requestUrl,
+	unreachableFetch
+} from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { actions, load } from './+page.server';
 import type { AccountMembership } from '$lib/api/account';
@@ -151,5 +158,60 @@ describe('/accounts/[id] delete action', () => {
 		const { fetch } = deleteFlowStub([aliceStudio], () => problemResponse(403, 'forbidden'));
 		const failure = await deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
 		expect(failure).toMatchObject({ status: 403, data: { problem: { code: 'forbidden' } } });
+	});
+});
+
+describe('/accounts/[id] when Zurfur doesn’t answer', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** What `run` rejected with, or `'resolved'`. */
+	function rejectionOf(run: () => unknown): Promise<unknown> {
+		return Promise.resolve()
+			.then(run)
+			.then(
+				() => 'resolved',
+				(thrown: unknown) => thrown
+			);
+	}
+
+	it('fails the page to the error view as “isn’t answering” (503)', async () => {
+		const failure = await rejectionOf(() => load(loadEvent(unreachableFetch(), 'acct-alice')));
+		expect(isHttpError(failure, 503)).toBe(true);
+	});
+
+	it('fails the delete to the error view, never issuing it, when the role read isn’t answered', async () => {
+		const calls: string[] = [];
+		const fetch: typeof globalThis.fetch = (input) => {
+			calls.push(requestUrl(input));
+			return Promise.reject(new TypeError('fetch failed'));
+		};
+		const failure = await rejectionOf(() =>
+			deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'))
+		);
+		expect(isHttpError(failure, 503)).toBe(true);
+		expect(calls).toEqual(['/api/v1/accounts']);
+	});
+
+	it('says a delete that ran out may have gone through', async () => {
+		vi.useFakeTimers();
+		const { fetch } = hangingFetch((url) =>
+			url === '/api/v1/accounts' ? Response.json({ accounts: [aliceStudio] }) : undefined
+		);
+		const pending = deleteAction(deleteEvent(fetch, 'acct-alice', 'alice.zurfur.app'));
+		await vi.advanceTimersByTimeAsync(10_000);
+		const failure = await pending;
+
+		expect(failure).toMatchObject({
+			status: 503,
+			data: {
+				problem: {
+					code: 'service_unavailable',
+					detail:
+						"Zurfur didn't answer in time. The Account may have been deleted: check your Accounts before you try again."
+				}
+			}
+		});
 	});
 });

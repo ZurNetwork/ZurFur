@@ -8,17 +8,15 @@
 	import TopBar from './TopBar.svelte';
 
 	/**
-	 * The signed-in frame: a "Skip to content" link, the top bar and the main
-	 * pane. Where this run serves a Den (`denServed`), the sidebar sits beside
-	 * the pane, and on a phone it is a drawer; `navigation` renders its
-	 * content, once inline and once in the drawer (only while it is open).
-	 * Where it doesn't, there is no sidebar and no drawer at all.
+	 * The signed-in frame: a "Skip to content" link, the top bar, and the
+	 * sidebar beside the main pane; on a phone the sidebar is a drawer.
+	 * `navigation` renders its content, once inline and once in the drawer
+	 * (only while it is open).
 	 */
 	let {
 		session,
 		trail,
 		section,
-		denServed,
 		drawerOpen = $bindable(false),
 		navigation,
 		children
@@ -26,7 +24,6 @@
 		session: Session;
 		trail: Trail;
 		section: FrameSection;
-		denServed: boolean;
 		drawerOpen?: boolean;
 		navigation: Snippet<[{ inDrawer: boolean }]>;
 		children: Snippet;
@@ -41,31 +38,26 @@
 		{session}
 		{trail}
 		{section}
-		drawer={denServed}
 		{drawerOpen}
 		{drawerId}
 		onOpenDrawer={() => (drawerOpen = true)}
 	/>
-	<div class="app-shell__body" class:app-shell__body--alone={!denServed}>
-		{#if denServed}
-			<div class="app-shell__sidebar desktop-only">
-				<Sidebar {session} {section} inDrawer={false}>
-					{@render navigation({ inDrawer: false })}
-				</Sidebar>
-			</div>
-		{/if}
+	<div class="app-shell__body">
+		<div class="app-shell__sidebar desktop-only">
+			<Sidebar {session} {section} inDrawer={false}>
+				{@render navigation({ inDrawer: false })}
+			</Sidebar>
+		</div>
 		<main id="main" class="app-shell__pane" tabindex="-1">
 			{@render children()}
 		</main>
 	</div>
 </div>
-{#if denServed}
-	<Dialog bind:open={drawerOpen} label="My Den" variant="drawer" id={drawerId}>
-		<Sidebar {session} {section} inDrawer={true}>
-			{@render navigation({ inDrawer: true })}
-		</Sidebar>
-	</Dialog>
-{/if}
+<Dialog bind:open={drawerOpen} label="My Den" variant="drawer" id={drawerId}>
+	<Sidebar {session} {section} inDrawer={true}>
+		{@render navigation({ inDrawer: true })}
+	</Sidebar>
+</Dialog>
 
 <style>
 	.skip-link {
@@ -97,10 +89,6 @@
 		min-height: 0;
 	}
 
-	.app-shell__body--alone {
-		grid-template-columns: minmax(0, 1fr);
-	}
-
 	.app-shell__sidebar {
 		position: sticky;
 		top: 0;
@@ -120,10 +108,6 @@
 	}
 
 	@media (forced-colors: active) {
-		.app-shell__body--alone {
-			grid-template-columns: minmax(0, 1fr);
-		}
-
 		.app-shell__sidebar {
 			border-right: 1px solid CanvasText;
 		}

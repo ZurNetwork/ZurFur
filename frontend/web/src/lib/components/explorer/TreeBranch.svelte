@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardTypeWord } from '$lib/api/den';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import TreeItem from '$lib/components/ui/TreeItem.svelte';
@@ -139,7 +140,12 @@
 			data-tree-name={typeaheadName}
 		>
 			<span class="tree-row__arrow tree-row__arrow--none" aria-hidden="true"></span>
-			<TreeItem look="cantOpen" name={node.entry.name} mounted={node.entry.mounted} />
+			<TreeItem
+				look="cantOpen"
+				name={node.entry.name}
+				mounted={node.entry.mounted}
+				typeWord={cardTypeWord(node.entry.type)}
+			/>
 		</span>
 	{:else if node.item === 'more' && !enhanced}
 		<!-- Before the page's script runs, "More…" is a plain link to the next page. -->

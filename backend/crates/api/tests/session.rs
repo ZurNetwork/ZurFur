@@ -976,9 +976,12 @@ async fn serve_with_session_store(store: impl SessionStore + Clone) -> String {
         signin: Signin::Live,
     });
     let state = AppState { auth, ..runtime };
-    let router = api::app(state).layer(http_cookies::session_layer(store, false));
+    let sessions = http_cookies::session_layer(store, false);
+    let router = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        http_stack::serve(listener, router, std::future::pending())
+            .await
+            .unwrap();
     });
     base_url
 }
@@ -1023,4 +1026,132 @@ async fn a_session_write_failure_after_an_accepted_browser_clears_the_cookie() {
         vec![CLEARED.to_string()],
         "the authenticator accepted the browser, so the cookie is cleared"
     );
+}
+
+// --- two session cookie pairs ---------------------------------------------------
+
+/// The live session id `sign_in`'s callback set.
+fn issued_session_id(callback: &reqwest::Response) -> String {
+    callback
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookie| cookie.split(';').next()?.strip_prefix("zurfur.sid="))
+        .expect("the callback sets the session cookie")
+        .to_owned()
+}
+
+/// A served app with alice signed in, and her live session id.
+async fn alice_signed_in() -> (String, String) {
+    let base = serve_happy().await;
+    let callback = sign_in(&client(), &base, "alice.bsky.social").await;
+    let session_id = issued_session_id(&callback);
+    (base, session_id)
+}
+
+/// A well-formed session id no session holds, planted beside the visitor's.
+fn planted_session_id() -> String {
+    Id(7).to_string()
+}
+
+/// `GET {base}/me` sending one `Cookie` header per entry of `cookies`.
+async fn me_with_cookie_headers(base: &str, cookies: &[String]) -> reqwest::Response {
+    let mut request = reqwest::Client::new().get(format!("{base}/me"));
+    for cookie in cookies {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
+    request.send().await.expect("GET /me")
+}
+
+/// Every way two `zurfur.sid` pairs reach the API: in one header or split
+/// across two, the planted pair first or second, junk or well-formed, its
+/// name plain or percent-encoded.
+fn two_pair_cases(live: &str) -> Vec<Vec<String>> {
+    let planted = planted_session_id();
+    let pairs = [
+        (format!("zurfur.sid={live}"), "zurfur.sid=junk".to_owned()),
+        (
+            format!("zurfur.sid={live}"),
+            format!("zurfur%2Esid={planted}"),
+        ),
+        ("zurfur.sid=junk".to_owned(), format!("zurfur.sid={live}")),
+        (
+            format!("zurfur.sid={live}"),
+            format!("zurfur.sid={planted}"),
+        ),
+        (
+            format!("zurfur.sid={planted}"),
+            format!("zurfur.sid={live}"),
+        ),
+        (format!("zurfur.sid={live}"), format!("zurfur.sid={live}")),
+    ];
+    pairs
+        .into_iter()
+        .flat_map(|(first, second)| {
+            let one_header = vec![format!("theme=dark; {first}; {second}")];
+            let two_headers = vec![first, second];
+            [one_header, two_headers]
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn me_answers_200_for_one_session_pair_among_other_cookies() {
+    let (base, live) = alice_signed_in().await;
+    let cookies = [format!("theme=dark; zurfur.sid={live}; other=1")];
+
+    let res = me_with_cookie_headers(&base, &cookies).await;
+
+    assert_eq!(res.status(), 200);
+}
+
+#[tokio::test]
+async fn me_answers_401_for_two_session_pairs_however_they_arrive() {
+    let (base, live) = alice_signed_in().await;
+
+    for cookies in two_pair_cases(&live) {
+        let res = me_with_cookie_headers(&base, &cookies).await;
+
+        assert_eq!(res.status(), 401, "for {cookies:?}");
+        common::assert_problem(res, 401, "not_authenticated").await;
+    }
+}
+
+#[tokio::test]
+async fn the_callback_still_reads_the_binding_cookie_beside_two_session_pairs() {
+    let auth = Arc::new(RecordingAuthenticator::default());
+    let base = serve(
+        auth.clone(),
+        Arc::new(MemProfileSource::new(alice_profile())),
+    )
+    .await;
+    let planted = planted_session_id();
+    let one_header =
+        format!("zurfur.sid=junk; zurfur.signin=from-the-browser; zurfur.sid={planted}");
+    let split = [
+        "zurfur.sid=junk",
+        "zurfur.signin=from-the-browser",
+        "zurfur.sid=again",
+    ];
+
+    let in_one = client()
+        .get(format!("{base}/signin-callback?code=test&state=s"))
+        .header(reqwest::header::COOKIE, one_header)
+        .send()
+        .await
+        .expect("GET /signin-callback");
+    let mut split_request = client().get(format!("{base}/signin-callback?code=test&state=s"));
+    for cookie in split {
+        split_request = split_request.header(reqwest::header::COOKIE, cookie);
+    }
+    let in_three = split_request.send().await.expect("GET /signin-callback");
+
+    let home = format!("{base}/");
+    for res in [in_one, in_three] {
+        assert_eq!(res.status(), 303);
+        assert_eq!(res.headers()["location"], home.as_str());
+    }
+    let presented_twice = vec![Some("from-the-browser".to_string()); 2];
+    assert_eq!(auth.presented(), presented_twice);
 }

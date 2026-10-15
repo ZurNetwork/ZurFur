@@ -1,0 +1,34 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "accounts",
+      "segments": [
+        "accounts"
+      ]
+    },
+    {
+      "name": "Supreme Arts",
+      "segments": [
+        "accounts",
+        "did:plc:t7nesupremeartsfixtureaa"
+      ]
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "name": "characters",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts",
+      "did:plc:t7nesupremeartsfixtureaa",
+      "characters"
+    ],
+    "type": "account.characters"
+  }
+}

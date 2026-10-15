@@ -8,8 +8,8 @@
 	/**
 	 * The error view, chosen by status and route alone: it takes no message,
 	 * so no error's own text (which may hold a path or an internal detail) can
-	 * ever reach the screen. Inside the frame, where a Den is served, its way
-	 * back is My Den; otherwise the start page.
+	 * ever reach the screen. Inside the frame its way back is My Den; outside
+	 * it, the start page.
 	 */
 	let {
 		status,

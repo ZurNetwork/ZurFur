@@ -57,6 +57,10 @@ impl StubPlc {
             .route("/{did}/data", get(did_data))
             .with_state(ops.clone());
 
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the stub PLC directory is not the app; it serves no session"
+        )]
         let server = tokio::spawn(async move {
             // Runs until the handle is aborted on drop; serve errors only if
             // the listener dies, which the owning test will surface anyway.

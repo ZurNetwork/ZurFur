@@ -9,8 +9,10 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, changelog::Changelog},
+    commission::{CommissionError, CommissionResult, changelog::Changelog, den_refusal},
+    den::access::{ServedNode, may_open},
 };
+
 pub struct Query {
     pub actor_id: UserId,
     pub commission_id: CommissionId,
@@ -29,8 +31,8 @@ pub struct Output {
 }
 
 impl Changelog<'_> {
-    /// Reads the commission's changelog in stream order, ascending `seq`.
-    /// Participant-only: everyone else gets `NotAMember`, which the drivers
+    /// Reads the commission's changelog in stream order, ascending `seq`, once den's check
+    /// opens its `changelog`. Everyone it doesn't open to gets `NotAMember`, which the drivers
     /// render byte-identically to an absent commission's `404`.
     #[use_case]
     pub async fn read(&self, #[ports] ports: &Ports, query: Query) -> CommissionResult<Output> {
@@ -38,15 +40,12 @@ impl Changelog<'_> {
             actor_id,
             commission_id,
         } = query;
-        if !ports
-            .commissions
-            .is_participant(&commission_id, &actor_id)
-            .await?
-        {
-            // The closed door: never a 403, which would confirm a private
-            // commission to a stranger who guessed its id.
+        let opens = may_open(ports, &actor_id, ServedNode::Changelog(commission_id))
+            .await
+            .map_err(|refusal| den_refusal(refusal, CommissionError::NotAMember))?;
+        let &ServedNode::Changelog(commission_id) = opens.node() else {
             return Err(CommissionError::NotAMember);
-        }
+        };
 
         Ok(Output {
             entries: ports
@@ -68,3 +67,6 @@ impl Changelog<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

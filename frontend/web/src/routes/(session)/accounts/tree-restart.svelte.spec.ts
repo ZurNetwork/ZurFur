@@ -28,7 +28,6 @@ const data = {
 		displayName: undefined,
 		avatarUrl: undefined
 	},
-	denServed: true,
 	accounts: [],
 	deleted: undefined,
 	form: formStub({ name: '', handle: '' }),

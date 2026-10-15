@@ -1,0 +1,39 @@
+[package]
+publish = false
+name = "http-stack"
+version = "0.1.0"
+edition = "2024"
+
+# The one HTTP stack every mount serves through: the detach layer that runs each
+# request to its end, the session layer inside it, and the server with its
+# graceful shutdown. A leaf `api` and the `test-support` rigs both consume, so
+# the test servers run the stack `main` runs.
+[dependencies]
+# The router the stack wraps, its per-route layer bounds and `axum::serve`.
+axum = { workspace = true }
+# The request semaphore, the spawned tasks, the listener and the deadlines.
+tokio = { workspace = true }
+# `TaskTracker`: the detached requests shutdown waits on.
+tokio-util = { workspace = true }
+# The detach layer, as a tower layer and service.
+tower-layer = { workspace = true }
+tower-service = { workspace = true }
+# Each detached request keeps the span it arrived in.
+tracing = { workspace = true }
+# The panic answer's problem document.
+serde_json = { workspace = true }
+# `Unfinished`, the drain's error.
+thiserror = { workspace = true }
+# `RequestBodyTimeoutLayer`: a stalled request body fails its read.
+tower-http = { workspace = true }
+# The session layer the stack mounts inside the detach layer.
+http-cookies = { path = "../http-cookies" }
+tower-sessions = { workspace = true }
+
+[dev-dependencies]
+# `now_or_never`: a request waiting for its permit is still pending.
+futures-util = { workspace = true }
+# `start_paused`: the stalled-body test runs on the paused clock.
+tokio = { workspace = true, features = ["test-util"] }
+# The counting session store implements tower-sessions' `#[async_trait]` port.
+async-trait = { workspace = true }

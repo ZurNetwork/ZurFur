@@ -7,15 +7,19 @@
 //! guarantees, and the container-reuse escape hatch.
 
 pub mod contract;
+pub mod cut;
+pub mod den;
 mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
 pub mod log_capture;
 mod pds;
 pub mod pg;
+pub mod pg_app;
 mod plc_stub;
 pub mod recording;
 pub mod runtime;
+pub mod store_doubles;
 
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;

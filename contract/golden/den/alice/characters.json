@@ -1,0 +1,50 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Ember",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "characters",
+          "did:plc:e3qkemberfixtureaaaaaaaa"
+        ],
+        "type": "character"
+      },
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Kael-sona",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "characters",
+          "did:plc:k4sokaelsonafixtureaaaaa"
+        ],
+        "type": "character"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "characters",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "characters"
+    ],
+    "type": "user.characters"
+  }
+}

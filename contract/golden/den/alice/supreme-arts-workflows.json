@@ -1,0 +1,52 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "accounts",
+      "segments": [
+        "accounts"
+      ]
+    },
+    {
+      "name": "Supreme Arts",
+      "segments": [
+        "accounts",
+        "did:plc:t7nesupremeartsfixtureaa"
+      ]
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "Queue",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "accounts",
+          "did:plc:t7nesupremeartsfixtureaa",
+          "workflows",
+          "01a0ef9c-7000-7a00-8000-000000000031"
+        ],
+        "type": "workflow"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "workflows",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "accounts",
+      "did:plc:t7nesupremeartsfixtureaa",
+      "workflows"
+    ],
+    "type": "account.workflows"
+  }
+}

@@ -155,6 +155,16 @@ describe('sessionHeaders', () => {
 		expect(response.headers.get('cache-control')).toBe('public, max-age=60');
 	});
 
+	it('marks a request carrying two session pairs private, no-store', async () => {
+		// The API sees no session for it, but a cookie that was ours is still on it.
+		const twoPairs = { routeId: '/', cookie: 'zurfur.sid=s3ss10n==; zurfur.sid=planted' };
+
+		const response = await handleFor(twoPairs, pageResponse);
+
+		expect(response.headers.get('cache-control')).toBe('private, no-store');
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
+	});
+
 	it('reads the session cookie by name, not by prefix', async () => {
 		const lookalike = { routeId: '/', cookie: 'zurfur.sidx=1; xzurfur.sid=2' };
 

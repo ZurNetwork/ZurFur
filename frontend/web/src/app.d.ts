@@ -12,14 +12,14 @@ declare global {
 		interface Locals {
 			/** The signed-in visitor, set by the sign-in gate on every `(session)` route. */
 			session?: Session | undefined;
+			/** The request's one deadline, set by the first hook: every backend call it makes stops by then. */
+			deadline?: AbortSignal | undefined;
 		}
 
 		/** What any page may hand the frame. */
 		interface PageData {
 			/** The path bar's steps down to this page; a page without one shows an empty path. */
 			trail?: Trail | undefined;
-			/** Whether this run can show a Den at all (the root layout's switch). */
-			denServed?: boolean | undefined;
 			/** On a My Den page: everything its load read, for the pane and the tree. */
 			den?: DenPageData | undefined;
 		}

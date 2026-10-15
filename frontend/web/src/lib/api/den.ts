@@ -80,8 +80,6 @@ export type DenOutcome =
 	  }
 	/** Every not-found, whatever its cause, looks the same. */
 	| { readonly outcome: 'notFound' }
-	/** This build has no live Den behind it yet. */
-	| { readonly outcome: 'notConnected' }
 	| { readonly outcome: 'problem'; readonly problem: Problem };
 
 /** One folder's listing, as the tree keeps it. */
@@ -222,7 +220,6 @@ function isDenOutcome(value: unknown): boolean {
 			);
 		}
 		case 'notFound':
-		case 'notConnected':
 			return true;
 		case 'problem':
 			return field(value, 'problem') instanceof Object;
@@ -263,4 +260,21 @@ export function isDenPageData(value: unknown): value is DenPageData {
 export function foldersFirst(entries: readonly DenEntry[]): readonly DenEntry[] {
 	const isFolder = (entry: DenEntry) => entry.view === 'open' && entry.kind === 'directory';
 	return [...entries.filter(isFolder), ...entries.filter((entry) => !isFolder(entry))];
+}
+
+/** The word a card shows for a type this build knows. */
+export type CardTypeWord = 'Account' | 'Character' | 'Commission';
+
+/** The word a card shows for its type: exactly the types this build knows, and no word for any other. */
+export function cardTypeWord(type: DenType): CardTypeWord | undefined {
+	switch (type) {
+		case 'account':
+			return 'Account';
+		case 'character':
+			return 'Character';
+		case 'commission':
+			return 'Commission';
+		default:
+			return undefined;
+	}
 }

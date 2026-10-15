@@ -20,7 +20,7 @@
   "fs": [
     {
       "name": "(public)/",
-      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → sets the backend's browser-binding cookie (Path=/, HttpOnly, SameSite=Lax; name, Secure and Max-Age as the backend set them) → PDS redirect, callback-errors.ts maps axum's ?error= codes to copy (browser_mismatch carries the ruled text, \"This sign-in expired or was started in a different browser. Please sign in again here.\")",
+      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → sets the backend's browser-binding cookie (Path=/, HttpOnly, SameSite=Lax; name, Secure and Max-Age as the backend set them) → PDS redirect, which the enhanced form follows by a full page load (never the client router), a sign-in start that can't reach the API or runs out says \"Zurfur isn't answering right now. Please try again.\" on the form; callback-errors.ts maps axum's ?error= codes to copy (browser_mismatch carries the ruled text, \"This sign-in expired or was started in a different browser. Please sign in again here.\")",
       "node": false
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "name": "+layout.server.ts",
-      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes), plus `denServed` (whether this run can show a Den); unreachable backend degrades to signed-out, contract breakage still 500s",
+      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes); unreachable backend degrades to signed-out, contract breakage still 500s",
       "node": false
     },
     {

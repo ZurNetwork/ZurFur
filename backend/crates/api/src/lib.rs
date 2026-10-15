@@ -19,6 +19,11 @@ pub use composition::{Config, Environment, Runtime as AppState};
 /// the `contract_current` test.
 pub mod generated;
 
+/// The dev profile: the server on the in-memory fixture world, every sign-in
+/// alice. Only the `dev-profile` feature compiles it in.
+#[cfg(feature = "dev-profile")]
+pub mod dev_profile;
+
 mod extract;
 
 /// The server's log subscriber, which keeps the DNS client's own events out.
@@ -49,9 +54,10 @@ pub fn app(state: AppState) -> Router {
         HeaderValue::from_static("no-store"),
     );
 
-    // Cookie surface: session + accounts + commissions, under CSRF; no-store outermost.
+    // Cookie surface: session + accounts + commissions + den, under CSRF; no-store outermost.
     let cookie_surface = routes::session_router()
         .merge(routes::accounts_router())
+        .merge(routes::den_router())
         .merge(routes::commissions_router(
             // Checked, not `as`: an oversized cap must saturate, never silently truncate.
             usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX),

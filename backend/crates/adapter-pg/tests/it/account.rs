@@ -1823,3 +1823,104 @@ async fn list_for_user_honors_the_privacy_valve_only_for_a_public_projection() {
         "a PUBLIC projection shows only the memberships the member published"
     );
 }
+
+// --- The deactivated-Accounts-for-their-Owner read ---
+
+/// The deactivated accounts `owner` holds the Owner role in, read off the pool.
+async fn list_deactivated_for_owner(pool: &PgPool, owner: &UserId) -> Vec<Account> {
+    PgAccountStore::new(pool.clone())
+        .list_deactivated_for_owner(owner)
+        .await
+        .expect("list_deactivated_for_owner")
+}
+
+/// Founds an account `tag` owned by `owner` and returns it. The DID keeps
+/// `tag`'s case; the handle lowercases it.
+async fn found_owned(pool: &PgPool, owner: &UserId, tag: &str) -> Account {
+    let did = Did::from(format!("did:plc:deact-{tag}"));
+    let handle = format!("deact-{}.example.com", tag.to_lowercase())
+        .parse::<Handle>()
+        .unwrap();
+    let name = "Former Studio".parse::<AccountName>().unwrap();
+    let (account, membership) = Account::open(owner.clone(), did, handle, name, Utc::now());
+    create(pool, &account, &membership).await;
+    account
+}
+
+#[tokio::test]
+async fn the_deactivated_read_returns_a_soft_deleted_account_to_its_owner_only() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:deact-owner").await;
+    let admin = provision(&pool, "did:plc:deact-admin").await;
+    let stranger = provision(&pool, "did:plc:deact-stranger").await;
+    let live = found_owned(&pool, &owner.id, "live").await;
+    let gone = found_owned(&pool, &owner.id, "gone").await;
+    let admin_membership = UserAccount {
+        user_id: admin.id.clone(),
+        account_id: gone.id.clone(),
+        role: Role::Admin,
+        alias: None,
+    };
+    grant_role(&pool, &admin_membership).await;
+    soft_delete(&pool, &gone.id).await;
+
+    let owners = list_deactivated_for_owner(&pool, &owner.id).await;
+    let admins = list_deactivated_for_owner(&pool, &admin.id).await;
+    let strangers = list_deactivated_for_owner(&pool, &stranger.id).await;
+
+    let [deactivated] = owners.as_slice() else {
+        panic!(
+            "the Owner sees exactly one deactivated account, got {}",
+            owners.len()
+        );
+    };
+    assert_eq!(deactivated.id, gone.id);
+    assert!(
+        deactivated.deleted_at.is_some(),
+        "it carries its soft-delete stamp"
+    );
+    assert_ne!(
+        deactivated.id, live.id,
+        "a live account is never in this read"
+    );
+    assert!(admins.is_empty(), "a non-Owner member never sees it");
+    assert!(strangers.is_empty(), "nor does a stranger");
+}
+
+#[tokio::test]
+async fn the_deactivated_read_leaves_the_live_listing_unchanged() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:deact-owner2").await;
+    let live = found_owned(&pool, &owner.id, "live2").await;
+    let gone = found_owned(&pool, &owner.id, "gone2").await;
+    soft_delete(&pool, &gone.id).await;
+
+    let listed = PgAccountStore::new(pool.clone())
+        .list_for_user(&owner.id, ListingScope::SelfView)
+        .await
+        .expect("list_for_user");
+
+    let listed_ids: Vec<&AccountId> = listed
+        .iter()
+        .map(|membership| &membership.account.id)
+        .collect();
+    let expected_ids = vec![&live.id];
+    assert_eq!(listed_ids, expected_ids);
+}
+
+#[tokio::test]
+async fn the_deactivated_read_orders_by_account_did() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:deact-owner3").await;
+    // Byte order puts `Z` before `a`; a locale collation would not.
+    let second = found_owned(&pool, &owner.id, "aa").await;
+    let first = found_owned(&pool, &owner.id, "Zz").await;
+    soft_delete(&pool, &second.id).await;
+    soft_delete(&pool, &first.id).await;
+
+    let deactivated = list_deactivated_for_owner(&pool, &owner.id).await;
+
+    let ids: Vec<&AccountId> = deactivated.iter().map(|account| &account.id).collect();
+    let expected_ids = vec![&first.id, &second.id];
+    assert_eq!(ids, expected_ids);
+}

@@ -14,6 +14,15 @@ describe('errorCopy', () => {
 		expect(errorCopy(404, '/(session)/accounts/[id]').title).toBe('Nothing here');
 	});
 
+	it('says Zurfur isn’t answering for a 503, whatever the route but sign-out', () => {
+		expect(errorCopy(503, '/(session)/den/[...path]')).toEqual({
+			title: "Zurfur isn't answering right now",
+			message: 'Try again in a moment.'
+		});
+		expect(errorCopy(503, undefined).title).toBe("Zurfur isn't answering right now");
+		expect(errorCopy(503, '/(session)/logout').title).toBe("You're still signed in");
+	});
+
 	it('gives anything else the generic copy', () => {
 		expect(errorCopy(500, '/(session)/accounts').title).toBe('Something went wrong');
 	});

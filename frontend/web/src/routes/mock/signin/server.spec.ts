@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { handleFromTrusted } from '$lib/types/brand';
 import type { RequestHandler } from './$types';
@@ -29,6 +29,16 @@ async function loadRoute(stub: EnvStub) {
 	const mockApi = await import('$lib/server/api/zurfur-api-mock');
 	return { GET: route.GET, mockApi };
 }
+
+/** How long the one cold import may take on a loaded machine. */
+const WARM_IMPORT_TIMEOUT_MS = 60_000;
+
+// Pay the cold transform of the module graph once, under its own timeout, so
+// each test's fresh import after `vi.resetModules()` is only an evaluation.
+beforeAll(async () => {
+	await import('./+server');
+	await import('$lib/server/api/zurfur-api-mock');
+}, WARM_IMPORT_TIMEOUT_MS);
 
 afterEach(() => {
 	vi.doUnmock('$app/environment');

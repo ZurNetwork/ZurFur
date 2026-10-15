@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { CardEntry, DenKind, OpenEntry } from '$lib/api/den';
+	import { cardTypeWord, type CardEntry, type DenKind, type OpenEntry } from '$lib/api/den';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { IconName } from '$lib/components/ui/icons';
@@ -9,8 +9,9 @@
 	/**
 	 * The pane's title for the open node: its kind marker and name, then a
 	 * line with its kind word, its own visibility, the mounted marker and the
-	 * soft-delete word. A card shows only its name and "Can't open" — never a
-	 * level, which only openers see. `root` titles My Den's root "My Den".
+	 * soft-delete word. A card shows only its name, its type as a word when
+	 * this build knows it, and "Can't open" — never a level, which only
+	 * openers see. `root` titles My Den's root "My Den".
 	 */
 	let {
 		node,
@@ -40,6 +41,7 @@
 
 	const title = $derived(root ? 'My Den' : node.name);
 	const icon: IconName = $derived(node.view === 'open' ? KIND_ICONS[node.kind] : 'lock');
+	const typeWord = $derived(node.view === 'card' ? cardTypeWord(node.type) : undefined);
 </script>
 
 <header class="node-header" data-testid="node-header">
@@ -57,6 +59,7 @@
 			{#if node.mounted}<span>Mounted</span>{/if}
 			{#if node.removed !== undefined}<Badge label={removedWord(node.removed)} />{/if}
 		{:else}
+			{#if typeWord !== undefined}<span data-testid="card-type">{typeWord}</span>{/if}
 			<span data-testid="node-kind">Can't open</span>
 		{/if}
 	</p>

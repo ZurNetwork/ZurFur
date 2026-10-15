@@ -42,6 +42,23 @@ services:
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
 
+  # The dev profile's one origin (`just dev-profile-web`): the same Caddyfile,
+  # loopback-only on host networking like `caddy`, in front of the dev-profile
+  # API and its own vite dev server. The `dev-profile` compose profile keeps it
+  # out of plain `just up`. Its variables are its own, not `caddy`'s, so a
+  # worktree's .env (which sets `caddy`'s) never moves it onto `just dev`'s
+  # ports. The defaults (8180, 8181, 5184) sit clear of `just dev`'s.
+  caddy-dev-profile:
+    image: caddy:2-alpine
+    network_mode: host
+    profiles: [dev-profile]
+    environment:
+      ZURFUR_PROXY_HOST_PORT: ${ZURFUR_DEV_PROFILE_PROXY_PORT:-8180}
+      ZURFUR_API_UPSTREAM: ${ZURFUR_DEV_PROFILE_API_UPSTREAM:-http://127.0.0.1:8181}
+      ZURFUR_WEB_PORT: ${ZURFUR_DEV_PROFILE_WEB_PORT:-5184}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+
   # --- Local PDS + PLC (dev loop; ZMVP-102) ---
   #
   # A real reference PDS speaking the real protocol, wipeable with one

@@ -1,0 +1,84 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "attachments",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "019e830e-1a00-7a00-8000-000000000002",
+          "attachments"
+        ],
+        "type": "commission.attachments"
+      },
+      {
+        "kind": "file",
+        "name": "changelog",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "019e830e-1a00-7a00-8000-000000000002",
+          "changelog"
+        ],
+        "type": "commission.changelog"
+      },
+      {
+        "kind": "directory",
+        "name": "products",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "019e830e-1a00-7a00-8000-000000000002",
+          "products"
+        ],
+        "type": "commission.products"
+      },
+      {
+        "kind": "directory",
+        "name": "slots",
+        "open": {
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "019e830e-1a00-7a00-8000-000000000002",
+          "slots"
+        ],
+        "type": "commission.slots"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "mount": true,
+    "name": "Old sketch",
+    "open": {
+      "ownLevel": "private",
+      "softDelete": "archived"
+    },
+    "segments": [
+      "commissions",
+      "019e830e-1a00-7a00-8000-000000000002"
+    ],
+    "type": "commission"
+  }
+}

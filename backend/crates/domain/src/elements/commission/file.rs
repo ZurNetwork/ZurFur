@@ -15,5 +15,5 @@ mod value;
 pub use entity::CommissionFile;
 pub use errors::FileNameError;
 pub use id::FileKey;
-pub use rows::{FileDownload, FileMetadata};
+pub use rows::{FileDownload, FileMetadata, FileSummary};
 pub use value::FileName;

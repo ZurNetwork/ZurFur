@@ -520,3 +520,41 @@ async fn upload_is_capped_and_validated() {
         "only the creation entry remains — no rejected upload was recorded",
     );
 }
+
+// A dotfile is configuration, never an ordinary upload: a name that starts with a dot is the
+// 422, and nothing is stored or recorded for it.
+#[tokio::test]
+async fn an_upload_named_with_a_leading_dot_is_refused() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string()))
+            .profile(Profile::new(
+                Did::from("did:plc:artist".to_string()),
+                "artist.bsky.social",
+            ))
+            .max_upload_bytes(DEFAULT_MAX_UPLOAD),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let id = create_commission(&client, &base, &backend).await;
+
+    let res = upload(
+        &client,
+        &base,
+        id,
+        ".theme.yaml",
+        "text/yaml",
+        b"accent: red".to_vec(),
+    )
+    .await;
+
+    common::assert_problem(res, 422, "invalid_request").await;
+    assert_eq!(backend.blob_count(), 0, "no blob was stored");
+    assert_eq!(
+        read_changelog(&client, &base, id).await.len(),
+        1,
+        "only the creation entry remains",
+    );
+}

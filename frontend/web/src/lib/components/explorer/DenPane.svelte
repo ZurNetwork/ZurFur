@@ -13,10 +13,10 @@
 	/**
 	 * The right pane for one Den answer, in every state: an open folder (its
 	 * entries, or "This folder is empty"), content not shown yet, a file, a
-	 * link, a card, the one not-found, "not connected yet", and an API
-	 * problem. `busy` swaps the entries for skeleton rows while the next item
-	 * loads; `continuation` carries the pages fetched in place after the
-	 * first, with the link to the one after them.
+	 * link, a card, the one not-found, and an API problem. `busy` swaps the
+	 * entries for skeleton rows while the next item loads; `continuation`
+	 * carries the pages fetched in place after the first, with the link to
+	 * the one after them.
 	 */
 	let {
 		data,
@@ -37,7 +37,6 @@
 
 	/** What the pane shows, worked out once so the markup reads one level deep. */
 	type PaneView =
-		| { readonly pane: 'notConnected' }
 		| { readonly pane: 'notFound' }
 		| { readonly pane: 'problem'; readonly problem: Problem }
 		| { readonly pane: 'card'; readonly node: CardEntry }
@@ -79,8 +78,6 @@
 	const view: PaneView = $derived.by(() => {
 		const { outcome } = data;
 		switch (outcome.outcome) {
-			case 'notConnected':
-				return { pane: 'notConnected' };
 			case 'notFound':
 				return { pane: 'notFound' };
 			case 'problem':
@@ -96,10 +93,7 @@
 </script>
 
 <section class="den-pane" aria-busy={busy ? 'true' : undefined} data-testid="den-pane">
-	{#if view.pane === 'notConnected'}
-		<h1 tabindex="-1" bind:this={heading}>My Den</h1>
-		<EmptyState message="My Den isn't connected to the backend yet." testid="den-not-connected" />
-	{:else if view.pane === 'notFound'}
+	{#if view.pane === 'notFound'}
 		<h1 tabindex="-1" bind:this={heading}>Nothing here</h1>
 		<EmptyState message="This doesn't exist, or you can't open it." testid="den-not-found">
 			{#snippet action()}

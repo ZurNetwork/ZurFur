@@ -30,57 +30,81 @@ export interface RewriteApiRequestInput {
 	/**
 	 * The incoming request's raw `cookie` header (`event.request.headers.get('cookie')`,
 	 * platform null converted at contact), or `undefined` when the caller sent none.
-	 * Only the `zurfur.sid` pair is extracted from it and forwarded, and only to
-	 * the API upstream — never the whole header.
+	 * Only a sole `zurfur.sid` pair is extracted from it and forwarded, and only
+	 * to the API upstream — never the whole header, and none when it holds two.
 	 */
 	incomingCookie: string | undefined;
 	/** The internal axum origin (`ZURFUR_API_UPSTREAM`, e.g. `http://127.0.0.1:8081`). */
 	apiUpstream: string;
+	/**
+	 * The signal a request leaving the server carries, set on it directly
+	 * rather than followed through the rebuilt requests in between; the
+	 * request's own signal when absent.
+	 */
+	signal?: AbortSignal | undefined;
 }
 
 /**
- * Extract ONLY the `zurfur.sid` pair from a raw `cookie` header, or `undefined`
- * when it is absent. Cookies are host-scoped by hostname and NOT by port, so on
- * `127.0.0.1` every other local dev tool shares one cookie jar — forwarding the
- * whole header would leak those unrelated cookies straight to axum. We parse
- * defensively: pairs are `;`-separated with optional surrounding whitespace, and
- * a value may itself contain `=` (e.g. base64 padding), so each pair is split on
- * its FIRST `=` only. Exported so the session cache hook recognizes a
- * signed-in request by the same cookie this rewrite forwards.
+ * Every `zurfur.sid` value in a raw `cookie` header, in the order sent. Pairs
+ * are `;`-separated with optional surrounding whitespace, and a value may
+ * itself contain `=` (e.g. base64 padding), so each pair is split on its FIRST
+ * `=` only. Names are compared exactly, never decoded.
  */
-export function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
+function sessionCookieValues(incomingCookie: string | undefined): readonly string[] {
 	if (incomingCookie === undefined) {
-		return undefined;
+		return [];
 	}
 
-	const pairs = incomingCookie.split(';');
-	for (const pair of pairs) {
+	const values: string[] = [];
+	for (const pair of incomingCookie.split(';')) {
 		const trimmed = pair.trim();
 		const equalsIndex = trimmed.indexOf('=');
 		if (equalsIndex === -1) {
 			continue;
 		}
-
-		// The ONLY cookie ever forwarded: never the sign-in's browser-binding cookie,
-		// which reaches the backend only on `/signin-callback`, through Caddy.
 		const name = trimmed.slice(0, equalsIndex);
 		if (name === SESSION_COOKIE) {
-			const value = trimmed.slice(equalsIndex + 1);
-			return `${SESSION_COOKIE}=${value}`;
+			values.push(trimmed.slice(equalsIndex + 1));
 		}
 	}
-	return undefined;
+	return values;
+}
+
+/**
+ * The `zurfur.sid` pair to forward from a raw `cookie` header: the one pair, or
+ * `undefined` when there is none or more than one, since a planted second pair
+ * can't be told from the visitor's. Never the whole header: cookies are scoped
+ * by hostname, not port, so every other local dev tool's cookies share the jar.
+ */
+export function extractSessionCookie(incomingCookie: string | undefined): string | undefined {
+	const [value, ...others] = sessionCookieValues(incomingCookie);
+	if (value === undefined || others.length > 0) {
+		return undefined;
+	}
+	// The ONLY cookie ever forwarded: never the sign-in's browser-binding cookie,
+	// which reaches the backend only on `/signin-callback`, through Caddy.
+	return `${SESSION_COOKIE}=${value}`;
+}
+
+/**
+ * Whether a raw `cookie` header carries any `zurfur.sid` pair, one or several.
+ * Exported so the session headers hook treats a request as signed in by the
+ * cookie this rewrite reads, even when two pairs keep it from forwarding one.
+ */
+export function carriesSessionCookie(incomingCookie: string | undefined): boolean {
+	return sessionCookieValues(incomingCookie).length > 0;
 }
 
 /**
  * Rewrite a same-origin `/api/v1/*` request to the axum upstream (prefix stripped,
- * query preserved, method/body/headers preserved, only `zurfur.sid` forwarded).
+ * query preserved, method/body/headers preserved, only a sole `zurfur.sid` forwarded).
  * A cross-origin request passes through with credentials omitted, so SvelteKit
  * adds no cookies to it; a same-origin non-`/api` request is returned as-is.
  * Neither passthrough has its own headers added to or stripped.
  */
 export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	const { request, eventOrigin, incomingCookie, apiUpstream } = input;
+	const signal = input.signal ?? request.signal;
 
 	const requestUrl = new URL(request.url);
 
@@ -90,7 +114,7 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 	// the app's or a subdomain of it.
 	const isSameOrigin = requestUrl.origin === eventOrigin;
 	if (!isSameOrigin) {
-		return new Request(request, { credentials: 'omit' });
+		return new Request(request, { credentials: 'omit', signal });
 	}
 
 	// Only `/api` exactly or a path under `/api/` is an API call. `/apifoo` is a
@@ -111,12 +135,12 @@ export function rewriteApiRequest(input: RewriteApiRequestInput): Request {
 
 	// Clone method, body, and headers onto the new target URL, then set the cookie
 	// solely from the incoming request: delete first so a stray cookie on the
-	// outgoing request can't leak, then forward only the `zurfur.sid` pair — never
-	// the caller's other host-scoped cookies — and only when it is actually present.
+	// outgoing request can't leak, then forward a sole `zurfur.sid` pair — never
+	// the caller's other host-scoped cookies — and only when exactly one is present.
 	// `credentials: 'omit'` stops SvelteKit's server fetch from re-attaching the
 	// whole incoming cookie jar when the upstream's hostname matches the app's
 	// (both 127.0.0.1 in dev); the explicit header below still goes out.
-	const rewritten = new Request(new Request(upstreamUrl, request), { credentials: 'omit' });
+	const rewritten = new Request(new Request(upstreamUrl, request), { credentials: 'omit', signal });
 	rewritten.headers.delete('cookie');
 	const sessionCookie = extractSessionCookie(incomingCookie);
 	if (sessionCookie !== undefined) {

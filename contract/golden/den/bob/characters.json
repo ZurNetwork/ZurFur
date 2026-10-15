@@ -1,0 +1,36 @@
+{
+  "crumbs": [
+    {
+      "name": "bob.test"
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "mount": true,
+        "name": "Abco",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "characters",
+          "did:plc:a6hwabcofixtureaaaaaaaaa"
+        ],
+        "type": "character"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "characters",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "characters"
+    ],
+    "type": "user.characters"
+  }
+}

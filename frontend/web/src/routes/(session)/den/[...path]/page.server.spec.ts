@@ -7,9 +7,7 @@ import type { DenPageData } from '$lib/api/den';
 import type { Trail } from '$lib/api/trail';
 
 /** Whether this spec's `runApi` answers from the mock Den world instead of the live port. */
-const seam = vi.hoisted(() => ({ mock: false, servedLive: false }));
-
-vi.mock('$lib/server/den-served', () => ({ denServed: () => seam.mock || seam.servedLive }));
+const seam = vi.hoisted(() => ({ mock: false }));
 
 vi.mock('$lib/server/runtime', async (importActual) => {
 	const actual = await importActual<typeof import('$lib/server/runtime')>();
@@ -44,28 +42,42 @@ async function runLoad(address: string, isDataRequest = false): Promise<DenLoadD
 	return (await load(event)) as DenLoadData;
 }
 
-describe('/den load on the everyday stack (no Den served)', () => {
-	it('is the ordinary 404, with no Den call', async () => {
+describe('/den load on the live port', () => {
+	/** Run the load for `address` over the live port, every Den read answered by `respond`. */
+	async function runLiveLoad(address: string, respond: () => Response): Promise<unknown> {
 		seam.mock = false;
-		seam.servedLive = false;
-		const url = new URL('/den', 'http://127.0.0.1:5174');
-		const { fetch, calls } = fetchStub(() => Response.json({}));
-		const event = { url, fetch, isDataRequest: false } as unknown as LoadEvent;
-		const failure: unknown = await Promise.resolve()
+		const url = new URL(address, 'http://127.0.0.1:5174');
+		const { fetch } = fetchStub(respond);
+		const event = { url, fetch, isDataRequest: true } as unknown as LoadEvent;
+		const settled: unknown = await Promise.resolve()
 			.then(() => load(event))
 			.catch((thrown: unknown) => thrown);
-		expect(isHttpError(failure, 404)).toBe(true);
-		expect(calls).toEqual([]);
-	});
-});
+		return settled;
+	}
 
-describe('/den load on a served but unwired live port', () => {
-	it('answers "not connected yet", never an empty Den or the not-found', async () => {
-		seam.mock = false;
-		seam.servedLive = true;
-		const data = await runLoad('/den');
-		expect(data.den.outcome).toEqual({ outcome: 'notConnected' });
-		seam.servedLive = false;
+	it('reads the Den through the API and hands the page what it answered', async () => {
+		const body = {
+			node: { name: 'Alice', type: 'user', kind: 'directory', open: { ownLevel: 'private' } },
+			listing: { entries: [] }
+		};
+		const data = (await runLiveLoad('/den', () => Response.json(body))) as DenLoadData;
+		expect(data.den.outcome.outcome).toBe('page');
+	});
+
+	it.each(['TimeoutError', 'TypeError'])(
+		'fails to the error view as “isn’t answering” (503) when the Den doesn’t answer (%s), never "Nothing here"',
+		async (name) => {
+			const failure = await runLiveLoad('/den', () => {
+				throw new DOMException('The operation failed.', name);
+			});
+			expect(isHttpError(failure, 503)).toBe(true);
+		}
+	);
+
+	it('still fails a broken answer as an unexpected error, not as “isn’t answering”', async () => {
+		const failure = await runLiveLoad('/den', () => new Response('not json'));
+		expect(failure).toBeInstanceOf(Error);
+		expect(isHttpError(failure)).toBe(false);
 	});
 });
 

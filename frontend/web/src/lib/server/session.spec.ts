@@ -4,7 +4,13 @@ import type { Session } from '$lib/api/session';
 import { did, handleFromTrusted } from '$lib/types/brand';
 import { ApiProblem, ContractViolation, NetworkFailure } from './api/errors';
 import { zurfurApiTest, type ZurfurApi } from './api/zurfur-api';
-import { optionalSession, sessionOrAnonymous, signinOutcome, signoutOutcome } from './session';
+import {
+	optionalSession,
+	sessionCheck,
+	sessionOrAnonymous,
+	signinOutcome,
+	signoutOutcome
+} from './session';
 
 const alice: Session = {
 	did: did('did:plc:alice'),
@@ -33,9 +39,36 @@ describe('optionalSession', () => {
 	});
 });
 
+describe('sessionCheck', () => {
+	it('is signed in, with the session, for a signed-in visitor', async () => {
+		const check = await runTest({ me: Effect.succeed(alice) }, sessionCheck);
+		expect(check).toEqual({ check: 'signedIn', session: alice });
+	});
+
+	it('is signed out on the 401', async () => {
+		expect(await runTest({}, sessionCheck)).toEqual({ check: 'signedOut' });
+	});
+
+	it.each(['unreachable', 'timeout'] as const)(
+		'is unanswered, never signed out, when the backend is %s',
+		async (reason) => {
+			const me = Effect.fail(new NetworkFailure({ reason }));
+			expect(await runTest({ me }, sessionCheck)).toEqual({ check: 'unanswered' });
+		}
+	);
+
+	it('surfaces a broken contract', async () => {
+		const brokenMe = Effect.fail(
+			new ContractViolation({ path: '/me', status: 504, detail: 'no problem body' })
+		);
+		const failure = await runTest({ me: brokenMe }, Effect.flip(sessionCheck));
+		expect(failure._tag).toBe('ContractViolation');
+	});
+});
+
 describe('sessionOrAnonymous', () => {
 	it('degrades an unreachable backend to anonymous', async () => {
-		const unreachableMe = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const unreachableMe = Effect.fail(new NetworkFailure({ reason: 'unreachable' }));
 		const session = await runTest({ me: unreachableMe }, sessionOrAnonymous);
 		expect(session).toBeUndefined();
 	});
@@ -80,6 +113,20 @@ describe('signinOutcome', () => {
 	});
 });
 
+describe('signinOutcome when Zurfur doesn’t answer', () => {
+	it.each(['unreachable', 'timeout'] as const)('words a %s start for the form', async (reason) => {
+		const startSignin = () => Effect.fail(new NetworkFailure({ reason }));
+		const outcome = await runTest({ startSignin }, signinOutcome('alice.zurfur.app'));
+		expect(outcome).toMatchObject({
+			problem: {
+				code: 'service_unavailable',
+				detail: "Zurfur isn't answering right now. Please try again.",
+				status: 503
+			}
+		});
+	});
+});
+
 describe('signoutOutcome', () => {
 	it('carries the cleared cookie names on success', async () => {
 		const outcome = await runTest({ signout: Effect.succeed(['zurfur.sid']) }, signoutOutcome);
@@ -92,7 +139,7 @@ describe('signoutOutcome', () => {
 	});
 
 	it('is unconfirmed (unreachable) when the backend can’t be reached', async () => {
-		const unreachable = Effect.fail(new NetworkFailure({ cause: new TypeError('fetch failed') }));
+		const unreachable = Effect.fail(new NetworkFailure({ reason: 'unreachable' }));
 		const outcome = await runTest({ signout: unreachable }, signoutOutcome);
 		expect(outcome).toEqual({ unconfirmed: 'unreachable' });
 	});

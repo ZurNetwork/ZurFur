@@ -1,0 +1,28 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "characters",
+      "segments": [
+        "characters"
+      ]
+    }
+  ],
+  "listing": {},
+  "node": {
+    "kind": "directory",
+    "mount": true,
+    "name": "Ember",
+    "open": {
+      "contentNotShown": true,
+      "ownLevel": "private"
+    },
+    "segments": [
+      "characters",
+      "did:plc:e3qkemberfixtureaaaaaaaa"
+    ],
+    "type": "character"
+  }
+}

@@ -1,5 +1,7 @@
-import { page } from 'vitest/browser';
-import { describe, expect, it } from 'vitest';
+import '$lib/styles/tokens.css';
+import '$lib/styles/base.css';
+import { cdp, page } from 'vitest/browser';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { denHref } from '$lib/types/brand';
 import type { Trail } from '$lib/api/trail';
@@ -18,7 +20,43 @@ function currentStep(): string | undefined {
 	return bar.querySelector('[aria-current="page"]')?.textContent ?? undefined;
 }
 
+/** A parent whose name is far wider than a phone. */
+const longParentTrail: Trail = [
+	{ step: 'root', href: denHref('/den') },
+	{
+		step: 'named',
+		label: 'Supreme Arts and Crafts Collective of the Northern Reaches',
+		href: '/accounts'
+	},
+	{ step: 'named', label: 'slots', href: undefined }
+];
+
+/** The viewport box of an element's focus ring: its border box grown by the outline. */
+function ringBox(element: Element): DOMRect {
+	const style = getComputedStyle(element);
+	const reach = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+	const box = element.getBoundingClientRect();
+	return new DOMRect(box.x - reach, box.y - reach, box.width + 2 * reach, box.height + 2 * reach);
+}
+
+/** The text nodes Chromium's accessibility tree exposes to a screen reader, in this test's frame. */
+async function spokenTexts(): Promise<string[]> {
+	const session = cdp();
+	await session.send('Accessibility.enable');
+	const { frameTree } = await session.send('Page.getFrameTree');
+	const ownFrame = frameTree.childFrames?.find((child) => child.frame.url === location.href);
+	if (ownFrame === undefined) throw new Error("the test's frame is not in the page's frame tree");
+	const tree = await session.send('Accessibility.getFullAXTree', { frameId: ownFrame.frame.id });
+	return tree.nodes
+		.filter((node) => !node.ignored && node.role?.value === 'StaticText')
+		.map((node) => String(node.name?.value ?? ''));
+}
+
 describe('PathBar', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 800);
+	});
+
 	it('lists every step, the last marked as the current page', async () => {
 		render(PathBar, { trail: deepTrail });
 
@@ -36,6 +74,7 @@ describe('PathBar', () => {
 	});
 
 	it('offers the parent as the back link on a phone', async () => {
+		await page.viewport(320, 700);
 		render(PathBar, { trail: deepTrail });
 
 		const back = page.getByTestId('path-bar-back').getByRole('link');
@@ -62,6 +101,51 @@ describe('PathBar', () => {
 		const name = page.getByTestId('path-bar').getByText('طلب رسم');
 		await expect.element(name).toBeInTheDocument();
 		expect(name.element().tagName).toBe('BDI');
+	});
+
+	it("shows each step's focus ring whole, uncut by the list", () => {
+		render(PathBar, { trail: deepTrail });
+		const list = page.getByTestId('path-bar').getByRole('list').element();
+		const links = page.getByTestId('path-bar').getByRole('link').elements();
+		expect(links).toHaveLength(2);
+
+		for (const link of links) {
+			link.focus();
+			expect(link.matches(':focus-visible')).toBe(true);
+			expect(parseFloat(getComputedStyle(link).outlineWidth)).toBeGreaterThan(0);
+
+			const ring = ringBox(link);
+			const visible = list.getBoundingClientRect();
+			expect(ring.top).toBeGreaterThanOrEqual(visible.top);
+			expect(ring.bottom).toBeLessThanOrEqual(visible.bottom);
+			expect(ring.left).toBeGreaterThanOrEqual(visible.left);
+			expect(ring.right).toBeLessThanOrEqual(visible.right);
+		}
+	});
+
+	it('ends a long parent name in "…" on a phone, with no sideways scroll', async () => {
+		await page.viewport(320, 700);
+		render(PathBar, { trail: longParentTrail });
+
+		const name = page
+			.getByTestId('path-bar-back')
+			.getByText(/^Supreme Arts/)
+			.element();
+		expect(name.tagName).toBe('BDI');
+		expect(getComputedStyle(name).textOverflow).toBe('ellipsis');
+		expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+	});
+
+	it('keeps the separator between steps out of what a screen reader says', async () => {
+		render(PathBar, { trail: deepTrail });
+		await expect
+			.element(page.getByTestId('path-bar').getByRole('link', { name: 'accounts' }))
+			.toBeVisible();
+
+		const spoken = await spokenTexts();
+		expect(spoken).toContain('accounts');
+		expect(spoken.filter((text) => text.trim() === '/')).toEqual([]);
 	});
 });
 

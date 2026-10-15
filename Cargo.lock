@@ -82,6 +82,7 @@ dependencies = [
  "time",
  "tokio",
  "tower-sessions-core",
+ "tracing",
  "uuid",
  "zeroize",
 ]
@@ -211,10 +212,12 @@ dependencies = [
  "cli",
  "composition",
  "contract-gen",
+ "derive_more 2.1.1",
  "domain",
  "dotenvy",
  "futures-util",
  "http-cookies",
+ "http-stack",
  "insta",
  "pbjson",
  "pbjson-types",
@@ -227,6 +230,7 @@ dependencies = [
  "strum",
  "tempfile",
  "test-support",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -245,12 +249,17 @@ dependencies = [
  "anyhow",
  "application-macros",
  "async-trait",
+ "atta",
  "chrono",
  "composition",
+ "derive_more 2.1.1",
  "domain",
+ "proptest",
+ "quote",
  "serde_json",
  "shared",
  "strum",
+ "syn 2.0.117",
  "test-support",
  "thiserror 2.0.20",
  "tokio",
@@ -404,6 +413,14 @@ dependencies = [
 [[package]]
 name = "atta"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "derive_more 2.1.1",
+ "proptest",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "autocfg"
@@ -2407,7 +2424,28 @@ dependencies = [
  "reqwest 0.13.4",
  "strum",
  "tokio",
+ "tower-layer",
+ "tower-service",
  "tower-sessions",
+]
+
+[[package]]
+name = "http-stack"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-util",
+ "http-cookies",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "tower-layer",
+ "tower-service",
+ "tower-sessions",
+ "tracing",
 ]
 
 [[package]]
@@ -5816,23 +5854,30 @@ dependencies = [
  "adapter-mem",
  "adapter-pg",
  "anyhow",
+ "application",
  "async-trait",
  "atrium-crypto",
  "axum",
+ "base64",
  "chrono",
  "composition",
  "data-encoding",
  "domain",
  "http-cookies",
+ "http-stack",
  "rand 0.8.6",
  "reqwest 0.13.4",
  "serde_json",
  "sqlx",
+ "strum",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
+ "tower-layer",
+ "tower-service",
  "tower-sessions",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

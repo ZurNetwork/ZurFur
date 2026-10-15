@@ -19,6 +19,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	NODE_NOT_FOUND_PROBLEM,
 	PROBLEM_CONTENT_TYPE,
 	type Problem,
 	ProblemKind
@@ -35,16 +36,23 @@ import {
 import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
+	GetDenNodeResponseSchema,
+	GetDenRootResponseSchema
+} from './generated/zurfur/api/v1/den_pb';
+import {
 	ApiProblem,
 	ContractViolation,
-	DenNotConnected,
 	NetworkFailure,
 	NotAuthenticated,
 	SignoutFailed
 } from './errors';
 import type { DenQuery, DenRead } from './den-read';
+import { DEN_ROUTES, denReadFromNode, denReadFromRoot, type DenRoute } from './den-wire';
 import { joinPath, segmentPath, type SegmentPath } from '../path-builder';
+import { denApiPathOf } from '../den/den-path';
 import { isSignInBindingCookieName, type SignInBindingCookieName } from '../cookies';
+import { countdown, TIME_LIMITS } from '../time-limits';
+import { firstAbortOf, readWhole, settleBy } from '../bounded-fetch';
 
 /**
  * The contract's boundary decoder: `fromJson` against a GENERATED schema — produced from
@@ -80,8 +88,8 @@ export interface ZurfurApiShape {
 		handle: string
 	) => Effect.Effect<StartedSignin, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
-	 * `POST /logout` — end the session backend-side, waiting at most
-	 * {@link SIGNOUT_TIMEOUT_MS} (a timeout fails `NetworkFailure`); succeeds with the cookie
+	 * `POST /logout` — end the session backend-side, waiting at most sign-out's
+	 * own time limit (a timeout fails `NetworkFailure`); succeeds with the cookie
 	 * names the backend cleared (for mirroring onto the browser's response —
 	 * the SSR proxy rewrites the host, so SvelteKit won't pass `set-cookie`
 	 * through on its own).
@@ -108,8 +116,8 @@ export interface ZurfurApiShape {
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
 	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
-	 * Fails `ApiProblem` `node_not_found` for every miss, `DenNotConnected` while
-	 * this build has no live Den behind it.
+	 * Fails `ApiProblem` `node_not_found` for every miss, `NotAuthenticated`
+	 * for an ended session; a failure names only the route template.
 	 */
 	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
@@ -135,8 +143,7 @@ export interface StartedSignin {
 }
 
 /** Every way a Den read fails. */
-export type DenReadError =
-	DenNotConnected | NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
+export type DenReadError = NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
 
 /** The port tag — programs ask for `ZurfurApi`, the seam decides which Layer answers. */
 export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApiShape>() {}
@@ -148,16 +155,50 @@ export class ZurfurApi extends Context.Tag('web/ZurfurApi')<ZurfurApi, ZurfurApi
  */
 export class RequestFetch extends Context.Tag('web/RequestFetch')<RequestFetch, FetchFunction>() {}
 
-/** A fetch that reaches the backend or fails `NetworkFailure` — never throws through. */
+/**
+ * Why a fetch rejected, read from the rejection's name alone: a timeout, an
+ * abort, or anything else as unreachable. The rejection is never kept.
+ */
+function networkFailureOf(rejection: unknown): NetworkFailure {
+	if (!(rejection instanceof Error)) return new NetworkFailure({ reason: 'unreachable' });
+	switch (rejection.name) {
+		case 'TimeoutError':
+			return new NetworkFailure({ reason: 'timeout' });
+		case 'AbortError':
+			return new NetworkFailure({ reason: 'aborted' });
+		default:
+			return new NetworkFailure({ reason: 'unreachable' });
+	}
+}
+
+/** What a backend call may set on its fetch: everything but the signal, which its time limit owns. */
+type BackendInit = Omit<RequestInit, 'signal'>;
+
+/**
+ * A call to the backend, answered whole (the body read too) within `limit`
+ * ms, or failed `NetworkFailure`: a call that runs out is a `timeout` on time
+ * even if the abort never reaches the fetch, and an interrupted one stops its
+ * fetch. Never throws through.
+ */
 function backendFetch(
 	fetch: FetchFunction,
 	path: string,
-	init?: RequestInit
+	init: BackendInit = {},
+	limit: number = TIME_LIMITS.call
 ): Effect.Effect<Response, NetworkFailure> {
-	return Effect.tryPromise({
-		try: () => fetch(`${API_PREFIX}${path}`, init),
-		catch: (cause) => new NetworkFailure({ cause })
-	});
+	return Effect.acquireUseRelease(
+		Effect.sync(() => countdown(limit)),
+		(clock) =>
+			Effect.tryPromise({
+				try: (interrupted) => {
+					const signal = firstAbortOf([clock.signal, interrupted]);
+					const url = `${API_PREFIX}${path}`;
+					return settleBy(signal, () => fetch(url, { ...init, signal }).then(readWhole));
+				},
+				catch: networkFailureOf
+			}),
+		(clock) => Effect.sync(clock.stop)
+	);
 }
 
 /**
@@ -229,7 +270,7 @@ function isRedirectStatus(status: number): boolean {
 
 const liveMe = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
-		const response = yield* backendFetch(fetch, '/me');
+		const response = yield* backendFetch(fetch, '/me', {}, TIME_LIMITS.session);
 		if (!response.ok) return yield* problemFailure(response, '/me');
 		const raw = yield* parsedBody(response, '/me');
 		// Decode through the generated schema, then map the message to the PLAIN
@@ -279,7 +320,7 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		const form = new URLSearchParams({ handle });
 		// redirect:'manual' exposing the real 303 + Location is server-only (undici)
 		// behavior — a browser fetch would see an opaque status-0 redirect instead.
-		const init: RequestInit = { method: 'POST', body: form, redirect: 'manual' };
+		const init: BackendInit = { method: 'POST', body: form, redirect: 'manual' };
 		const response = yield* backendFetch(fetch, '/signin', init);
 		if (isRedirectStatus(response.status)) {
 			const location = response.headers.get('location') ?? undefined;
@@ -309,28 +350,11 @@ const liveStartSignin = (fetch: FetchFunction, handle: string) =>
 		);
 	});
 
-/**
- * How long sign-out waits for the backend, in ms. A backend that accepts the
- * connection and never answers must not hold the sign-out (and the browser's
- * cookie) forever: past this, the call is aborted and reads as unreachable.
- */
-export const SIGNOUT_TIMEOUT_MS = 5_000;
-
 const liveSignout = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
-		const controller = new AbortController();
-		const timer = setTimeout(() => {
-			controller.abort();
-		}, SIGNOUT_TIMEOUT_MS);
 		// Server-only undici semantics again: the 303 + Set-Cookie stay readable.
-		const init: RequestInit = { method: 'POST', redirect: 'manual', signal: controller.signal };
-		const response = yield* backendFetch(fetch, '/logout', init).pipe(
-			Effect.ensuring(
-				Effect.sync(() => {
-					clearTimeout(timer);
-				})
-			)
-		);
+		const init: BackendInit = { method: 'POST', redirect: 'manual' };
+		const response = yield* backendFetch(fetch, '/logout', init, TIME_LIMITS.signout);
 		if (!isRedirectStatus(response.status)) {
 			return yield* new SignoutFailed({ status: response.status });
 		}
@@ -391,7 +415,7 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 		// the backend decodes absent and empty identically, so the meaning is
 		// unchanged.
 		const request = create(CreateAccountRequestSchema, { name, handle });
-		const init: RequestInit = {
+		const init: BackendInit = {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(toJson(CreateAccountRequestSchema, request))
@@ -454,13 +478,48 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 	});
 
 /**
- * The live port's Den reads, until the Den contract is wired: every read
- * answers `DenNotConnected`, so a live run shows a notice, never an empty Den
- * or the not-found.
+ * A Den read over HTTP: `path` is the built API path, `route` the template
+ * every failure names instead. A 401 stays `NotAuthenticated`; an answer
+ * with no node, or one that doesn't decode, is a `ContractViolation`.
  */
-const liveDenNotConnected: Effect.Effect<never, DenNotConnected> = Effect.fail(
-	new DenNotConnected()
-);
+function liveDenRead(
+	fetch: FetchFunction,
+	path: string,
+	route: DenRoute,
+	decode: (raw: JsonValue) => DenRead | undefined
+): Effect.Effect<DenRead, DenReadError> {
+	return Effect.gen(function* () {
+		const response = yield* backendFetch(fetch, path);
+		if (!response.ok) return yield* problemFailure(response, route);
+		const raw = yield* parsedBody(response, route);
+		const violation = (detail: string) =>
+			new ContractViolation({ path: route, status: response.status, detail });
+		const read = yield* Effect.try({
+			try: () => decode(raw),
+			catch: () => violation('malformed den payload')
+		});
+		if (read === undefined) return yield* violation('an answer with no node');
+		return read;
+	});
+}
+
+/** `GET /den`: the viewer's own root. */
+const liveDenRoot = (fetch: FetchFunction, query: DenQuery) => {
+	const path = denApiPathOf([], query);
+	if (path === undefined) return Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
+	return liveDenRead(fetch, path, DEN_ROUTES.root, (raw) =>
+		denReadFromRoot(decodeContract(GetDenRootResponseSchema, raw))
+	);
+};
+
+/** `GET /den/{path}`: a path the builder refuses is the one not-found, with no fetch. */
+const liveDenNode = (fetch: FetchFunction, denPath: SegmentPath, query: DenQuery) => {
+	const path = denApiPathOf(denPath, query);
+	if (path === undefined) return Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
+	return liveDenRead(fetch, path, DEN_ROUTES.node, (raw) =>
+		denReadFromNode(decodeContract(GetDenNodeResponseSchema, raw))
+	);
+};
 
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
@@ -474,8 +533,8 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
 			deleteAccount: (id) => liveDeleteAccount(fetch, id),
-			denRoot: () => liveDenNotConnected,
-			denNode: () => liveDenNotConnected
+			denRoot: (query) => liveDenRoot(fetch, query),
+			denNode: (path, query) => liveDenNode(fetch, path, query)
 		});
 	})
 );
@@ -491,7 +550,7 @@ const anonymousProblem: Problem = {
 /** Anonymous-by-default stub behaviors for {@link zurfurApiTest}. */
 const anonymousDefaults: ZurfurApiShape = {
 	me: Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
-	startSignin: () => Effect.fail(new NetworkFailure({ cause: new TypeError('no signin stubbed') })),
+	startSignin: () => Effect.fail(new NetworkFailure({ reason: 'unreachable' })),
 	signout: Effect.fail(new SignoutFailed({ status: HttpStatus.InternalServerError })),
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),

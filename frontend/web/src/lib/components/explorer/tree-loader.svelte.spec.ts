@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { denHref, did, type DenHref } from '$lib/types/brand';
-import { fetchListing, loadFolder, loadMore, type Preload } from './tree-loader';
+import {
+	FetchQueue,
+	fetchListing,
+	FOLDER_FETCHES_IN_FLIGHT,
+	loadFolder,
+	loadFolders,
+	loadMore,
+	type Preload
+} from './tree-loader';
 import type { DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
 import { denName, denType } from '$lib/types/brand';
 import { TreeMemory } from './tree-memory.svelte';
@@ -113,6 +121,91 @@ describe('tree loader', () => {
 		expect(names(memory)).toEqual(['first', 'second']);
 	});
 });
+
+describe('the frame’s folder fetches', () => {
+	it('runs sixteen missing folders at most four at a time, and loads them all', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		const folders = sixteenFolders();
+		const network = slowNetwork();
+
+		await loadFolders(memory, folders, new FetchQueue(FOLDER_FETCHES_IN_FLIGHT), {
+			preload: network.preload
+		});
+
+		expect(network.asked()).toHaveLength(16);
+		expect(network.most()).toBe(4);
+		expect(folders.every((folder) => memory.folders.get(folder)?.state === 'loaded')).toBe(true);
+	});
+
+	it('goes on past a failing fetch, marking only that folder failed', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		const folders = sixteenFolders();
+		const failing = folders[0] ?? ROOT;
+		const network = slowNetwork(failing);
+
+		await loadFolders(memory, folders, new FetchQueue(FOLDER_FETCHES_IN_FLIGHT), {
+			preload: network.preload
+		});
+
+		expect(network.most()).toBeLessThanOrEqual(4);
+		expect(memory.folders.get(failing)).toEqual({ state: 'failed' });
+		const rest = folders.slice(1).map((folder) => memory.folders.get(folder)?.state);
+		expect(rest).toEqual(Array.from({ length: 15 }, () => 'loaded'));
+	});
+
+	it('never fetches a folder still waiting when the memory starts over', async () => {
+		const memory = new TreeMemory(did('did:plc:alice'));
+		const network = slowNetwork();
+		const loads = loadFolders(memory, sixteenFolders(), new FetchQueue(FOLDER_FETCHES_IN_FLIGHT), {
+			preload: network.preload
+		});
+
+		memory.clear();
+		await loads;
+
+		expect(network.asked()).toHaveLength(4);
+		expect(memory.folders.size).toBe(0);
+	});
+
+	it('starts waiting fetches in the order they came', async () => {
+		const queue = new FetchQueue(1);
+		const started: string[] = [];
+		const task = (name: string) => async () => {
+			started.push(name);
+			await new Promise((settle) => setTimeout(settle, 0));
+		};
+
+		await Promise.all([queue.run(task('a')), queue.run(task('b')), queue.run(task('c'))]);
+
+		expect(started).toEqual(['a', 'b', 'c']);
+	});
+});
+
+/** Sixteen sibling folders under `~`. */
+function sixteenFolders(): readonly DenHref[] {
+	return Array.from({ length: 16 }, (_, place) => denHref(`/den/folder-${String(place)}`));
+}
+
+/**
+ * A preload whose every answer takes a moment, an empty listing for the
+ * address asked (or a rejection for `failing`), counting how many are in
+ * flight at once.
+ */
+function slowNetwork(failing?: DenHref) {
+	const asked: string[] = [];
+	let inFlight = 0;
+	let most = 0;
+	const preload: Preload = async (href: string) => {
+		asked.push(href);
+		inFlight += 1;
+		most = Math.max(most, inFlight);
+		await new Promise((settle) => setTimeout(settle, 1));
+		inFlight -= 1;
+		if (href === failing) return Promise.reject(new TypeError('fetch failed'));
+		return { type: 'loaded', status: 200, data: { den: batchPage(denHref(href), []) } };
+	};
+	return { preload, asked: () => asked, most: () => most };
+}
 
 const FOLDER = denHref('/den/batch');
 const PAGE_TWO = denHref('/den/batch?pageToken=p1.1');

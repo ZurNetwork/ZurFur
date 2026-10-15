@@ -6,6 +6,10 @@ use domain::elements::{
 
 use crate::{
     Ports,
+    den::{
+        DenError,
+        access::{ServedNode, may_open},
+    },
     user::{ProfileLookups, Users},
 };
 
@@ -76,8 +80,10 @@ impl std::error::Error for MeError {
     }
 }
 
-/// Load the user behind [`MeQuery::user_id`] and resolve their profile through
+/// Ask den's access check about the caller's own root, then load the user
+/// behind [`MeQuery::user_id`] and resolve their profile through
 /// `profile_lookups`, waiting at most [`crate::user::PROFILE_WAIT`] on a miss.
+/// A root the check doesn't open is [`MeError::UnknownUser`].
 impl Users<'_> {
     #[use_case]
     pub async fn me(
@@ -86,6 +92,12 @@ impl Users<'_> {
         query: MeQuery,
         profile_lookups: &ProfileLookups,
     ) -> Result<Output, MeError> {
+        may_open(ports, &query.user_id, ServedNode::OwnRoot)
+            .await
+            .map_err(|error| match error {
+                DenError::NotFound => MeError::UnknownUser(query.user_id.clone()),
+                DenError::Store(error) => MeError::Store(error),
+            })?;
         let user = ports
             .users
             .find_by_did(query.user_id.did())

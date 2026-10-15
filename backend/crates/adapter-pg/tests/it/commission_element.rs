@@ -22,6 +22,7 @@
 
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
+use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
@@ -100,7 +101,7 @@ async fn seed_pre_rekey_user(pool: &PgPool, did: &str) -> (uuid::Uuid, User) {
 
 /// Create a commission (which mints its skeleton tabs) in one committed unit of
 /// work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
     let commission = Commission::create(
         title.parse::<CommissionTitle>().expect("valid title"),
         owner.id.clone(),

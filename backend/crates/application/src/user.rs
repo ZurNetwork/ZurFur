@@ -2,10 +2,11 @@
 
 use crate::ports::WithPorts;
 
+pub(crate) mod den;
 pub mod me;
 mod profile_lookup;
 
-pub use profile_lookup::{LOOKUP_CAP, PROFILE_WAIT, ProfileLookups};
+pub use profile_lookup::{FAILED_LOOKUP_HOLD, LOOKUP_CAP, PROFILE_WAIT, ProfileLookups};
 
 /// User use cases, with the ports already bound.
 #[derive(Clone, Copy, WithPorts)]

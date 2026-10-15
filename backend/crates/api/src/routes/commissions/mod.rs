@@ -1,5 +1,5 @@
 //! The commissions route group: the commission JSON API, split per area
-//! (create, list, changelog, notes, channel, delete, archive, maturity,
+//! (create, changelog, notes, channel, delete, archive, maturity,
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
@@ -76,6 +76,9 @@ impl From<CommissionError> for Problem {
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
+            CommissionError::InvalidName(e) => {
+                Problem::invalid_request(format!("Invalid name: {e}."))
+            }
         }
     }
 }
@@ -102,7 +105,6 @@ mod delete;
 mod elements;
 mod files;
 mod invitations;
-mod list;
 mod markup;
 mod maturity;
 mod notes;
@@ -122,10 +124,7 @@ const UPLOAD_BODY_SLACK_BYTES: usize = 1024 * 1024;
 pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
     let upload_body_limit = max_upload_bytes.saturating_add(UPLOAD_BODY_SLACK_BYTES);
     Router::new()
-        .route(
-            "/commissions",
-            get(list::list_commissions).post(create::create_commission),
-        )
+        .route("/commissions", post(create::create_commission))
         .route(
             "/commissions/{id}",
             axum::routing::delete(delete::delete_commission),

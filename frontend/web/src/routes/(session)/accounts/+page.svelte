@@ -10,9 +10,12 @@
 	// own reactivity from there.
 	// A founded Account changes what the tree's `accounts` folder holds, so a
 	// successful action starts the frame's tree memory over (keeping `~` open).
+	// An error result (the sign-in gate's "isn't answering" among them) shows the
+	// frame's error view by its status, as SvelteKit's own enhance does.
 	const treeMemory = treeMemoryFromContext();
 	// svelte-ignore state_referenced_locally
 	const { form, errors, enhance, constraints, message } = superForm(data.form, {
+		onError: 'apply',
 		onResult: ({ result }) => {
 			if (result.type === 'success' || result.type === 'redirect') {
 				treeMemory?.restart(denRootFallback());

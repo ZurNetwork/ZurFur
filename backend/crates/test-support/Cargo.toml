@@ -32,17 +32,31 @@ adapter-pg = { path = "../adapter-pg" }
 # 2026-08-25): every driver's in-process suite boots the same fakes.
 adapter-mem = { path = "../adapter-mem" }
 composition = { path = "../composition" }
+# `pg_app::den_world` creates its Workflows through the create use case: no route does yet.
+application = { path = "../application" }
 sqlx = { workspace = true }
 uuid = { workspace = true }
-# 0.13 + cookies so http::client() is the type the api tests use
-reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
+# 0.13 + cookies so http::client() is the type the api tests use; multipart for
+# `pg_app::den_world`'s uploads
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies", "multipart"] }
 # `log_capture`: a writer a driver's log test reads its own subscriber back from.
 tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
+# `pg_app` encodes the shipped example root key into its dev-profile Config.
+base64 = { workspace = true }
 # ...built by the driver's own `session_layer`, so tests run the real session cookie
 http-cookies = { path = "../http-cookies" }
+# The served rigs mount the app through the stack `main` serves.
+http-stack = { path = "../http-stack" }
+# `cut::DropWitness`, a tower layer outside the detach layer.
+tower-layer = { workspace = true }
+tower-service = { workspace = true }
 # Structurally-valid secp256k1 rotation key for the throwaway PDS (a random
 # 32-byte string is not guaranteed to be a valid scalar) — the same vetted
 # primitive the did:plc minter uses.
 atrium-crypto = { workspace = true }
+# The statement proxy's database URL.
+url = { workspace = true }
+# `pg_app::ProfileCacheState`: its names and its VARIANTS.
+strum = { workspace = true }

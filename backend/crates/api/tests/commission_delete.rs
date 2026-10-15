@@ -33,7 +33,8 @@ use domain::elements::{
     commission::{
         ChannelPointer, Commission, CommissionFile, CommissionId, CommissionMarkup,
         CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
-        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId,
+        element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -317,7 +318,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         Ok(true)
     }
 
-    async fn create(&mut self, commission: &Commission) -> anyhow::Result<()> {
+    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
         self.0.create(commission).await
     }
 

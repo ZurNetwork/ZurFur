@@ -86,6 +86,7 @@ impl From<AccountError> for Problem {
             AccountError::NothingToDo => {
                 Problem::invalid_request("That change would leave everything as it is.")
             }
+            AccountError::InvalidName(e) => Problem::invalid_request(format!("Invalid name: {e}.")),
             AccountError::SystemError(err) => Problem::internal_error(err.to_string()),
         }
     }
@@ -101,7 +102,7 @@ impl From<account::list::Listing> for AccountMembership {
             did,
             role: account.role.to_string(),
             handle: account.handle.as_str().to_owned(),
-            name: account.name.as_str().to_owned(),
+            name: account.name.to_string(),
             alias: account.alias.map(|alias| alias.to_string()),
         }
     }
@@ -117,7 +118,7 @@ impl From<account::create::Output> for CreateAccountResponse {
             id: did.clone(),
             did,
             handle: founded.handle.as_str().to_owned(),
-            name: founded.name.as_str().to_owned(),
+            name: founded.name.to_string(),
         }
     }
 }
@@ -141,7 +142,7 @@ impl From<account::change_handle::Output> for ChangeHandleResponse {
             id: did.clone(),
             did,
             handle: renamed.handle.as_str().to_owned(),
-            name: renamed.name.as_str().to_owned(),
+            name: renamed.name.to_string(),
         }
     }
 }
@@ -197,7 +198,8 @@ async fn list_accounts(
 ///
 /// - `201 { "id", "did", "handle", "name" }`
 /// - `401` — not signed in
-/// - `422 invalid_request` — missing/malformed body, blank name, or bad handle
+/// - `422 invalid_request` — missing/malformed body, a blank name or one the Den's name
+///   rule refuses, or a bad handle
 /// - `409 handle_taken` — handle already claimed (live or tombstoned)
 async fn create_account(
     State(state): State<AppState>,

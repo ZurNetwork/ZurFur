@@ -6,7 +6,11 @@
 	import AppShell from '$lib/components/explorer/AppShell.svelte';
 	import { frameSectionOf } from '$lib/components/explorer/frame-section';
 	import Tree from '$lib/components/explorer/Tree.svelte';
-	import { loadFolder } from '$lib/components/explorer/tree-loader';
+	import {
+		FetchQueue,
+		FOLDER_FETCHES_IN_FLIGHT,
+		loadFolders
+	} from '$lib/components/explorer/tree-loader';
 	import { provideTreeMemory, TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
 	import type { TreeCurrent } from '$lib/components/explorer/tree-model';
 	import ViewOptions from '$lib/components/explorer/ViewOptions.svelte';
@@ -19,14 +23,15 @@
 	 * from the Den itself: the path comes from the open page's `trail`, and the
 	 * tree from what Den pages bring (kept in this frame's tree memory, never
 	 * in browser storage). After each navigation the drawer closes and any
-	 * open folder the tree lacks is fetched through its server-built link. A
-	 * flip of "Show archived" starts the memory over, and so does a form
-	 * action's success (the page that ran it says so), keeping `~` open. The sidebar, the tree and the drawer appear only where
-	 * this run serves a Den.
+	 * open folder the tree lacks is fetched through its server-built link, at
+	 * most four at a time. A flip of "Show archived" starts the memory over,
+	 * and so does a form action's success (the page that ran it says so),
+	 * keeping `~` open.
 	 */
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 
 	let drawerOpen = $state(false);
+	const folderFetches = new FetchQueue(FOLDER_FETCHES_IN_FLIGHT);
 
 	// svelte-ignore state_referenced_locally
 	const memory = new TreeMemory(data.session.did);
@@ -36,8 +41,7 @@
 	afterNavigate(() => {
 		drawerOpen = false;
 		const missing = memory.navigated(data.session.did, page.data.den);
-		if (!data.denServed) return;
-		for (const folder of missing) void loadFolder(memory, folder);
+		void loadFolders(memory, missing, folderFetches);
 	});
 
 	const den: DenPageData | undefined = $derived(page.data.den);
@@ -57,7 +61,7 @@
 	const flagLinks = $derived(den?.outcome.outcome === 'page' ? den.outcome.flagLinks : undefined);
 </script>
 
-<AppShell session={data.session} {trail} {section} denServed={data.denServed} bind:drawerOpen>
+<AppShell session={data.session} {trail} {section} bind:drawerOpen>
 	{#snippet navigation()}
 		<nav class="frame-nav" aria-label="My Den">
 			<Tree {memory} {current} fallbackRootHref={denRootFallback()} />

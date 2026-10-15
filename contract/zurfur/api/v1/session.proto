@@ -22,8 +22,8 @@ message GetMeRequest {}
 // The signed-in visitor, as `GET /api/v1/me` renders them.
 message GetMeResponse {
   // The visitor's atproto DID — always present for a live session. Opaque to
-  // clients like every id (VERSIONING.md R6), though DIDs are additionally a
-  // public, externally-specified format.
+  // clients like every id (VERSIONING.md R6), at most 2048 characters, though
+  // DIDs are additionally a public, externally-specified format.
   string did = 1;
   // The visitor's handle, when their profile resolved. `optional` = explicit
   // presence: absent (key omitted) when the PDS was unreachable and nothing

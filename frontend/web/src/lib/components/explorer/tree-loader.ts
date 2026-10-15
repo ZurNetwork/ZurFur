@@ -106,6 +106,62 @@ export async function loadFolder(
 	}
 }
 
+/** How many of the frame's folder fetches run at once. */
+export const FOLDER_FETCHES_IN_FLIGHT = 4;
+
+/** Runs the tasks handed to it at most `limit` at a time, in the order they came. */
+export class FetchQueue {
+	readonly #limit: number;
+	#running = 0;
+	readonly #waiting: (() => Promise<void>)[] = [];
+
+	constructor(limit: number) {
+		this.#limit = limit;
+	}
+
+	/** Run `task` once fewer than `limit` are running; settles as `task` does. */
+	run(task: () => Promise<void>): Promise<void> {
+		return new Promise<void>((settle, fail) => {
+			this.#waiting.push(() => task().then(settle, fail));
+			this.#startWaiting();
+		});
+	}
+
+	/** Start waiting tasks while a slot is free; a task's slot frees the moment it settles. */
+	#startWaiting(): void {
+		while (this.#running < this.#limit) {
+			const start = this.#waiting.shift();
+			if (start === undefined) return;
+			this.#running += 1;
+			void start().finally(() => {
+				this.#running -= 1;
+				this.#startWaiting();
+			});
+		}
+	}
+}
+
+/**
+ * Fetch each of `folders`' first pages into the tree's memory through
+ * `queue`. Each shows as loading at once; one still waiting when the memory
+ * starts over is dropped without a fetch.
+ */
+export function loadFolders(
+	memory: TreeMemory,
+	folders: readonly DenHref[],
+	queue: FetchQueue,
+	options: FetchOptions = {}
+): Promise<void> {
+	const generation = memory.generation;
+	const loads = folders.map((folder) => {
+		memory.loading(folder);
+		return queue.run(() =>
+			memory.generation === generation ? loadFolder(memory, folder, options) : Promise.resolve()
+		);
+	});
+	return Promise.all(loads).then(() => undefined);
+}
+
 /**
  * Fetch the page after `folder`'s loaded ones, through its "More" link, and
  * append it. Answers whether it was appended (not dropped as stale, nor

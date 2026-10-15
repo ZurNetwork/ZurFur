@@ -8,15 +8,25 @@
 //! guard `whoami_parity.rs` gives `GET /me`.
 
 use api::generated::CreateAccountResponse;
-use application::account::create;
+use application::account::{ServedName, create};
+use chrono::Utc;
 use cli::commands::account::Founded;
-use domain::elements::{account::AccountId, did::Did};
+use domain::elements::{account::Account, did::Did, user::UserId};
 
 fn founded() -> create::Output {
+    let owner = UserId::from(Did::from("did:plc:parityowner".to_string()));
+    let (account, _owner) = Account::open(
+        owner,
+        Did::from("did:plc:parity".to_string()),
+        "parity.zurfur.app".parse().expect("a valid handle"),
+        "Parity Studio".parse().expect("a valid name"),
+        Utc::now(),
+    );
+    let name = ServedName::from(&account);
     create::Output {
-        account_id: AccountId::from(Did::from("did:plc:parity".to_string())),
-        handle: "parity.zurfur.app".parse().expect("a valid handle"),
-        name: "Parity Studio".parse().expect("a valid name"),
+        account_id: account.id,
+        handle: account.handle,
+        name,
     }
 }
 

@@ -66,6 +66,11 @@ pub trait AccountStore: Send + Sync {
         user: &UserId,
         scope: ListingScope,
     ) -> anyhow::Result<Vec<AccountMembership>>;
+
+    /// Every soft-deleted (deactivated) account in which `owner` holds the
+    /// Owner role, ordered by [`AccountId`], unpaginated. The one read that
+    /// returns deactivated accounts; the caller passes the viewer's own id.
+    async fn list_deactivated_for_owner(&self, owner: &UserId) -> anyhow::Result<Vec<Account>>;
 }
 
 /// The **write** surface of Zurfur's record of accounts and memberships —

@@ -51,6 +51,39 @@ dev-web:
 dev-mock:
     cd frontend/web && ZURFUR_WEB_MOCK=1 yarn dev
 
+# The dev profile (no Docker, no PostgreSQL, no PDS): the API on the in-memory
+# fixture world, where every sign-in is alice. The `dev-profile` Cargo feature
+# alone chooses it (nothing in .env can); the binary refuses to start unless
+# ZURFUR_ENV=dev, which this recipe sets. It binds `http_addr` (default
+# 127.0.0.1:8181) and builds its redirects and CSRF check on `public_url`
+# (default http://127.0.0.1:8180, the origin a web run in front of it uses),
+# clear of `just dev`'s 8080 (Caddy), 8081 (axum) and 5174 (web), so both can
+# run at once; their sessions never cross. It builds into target/dev-profile,
+# so target/debug/api is never the profile. Override either:
+# `just dev-profile 127.0.0.1:9191 http://127.0.0.1:9190`.
+dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
+    ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile cargo run -p api --features dev-profile
+
+# The dev profile in a browser: its one origin (the `caddy-dev-profile` compose
+# service, the same Caddyfile, loopback only) on `proxy_port`, in front of the
+# dev-profile API at `api_upstream` and the web's vite dev server on `web_port`,
+# which runs in the foreground like `dev-web`; Ctrl-C stops both. Run
+# `just dev-profile` in another terminal, then browse http://127.0.0.1:8180 and
+# sign in (every sign-in is alice). The defaults mirror `dev-profile`'s, so it
+# runs beside `just dev` without colliding, though cookies don't isolate by
+# port: signing in here signs `just dev`'s browser session out (neither stack
+# accepts the other's session). Needs .env (`just setup`): compose
+# reads it, and so does the API. Other ports, with the API to match:
+# `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
+# `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
+dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port="5184":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
+    trap 'docker compose --profile dev-profile down caddy-dev-profile' EXIT
+    docker compose --profile dev-profile up -d caddy-dev-profile
+    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" yarn dev)
+
 # --- Docker ---
 
 up:
@@ -66,6 +99,12 @@ logs:
 
 db-shell:
     docker compose exec db psql -U admin -d zurfur
+
+# Fill your Den on `just dev` with two commissions, one archived, as you: sign
+# in, then paste your zurfur.sid cookie's value at the hidden prompt. Run it
+# once: each run adds two more commissions.
+den-fill:
+    bash scripts/den-fill.sh
 
 # Create a new migration file in adapter-pg (applied automatically on app boot)
 migrate-add name:
@@ -145,6 +184,19 @@ gen-contract:
     cargo run -p contract-gen
     cd contract && buf generate
 
+# Regenerate the Den's golden responses under contract/golden/den/ from the
+# in-memory fixture world. Run after a contract or fixture change, then commit;
+# the den_golden test (in `just gate` and CI) fails while they are stale.
+den-golden:
+    DEN_GOLDEN=write cargo test -p api --test den_golden
+
+# Clock times of each pair of not-found causes on PostgreSQL, from a warm and a
+# cold profile cache, printed as a Markdown table for the security review. Not a
+# gate. DEN_TIMING_RUNS sets the timed runs per cause (default 200); extra
+# arguments go to cargo (e.g. `just den-timing --release`).
+den-timing *ARGS:
+    cargo test -p api --test not_found_timing {{ARGS}} -- --ignored --nocapture
+
 
 # --- The node tree (NODE.json) ---
 
@@ -198,14 +250,14 @@ hooks-test:
     exit "$status"
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# pr-wait and tools-check (the
+# the dev-profile pins, pr-wait, tools-check and den-fill (the
 # design-index check's own tests run under `design-index-check-test`). CI
 # runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -268,7 +320,11 @@ gate:
     just tools-check
     cargo fmt --all --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
-    INSTA_UPDATE=no cargo test --workspace --locked
+    # The dev-profile build gets its own target dir, so target/debug/api is
+    # never the profile; scripts/dev-profile-pins.test.sh pins these lines.
+    CARGO_TARGET_DIR=target/dev-profile cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
+    INSTA_UPDATE=no DEN_GOLDEN=check cargo test --workspace --locked
+    CARGO_TARGET_DIR=target/dev-profile INSTA_UPDATE=no cargo test -p api --locked --features dev-profile --lib --test dev_profile
     cargo deny --locked --all-features check
     typos
     just design-index-check

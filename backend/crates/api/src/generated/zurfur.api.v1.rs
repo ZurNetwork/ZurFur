@@ -28,8 +28,8 @@ pub struct GetMeRequest {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetMeResponse {
     /// The visitor's atproto DID — always present for a live session. Opaque to
-    /// clients like every id (VERSIONING.md R6), though DIDs are additionally a
-    /// public, externally-specified format.
+    /// clients like every id (VERSIONING.md R6), at most 2048 characters, though
+    /// DIDs are additionally a public, externally-specified format.
     #[prost(string, tag = "1")]
     pub did: ::prost::alloc::string::String,
     /// The visitor's handle, when their profile resolved. `optional` = explicit
@@ -176,59 +176,15 @@ pub struct DeleteAccountRequest {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
 }
-/// `GET /api/v1/commissions` takes no input; the session is the argument.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ListCommissionsRequest {}
 /// `POST /api/v1/commissions` succeeds `201` with the created commission —
 /// the bare resource, flat, exactly as CreateAccountResponse renders its
 /// account (success bodies are bare resources, never wrapped). Minted at
 /// `/api/v1`; the pre-GA surface answered an empty `201`, leaving the creator
 /// unable to navigate to what it just made — a client can only act on what
-/// it is actually given. Field semantics are documented on `Commission`;
-/// this is a dedicated message so the create response can evolve
-/// independently of the listing row.
+/// it is actually given. The content tree is deliberately absent, and so is
+/// `owner`: the caller is the owner.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateCommissionResponse {
-    #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub lifecycle: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub visibility: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "5")]
-    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
-    #[prost(message, optional, tag = "6")]
-    pub maturity: ::core::option::Option<Maturity>,
-    #[prost(string, optional, tag = "7")]
-    pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "8")]
-    pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "9")]
-    pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "10")]
-    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
-}
-/// A commission's maturity posture: the atproto self-label rating axis plus
-/// the orthogonal graphic flag.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Maturity {
-    /// Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
-    /// `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
-    #[prost(string, tag = "1")]
-    pub rating: ::prost::alloc::string::String,
-    /// The orthogonal graphic-content flag.
-    #[prost(bool, tag = "2")]
-    pub graphic: bool,
-}
-/// One row of `GET /api/v1/commissions` — the envelope a listing renders.
-/// The content tree is deliberately absent (the future single-commission
-/// surface's job); `owner` is omitted because this endpoint is owner-POV only.
-/// This is the FIRST place a Commission is serialized anywhere in the API —
-/// the precedent later commission surfaces inherit.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Commission {
     /// Opaque commission id (R6).
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
@@ -262,13 +218,17 @@ pub struct Commission {
     #[prost(message, optional, tag = "10")]
     pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
-/// `GET /api/v1/commissions` — wrapped (R7) for additive pagination later.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ListCommissionsResponse {
-    /// The caller's owned, ACTIVE commissions (archived excluded), ascending by
-    /// creation. Order is served — never derived from ids (R6).
-    #[prost(message, repeated, tag = "1")]
-    pub commissions: ::prost::alloc::vec::Vec<Commission>,
+/// A commission's maturity posture: the atproto self-label rating axis plus
+/// the orthogonal graphic flag.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Maturity {
+    /// Extensible string vocabulary (R8): `safe` | `suggestive` | `nudity` |
+    /// `adult`. Domain-enforced; clients tolerate unknowns with a fallback.
+    #[prost(string, tag = "1")]
+    pub rating: ::prost::alloc::string::String,
+    /// The orthogonal graphic-content flag.
+    #[prost(bool, tag = "2")]
+    pub graphic: bool,
 }
 /// `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -282,4 +242,165 @@ pub struct CreateCommissionRequest {
     /// Optional at-birth maturity; same shape re-rating speaks later.
     #[prost(message, optional, tag = "3")]
     pub maturity: ::core::option::Option<Maturity>,
+}
+/// `GET /api/v1/den`: the viewer's own root; the session is the argument.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDenRootRequest {
+    /// Query parameter `includeDeleted`: also list soft-deleted nodes the viewer may open.
+    #[prost(bool, tag = "1")]
+    pub include_deleted: bool,
+    /// Query parameter `pageToken`: a `nextPageToken` from an earlier page; absent for the first page.
+    #[prost(string, tag = "2")]
+    pub page_token: ::prost::alloc::string::String,
+}
+/// The viewer's own root and one page of its entries.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetDenRootResponse {
+    /// The root itself, its `segments` empty, its name the viewer's own name and its
+    /// own level `private`; required, or the answer is a contract violation.
+    #[prost(message, optional, tag = "1")]
+    pub node: ::core::option::Option<DenNode>,
+    /// What the root holds. A client that finds no case it knows shows "content not shown yet".
+    #[prost(oneof = "get_den_root_response::Content", tags = "2")]
+    pub content: ::core::option::Option<get_den_root_response::Content>,
+}
+/// Nested message and enum types in `GetDenRootResponse`.
+pub mod get_den_root_response {
+    /// What the root holds. A client that finds no case it knows shows "content not shown yet".
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        /// One page of the root's entries.
+        #[prost(message, tag = "2")]
+        Listing(super::DenListing),
+    }
+}
+/// `GET /api/v1/den/{path=**}`: a node below the viewer's root.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDenNodeRequest {
+    /// The Den path below the root: each segment percent-encoded once on its own, joined by `/`.
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Query parameter `includeDeleted`: also list soft-deleted nodes the viewer may open.
+    #[prost(bool, tag = "2")]
+    pub include_deleted: bool,
+    /// Query parameter `pageToken`: a `nextPageToken` from an earlier page; absent for the first page.
+    #[prost(string, tag = "3")]
+    pub page_token: ::prost::alloc::string::String,
+}
+/// The node at a Den path, its breadcrumbs, and what it holds.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetDenNodeResponse {
+    /// The node the path lands on, in the shape its parent's listing uses; required, or
+    /// the answer is a contract violation.
+    #[prost(message, optional, tag = "1")]
+    pub node: ::core::option::Option<DenNode>,
+    /// The folders above it, the root first, down to its parent.
+    #[prost(message, repeated, tag = "2")]
+    pub crumbs: ::prost::alloc::vec::Vec<DenCrumb>,
+    /// What an open node holds; unset for a card. On an open node, a client that finds
+    /// no case it knows shows "content not shown yet", never an empty folder.
+    #[prost(oneof = "get_den_node_response::Content", tags = "3, 4, 5")]
+    pub content: ::core::option::Option<get_den_node_response::Content>,
+}
+/// Nested message and enum types in `GetDenNodeResponse`.
+pub mod get_den_node_response {
+    /// What an open node holds; unset for a card. On an open node, a client that finds
+    /// no case it knows shows "content not shown yet", never an empty folder.
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        /// One page of an open directory's entries.
+        #[prost(message, tag = "3")]
+        Listing(super::DenListing),
+        /// An open file.
+        #[prost(message, tag = "4")]
+        File(super::DenFile),
+        /// An open symlink.
+        #[prost(message, tag = "5")]
+        Link(super::DenLink),
+    }
+}
+/// One node as the Den shows it to this viewer.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenNode {
+    /// Its Den path from the viewer's root: opaque pieces, sent back unchanged. Empty on a card.
+    #[prost(string, repeated, tag = "1")]
+    pub segments: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Its display name, taken from what it holds; never its key.
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Its type: a provisional working name such as `commission`; unknown values get a generic icon.
+    #[prost(string, tag = "3")]
+    pub r#type: ::prost::alloc::string::String,
+    /// `directory` | `file` | `symlink`, a mount's being its target's; unset on a card;
+    /// unknown values get a generic marker.
+    #[prost(string, tag = "4")]
+    pub kind: ::prost::alloc::string::String,
+    /// Set when the entry is one of the viewer's mounts rather than a real child of its folder.
+    #[prost(bool, tag = "5")]
+    pub mount: bool,
+    /// The viewer's resolved access; unset or unknown renders as a card, never as open.
+    #[prost(oneof = "den_node::Access", tags = "6, 7")]
+    pub access: ::core::option::Option<den_node::Access>,
+}
+/// Nested message and enum types in `DenNode`.
+pub mod den_node {
+    /// The viewer's resolved access; unset or unknown renders as a card, never as open.
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Access {
+        /// The viewer can open it.
+        #[prost(message, tag = "6")]
+        Open(super::DenOpen),
+        /// The viewer may know it exists but can't open it.
+        #[prost(message, tag = "7")]
+        Card(super::DenCard),
+    }
+}
+/// What a viewer who can open a node sees of it, beyond its entry.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenOpen {
+    /// The node's own level: `private` | `listed` | `public`; a mount shows its target's, a
+    /// symlink its own. An unknown value shows no level, never `public`.
+    #[prost(string, tag = "1")]
+    pub own_level: ::prost::alloc::string::String,
+    /// Set when this view doesn't show the node's content yet; fixed per type, never read from the node.
+    #[prost(bool, tag = "2")]
+    pub content_not_shown: bool,
+    /// Set only when the node is soft-deleted, to a word naming its soft-deleted state:
+    /// today `archived` (a commission) or `deactivated` (an Account). A mount shows its
+    /// target's, a symlink its own. An unknown value still marks the node soft-deleted,
+    /// with a generic soft-deleted label, never the unknown value itself: never as live,
+    /// and never with another value's word.
+    #[prost(string, tag = "3")]
+    pub soft_delete: ::prost::alloc::string::String,
+}
+/// A node the viewer may know exists but can't open. Its entry carries only its name, its
+/// type and, on the viewer's own mount, the mount mark; this message carries nothing more yet.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenCard {}
+/// An open file's content; empty, because this read serves no file content yet.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenFile {}
+/// An open symlink's content; empty, because links don't open yet.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenLink {}
+/// One folder above the node, as a breadcrumb.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DenCrumb {
+    /// Its Den path from the viewer's root; empty for the root.
+    #[prost(string, repeated, tag = "1")]
+    pub segments: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Its display name, the one its parent's listing uses; for the root, the viewer's own name.
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+}
+/// One page of a directory's entries, after everything the viewer can't see is left out.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DenListing {
+    /// The entries, in the order the server sends; clients keep it within each kind and may
+    /// show directories first. Today: by name, as the viewer is shown it.
+    #[prost(message, repeated, tag = "1")]
+    pub entries: ::prost::alloc::vec::Vec<DenNode>,
+    /// An opaque position in this viewer's listing that reveals no names, hashes or counts; absent on the last page.
+    #[prost(string, tag = "2")]
+    pub next_page_token: ::prost::alloc::string::String,
 }

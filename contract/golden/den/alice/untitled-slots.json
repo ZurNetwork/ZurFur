@@ -1,0 +1,97 @@
+{
+  "crumbs": [
+    {
+      "name": "Alice"
+    },
+    {
+      "name": "commissions",
+      "segments": [
+        "commissions"
+      ]
+    },
+    {
+      "name": "Untitled",
+      "segments": [
+        "commissions",
+        "01a0ef9c-4e00-7a00-8000-000000000001"
+      ]
+    }
+  ],
+  "listing": {
+    "entries": [
+      {
+        "kind": "directory",
+        "name": "Abco",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "slots",
+          "01a0ef9c-6000-7a00-8000-000000000021"
+        ],
+        "type": "slot"
+      },
+      {
+        "kind": "directory",
+        "name": "Ember",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "slots",
+          "01a0ef9c-6100-7a00-8000-000000000022"
+        ],
+        "type": "slot"
+      },
+      {
+        "kind": "directory",
+        "name": "Kael",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "slots",
+          "01a0ef9c-6200-7a00-8000-000000000023"
+        ],
+        "type": "slot"
+      },
+      {
+        "kind": "directory",
+        "name": "Open slot",
+        "open": {
+          "contentNotShown": true,
+          "ownLevel": "private"
+        },
+        "segments": [
+          "commissions",
+          "01a0ef9c-4e00-7a00-8000-000000000001",
+          "slots",
+          "01a0ef9c-6300-7a00-8000-000000000024"
+        ],
+        "type": "slot"
+      }
+    ]
+  },
+  "node": {
+    "kind": "directory",
+    "name": "slots",
+    "open": {
+      "ownLevel": "private"
+    },
+    "segments": [
+      "commissions",
+      "01a0ef9c-4e00-7a00-8000-000000000001",
+      "slots"
+    ],
+    "type": "commission.slots"
+  }
+}

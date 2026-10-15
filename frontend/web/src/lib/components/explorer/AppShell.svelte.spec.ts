@@ -24,12 +24,11 @@ const navigation = createRawSnippet(() => ({
 /** The pane's content. */
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderShell(denServed = true) {
+function renderShell() {
 	return render(AppShell, {
 		session: alice,
 		trail,
 		section: 'accounts',
-		denServed,
 		navigation,
 		children
 	});
@@ -100,33 +99,18 @@ describe('AppShell', () => {
 		await expect.element(opener).toHaveFocus();
 	});
 
-	it('shows no sidebar, no drawer and no ☰ where this run serves no Den', async () => {
-		renderShell(false);
+	it('puts the sidebar and its navigation beside the pane', async () => {
+		renderShell();
 
-		await expect.element(page.getByRole('main')).toBeInTheDocument();
-		await expect.element(page.getByTestId('sidebar')).not.toBeInTheDocument();
-		await expect.element(page.getByTestId('open-drawer')).not.toBeInTheDocument();
-		await expect.element(page.getByRole('dialog', { includeHidden: true })).not.toBeInTheDocument();
-		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
-		await expect.element(page.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+		const sidebar = page.getByTestId('sidebar');
+		await expect.element(sidebar).toBeInTheDocument();
+		await expect
+			.element(sidebar.getByRole('navigation', { name: 'Test navigation' }))
+			.toBeInTheDocument();
 	});
 
-	it('keeps the sections and Sign out in the row on a phone when there is no drawer', async () => {
-		renderShell(false);
-		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
-
-		expect(page.getByTestId('accounts-link').element().closest('.desktop-only')).toBeNull();
-		expect(page.getByTestId('session-handle').element().closest('.desktop-only')).toBeNull();
-	});
-
-	it('links to My Den in the top bar only where a Den is served', async () => {
-		renderShell(true);
+	it('links to My Den in the top bar', async () => {
+		renderShell();
 		await expect.element(page.getByTestId('den-link')).toHaveAttribute('href', '/den');
-	});
-
-	it('has no My Den link on the everyday stack', async () => {
-		renderShell(false);
-		await expect.element(page.getByTestId('accounts-link')).toBeInTheDocument();
-		await expect.element(page.getByTestId('den-link')).not.toBeInTheDocument();
 	});
 });

@@ -1,5 +1,5 @@
 //! Use cases about [`Account`]s.
-use crate::ports::WithPorts;
+use crate::{den::DenNameError, ports::WithPorts};
 use domain::{
     datetime::DateTimeUtc,
     elements::{
@@ -14,13 +14,17 @@ use shared::settings::HANDLE_QUARANTINE_WINDOW;
 pub mod change_handle;
 pub mod create;
 pub mod delete;
+pub(crate) mod den;
 pub mod facts;
 pub mod invitation;
 pub mod leave;
 pub mod list;
 pub mod role;
+mod served_name;
 pub mod transfer_ownership;
 pub mod workflow;
+
+pub use served_name::ServedName;
 
 #[derive(Clone, Copy, WithPorts)]
 pub struct Accounts<'a> {
@@ -109,6 +113,9 @@ pub enum AccountError {
     /// The requested position is past the end of the list; carries the
     /// offending index.
     IndexOutOfRange(usize),
+    /// A name the Den's name rule refuses, such as a Workflow's, or an Account name that isn't
+    /// safe to show.
+    InvalidName(DenNameError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,6 +200,7 @@ impl std::fmt::Display for AccountError {
             Self::IndexOutOfRange(index) => {
                 write!(f, "position {index} is past the end of the list")
             }
+            Self::InvalidName(_) => write!(f, "invalid name"),
         }
     }
 }
@@ -221,6 +229,7 @@ impl std::error::Error for AccountError {
             | Self::DuplicateName => None,
             Self::NotFound(entity) => Some(entity),
             Self::SystemError(e) => Some(e),
+            Self::InvalidName(e) => Some(e),
             AccountError::Infrastructure(e) => Some(e.as_ref()),
         }
     }

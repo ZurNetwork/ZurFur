@@ -35,7 +35,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, then the created resource read back through commission::list (create::Output carries only the id — GAP)",
+      "role": "POST /commissions → commission::create, then the created resource read back through commission::list and projected into CreateCommissionResponse (create::Output carries only the id — GAP)",
       "node": false
     },
     {
@@ -61,11 +61,6 @@
     {
       "name": "invitations.rs",
       "role": "POST/DELETE seat invitations → commission::invitations::issue / revoke",
-      "node": false
-    },
-    {
-      "name": "list.rs",
-      "role": "GET /commissions (owner POV) → commission::list + wire_commission projection",
       "node": false
     },
     {
@@ -169,6 +164,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "markup.rs (POST …/files/{file_id}/markup) and notes.rs are replaced by the comment routes: place a pin, comment, reply, edit, delete, read a thread (cursor), read the pins of a file entry; every create returns the id"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "files.rs: the download names its Content-Disposition with the file's Den name, as the use case hands it over (D6, D19)"
     }
   ],
   "notes": [
