@@ -463,7 +463,8 @@ impl UserStore for SwitchableUsers {
 #[tokio::test]
 async fn a_store_failure_is_the_house_500_logged_by_its_route_template_alone() {
     let log = CapturedLog::default();
-    let subscriber = api::logging::subscriber(EnvFilter::new("info"), log.clone());
+    let subscriber =
+        api::logging::subscriber(&api::Environment::DEV, EnvFilter::new("info"), log.clone());
     let _guard = tracing::subscriber::set_default(subscriber);
     let failing = Arc::new(AtomicBool::new(false));
     let switch = Arc::clone(&failing);

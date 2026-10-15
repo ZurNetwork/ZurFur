@@ -1,7 +1,9 @@
 import type { Handle, HandleFetch, HandleServerError } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
+import { consoleSink, logRequests, logUpstreamCalls } from '$lib/server/dev-log';
 import { logUnexpectedError } from '$lib/server/error-log';
 import { refuseFraming } from '$lib/server/frame-headers';
 import { handleChain } from '$lib/server/handle-chain';
@@ -49,9 +51,10 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
  * point same-origin `/api/*` at the internal axum origin (prefix stripped) and
  * forward the caller's session cookie — see {@link rewriteApiRequest}. The
  * upstream is read via `$env/dynamic/private` so the build never bakes it in and
- * a worktree's own port is honored at runtime.
+ * a worktree's own port is honored at runtime. In dev, each call is logged by
+ * its page's route template, method, status and time (`logUpstreamCalls`).
  */
-export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
+const boundedFetch: HandleFetch = ({ event, request, fetch }) => {
 	const apiUpstream = runtimeEnv().ZURFUR_API_UPSTREAM ?? DEFAULT_API_UPSTREAM;
 	const incomingCookie = event.request.headers.get('cookie') ?? undefined;
 
@@ -72,13 +75,17 @@ export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
 	);
 };
 
+export const handleFetch: HandleFetch = logUpstreamCalls(dev, consoleSink, boundedFetch);
+
 /**
  * Every request gets one deadline for all its backend calls; every response
  * refuses to be framed; signed-in responses are never stored and never leak
  * their address (`private, no-store`, `Referrer-Policy: same-origin`); and no
- * `(session)` load or action runs without a session.
+ * `(session)` load or action runs without a session. In dev, each request is
+ * logged by its method, route template, status and time (`logRequests`).
  */
 export const handle: Handle = handleChain(
+	logRequests(dev, consoleSink),
 	requestDeadline,
 	refuseFraming,
 	sessionHeaders,

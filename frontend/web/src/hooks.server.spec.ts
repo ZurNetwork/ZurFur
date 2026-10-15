@@ -22,7 +22,7 @@ const passThrough: HandleFetch = ({ request, fetch }) => fetch(request);
 function eventFetch(hook: HandleFetch, locals: App.Locals = {}): typeof fetch {
 	const url = new URL(`${APP_ORIGIN}/`);
 	const request = new Request(url, { headers: { cookie: VISITOR_COOKIE } });
-	return kitEventFetch({ url, request, locals }, hook);
+	return kitEventFetch({ url, request, locals, route: { id: '/' } }, hook);
 }
 
 /** Fetch `target` through `hook`; resolves to the request that left the server. */

@@ -163,6 +163,7 @@ impl MemIdentityResolver {
 #[async_trait]
 impl IdentityResolver for MemIdentityResolver {
     /// Forward lookup, then the back-check against the DID's document.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn resolve_handle(&self, handle: &AtHandle) -> Result<Did, ResolveError> {
         let did = self.lookup_handle(handle)?;
         let claimed = self.lookup_document(&did)?;
@@ -174,6 +175,7 @@ impl IdentityResolver for MemIdentityResolver {
 
     /// The document's claim, kept only when that handle names the DID back; a
     /// back-check that could not finish is an error, any other failure `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn resolve_did(&self, did: &Did) -> Result<Option<AtHandle>, ResolveError> {
         let Some(claimed) = self.lookup_document(did)? else {
             return Ok(None);

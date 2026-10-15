@@ -35,6 +35,7 @@ impl FileStore for PgFileStore {
     /// `filename`/`content_type`/byte size. Idempotent: a retried `put` under
     /// the same key replaces rather than errors, and `created_at` is kept on
     /// conflict. Deliberately outside any unit of work (see module docs).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put(
         &self,
         key: FileKey,
@@ -60,6 +61,7 @@ impl FileStore for PgFileStore {
     /// The bytes and metadata stored under `key`, or `None` on a miss; bytes
     /// come back wrapped in a [`std::io::Cursor`]. The stored `filename` is
     /// carried as [`StoredText`], never re-checked.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>> {
         let Some(row) = sql::get(&self.pool, uuid::Uuid::from(key)).await? else {
             return Ok(None);
@@ -77,12 +79,14 @@ impl FileStore for PgFileStore {
 
     /// The stored `filename` under `key`, or `None`; selects no bytes. Carried
     /// as stored, never re-checked.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>> {
         let filename = sql::filename(&self.pool, uuid::Uuid::from(key)).await?;
         Ok(filename.map(StoredText::from))
     }
 
     /// Removes the bytes under `key`. Idempotent: an absent key is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&self, key: FileKey) -> anyhow::Result<()> {
         sql::delete(&self.pool, uuid::Uuid::from(key)).await?;
         Ok(())

@@ -313,7 +313,7 @@ async fn a_node_reached_through_a_mount_does_not_count_as_opening() {
         &resolved.node().view,
         View::Open { real_path, .. } if real_path == &landed_at_the_account
     ));
-    assert!(matches!(answer, Err(DenError::NotFound)));
+    assert!(matches!(answer, Err(Refusal::Elsewhere)));
 }
 
 /// A user store whose every read fails.
@@ -387,4 +387,56 @@ async fn the_check_names_a_cold_root_without_starting_or_waiting_on_a_lookup() {
     assert_eq!(opens.node(), &ServedNode::OwnRoot);
     assert_eq!(waited, Duration::ZERO, "the check never waits on a name");
     assert_eq!(pds.fetches(), 0, "the check never starts a lookup");
+}
+
+#[test]
+fn each_refusal_names_its_class_and_maps_to_the_one_not_found_or_the_store_failure() {
+    let refusals = [
+        Refusal::Unanchored,
+        Refusal::UnkeyedStep,
+        Refusal::Walk,
+        Refusal::Card,
+        Refusal::Elsewhere,
+        Refusal::StoreFailed(anyhow::anyhow!("the store is down")),
+    ];
+
+    let classes: Vec<&'static str> = refusals.iter().map(<&'static str>::from).collect();
+    let errors: Vec<DenError> = refusals.into_iter().map(DenError::from).collect();
+
+    assert_eq!(
+        classes,
+        [
+            "not_found.unanchored",
+            "not_found.unkeyed_step",
+            "not_found.walk",
+            "not_found.card",
+            "not_found.elsewhere",
+            "store_failed",
+        ]
+    );
+    let not_found = errors
+        .iter()
+        .filter(|error| matches!(error, DenError::NotFound))
+        .count();
+    assert_eq!(not_found, 5);
+    assert!(matches!(errors[5], DenError::Store(_)));
+}
+
+#[test]
+fn a_served_node_names_its_kind() {
+    let kinds: Vec<&'static str> = [
+        ServedNode::OwnRoot,
+        ServedNode::Account(supreme_arts()),
+        ServedNode::Commission(nowhere()),
+        ServedNode::Changelog(nowhere()),
+        ServedNode::File(nowhere(), FileKey::from(Uuid::nil())),
+    ]
+    .iter()
+    .map(<&'static str>::from)
+    .collect();
+
+    assert_eq!(
+        kinds,
+        ["own_root", "account", "commission", "changelog", "file"]
+    );
 }

@@ -2,7 +2,7 @@
   "path": "backend/crates/http-stack",
   "charted": "2026-10-14",
   "short": "The one HTTP stack every mount serves through",
-  "is": "The leaf crate holding the stack the HTTP server runs: the detach layer that runs each request's handling to its end in its own tracked task (bounded by a request semaphore, a panic answered with the internal-error problem), the session layer inside it, and the server with its graceful shutdown; main, the dev profile and the test-support rigs all serve through it.",
+  "is": "The leaf crate holding the stack the HTTP server runs: the detach layer that runs each request's handling to its end in its own tracked task (bounded by a request semaphore, a panic answered with the internal-error problem), the session layer inside it, the request log around both, and the server with its graceful shutdown; main, the dev profile and the test-support rigs all serve through it.",
   "type": "code",
   "tags": [
     "category:source"
@@ -22,12 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "crate manifest: axum, tokio, tokio-util (rt: TaskTracker), tower-layer/tower-service, tower-http (timeout), tracing, serde_json, thiserror, http-cookies, tower-sessions",
-      "node": false
-    },
-    {
-      "name": "src/lib.rs",
-      "role": "façade: re-exports Detach, Detached, REQUEST_PERMITS, Unfinished, panic_answer, and BODY_IDLE_TIMEOUT, SHUTDOWN_DEADLINE, Stacked, serve, stack",
+      "role": "crate manifest: axum, tokio, tokio-util (rt: TaskTracker), tower-layer/tower-service, tower-http (timeout, trace), tracing, serde_json, thiserror, http-cookies, tower-sessions; tracing-subscriber for the request-log test",
       "node": false
     },
     {
@@ -41,13 +36,28 @@
       "node": false
     },
     {
+      "name": "src/lib.rs",
+      "role": "façade: re-exports Detach, Detached, REQUEST_PERMITS, Unfinished, panic_answer, RequestLog, UNMATCHED_ROUTE, request_log, and BODY_IDLE_TIMEOUT, SHUTDOWN_DEADLINE, Stacked, serve, stack",
+      "node": false
+    },
+    {
+      "name": "src/request_log.rs",
+      "role": "request_log: tower-http TraceLayer whose debug span request{id, method, route} carries the MatchedPath template or \"(unmatched)\", never the URI or a header; debug events request started / request finished (status, latency_ms); id = <pid>-<counter>; no response header",
+      "node": false
+    },
+    {
       "name": "src/served.rs",
-      "role": "stack (the app under the session layer and the body idle timeout, inside Detach), Stacked (outer layers only outside), serve (graceful shutdown, then the drain, within SHUTDOWN_DEADLINE of the signal)",
+      "role": "stack (the app under the session layer and the body idle timeout, inside Detach, with the request log outermost), Stacked (outer layers only outside), serve (graceful shutdown, then the drain, within SHUTDOWN_DEADLINE of the signal)",
       "node": false
     },
     {
       "name": "src/served/tests.rs",
       "role": "pins a cut request still saving its session (the session layer inside Detach), shutdown holding while a detached request runs, and a stalled body failing its read and freeing its permit",
+      "node": false
+    },
+    {
+      "name": "tests/request_log.rs",
+      "role": "alone in its binary (callsite interest): over a served stack, pins the route template, method, status and latency, no URI/query/cookie/authorization value, the fixed unmatched route, the detached handling inside the request span, a panicking handler's 500 still logged (the log sits outside Detach), and distinct <pid>-<n> ids no response carries",
       "node": false
     }
   ],

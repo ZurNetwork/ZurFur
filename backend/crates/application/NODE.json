@@ -160,6 +160,11 @@
       "node": false
     },
     {
+      "name": "tests/den_check_log.rs",
+      "role": "alone in its binary: den's check, through me and download, logs node kind and answer class (opens, not_found.card, not_found.walk, store_failed) at debug, never an id or a store error",
+      "node": false
+    },
+    {
       "name": "tests/den_names.rs",
       "role": "names at write: a commission title, a file name, a slot title and a Workflow name the Den's name rule refuses are each refused in their use case's own error, and an accepted one is stored as the rule keeps it",
       "node": false
@@ -172,6 +177,11 @@
     {
       "name": "tests/unit_order.rs",
       "role": "call-order proofs: DID mint, DID-document update and blob write run before the unit opens (test-support's recording doubles)",
+      "node": false
+    },
+    {
+      "name": "tests/use_case_log.rs",
+      "role": "pins #[use_case]'s log for an injecting use case (create) and one that injects nothing (facts().exist): the debug span use_case{name}, use case started, use case finished with outcome ok/err and the error by Display, the span close, never the command (alone in its binary: callsite interest)",
       "node": false
     },
     {

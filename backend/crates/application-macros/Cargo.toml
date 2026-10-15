@@ -18,3 +18,5 @@ syn = { workspace = true }
 # Compile-FAIL tests: each `tests/ui/*.rs` must be rejected by rustc, and the
 # compiler's output must match the sibling `.stderr` file.
 trybuild = { workspace = true }
+# The pass cases' expansion logs through `tracing`, as it does inside `application`.
+tracing = { workspace = true }

@@ -45,6 +45,7 @@ pub struct MemActorIdentityStore(pub(crate) MemBackend);
 
 #[async_trait]
 impl ActorIdentityStore for MemActorIdentityStore {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &ActorIdentityId) -> anyhow::Result<Option<ActorIdentity>> {
         let identities = self
             .0
@@ -54,6 +55,7 @@ impl ActorIdentityStore for MemActorIdentityStore {
         Ok(identities.get(id).map(|stored| rebuild(*id, stored)))
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<ActorIdentity>> {
         let identities = self
             .0
@@ -73,6 +75,7 @@ pub struct MemActorIdentityWrites(pub(crate) MemBackend);
 
 #[async_trait]
 impl ActorIdentityWrites for MemActorIdentityWrites {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, identity: &ActorIdentity) -> anyhow::Result<()> {
         // The DID-less path by contract: intern owns DID-bearing rows.
         anyhow::ensure!(
@@ -115,6 +118,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn intern(
         &mut self,
         did: &Did,
@@ -154,6 +158,7 @@ impl ActorIdentityWrites for MemActorIdentityWrites {
         Ok(minted)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn cache_handle(
         &mut self,
         id: &ActorIdentityId,

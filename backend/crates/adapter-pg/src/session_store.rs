@@ -54,6 +54,7 @@ impl SessionStore for PgSessionStore {
     /// Inserts under the record's id, retrying with a fresh [`Id`] on a
     /// primary-key collision rather than clobbering an unrelated session.
     /// Mutates `record.id` when it loops.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         loop {
             let data = encode(record)?;
@@ -76,6 +77,7 @@ impl SessionStore for PgSessionStore {
     /// Upserts by id: persists changes to an existing session, or writes one
     /// whose id is already settled. Unlike [`create`](#method.create) it does
     /// not reroll on collision — the id is the key being saved.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn save(&self, record: &Record) -> session_store::Result<()> {
         let data = encode(record)?;
         sql::save(
@@ -91,6 +93,7 @@ impl SessionStore for PgSessionStore {
 
     /// Loads a live session, filtering `expiry_date > now()` in SQL so an
     /// expired row reads as `None` even before [`delete_expired`](#method.delete_expired) sweeps it.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
         let data = sql::load(
             &self.pool,
@@ -104,6 +107,7 @@ impl SessionStore for PgSessionStore {
     }
 
     /// Deletes the session by id. An absent id is a harmless no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
         sql::delete(&self.pool, &session_id.to_string())
             .await

@@ -21,3 +21,6 @@ WORKSHEET.md
 # insta's unreviewed snapshots
 *.snap.new
 *.pending-snap
+
+# Dev logs (scripts/dev-log.sh): every dev recipe writes logs/<name>/*.log here.
+/logs/

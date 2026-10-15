@@ -22,6 +22,7 @@ pub use pairs::{
     download_participant_pair, public_live_download_pair, stranger_targets,
 };
 pub use served::{
-    PgRuntime, PgServed, SignedIn, pg_runtime, serve, serve_recording, serve_wrapped,
+    PgRuntime, PgServed, SignedIn, pg_runtime, serve, serve_configured, serve_recording,
+    serve_wrapped,
 };
 pub use statements::{Statement, StatementLog, record_statements};

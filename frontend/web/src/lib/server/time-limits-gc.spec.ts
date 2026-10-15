@@ -97,7 +97,13 @@ function requestFetch(): typeof fetch {
 	const url = new URL('http://127.0.0.1:5174/den');
 	const request = new Request(url, { headers: { cookie: 'zurfur.sid=s3ss10n' } });
 	const locals: App.Locals = { deadline: countdown(TIME_LIMITS.request).signal };
-	const event: Pick<RequestEvent, 'url' | 'request' | 'locals'> = { url, request, locals };
+	const route = { id: '/(session)/den/[...path]' as const };
+	const event: Pick<RequestEvent, 'url' | 'request' | 'locals' | 'route'> = {
+		url,
+		request,
+		locals,
+		route
+	};
 	return kitEventFetch(event, handleFetch);
 }
 

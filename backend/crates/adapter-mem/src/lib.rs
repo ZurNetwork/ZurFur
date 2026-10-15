@@ -797,6 +797,7 @@ pub struct MemUserStore(MemBackend);
 #[async_trait]
 impl UserStore for MemUserStore {
     /// A direct lookup: a [`UserId`] IS the DID the map is keyed by.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &UserId) -> anyhow::Result<Option<User>> {
         let users = self
             .0
@@ -807,6 +808,7 @@ impl UserStore for MemUserStore {
     }
 
     /// Read-only counterpart to `provision`: a miss returns `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_by_did(&self, did: &Did) -> anyhow::Result<Option<User>> {
         let users = self
             .0
@@ -825,6 +827,7 @@ impl UserWrites for MemUserWrites {
     /// Recognize a DID in two steps: intern the identity row, then key the
     /// `users` projection by it. Idempotent per DID, so a repeat sign-in maps to
     /// the same User; both rows land in the same backend and commit together.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn provision(&mut self, did: &Did) -> anyhow::Result<User> {
         let now = Utc::now();
         // Intern first: the identity row is the projection's parent.
@@ -869,6 +872,7 @@ impl MemAuthenticator {
 
 #[async_trait]
 impl Authenticator for MemAuthenticator {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn start(&self, _handle: &AtHandle) -> anyhow::Result<SigninStarted> {
         // Any callback URL works; the test issues the callback itself. The
         // browser token is fixed and never checked: this fake stays thin.
@@ -880,6 +884,7 @@ impl Authenticator for MemAuthenticator {
         Ok(started)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn complete(
         &self,
         _code: String,
@@ -970,6 +975,7 @@ impl ProfileSource for MemProfileSource {
     /// Bump the call counter, wait out the configured latency, then return the
     /// configured profile; errors once the fake is unreachable. The DID is
     /// ignored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn fetch(&self, _did: &Did) -> anyhow::Result<Profile> {
         self.fetches.fetch_add(1, Ordering::SeqCst);
         let latency = *self
@@ -996,6 +1002,7 @@ pub struct MemProfileCache(MemBackend);
 
 #[async_trait]
 impl ProfileCache for MemProfileCache {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, did: &Did) -> anyhow::Result<Option<Profile>> {
         let profiles = self
             .0
@@ -1005,6 +1012,7 @@ impl ProfileCache for MemProfileCache {
         Ok(profiles.get(did).cloned())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put(&self, profile: &Profile) -> anyhow::Result<()> {
         let mut profiles = self
             .0
@@ -1100,6 +1108,7 @@ pub struct MemAccountStore(MemBackend);
 impl AccountStore for MemAccountStore {
     /// Rebuild an [`Account`] from its stored parts; a soft-deleted account
     /// resolves to `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         let accounts = self
             .0
@@ -1111,6 +1120,7 @@ impl AccountStore for MemAccountStore {
             .and_then(|stored| rebuild_account(id.clone(), stored)))
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>> {
         let memberships = self
             .0
@@ -1124,6 +1134,7 @@ impl AccountStore for MemAccountStore {
 
     /// Scan for the lone pending offer for `(account, invited_user)`; accepted
     /// and revoked invitations never match.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_pending_invitation(
         &self,
         account: &AccountId,
@@ -1143,6 +1154,7 @@ impl AccountStore for MemAccountStore {
     }
 
     /// Rebuild the [`Invitation`] for `id` in whatever state it holds.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
         let invitations = self
             .0
@@ -1156,6 +1168,7 @@ impl AccountStore for MemAccountStore {
 
     /// Scan for the live account whose handle matches, returning its DID. A
     /// soft-deleted account resolves to `None`; handle equality is exact.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         let accounts = self
             .0
@@ -1168,6 +1181,7 @@ impl AccountStore for MemAccountStore {
     }
 
     /// Count this account's recorded handle changes at or after `since`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn count_handle_changes_since(
         &self,
         account: &AccountId,
@@ -1186,6 +1200,7 @@ impl AccountStore for MemAccountStore {
 
     /// Whether `handle` was recently vacated by an account other than
     /// `excluding` — so an account can always reclaim its own vacated handle.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
@@ -1207,6 +1222,7 @@ impl AccountStore for MemAccountStore {
     /// Scan `memberships` for `user`'s rows, join each back to its account and
     /// drop the soft-deleted or vanished ones. Sorted by the account's DID, by
     /// byte value, so the result is deterministic.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_for_user(
         &self,
         user: &UserId,
@@ -1252,6 +1268,7 @@ impl AccountStore for MemAccountStore {
 
     /// Scan `owner`'s Owner memberships and keep the accounts whose row is
     /// soft-deleted, sorted by the account's DID by byte value.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_deactivated_for_owner(&self, owner: &UserId) -> anyhow::Result<Vec<Account>> {
         let accounts = self
             .0
@@ -1319,6 +1336,7 @@ impl AccountWrites for MemAccountWrites {
     /// Insert the account and the owner's membership in turn — not truly atomic,
     /// standing in for pg's single transaction. Handle uniqueness is global across
     /// live AND soft-deleted accounts: a collision fails with [`HandleTaken`].
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         let mut accounts = self
             .0
@@ -1404,6 +1422,7 @@ impl AccountWrites for MemAccountWrites {
     /// change applies only if the account is live and still holds `old`, else it
     /// fails and records no audit row. A collision with any OTHER account, live or
     /// tombstoned, then fails with [`HandleTaken`].
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -1457,6 +1476,7 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
         // Upsert into the (account, user) -> role map. A role grant never
         // clobbers a member's already-set alias.
@@ -1478,12 +1498,14 @@ impl AccountWrites for MemAccountWrites {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // A revoke is a departure, identical to `leave` at the store level.
         self.settle_member_departure(user, account);
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // Self-removal; the preconditions are the caller's.
         self.settle_member_departure(user, account);
@@ -1493,6 +1515,7 @@ impl AccountWrites for MemAccountWrites {
     /// Insert the pending invitation unless one is already pending for the same
     /// `(account, invited_user)`, in which case this is a no-op. Returns the offer
     /// that now stands — the fresh one, or the pending one already on file.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         let mut invitations = self
             .0
@@ -1525,6 +1548,7 @@ impl AccountWrites for MemAccountWrites {
 
     /// Flip a pending invitation to revoked and stamp `updated_at`. A non-pending
     /// or absent invitation is a no-op, not an error.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         let mut invitations = self
             .0
@@ -1545,6 +1569,7 @@ impl AccountWrites for MemAccountWrites {
     /// what is checked, so an offer accepted or revoked in the meantime seats
     /// nothing and errors. Seating an already-seated pair is a no-op, leaving the
     /// original membership and returning whatever role is actually persisted.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -1599,6 +1624,7 @@ impl AccountWrites for MemAccountWrites {
     /// Transfer ownership: promote the incoming member to sole `Owner` and demote
     /// the outgoing one to `Admin`, under one lock so both writes land together.
     /// Errors rather than half-transferring if either membership has vanished.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
@@ -1648,6 +1674,7 @@ impl AccountWrites for MemAccountWrites {
     /// Stamp `deleted_at` on the account, keeping the row so its handle stays
     /// reserved while reads treat it as absent. Memberships and invitations are
     /// left in place. Idempotent on an already-deleted or absent account.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let mut accounts = self
             .0
@@ -1669,6 +1696,7 @@ impl AccountWrites for MemAccountWrites {
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
     /// are not modeled here; removing an absent account is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         self.0
             .accounts
@@ -1728,14 +1756,17 @@ impl AccountWrites for MemAccountWrites {
 /// process, so `find_for_update` is `find`.
 #[async_trait]
 impl AccountReads for MemAccountWrites {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         MemAccountStore(self.0.clone()).find(id).await
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         MemAccountStore(self.0.clone()).find(id).await
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn role_of(
         &mut self,
         user: &UserId,
@@ -1752,6 +1783,7 @@ pub struct MemDatabase(MemBackend);
 
 #[async_trait]
 impl Database for MemDatabase {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
         // `staged` is what the write views mutate; `base` is an independent copy
         // taken at the same instant, never touched, that `commit` diffs against.
@@ -1826,6 +1858,7 @@ impl UnitOfWork for MemUnitOfWork {
         Box::new(MemCharacterWrites(self.staged.clone()))
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         // Without this call `base`/`staged` are simply dropped, rolling back.
         self.shared.merge(&self.base, &self.staged);
@@ -1834,6 +1867,7 @@ impl UnitOfWork for MemUnitOfWork {
 
     /// Drop `base` and `staged` together, discarding every write in the unit —
     /// the same outcome as dropping the handle, made explicit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         Ok(())
     }
@@ -1896,6 +1930,7 @@ impl MemDidMinter {
 impl DidMinter for MemDidMinter {
     /// Hand back the next synthetic DID (`did:plc:mem<n>`, zero-padded to six
     /// digits); never fails, and `handle` is ignored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::from(format!("did:plc:mem{n:06}")))
@@ -1903,18 +1938,21 @@ impl DidMinter for MemDidMinter {
 
     /// Hand back the next synthetic DID, same counter as [`mint`](Self::mint);
     /// the fake records no alias for either, so there is nothing to omit.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn mint_handleless(&self) -> anyhow::Result<Did> {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         Ok(Did::from(format!("did:plc:mem{n:06}")))
     }
 
     /// No-op: the fake registers nothing, so there is nothing to tombstone.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
         Ok(())
     }
 
     /// No-op: the fake mints no real operation, so there is no `alsoKnownAs` to
     /// re-point.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
         Ok(())
     }
@@ -1940,6 +1978,7 @@ impl MemKeyStore {
 impl KeyStore for MemKeyStore {
     /// Store `keys` under `did`. A DID mints once, so a second `put` for the same
     /// DID is rejected rather than overwriting custody keys.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
         let mut map = self.keys.lock().unwrap();
         if map.contains_key(AsRef::<str>::as_ref(did)) {
@@ -1950,6 +1989,7 @@ impl KeyStore for MemKeyStore {
     }
 
     /// Return the custody keys for `did`, or `None` if never stored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
         Ok(self
             .keys
@@ -1990,6 +2030,7 @@ impl PlcOperationLog for MemPlcOperationLog {
     /// Append the operation in submission order, mirroring pg's two integrity
     /// indexes: a duplicate `cid` is rejected, and so is a second non-genesis op
     /// chaining an already-used `prev` — the chain never forks.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn append(&self, record: &PlcOperationRecord) -> anyhow::Result<()> {
         let mut entries = self.entries.lock().unwrap();
         if entries.iter().any(|entry| entry.cid == record.cid) {
@@ -2014,6 +2055,7 @@ impl PlcOperationLog for MemPlcOperationLog {
     }
 
     /// The `cid` of the DID's most recently appended operation, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn latest_cid(&self, did: &Did) -> anyhow::Result<Option<String>> {
         Ok(self
             .entries
@@ -2026,6 +2068,7 @@ impl PlcOperationLog for MemPlcOperationLog {
     }
 
     /// The DID's most recently appended operation as a full record, or `None`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn latest_op(&self, did: &Did) -> anyhow::Result<Option<PlcOperationRecord>> {
         Ok(self
             .entries

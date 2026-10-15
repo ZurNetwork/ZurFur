@@ -68,6 +68,7 @@ impl MemPublicRecords {
 
 #[async_trait]
 impl PublicRecords for MemPublicRecords {
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_record(
         &self,
         repo: &Did,
@@ -93,6 +94,7 @@ impl PublicRecords for MemPublicRecords {
         })
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put_record(
         &self,
         uri: &AtUri,
@@ -108,6 +110,7 @@ impl PublicRecords for MemPublicRecords {
         })
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete_record(&self, uri: &AtUri) -> Result<(), PublicRecordsError> {
         // Idempotent, like the repo: deleting an absent record is a no-op.
         self.records
@@ -117,6 +120,7 @@ impl PublicRecords for MemPublicRecords {
         Ok(())
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get_record(&self, uri: &AtUri) -> Result<PublicRecord, PublicRecordsError> {
         self.records
             .lock()
@@ -126,6 +130,7 @@ impl PublicRecords for MemPublicRecords {
             .ok_or(PublicRecordsError::NotFound)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn upload_blob(
         &self,
         bytes: Vec<u8>,

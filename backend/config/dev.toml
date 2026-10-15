@@ -11,7 +11,9 @@ http_addr = "127.0.0.1:8081"
 # origin = Caddy's listen port, NOT axum's internal bind above. In dev it is the
 # loopback proxy address; in prod it is the public HTTPS domain.
 public_url = "http://127.0.0.1:8080"
-log_level = "info,zurfur=debug"
+# Dependencies at info, every Zurfur crate the server is built from at debug
+# (pinned by api's logging tests). RUST_LOG, when set, overrides it.
+log_level = "info,api=debug,application=debug,atta=debug,composition=debug,domain=debug,http_cookies=debug,http_stack=debug,shared=debug,adapter_pg=debug,adapter_mem=debug,adapter_atproto=debug"
 
 # Local reference-PDS endpoint (ZMVP-102; docker-compose.yml `pds` service).
 # Coherent with .env.example's ZURFUR_PDS_ENDPOINT default — env still wins if

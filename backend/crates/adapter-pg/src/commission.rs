@@ -158,6 +158,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Inserts the commission row, one `commission_tab` row per
     /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
     /// transaction. Every tab is minted [`VisibilityMode::Total`].
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
         sql::create_commission(
             &mut *self.conn,
@@ -197,6 +198,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Contributes one element into a declared surface behind
     /// `require_address`; position assigned by
     /// `max(position) + 1` within `(tab, surface, band)`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
         self.insert_element(element).await
     }
@@ -204,6 +206,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Removes one element scoped to `commission_id` ([`ElementNotFound`] if
     /// absent/foreign), taking the same tab lock `require_tab`
     /// uses on add before deleting and renumbering the vacated group.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn remove_element(
         &mut self,
         commission: &CommissionId,
@@ -245,6 +248,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Inserts a file entry's link row so it lands atomically with the caller's
     /// `file_added` changelog entry. Bytes already live in [`FileStore`](domain::ports::FileStore).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
         sql::add_file(
             &mut *self.conn,
@@ -260,6 +264,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Inserts one annotation row so it commits with the `markup_added` changelog
     /// entry. Re-serializes the already-validated
     /// [`MarkupShape`](domain::elements::commission::MarkupShape), never raw text.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
         let shape = serde_json::to_value(&markup.markup.shape)?;
         sql::add_markup(
@@ -279,6 +284,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Declares a batch of Slots: per Slot, an ordinary element (typed
     /// [`ElementType::slot`]) via `insert_element` plus its
     /// `commission_slot` satellite, all in one transaction.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
         for slot in slots {
             let carrier = NewElement::carrying(
@@ -306,6 +312,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Inserts a pending seat invitation; a duplicate pending offer is silently
     /// dropped by the partial unique index. Returns the offer that now stands —
     /// freshly inserted, or the pre-existing pending one.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_seat_invitation(
         &mut self,
         invitation: &SeatInvitation,
@@ -343,6 +350,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Flips a pending offer to revoked; matching no row (absent or already
     /// terminal) is a harmless no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
         sql::revoke_seat_invitation(
             &mut *self.conn,
@@ -357,12 +365,14 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Whether the commission bears any fact, checked on the open transaction (no
     /// TOCTOU window). Constant `false` while [`COMMISSION_FACT_TABLES`] is empty.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
         Ok(false)
     }
 
     /// Deletes the commission row on the open transaction. Child rows cascade via
     /// `ON DELETE CASCADE`; an absent commission is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         sql::delete(&mut *self.conn, uuid::Uuid::from(*id)).await?;
         Ok(())
@@ -370,6 +380,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Flips `commission.archived_at` via a conditional `UPDATE`; matches a row
     /// only on a real transition, so the return value IS the transition answer.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_archived(
         &mut self,
         id: &CommissionId,
@@ -382,6 +393,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Writes `maturity` and `graphic` together; the schema's both-or-neither
     /// CHECK makes a half-set pair unrepresentable.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         sql::set_maturity(
             &mut *self.conn,
@@ -396,6 +408,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// Declares a seat: an ordinary element (typed [`ElementType::seat`]) via the
     /// shared address gate plus its `commission_seat` satellite. Every seat is
     /// born vacant.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         let carrier = NewElement::carrying(
             seat.id,
@@ -421,6 +434,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Repoints or clears `commission.linked_channel` via a conditional `UPDATE`
     /// (`IS DISTINCT FROM`), so the return value IS the changed answer.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_linked_channel(
         &mut self,
         id: &CommissionId,
@@ -437,6 +451,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Upserts the grantee's key; re-granting replaces the level. The `commission`
     /// FK assumes existence was already checked by the caller.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn grant_view(
         &mut self,
         commission: &CommissionId,
@@ -455,6 +470,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Hard-deletes the grantee's key; the return value is `true` only when a key
     /// existed (an idempotent no-op otherwise).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_view(
         &mut self,
         commission: &CommissionId,
@@ -471,6 +487,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Repoints or clears `commission.direction_status`; an absent commission is a
     /// no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
         id: &CommissionId,
@@ -486,6 +503,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Repoints or clears `commission.deadline`; an absent commission is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
         id: &CommissionId,
@@ -497,6 +515,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
     /// Repoints or clears `commission.deadline_status` (the manual `Delayed` flag
     /// only — `Late` is derived fresh at read, never persisted).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
         id: &CommissionId,
@@ -514,6 +533,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     /// The sweeper's candidate scan, on the open transaction: deadline strictly
     /// before `now`, not already `late`, non-terminal lifecycle
     /// ([`LifecycleStep::is_terminal`]).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
         let terminal: Vec<String> = {
             use strum::VariantArray;
@@ -760,6 +780,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
 #[async_trait::async_trait]
 impl CommissionReads for PgCommissionWrites<'_> {
     /// [`CommissionStore::find`] on the unit's connection.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
@@ -769,6 +790,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 
     /// [`find`](Self::find) with `FOR NO KEY UPDATE`; concurrent writers of this
     /// commission wait, but inserts of child rows stay free.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find_for_update(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
@@ -777,6 +799,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
     }
 
     /// [`CommissionStore::is_participant`] on the unit's connection.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -792,6 +815,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 
     /// The tab's row, locked for the rest of the unit — the same statement
     /// `require_tab` uses.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn tab_for_update(
         &mut self,
         commission: &CommissionId,
@@ -804,6 +828,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 #[async_trait::async_trait]
 impl CommissionStore for PgCommissionStore {
     /// Rebuilds the [`Commission`] via `to_commission`; `None` if absent.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&self.pool, uuid::Uuid::from(*id)).await? else {
             return Ok(None);
@@ -813,6 +838,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// Reads only the title, the visibility and whether it is archived; the visibility
     /// through [`stored_visibility`], the title as stored. `None` if absent.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
         let row = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
         let summary = row.map(|row| CommissionSummary {
@@ -827,6 +853,7 @@ impl CommissionStore for PgCommissionStore {
     /// Which column of `workflow_id` currently holds this commission, if any.
     /// Scoped by board — a commission sits in at most one column per board but
     /// on many boards. Delegates to [`PgColumnStore::find_column`].
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -839,6 +866,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// This commission's index within `column_id`, or `None` if absent. A stored
     /// value that can't be a `u8` surfaces as an `Err`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn current_position_in_column(
         &self,
         commission: &CommissionId,
@@ -861,6 +889,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// The [`GrantLevel`] `user` holds on `commission`, or `None`.
     /// The stored token is re-validated through [`GrantLevel`]'s `FromStr`.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn view_grant(
         &self,
         commission: &CommissionId,
@@ -881,6 +910,7 @@ impl CommissionStore for PgCommissionStore {
     /// widened surface modes, elements), each re-validated through its domain
     /// gate. `None` only when the commission has no tabs at all; an empty
     /// `elements` list is the ordinary state of a fresh one.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn load_composition(
         &self,
         id: &CommissionId,
@@ -943,6 +973,7 @@ impl CommissionStore for PgCommissionStore {
     /// One `EXISTS` over the persisted `commission_participant` membership record
     /// — never a computed owner-∪-seated union. Unaffected by placement or view
     /// grants.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &self,
         commission: &CommissionId,
@@ -954,6 +985,7 @@ impl CommissionStore for PgCommissionStore {
     /// The file-entry link `key` names within `commission` — scoped by both id and
     /// commission_id, so a foreign key answers `None`. Bytes live behind
     /// [`FileStore`](domain::ports::FileStore).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_file(
         &self,
         commission: &CommissionId,
@@ -977,6 +1009,7 @@ impl CommissionStore for PgCommissionStore {
     /// One file entry's annotations in draw order, scoped by `commission`. Each
     /// row's `shape` is re-validated through
     /// [`MarkupShape`](domain::elements::commission::MarkupShape)'s deserializer.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn markups_for_file(
         &self,
         commission: &CommissionId,
@@ -1010,6 +1043,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// The lone `state = 'pending'` offer for `(seat, invited_user)`, or `None`.
     /// Accepted/revoked invitations never match.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_pending_seat_invitation(
         &self,
         commission: &CommissionId,
@@ -1030,6 +1064,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// The commission's seat satellites in declaration order (element ids are
     /// UUIDv7). Each row re-validated through its domain gate.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
         let rows = sql::seats(&self.pool, uuid::Uuid::from(*commission)).await?;
         rows.into_iter()
@@ -1048,6 +1083,7 @@ impl CommissionStore for PgCommissionStore {
     /// One join from the participant record onto `commission`, seeking the
     /// by-user index; archived rows included. Each visibility token is read
     /// through [`stored_visibility`]; the title is carried as stored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         let rows = sql::list_participating(&self.pool, user.as_ref()).await?;
         let summaries = rows
@@ -1064,6 +1100,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// The commission's file entries in key (upload) order; the query selects
     /// no uploader.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn files(&self, commission: &CommissionId) -> anyhow::Result<Vec<FileSummary>> {
         let rows = sql::files(&self.pool, uuid::Uuid::from(*commission)).await?;
         let files = rows
@@ -1078,6 +1115,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// The commission's Slot satellites in declaration order; titles carried as
     /// stored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         let rows = sql::slots(&self.pool, uuid::Uuid::from(*commission)).await?;
         let slots = rows
@@ -1095,6 +1133,7 @@ impl CommissionStore for PgCommissionStore {
     /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
     /// id, each rebuilt through `to_commission`: tokens re-validated, the title
     /// carried as stored.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         sql::list_owned_by(&self.pool, owner.as_ref())
             .await?

@@ -35,6 +35,7 @@ impl FileStore for MemFileStore {
     /// Drain `content` and store it under `key` with its finalized
     /// [`FileMetadata`] — an idempotent insert-or-replace, written straight to
     /// the shared map, never staged.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn put(
         &self,
         key: FileKey,
@@ -58,6 +59,7 @@ impl FileStore for MemFileStore {
 
     /// Wrap the stored bytes in a [`Cursor`] as the returned reader, or
     /// `None` on a miss.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, key: FileKey) -> anyhow::Result<Option<FileDownload>> {
         let blobs = self
             .0
@@ -72,6 +74,7 @@ impl FileStore for MemFileStore {
 
     /// The stored filename under `key`, or `None` on a miss; the bytes are not
     /// copied.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn filename(&self, key: FileKey) -> anyhow::Result<Option<StoredText>> {
         let blobs = self
             .0
@@ -84,6 +87,7 @@ impl FileStore for MemFileStore {
     }
 
     /// Remove the bytes under `key`. Idempotent: an absent key is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&self, key: FileKey) -> anyhow::Result<()> {
         let mut blobs = self
             .0

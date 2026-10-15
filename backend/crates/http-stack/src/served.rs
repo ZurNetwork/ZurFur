@@ -13,7 +13,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 use tower_sessions::SessionStore;
 
-use crate::Detach;
+use crate::{Detach, request_log};
 
 /// How long shutdown waits, from its signal, for open connections and then
 /// detached requests to finish.
@@ -52,9 +52,10 @@ impl Stacked {
     }
 }
 
-/// `app` under `sessions`, both inside `detach`: the session layer's save
-/// after the handler runs to its end with it. A request body idle for
-/// [`BODY_IDLE_TIMEOUT`] fails its read, so a stalled body frees its permit.
+/// `app` under `sessions` and a [`BODY_IDLE_TIMEOUT`] on request bodies, all
+/// inside `detach`, so the session saves after the handler runs to its end.
+/// The [`request_log`] wraps them all: the detached handling runs in the
+/// request's span, and a panic's answer is still logged.
 pub fn stack<S>(app: Router, sessions: SessionLayer<S>, detach: Detach) -> Stacked
 where
     S: SessionStore + Clone,
@@ -62,7 +63,8 @@ where
     let router = app
         .layer(sessions)
         .layer(RequestBodyTimeoutLayer::new(BODY_IDLE_TIMEOUT))
-        .layer(detach.clone());
+        .layer(detach.clone())
+        .layer(request_log());
     Stacked { router, detach }
 }
 

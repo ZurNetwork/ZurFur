@@ -266,6 +266,7 @@ impl PgAccountWrites<'_> {
 #[async_trait::async_trait]
 impl AccountReads for PgAccountWrites<'_> {
     /// [`AccountStore::find`] on the unit's connection.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find(&mut *self.conn, id.as_ref())
             .await?
@@ -275,6 +276,7 @@ impl AccountReads for PgAccountWrites<'_> {
 
     /// [`find`](Self::find) with `FOR NO KEY UPDATE`: concurrent writers wait
     /// for commit; inserts of child rows stay free.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find_for_update(&mut *self.conn, id.as_ref())
             .await?
@@ -283,6 +285,7 @@ impl AccountReads for PgAccountWrites<'_> {
     }
 
     /// [`AccountStore::role_of`] on the unit's connection.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn role_of(
         &mut self,
         user: &UserId,
@@ -297,6 +300,7 @@ impl AccountReads for PgAccountWrites<'_> {
 impl AccountStore for PgAccountStore {
     /// Filters `deleted_at IS NULL`; a soft-deleted account reads as `None`.
     /// Re-validates the stored `name`; an `Err` on tampering, never a panic.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         sql::find(&self.pool, id.as_ref())
             .await?
@@ -304,6 +308,7 @@ impl AccountStore for PgAccountStore {
             .transpose()
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>> {
         let role = sql::role_of(&self.pool, user.as_ref(), account.as_ref()).await?;
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
@@ -312,6 +317,7 @@ impl AccountStore for PgAccountStore {
     /// The lone `state = 'pending'` offer for `(account, invited_user)`, or
     /// `None` — accepted/revoked invitations never match. Re-validates the
     /// stored discriminants; an `Err` on tampering, never a panic.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_pending_invitation(
         &self,
         account: &AccountId,
@@ -330,6 +336,7 @@ impl AccountStore for PgAccountStore {
 
     /// The invitation for `id` in whatever state it holds, or `None`.
     /// Re-validates stored discriminants; an `Err` on tampering, never a panic.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>> {
         sql::find_invitation(&self.pool, uuid::Uuid::from(*id))
             .await?
@@ -340,6 +347,7 @@ impl AccountStore for PgAccountStore {
     /// A live account's `did` by normalized `handle`; filters `deleted_at IS
     /// NULL` like [`find`](PgAccountStore::find). Backs `/.well-known/atproto-did`
     /// resolution and the duplicate-handle pre-check.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         Ok(sql::find_did_by_handle(&self.pool, handle.as_str())
             .await?
@@ -348,6 +356,7 @@ impl AccountStore for PgAccountStore {
 
     /// Count of the account's `account_handle_changes` rows at or after `since`
     /// — the rate-limit tally. Uses the `(account_id, changed_at)` index.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn count_handle_changes_since(
         &self,
         account: &AccountId,
@@ -359,6 +368,7 @@ impl AccountStore for PgAccountStore {
     /// Whether `handle` was recently vacated by an account other than
     /// `excluding` — i.e. quarantined to someone else.
     /// Uses the `(old_handle, changed_at)` index.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn handle_reserved_for_other(
         &self,
         handle: &Handle,
@@ -373,6 +383,7 @@ impl AccountStore for PgAccountStore {
     /// id; each row re-validated. `scope` controls `listed_on_profile`:
     /// [`PublicProfile`](ListingScope::PublicProfile) sees only published
     /// memberships, [`SelfView`](ListingScope::SelfView) sees all.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_for_user(
         &self,
         user: &UserId,
@@ -392,6 +403,7 @@ impl AccountStore for PgAccountStore {
 
     /// Every deactivated account `owner` holds the Owner role in, ordered by
     /// id; each row re-validated.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn list_deactivated_for_owner(&self, owner: &UserId) -> anyhow::Result<Vec<Account>> {
         let owner_role = <&'static str>::from(Role::Owner);
         sql::list_deactivated_for_owner(&self.pool, owner.as_ref(), owner_role)
@@ -416,6 +428,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// the `accounts` row and the founder's `account_members` row, all on the open
     /// transaction. A handle collision on `accounts_handle_key` returns
     /// [`HandleTaken`]; any other failure rolls the transaction back.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create(&mut self, account: &Account, owner: &UserAccount) -> anyhow::Result<()> {
         // Intern the DID first: the accounts row's composite FK requires the
         // identity row to exist already.
@@ -468,6 +481,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// `old` is an optimistic-concurrency precondition (`handle = old AND
     /// deleted_at IS NULL`); a non-matching row rolls the unit back. A handle
     /// collision returns [`HandleTaken`].
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn change_handle(
         &mut self,
         account: &AccountId,
@@ -514,6 +528,7 @@ impl AccountWrites for PgAccountWrites<'_> {
 
     /// Upserts the member's role; `parent` defaults to `NULL`, matching the
     /// founder row from [`create`](PgAccountWrites::create).
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
         sql::grant_role(
             &mut *self.conn,
@@ -527,12 +542,14 @@ impl AccountWrites for PgAccountWrites<'_> {
 
     /// Departure with the same store effects as [`leave`](AccountWrites::leave)
     /// (the caller settles authority first). No-op on a non-member.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
     /// Settles a member leaving: re-homes children, deletes the membership,
     /// revokes pending issued invitations. Preconditions are the caller's.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
@@ -541,6 +558,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// pending offer per (account, invited user) — silently drops a duplicate.
     /// Returns whichever offer now stands: the fresh insert, or the pending one
     /// already on file.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
         sql::create_invitation(
             &mut *self.conn,
@@ -574,6 +592,7 @@ impl AccountWrites for PgAccountWrites<'_> {
 
     /// Flips a pending offer to revoked; a no-op (not an error) on an absent or
     /// already-terminal invitation.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         sql::revoke_invitation(
             &mut *self.conn,
@@ -591,6 +610,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// (rolling back) if the offer is no longer pending. Seating is `ON CONFLICT
     /// DO NOTHING`: an already-seated pair is a no-op and the existing role is
     /// re-read rather than overwritten.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -657,6 +677,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// re-homed under the incoming Owner, promotes the incoming member to Owner.
     /// Each precondition is enforced inside its `UPDATE` and must touch exactly
     /// one row, so a concurrent transfer fails closed rather than minting two Owners.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
@@ -703,6 +724,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Stamps `deleted_at` on a live account, keeping the row (handle stays
     /// reserved, DID stays live); [`find`](PgAccountStore::find) now reads it as
     /// absent. A repeat soft-delete is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let now = Utc::now();
         sql::soft_delete(&mut *self.conn, Some(now), now, account.as_ref()).await?;
@@ -713,6 +735,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// don't cascade). Frees the handle for reuse. Custody `account_keys` rows are
     /// deliberately left in place (the PLC recovery window). A `DELETE` matching
     /// no row is a no-op.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         sql::hard_delete_invitations(&mut *self.conn, account.as_ref()).await?;
         sql::hard_delete_memberships(&mut *self.conn, account.as_ref()).await?;

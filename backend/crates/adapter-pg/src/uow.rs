@@ -39,6 +39,7 @@ impl PgDatabase {
 impl Database for PgDatabase {
     /// Opens one transaction and hands back the owning handle. Dropping the
     /// handle without [`commit`](UnitOfWork::commit) rolls back.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
         let tx = self.pool.begin().await?;
         Ok(Box::new(PgUnitOfWork { tx }))
@@ -101,12 +102,14 @@ impl UnitOfWork for PgUnitOfWork {
     }
 
     /// Commits the unit, consuming the handle so it can't be reused.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         self.tx.commit().await?;
         Ok(())
     }
 
     /// Aborts the transaction explicitly and deterministically, consuming the handle.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         self.tx.rollback().await?;
         Ok(())

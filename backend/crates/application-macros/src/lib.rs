@@ -12,11 +12,10 @@ use crate::with_ports::expand_with_ports;
 mod use_case;
 mod with_ports;
 
-/// Turns an async `&self` method into a use case: parameters marked `#[ports]`,
-/// `#[unit]` or `#[lazy_unit]` are injected and removed from the public
-/// signature. `#[unit]` opens the unit before the body, `#[lazy_unit]` leaves
-/// it to the body's `open()`; either commits on `Ok` and rolls back on `Err`.
-/// A method that injects nothing is left as written.
+/// Turns an async `&self` method returning a `Result` into a use case: `#[ports]`, `#[unit]`
+/// and `#[lazy_unit]` parameters are injected and leave the public signature. A unit commits
+/// on `Ok` and rolls back on `Err`. Every use case runs in a `debug` span `use_case{name}`
+/// that logs its start and its outcome.
 #[proc_macro_attribute]
 pub fn use_case(args: TokenStream, item: TokenStream) -> TokenStream {
     let _args = parse_macro_input!(args as syn::parse::Nothing);
