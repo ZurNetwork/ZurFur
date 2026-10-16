@@ -288,14 +288,15 @@ hooks-test:
     exit "$status"
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs and the
-# private-papers check (the design-index check's own tests run under
-# `design-index-check-test`). CI runs it in the `hooks` job.
+# the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs, the
+# private-papers check and the `jj push` gate's argument guard (the
+# design-index check's own tests run under `design-index-check-test`). CI runs
+# it in the `hooks` job, which has no jj: the jj fixtures skip themselves there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -312,11 +313,13 @@ tools-check *ARGS:
 toml-check:
     python3 -c 'import os, sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:] if os.path.exists(f)]' NODE.toml
 
-# Fail when a tracked path looks like a private working paper (a .understand/,
-# .teams/, releases/ or retros/ folder, a rulings-* or queue.md file, or a
-# docs/<version>/ folder): those live on the design corpus's `understand`
-# branch, and this repo is public. Part of `just gate`; CI runs it in the
-# `hooks` job, and `jj push` runs it too.
+# Fail when a tracked path looks like a private working paper (ignoring case:
+# a .understand/, .teams/, releases/ or retros/ folder, a rulings-* or
+# handoff-* file, a queue.md or engineer-queue.md file, or a docs/<version>/
+# folder): those live on the design corpus's `understand` branch, and this
+# repo is public. Part of `just gate`; CI runs it in the `hooks` job. `jj push`
+# runs its --unpushed mode instead, which checks what each commit not on
+# origin that the push names adds or changes.
 private-papers-check:
     sh scripts/private-papers-check.sh
 
