@@ -6,8 +6,8 @@ One line each; `[src: …]` names where the fact is recorded. Limit: 40 pins,
 8,000 chars. A machine-specific line lives in the untracked, user-level
 `~/.claude/pins.local.md` instead — see scripts/hooks/pins.sh.
 
-- Every domain decision — an entity's shape, a name, an invariant, a boundary, an API contract, a schema choice, a trade-off with two defensible answers — is the Engineer's; Claude pre-fills its answer and work proceeds on it, except one-way doors and outward-facing work, which wait for the Engineer. [src: teams pack, orchestrate §1]
-- Claude writes the code, domain-heavy work included, and states its implementation choices in the PR; the Engineer reviews and merges every PR into `main`; Claude merges the rest once QA passes. [src: teams pack, orchestrate §1, §4.8]
+- Every domain decision — an entity's shape, a name, an invariant, a boundary, an API contract, a schema choice, a trade-off with two defensible answers — is the Engineer's. A Spawn never decides one: it stops that piece and reports the fork with its pre-filled answer; the Orchestrator puts it to the Engineer pre-filled, and dependent work proceeds on that answer, except one-way doors and outward-facing work, which wait for the Engineer. [src: teams pack, orchestrate §1; agents/builder.md]
+- Claude writes the code, domain-heavy work included, and states its implementation choices in the PR; the Engineer reviews and merges every PR into `main`; Claude merges the rest once QA passes (plus security when triggered) and CI is green. [src: teams pack, orchestrate §1, §4.8]
 - Design truth is the corpus at `~/code/zurfur-design`, indexed by `docs/design-index.md`; a design fact is read from its page before it is asserted. Confluence and memory paraphrases are not sources. [src: CLAUDE.md › Project]
 - A page under `superseded/` governs nothing; its index line names the successor. [src: docs/design-index.md]
 - `main` is never pushed to directly; work lands as `[{slug}][{n}]` slice PRs into a feature branch cut at `main`'s tip, and every commit on that branch is gate-green. [src: .claude/TEAMS.md › Repository, Branches; CLAUDE.md › Branches and gates]

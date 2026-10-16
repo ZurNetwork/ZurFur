@@ -17,7 +17,6 @@ Dependency rule: adapters depend on domain, never the reverse; only `api` knows 
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets` must be clean before claiming a task done
 - `just dev` / `just up` / `just down` / `just db-shell` for the dev stack
 - `just migrate-add <name>` is the ONLY way to create a migration — never hand-write migration filenames
-- After changing any sqlx `query!` macro: run `cargo sqlx prepare` and include the `.sqlx/` changes
 
 ## Conventions
 
