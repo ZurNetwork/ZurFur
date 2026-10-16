@@ -11,6 +11,7 @@
 # Runs `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
 # --locked -- -D warnings`, the same commands as CI's fmt and clippy jobs, then
 # hands off to `jj git push`. Tests stay on CI, exactly as before.
+# It also runs scripts/private-papers-check.sh: no private working paper is pushed.
 #
 # The gate runs against the WORKING COPY: `cargo` reads the files on disk, which
 # are the content of `@`, which is what CI builds for the pushed commit. All
@@ -54,6 +55,16 @@ if new_migrations=$(jj diff --from 'trunk()' --to '@' --summary 2>/dev/null | aw
         printf '  %s\n' $offenders
         exit 1
     fi
+fi
+
+# Private working papers never reach this public repo; the check fails on any
+# tracked one. It lists `@`'s files (`jj file list`), the same working-copy
+# scope as the fmt/clippy gate below, and runs whatever the diff touches.
+echo "jj-push: private-papers-check"
+if ! sh scripts/private-papers-check.sh; then
+    echo ""
+    echo "jj-push: private working papers are tracked — untrack them and push again."
+    exit 1
 fi
 
 if [ "$run_gate" = 1 ]; then

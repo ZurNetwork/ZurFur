@@ -288,14 +288,14 @@ hooks-test:
     exit "$status"
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait, tools-check, den-fill and the dev logs (the
-# design-index check's own tests run under `design-index-check-test`). CI
-# runs it in the `hooks` job.
+# the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs and the
+# private-papers check (the design-index check's own tests run under
+# `design-index-check-test`). CI runs it in the `hooks` job.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -307,11 +307,18 @@ scripts-test:
 tools-check *ARGS:
     sh scripts/tools-check.sh "$@"
 
-# Parse the TOML files CI's `changes` job counts as docs-only (those present
-# of .agent-board.toml and NODE.toml), so a broken one still fails CI. Needs
-# python3 >= 3.11 (tomllib).
+# Parse the TOML file CI's `changes` job counts as docs-only (NODE.toml, when
+# present), so a broken one still fails CI. Needs python3 >= 3.11 (tomllib).
 toml-check:
-    python3 -c 'import os, sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:] if os.path.exists(f)]' .agent-board.toml NODE.toml
+    python3 -c 'import os, sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:] if os.path.exists(f)]' NODE.toml
+
+# Fail when a tracked path looks like a private working paper (a .understand/,
+# .teams/, releases/ or retros/ folder, a rulings-* or queue.md file, or a
+# docs/<version>/ folder): those live on the design corpus's `understand`
+# branch, and this repo is public. Part of `just gate`; CI runs it in the
+# `hooks` job, and `jj push` runs it too.
+private-papers-check:
+    sh scripts/private-papers-check.sh
 
 # Forward to the design corpus's recall eval harness (private, Python
 # stdlib) at $ZURFUR_DESIGN_DIR/eval/run.py — see that repo for subcommands
@@ -370,6 +377,7 @@ gate:
     just hooks-test
     just scripts-test
     just toml-check
+    just private-papers-check
     buf lint contract
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
