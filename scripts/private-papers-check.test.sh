@@ -102,6 +102,17 @@ docs/pre_alpha-v0.2/a.md
 backend/docs/0.1/a.md
 "
 
+expect "a .claude/projects/ memory folder" 1 ".claude/projects/-home-zuri-code-zurfur/memory/MEMORY.md"
+expect "a .Claude/Projects/ folder in capitals" 1 ".Claude/Projects/x/memory/a.md"
+expect "a .claude/projects/ folder deeper down" 1 "sub/.claude/projects/p/m.md"
+expect "other .claude/ files and projects lookalikes pass" 0 ".claude/settings.json
+.claude/TEAMS.md
+.claude/pins.md
+projects/a.md
+claude/projects/a.md
+.claude/projects-notes.md
+"
+
 expect "a quoted name git could not print plainly" 1 "\"docs/0.1/\\303\\251.md\""
 
 out="$(printf 'README.md\nretros/a.md\ndocs/design-index.md\n' | sh "$under_test" --stdin)" && got=0 || got=$?
@@ -249,6 +260,30 @@ if command -v jj >/dev/null 2>&1; then
         jj bookmark set main -r @ --allow-backwards >/dev/null 2>&1
     )
     unpushed "--unpushed: deleting a paper origin already has passes" "$r" 0 \
+        "OK, no working papers added or changed in the 1 unpushed commit(s) checked"
+
+    # (e2) A commit adding a Claude memory file under .claude/projects/ fails;
+    # once that commit is on origin, a commit that only deletes the file
+    # passes (removals stay pushable).
+    r="$(repo e2)"
+    git init -q --bare "$tmp/e2-origin.git"
+    (
+        cd "$r"
+        jj git remote add origin "$tmp/e2-origin.git"
+        mkdir -p .claude/projects/p/memory && echo m >.claude/projects/p/memory/x.md
+        jj describe -m "add a memory file" >/dev/null 2>&1
+    )
+    unpushed "--unpushed: a commit adding a .claude/projects/ file is caught" "$r" 1 \
+        "add a memory file" "    .claude/projects/p/memory/x.md  ("
+    (
+        cd "$r"
+        jj new -m "drop the memory file" >/dev/null 2>&1
+        jj bookmark create main -r @- >/dev/null 2>&1
+        jj git push --remote origin -b main >/dev/null 2>&1
+        rm -r .claude
+        jj bookmark set main -r @ >/dev/null 2>&1
+    )
+    unpushed "--unpushed: a commit only deleting a .claude/projects/ file passes" "$r" 0 \
         "OK, no working papers added or changed in the 1 unpushed commit(s) checked"
 
     # (f) A rename into .understand/ is caught on its target path.

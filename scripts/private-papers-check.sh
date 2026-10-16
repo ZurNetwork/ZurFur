@@ -26,7 +26,9 @@
 #                                       this mode with the heads it pushes.
 #
 # A path is a working paper when, ignoring case, it has a `.understand/`,
-# `.teams/`, `releases/` or `retros/` folder at any depth, a file name
+# `.teams/`, `releases/` or `retros/` folder at any depth, a
+# `.claude/projects/` folder at any depth (a Claude project or memory folder:
+# a `.claude` segment directly followed by a `projects` folder), a file name
 # starting `rulings-` or `handoff-`, or exactly `queue.md` or
 # `engineer-queue.md`, or lies in a release-documents folder directly under
 # the root docs/: `docs/<version>/…`, where <version> is `0.1`, `v0.2`,
@@ -77,6 +79,9 @@ check() {
                 if (seg[i] == ".understand" || seg[i] == ".teams" ||
                     seg[i] == "releases" || seg[i] == "retros") {
                     hit("a " seg[i] "/ folder"); next
+                }
+                if (seg[i] == ".claude" && i + 1 < n && seg[i + 1] == "projects") {
+                    hit("a .claude/projects/ folder"); next
                 }
             }
             if (index(name, "rulings-") == 1) { hit("a rulings-* file"); next }
