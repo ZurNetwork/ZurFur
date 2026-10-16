@@ -118,6 +118,7 @@
 - 9994307 current — Blocking Gaps for v1
 - 11763713 current — Domains and Applications
 - 37519361 current — Code Style — Semantic Rulings (Rust)
+- 2026101601 current — Where Each Zurfur Ruling Lives — the Ways Harvest
 
 ## superseded/
 - 2490388 SUPERSEDED — Design decision
