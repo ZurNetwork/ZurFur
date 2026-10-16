@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for scripts/jj-push.sh: its argument guard and its private-papers
-# check. Run directly, or via `just scripts-test`. Needs jj; without it (CI's
+# check (including papers only a tag reaches). Run directly, or via `just scripts-test`. Needs jj; without it (CI's
 # `hooks` job) it prints a skip line and passes.
 set -eu
 
@@ -128,6 +128,35 @@ if [ "$(pushed)" = 0 ]; then
     echo "ok   nothing reached origin (every push was refused, failed or dry-run)"
 else
     echo "FAIL something reached origin: $(git --git-dir="$origin" for-each-ref)"
+    failures=$((failures + 1))
+fi
+
+# (j) A second scratch repo, its own origin: the paper is reachable ONLY from
+# a tag (tag `p`), @ is a clean commit on bookmark `clean`. `--all`,
+# `--tracked` and jj's default push all cover tags, so each fails the check.
+repo="$tmp/tag-repo"
+origin="$tmp/tag-origin.git"
+git init -q --bare "$origin"
+jj git init "$repo" >/dev/null 2>&1
+(
+    cd "$repo"
+    jj git remote add origin "$origin"
+    mkdir .understand && echo q >.understand/q.md
+    jj commit -m "add a tagged paper" >/dev/null 2>&1
+    jj tag set p -r @- >/dev/null 2>&1
+    jj new 'root()' -m "clean work" >/dev/null 2>&1
+    mkdir scripts
+    cp "$script_dir/jj-push.sh" "$script_dir/private-papers-check.sh" scripts/
+    jj bookmark create clean -r @ >/dev/null 2>&1
+)
+run "--all --dry-run fails on a paper only a tag reaches" 1 ".understand/q.md  (" -- --all --dry-run
+run "--tracked --dry-run fails on a paper only a tag reaches" 1 ".understand/q.md  (" -- --tracked --dry-run
+run "a default push fails on a paper only a tag reaches" 1 ".understand/q.md  (" -- --dry-run
+
+if [ "$(pushed)" = 0 ]; then
+    echo "ok   nothing reached the tag repo's origin"
+else
+    echo "FAIL something reached the tag repo's origin: $(git --git-dir="$origin" for-each-ref)"
     failures=$((failures + 1))
 fi
 

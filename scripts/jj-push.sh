@@ -8,10 +8,12 @@
 # jj makes many tiny working-copy snapshots with no commit ceremony. Gating once,
 # at push (the moment code reaches the remote and CI), is the right seam.
 #
-# In order: an argument guard, the migration-name check, the private-papers
-# check, `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
-# --locked -- -D warnings` (the same commands as CI's fmt and clippy jobs), then
-# `jj git push`. Tests stay on CI, exactly as before.
+# In order: an argument guard, the migration-name check, `cargo fmt --all
+# --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+# (the same commands as CI's fmt and clippy jobs), the private-papers check,
+# then `jj git push`. The papers check runs last, right before the push, so a
+# bookmark another workspace moves while cargo runs is checked where the push
+# finds it. Tests stay on CI, exactly as before.
 #
 # Arguments are NOT forwarded verbatim. The guard admits a whitelist of
 # `jj git push` options and refuses everything else (exit 2) before any check
@@ -21,8 +23,9 @@
 # always goes to origin, the remote the papers check measures against.
 #
 # The guard also builds the heads this push names: `@`, plus the bookmark of a
-# plain `-b NAME`, all bookmarks for a `-b` pattern, `--all`, `--tracked` or
-# jj's default push, all tags for `-t`, and the commits `-r` resolves to. The
+# plain `-b NAME`, all bookmarks for a `-b` pattern, all bookmarks and all
+# tags for `--all`, `--tracked` or jj's default push (each of which pushes tags
+# as well as bookmarks), all tags for `-t`, and the commits `-r` resolves to. The
 # papers check covers what every commit not on origin that those heads reach
 # adds or changes. The cargo gate runs against the WORKING COPY: `cargo` reads
 # the files on disk, which are the content of `@`.
@@ -61,7 +64,8 @@ only_at() {
 # heads is the revset of what this push names; the papers check covers every
 # commit not on origin it reaches. `@` is always in it (it covers `-c @` and
 # `--named n=@`). default_push stays 1 while no option selects what to push,
-# which means jj's default push of tracked bookmarks: all bookmarks.
+# which means jj's default push of tracked bookmarks and tags: all bookmarks
+# and all tags.
 heads="@"
 default_push=1
 
@@ -129,7 +133,7 @@ for arg do
             ;;
         --all | --tracked)
             default_push=0
-            heads="$heads | bookmarks()"
+            heads="$heads | bookmarks() | tags()"
             ;;
         --deleted) default_push=0 ;;
         --dry-run | --allow-empty-description | --allow-private | --allow-conflicts | --quiet | --no-pager | -h | --help) ;;
@@ -144,7 +148,7 @@ for arg do
 done
 [ -z "$pending" ] || refuse "\`$pending\` needs a value"
 if [ "$default_push" = 1 ]; then
-    heads="$heads | bookmarks()"
+    heads="$heads | bookmarks() | tags()"
 fi
 
 # Fast path: only spend time on cargo when this branch's diff over trunk actually
@@ -175,23 +179,6 @@ if new_migrations=$(jj diff --from 'trunk()' --to '@' --summary 2>/dev/null | aw
     fi
 fi
 
-# Private working papers never reach this public repo. The check looks at what
-# every commit not on origin that this push names (heads, from the guard)
-# adds or changes (`private-papers-check.sh --unpushed`), so it covers
-# whatever the push selects, not just `@`; a paper added in one commit and
-# deleted in the next is still caught.
-echo "jj-push: private-papers-check --unpushed"
-sh scripts/private-papers-check.sh --unpushed "$heads" || {
-    status=$?
-    echo ""
-    if [ "$status" = 1 ]; then
-        echo "jj-push: commits this push names add or change private working papers — take the papers out of those commits, or push only bookmarks that do not reach them."
-    else
-        echo "jj-push: the private-papers check could not run — nothing was pushed."
-    fi
-    exit "$status"
-}
-
 if [ "$run_gate" = 1 ]; then
     command -v cargo >/dev/null 2>&1 || { echo "jj-push: cargo not found (install the Rust toolchain)"; exit 1; }
     cargo fmt --version >/dev/null 2>&1 || { echo "jj-push: rustfmt not available (run: rustup component add rustfmt)"; exit 1; }
@@ -213,6 +200,25 @@ if [ "$run_gate" = 1 ]; then
 else
     echo "jj-push: no Rust-shaped changes over trunk — skipping fmt/clippy."
 fi
+
+# Private working papers never reach this public repo. The check looks at what
+# every commit not on origin that this push names (heads, from the guard)
+# adds or changes (`private-papers-check.sh --unpushed`), so it covers
+# whatever the push selects, not just `@`; a paper added in one commit and
+# deleted in the next is still caught. It runs last, after the cargo gate and
+# right before the push, so heads resolve to the targets that get pushed even
+# when another workspace moved a bookmark while cargo ran.
+echo "jj-push: private-papers-check --unpushed"
+sh scripts/private-papers-check.sh --unpushed "$heads" || {
+    status=$?
+    echo ""
+    if [ "$status" = 1 ]; then
+        echo "jj-push: commits this push names add or change private working papers — take the papers out of those commits, or push only bookmarks that do not reach them."
+    else
+        echo "jj-push: the private-papers check could not run — nothing was pushed."
+    fi
+    exit "$status"
+}
 
 echo "jj-push: gate green — pushing."
 if [ "$remote_given" = 1 ]; then
