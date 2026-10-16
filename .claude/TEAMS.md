@@ -80,7 +80,7 @@
 | release reviews | on | compliance, architecture and security at the end of each release |
 | security triggers | authentication; authorization and permissions; sessions and tokens; secrets, keys and signing; the private↔public data boundary; DID or handle correlation; plugin trust; the blob store; fetches of user-supplied URLs | a feature that hit one also gets security on its merge into main |
 | compliance triggers | personal data; age or adult content; copyright or takedowns; payments or tax; accessibility; a new dependency's license | |
-| bot | — | `copilot`, paused since 2026-10-15 (R-149); set it back when the Engineer resumes it. CodeRabbit reviews every PR automatically; it is never requested |
+| bot | — | `copilot`, paused since 2026-10-15 (R-149); set it back when the Engineer resumes it. CodeRabbit reviews only PRs into main, automatically, as part of the top-level review layer beside QA and the architects, and a merge into main waits for its review (the Engineer, 2026-10-16). Slice PRs into other branches get no CodeRabbit: its default auto-review covers only the default branch |
 | comment prefix | `Claude:` | starts every comment posted through the Engineer's accounts |
 
 ## Teams
