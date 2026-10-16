@@ -3,7 +3,7 @@
 - [Platform vision](project_vision.md) — AT Protocol art commission platform; live roadmap/design in Confluence (Project MVP + DESIGN), not in-repo docs
 - [Config & runtime](config_and_runtime.md) — figment + ZURFUR_* env-var catalogue, Postgres/runtime specifics (moved out of always-loaded CLAUDE.md)
 - [Always include tests](feedback_tests.md) — Every submodule PR must include extensive frontend and backend tests
-- Retrospectives + `/understand` snapshots + unit-of-work logbooks/ledger live (tracked) under `.understand/` — read the retrospectives in `.understand/retrospectives/` before starting feature work
+- Retrospectives + `/understand` snapshots + unit-of-work logbooks/ledger live under `.understand/` (git-ignored here; the private corpus repo's `understand` branch, checked out at the orchestrator's `.understand/`) — read the retrospectives in `.understand/retros/` before starting feature work
 - [No generic module names](feedback_no_generic_names.md) — Never use "helpers", "base", "misc" — use domain-specific names
 - [Assign before Ok](feedback_variable_before_ok.md) — Always assign to a variable before returning Ok(), never chain into Ok()
 - [Readability over cleverness](feedback_readability_over_cleverness.md) — Always favor readable, maintainable code over clever or terse patterns
