@@ -41,11 +41,11 @@ reports/x.html
 forks/003/run.py
 .claude/settings.json
 "
-expect "board config, scripts, Justfile" "code=false lock=false " ".agent-board.toml
-scripts/jj-push.sh
+expect "scripts, Justfile" "code=false lock=false " "scripts/jj-push.sh
 scripts/hooks/pins.sh
 Justfile
 "
+expect "the retired board config is code (fails closed)" "code=true lock=false " ".agent-board.toml"
 expect "a Rust file among docs" "code=true lock=false " "README.md
 backend/crates/domain/src/lib.rs
 "

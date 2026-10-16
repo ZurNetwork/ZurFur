@@ -32,8 +32,6 @@ docs_only() {
         *.md) return 0 ;;
         # design-index.md (nodes job); documents; boardroom runs; agent settings.
         docs/* | .understand/* | reports/* | forks/* | .claude/*) return 0 ;;
-        # The board tool's config; parsed by the always-on `hooks` job.
-        .agent-board.toml) return 0 ;;
         # Used by the always-on `nodes` and `hooks` jobs and locally.
         scripts/* | Justfile) return 0 ;;
     esac
