@@ -88,7 +88,7 @@
     "`Config::DEFAULT_MAX_UPLOAD_BYTES` (50 MiB) is the one home for the upload cap. Raising it past `i32::MAX` bytes is a wire break — `byte_size` must then become an int64 decimal string (`contract/VERSIONING.md` §7.2).",
     "See also: ZMVP-200 (crate extracted from api::AppState).",
     "See also: ZMVP-3 (original composition root).",
-    "See also: memory `config-and-runtime`.",
+    "See also: `.env.example` (every `ZURFUR_*` variable and `DATABASE_URL`).",
     "See also: CLAUDE.md \"Configuration & database\"."
   ]
 }
