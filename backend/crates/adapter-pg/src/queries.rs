@@ -31,6 +31,13 @@ pub mod account {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct DepartureMembershipRow {
+        pub role: String,
+        pub parent: Option<String>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct FindForUpdateRow {
         pub id: String,
         pub handle: String,
@@ -273,12 +280,15 @@ pub mod account {
     }
 
     /// `queries/account/departure_membership.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The departing member's role and parent, with their row locked until the unit
+    /// commits, so a concurrent ownership transfer either commits first or waits.
     pub async fn departure_membership(
         conn: impl sqlx::PgExecutor<'_>,
         account_id: &str,
         user_id: &str,
-    ) -> sqlx::Result<Option<Option<String>>> {
-        sqlx::query_scalar(include_str!("../queries/account/departure_membership.sql"))
+    ) -> sqlx::Result<Option<DepartureMembershipRow>> {
+        sqlx::query_as(include_str!("../queries/account/departure_membership.sql"))
             .bind(account_id)
             .bind(user_id)
             .fetch_optional(conn)

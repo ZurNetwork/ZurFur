@@ -82,7 +82,7 @@
     {
       "page": 2162692,
       "title": "Roles",
-      "governs": "role/grant.rs: a grant changes an existing member's role and never seats anyone; role/revoke.rs; ownership moves only by transfer"
+      "governs": "role/grant.rs: a grant changes an existing member's role and never seats anyone; leave.rs and role/revoke.rs: a departure never removes the Owner, and the stores refuse it; ownership moves only by transfer"
     },
     {
       "page": 9895957,

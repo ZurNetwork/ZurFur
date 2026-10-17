@@ -218,26 +218,36 @@ pub struct PgAccountWrites<'a> {
 }
 
 impl PgAccountWrites<'_> {
-    /// Settle a member's departure from `account` — shared by
-    /// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role).
-    /// Re-homes the member's children to their parent, deletes the membership,
-    /// and revokes their pending issued invitations. No-op if already gone.
+    /// Settle a member's departure, shared by [`leave`](AccountWrites::leave) and
+    /// [`revoke_role`](AccountWrites::revoke_role): locks the membership and refuses the
+    /// Owner before writing anything, else re-homes the children, deletes the membership
+    /// and revokes pending issued invitations. No-op if already gone.
     async fn settle_member_departure(
         &mut self,
         user: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
         // No-op if the membership is already gone.
-        let Some(parent) =
+        let Some(departing) =
             sql::departure_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?
         else {
             return Ok(());
         };
 
+        // The locked read is the one Owner guard: nothing below re-checks it.
+        if matches!(Role::from_str(&departing.role)?, Role::Owner) {
+            let owner_departing = anyhow::anyhow!(
+                "the Owner never departs; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+            return Err(owner_departing);
+        }
+
         // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
         sql::departure_rehome_children(
             &mut *self.conn,
-            parent.as_deref(),
+            departing.parent.as_deref(),
             account.as_ref(),
             user.as_ref(),
         )
@@ -564,14 +574,16 @@ impl AccountWrites for PgAccountWrites<'_> {
     }
 
     /// Departure with the same store effects as [`leave`](AccountWrites::leave)
-    /// (the caller settles authority first). No-op on a non-member.
+    /// (the caller settles authority first). Refuses the Owner, writing nothing.
+    /// No-op on a non-member.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
     /// Settles a member leaving: re-homes children, deletes the membership,
-    /// revokes pending issued invitations. Preconditions are the caller's.
+    /// revokes pending issued invitations. Refuses the Owner, writing nothing;
+    /// every other precondition is the caller's.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await

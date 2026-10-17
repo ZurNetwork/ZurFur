@@ -2049,3 +2049,172 @@ async fn the_deactivated_read_orders_by_account_did() {
     let expected_ids = vec![&first.id, &second.id];
     assert_eq!(ids, expected_ids);
 }
+
+// --- A departure never removes the Owner ---
+
+/// Revoke a member's role in one unit of work, committing it whatever the store
+/// answers, so a refused departure is proven to leave nothing behind.
+async fn try_revoke_role(pool: &PgPool, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let revoked = uow.accounts().revoke_role(user, account).await;
+    uow.commit().await.expect("commit");
+    revoked
+}
+
+/// A member leaves in one unit of work, committed whatever the store answers.
+async fn try_leave(pool: &PgPool, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let left = uow.accounts().leave(user, account).await;
+    uow.commit().await.expect("commit");
+    left
+}
+
+/// How many Owner rows `account` holds, read straight from `account_members`.
+async fn owner_count(pool: &PgPool, account: &AccountId) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM account_members WHERE account_id = $1 AND \"role\" = $2",
+    )
+    .bind(account.as_ref())
+    .bind(<&'static str>::from(&Role::Owner))
+    .fetch_one(pool)
+    .await
+    .expect("count the Owner rows")
+}
+
+/// Waits until some session on this test's database waits on a lock, probing every
+/// 20 ms; panics after 10 s. Each probe is its own statement on the pool, since
+/// `pg_stat_activity` is a frozen snapshot inside one transaction.
+async fn wait_for_a_lock_wait(pool: &PgPool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("probe pg_stat_activity");
+        if waiting >= 1 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no session waited on a lock within 10 s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Founds `account` under `owner`, with `member` seated as a Member under the Owner.
+async fn found_with_member(pool: &PgPool, owner: &UserId, member: &UserId, tag: &str) -> AccountId {
+    let (account, membership) = Account::open(
+        owner.clone(),
+        Did::from(format!("did:plc:{tag}-acct")),
+        format!("{tag}-acct.example.com").parse::<Handle>().unwrap(),
+        "Studio".parse::<AccountName>().unwrap(),
+        Utc::now(),
+    );
+    create(pool, &account, &membership).await;
+    seat_under(pool, &account.id, member, owner, Role::Member, true).await;
+    account.id
+}
+
+#[tokio::test]
+async fn a_departure_after_a_transfer_never_removes_the_new_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:keep-o").await.id;
+    let x = provision(&pool, "did:plc:keep-x").await.id;
+    let y = provision(&pool, "did:plc:keep-y").await.id;
+    let stranger = provision(&pool, "did:plc:keep-s").await.id;
+    let account = found_with_member(&pool, &o, &x, "keep").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    create_invitation(&pool, &x_invites_y).await;
+    transfer_ownership(&pool, o.clone(), x.clone(), account.clone()).await;
+
+    let revoked = try_revoke_role(&pool, &x, &account)
+        .await
+        .expect_err("the Owner's revoke is refused");
+    let left = try_leave(&pool, &x, &account)
+        .await
+        .expect_err("the Owner's leave is refused");
+
+    let refusal = "the Owner never departs";
+    assert!(
+        revoked.to_string().contains(refusal),
+        "unexpected refusal: {revoked}"
+    );
+    assert!(
+        left.to_string().contains(refusal),
+        "unexpected refusal: {left}"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(role_of(&pool, &o, &account).await, Some(Role::Admin));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+    assert_eq!(
+        parent_of(&pool, &account, &o).await,
+        Some(x.clone()),
+        "the refused departures re-homed no child"
+    );
+    let x_offer = find_invitation(&pool, x_invites_y.id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(
+        x_offer.state,
+        InvitationState::Pending,
+        "the refused departures revoked no invitation"
+    );
+
+    try_leave(&pool, &o, &account)
+        .await
+        .expect("the former Owner, now Admin, leaves");
+
+    assert_eq!(role_of(&pool, &o, &account).await, None);
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+
+    try_revoke_role(&pool, &stranger, &account)
+        .await
+        .expect("a stranger's departure is a no-op");
+
+    assert_eq!(role_of(&pool, &stranger, &account).await, None);
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+}
+
+#[tokio::test]
+async fn a_departure_waiting_on_a_transfer_never_removes_the_new_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:wait-o").await.id;
+    let x = provision(&pool, "did:plc:wait-x").await.id;
+    let account = found_with_member(&pool, &o, &x, "wait").await;
+    let db = PgDatabase::new(pool.clone());
+    let mut transfer_unit = db.begin().await.expect("begin the transfer");
+    transfer_unit
+        .accounts()
+        .transfer_ownership(&o, &x, &account)
+        .await
+        .expect("transfer_ownership");
+
+    let revoke = try_revoke_role(&pool, &x, &account);
+    let commit_the_transfer = async {
+        wait_for_a_lock_wait(&pool).await;
+        transfer_unit.commit().await.expect("commit the transfer");
+    };
+    let (revoked, ()) = tokio::join!(revoke, commit_the_transfer);
+
+    let revoked = revoked.expect_err("the revoke that waited on the transfer is refused");
+    assert!(
+        revoked.to_string().contains("the Owner never departs"),
+        "unexpected refusal: {revoked}"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+}

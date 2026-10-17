@@ -1101,3 +1101,96 @@ async fn an_unreachable_profile_source_answers_no_one() {
     assert!(fetched.is_err(), "an unreachable PDS answers nothing");
     assert_eq!(source.fetch_count(), 1);
 }
+
+// --- A departure never removes the Owner ---
+
+#[tokio::test]
+async fn a_departure_after_a_transfer_never_removes_the_new_owner() {
+    let backend = MemBackend::new();
+    let account = live_account("did:plc:keepowner");
+    let (o, x, y, stranger) = (user_id(), user_id(), user_id(), user_id());
+    found(&backend, &account, &o).await;
+    let x_membership = UserAccount {
+        user_id: x.clone(),
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&x_membership);
+    let x_invites_y = Invitation::issue(
+        account.id.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    backend.create_invitation(&x_invites_y).await.unwrap();
+    let mut transfer = backend.database().begin().await.unwrap();
+    transfer
+        .accounts()
+        .transfer_ownership(&o, &x, &account.id)
+        .await
+        .unwrap();
+    transfer.commit().await.unwrap();
+
+    let mut revoke = backend.database().begin().await.unwrap();
+    let revoked = revoke
+        .accounts()
+        .revoke_role(&x, &account.id)
+        .await
+        .expect_err("the Owner's revoke is refused");
+    revoke.commit().await.unwrap();
+    let mut leave = backend.database().begin().await.unwrap();
+    let left = leave
+        .accounts()
+        .leave(&x, &account.id)
+        .await
+        .expect_err("the Owner's leave is refused");
+    leave.commit().await.unwrap();
+
+    let refusal = "the Owner never departs";
+    assert!(
+        revoked.to_string().contains(refusal),
+        "unexpected refusal: {revoked}"
+    );
+    assert!(
+        left.to_string().contains(refusal),
+        "unexpected refusal: {left}"
+    );
+    assert_eq!(
+        backend.role_of(&x, &account.id).await.unwrap(),
+        Some(Role::Owner)
+    );
+    let x_offer = backend
+        .find_pending_invitation(&account.id, &y)
+        .await
+        .unwrap()
+        .map(|invitation| invitation.id);
+    assert_eq!(
+        x_offer,
+        Some(x_invites_y.id),
+        "the refused departures revoked no invitation"
+    );
+
+    let mut former_owner_leaves = backend.database().begin().await.unwrap();
+    former_owner_leaves
+        .accounts()
+        .leave(&o, &account.id)
+        .await
+        .expect("the former Owner, now Admin, leaves");
+    former_owner_leaves.commit().await.unwrap();
+    let mut stranger_departs = backend.database().begin().await.unwrap();
+    stranger_departs
+        .accounts()
+        .revoke_role(&stranger, &account.id)
+        .await
+        .expect("a stranger's departure is a no-op");
+    stranger_departs.commit().await.unwrap();
+
+    assert_eq!(backend.role_of(&o, &account.id).await.unwrap(), None);
+    assert_eq!(backend.role_of(&stranger, &account.id).await.unwrap(), None);
+    assert_eq!(
+        backend.role_of(&x, &account.id).await.unwrap(),
+        Some(Role::Owner)
+    );
+}

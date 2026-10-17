@@ -98,6 +98,11 @@
   ],
   "refs": [
     {
+      "page": 2162692,
+      "title": "Roles",
+      "governs": "src/lib.rs: the fake's Owner backstops: grant_role never grants Owner or changes the Owner's role, and a departure (revoke_role, leave) never removes the Owner, refusing before any write"
+    },
+    {
       "page": 3014657,
       "title": "Deletion of Commissions",
       "governs": "src/commission.rs: `commission_has_facts` stays `false` until a fact-minter registers a map here"

@@ -1352,15 +1352,30 @@ impl AccountStore for MemAccountStore {
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
-    /// Shared store effects of a member departing: remove the membership and
-    /// revoke their still-pending issued invitations. The mem fake models no role
-    /// tree, so there are no children to re-home.
-    fn settle_member_departure(&self, user: &UserId, account: &AccountId) {
-        self.0
+    /// A member departing: refuses the Owner before touching anything, else removes the
+    /// membership and revokes their pending issued invitations (no role tree to re-home).
+    /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
+    /// before a transfer committed can still remove the new Owner, in dev and tests only.
+    fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+        let mut memberships = self
+            .0
             .memberships
             .lock()
-            .expect("MemBackend memberships mutex poisoned")
-            .remove(&(account.clone(), user.clone()));
+            .expect("MemBackend memberships mutex poisoned");
+        let seat = (account.clone(), user.clone());
+        let Some(departing) = memberships.get(&seat) else {
+            return Ok(());
+        };
+        if matches!(departing.role, Role::Owner) {
+            let owner_departing = anyhow::anyhow!(
+                "the Owner never departs; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+            return Err(owner_departing);
+        }
+        memberships.remove(&seat);
+        drop(memberships);
 
         let mut invitations = self
             .0
@@ -1375,6 +1390,7 @@ impl MemAccountWrites {
                 invitation.state = InvitationState::Revoked;
             }
         }
+        Ok(())
     }
 }
 
@@ -1560,15 +1576,13 @@ impl AccountWrites for MemAccountWrites {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // A revoke is a departure, identical to `leave` at the store level.
-        self.settle_member_departure(user, account);
-        Ok(())
+        self.settle_member_departure(user, account)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
-        // Self-removal; the preconditions are the caller's.
-        self.settle_member_departure(user, account);
-        Ok(())
+        // Self-removal; the store refuses the Owner, every other precondition is the caller's.
+        self.settle_member_departure(user, account)
     }
 
     /// Insert the pending invitation unless one is already pending for the same
