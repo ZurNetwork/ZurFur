@@ -408,12 +408,24 @@ fn account_id() -> AccountId {
     AccountId::from(mint_did())
 }
 
+/// Seed `inviter` as a Member of `account`: an invitation's issuer must be a member.
+fn seed_inviter(backend: &MemBackend, account: &AccountId, inviter: &UserId) {
+    let inviter_membership = UserAccount {
+        account_id: account.clone(),
+        user_id: inviter.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&inviter_membership);
+}
+
 // AC3 (store layer) — a freshly issued pending invitation round-trips: it is the
 // pending offer found for its (account, invited_user) pair, with every fact intact.
 #[tokio::test]
 async fn create_then_find_pending_returns_the_invitation() {
     let backend = MemBackend::new();
     let (account, invited, inviter) = (account_id(), user_id(), user_id());
+    seed_inviter(&backend, &account, &inviter);
     let invitation = Invitation::issue(
         account.clone(),
         invited.clone(),
@@ -443,18 +455,21 @@ async fn create_then_find_pending_returns_the_invitation() {
 async fn a_second_pending_invitation_for_the_same_pair_is_not_a_second_row() {
     let backend = MemBackend::new();
     let (account, invited) = (account_id(), user_id());
+    let (first_inviter, second_inviter) = (user_id(), user_id());
+    seed_inviter(&backend, &account, &first_inviter);
+    seed_inviter(&backend, &account, &second_inviter);
     let first = Invitation::issue(
         account.clone(),
         invited.clone(),
         Role::Member,
-        user_id(),
+        first_inviter,
         Utc::now(),
     );
     let second = Invitation::issue(
         account.clone(),
         invited.clone(),
         Role::Admin,
-        user_id(),
+        second_inviter,
         Utc::now(),
     );
 
@@ -495,11 +510,14 @@ async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
     let database = backend.database();
     let store = backend.account_store();
     let (account, invited) = (account_id(), user_id());
+    let (first_inviter, second_inviter) = (user_id(), user_id());
+    seed_inviter(&backend, &account, &first_inviter);
+    seed_inviter(&backend, &account, &second_inviter);
     let invitation = Invitation::issue(
         account.clone(),
         invited.clone(),
         Role::Member,
-        user_id(),
+        first_inviter,
         Utc::now(),
     );
     let id = invitation.id;
@@ -528,7 +546,7 @@ async fn revoke_invitation_flips_state_and_clears_the_pending_offer() {
         account.clone(),
         invited.clone(),
         Role::Admin,
-        user_id(),
+        second_inviter,
         Utc::now(),
     );
     backend.create_invitation(&reissued).await.unwrap();
@@ -1100,4 +1118,147 @@ async fn an_unreachable_profile_source_answers_no_one() {
 
     assert!(fetched.is_err(), "an unreachable PDS answers nothing");
     assert_eq!(source.fetch_count(), 1);
+}
+
+// --- A departure never removes the Owner ---
+
+#[tokio::test]
+async fn a_departure_after_a_transfer_never_removes_the_new_owner() {
+    let backend = MemBackend::new();
+    let account = live_account("did:plc:keepowner");
+    let (o, x, y, stranger) = (user_id(), user_id(), user_id(), user_id());
+    found(&backend, &account, &o).await;
+    let x_membership = UserAccount {
+        user_id: x.clone(),
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&x_membership);
+    let x_invites_y = Invitation::issue(
+        account.id.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    backend.create_invitation(&x_invites_y).await.unwrap();
+    let mut transfer = backend.database().begin().await.unwrap();
+    transfer
+        .accounts()
+        .transfer_ownership(&o, &x, &account.id)
+        .await
+        .unwrap();
+    transfer.commit().await.unwrap();
+
+    let mut revoke = backend.database().begin().await.unwrap();
+    let revoked = revoke
+        .accounts()
+        .revoke_role(&x, &account.id)
+        .await
+        .expect_err("the Owner's revoke is refused");
+    revoke.commit().await.unwrap();
+    let mut leave = backend.database().begin().await.unwrap();
+    let left = leave
+        .accounts()
+        .leave(&x, &account.id)
+        .await
+        .expect_err("the Owner's leave is refused");
+    leave.commit().await.unwrap();
+
+    let refusal = "the Owner never departs";
+    assert!(
+        revoked.to_string().contains(refusal),
+        "unexpected refusal: {revoked}"
+    );
+    assert!(
+        left.to_string().contains(refusal),
+        "unexpected refusal: {left}"
+    );
+    assert_eq!(
+        backend.role_of(&x, &account.id).await.unwrap(),
+        Some(Role::Owner)
+    );
+    let x_offer = backend
+        .find_pending_invitation(&account.id, &y)
+        .await
+        .unwrap()
+        .map(|invitation| invitation.id);
+    assert_eq!(
+        x_offer,
+        Some(x_invites_y.id),
+        "the refused departures revoked no invitation"
+    );
+
+    let mut former_owner_leaves = backend.database().begin().await.unwrap();
+    former_owner_leaves
+        .accounts()
+        .leave(&o, &account.id)
+        .await
+        .expect("the former Owner, now Admin, leaves");
+    former_owner_leaves.commit().await.unwrap();
+    let mut stranger_departs = backend.database().begin().await.unwrap();
+    stranger_departs
+        .accounts()
+        .revoke_role(&stranger, &account.id)
+        .await
+        .expect("a stranger's departure is a no-op");
+    stranger_departs.commit().await.unwrap();
+
+    assert_eq!(backend.role_of(&o, &account.id).await.unwrap(), None);
+    assert_eq!(backend.role_of(&stranger, &account.id).await.unwrap(), None);
+    assert_eq!(
+        backend.role_of(&x, &account.id).await.unwrap(),
+        Some(Role::Owner)
+    );
+}
+
+// --- An invitation's issuer must still be a member ---
+
+#[tokio::test]
+async fn an_issue_from_a_departed_member_is_refused() {
+    let backend = MemBackend::new();
+    let account = live_account("did:plc:goneissuer");
+    let (o, x, y) = (user_id(), user_id(), user_id());
+    found(&backend, &account, &o).await;
+    let x_membership = UserAccount {
+        user_id: x.clone(),
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&x_membership);
+    let mut leave = backend.database().begin().await.unwrap();
+    leave
+        .accounts()
+        .leave(&x, &account.id)
+        .await
+        .expect("the member leaves");
+    leave.commit().await.unwrap();
+    let x_invites_y = Invitation::issue(
+        account.id.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+
+    let mut issue = backend.database().begin().await.unwrap();
+    let issued = issue.accounts().create_invitation(&x_invites_y).await;
+    issue.commit().await.unwrap();
+    let Err(refused) = issued else {
+        panic!("an issue from a departed member is refused");
+    };
+
+    assert!(
+        refused
+            .to_string()
+            .contains("an invitation's issuer must be a member"),
+        "unexpected refusal: {refused}"
+    );
+    let standing = backend
+        .find_pending_invitation(&account.id, &y)
+        .await
+        .unwrap();
+    assert!(standing.is_none(), "the refused issue stored no offer");
 }

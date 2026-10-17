@@ -109,20 +109,21 @@ pub trait AccountWrites: Send {
         role: &Role,
     ) -> anyhow::Result<()>;
 
-    /// Remove a user's membership: re-homes their role-tree children to their own
-    /// parent, deletes the membership, and revokes the invitations they had issued,
-    /// in one transaction. Idempotent on a non-member.
+    /// Remove a non-Owner member's membership: revokes the invitations they had
+    /// issued, re-homes their role-tree children to their own parent, and deletes the
+    /// membership, in one transaction. Fails, writing nothing, when the member is the
+    /// Owner. Idempotent on a non-member.
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
-    /// A member leaves their own account: the same store effects as
-    /// [`revoke_role`](AccountWrites::revoke_role), self-initiated so no rank check
-    /// applies. Assumes a valid non-`Owner` member; a vanished membership is a
-    /// no-op, not an error.
+    /// A member leaves their own account: the same store effects and the same Owner
+    /// refusal as [`revoke_role`](AccountWrites::revoke_role), self-initiated so no
+    /// rank check applies.
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// Persist a freshly issued, pending [`Invitation`]. At most one pending
     /// invitation may exist per (account, invited user); a duplicate is a no-op
-    /// rather than a second row.
+    /// rather than a second row. Fails, writing nothing, when the inviter isn't a
+    /// member of the account.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation>;
 
     /// Transition a pending invitation to revoked. Idempotent on a non-pending or

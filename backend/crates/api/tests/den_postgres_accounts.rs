@@ -2,8 +2,9 @@
 //! Owner, another's and a missing Account answer alike, and a stored name unsafe to show is
 //! served as the Account's handle by the Den, `GET /accounts` and a handle change, while
 //! founding refuses it with a `422`. It also proves on the real stores that a role grant
-//! never seats a stranger and only changes an existing member's role. Requires a
-//! container runtime socket.
+//! never seats a stranger and only changes an existing member's role, and that a revoke or
+//! leave racing a transfer never leaves an Account without an Owner. Requires a container
+//! runtime socket.
 
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use test_support::{
     recording::{
         CallLog, RecordingAccountStore, RecordingCommissionStore, RecordingProfileCache, SubjectLog,
     },
+    store_doubles::{AccountsScript, ScriptedAccounts},
 };
 
 mod common;
@@ -656,4 +658,112 @@ async fn seat_then_transfer_is_closed() {
         role_of(&world, &stranger(), &world.supreme_arts).await,
         None
     );
+}
+
+/// The den world with the app's Account store behind a double scripted by `script`; the world's
+/// own runtime keeps the unscripted stores.
+async fn den_world_with_scripted_accounts(script: &AccountsScript) -> DenWorld {
+    let script = script.clone();
+    pg_app::den_world(move |mut runtime| {
+        let scripted = ScriptedAccounts::new(Arc::clone(&runtime.accounts), script);
+        runtime.accounts = Arc::new(scripted);
+        api::app(runtime)
+    })
+    .await
+}
+
+/// How many Owner rows `account` holds, read straight from `account_members`.
+async fn owner_count(world: &DenWorld, account: &AccountId) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM account_members WHERE account_id = $1 AND \"role\" = $2",
+    )
+    .bind(account.to_string())
+    .bind(<&'static str>::from(&Role::Owner))
+    .fetch_one(&world.served.runtime.pool)
+    .await
+    .expect("count the Owner rows")
+}
+
+/// Supreme Arts with bob seated as a Member, his role read scripted to answer Member from now
+/// on, and its ownership then transferred from alice to bob.
+async fn supreme_arts_handed_to_a_stale_bob(world: &DenWorld, script: &AccountsScript) {
+    world.add_bob_as_member(&world.supreme_arts).await;
+    let bob = adapter_mem::fixture::bob();
+    script.answer_role_of(bob.clone(), world.supreme_arts.clone(), Role::Member);
+    let transfer = json!({ "new_owner": bob.to_string() });
+    let transferred = world
+        .alice
+        .post(format!(
+            "{}/accounts/{}/transfer",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .json(&transfer)
+        .send()
+        .await
+        .expect("POST /accounts/{id}/transfer is answered");
+    assert_eq!(transferred.status(), 200, "alice hands Supreme Arts to bob");
+}
+
+/// Supreme Arts still has bob as its one Owner and alice as an Admin, and bob still lists it.
+async fn assert_bob_still_owns_supreme_arts(world: &DenWorld) {
+    let (alice, bob) = (adapter_mem::fixture::alice(), adapter_mem::fixture::bob());
+    assert_eq!(
+        role_of(world, &bob, &world.supreme_arts).await,
+        Some(Role::Owner)
+    );
+    assert_eq!(
+        role_of(world, &alice, &world.supreme_arts).await,
+        Some(Role::Admin)
+    );
+    assert_eq!(owner_count(world, &world.supreme_arts).await, 1);
+    let bob_s_accounts = listed_account_dids(world, &world.bob).await;
+    assert!(
+        bob_s_accounts.contains(&world.supreme_arts.to_string()),
+        "{bob_s_accounts:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_leave_racing_a_transfer_keeps_the_new_owner() {
+    let script = AccountsScript::default();
+    let world = den_world_with_scripted_accounts(&script).await;
+    supreme_arts_handed_to_a_stale_bob(&world, &script).await;
+
+    let left = world
+        .bob
+        .delete(format!(
+            "{}/accounts/{}/members/me",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members/me is answered");
+
+    common::assert_problem(left, 500, "internal_error").await;
+    assert_bob_still_owns_supreme_arts(&world).await;
+}
+
+#[tokio::test]
+async fn a_revoke_racing_a_transfer_keeps_the_new_owner() {
+    let script = AccountsScript::default();
+    let world = den_world_with_scripted_accounts(&script).await;
+    supreme_arts_handed_to_a_stale_bob(&world, &script).await;
+    let revocation = json!({ "user": adapter_mem::fixture::bob().to_string() });
+
+    let revoked = world
+        .alice
+        .delete(format!(
+            "{}/accounts/{}/members",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .json(&revocation)
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members is answered");
+
+    common::assert_problem(revoked, 500, "internal_error").await;
+    assert_bob_still_owns_supreme_arts(&world).await;
 }

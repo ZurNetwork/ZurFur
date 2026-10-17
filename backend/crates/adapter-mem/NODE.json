@@ -98,6 +98,11 @@
   ],
   "refs": [
     {
+      "page": 2162692,
+      "title": "Roles",
+      "governs": "src/lib.rs: the fake's Owner backstops: grant_role never grants Owner or changes the Owner's role, and a departure (revoke_role, leave) never removes the Owner, refusing before any write"
+    },
+    {
       "page": 3014657,
       "title": "Deletion of Commissions",
       "governs": "src/commission.rs: `commission_has_facts` stays `false` until a fact-minter registers a map here"
@@ -116,6 +121,11 @@
       "page": 24150017,
       "title": "Transactions as a capability — compile-enforced Unit of Work",
       "governs": "src/lib.rs + src/commission.rs: the stage/commit/rollback contract"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "src/lib.rs: create_invitation refuses an issuer who is not a member of the account, before any write; a departure revokes the member's pending invitations"
     },
     {
       "page": 27852802,

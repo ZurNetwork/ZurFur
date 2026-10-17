@@ -218,33 +218,34 @@ pub struct PgAccountWrites<'a> {
 }
 
 impl PgAccountWrites<'_> {
-    /// Settle a member's departure from `account` — shared by
-    /// [`leave`](AccountWrites::leave) and [`revoke_role`](AccountWrites::revoke_role).
-    /// Re-homes the member's children to their parent, deletes the membership,
-    /// and revokes their pending issued invitations. No-op if already gone.
+    /// Settle a member's departure, shared by [`leave`](AccountWrites::leave) and
+    /// [`revoke_role`](AccountWrites::revoke_role): locks the membership and refuses the
+    /// Owner before writing anything, else revokes pending issued invitations, re-homes
+    /// the children, deletes the membership, then re-homes once more. No-op if gone.
     async fn settle_member_departure(
         &mut self,
         user: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
         // No-op if the membership is already gone.
-        let Some(parent) =
+        let Some(departing) =
             sql::departure_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?
         else {
             return Ok(());
         };
 
-        // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
-        sql::departure_rehome_children(
-            &mut *self.conn,
-            parent.as_deref(),
-            account.as_ref(),
-            user.as_ref(),
-        )
-        .await?;
+        // The locked read is the one Owner guard: nothing below re-checks it.
+        if matches!(Role::from_str(&departing.role)?, Role::Owner) {
+            let owner_departing = anyhow::anyhow!(
+                "the Owner never departs; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+            return Err(owner_departing);
+        }
 
-        sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?;
-
+        // Revoke before re-homing: an accept of one of these offers either loses to the
+        // revocation or commits first, and then the re-homing below sees its new seat.
         sql::departure_revoke_invitations(
             &mut *self.conn,
             <&'static str>::from(InvitationState::Revoked),
@@ -252,6 +253,27 @@ impl PgAccountWrites<'_> {
             account.as_ref(),
             user.as_ref(),
             <&'static str>::from(InvitationState::Pending),
+        )
+        .await?;
+
+        // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
+        sql::departure_rehome_children(
+            &mut *self.conn,
+            departing.parent.as_deref(),
+            account.as_ref(),
+            user.as_ref(),
+        )
+        .await?;
+
+        sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?;
+
+        // Read Committed: a new statement sees a child committed under this member while
+        // the first re-homing waited (their own parent departing at once), so re-home again.
+        sql::departure_rehome_children(
+            &mut *self.conn,
+            departing.parent.as_deref(),
+            account.as_ref(),
+            user.as_ref(),
         )
         .await?;
 
@@ -564,25 +586,42 @@ impl AccountWrites for PgAccountWrites<'_> {
     }
 
     /// Departure with the same store effects as [`leave`](AccountWrites::leave)
-    /// (the caller settles authority first). No-op on a non-member.
+    /// (the caller settles authority first). Refuses the Owner, writing nothing.
+    /// No-op on a non-member.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
-    /// Settles a member leaving: re-homes children, deletes the membership,
-    /// revokes pending issued invitations. Preconditions are the caller's.
+    /// Settles a member leaving: revokes pending issued invitations, re-homes
+    /// children, deletes the membership. Refuses the Owner, writing nothing;
+    /// every other precondition is the caller's.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         self.settle_member_departure(user, account).await
     }
 
-    /// Inserts the invitation, or — a partial unique index enforces at most one
-    /// pending offer per (account, invited user) — silently drops a duplicate.
-    /// Returns whichever offer now stands: the fresh insert, or the pending one
-    /// already on file.
+    /// Refuses, writing nothing, an inviter who isn't a member, key-share locking their
+    /// row; else inserts the invitation, or silently drops a duplicate pending offer
+    /// (a partial unique index allows one per account and invited user). Returns
+    /// whichever offer now stands: the fresh insert, or the pending one on file.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
+        let issuer = sql::invitation_issuer_membership(
+            &mut *self.conn,
+            invitation.account.as_ref(),
+            invitation.inviter.as_ref(),
+        )
+        .await?;
+        if issuer.is_none() {
+            let issuer_not_a_member = anyhow::anyhow!(
+                "an invitation's issuer must be a member; account {} user {}",
+                AsRef::<str>::as_ref(&invitation.account),
+                invitation.inviter.as_ref()
+            );
+            return Err(issuer_not_a_member);
+        }
+
         sql::create_invitation(
             &mut *self.conn,
             uuid::Uuid::from(invitation.id),
