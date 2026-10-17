@@ -1,4 +1,4 @@
-//! CI guard: `domain::elements` never imports `domain::ports`.
+//! CI guard: no domain crate's `elements` imports its `ports`.
 //!
 //! Elements are the pure domain vocabulary; ports are the traits adapters
 //! implement against that vocabulary. A `crate::ports` reference inside
@@ -18,13 +18,35 @@ const FORBIDDEN: &str = "ports";
 /// reason inline.
 const EXEMPT: &[&str] = &[];
 
-/// The files this guard scans: the `elements.rs` façade and every leaf under
-/// `src/elements/`, relative to this crate's `CARGO_MANIFEST_DIR`.
+/// The domain crates, as their folder names beside this crate's.
+const DOMAIN_CRATES: &[&str] = &[
+    "kernel",
+    "identity",
+    "workflow",
+    "gallery",
+    "moderation",
+    "domain",
+];
+
+/// The files this guard scans: in every domain crate that has them, the
+/// `src/elements.rs` façade and every leaf under `src/elements/`.
 fn scanned_files() -> Vec<PathBuf> {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let facade = src.join("elements.rs");
-    let mut files = rust_files(&src.join("elements"));
-    files.push(facade);
+    let crates = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crates folder")
+        .to_path_buf();
+    let mut files = Vec::new();
+    for name in DOMAIN_CRATES {
+        let src = crates.join(name).join("src");
+        let leaves = src.join("elements");
+        if leaves.is_dir() {
+            files.extend(rust_files(&leaves));
+        }
+        let facade = src.join("elements.rs");
+        if facade.is_file() {
+            files.push(facade);
+        }
+    }
     files
 }
 
