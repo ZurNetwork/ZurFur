@@ -1,8 +1,8 @@
 # cargo-deny configuration (ZMVP-143). Run locally with `cargo deny check`;
 # CI runs it via the `deny` job in .github/workflows/ci.yml. Lint levels:
 # deny = fails the check, warn = printed but non-blocking, allow = silent.
-# [sources] sets both unknown-source lints to deny, so a new registry or git
-# source fails the check until it is listed there.
+# [sources] sets both unknown-source lints to deny, so a registry or git
+# repository that Cargo.lock records fails the check until it is listed there.
 #
 # All 7 workspace crates set `publish = false`, which is what keys cargo-deny's
 # private-crate exemptions ([licenses.private] and [bans] allow-wildcard-paths);
@@ -103,8 +103,10 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
-# The whole source policy: a crate from any registry or git repository not
-# listed below fails the check. A new source fails until it is added here.
+# Every registry and git repository that Cargo.lock records must be listed
+# below, or the check fails. Source replacement in .cargo/config* (say,
+# `[source.crates-io] replace-with = ...`) still records crates.io in
+# Cargo.lock, so this check does not see it.
 unknown-registry = "deny"
 unknown-git = "deny"
 # crates.io, the only registry in use.
