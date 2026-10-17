@@ -8,14 +8,27 @@
 # jj makes many tiny working-copy snapshots with no commit ceremony. Gating once,
 # at push (the moment code reaches the remote and CI), is the right seam.
 #
-# Runs `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
-# --locked -- -D warnings`, the same commands as CI's fmt and clippy jobs, then
-# hands off to `jj git push`. Tests stay on CI, exactly as before.
+# In order: an argument guard, the migration-name check, `cargo fmt --all
+# --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+# (the same commands as CI's fmt and clippy jobs), the private-papers check,
+# then `jj git push`. The papers check runs last, right before the push, so a
+# bookmark another workspace moves while cargo runs is checked where the push
+# finds it. Tests stay on CI, exactly as before.
 #
-# The gate runs against the WORKING COPY: `cargo` reads the files on disk, which
-# are the content of `@`, which is what CI builds for the pushed commit. All
-# arguments are forwarded verbatim to `jj git push`, so `jj-push.sh -b <bookmark>`,
-# `--all`, `--dry-run`, etc. all work.
+# Arguments are NOT forwarded verbatim. The guard admits a whitelist of
+# `jj git push` options and refuses everything else (exit 2) before any check
+# or push runs: an option that changes which repo, operation or config jj
+# uses (`-R`, `--at-op`, `--config`, …) would let the push reach commits the
+# papers check never saw. `-c`/`--named` are admitted only for `@`. The push
+# always goes to origin, the remote the papers check measures against.
+#
+# The guard also builds the heads this push names: `@`, plus the bookmark of a
+# plain `-b NAME`, all bookmarks for a `-b` pattern, all bookmarks and all
+# tags for `--all`, `--tracked` or jj's default push (each of which pushes tags
+# as well as bookmarks), all tags for `-t`, and the commits `-r` resolves to. The
+# papers check covers what every commit not on origin that those heads reach
+# adds or changes. The cargo gate runs against the WORKING COPY: `cargo` reads
+# the files on disk, which are the content of `@`.
 #
 # Invoke directly (`scripts/jj-push.sh ...`) or via the `jj push` alias set in the
 # user's jj config. Reversible: delete this file + drop the alias to go back to
@@ -27,6 +40,116 @@ set -eu
 # answer; fall back to git (colocated repo) so the script also works pre-jj.
 ROOT=$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel)
 cd "$ROOT"
+
+# Argument guard: a whitelist of `jj git push` options; anything else is
+# refused before any check or push. It runs after the `cd`, so a revset given
+# to `-c`/`--named` resolves here exactly as `jj git push` will resolve it.
+refuse() {
+    echo "jj-push: refused: $*" >&2
+    exit 2
+}
+
+at_commit=""
+# only_at <option> <revset>: refuse unless the revset is exactly `@`'s commit.
+only_at() {
+    if [ -z "$at_commit" ]; then
+        at_commit=$(jj log -r @ --no-graph -T commit_id) || refuse "could not resolve \`@\`"
+    fi
+    resolved=$(jj --ignore-working-copy log -r "$2" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null) || resolved=""
+    if [ "$resolved" != "$at_commit" ]; then
+        refuse "\`$1 $2\`: jj push pushes \`-c\` only for \`@\`; bookmark the change and push the bookmark instead"
+    fi
+}
+
+# heads is the revset of what this push names; the papers check covers every
+# commit not on origin it reaches. `@` is always in it (it covers `-c @` and
+# `--named n=@`). default_push stays 1 while no option selects what to push,
+# which means jj's default push of tracked bookmarks and tags: all bookmarks
+# and all tags.
+heads="@"
+default_push=1
+
+# value <option> <value>: check one option's value and add what it names to
+# heads.
+value() {
+    case "$2" in
+        "" | -*) refuse "\`$1\` needs a value, got \`$2\`" ;;
+    esac
+    case "$1" in
+        -b | --bookmark)
+            default_push=0
+            # A plain name selects one bookmark; a `kind:` pattern or a glob
+            # metacharacter may select many, so the check takes all of them.
+            case "$2" in
+                *[!A-Za-z0-9._/+-]*) heads="$heads | bookmarks()" ;;
+                *) heads="$heads | bookmarks(exact:\"$2\")" ;;
+            esac
+            ;;
+        -r | --revision)
+            default_push=0
+            # Resolved to commit ids here rather than pasted into the revset,
+            # so the value cannot reshape the check's range.
+            ids=$(jj log -r "$2" --no-graph -T 'commit_id ++ "\n"') || refuse "\`$1 $2\`: not a revision jj can resolve"
+            for id in $ids; do
+                heads="$heads | $id"
+            done
+            ;;
+        -t | --tag)
+            default_push=0
+            heads="$heads | tags()"
+            ;;
+        --remote)
+            [ "$2" = origin ] || refuse "\`--remote $2\`: jj push pushes only to origin, the remote the papers check measures against"
+            remote_given=1
+            ;;
+        -c | --change)
+            default_push=0
+            only_at "$1" "$2"
+            ;;
+        --named)
+            default_push=0
+            case "$2" in
+                ?*=?*) only_at "$1" "${2#*=}" ;;
+                *) refuse "\`--named $2\`: expected NAME=REVISION" ;;
+            esac
+            ;;
+    esac
+}
+
+remote_given=0
+pending=""
+for arg do
+    if [ -n "$pending" ]; then
+        value "$pending" "$arg"
+        pending=""
+        continue
+    fi
+    case "$arg" in
+        -b | --bookmark | -r | --revision | -t | --tag | --color | --remote | -c | --change | --named)
+            pending="$arg"
+            ;;
+        --bookmark=* | --revision=* | --tag=* | --color=* | --remote=* | --change=* | --named=*)
+            value "${arg%%=*}" "${arg#*=}"
+            ;;
+        --all | --tracked)
+            default_push=0
+            heads="$heads | bookmarks() | tags()"
+            ;;
+        --deleted) default_push=0 ;;
+        --dry-run | --allow-empty-description | --allow-private | --allow-conflicts | --quiet | --no-pager | -h | --help) ;;
+        -[brtc]?*)
+            short=$(printf '%s' "$arg" | cut -c1-2)
+            rest=$(printf '%s' "$arg" | cut -c3- | command sed 's/^=//')
+            refuse "\`$arg\`: use \`$short $rest\`"
+            ;;
+        -*) refuse "\`$arg\` is not an option jj push forwards" ;;
+        *) refuse "stray argument \`$arg\`" ;;
+    esac
+done
+[ -z "$pending" ] || refuse "\`$pending\` needs a value"
+if [ "$default_push" = 1 ]; then
+    heads="$heads | bookmarks() | tags()"
+fi
 
 # Fast path: only spend time on cargo when this branch's diff over trunk actually
 # touches Rust-shaped files (mirrors the old hook's staged-file check). Fail-safe:
@@ -78,5 +201,27 @@ else
     echo "jj-push: no Rust-shaped changes over trunk — skipping fmt/clippy."
 fi
 
+# Private working papers never reach this public repo. The check looks at what
+# every commit not on origin that this push names (heads, from the guard)
+# adds or changes (`private-papers-check.sh --unpushed`), so it covers
+# whatever the push selects, not just `@`; a paper added in one commit and
+# deleted in the next is still caught. It runs last, after the cargo gate and
+# right before the push, so heads resolve to the targets that get pushed even
+# when another workspace moved a bookmark while cargo ran.
+echo "jj-push: private-papers-check --unpushed"
+sh scripts/private-papers-check.sh --unpushed "$heads" || {
+    status=$?
+    echo ""
+    if [ "$status" = 1 ]; then
+        echo "jj-push: commits this push names add or change private working papers — take the papers out of those commits, or push only bookmarks that do not reach them."
+    else
+        echo "jj-push: the private-papers check could not run — nothing was pushed."
+    fi
+    exit "$status"
+}
+
 echo "jj-push: gate green — pushing."
-exec jj git push "$@"
+if [ "$remote_given" = 1 ]; then
+    exec jj git push "$@"
+fi
+exec jj git push --remote origin "$@"

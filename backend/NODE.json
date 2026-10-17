@@ -55,6 +55,6 @@
     }
   ],
   "notes": [
-    "See also: memory `config-and-runtime`."
+    "See also: `.env.example` (every `ZURFUR_*` variable and `DATABASE_URL`) and `backend/config/{profile}.toml`."
   ]
 }

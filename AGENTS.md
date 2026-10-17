@@ -17,7 +17,6 @@ Dependency rule: adapters depend on domain, never the reverse; only `api` knows 
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets` must be clean before claiming a task done
 - `just dev` / `just up` / `just down` / `just db-shell` for the dev stack
 - `just migrate-add <name>` is the ONLY way to create a migration — never hand-write migration filenames
-- After changing any sqlx `query!` macro: run `cargo sqlx prepare` and include the `.sqlx/` changes
 
 ## Conventions
 
@@ -32,4 +31,4 @@ You handle mechanical, locally-verifiable work: doc comments, test scaffolding, 
 
 - Do NOT make design or domain decisions (entity modeling, naming, schemas, API shapes, invariants). If a task requires one, stop and report it as an open question instead of choosing.
 - Never push to `main`. Never commit unless explicitly asked.
-- Design truth lives in the design corpus — the sibling repo `ZurNetwork/zurfur-design`, checked out at `~/code/zurfur-design`, one Markdown page per file under `entities/ decisions/ project/ data-layer/ superseded/`. Match the topic in `docs/design-index.md`, then read `<id>-<slug>.md` in the corpus, or `rg` it. Work is tracked in Jira (project ZMVP): read-only via the `atl` CLI (see the `atlassian` skill), `atl issue ZMVP-N`. Never run `atl page` — Confluence is a frozen archive, not a source. Never guess a design decision: read the page, or say you couldn't resolve it.
+- Design truth lives in the design corpus — the sibling repo `ZurNetwork/zurfur-design`, checked out at `~/code/zurfur-design`, one Markdown page per file under `entities/ decisions/ project/ data-layer/ superseded/`. Match the topic in `docs/design-index.md`, then read `<id>-<slug>.md` in the corpus, or `rg` it. Tickets stopped on 2026-09-19; the old Jira project ZMVP stays readable for history (read-only, `atl issue ZMVP-N`). Never run `atl page` — Confluence is a frozen archive, not a source. Never guess a design decision: read the page, or say you couldn't resolve it.

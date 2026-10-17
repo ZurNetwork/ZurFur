@@ -28,3 +28,6 @@ WORKSHEET.md
 # Working papers (rulings, queue, handoffs, reviews, retros) live on the private
 # corpus repo's `understand` branch, checked out at the orchestrator's .understand/.
 /.understand/
+
+# Team working papers are private too; scripts/private-papers-check.sh fails if any is tracked.
+/.teams/

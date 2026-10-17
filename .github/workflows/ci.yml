@@ -274,6 +274,8 @@ jobs:
       - run: just tools-check --pins-only
       # The TOML files the `changes` job lets skip the Rust jobs still parse.
       - run: just toml-check
+      # No private working paper (rulings, queue, retros, releases) is tracked.
+      - run: just private-papers-check
 
   web:
     name: web

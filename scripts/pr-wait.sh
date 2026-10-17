@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Waits once for a PR's CI to finish and its Copilot review to land, then
-# prints a short verdict. Run it in the background instead of polling.
+# Waits once for a PR's CI to finish and its Copilot and CodeRabbit reviews to
+# land, then prints a short verdict. Run it in the background instead of polling.
 #
 #   scripts/pr-wait.sh <pr-number>
 #
@@ -8,17 +8,27 @@
 #        of jj's `origin` remote, so a jj workspace without .git works),
 #      PR_WAIT_COPILOT (0: don't wait for Copilot; default 1; a PR whose
 #        base isn't main never waits, since Copilot isn't requested there),
+#      PR_WAIT_CODERABBIT (0: don't wait for CodeRabbit; default 1; a PR whose
+#        base isn't main never waits for it either),
 #      PR_WAIT_INTERVAL (seconds between polls; default 30),
-#      PR_WAIT_TIMEOUT (minutes before giving up; default 45),
+#      PR_WAIT_TIMEOUT (minutes before giving up on CI, Copilot and CodeRabbit;
+#        default 45),
 #      PR_WAIT_MAX_ERRORS (GitHub read failures in a row before exit 3; default 3).
 #
-# Exit: 0 CI green and Copilot reviewed the head, 1 CI red, 2 timed out,
-# 3 usage or GitHub error, 4 CI green but Copilot unable to review the head
-# (its quota notice, say): re-request it later, or go on without it.
+# Exit: 0 CI green and Copilot and CodeRabbit reviewed the head, 1 CI red,
+# 2 timed out, 3 usage or GitHub error, 4 CI green but Copilot unable to
+# review the head (its quota notice, say): re-request it later, or go on
+# without it, 5 CI green but CodeRabbit didn't review the head (its "Review
+# skipped", a rate limit or a pause): tell the Engineer.
 # Copilot counts as done only once it has a review whose commit is the PR's
 # head; leaving the requested reviewers isn't enough, since that happens when
 # its review starts. A review whose body says Copilot was unable (or wasn't
 # able) to review is a notice, not a review.
+# CodeRabbit counts as done only once it has reviewed the head: a review by
+# coderabbitai[bot] whose commit is the head and whose body posts actionable
+# comments, or its summary comment saying the recent review, up to the head,
+# generated none. Its CodeRabbit status check alone isn't enough: it turns
+# success ("Review completed", even) on heads CodeRabbit skipped.
 set -uo pipefail
 
 if [ $# -ne 1 ] || ! [[ $1 =~ ^[0-9]+$ ]]; then
@@ -32,6 +42,8 @@ max_errors="${PR_WAIT_MAX_ERRORS:-3}"
 
 copilot_wait="${PR_WAIT_COPILOT:-1}"
 copilot_skip_reason="PR_WAIT_COPILOT=0"
+coderabbit_wait="${PR_WAIT_CODERABBIT:-1}"
+coderabbit_skip_reason="PR_WAIT_CODERABBIT=0"
 
 # detect_repo prints owner/name: PR_WAIT_REPO, else what gh reads from git,
 # else the GitHub URL of jj's `origin` remote (or its only remote).
@@ -67,15 +79,22 @@ head_sha() {
     gh pr view "$pr" -R "$repo" --json headRefOid --jq .headRefOid 2>/dev/null
 }
 
-# Copilot is requested only on PRs into main; a slice PR never gets a review.
-if [ "$copilot_wait" != 0 ]; then
+# Copilot is requested only on PRs into main, and only those wait for
+# CodeRabbit; a slice PR waits for neither.
+if [ "$copilot_wait" != 0 ] || [ "$coderabbit_wait" != 0 ]; then
     if ! base="$(gh pr view "$pr" -R "$repo" --json baseRefName --jq .baseRefName 2>/dev/null)" || [ -z "$base" ]; then
         echo "pr-wait: cannot read the base of PR #$pr in $repo" >&2
         exit 3
     fi
     if [ "$base" != main ]; then
-        copilot_wait=0
-        copilot_skip_reason="a PR into $base"
+        if [ "$copilot_wait" != 0 ]; then
+            copilot_wait=0
+            copilot_skip_reason="a PR into $base"
+        fi
+        if [ "$coderabbit_wait" != 0 ]; then
+            coderabbit_wait=0
+            coderabbit_skip_reason="a PR into $base"
+        fi
     fi
 fi
 
@@ -143,6 +162,135 @@ copilot_state() {
         END { print reviewed ? "reviewed" : notice ? "unavailable" : "waiting" }' <<<"$reviews"
 }
 
+# CodeRabbit is matched by its exact login: GitHub usernames can't hold "[",
+# so only the CodeRabbit App posts as coderabbitai[bot], while anyone can
+# comment on a public PR.
+
+# coderabbit_reviews prints one tab-separated line per CodeRabbit review that
+# posts actionable comments, oldest first: commit and the number posted. The
+# empty-body reviews it makes when it replies in a comment thread don't
+# count. Fails when GitHub can't be read.
+coderabbit_reviews() {
+    gh api "repos/$repo/pulls/$pr/reviews" --paginate \
+        --jq '.[] | select(.user.login == "coderabbitai[bot]")
+            | ((.body // "") | capture("Actionable comments posted: (?<n>[0-9]+)")) as $m
+            | [.commit_id, $m.n]
+            | @tsv' 2>/dev/null
+}
+
+# coderabbit_comments prints the bodies of CodeRabbit's issue comments, every
+# line prefixed with "|" and each body followed by a "--" line, so a reader
+# can tell where one comment ends. Fails when GitHub can't be read.
+coderabbit_comments() {
+    gh api "repos/$repo/issues/$pr/comments" --paginate \
+        --jq '.[] | select(.user.login == "coderabbitai[bot]")
+            | (((.body // "") | gsub("\r"; "") | split("\n") | .[] | "|" + .), "--")' 2>/dev/null
+}
+
+# coderabbit_status <sha> prints CodeRabbit's latest status on <sha>, tab-
+# separated: state and description; nothing when it has none. The combined
+# status endpoint drops the creator, so this reads the list, newest first.
+# Fails when GitHub can't be read.
+coderabbit_status() {
+    gh api "repos/$repo/commits/$1/statuses?per_page=100" \
+        --jq 'first(.[] | select(.context == "CodeRabbit" and .creator.login == "coderabbitai[bot]"))
+            | [.state, ((.description // "") | gsub("[\\t\\r\\n]+"; " "))]
+            | @tsv' 2>/dev/null
+}
+
+# coderabbit_summary <head> reads coderabbit_comments and prints, tab-
+# separated: 1 when a comment says the recent review, between some commit and
+# <head>, generated no actionable comments (else 0), and the reason of the
+# last "Review skipped" block (one line, at most 200 characters). Only text
+# outside CodeRabbit's "skip review", "review in progress" and other marked
+# blocks counts, since those name the head of a review that was skipped or
+# hasn't finished; the "summarize" marker opens no block. Each comment is read
+# on its own, so a block left open in one can't swallow another.
+coderabbit_summary() {
+    awk -v head="$1" '
+        function ends(s, t) { return length(s) >= length(t) && substr(s, length(s) - length(t) + 1) == t }
+        function end_comment() {
+            if (no_actionable && between) reviewed = 1
+            no_actionable = between = want_reason = 0
+            block = ""
+        }
+        BEGIN {
+            start = "<!-- This is an auto-generated comment: "
+            stop = "<!-- end of auto-generated comment: "
+        }
+        substr($0, 1, 1) != "|" { end_comment(); next }
+        {
+            line = substr($0, 2)
+            sub(/[ \t]+$/, "", line)
+            if ((i = index(line, start))) {
+                kind = substr(line, i + length(start))
+                if ((j = index(kind, " by coderabbit.ai -->")) && substr(kind, 1, j - 1) != "summarize")
+                    block = substr(kind, 1, j - 1)
+                next
+            }
+            if (index(line, stop)) {
+                block = ""
+                want_reason = 0
+                next
+            }
+            if (block == "skip review") {
+                if (want_reason) {
+                    s = line
+                    sub(/^[> \t]+/, "", s)
+                    gsub(/\t/, " ", s)
+                    if (s != "") {
+                        skip = substr(s, 1, 200)
+                        want_reason = 0
+                    }
+                }
+                if (index(line, "## Review skipped")) want_reason = 1
+                next
+            }
+            if (block != "") next
+            if (index(line, "No actionable comments were generated in the recent review")) no_actionable = 1
+            if (index(line, "between ") && (ends(line, " and " head) || ends(line, " and " head "."))) between = 1
+        }
+        END {
+            end_comment()
+            printf "%d\t%s\n", reviewed, skip
+        }'
+}
+
+# coderabbit_state <head> prints reviewed once CodeRabbit has reviewed
+# <head> (see the header), unreviewed when its status on <head> is there and
+# not pending but no review of <head> is, waiting until either, skipped when
+# not waited for, or error when GitHub can't be read. It saves what the
+# verdict needs under $state_dir: coderabbit-actionable (the number posted,
+# or "none"), coderabbit-status (state and description) and coderabbit-skip
+# (the "Review skipped" reason).
+coderabbit_state() {
+    local sha="$1" reviews comments status actionable summary
+    if [ "$coderabbit_wait" = 0 ]; then
+        echo skipped
+        return
+    fi
+    if ! reviews="$(coderabbit_reviews)" || ! comments="$(coderabbit_comments)" ||
+        ! status="$(coderabbit_status "$sha")"; then
+        echo error
+        return
+    fi
+    actionable="$(awk -F '\t' -v head="$sha" '$1 == head { n = $2 } END { print n }' <<<"$reviews")"
+    summary="$(coderabbit_summary "$sha" <<<"$comments")"
+    printf '%s\n' "$status" >"$state_dir/coderabbit-status"
+    printf '%s\n' "${summary#*$'\t'}" >"$state_dir/coderabbit-skip"
+    if [ -n "$actionable" ]; then
+        echo "$actionable" >"$state_dir/coderabbit-actionable"
+        echo reviewed
+    elif [ "${summary%%$'\t'*}" = 1 ]; then
+        echo none >"$state_dir/coderabbit-actionable"
+        echo reviewed
+    elif [ -n "$status" ] && [ "${status%%$'\t'*}" != pending ]; then
+        echo unreviewed
+    else
+        echo waiting
+    fi
+}
+
 # github_error <what> — exit 3 after max_errors failed reads in a row.
 errors=0
 github_error() {
@@ -159,21 +307,44 @@ if [ -z "$start_head" ]; then
     exit 3
 fi
 
-# wait_once polls until CI settles and Copilot has reviewed $start_head, or
-# the deadline passes; it leaves the last states in $ci and $copilot.
+# wait_once polls until CI settles and Copilot and CodeRabbit have reviewed
+# $start_head, or the deadline passes; it leaves the last states in $ci,
+# $copilot and $coderabbit.
+# CodeRabbit's status can turn success a few seconds before it edits its
+# summary comment with the review, and a "Review skipped" block from an
+# earlier head can stand until then; so a settled status with no review of
+# the head becomes final (unavailable) only on the second poll in a row, or
+# at the deadline. The count starts afresh for each head.
 wait_once() {
+    local unreviewed_polls=0
     ci="pending"
     copilot=waiting
+    coderabbit=waiting
     while :; do
         ci="$(ci_state)"
         copilot="$(copilot_state "$start_head")"
+        coderabbit="$(coderabbit_state "$start_head")"
+        case "$coderabbit" in
+            unreviewed)
+                unreviewed_polls=$((unreviewed_polls + 1))
+                if [ "$unreviewed_polls" -ge 2 ] || [ "$SECONDS" -ge "$deadline" ]; then
+                    coderabbit=unavailable
+                else
+                    coderabbit=waiting
+                fi
+                ;;
+            error) ;;
+            *) unreviewed_polls=0 ;;
+        esac
         if [ "$ci" = error ]; then
             github_error "the checks"
         elif [ "$copilot" = error ]; then
             github_error "the Copilot reviews"
+        elif [ "$coderabbit" = error ]; then
+            github_error "the CodeRabbit review"
         else
             errors=0
-            if [ "$ci" != "pending" ] && [ "$copilot" != waiting ]; then
+            if [ "$ci" != "pending" ] && [ "$copilot" != waiting ] && [ "$coderabbit" != waiting ]; then
                 return
             fi
         fi
@@ -261,11 +432,49 @@ case "$copilot" in
         ;;
 esac
 
+case "$coderabbit" in
+    skipped)
+        echo "CodeRabbit: not waited for ($coderabbit_skip_reason)"
+        ;;
+    error)
+        echo "CodeRabbit: could not read the review"
+        exit 3
+        ;;
+    reviewed)
+        actionable="$(cat "$state_dir/coderabbit-actionable" 2>/dev/null)"
+        if [ "$actionable" = none ]; then
+            echo "CodeRabbit: reviewed ${end_head:0:7}, no actionable comments"
+        else
+            echo "CodeRabbit: reviewed ${end_head:0:7}, $actionable actionable comment(s)"
+        fi
+        ;;
+    *)
+        cr_state=""
+        cr_desc=""
+        IFS=$'\t' read -r cr_state cr_desc 2>/dev/null <"$state_dir/coderabbit-status"
+        cr_desc="${cr_desc:-$cr_state}"
+        if [ "$coderabbit" = unavailable ]; then
+            echo "CodeRabbit: no review of ${end_head:0:7} ($cr_desc)"
+            skip="$(cat "$state_dir/coderabbit-skip" 2>/dev/null)"
+            if [ -n "$skip" ]; then
+                echo "CodeRabbit: Review skipped: $skip"
+            fi
+        elif [ -n "${cr_state:-}" ]; then
+            echo "CodeRabbit: no review of ${end_head:0:7} by the timeout (status: $cr_desc)"
+        else
+            echo "CodeRabbit: no review of ${end_head:0:7} by the timeout (no CodeRabbit status yet)"
+        fi
+        ;;
+esac
+
 case "$ci" in
     green)
-        case "$copilot" in
-            waiting) exit 2 ;;
-            unavailable) exit 4 ;;
+        if [ "$copilot" = waiting ] || [ "$coderabbit" = waiting ]; then
+            exit 2
+        fi
+        case "$coderabbit:$copilot" in
+            unavailable:*) exit 5 ;;
+            *:unavailable) exit 4 ;;
             *) exit 0 ;;
         esac
         ;;
