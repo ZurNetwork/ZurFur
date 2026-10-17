@@ -352,7 +352,8 @@ describe('denPage: failures', () => {
 			code: 'unknown_parameter',
 			title: 'Bad request',
 			detail: 'Unknown parameter.',
-			status: 400
+			status: 400,
+			errors: []
 		};
 		const program = denPage(
 			'/den/accounts/did:plc:secretsecret',
@@ -371,7 +372,8 @@ describe('denPage: failures', () => {
 			code: 'not_authenticated',
 			title: 'Not authenticated',
 			detail: 'Sign in.',
-			status: 401
+			status: 401,
+			errors: []
 		};
 		const { layer } = denPort(() => Effect.fail(new NotAuthenticated({ problem })));
 		expect(await run(layer, '/den')).toEqual({ result: 'signedOut' });
@@ -383,7 +385,8 @@ describe('denPage: failures', () => {
 			code: 'rate_limited',
 			title: 'Slow down',
 			detail: 'Slow down.',
-			status: 429
+			status: 429,
+			errors: []
 		};
 		const data = pageData(await run(problemPort(problem).layer, '/den'));
 		expect(data.outcome).toEqual({ outcome: 'problem', problem });

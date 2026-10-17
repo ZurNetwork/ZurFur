@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isRenderableErrorStatus } from './problem';
+import { fieldPointer } from '$lib/types/brand';
+import { invalidFieldsProblem, isRenderableErrorStatus, type FieldError } from './problem';
 
 /**
  * Pins the one statement of the renderable error range at its edges — the
@@ -23,5 +24,27 @@ describe('isRenderableErrorStatus', () => {
 
 	it('rejects the proto3 absent-status decode (0)', () => {
 		expect(isRenderableErrorStatus(0)).toBe(false);
+	});
+});
+
+describe('invalidFieldsProblem', () => {
+	it("answers the backend's shape for refused fields", () => {
+		const titleError: FieldError = {
+			pointer: fieldPointer('#/title'),
+			code: 'name_empty',
+			detail: "This can't be blank."
+		};
+
+		const problem = invalidFieldsProblem([titleError]);
+
+		const expected = {
+			type: 'urn:zurfur:error:invalid-request',
+			code: 'invalid_request',
+			title: 'Invalid request',
+			detail: 'Some fields need changing; each one says why.',
+			status: 422,
+			errors: [titleError]
+		};
+		expect(problem).toEqual(expected);
 	});
 });

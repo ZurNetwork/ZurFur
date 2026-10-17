@@ -185,7 +185,8 @@ describe('DenPane', () => {
 			code: 'rate_limited',
 			title: 'Slow',
 			detail: 'Slow down.',
-			status: 429
+			status: 429,
+			errors: []
 		};
 		render(DenPane, { data: data({ outcome: 'problem', problem }) });
 		await expect.element(page.getByTestId('problem')).toHaveTextContent('Slow down.');

@@ -13,19 +13,26 @@ function isErrorStatus(status: number): status is ErrorStatus {
 }
 
 /**
- * The one way a backend `Problem` rides back to a page: as the superform's
- * status message, failing the request with the problem's own (renderable)
- * status. `renderableStatus` clamps to 400–599 at runtime, so the fallback
- * arm is unreachable; it exists because {@link isErrorStatus} proves the
- * range to the type system instead of asserting it. Keep every action on
- * this helper so the bridge lives (and is right) exactly once.
+ * The problem's own (renderable) status as superforms' `ErrorStatus`.
+ * `renderableStatus` clamps to 400–599 at runtime, so the fallback arm is
+ * unreachable; it exists because {@link isErrorStatus} proves the range to
+ * the type system instead of asserting it.
+ */
+export function formErrorStatus(problem: Problem): ErrorStatus {
+	const status = renderableStatus(problem);
+	return isErrorStatus(status) ? status : HttpStatus.InternalServerError;
+}
+
+/**
+ * The one way a backend `Problem` rides back to a page as a whole: as the
+ * superform's status message, failing the request with the problem's own
+ * (renderable) status. Keep every action on this helper (or on
+ * `problemOnFields`, for a problem that names fields) so the bridge lives
+ * (and is right) exactly once.
  */
 export function problemMessage<T extends Record<string, unknown>>(
 	form: SuperValidated<T>,
 	problem: Problem
 ) {
-	const status = renderableStatus(problem);
-	return message(form, problem, {
-		status: isErrorStatus(status) ? status : HttpStatus.InternalServerError
-	});
+	return message(form, problem, { status: formErrorStatus(problem) });
 }

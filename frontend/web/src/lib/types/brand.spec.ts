@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { accountId, did, handle, handleFromTrusted, pathSegment, pageToken } from './brand';
+import {
+	accountId,
+	did,
+	fieldPointer,
+	handle,
+	handleFromTrusted,
+	pathSegment,
+	pageToken
+} from './brand';
 import { HANDLE_MAX_LEN } from './handle-format';
 
 describe('handle (the validated mint)', () => {
@@ -63,5 +71,26 @@ describe('pageToken (validated mint)', () => {
 
 	it.each(['', 'a b', 'a\u0000b', 'é', 'a'.repeat(513)])('refuses %j', (raw) => {
 		expect(pageToken(raw)).toBeUndefined();
+	});
+});
+
+describe('fieldPointer (validated mint)', () => {
+	it.each(['#/title', '#/maturity/rating', '#/linkedChannel'])('accepts the pointer %s', (raw) => {
+		expect(fieldPointer(raw)).toBe(raw);
+	});
+
+	it.each(['/title', 'title', '#', '#/', '#//title', '#/title/', '#/linked_channel', ''])(
+		'refuses %j',
+		(raw) => {
+			expect(fieldPointer(raw)).toBeUndefined();
+		}
+	);
+
+	it('never throws, whatever it is given', () => {
+		const hostile = ['#/\u0000', '#/ title', '#/é', '#/a'.repeat(10_000), '\n#/title', '#/title\n'];
+		for (const raw of hostile) {
+			expect(() => fieldPointer(raw)).not.toThrow();
+			expect(fieldPointer(raw)).toBeUndefined();
+		}
 	});
 });

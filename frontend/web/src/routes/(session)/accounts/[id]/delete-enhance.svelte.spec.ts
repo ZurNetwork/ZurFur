@@ -47,7 +47,8 @@ const MAY_HAVE_DELETED: Problem = {
 	title: 'Service unavailable',
 	detail:
 		"Zurfur didn't answer in time. The Account may have been deleted: check your Accounts before you try again.",
-	status: 503
+	status: 503,
+	errors: []
 };
 
 /** The page inside a frame whose tree memory knows `~` and `accounts`, its `form` as given. */

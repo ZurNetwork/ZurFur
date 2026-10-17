@@ -10,9 +10,22 @@
  * Success bodies stay bare — a problem only ever arrives with an error status
  * and the `application/problem+json` content type. Clients branch on `code`
  * (the terse machine string), never on `type` (a non-dereferenceable
- * `urn:zurfur:error:*` URN naming the class).
+ * `urn:zurfur:error:*` URN naming the class). A problem that refuses request
+ * fields (a `422 invalid_request`) also lists them in `errors`, one
+ * {@link FieldError} per field; every other problem carries `errors: []`.
  */
 import { HttpStatus } from './http-status';
+import type { FieldPointer } from '$lib/types/brand';
+
+/** One request field the server refused: where it sits, the machine token for why, and the words a form shows. */
+export interface FieldError {
+	/** Where the field sits in the request body; `undefined` when the wire's pointer didn't parse. */
+	readonly pointer: FieldPointer | undefined;
+	/** The machine token for why, such as `name_empty`; clients branch on it. */
+	readonly code: string;
+	/** Plain words a form shows under the field. */
+	readonly detail: string;
+}
 
 export interface Problem {
 	type: string;
@@ -25,6 +38,8 @@ export interface Problem {
 	 */
 	detail: string;
 	status: number;
+	/** The request fields that were refused, one per field; empty on a problem that refuses none. */
+	readonly errors: readonly FieldError[];
 }
 
 /** The content type every backend problem response carries. */
@@ -66,7 +81,8 @@ export const FORBIDDEN_PROBLEM: Problem = {
 	...ProblemKind.Forbidden,
 	title: 'Forbidden',
 	detail: "You don't have permission to perform this action.",
-	status: HttpStatus.Forbidden
+	status: HttpStatus.Forbidden,
+	errors: []
 };
 
 /**
@@ -81,7 +97,8 @@ export const NOT_AUTHENTICATED_PROBLEM: Problem = {
 	...ProblemKind.NotAuthenticated,
 	title: 'Not authenticated',
 	detail: 'You must be signed in to do that.',
-	status: HttpStatus.Unauthorized
+	status: HttpStatus.Unauthorized,
+	errors: []
 };
 
 /**
@@ -98,7 +115,8 @@ export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
 	...ProblemKind.AccountNotFound,
 	title: 'Account not found',
 	detail: 'No such account.',
-	status: HttpStatus.NotFound
+	status: HttpStatus.NotFound,
+	errors: []
 };
 
 /**
@@ -111,7 +129,8 @@ export const NODE_NOT_FOUND_PROBLEM: Problem = {
 	...ProblemKind.NodeNotFound,
 	title: 'Not found',
 	detail: "This doesn't exist, or you can't open it.",
-	status: HttpStatus.NotFound
+	status: HttpStatus.NotFound,
+	errors: []
 };
 
 /**
@@ -133,7 +152,8 @@ export function invalidRequestProblem(detail: string): Problem {
 		...ProblemKind.InvalidRequest,
 		title: 'Invalid request',
 		detail,
-		status: HttpStatus.UnprocessableContent
+		status: HttpStatus.UnprocessableContent,
+		errors: []
 	};
 }
 
@@ -147,7 +167,24 @@ export function serviceUnavailableProblem(detail: string): Problem {
 		...ProblemKind.ServiceUnavailable,
 		title: 'Service unavailable',
 		detail,
-		status: HttpStatus.ServiceUnavailable
+		status: HttpStatus.ServiceUnavailable,
+		errors: []
+	};
+}
+
+/**
+ * Field-for-field the backend's own problem for refused request fields: an
+ * `invalid_request` 422 listing each field it refused. The tuple type keeps
+ * the list non-empty, as the backend's is. It is for the mock `ZurfurApi`
+ * Layer, to refuse a form's fields the way the backend would.
+ */
+export function invalidFieldsProblem(errors: readonly [FieldError, ...FieldError[]]): Problem {
+	return {
+		...ProblemKind.InvalidRequest,
+		title: 'Invalid request',
+		detail: 'Some fields need changing; each one says why.',
+		status: HttpStatus.UnprocessableContent,
+		errors
 	};
 }
 

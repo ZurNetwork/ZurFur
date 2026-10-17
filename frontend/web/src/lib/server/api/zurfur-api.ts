@@ -10,6 +10,7 @@ import {
 	create,
 	type DescMessage,
 	fromJson,
+	type JsonObject,
 	type JsonValue,
 	type MessageShape,
 	toJson
@@ -19,6 +20,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	type FieldError,
 	NODE_NOT_FOUND_PROBLEM,
 	PROBLEM_CONTENT_TYPE,
 	type Problem,
@@ -26,14 +28,17 @@ import {
 } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
-import { accountId, did, handleFromTrusted } from '$lib/types/brand';
+import { accountId, did, fieldPointer, handleFromTrusted } from '$lib/types/brand';
 import {
 	CreateAccountRequestSchema,
 	CreateAccountResponseSchema,
 	DeleteAccountResponseSchema,
 	ListAccountsResponseSchema
 } from './generated/zurfur/api/v1/account_pb';
-import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
+import {
+	type FieldError as WireFieldError,
+	ProblemSchema
+} from './generated/zurfur/api/v1/problem_pb';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
 import {
 	GetDenNodeResponseSchema,
@@ -216,6 +221,52 @@ function parsedBody(response: Response, path: string): Effect.Effect<JsonValue, 
 	});
 }
 
+/** A wire field error as the plain one; a pointer that doesn't parse becomes `undefined`. */
+function fieldErrorOf(item: WireFieldError): FieldError {
+	return { pointer: fieldPointer(item.pointer), code: item.code, detail: item.detail };
+}
+
+/**
+ * `body` decoded through the generated schema (the contract's one Problem
+ * declaration) and mapped to the plain interface, or `undefined` when it
+ * doesn't decode.
+ */
+function decodedProblem(body: JsonValue): Problem | undefined {
+	try {
+		const message = decodeContract(ProblemSchema, body);
+		return {
+			type: message.type,
+			code: message.code,
+			title: message.title,
+			detail: message.detail,
+			status: message.status,
+			errors: message.errors.map(fieldErrorOf)
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether `value` is a JSON object (not an array, not a scalar). */
+function isJsonObject(value: JsonValue): value is JsonObject {
+	return value instanceof Object && !Array.isArray(value);
+}
+
+/**
+ * The problem in `body`, or `undefined` when it isn't one. As RFC 9457 §3.1
+ * asks, an `errors` member of the wrong type is ignored, as if it weren't
+ * there: the problem keeps its code and detail with `errors: []`.
+ */
+function problemOf(body: JsonValue): Problem | undefined {
+	const decoded = decodedProblem(body);
+	if (decoded !== undefined) return decoded;
+	if (!isJsonObject(body) || !('errors' in body)) return undefined;
+	const withoutErrors = Object.fromEntries(
+		Object.entries(body).filter(([member]) => member !== 'errors')
+	);
+	return decodedProblem(withoutErrors);
+}
+
 /**
  * Classify a non-2xx response by the error contract: `application/problem+json`
  * with a well-formed problem becomes `NotAuthenticated` (the session branch) or
@@ -236,26 +287,14 @@ function problemFailure(
 	const classified = (
 		body: JsonValue
 	): Effect.Effect<never, NotAuthenticated | ApiProblem | ContractViolation> => {
-		// Decode through the generated schema (ZMVP-162): the contract's one
-		// Problem declaration, mapped to the plain component-facing interface.
-		let problem: Problem;
-		try {
-			const message = decodeContract(ProblemSchema, body);
-			problem = {
-				type: message.type,
-				code: message.code,
-				title: message.title,
-				detail: message.detail,
-				status: message.status
-			};
-		} catch {
-			// Each failure arm keeps its own detail — "no problem body" (wrong
-			// content type), "unparsable body" (parsedBody's, propagated), and
-			// this one — so a ContractViolation says which contract promise broke.
+		const problem = problemOf(body);
+		// Each failure arm keeps its own detail — "no problem body" (wrong
+		// content type), "unparsable body" (parsedBody's, propagated), and
+		// this one — so a ContractViolation says which contract promise broke.
+		if (problem === undefined)
 			return Effect.fail(
 				new ContractViolation({ path, status: response.status, detail: 'malformed problem body' })
 			);
-		}
 		if (problem.code === ProblemKind.NotAuthenticated.code)
 			return Effect.fail(new NotAuthenticated({ problem }));
 		return Effect.fail(new ApiProblem({ problem }));
@@ -544,7 +583,8 @@ const anonymousProblem: Problem = {
 	...ProblemKind.NotAuthenticated,
 	title: 'not_authenticated',
 	detail: 'No signed-in visitor (test default).',
-	status: HttpStatus.Unauthorized
+	status: HttpStatus.Unauthorized,
+	errors: []
 };
 
 /** Anonymous-by-default stub behaviors for {@link zurfurApiTest}. */
