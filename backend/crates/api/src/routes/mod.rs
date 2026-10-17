@@ -2,7 +2,7 @@
 //! namespace → router). Each exposes
 //! a `*_router()`; a namespace boundary is also a policy boundary — the
 //! cookie surface is wrapped by [`require_first_party_origin`] (CSRF), while
-//! `health`/`wellknown` mount outside it.
+//! `health`/`wellknown` and the not-found fallback stay outside it.
 
 use axum::{
     extract::{Request, State},
@@ -39,11 +39,10 @@ const SEC_FETCH_SITE: &str = "sec-fetch-site";
 /// The one `Sec-Fetch-Site` value that vouches for a request with no `Origin`.
 const SAME_ORIGIN: &[u8] = b"same-origin";
 
-/// CSRF guard on the cookie surface: refuses a state-changing request, with
-/// `403 cross_origin` before its handler runs, unless its `Origin` is exactly
-/// `public_origin`, or it sends no `Origin` and `Sec-Fetch-Site: same-origin`.
-/// Only GET, HEAD and OPTIONS are exempt; no cookie-surface GET changes state
-/// but `/signin-callback`, which the browser-binding cookie guards.
+/// CSRF guard on the cookie surface: refuses a write (any method [`is_safe`]
+/// doesn't name), with `403 cross_origin` before its handler runs, unless its
+/// `Origin` is exactly `public_origin`, or it sends no `Origin` and
+/// `Sec-Fetch-Site: same-origin`.
 pub(crate) async fn require_first_party_origin(
     State(public_origin): State<BareOrigin>,
     request: Request,
@@ -55,8 +54,10 @@ pub(crate) async fn require_first_party_origin(
     next.run(request).await
 }
 
-/// Whether `method` is GET, HEAD or OPTIONS, exactly as sent: a lowercase
-/// `get` or an unknown method is a write.
+/// Whether `method` is GET, HEAD or OPTIONS, exactly as sent. That holds only
+/// while no cookie-surface GET changes the visitor's state but `/signin-callback`,
+/// the API grants no CORS (so a cross-origin OPTIONS carries no cookie), and a
+/// WebSocket upgrade on the cookie surface checks `Origin` itself.
 fn is_safe(method: &Method) -> bool {
     matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
 }

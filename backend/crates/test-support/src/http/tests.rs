@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     http::{HeaderMap, StatusCode},
-    routing::get,
+    routing::{get, post},
 };
 use domain::elements::did::Did;
 use tokio::sync::Notify;
@@ -57,21 +57,25 @@ async fn the_served_rig_runs_a_cut_request_to_its_end() {
         .expect("nothing is left running");
 }
 
+/// Every value of `headers`' `Origin` and `Sec-Fetch-Site`, one `name: value`
+/// line each.
+fn signal_lines(headers: &HeaderMap) -> String {
+    ["origin", "sec-fetch-site"]
+        .into_iter()
+        .flat_map(|name| {
+            headers
+                .get_all(name)
+                .iter()
+                .map(move |value| format!("{name}: {}\n", value.to_str().unwrap_or("?")))
+        })
+        .collect()
+}
+
 /// Serves a route echoing every value of the request's `Origin` and
 /// `Sec-Fetch-Site` headers, one `name: value` line each.
 async fn serve_signal_echo() -> Served {
     let builder = crate::runtime::mem(&Did::from("did:plc:rig-signal".to_string()));
-    let echo = |headers: HeaderMap| async move {
-        ["origin", "sec-fetch-site"]
-            .into_iter()
-            .flat_map(|name| {
-                headers
-                    .get_all(name)
-                    .iter()
-                    .map(move |value| format!("{name}: {}\n", value.to_str().unwrap_or("?")))
-            })
-            .collect::<String>()
-    };
+    let echo = |headers: HeaderMap| async move { signal_lines(&headers) };
     serve(builder, move |_runtime| {
         Router::new().route("/signal", get(echo))
     })
@@ -122,4 +126,32 @@ async fn a_request_header_replaces_the_client_default() {
         .expect("GET /signal");
     let sent = response.text().await.expect("the echo is text");
     assert_eq!(sent, "sec-fetch-site: cross-site\n");
+}
+
+#[tokio::test]
+async fn sign_in_sends_its_base_as_origin_on_the_signin_post() {
+    let recorded = Arc::new(Mutex::new(String::new()));
+    let record = {
+        let recorded = recorded.clone();
+        move |headers: HeaderMap| {
+            let recorded = recorded.clone();
+            async move {
+                *recorded.lock().expect("an unpoisoned record") = signal_lines(&headers);
+                StatusCode::SEE_OTHER
+            }
+        }
+    };
+    let builder = crate::runtime::mem(&Did::from("did:plc:rig-sign-in".to_string()));
+    let served = serve(builder, move |_runtime| {
+        Router::new()
+            .route("/signin", post(record))
+            .route("/signin-callback", get(|| async { StatusCode::SEE_OTHER }))
+    })
+    .await;
+
+    sign_in(&bare_client(), &served.base_url, "t.bsky.social").await;
+
+    let sent = recorded.lock().expect("an unpoisoned record").clone();
+    let expected = format!("origin: {}\n", served.base_url);
+    assert_eq!(sent, expected);
 }

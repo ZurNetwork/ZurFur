@@ -51,7 +51,7 @@
     },
     {
       "name": "src/http/tests.rs",
-      "role": "pins the served rig running a cut request to its end through the detach layer, and each client's first-party signal (same-origin fetch metadata, its Origin, none) with a per-request header replacing the default",
+      "role": "pins the served rig running a cut request to its end through the detach layer, and each client's first-party signal (same-origin fetch metadata, its Origin, none) with a per-request header replacing the default, and sign_in's POST /signin sending Origin: base",
       "node": false
     },
     {

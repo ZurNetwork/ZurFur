@@ -63,9 +63,9 @@ pub async fn serve_wrapped(
 }
 
 /// A cookie-keeping client that does not auto-follow redirects, so each hop
-/// in a multi-step flow is asserted on its own, and that sends
-/// `Sec-Fetch-Site: same-origin` on every request, as a browser's fetch from
-/// the app's own pages does.
+/// in a multi-step flow is asserted on its own. It sends
+/// `Sec-Fetch-Site: same-origin` on every request and no `Origin`, though a
+/// browser's same-origin write would send both.
 pub fn client() -> reqwest::Client {
     let sec_fetch_site = HeaderName::from_static("sec-fetch-site");
     first_party_client(sec_fetch_site, "same-origin")

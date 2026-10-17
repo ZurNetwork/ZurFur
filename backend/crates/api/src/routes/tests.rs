@@ -32,6 +32,7 @@ fn another_scheme_host_or_port_is_not_first_party() {
         "http://localhost:8080",
         "http://127.0.0.1:8081",
         "http://127.0.0.1:8080/",
+        "HTTP://127.0.0.1:8080",
     ] {
         assert!(!names_origin(origin.as_bytes(), &public_url()), "{origin}");
     }

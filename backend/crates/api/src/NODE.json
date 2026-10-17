@@ -35,7 +35,7 @@
     },
     {
       "name": "lib.rs",
-      "role": "app() composition + no-store header layer; ports/Config now shared via the composition crate",
+      "role": "app() composition + no-store header layer; the outer router's not-found fallback (a bare 404) sits outside the CSRF guard and no-store; ports/Config now shared via the composition crate",
       "node": false
     },
     {

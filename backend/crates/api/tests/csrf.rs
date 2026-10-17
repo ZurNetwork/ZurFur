@@ -1,17 +1,19 @@
 //! CSRF on the cookie surface. A state-changing request passes only with a
 //! first-party signal: an `Origin` equal to the configured origin, or no
 //! `Origin` and `Sec-Fetch-Site: same-origin`. Everything else — no signal at
-//! all, a foreign, `null` or empty `Origin`, any other fetch-metadata value —
+//! all, a foreign, `null` or empty `Origin`, a loopback neighbour's `Origin`,
+//! an `Origin` equal to a loopback `Host`, any other fetch-metadata value —
 //! is refused with `403 cross_origin` before the handler runs, in every
 //! environment. GET, HEAD and OPTIONS pass; `/health` and `/.well-known` sit
-//! outside the guard. Layers on top of the session cookie's `SameSite=Lax`.
+//! outside the guard, and a path no route matches is a bare `404` whatever
+//! its signal. Layers on top of the session cookie's `SameSite=Lax`.
 //! Same in-process fakes as the other api e2e tests, no database; the clients
 //! here are bare (no default signal), so each request carries exactly the
 //! signal it names.
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::{
     Method, RequestBuilder,
-    header::{HOST, ORIGIN},
+    header::{CACHE_CONTROL, HOST, ORIGIN},
 };
 use serde_json::json;
 use test_support::http::{Served, bare_client, serve, sign_in};
@@ -53,6 +55,18 @@ fn create_commission(client: &reqwest::Client, base: &str) -> RequestBuilder {
 /// `POST {base}/logout`.
 fn logout(client: &reqwest::Client, base: &str) -> RequestBuilder {
     client.post(format!("{base}/logout"))
+}
+
+/// The port `base` is served on.
+fn served_port(base: &str) -> u16 {
+    let (_, port) = base.rsplit_once(':').expect("a base URL with a port");
+    port.parse().expect("a port number")
+}
+
+/// A loopback port beside `base`'s own, never equal to it, even at 65535.
+fn neighbour_port(base: &str) -> u16 {
+    let port = served_port(base);
+    port.checked_add(1).unwrap_or(port - 1)
 }
 
 async fn assert_refused(request: RequestBuilder) {
@@ -287,5 +301,58 @@ async fn the_guard_does_not_wrap_health_or_well_known() {
             .await
             .expect("POST outside the cookie surface");
         assert_eq!(response.status(), 405, "{path} answers before any guard");
+    }
+}
+
+#[tokio::test]
+async fn a_loopback_neighbours_origin_is_refused() {
+    let served = served().await;
+    let base = served.base_url.as_str();
+    let client = bare_client();
+    let neighbour_origin = format!("http://127.0.0.1:{}", neighbour_port(base));
+
+    let signin_request = signin(&client, base).header(ORIGIN, neighbour_origin.as_str());
+    assert_refused(signin_request).await;
+    let account_request = found_account(&client, base).header(ORIGIN, neighbour_origin.as_str());
+    assert_refused(account_request).await;
+}
+
+#[tokio::test]
+async fn an_origin_equal_to_a_loopback_host_is_refused() {
+    let served = served().await;
+    let base = served.base_url.as_str();
+    let client = bare_client();
+    let loopback_host = format!("127.0.0.1:{}", neighbour_port(base));
+    let loopback_origin = format!("http://{loopback_host}");
+
+    let signin_request = signin(&client, base)
+        .header(HOST, loopback_host.as_str())
+        .header(ORIGIN, loopback_origin.as_str());
+    assert_refused(signin_request).await;
+    let account_request = found_account(&client, base)
+        .header(HOST, loopback_host.as_str())
+        .header(ORIGIN, loopback_origin.as_str());
+    assert_refused(account_request).await;
+}
+
+#[tokio::test]
+async fn a_path_no_route_matches_is_a_bare_404_whatever_its_signal() {
+    let served = served().await;
+    let base = served.base_url.as_str();
+    let client = bare_client();
+    let unmatched = format!("{base}/plugin/v1/x");
+
+    let unsignalled = client.post(&unmatched);
+    let foreign = client.post(&unmatched).header(ORIGIN, FOREIGN_ORIGIN);
+    for (signal, request) in [("no Origin", unsignalled), ("a foreign Origin", foreign)] {
+        let response = request.send().await.expect("POST /plugin/v1/x");
+        assert_eq!(response.status(), 404, "with {signal}");
+        let no_store = response.headers().get(CACHE_CONTROL);
+        assert!(
+            no_store.is_none(),
+            "with {signal}, outside the no-store layer"
+        );
+        let body = response.text().await.expect("a body");
+        assert_eq!(body, "", "with {signal}, an empty body");
     }
 }
