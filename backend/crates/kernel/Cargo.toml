@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+# The bottom of the domain crates: it depends on no other domain crate (`shared`
+# is allowed), and every other domain crate may depend on it.
+[dependencies]
+# DateTimeUtc, the one clock type.
+chrono = { workspace = true }
+# BlobId, a blob's content address.
+cid = { workspace = true }
+serde = { workspace = true }
+# Error enums derive Display/Error/From; the cause travels via source().
+thiserror = { workspace = true }
+# Newtype and enum derives; see the workspace notes on both.
+derive_more = { workspace = true }
+strum = { workspace = true }
+
+[dev-dependencies]
+# Property tests for the StringBuilder invariants.
+proptest = { workspace = true }

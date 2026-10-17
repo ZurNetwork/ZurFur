@@ -1,0 +1,90 @@
+{
+  "path": "backend/crates/identity/src",
+  "charted": "2026-10-17",
+  "short": "Identity elements and ports",
+  "is": "Two public modules: the identity nouns (elements) and the seams that store and resolve them (ports).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "A new port area adds a file under `ports/` rather than growing `mod.rs`.",
+    "Time is injected, never read from the ambient clock."
+  ],
+  "entry_points": [
+    "ports.rs (the identity ports, re-exported flat)"
+  ],
+  "fs": [
+    {
+      "name": "elements.rs",
+      "role": "module index for elements/, live entities vs stubs",
+      "node": false
+    },
+    {
+      "name": "elements/",
+      "role": "one entity/value-object cluster per file",
+      "node": true
+    },
+    {
+      "name": "lib.rs",
+      "role": "crate root: the module declarations",
+      "node": false
+    },
+    {
+      "name": "ports.rs",
+      "role": "module index for ports/, re-exports the port traits flat",
+      "node": false
+    },
+    {
+      "name": "ports/",
+      "role": "trait seams: account, user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, actor_identity, authenticator, public_records; errors.rs (HandleTaken, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "ports/errors.rs HandleTaken, ports/account.rs soft_delete/hard_delete, ports/identity.rs tombstone"
+    },
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability",
+      "governs": "ports/profile.rs ProfileCache — the cache-fill exception"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "ports/account.rs revoke_role"
+    },
+    {
+      "page": 26607618,
+      "title": "Handle Resolution for *.zurfur.app",
+      "governs": "ports/account.rs find_did_by_handle"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "ports/account.rs count_handle_changes_since/handle_reserved_for_other/change_handle; ports/identity.rs update_handle"
+    },
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table",
+      "governs": "ports/actor_identity.rs"
+    },
+    {
+      "page": 54427650,
+      "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
+      "governs": "ports/identity.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer — Use Cases, DTOs and Ports",
+      "governs": "ports/errors.rs ResolveError: terse Display that never echoes the input, the cause via #[source] (D8)"
+    }
+  ],
+  "notes": [
+    "Adapters: `adapter-pg` implements the private-store ports, `adapter-atproto` the public ones (`PublicRecords`, the real `DidMinter`), `adapter-mem` fakes both.",
+    "`DidOperations` is interface-only — no adapter implements it, and whether `tombstone`/`update_handle` migrate off `DidMinter` is an open Engineer ruling."
+  ]
+}
