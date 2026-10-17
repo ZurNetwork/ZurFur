@@ -201,15 +201,13 @@ async fn only_the_owner_may_change_the_handle() {
         .create(&account, &owner_membership)
         .await
         .expect("found host account");
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: account.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a member");
+    let my_seat = UserAccount {
+        user_id: me.id,
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&my_seat);
 
     common::assert_problem(
         change(&client, &base, account.id.as_ref(), "hijack.zurfur.app").await,

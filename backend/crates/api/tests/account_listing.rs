@@ -48,7 +48,7 @@ async fn seed_account(backend: &MemBackend, owner_did: &str, handle: &str) -> Ac
 
 // Role-based listing: GET /accounts returns every live account the caller
 // holds a role in — an account they FOUNDED (Owner) and one they only hold a
-// non-Owner role on via a grant (the accepted-invitation surface, ZMVP-20).
+// non-Owner role on, as an accepted invitation leaves it (ZMVP-20).
 #[tokio::test]
 async fn lists_every_live_account_the_caller_holds_a_role_in_with_that_role() {
     let did = "did:plc:lister";
@@ -80,18 +80,16 @@ async fn lists_every_live_account_the_caller_holds_a_role_in_with_that_role() {
     let founded: serde_json::Value = res.json().await.expect("json body");
     let owned_id = founded["id"].as_str().expect("id").to_string();
 
-    // Seed a SECOND account owned by someone else, then grant the signed-in
-    // caller a non-Owner role on it — the accepted-invitation shape (ZMVP-20).
+    // Seed a SECOND account owned by someone else, then seat the signed-in
+    // caller at a non-Owner role on it — the accepted-invitation shape (ZMVP-20).
     let granted = seed_account(&backend, "did:plc:someone-else", "granted.zurfur.app").await;
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: granted.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("grant member role");
+    let granted_seat = UserAccount {
+        user_id: me.id,
+        account_id: granted.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&granted_seat);
 
     // Seed a THIRD account the caller holds NO role in. This is the containment
     // case: without it, an implementation that listed every live account —
@@ -177,28 +175,24 @@ async fn excludes_a_soft_deleted_account_the_caller_holds_a_role_in() {
 
     // A live account the caller owns — must still show up.
     let live = seed_account(&backend, did, "live.zurfur.app").await;
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id.clone(),
-            account_id: live.id.clone(),
-            role: Role::Owner,
-            alias: None,
-        })
-        .await
-        .expect("seed live membership");
+    let live_seat = UserAccount {
+        user_id: me.id.clone(),
+        account_id: live.id.clone(),
+        role: Role::Owner,
+        alias: None,
+    };
+    backend.seed_member(&live_seat);
 
     // A second account the caller also holds a role on, then soft-deleted
     // through the real write path (never a bare-pool/backdoor mutation).
     let tombstoned = seed_account(&backend, "did:plc:tombstone-owner", "gone.zurfur.app").await;
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: tombstoned.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seed tombstoned membership");
+    let tombstoned_seat = UserAccount {
+        user_id: me.id,
+        account_id: tombstoned.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&tombstoned_seat);
     let mut uow = backend.database().begin().await.expect("begin");
     uow.accounts()
         .soft_delete(&tombstoned.id)
@@ -249,15 +243,13 @@ async fn a_members_role_alias_rides_along_when_set_and_is_absent_when_not() {
 
     // One account where the caller's role carries an alias, one where it doesn't.
     let aliased = seed_account(&backend, "did:plc:aliased-owner", "aliased.zurfur.app").await;
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id.clone(),
-            account_id: aliased.id.clone(),
-            role: Role::Manager,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a manager");
+    let aliased_seat = UserAccount {
+        user_id: me.id.clone(),
+        account_id: aliased.id.clone(),
+        role: Role::Manager,
+        alias: None,
+    };
+    backend.seed_member(&aliased_seat);
     backend.seed_role_alias(
         me.id.clone(),
         aliased.id.clone(),
@@ -265,15 +257,13 @@ async fn a_members_role_alias_rides_along_when_set_and_is_absent_when_not() {
     );
 
     let unaliased = seed_account(&backend, "did:plc:unaliased-owner", "unaliased.zurfur.app").await;
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: unaliased.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a member");
+    let unaliased_seat = UserAccount {
+        user_id: me.id,
+        account_id: unaliased.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&unaliased_seat);
 
     let res = client
         .get(format!("{base}/accounts"))

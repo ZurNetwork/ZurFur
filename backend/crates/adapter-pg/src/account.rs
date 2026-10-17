@@ -526,17 +526,40 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// Upserts the member's role; `parent` defaults to `NULL`, matching the
-    /// founder row from [`create`](PgAccountWrites::create).
+    /// Changes an existing non-Owner member's role, never to Owner. Refuses Owner
+    /// before any SQL; the `UPDATE` must touch exactly one row, so a non-member or
+    /// the Owner fails and writes nothing. Leaves alias, listing and parent alone.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
-        sql::grant_role(
+    async fn grant_role(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+        role: &Role,
+    ) -> anyhow::Result<()> {
+        if matches!(role, Role::Owner) {
+            anyhow::bail!(
+                "grant_role: ownership moves only by transfer; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+        }
+
+        // Zero rows: no membership, or the member is the Owner.
+        let updated = sql::grant_role(
             &mut *self.conn,
-            member.account_id.as_ref(),
-            member.user_id.as_ref(),
-            <&'static str>::from(&member.role),
+            account.as_ref(),
+            user.as_ref(),
+            <&'static str>::from(role),
+            <&'static str>::from(&Role::Owner),
         )
         .await?;
+        if updated != 1 {
+            anyhow::bail!(
+                "grant_role: user {} is not a non-Owner member of account {}; nothing changed",
+                user.as_ref(),
+                AsRef::<str>::as_ref(account)
+            );
+        }
         Ok(())
     }
 
@@ -608,8 +631,8 @@ impl AccountWrites for PgAccountWrites<'_> {
 
     /// Flips the invitation to Accepted and seats the member atomically. Errors
     /// (rolling back) if the offer is no longer pending. Seating is `ON CONFLICT
-    /// DO NOTHING`: an already-seated pair is a no-op and the existing role is
-    /// re-read rather than overwritten.
+    /// DO NOTHING`: a pair already seated by another invitation is a no-op, and
+    /// the existing role is re-read rather than overwritten.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn accept_invitation(
         &mut self,

@@ -360,7 +360,10 @@ impl MemBackend {
     /// through [`merge_log`].
     ///
     /// Not modeled: a same-key write-write conflict is last-writer-wins here,
-    /// where pg would serialize the second writer on a row lock.
+    /// where pg would serialize the second writer on a row lock. Concurrent
+    /// units can therefore undo the guards a write checked against its own
+    /// snapshot (a grant whose unit opened before a leave committed seats the
+    /// leaver again); this fake runs in dev and tests only.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),
@@ -687,9 +690,18 @@ impl MemBackend {
         MemProfileCache(self.clone()).put(profile).await
     }
 
-    /// Seat or replace a member's role (test seed).
-    pub async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
-        MemAccountWrites(self.clone()).grant_role(member).await
+    /// Seat `member` straight into the membership map, listed, replacing any entry
+    /// (test seed). Writes no User row. Panics only on a poisoned lock.
+    pub fn seed_member(&self, member: &UserAccount) {
+        let seeded = StoredMembership {
+            role: member.role.clone(),
+            alias: member.alias.clone(),
+            listed_on_profile: true,
+        };
+        self.memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .insert((member.account_id.clone(), member.user_id.clone()), seeded);
     }
 
     /// Seed a member's [`RoleAlias`] onto an already-seated membership
@@ -1477,24 +1489,36 @@ impl AccountWrites for MemAccountWrites {
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
-        // Upsert into the (account, user) -> role map. A role grant never
-        // clobbers a member's already-set alias.
-        let UserAccount {
-            user_id: user,
-            account_id,
-            role,
-            alias: _,
-        } = member;
+    async fn grant_role(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+        role: &Role,
+    ) -> anyhow::Result<()> {
+        if matches!(role, Role::Owner) {
+            anyhow::bail!(
+                "grant_role: ownership moves only by transfer; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+        }
         let mut memberships = self
             .0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert(
-            (account_id.clone(), user.clone()),
-            StoredMembership::listed(role.clone()),
-        );
+        // Only an existing non-Owner member's role changes; alias and listing stay.
+        let Some(stored) = memberships
+            .get_mut(&(account.clone(), user.clone()))
+            .filter(|stored| !matches!(stored.role, Role::Owner))
+        else {
+            anyhow::bail!(
+                "grant_role: user {} is not a non-Owner member of account {}; nothing changed",
+                user.as_ref(),
+                AsRef::<str>::as_ref(account)
+            );
+        };
+        stored.role = role.clone();
         Ok(())
     }
 
@@ -1602,7 +1626,7 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        // `or_insert_with` writes only when the pair is absent, so a re-seat
+        // `or_insert` writes only when the pair is absent, so a re-seat
         // leaves the existing role and listing choice untouched.
         let seated = StoredMembership {
             role: invitation.role.clone(),

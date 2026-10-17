@@ -100,12 +100,14 @@ pub mod account {
 
     /// `queries/account/accept_invitation_seat.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Seat the invited User at the offered role. If the pair is already seated (a
-    /// role granted through another path, e.g. `grant_role`, while this invitation
-    /// sat pending), `ON CONFLICT DO NOTHING` skips the insert and leaves the
-    /// existing row untouched rather than raising a primary-key violation; RETURNING
-    /// then yields no row, and the caller (`PgAccountWrites::accept_invitation`)
-    /// falls back to reading the already-persisted role.
+    /// Seat the invited User at the offered role. If the pair is already seated
+    /// (a narrow issue/accept race: this invitation passed its membership check,
+    /// another invitation for the pair was then accepted, and only then was this
+    /// one stored), `ON CONFLICT DO NOTHING` skips the insert and
+    /// leaves the existing row untouched rather than raising a primary-key
+    /// violation; RETURNING then yields no row, and the caller
+    /// (`PgAccountWrites::accept_invitation`) falls back to reading the
+    /// already-persisted role.
     pub async fn accept_invitation_seat(
         conn: impl sqlx::PgExecutor<'_>,
         account_id: &str,
@@ -404,16 +406,22 @@ pub mod account {
     }
 
     /// `queries/account/grant_role.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// role receives the member's new role; m_role guards that the member is not
+    /// the owner. An update, never an insert: a pair with no membership matches no
+    /// row, so a grant seats no one.
     pub async fn grant_role(
         conn: impl sqlx::PgExecutor<'_>,
         account_id: &str,
         user_id: &str,
         role: &str,
+        m_role: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/account/grant_role.sql"))
             .bind(account_id)
             .bind(user_id)
             .bind(role)
+            .bind(m_role)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -505,9 +513,9 @@ pub mod account {
     /// `queries/account/list_for_user.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Every LIVE account `$1` holds a role in, together with that role —
-    /// not owned-only: gaining a role is how a user joins an account on this
-    /// platform, so an accepted invitation belongs here exactly as a founded
-    /// account does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
+    /// not owned-only: an accepted invitation is how a user joins an account on
+    /// this platform, so that membership belongs here exactly as a founded account
+    /// does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
     /// `accounts.id` IS the DID, so the actor_identity join that used to
     /// recover one is gone.
     ///

@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -67,6 +67,16 @@
     {
       "name": "src/log_capture.rs",
       "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from",
+      "node": false
+    },
+    {
+      "name": "src/membership.rs",
+      "role": "seat_member — seats a member through the port: issue, create and accept an invitation, always listed",
+      "node": false
+    },
+    {
+      "name": "src/membership/tests.rs",
+      "role": "pins seat_member's seat as listed: the member's public profile shows the Account",
       "node": false
     },
     {

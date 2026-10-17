@@ -162,12 +162,19 @@ async fn revoke_role(pool: &PgPool, user: &UserId, account: &AccountId) {
     uow.commit().await.expect("commit");
 }
 
-/// Grant (seat or re-seat) a member's role directly, bypassing any invitation.
-async fn grant_role(pool: &PgPool, member: &UserAccount) {
+/// Change a member's role in one unit of work, committing it whatever the grant
+/// answers, so a refused grant is proven to leave nothing behind.
+async fn try_grant_role(
+    pool: &PgPool,
+    user: &UserId,
+    account: &AccountId,
+    role: &Role,
+) -> anyhow::Result<()> {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.accounts().grant_role(member).await.expect("grant_role");
+    let granted = uow.accounts().grant_role(user, account, role).await;
     uow.commit().await.expect("commit");
+    granted
 }
 
 /// Read an account by id off the pool-backed store.
@@ -542,54 +549,169 @@ async fn find_unknown_invitation_is_none() {
 
 // Bug guard — `account_members`'s PRIMARY KEY is `(account_id, user_id)`, and the
 // seat insert had no `ON CONFLICT` clause: accepting a still-pending invitation
-// for a pair that's ALREADY seated (granted a role through another path while the
-// offer sat pending) raised a PK violation and 500'd, leaving the invitation
-// permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING` makes the seat
-// a no-op that keeps the ORIGINAL membership row.
+// for a pair that's ALREADY seated (a narrow issue/accept race: this offer passed
+// its membership check, another invitation for the pair was then accepted, and
+// only then was this offer stored) raised a PK violation and 500'd, leaving the
+// invitation permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING`
+// makes the seat a no-op that keeps the ORIGINAL membership row: role, parent
+// and listing.
 #[tokio::test]
 async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
     let (pool, _container) = fresh_pool().await;
-    let (account, inviter, invitee) = invitation_fixture(&pool, "reseat").await;
+    let (account, owner, invitee) = invitation_fixture(&pool, "reseat").await;
+    let first_inviter = provision(&pool, "did:plc:pginviter2-reseat").await.id;
 
-    // The invitee is granted Admin directly, bypassing any invitation.
-    grant_role(
+    // The invitee is already seated as Admin, listed, under a second inviter.
+    seat_under(
         &pool,
-        &UserAccount {
-            account_id: account.id.clone(),
-            user_id: invitee.clone(),
-            role: Role::Admin,
-            alias: None,
-        },
+        &account.id,
+        &invitee,
+        &first_inviter,
+        Role::Admin,
+        true,
     )
     .await;
 
-    // A stale pending invitation (issued before the grant) offers only Member.
+    // A later invitation from the Owner offers only Member, unlisted.
     let invitation = Invitation::issue(
         account.id.clone(),
         invitee.clone(),
         Role::Member,
-        inviter,
+        owner,
         Utc::now(),
     );
     create_invitation(&pool, &invitation).await;
 
-    // Accepting it must not error, and must not downgrade the already-granted role.
+    // Accepting it must not error, and must not touch the existing row.
     let seated = accept_invitation(&pool, invitation, false).await;
     assert_eq!(
         seated.role,
         Role::Admin,
-        "the returned membership reflects the original grant, not the invitation's role"
+        "the returned membership reflects the original seat, not the invitation's role"
     );
     assert_eq!(
-        role_of(&pool, &invitee.clone(), &account.id).await,
+        role_of(&pool, &invitee, &account.id).await,
         Some(Role::Admin),
-        "the persisted membership still holds the original grant"
+        "the persisted membership still holds the original seat"
     );
     assert_eq!(
         parent_of(&pool, &account.id, &invitee).await,
+        Some(first_inviter),
+        "the parent stays the first inviter, not this invitation's inviter"
+    );
+    let public_view = list_for_user(&pool, &invitee, ListingScope::PublicProfile).await;
+    let public_ids: Vec<&AccountId> = public_view.iter().map(|row| &row.account.id).collect();
+    assert_eq!(
+        public_ids,
+        vec![&account.id],
+        "the membership is still listed: the unlisted accept changed nothing"
+    );
+}
+
+// --- A role grant changes an existing member's role and seats no one ---
+
+#[tokio::test]
+async fn grant_role_on_a_non_member_fails_and_seats_no_one() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, _owner, stranger) = invitation_fixture(&pool, "grantnone").await;
+
+    let refused = try_grant_role(&pool, &stranger, &account.id, &Role::Member)
+        .await
+        .expect_err("a grant to a non-member is refused");
+
+    assert!(
+        refused.to_string().contains("is not a non-Owner member"),
+        "unexpected refusal: {refused}"
+    );
+    assert_eq!(
+        role_of(&pool, &stranger, &account.id).await,
         None,
-        "the row is untouched entirely — parent stays NULL from the direct \
-         grant, not overwritten to this invitation's inviter"
+        "the refused grant seated no one, even after the unit committed"
+    );
+}
+
+#[tokio::test]
+async fn grant_role_never_grants_or_changes_an_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, owner, member) = invitation_fixture(&pool, "grantowner").await;
+    seat_under(&pool, &account.id, &member, &owner, Role::Member, true).await;
+
+    let owner_grant = try_grant_role(&pool, &member, &account.id, &Role::Owner)
+        .await
+        .expect_err("a grant never mints an Owner");
+    assert!(
+        owner_grant
+            .to_string()
+            .contains("ownership moves only by transfer"),
+        "unexpected refusal: {owner_grant}"
+    );
+    assert_eq!(
+        role_of(&pool, &member, &account.id).await,
+        Some(Role::Member),
+        "the member keeps their role"
+    );
+
+    let owner_change = try_grant_role(&pool, &owner, &account.id, &Role::Admin)
+        .await
+        .expect_err("a grant never changes the Owner's role");
+    assert!(
+        owner_change
+            .to_string()
+            .contains("is not a non-Owner member"),
+        "unexpected refusal: {owner_change}"
+    );
+    assert_eq!(
+        role_of(&pool, &owner, &account.id).await,
+        Some(Role::Owner),
+        "the Owner is still the Owner"
+    );
+}
+
+#[tokio::test]
+async fn grant_role_keeps_alias_and_listing() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, owner, member) = invitation_fixture(&pool, "grantkeeps").await;
+    seat_under(&pool, &account.id, &member, &owner, Role::Member, false).await;
+    sqlx::query("UPDATE account_members SET alias = $1 WHERE account_id = $2 AND user_id = $3")
+        .bind("Colourist")
+        .bind(account.id.as_ref())
+        .bind(member.as_ref())
+        .execute(&pool)
+        .await
+        .expect("seed the alias column directly");
+
+    // Twice: a repeat matches the row though its value is unchanged, so it is Ok too.
+    try_grant_role(&pool, &member, &account.id, &Role::Manager)
+        .await
+        .expect("the grant changes the member's role");
+    try_grant_role(&pool, &member, &account.id, &Role::Manager)
+        .await
+        .expect("re-granting the current role is idempotent");
+
+    assert_eq!(
+        role_of(&pool, &member, &account.id).await,
+        Some(Role::Manager),
+        "the member holds the new role"
+    );
+    let own_view = list_for_user(&pool, &member, ListingScope::SelfView).await;
+    let own_aliases: Vec<(&AccountId, Option<&RoleAlias>)> = own_view
+        .iter()
+        .map(|row| (&row.account.id, row.alias.as_ref()))
+        .collect();
+    let alias: RoleAlias = "Colourist".parse().expect("a valid alias");
+    let expected_aliases = vec![(&account.id, Some(&alias))];
+    assert_eq!(own_aliases, expected_aliases, "the alias is kept");
+    let public_view = list_for_user(&pool, &member, ListingScope::PublicProfile).await;
+    assert!(
+        public_view.is_empty(),
+        "the membership stays unlisted on the public profile"
+    );
+    // Pins today's behaviour: the grant leaves the parent alone. A later rule that
+    // makes the promoter the parent changes this assertion.
+    assert_eq!(
+        parent_of(&pool, &account.id, &member).await,
+        Some(owner),
+        "the parent is still the inviter"
     );
 }
 
@@ -610,18 +732,26 @@ async fn parent_of(pool: &PgPool, account: &AccountId, user: &UserId) -> Option<
     parent.map(|did| UserId::from(Did::from(did)))
 }
 
-/// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
-/// accepting an invitation — the only path that writes `account_members.parent`.
-async fn seat_under(pool: &PgPool, account: &AccountId, invited: &UserId, inviter: &UserId) {
+/// Seats `invited` at `role` under `inviter` (`parent = inviter`), with the given
+/// listing choice, by issuing and accepting an invitation — the only path that
+/// seats a member and writes `account_members.parent`.
+async fn seat_under(
+    pool: &PgPool,
+    account: &AccountId,
+    invited: &UserId,
+    inviter: &UserId,
+    role: Role,
+    listed: bool,
+) {
     let invitation = Invitation::issue(
         account.clone(),
         invited.clone(),
-        Role::Member,
+        role,
         inviter.clone(),
         Utc::now(),
     );
     create_invitation(pool, &invitation).await;
-    accept_invitation(pool, invitation, true).await;
+    accept_invitation(pool, invitation, listed).await;
 }
 
 // AC3 — when a leaving member has children in the role tree, those children re-home
@@ -643,9 +773,9 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A's parent is the Owner
-    seat_under(&pool, &account.id, &b.id, &a.id).await; // B's parent is A
-    seat_under(&pool, &account.id, &c.id, &a.id).await; // C's parent is A
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await; // A's parent is the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id, Role::Member, true).await; // B's parent is A
+    seat_under(&pool, &account.id, &c.id, &a.id, Role::Member, true).await; // C's parent is A
 
     leave(&pool, &a.id, &account.id).await; // A leaves
 
@@ -697,10 +827,10 @@ async fn leave_is_scoped_to_the_account_being_left() {
     create(&pool, &acct2, &m2).await;
 
     // A parents B in acct1 and D in acct2.
-    seat_under(&pool, &acct1.id, &a.id, &o1.id).await;
-    seat_under(&pool, &acct1.id, &b.id, &a.id).await;
-    seat_under(&pool, &acct2.id, &a.id, &o2.id).await;
-    seat_under(&pool, &acct2.id, &d.id, &a.id).await;
+    seat_under(&pool, &acct1.id, &a.id, &o1.id, Role::Member, true).await;
+    seat_under(&pool, &acct1.id, &b.id, &a.id, Role::Member, true).await;
+    seat_under(&pool, &acct2.id, &a.id, &o2.id, Role::Member, true).await;
+    seat_under(&pool, &acct2.id, &d.id, &a.id, Role::Member, true).await;
 
     leave(&pool, &a.id, &acct1.id).await; // A leaves acct1
 
@@ -739,7 +869,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await;
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await;
 
     // A (leaving) has a pending offer out to X; the Owner (staying) has one out to Y.
     let a_invites_x = Invitation::issue(
@@ -796,8 +926,8 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A under the Owner
-    seat_under(&pool, &account.id, &b.id, &a.id).await; // B under A
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await; // A under the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id, Role::Member, true).await; // B under A
 
     // A has a pending offer out to X.
     let a_invites_x = Invitation::issue(
@@ -956,7 +1086,7 @@ async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
     );
     create(&pool, &account, &membership).await;
     // Seat the heir as a Member under the Owner (parent = Owner) before the transfer.
-    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id, Role::Member, true).await;
 
     transfer_ownership(&pool, owner.id.clone(), heir.id.clone(), account.id.clone()).await;
 
@@ -1000,8 +1130,8 @@ async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &admin.id, &owner.id).await;
-    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
+    seat_under(&pool, &account.id, &admin.id, &owner.id, Role::Member, true).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id, Role::Member, true).await;
 
     // `admin` is not the Owner, so the store guard rejects the transfer.
     let db = PgDatabase::new(pool.clone());
@@ -1627,7 +1757,7 @@ async fn found_account(pool: &PgPool, owner: &UserId, tag: &str) -> Account {
 }
 
 // The listing is every live account the caller holds a role in — founded AND
-// granted alike (Engineer ruling 2026-07-24) — each row carrying the caller's
+// joined by invitation alike (Engineer ruling 2026-07-24) — each row carrying the caller's
 // OWN role, ordered by id. The stranger's account is the containment case: it
 // proves the `user_id` predicate scopes the query rather than merely decorating
 // it, which is the property ZMVP-17 rests on.
@@ -1643,13 +1773,15 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     // A second account someone else founded, on which the caller holds a
     // non-Owner role — the accepted-invitation shape (ZMVP-20).
     let joined = found_account(&pool, &stranger.id, "joined").await;
-    let seat = UserAccount {
-        user_id: caller.id.clone(),
-        account_id: joined.id.clone(),
-        role: Role::Member,
-        alias: None,
-    };
-    grant_role(&pool, &seat).await;
+    seat_under(
+        &pool,
+        &joined.id,
+        &caller.id,
+        &stranger.id,
+        Role::Member,
+        true,
+    )
+    .await;
 
     // A third the caller has nothing to do with: must never appear.
     let theirs = found_account(&pool, &stranger.id, "theirs").await;
@@ -1688,7 +1820,7 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     let joined_row = rows
         .iter()
         .find(|row| row.account.id == joined.id)
-        .expect("the granted-only account is listed too — not owned-only");
+        .expect("the joined account is listed too — not owned-only");
     assert_eq!(
         joined_row.role,
         Role::Member,
@@ -1703,10 +1835,9 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     assert_eq!(order, expected, "rows come back ascending by account id");
 }
 
-// A member's own [`RoleAlias`] round-trips through `grant_role` → `list_for_user`
-// once persisted: `grant_role` itself never sets it (there is no set-alias write
-// path yet, mirroring `grant_role.sql`, which only ever touches the `role`
-// column), so this reaches straight into the `account_members.alias` column with
+// A member's own [`RoleAlias`] round-trips through `list_for_user` once
+// persisted: no write path sets it yet (`grant_role.sql` only ever touches the
+// `role` column), so this reaches straight into the `account_members.alias` column with
 // a raw `UPDATE` — the pg-side mirror of `MemBackend::seed_role_alias`. Also
 // proves the unset case reads back `None`, not an empty string.
 #[tokio::test]
@@ -1855,13 +1986,7 @@ async fn the_deactivated_read_returns_a_soft_deleted_account_to_its_owner_only()
     let stranger = provision(&pool, "did:plc:deact-stranger").await;
     let live = found_owned(&pool, &owner.id, "live").await;
     let gone = found_owned(&pool, &owner.id, "gone").await;
-    let admin_membership = UserAccount {
-        user_id: admin.id.clone(),
-        account_id: gone.id.clone(),
-        role: Role::Admin,
-        alias: None,
-    };
-    grant_role(&pool, &admin_membership).await;
+    seat_under(&pool, &gone.id, &admin.id, &owner.id, Role::Admin, true).await;
     soft_delete(&pool, &gone.id).await;
 
     let owners = list_deactivated_for_owner(&pool, &owner.id).await;

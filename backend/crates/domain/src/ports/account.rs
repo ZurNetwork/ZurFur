@@ -98,9 +98,16 @@ pub trait AccountWrites: Send {
         at: DateTimeUtc,
     ) -> anyhow::Result<()>;
 
-    /// Set the role a user holds in an account, seating them if they aren't yet a
-    /// member — an upsert, since granting a role *is* how a user joins. Idempotent.
-    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()>;
+    /// Change the role of an existing member. Never seats anyone, never grants
+    /// Owner, never changes the Owner's role. Fails, writing nothing, when the pair
+    /// holds no membership, when the member is the Owner, or when `role` is Owner.
+    /// Idempotent for a member.
+    async fn grant_role(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+        role: &Role,
+    ) -> anyhow::Result<()>;
 
     /// Remove a user's membership: re-homes their role-tree children to their own
     /// parent, deletes the membership, and revokes the invitations they had issued,
