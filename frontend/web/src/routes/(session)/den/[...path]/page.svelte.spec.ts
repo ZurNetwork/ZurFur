@@ -29,7 +29,9 @@ const kit = vi.hoisted((): Kit => ({
 	asked: []
 }));
 
-vi.mock('$app/navigation', () => ({
+vi.mock('$app/navigation', async (importOriginal) => ({
+	// The rest of the module stays real: the "New commission" form's superForm imports it.
+	...(await importOriginal<typeof import('$app/navigation')>()),
 	afterNavigate: (callback: (navigation: { type: string }) => void) => {
 		kit.afterNavigate.push(callback);
 	},

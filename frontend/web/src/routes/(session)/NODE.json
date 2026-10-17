@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/routes/(session)",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The signed-in area behind the session gate",
   "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame (the My Den tree beside the pane), containing My Den (`den/`), the account screens and the logout action; its errors render inside the frame.",
   "type": "code",
@@ -42,7 +42,7 @@
     },
     {
       "name": "den/",
-      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port, and a page whose sixteen folder reads hang ending at the 15 s request deadline, counted from the request's start (the gate's /me included), through kit's real event.fetch. +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
+      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port, and a page whose sixteen folder reads hang ending at the 15 s request deadline, counted from the request's start (the gate's /me included), through kit's real event.fetch. +page.server.ts is the only code that reads the Den (through lib/server/den.ts, and lib/server/commissions.ts for its createCommission action: create, then a 303 to the new entry's link from the folder's listing, or to the folder; create-commission.server.spec.ts); on the viewer's own commissions folder the pane offers \"New commission\" (explorer/NewCommission.svelte, a dialog with the Title field; new-commission.svelte.spec.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
       "node": false
     },
     {

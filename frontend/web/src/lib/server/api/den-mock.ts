@@ -3,7 +3,8 @@
  * `accounts`, `characters` (Ember, Kael-sona), `commissions` (the commission
  * "Untitled") and `posts` — read the way the Den contract reads. Its
  * `accounts` folder comes from the mock's own account store, so founding or
- * deleting an Account on `/accounts` shows up here. A few HAND-MADE extras,
+ * deleting an Account on `/accounts` shows up here, and its `commissions`
+ * folder lists the commissions the mock created too. A few HAND-MADE extras,
  * marked below, cover what the seed can't produce: a card, an archived
  * commission, a deactivated Account, a folder with more than one page, a very
  * long name and a right-to-left name.
@@ -17,10 +18,24 @@ import {
 	NOT_AUTHENTICATED_PROBLEM
 } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
-import { commissionId, did } from '$lib/types/brand';
+import { commissionId, did, type CommissionId } from '$lib/types/brand';
 import type { SegmentPath } from '../path-builder';
 import type { DenQuery, DenRead, DenReadCrumb, DenReadNode, DenReadThing } from './den-read';
 import { ApiProblem, NotAuthenticated } from './errors';
+
+/** A commission the mock created: where it sits in `commissions`, its id and its title. */
+export interface MockCommission {
+	readonly segment: string;
+	readonly id: CommissionId;
+	readonly title: string;
+}
+
+/** What the mock Den is read from: who is signed in, their Accounts and the commissions created. */
+export interface MockDenWorld {
+	readonly session: Session | undefined;
+	readonly accounts: readonly AccountMembership[];
+	readonly commissions: readonly MockCommission[];
+}
 
 /** How many entries one page of a mock listing holds. */
 export const MOCK_PAGE_SIZE = 25;
@@ -126,6 +141,14 @@ function commissionMount(key: string, name: string, children: () => readonly Moc
 	};
 }
 
+/** A commission the mock created, mounted at its own segment and naming its own id. */
+function createdCommissionMount(commission: MockCommission): MockNode {
+	const mount = commissionMount(commission.segment, commission.title, () =>
+		commissionEntries([], [])
+	);
+	return { ...mount, thing: { thing: 'commission', id: commission.id } };
+}
+
 /** An open, empty slot. */
 function slot(key: string, name: string): MockNode {
 	return { ...systemFolder(key, 'commission.slot'), name };
@@ -224,8 +247,12 @@ const CHARACTERS: readonly MockNode[] = [
 	}
 ];
 
-/** The viewer's own root: the four system folders, `accounts` read from the store. */
-function denRoot(session: Session, accounts: readonly AccountMembership[]): MockNode {
+/** The viewer's own root: the four system folders, `accounts` and `commissions` read from the store. */
+function denRoot(
+	session: Session,
+	accounts: readonly AccountMembership[],
+	commissions: readonly MockCommission[]
+): MockNode {
 	const name = session.displayName ?? session.handle ?? session.did;
 	return {
 		...FOLDER,
@@ -240,6 +267,7 @@ function denRoot(session: Session, accounts: readonly AccountMembership[]): Mock
 			systemFolder('characters', 'user.characters', () => CHARACTERS),
 			systemFolder('commissions', 'user.commissions', () => [
 				UNTITLED,
+				...commissions.map(createdCommissionMount),
 				ARCHIVED_COMMISSION,
 				CARD_COMMISSION,
 				PAGED_COMMISSION,
@@ -306,12 +334,12 @@ function pageOffset(query: DenQuery): number | undefined {
  * the path; a soft-deleted entry is listed only with `includeDeleted`.
  */
 export function mockDenRead(
-	session: Session | undefined,
-	accounts: readonly AccountMembership[],
+	world: MockDenWorld,
 	path: SegmentPath,
 	query: DenQuery
 ): Effect.Effect<DenRead, NotAuthenticated | ApiProblem> {
 	return Effect.suspend((): Effect.Effect<DenRead, NotAuthenticated | ApiProblem> => {
+		const { session } = world;
 		if (session === undefined)
 			return Effect.fail(new NotAuthenticated({ problem: NOT_AUTHENTICATED_PROBLEM }));
 		const offset = pageOffset(query);
@@ -321,7 +349,7 @@ export function mockDenRead(
 		}
 		const notFound = Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
 
-		let node = denRoot(session, accounts);
+		let node = denRoot(session, world.accounts, world.commissions);
 		const crumbs: DenReadCrumb[] = [];
 		const walked: string[] = [];
 		for (const segment of path) {

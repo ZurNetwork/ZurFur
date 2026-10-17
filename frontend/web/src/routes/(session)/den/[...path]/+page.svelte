@@ -4,6 +4,7 @@
 	import { navigating } from '$app/state';
 	import type { DenEntry } from '$lib/api/den';
 	import DenPane from '$lib/components/explorer/DenPane.svelte';
+	import NewCommission from '$lib/components/explorer/NewCommission.svelte';
 	import { fetchListing } from '$lib/components/explorer/tree-loader';
 	import { treeMemoryFromContext } from '$lib/components/explorer/tree-memory.svelte';
 	import type { DenHref } from '$lib/types/brand';
@@ -17,7 +18,8 @@
 	 * after the page changed is dropped. Opening an item from the pane or the
 	 * path bar moves focus to the pane's heading; opening one from the tree
 	 * leaves focus in the tree. The title stays generic; a live region says
-	 * which item opened.
+	 * which item opened. The viewer's own `commissions` folder offers "New
+	 * commission".
 	 */
 	let { data }: { data: PageData } = $props();
 
@@ -157,5 +159,9 @@
 			void onMore(more);
 		}}
 		bind:heading
-	/>
+	>
+		{#snippet newCommission()}
+			<NewCommission form={data.createCommission} />
+		{/snippet}
+	</DenPane>
 </div>

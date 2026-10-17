@@ -28,13 +28,24 @@ import {
 } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
-import { accountId, did, fieldPointer, handleFromTrusted } from '$lib/types/brand';
+import {
+	accountId,
+	commissionId,
+	did,
+	fieldPointer,
+	handleFromTrusted,
+	type CommissionId
+} from '$lib/types/brand';
 import {
 	CreateAccountRequestSchema,
 	CreateAccountResponseSchema,
 	DeleteAccountResponseSchema,
 	ListAccountsResponseSchema
 } from './generated/zurfur/api/v1/account_pb';
+import {
+	CreateCommissionRequestSchema,
+	CreateCommissionResponseSchema
+} from './generated/zurfur/api/v1/commission_pb';
 import {
 	type FieldError as WireFieldError,
 	ProblemSchema
@@ -120,6 +131,13 @@ export interface ZurfurApiShape {
 		id: string
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
+	 * `POST /commissions` — create a commission the caller owns. A refused
+	 * title rejects with `invalid_request` (422) carrying its field errors.
+	 */
+	readonly createCommission: (
+		title: string
+	) => Effect.Effect<CreatedCommission, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
 	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
 	 * Fails `ApiProblem` `node_not_found` for every miss, `NotAuthenticated`
 	 * for an ended session; a failure names only the route template.
@@ -145,6 +163,12 @@ export interface BrowserBindingCookie {
 export interface StartedSignin {
 	readonly location: string;
 	readonly browserBinding: BrowserBindingCookie;
+}
+
+/** The commission `POST /commissions` created: its id and its title. */
+export interface CreatedCommission {
+	readonly id: CommissionId;
+	readonly title: string;
 }
 
 /** Every way a Den read fails. */
@@ -405,12 +429,12 @@ const liveSignout = (fetch: FetchFunction) =>
 	});
 
 /**
- * Any non-2xx account response, classified the shared way — 401
- * `not_authenticated` folds into `ApiProblem` too (unlike `me`, none of the
- * account calls has a distinct "am I signed in" branch for callers to key
+ * Any non-2xx account or commission response, classified the shared way —
+ * 401 `not_authenticated` folds into `ApiProblem` too (unlike `me`, none of
+ * these calls has a distinct "am I signed in" branch for callers to key
  * on; the session gate above these routes already owns that question).
  */
-function accountProblemFailure(
+function foldedProblemFailure(
 	response: Response,
 	path: string
 ): Effect.Effect<never, ApiProblem | ContractViolation> {
@@ -422,7 +446,7 @@ function accountProblemFailure(
 const liveListAccounts = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
 		const response = yield* backendFetch(fetch, '/accounts');
-		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		if (!response.ok) return yield* foldedProblemFailure(response, '/accounts');
 		const raw = yield* parsedBody(response, '/accounts');
 		return yield* Effect.try({
 			try: () => {
@@ -460,7 +484,7 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 			body: JSON.stringify(toJson(CreateAccountRequestSchema, request))
 		};
 		const response = yield* backendFetch(fetch, '/accounts', init);
-		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		if (!response.ok) return yield* foldedProblemFailure(response, '/accounts');
 		const raw = yield* parsedBody(response, '/accounts');
 		return yield* Effect.try({
 			try: () => {
@@ -500,7 +524,7 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 		const path = accountPath === undefined ? undefined : joinPath('/accounts', accountPath);
 		if (path === undefined) return yield* new ApiProblem({ problem: ACCOUNT_NOT_FOUND_PROBLEM });
 		const response = yield* backendFetch(fetch, path, { method: 'DELETE' });
-		if (!response.ok) return yield* accountProblemFailure(response, path);
+		if (!response.ok) return yield* foldedProblemFailure(response, path);
 		const raw = yield* parsedBody(response, path);
 		return yield* Effect.try({
 			try: () => {
@@ -514,6 +538,33 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 					detail: 'malformed delete outcome payload'
 				})
 		});
+	});
+
+/**
+ * `POST /commissions`, the request encoded through the generated schema. An
+ * answer whose id is empty, or that doesn't decode, is a `ContractViolation`.
+ */
+const liveCreateCommission = (fetch: FetchFunction, title: string) =>
+	Effect.gen(function* () {
+		const request = create(CreateCommissionRequestSchema, { title });
+		const init: BackendInit = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(CreateCommissionRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, '/commissions', init);
+		if (!response.ok) return yield* foldedProblemFailure(response, '/commissions');
+		const raw = yield* parsedBody(response, '/commissions');
+		const violation = (detail: string) =>
+			new ContractViolation({ path: '/commissions', status: response.status, detail });
+		const message = yield* Effect.try({
+			try: () => decodeContract(CreateCommissionResponseSchema, raw),
+			catch: () => violation('malformed created commission payload')
+		});
+		const id = commissionId(message.id);
+		if (id === undefined) return yield* violation('a created commission with no id');
+		const created: CreatedCommission = { id, title: message.title };
+		return created;
 	});
 
 /**
@@ -572,6 +623,7 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
 			deleteAccount: (id) => liveDeleteAccount(fetch, id),
+			createCommission: (title) => liveCreateCommission(fetch, title),
 			denRoot: (query) => liveDenRoot(fetch, query),
 			denNode: (path, query) => liveDenNode(fetch, path, query)
 		});
@@ -595,6 +647,7 @@ const anonymousDefaults: ZurfurApiShape = {
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	createCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };

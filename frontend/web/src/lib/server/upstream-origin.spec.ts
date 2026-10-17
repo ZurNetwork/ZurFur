@@ -119,6 +119,11 @@ const deleteAccount = () =>
 		Effect.flatMap(ZurfurApi, (api) => api.deleteAccount(ACCOUNT_ID)),
 		requestFetch(`/accounts/${ACCOUNT_ID}`, '/(session)/accounts/[id]')
 	);
+const createCommission = () =>
+	runLive(
+		Effect.flatMap(ZurfurApi, (api) => api.createCommission('Fox in the snow')),
+		requestFetch('/den/commissions', '/(session)/den/[...path]')
+	);
 /** No live PATCH exists yet: one sent through the same `event.fetch` and `handleFetch`. */
 const patchCommission = () =>
 	requestFetch('/den', '/(session)/den/[...path]')('/api/v1/commissions/c-1', {
@@ -135,6 +140,7 @@ describe("SvelteKit's server-side writes reach the API carrying the page's origi
 	it.each([
 		['startSignin', 'POST', '/signin', startSignin],
 		['createAccount', 'POST', '/accounts', createAccount],
+		['createCommission', 'POST', '/commissions', createCommission],
 		['a PATCH to /api/v1/...', 'PATCH', '/commissions/c-1', patchCommission],
 		['deleteAccount', 'DELETE', `/accounts/${ACCOUNT_ID}`, deleteAccount]
 	] as const)('%s (%s) arrives with origin set to the page’s', async (_, method, path, send) => {

@@ -6,7 +6,21 @@ import { denPage } from '../den';
 import { segmentPath } from '../path-builder';
 import type { DenRead, DenReadNode } from './den-read';
 import { createMockStore, zurfurApiMock, type MockStore } from './zurfur-api-mock';
-import { mockDenRead, MOCK_PAGE_SIZE } from './den-mock';
+import { ZurfurApi } from './zurfur-api';
+import { mockDenRead, MOCK_PAGE_SIZE, type MockDenWorld } from './den-mock';
+
+/** A mock Den world with nobody signed in. */
+const NOBODY: MockDenWorld = { session: undefined, accounts: [], commissions: [] };
+
+/** The first page, nothing deleted shown. */
+const PLAIN = { includeDeleted: false, pageToken: undefined };
+
+/** `segments` as a path the builder accepts, or a thrown test failure. */
+function segmentPathOf(segments: readonly string[]) {
+	const path = segmentPath(segments);
+	if (path === undefined) throw new Error('bad test path');
+	return path;
+}
 
 /** The fixture commission "Untitled". */
 const UNTITLED = '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90';
@@ -63,6 +77,30 @@ describe('the mock Den world', () => {
 		store.accounts.push(founded);
 
 		expect(names(await open('/den/accounts', store))).toEqual(["Alice's Studio", 'New Studio']);
+	});
+
+	it('lists a commission the mock created in commissions, naming its id', async () => {
+		const store = createMockStore();
+		const create = Effect.flatMap(ZurfurApi, (api) => api.createCommission('Fox in the snow'));
+		const created = await Effect.runPromise(create.pipe(Effect.provide(zurfurApiMock(store))));
+
+		const read = await Effect.runPromise(mockDenRead(store, segmentPathOf(['commissions']), PLAIN));
+
+		const row = rowWhere(rowsOf(read), (node) => node.name === 'Fox in the snow');
+		expect(row.access).toMatchObject({ thing: { thing: 'commission', id: created.id } });
+	});
+
+	it('mounts a store commission at its own segment, naming its own id', async () => {
+		const store = createMockStore();
+		const id = commissionId('c-0192f0c0');
+		if (id === undefined) throw new Error('bad test id');
+		store.commissions.push({ segment: 'fox-in-the-snow', id, title: 'Fox in the snow' });
+
+		const read = await Effect.runPromise(mockDenRead(store, segmentPathOf(['commissions']), PLAIN));
+
+		const row = rowWhere(rowsOf(read), (node) => node.name === 'Fox in the snow');
+		expect(row.segments).toEqual(['commissions', 'fox-in-the-snow']);
+		expect(row.access).toMatchObject({ thing: { thing: 'commission', id } });
 	});
 
 	it('keeps Ember and Kael-sona under characters, mounted', async () => {
@@ -188,7 +226,7 @@ describe('the hand-made extras', () => {
 describe('mockDenRead', () => {
 	it('answers not authenticated when nobody is signed in', async () => {
 		const failure = await Effect.runPromise(
-			Effect.flip(mockDenRead(undefined, [], [], { includeDeleted: false, pageToken: undefined }))
+			Effect.flip(mockDenRead(NOBODY, [], { includeDeleted: false, pageToken: undefined }))
 		);
 		expect(failure._tag).toBe('NotAuthenticated');
 	});
@@ -197,7 +235,7 @@ describe('mockDenRead', () => {
 		const store = createMockStore();
 		const token = pageToken('p1.999');
 		const read = await Effect.runPromise(
-			mockDenRead(store.session, store.accounts, [], { includeDeleted: false, pageToken: token })
+			mockDenRead(store, [], { includeDeleted: false, pageToken: token })
 		);
 		expect(read.content).toEqual({ content: 'listing', entries: [], nextPageToken: undefined });
 	});
@@ -209,7 +247,7 @@ async function readAt(segments: readonly string[]): Promise<DenRead> {
 	const path = segmentPath(segments);
 	if (path === undefined) throw new Error('bad test path');
 	const query = { includeDeleted: true, pageToken: undefined };
-	return Effect.runPromise(mockDenRead(store.session, store.accounts, path, query));
+	return Effect.runPromise(mockDenRead(store, path, query));
 }
 
 /** The entries of a listing read. */

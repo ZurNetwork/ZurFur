@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
 import { fetchStub, problemResponse, requestUrl, unreachableFetch } from '$lib/testing/http';
-import { fieldPointer, pageToken } from '$lib/types/brand';
+import { commissionId, fieldPointer, pageToken } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
 import type { DenQuery } from './den-read';
 import { ApiProblem, type ZurfurApiError } from './errors';
@@ -38,6 +38,8 @@ const listAccounts = Effect.flatMap(ZurfurApi, (api) => api.listAccounts);
 const createAccount = (name: string, handle: string) =>
 	Effect.flatMap(ZurfurApi, (api) => api.createAccount(name, handle));
 const deleteAccount = (id: string) => Effect.flatMap(ZurfurApi, (api) => api.deleteAccount(id));
+const createCommission = (title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
 
 const aliceWire = {
 	did: 'did:plc:alice',
@@ -329,6 +331,68 @@ describe('ZurfurApi problems: field errors (live)', () => {
 		]);
 		expect(failure._tag).toBe('ApiProblem');
 		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+});
+
+describe('ZurfurApi.createCommission (live)', () => {
+	/** The 201 the backend answers a create with. */
+	const createdWire = {
+		id: '0192f0c0-0000-7000-8000-00000000c0de',
+		title: 'Fox in the snow',
+		lifecycle: 'draft',
+		visibility: 'private',
+		createdAt: '2026-10-17T12:00:00Z'
+	};
+
+	it('posts {title} to /commissions and decodes the 201 into the created commission', async () => {
+		const sent: { method: string | undefined; body: unknown }[] = [];
+		const { fetch, calls } = fetchStub(() => Response.json(createdWire, { status: 201 }));
+		const spyingFetch: typeof fetch = async (input, init) => {
+			const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+			sent.push({ method: init?.method, body });
+			return fetch(input, init);
+		};
+
+		const created = await runLive(spyingFetch, createCommission('Fox in the snow'));
+
+		expect(calls).toEqual(['/api/v1/commissions']);
+		expect(sent).toEqual([{ method: 'POST', body: { title: 'Fox in the snow' } }]);
+		expect(created).toEqual({ id: commissionId(createdWire.id), title: 'Fox in the snow' });
+	});
+
+	it('fails a refused title as the problem with its field errors', async () => {
+		const body = refusedFields([
+			{ pointer: '#/title', code: 'name_empty', detail: "This can't be blank." }
+		]);
+		const { fetch } = fetchStub(() => problemResponseWith(422, body));
+
+		const failure = await runLive(fetch, failureOf(createCommission(' ')));
+
+		const expected = refusedFields([
+			{ pointer: fieldPointer('#/title'), code: 'name_empty', detail: "This can't be blank." }
+		]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+
+	it('fails an answer whose id is empty as a ContractViolation, never a commission', async () => {
+		const { fetch } = fetchStub(() => Response.json({ ...createdWire, id: '' }, { status: 201 }));
+
+		const failure = await runLive(fetch, failureOf(createCommission('Fox in the snow')));
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(
+			/\/commissions responded 201 — a created commission with no id/
+		);
+	});
+
+	it('fails an answer that does not decode as a ContractViolation', async () => {
+		const { fetch } = fetchStub(() => Response.json({ id: 7 }, { status: 201 }));
+
+		const failure = await runLive(fetch, failureOf(createCommission('Fox in the snow')));
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/malformed created commission payload/);
 	});
 });
 

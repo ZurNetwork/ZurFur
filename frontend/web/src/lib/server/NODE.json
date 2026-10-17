@@ -45,6 +45,11 @@
       "node": false
     },
     {
+      "name": "commissions.ts",
+      "role": "commission programs: createCommissionOutcome creates through the port, then lands on the new entry's link as the folder's listing gives it (found by the thing it names, over at most 4 pages), or on the folder when it isn't found; never a link built from the id; a create that isn't answered becomes a 503 problem saying it may have gone through",
+      "node": false
+    },
+    {
       "name": "cookies.ts",
       "role": "every cookie name Zurfur sets (closed SessionCookieName | SignInBindingCookieName) and cookieOptions, the one set/clear options helper; the backend ZurfurCookie's twin",
       "node": false
@@ -71,7 +76,7 @@
     },
     {
       "name": "forms/",
-      "role": "one Effect Schema per form (login, create-account, delete-account) over a shared handle field; problem-message.ts bridges a Problem onto the superform message; field-errors.ts (problemOnFields) puts a problem's field errors under the fields they name, any the form can't place as the form message",
+      "role": "one Effect Schema per form (login, create-account, delete-account, create-commission — the title as typed, no rule of its own) over a shared handle field; problem-message.ts bridges a Problem onto the superform message; field-errors.ts (problemOnFields) puts a problem's field errors under the fields they name, any the form can't place as the form message",
       "node": false
     },
     {

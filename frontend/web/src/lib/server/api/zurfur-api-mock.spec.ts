@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
 import { fetchStub } from '$lib/testing/http';
-import { handleFromTrusted } from '$lib/types/brand';
+import { fieldPointer, handleFromTrusted } from '$lib/types/brand';
 import { accountsOutcome, createAccountOutcome, deleteAccountOutcome } from '../accounts';
 import { optionalSession, signinOutcome, signoutOutcome } from '../session';
 import {
@@ -19,6 +19,10 @@ const DID_PLC_SHAPE = /^did:plc:[a-z2-7]{24}$/;
 function runOn<A, E>(store: MockStore, program: Effect.Effect<A, E, ZurfurApi>): Promise<A> {
 	return Effect.runPromise(program.pipe(Effect.provide(zurfurApiMock(store))));
 }
+
+/** The raw create call. */
+const createCommission = (title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
 
 /** The one raw `api.me` case this file keeps — {@link optionalSession} folds `NotAuthenticated` to `undefined`, so the tag itself is only observable below the outcome helper. */
 const me = Effect.gen(function* () {
@@ -143,6 +147,52 @@ describe('zurfurApiMock', () => {
 				status: 422
 			}
 		});
+	});
+
+	it('createCommission stores the created commission, its title trimmed', async () => {
+		const store = createMockStore();
+
+		const created = await runOn(store, createCommission('  Fox in the snow  '));
+
+		expect(created.title).toBe('Fox in the snow');
+		expect(store.commissions).toEqual([
+			{ segment: created.id, id: created.id, title: 'Fox in the snow' }
+		]);
+	});
+
+	it.each([
+		['a blank title', '', 'name_empty', "This can't be blank."],
+		['a title of spaces', '   ', 'name_empty', "This can't be blank."],
+		[
+			'a title holding U+202E',
+			'Fox\u202Ein the snow',
+			'name_invisible',
+			'Leave out invisible and direction-changing characters.'
+		]
+	])(
+		'createCommission refuses %s as invalid_request at #/title',
+		async (_, title, code, detail) => {
+			const store = createMockStore();
+
+			const failure = await runOn(store, Effect.flip(createCommission(title)));
+
+			expect(failure._tag).toBe('ApiProblem');
+			if (failure._tag !== 'ApiProblem') return;
+			expect(failure.problem.code).toBe('invalid_request');
+			expect(failure.problem.status).toBe(422);
+			expect(failure.problem.errors).toEqual([{ pointer: fieldPointer('#/title'), code, detail }]);
+			expect(store.commissions).toEqual([]);
+		}
+	);
+
+	it('createCommission fails not-authenticated when nobody is signed in', async () => {
+		const store = createMockStore();
+		store.session = undefined;
+
+		const failure = await runOn(store, Effect.flip(createCommission('Fox in the snow')));
+
+		expect(failure).toMatchObject({ problem: { code: 'not_authenticated' } });
+		expect(store.commissions).toEqual([]);
 	});
 
 	it('deleteAccount removes a known row and reports the outcome', async () => {

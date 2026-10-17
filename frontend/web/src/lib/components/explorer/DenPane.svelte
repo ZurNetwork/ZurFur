@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import type { CardEntry, DenBody, DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
 	import type { Problem } from '$lib/api/problem';
 	import ProblemNote from '$lib/components/ProblemNote.svelte';
@@ -16,7 +17,8 @@
 	 * link, a card, the one not-found, and an API problem. `busy` swaps the
 	 * entries for skeleton rows while the next item loads; `continuation`
 	 * carries the pages fetched in place after the first, with the link to
-	 * the one after them.
+	 * the one after them. `newCommission` shows under the header of the
+	 * viewer's own `commissions` folder, and nowhere else.
 	 */
 	let {
 		data,
@@ -24,6 +26,7 @@
 		continuation,
 		moreState = 'idle',
 		onMore,
+		newCommission,
 		heading = $bindable()
 	}: {
 		data: DenPageData;
@@ -32,6 +35,7 @@
 			{ readonly entries: readonly DenEntry[]; readonly more: DenHref | undefined } | undefined;
 		moreState?: 'idle' | 'loading' | 'failed';
 		onMore?: ((more: DenHref) => void) | undefined;
+		newCommission?: Snippet | undefined;
 		heading?: HTMLHeadingElement | undefined;
 	} = $props();
 
@@ -46,6 +50,9 @@
 				readonly root: boolean;
 				readonly body: PaneBody;
 		  };
+
+	/** The type of the viewer's own `commissions` folder, the one place a commission is created. */
+	const USER_COMMISSIONS = 'user.commissions';
 
 	/** What sits under an open node's header. */
 	type PaneBody =
@@ -108,6 +115,9 @@
 		<EmptyState message="You can see that this exists, but you can't open it." testid="den-card" />
 	{:else if view.pane === 'open'}
 		<NodeHeader node={view.node} root={view.root} bind:heading />
+		{#if view.node.type === USER_COMMISSIONS && newCommission !== undefined}
+			{@render newCommission()}
+		{/if}
 		{#if busy}
 			<Skeleton rows={4} />
 		{:else if view.body.body === 'entries'}
