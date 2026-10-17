@@ -13,3 +13,7 @@ identity = { path = "../identity" }
 workflow = { path = "../workflow" }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+# The guards read `cargo metadata`'s JSON.
+serde_json = { workspace = true }

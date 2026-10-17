@@ -4,6 +4,8 @@
 //! moderation and this façade) live in one binary here, so no consumer crate
 //! carries them.
 //!
-//! Filter as usual: `cargo test -p domain --test it elements_do_not_import_ports::`.
+//! Filter as usual: `cargo test -p domain --test it facade_paths::`.
 
+mod domain_crates_point_one_way;
 mod elements_do_not_import_ports;
+mod facade_paths;

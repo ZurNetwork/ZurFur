@@ -1606,6 +1606,7 @@ dependencies = [
  "async-trait",
  "identity",
  "kernel",
+ "serde_json",
  "workflow",
 ]
 
