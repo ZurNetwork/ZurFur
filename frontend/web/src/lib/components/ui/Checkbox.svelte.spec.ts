@@ -24,6 +24,28 @@ describe('Checkbox', () => {
 		await expect.element(box).toHaveAccessibleDescription('/den/accounts');
 	});
 
+	it('reads its note after its description, and shows it', async () => {
+		render(Checkbox, {
+			label: 'Page',
+			description: '/den/accounts',
+			note: 'This address can contain ids.'
+		});
+
+		const box = page.getByRole('checkbox', { name: 'Page' });
+		await expect
+			.element(box)
+			.toHaveAccessibleDescription('/den/accounts This address can contain ids.');
+		await expect.element(page.getByText('This address can contain ids.')).toBeVisible();
+	});
+
+	it('reads its note alone when it has no description', async () => {
+		render(Checkbox, { label: 'Page', note: 'This address can contain ids.' });
+
+		await expect
+			.element(page.getByRole('checkbox', { name: 'Page' }))
+			.toHaveAccessibleDescription('This address can contain ids.');
+	});
+
 	it('has no description when none is given', async () => {
 		render(Checkbox, { label: 'Include the page' });
 

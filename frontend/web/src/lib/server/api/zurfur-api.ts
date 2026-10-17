@@ -38,7 +38,9 @@ import type {
 	BugDescription,
 	BugPage,
 	BugVersion,
-	PageType
+	ErrorStatus,
+	PageType,
+	WindowSide
 } from '$lib/types/bug-report-rules';
 import {
 	CreateAccountRequestSchema,
@@ -156,8 +158,8 @@ export interface ZurfurApiShape {
 
 /** The browser window's size, each side 1 to 100000. */
 export interface BugWindow {
-	readonly width: number;
-	readonly height: number;
+	readonly width: WindowSide;
+	readonly height: WindowSide;
 }
 
 /** Which display preferences the browser matched. */
@@ -181,7 +183,7 @@ export interface BugReportFiling {
 	readonly window: BugWindow | undefined;
 	readonly display: BugDisplay | undefined;
 	/** The error page's HTTP status, 400 to 599. */
-	readonly errorStatus: number | undefined;
+	readonly errorStatus: ErrorStatus | undefined;
 }
 
 /**

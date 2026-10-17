@@ -24,15 +24,19 @@ import {
 	PAGE_TYPES,
 	parseBrowser,
 	parseDescription,
+	parseErrorStatus,
 	parsePage,
 	parsePageTypeField,
 	parseVersion,
+	parseWindowSide,
 	type BugBrowser,
 	type BugDescription,
 	type BugPage,
 	type BugVersion,
+	type ErrorStatus,
 	type FieldParse,
-	type OptionalFieldParse
+	type OptionalFieldParse,
+	type WindowSide
 } from '$lib/types/bug-report-rules';
 import type { BugReportFiling } from '../api/zurfur-api';
 import { judgePostedPage } from '../bug-report';
@@ -58,11 +62,24 @@ export function echoOf(posted: PostedBugReport): BugReportEcho {
 /** What the form is read against: the site's own origin and the web's own build. */
 export interface BugReportFormContext {
 	readonly firstParty: FirstPartyOrigin | undefined;
-	readonly buildId: string;
+	readonly buildId: BugVersion;
 }
 
-/** Why a field was refused, as the issue's message: the step after maps it to a failure kind. */
+/** Why a field was refused: the step after maps it to a failure kind. */
 type RefusalCode = 'empty' | 'tooLong' | 'hiddenCharacter' | 'notAnAddress' | 'refused';
+
+/**
+ * A parse issue that carries its {@link RefusalCode} as a value. The code is
+ * also its message, so nothing of the reporter's text ever rides in it.
+ */
+class FieldRefusal extends ParseResult.Type {
+	readonly code: RefusalCode;
+
+	constructor(ast: SchemaAST.AST, actual: unknown, code: RefusalCode) {
+		super(ast, actual, code);
+		this.code = code;
+	}
+}
 
 const POSTED_FIELD = Schema.optional(Schema.String);
 
@@ -115,7 +132,7 @@ function ifTicked<T>(box: string | undefined, value: () => T): T | undefined {
 }
 
 /** The ticked items of `posted`; the version, when ticked, is `buildId`, never anything posted. */
-function chosenItems(posted: typeof Posted.Type, buildId: string): ChosenItems {
+function chosenItems(posted: typeof Posted.Type, buildId: BugVersion): ChosenItems {
 	return {
 		description: posted.description ?? '',
 		page: ifTicked(posted.sendPage, () => posted.page ?? ''),
@@ -136,7 +153,7 @@ function chosenItems(posted: typeof Posted.Type, buildId: string): ChosenItems {
 }
 
 /** The tick-box step: decode only, a form is never encoded back. */
-function chooseItems(buildId: string) {
+function chooseItems(buildId: BugVersion) {
 	return Schema.transformOrFail(Posted, Chosen, {
 		strict: true,
 		decode: (posted) => ParseResult.succeed(chosenItems(posted, buildId)),
@@ -163,9 +180,9 @@ const Page = Schema.typeSchema(Schema.String.pipe(Schema.filter(acceptedAsIs(par
 const Version = Schema.typeSchema(Schema.String.pipe(Schema.filter(acceptedAsIs(parseVersion))));
 const Browser = Schema.typeSchema(Schema.String.pipe(Schema.filter(acceptedAsIs(parseBrowser))));
 
-/** A refusal of `actual` with `code` as its message. */
+/** A refusal of `actual` for `code`. */
 function refusal(ast: SchemaAST.AST, actual: unknown, code: RefusalCode) {
-	return ParseResult.fail(new ParseResult.Type(ast, actual, code));
+	return ParseResult.fail(new FieldRefusal(ast, actual, code));
 }
 
 /** The description: CR LF to LF, trimmed, then the description rule. */
@@ -243,28 +260,38 @@ const pageTypeField = optionalTextField(Schema.Literal(...PAGE_TYPES), parsePage
 const versionField = optionalTextField<BugVersion>(Version, parseVersion);
 const browserField = optionalTextField<BugBrowser>(Browser, parseBrowser);
 
-/** A whole number from `low` to `high`, written plainly in decimal (no sign, exponent or leading zero). */
-function boundedInteger(low: number, high: number) {
-	return Schema.transformOrFail(Schema.String, Schema.Int.pipe(Schema.between(low, high)), {
+/** A type guard from a number mint: `value` is the brand when the mint accepts it unchanged. */
+function mintedAsIs<T extends number>(
+	mint: (value: number) => T | undefined
+): (value: number) => value is T {
+	return (value): value is T => mint(value) === value;
+}
+
+const WindowSideValue = Schema.typeSchema(
+	Schema.Number.pipe(Schema.filter(mintedAsIs(parseWindowSide)))
+);
+const ErrorStatusValue = Schema.typeSchema(
+	Schema.Number.pipe(Schema.filter(mintedAsIs(parseErrorStatus)))
+);
+
+/** A whole number written plainly in decimal (no sign, exponent or leading zero), minted by `mint`. */
+function mintedInteger<T extends number>(
+	target: Schema.Schema<T>,
+	mint: (value: number) => T | undefined
+) {
+	return Schema.transformOrFail(Schema.String, target, {
 		strict: true,
-		decode: (text, _options, ast) =>
-			/^[1-9][0-9]{0,8}$/.test(text)
-				? ParseResult.succeed(Number(text))
-				: refusal(ast, text, 'refused'),
+		decode: (text, _options, ast) => {
+			const minted = /^[1-9][0-9]{0,8}$/.test(text) ? mint(Number(text)) : undefined;
+			return minted === undefined ? refusal(ast, text, 'refused') : ParseResult.succeed(minted);
+		},
 		encode: (value) => ParseResult.succeed(String(value))
 	});
 }
 
-const WINDOW_SIDE_MAX = 100_000;
-const ERROR_STATUS_MIN = 400;
-const ERROR_STATUS_MAX = 599;
+const windowSide = mintedInteger<WindowSide>(WindowSideValue, parseWindowSide);
 
-const windowField = Schema.UndefinedOr(
-	Schema.Struct({
-		width: boundedInteger(1, WINDOW_SIDE_MAX),
-		height: boundedInteger(1, WINDOW_SIDE_MAX)
-	})
-);
+const windowField = Schema.UndefinedOr(Schema.Struct({ width: windowSide, height: windowSide }));
 
 /** A display preference: exactly {@link DISPLAY_MATCHED} or {@link DISPLAY_UNMATCHED}. */
 const displayPreference = Schema.transformLiterals(
@@ -280,7 +307,9 @@ const displayField = Schema.UndefinedOr(
 	})
 );
 
-const errorStatusField = Schema.UndefinedOr(boundedInteger(ERROR_STATUS_MIN, ERROR_STATUS_MAX));
+const errorStatusField = Schema.UndefinedOr(
+	mintedInteger<ErrorStatus>(ErrorStatusValue, parseErrorStatus)
+);
 
 /** The chosen items, each parsed by its rule. */
 function parsedItems(firstParty: FirstPartyOrigin | undefined) {
@@ -306,12 +335,25 @@ export type BugReportFormRead =
 	| { readonly kind: 'filing'; readonly filing: BugReportFiling }
 	| { readonly kind: 'refused'; readonly refusal: BugReportRefusalKind };
 
-const REFUSAL_CODES: ReadonlyMap<string, RefusalCode> = new Map<string, RefusalCode>([
-	['empty', 'empty'],
-	['tooLong', 'tooLong'],
-	['hiddenCharacter', 'hiddenCharacter'],
-	['notAnAddress', 'notAnAddress']
-]);
+/** The reason of the first refusal inside `issue`; any other failure (a bad shape, say) is `refused`. */
+function refusalCodeOf(issue: ParseResult.ParseIssue): RefusalCode {
+	switch (issue._tag) {
+		case 'Pointer':
+		case 'Refinement':
+		case 'Transformation':
+			return refusalCodeOf(issue.issue);
+		case 'Composite': {
+			const first = 'length' in issue.issues ? issue.issues[0] : issue.issues;
+			return refusalCodeOf(first);
+		}
+		case 'Type':
+			return issue instanceof FieldRefusal ? issue.code : 'refused';
+		case 'Missing':
+		case 'Unexpected':
+		case 'Forbidden':
+			return 'refused';
+	}
+}
 
 /** The item an issue's path names, when it names one. */
 function itemOf(path: readonly PropertyKey[]): BugReportItem | undefined {
@@ -319,9 +361,8 @@ function itemOf(path: readonly PropertyKey[]): BugReportItem | undefined {
 	return BUG_REPORT_ITEMS.find((item) => item === head);
 }
 
-/** The failure kind for a refused `item`, from its issue's message. */
-function refusalKindOf(item: BugReportItem | undefined, message: string): BugReportRefusalKind {
-	const code = REFUSAL_CODES.get(message) ?? 'refused';
+/** The failure kind for a refused `item`, from its refusal `code`. */
+function refusalKindOf(item: BugReportItem | undefined, code: RefusalCode): BugReportRefusalKind {
 	switch (item) {
 		case 'description':
 			if (code === 'empty') return { kind: 'descriptionEmpty' };
@@ -353,6 +394,6 @@ export function readBugReportForm(
 	const decoded = Schema.decodeUnknownEither(bugReportForm(context), { errors: 'first' })(posted);
 	if (Either.isRight(decoded)) return { kind: 'filing', filing: decoded.right };
 	const [issue] = ParseResult.ArrayFormatter.formatErrorSync(decoded.left);
-	const refusalKind = refusalKindOf(itemOf(issue?.path ?? []), issue?.message ?? '');
+	const refusalKind = refusalKindOf(itemOf(issue?.path ?? []), refusalCodeOf(decoded.left.issue));
 	return { kind: 'refused', refusal: refusalKind };
 }

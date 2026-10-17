@@ -12,6 +12,7 @@ import {
 	snapshotOf
 } from './bug-report.svelte';
 import type { FrameSection } from './frame-section';
+import ReportBugButton from './ReportBugButton.svelte';
 import TopBar from './TopBar.svelte';
 
 const alice: Session = {
@@ -129,10 +130,71 @@ describe('ReportBugButton in the top bar', () => {
 		expect(followed.last).toBe(false);
 	});
 
+	it('on the report page with no text box (a report just sent), leaves the click to the browser for a full load', async () => {
+		const report = renderTopBar('report');
+
+		await link().click();
+
+		expect(followed.last).toBe(true);
+		await expect.element(link()).toHaveAttribute('data-sveltekit-reload');
+		expect(report.isOpen).toBe(false);
+	});
+
+	it('elsewhere, never asks for a full load', async () => {
+		renderTopBar('den');
+
+		await expect.element(link()).not.toHaveAttribute('data-sveltekit-reload');
+	});
+
 	it('is not in the top bar on a phone', async () => {
 		await page.viewport(320, 640);
 		renderTopBar('den');
 
 		await expect.element(link()).not.toBeVisible();
+	});
+});
+
+describe('ReportBugButton in the drawer, on the report page', () => {
+	/** The drawer's link, with a `closeFirst` that records it ran and answers ☰. */
+	function renderDrawerLink(): { closes: () => number } {
+		const menu = document.createElement('button');
+		document.body.append(menu);
+		added.push(menu);
+		const counter = { runs: 0 };
+		render(ReportBugButton, {
+			props: {
+				current: true,
+				closeFirst: () => {
+					counter.runs += 1;
+					return Promise.resolve(menu);
+				}
+			},
+			context: new Map([[BUG_REPORT_KEY, new BugReport(alice.did)]])
+		} as never);
+		return { closes: () => counter.runs };
+	}
+
+	it('closes the drawer, then focuses the page’s text box, the click kept', async () => {
+		const box = document.createElement('textarea');
+		box.id = REPORT_PAGE_DESCRIPTION_ID;
+		document.body.append(box);
+		added.push(box);
+		const drawer = renderDrawerLink();
+
+		await link().click();
+
+		expect(followed.last).toBe(false);
+		expect(drawer.closes()).toBe(1);
+		await expect.poll(() => document.activeElement).toBe(box);
+	});
+
+	it('with no text box (a report just sent), closes the drawer and leaves the click to the browser', async () => {
+		const drawer = renderDrawerLink();
+
+		await link().click();
+
+		expect(followed.last).toBe(true);
+		expect(drawer.closes()).toBe(1);
+		await expect.element(link()).toHaveAttribute('data-sveltekit-reload');
 	});
 });

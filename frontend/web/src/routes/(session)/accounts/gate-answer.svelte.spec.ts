@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { formStub } from '$lib/testing/superforms';
 import { did, handleFromTrusted } from '$lib/types/brand';
+import { UNKNOWN_BUILD_ID } from '$lib/types/bug-report-rules';
 
 /** Every action result the page hands SvelteKit to show, instead of rendering it. */
 const forms = vi.hoisted(() => ({ applied: [] as unknown[] }));
@@ -26,7 +27,7 @@ const data = {
 		displayName: 'Alice',
 		avatarUrl: undefined
 	},
-	buildId: 'unknown',
+	buildId: UNKNOWN_BUILD_ID,
 	testStack: 'none' as const,
 	accounts: [],
 	deleted: undefined,

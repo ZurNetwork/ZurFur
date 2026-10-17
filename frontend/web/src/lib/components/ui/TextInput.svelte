@@ -2,7 +2,8 @@
 	/**
 	 * A labelled text box, one line or several. Multi-line it is a textarea of
 	 * at least six rows; it never caps its length, so the caller's rule can say
-	 * why text is too long. An `error` marks it invalid and is read with it.
+	 * why text is too long. An `error` marks it invalid and is read with it;
+	 * `describedBy` names further elements read after the hint and the error.
 	 */
 	let {
 		value = $bindable(''),
@@ -13,6 +14,7 @@
 		required = false,
 		name,
 		id,
+		describedBy: moreDescriptions,
 		testid
 	}: {
 		value?: string;
@@ -23,6 +25,7 @@
 		required?: boolean;
 		name?: string | undefined;
 		id?: string | undefined;
+		describedBy?: string | undefined;
 		testid?: string | undefined;
 	} = $props();
 
@@ -31,11 +34,12 @@
 	const hintId = `${ownId}-hint`;
 	const errorId = `${ownId}-error`;
 
-	/** The hint and the error, whichever are shown, as the field's description. */
+	/** The hint, the error and any further descriptions, whichever are shown, as the field's description. */
 	const describedBy = $derived.by(() => {
 		const parts = [
 			...(hint === undefined ? [] : [hintId]),
-			...(error === undefined ? [] : [errorId])
+			...(error === undefined ? [] : [errorId]),
+			...(moreDescriptions === undefined ? [] : [moreDescriptions])
 		];
 		return parts.length === 0 ? undefined : parts.join(' ');
 	});

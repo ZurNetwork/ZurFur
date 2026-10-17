@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { render } from 'vitest-browser-svelte';
 import type { TestStack } from '$lib/api/bug-report';
 import type { Session } from '$lib/api/session';
-import { devalued, kitCalls as kit, resetKitCalls } from '$lib/testing/kit-client';
+import {
+	devalued,
+	kitCalls as kit,
+	resetKitCalls,
+	settleKitImports
+} from '$lib/testing/kit-client';
 import { denHref, did, handleFromTrusted } from '$lib/types/brand';
 import { BUG_REPORT_KEY, BugReport } from './bug-report.svelte';
 import ErrorView from './ErrorView.svelte';
@@ -117,11 +122,12 @@ function recordSubmits(): { settled: () => Promise<void> } {
 		EventTarget.prototype.addEventListener.call(this, type, recorded, options);
 	});
 	return {
-		/** Every submit run finished, then one macrotask more for anything it left queued. */
+		/** Every submit run finished, then the page's dynamic imports and one macrotask more for anything it left queued. */
 		settled: async () => {
 			expect(runs.length).toBeGreaterThan(0);
 			await Promise.all(runs);
 			await new Promise((done) => setTimeout(done, 0));
+			await settleKitImports();
 		}
 	};
 }
@@ -177,6 +183,21 @@ const tick = (name: string) => page.getByRole('checkbox', { name, exact: true })
 const sendButton = () => page.getByRole('button', { name: /^(Send report|Sending…)$/ });
 const statusRegion = () => page.getByTestId('report-status');
 
+const PAGE_NOTE = 'This address can contain the ids of your Accounts, characters and commissions.';
+const DISPLAY_NOTE = 'Helps with display bugs. These settings can say something about your needs.';
+
+/** The ids in `element`'s `aria-describedby`. */
+function describedByIds(element: Element): readonly string[] {
+	return (element.getAttribute('aria-describedby') ?? '').split(' ').filter((id) => id !== '');
+}
+
+/** Whether `inner` shows inside `outer`'s visible box. */
+function showsInside(inner: Element, outer: Element): boolean {
+	const innerBox = inner.getBoundingClientRect();
+	const outerBox = outer.getBoundingClientRect();
+	return innerBox.top >= outerBox.top && innerBox.bottom <= outerBox.bottom;
+}
+
 async function openDialog(): Promise<void> {
 	await link().click();
 	await expect.element(textBox()).toHaveFocus();
@@ -228,7 +249,9 @@ describe('ReportBugDialog: what is sent with the report', () => {
 		await openDialog();
 
 		await expect.element(tick('Page')).not.toBeChecked();
-		await expect.element(tick('Page')).toHaveAccessibleDescription('Not sent · /den/x');
+		await expect
+			.element(tick('Page'))
+			.toHaveAccessibleDescription(`Not sent · /den/x ${PAGE_NOTE}`);
 	});
 
 	it('ticks_reset_after_a_send', async () => {
@@ -269,6 +292,24 @@ describe('ReportBugDialog: what is sent with the report', () => {
 			.toHaveAccessibleDescription(navigator.userAgent);
 	});
 
+	it('reads each privacy note with its tick box, after the value', async () => {
+		renderFrame();
+		await openDialog();
+
+		await expect.element(tick('Page')).toHaveAccessibleDescription(`/den/x ${PAGE_NOTE}`);
+		await expect
+			.element(tick('Display settings'))
+			.toHaveAccessibleDescription(
+				/^Not sent · reduce motion (on|off) · more contrast (on|off) · forced colours (on|off) Helps with display bugs\. These settings can say something about your needs\.$/
+			);
+		await expect.element(page.getByText(PAGE_NOTE)).toBeVisible();
+		await expect.element(page.getByText(DISPLAY_NOTE)).toBeVisible();
+		const pageNoteId = page.getByText(PAGE_NOTE).element().id;
+		expect(pageNoteId).not.toBe('');
+		expect(describedByIds(tick('Page').element())).toContain(pageNoteId);
+		await expect.element(tick('Page type')).toHaveAccessibleDescription('My Den');
+	});
+
 	it('posts only the ticked items, under the shared field names', async () => {
 		const spy = answerWith(sentResponse());
 		renderFrame();
@@ -302,7 +343,9 @@ describe('ReportBugDialog: the page it reports', () => {
 		renderFrame();
 		await openDialog();
 
-		await expect.element(tick('Page')).toHaveAccessibleDescription('/den/x (showing archived)');
+		await expect
+			.element(tick('Page'))
+			.toHaveAccessibleDescription(`/den/x (showing archived) ${PAGE_NOTE}`);
 		await expect.element(dialog().getByText(/pageToken|includeDeleted/)).not.toBeInTheDocument();
 		await textBox().fill('It broke');
 		await sendButton().click();
@@ -325,7 +368,7 @@ describe('ReportBugDialog: the page it reports', () => {
 
 		await expect.element(textBox()).toHaveValue('Kept');
 		await expect.element(tick('Browser')).not.toBeChecked();
-		await expect.element(tick('Page')).toHaveAccessibleDescription('/accounts');
+		await expect.element(tick('Page')).toHaveAccessibleDescription(`/accounts ${PAGE_NOTE}`);
 		await expect.element(tick('Page type')).toHaveAccessibleDescription('Accounts');
 		await expect.element(tick('Window size')).toHaveAccessibleDescription('1000 × 700');
 	});
@@ -341,6 +384,26 @@ describe('ReportBugDialog: "What happened?"', () => {
 		await expect.element(page.getByTestId('report-count')).not.toBeInTheDocument();
 		await textBox().fill('😀'.repeat(3600));
 		await expect.element(page.getByTestId('report-count')).toHaveTextContent('3,600 / 4,000');
+	});
+
+	it('reads the count with the text box while it shows', async () => {
+		renderFrame();
+		await openDialog();
+		const hint = 'What did you do, what did you expect, and what happened instead?';
+
+		await expect.element(textBox()).toHaveAccessibleDescription(hint);
+		await textBox().fill('a'.repeat(3600));
+
+		const count = page.getByTestId('report-count');
+		await expect.element(count).toHaveTextContent('3,600 / 4,000');
+		const countId = count.element().id;
+		expect(countId).not.toBe('');
+		expect(describedByIds(textBox().element())).toContain(countId);
+		await expect.element(textBox()).toHaveAccessibleDescription(`${hint} 3,600 / 4,000`);
+
+		await textBox().fill('a'.repeat(3599));
+		await expect.element(count).not.toBeInTheDocument();
+		await expect.element(textBox()).toHaveAccessibleDescription(hint);
 	});
 
 	it('keeps the draft when closed, and gives focus back to the link', async () => {
@@ -371,6 +434,19 @@ describe('ReportBugDialog: "What happened?"', () => {
 });
 
 describe('ReportBugDialog: sending', () => {
+	it('puts "Send report" before "Cancel" in the footer, in the order of the page', async () => {
+		renderFrame();
+		await openDialog();
+
+		const send = sendButton().element();
+		const cancel = page.getByRole('button', { name: 'Cancel' }).element();
+
+		expect(send.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		const sendLeft = send.getBoundingClientRect().left;
+		const cancelLeft = cancel.getBoundingClientRect().left;
+		expect(sendLeft).toBeLessThan(cancelLeft);
+	});
+
 	it('has an empty polite live region before sending, then says "Report sent." and shows the reference', async () => {
 		answerWith(sentResponse());
 		renderFrame();
@@ -596,18 +672,6 @@ describe('ReportBugDialog: every answer the action gives', () => {
 		readonly text: string;
 	}[] = [
 		{
-			name: 'descriptionTooLong',
-			data: { kind: 'descriptionTooLong', ...echo },
-			status: 400,
-			text: 'Your text is longer than 4,000 characters. Please shorten it.'
-		},
-		{
-			name: 'hiddenCharacter in the description',
-			data: { kind: 'hiddenCharacter', item: 'description', ...echo },
-			status: 400,
-			text: 'Your text has a hidden formatting character. Please remove it.'
-		},
-		{
 			name: 'hiddenCharacter in the browser',
 			data: { kind: 'hiddenCharacter', item: 'browser', ...echo },
 			status: 400,
@@ -620,10 +684,10 @@ describe('ReportBugDialog: every answer the action gives', () => {
 			text: "Your page's address has a hidden character. Untick Page to send."
 		},
 		{
-			name: 'pageAddress',
+			name: 'pageAddress, with no box to paste into',
 			data: { kind: 'pageAddress', ...echo },
 			status: 400,
-			text: "Paste the page's address, or leave this empty."
+			text: "Page couldn't be sent. Untick Page to send."
 		},
 		{
 			name: 'itemRefused',
@@ -679,6 +743,70 @@ describe('ReportBugDialog: every answer the action gives', () => {
 		await expect.element(field).toHaveFocus();
 		await expect.element(tick('Page')).not.toBeChecked();
 	});
+
+	const fieldCases: readonly {
+		readonly name: string;
+		readonly data: Readonly<Record<string, string>>;
+		readonly text: string;
+	}[] = [
+		{
+			name: 'descriptionTooLong',
+			data: { kind: 'descriptionTooLong', ...echo },
+			text: 'Your text is longer than 4,000 characters. Please shorten it.'
+		},
+		{
+			name: 'hiddenCharacter in the description',
+			data: { kind: 'hiddenCharacter', item: 'description', ...echo },
+			text: 'Your text has a hidden formatting character. Please remove it.'
+		}
+	];
+
+	it.each(fieldCases)(
+		'failure $name: its message on "What happened?", focus moved there, the status region empty',
+		async ({ data, text }) => {
+			answerWith(failureResponse(data));
+			renderFrame();
+			await openDialog();
+			await textBox().fill('It broke');
+
+			await sendButton().click();
+
+			const field = textBox();
+			await expect.element(field).toHaveAttribute('aria-invalid', 'true');
+			const message = dialog().getByText(text);
+			await expect.element(message).toBeVisible();
+			expect(describedByIds(field.element())).toContain(message.element().id);
+			await expect.element(field).toHaveAccessibleDescription(new RegExp(`${text}$`));
+			await expect.element(field).toHaveFocus();
+			await expect.element(statusRegion()).toHaveTextContent('');
+			await expect.element(field).toHaveValue('It broke');
+		}
+	);
+
+	it.each([
+		{ name: 'the limit (429)', data: { kind: 'limit', ...echo }, status: 429 },
+		{ name: "couldn't send (502)", data: { kind: 'couldNotSend', ...echo }, status: 502 }
+	])(
+		'failure $name at 320 × 480: the message scrolled into the body’s view, focus left on "Send report"',
+		async ({ data, status }) => {
+			await page.viewport(320, 480);
+			answerWith(failureResponse(data, status));
+			renderFrame();
+			await openDialog();
+			await textBox().fill('It broke');
+			const body = dialog().element().querySelector('.dialog__body');
+			if (!(body instanceof HTMLElement)) throw new Error('the dialog has no body');
+			body.scrollTop = 0;
+
+			await sendButton().click();
+
+			await expect.element(statusRegion()).not.toHaveTextContent('');
+			const message = statusRegion().element();
+			await expect.poll(() => showsInside(message, body)).toBe(true);
+			expect(body.scrollTop).toBeGreaterThan(0);
+			expect(document.activeElement).toBe(sendButton().element());
+		}
+	);
 
 	it('error with status 503: "Couldn\'t send…", the text kept, the error never applied', async () => {
 		answerWith(

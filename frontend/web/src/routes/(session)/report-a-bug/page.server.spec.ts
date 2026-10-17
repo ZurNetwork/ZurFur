@@ -63,6 +63,8 @@ function referenceOf(raw: string): BugReference {
 const EMOJI = '😀';
 const RLO = String.fromCodePoint(0x202e);
 const CSI = String.fromCodePoint(0x9b);
+const LINE_SEPARATOR = String.fromCodePoint(0x2028);
+const PARAGRAPH_SEPARATOR = String.fromCodePoint(0x2029);
 
 /** Every bug-report call the port received, in order. */
 let filed: BugReportFiling[] = [];
@@ -274,6 +276,8 @@ describe('the report action: the page', () => {
 		'http://127.0.0.1:8080@evil.example/den',
 		'//evil.example/den',
 		'/\\evil.example/den',
+		'http://127.0.0.1:8080//evil.example/x',
+		'http://127.0.0.1:8080/\\evil.example/a',
 		'den/x',
 		'not an address'
 	])('refuses %j as "Which page?", keeping the text', async (posted) => {
@@ -377,7 +381,9 @@ describe('the report action: the description and hidden characters', () => {
 
 	it.each([
 		['U+202E', RLO],
-		['U+009B', CSI]
+		['U+009B', CSI],
+		['U+2028', LINE_SEPARATOR],
+		['U+2029', PARAGRAPH_SEPARATOR]
 	])('refuses %s in "Which page?"', async (_name, character) => {
 		const page = `/den/${character}x`;
 
@@ -398,13 +404,15 @@ describe('the report action: the description and hidden characters', () => {
 
 	it.each([
 		['U+202E', RLO],
-		['U+009B', CSI]
+		['U+009B', CSI],
+		['U+2028', LINE_SEPARATOR],
+		['U+2029', PARAGRAPH_SEPARATOR]
 	])('refuses %s in the browser text', async (_name, character) => {
 		const answer = answerOf(
 			await post([
 				[FIELD.description, 'Broken.'],
 				[FIELD.sendBrowser, TICKED],
-				[FIELD.browser, `Mozilla${character}`]
+				[FIELD.browser, `Mozilla${character}5`]
 			])
 		);
 

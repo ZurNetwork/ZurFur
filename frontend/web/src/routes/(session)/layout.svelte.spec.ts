@@ -7,6 +7,7 @@ import { createRawSnippet } from 'svelte';
 import type { DenPageData } from '$lib/api/den';
 import type { TestStack } from '$lib/api/bug-report';
 import { denHref, did, handleFromTrusted, type DenHref, type Did } from '$lib/types/brand';
+import { UNKNOWN_BUILD_ID } from '$lib/types/bug-report-rules';
 
 /** The callbacks the layout registered with `afterNavigate`, to fire as a navigation would. */
 interface Nav {
@@ -96,7 +97,7 @@ const session = {
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
 function renderLayout(testStack: TestStack = 'none') {
-	return render(Layout, { data: { session, buildId: 'unknown', testStack }, children });
+	return render(Layout, { data: { session, buildId: UNKNOWN_BUILD_ID, testStack }, children });
 }
 
 afterEach(() => {
@@ -196,12 +197,18 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.element(dialog).toBeVisible();
 		await expect
 			.element(dialog.getByRole('checkbox', { name: 'Page', exact: true }))
-			.toHaveAccessibleDescription('/accounts/acct-1');
+			.toHaveAccessibleDescription(
+				'/accounts/acct-1 This address can contain the ids of your Accounts, characters and commissions.'
+			);
 		await expect
 			.element(dialog.getByRole('checkbox', { name: 'Page type' }))
 			.toHaveAccessibleDescription('An Account');
 		await expect
-			.element(dialog.getByText('Sent as @alice.zurfur.app. Zurfur also records when it arrives.'))
+			.element(
+				dialog.getByText(
+					'Sent as @alice.zurfur.app. Zurfur also records when it arrives, and its own version.'
+				)
+			)
 			.toBeInTheDocument();
 	});
 
@@ -295,12 +302,15 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await page.getByTestId('report-bug-link').click();
 		await textBox.fill("Alice's draft");
 		await userEvent.keyboard('{Escape}');
-		await rerender({ data: { session, buildId: 'unknown', testStack: 'none' }, children });
+		await rerender({ data: { session, buildId: UNKNOWN_BUILD_ID, testStack: 'none' }, children });
 		await page.getByTestId('report-bug-link').click();
 		await expect.element(textBox).toHaveValue("Alice's draft");
 		await userEvent.keyboard('{Escape}');
 
-		await rerender({ data: { session: bob, buildId: 'unknown', testStack: 'none' }, children });
+		await rerender({
+			data: { session: bob, buildId: UNKNOWN_BUILD_ID, testStack: 'none' },
+			children
+		});
 		await page.getByTestId('report-bug-link').click();
 
 		await expect.element(textBox).toHaveValue('');
@@ -392,7 +402,10 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
 		for (const callback of nav.callbacks) callback();
-		await rerender({ data: { session: bob, buildId: 'unknown', testStack: 'none' }, children });
+		await rerender({
+			data: { session: bob, buildId: UNKNOWN_BUILD_ID, testStack: 'none' },
+			children
+		});
 		for (const callback of nav.callbacks) callback();
 
 		expect(trees.built.map((built) => built.owner)).toEqual([session.did]);

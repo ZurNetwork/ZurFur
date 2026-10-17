@@ -26,6 +26,18 @@ export function resetKitCalls(): void {
 	kitCalls.applied.length = 0;
 }
 
+/**
+ * Waits out what a page may have left in flight: a dynamic `import()` of
+ * `$app/navigation` or `$app/forms` that then calls `invalidateAll`. Awaits
+ * both imports, then one macrotask, so a fire-and-forget call has landed
+ * before a spec reads {@link kitCalls}.
+ */
+export async function settleKitImports(): Promise<void> {
+	await import('$app/navigation');
+	await import('$app/forms');
+	await new Promise((done) => setTimeout(done, 0));
+}
+
 /** A flat record of strings as devalue writes it: how SvelteKit sends an action's data. */
 export function devalued(record: Readonly<Record<string, string>>): string {
 	const keys = Object.keys(record);

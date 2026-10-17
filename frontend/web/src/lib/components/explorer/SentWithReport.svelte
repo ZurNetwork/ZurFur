@@ -6,8 +6,9 @@
 
 	/**
 	 * "Sent with your report": one tick box per item, its exact value beneath
-	 * its name. An unticked value is greyed and says "Not sent", and none of
-	 * its fields is posted. `before` renders first inside the group.
+	 * its name and any note read with it. An unticked value is greyed and says
+	 * "Not sent", and none of its fields is posted. `before` renders first
+	 * inside the group.
 	 */
 	let {
 		draft,
@@ -54,6 +55,7 @@
 			<Checkbox
 				label={item.label}
 				description={described(item, ticked)}
+				note={item.note}
 				name={boxName(item.item)}
 				bind:checked={
 					() => draft.ticks[item.item],
@@ -62,9 +64,6 @@
 					}
 				}
 			/>
-			{#if item.note !== undefined}
-				<p class="sent-with-report__note">{item.note}</p>
-			{/if}
 			{#if ticked}
 				{#each item.fields as field (field.name)}
 					<input type="hidden" name={field.name} value={field.value} />
@@ -104,11 +103,5 @@
 	.sent-with-report__item :global(.checkbox__description) {
 		font-family: var(--font-mono);
 		overflow-wrap: anywhere;
-	}
-
-	.sent-with-report__note {
-		margin: 0 0 0 calc(var(--space-5) + var(--space-2));
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
 	}
 </style>

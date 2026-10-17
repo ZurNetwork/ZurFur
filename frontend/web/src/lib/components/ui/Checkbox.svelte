@@ -1,18 +1,21 @@
 <script lang="ts">
 	/**
 	 * A labelled checkbox. `description` is read with it and shown under the
-	 * label, in muted text while unticked (such as a value, or "Not sent").
+	 * label, in muted text while unticked (such as a value, or "Not sent");
+	 * `note` is read after it and shown beneath it, always muted.
 	 */
 	let {
 		checked = $bindable(false),
 		label,
 		description,
+		note,
 		name,
 		testid
 	}: {
 		checked?: boolean;
 		label: string;
 		description?: string | undefined;
+		note?: string | undefined;
 		name?: string | undefined;
 		testid?: string | undefined;
 	} = $props();
@@ -20,6 +23,16 @@
 	const ownId = $props.id();
 	const boxId = `${ownId}-box`;
 	const descriptionId = `${ownId}-description`;
+	const noteId = `${ownId}-note`;
+
+	/** The description and the note, whichever are shown, in reading order. */
+	const describedBy = $derived.by(() => {
+		const parts = [
+			...(description === undefined ? [] : [descriptionId]),
+			...(note === undefined ? [] : [noteId])
+		];
+		return parts.length === 0 ? undefined : parts.join(' ');
+	});
 </script>
 
 <div class="checkbox" data-testid={testid}>
@@ -29,7 +42,7 @@
 		id={boxId}
 		{name}
 		bind:checked
-		aria-describedby={description === undefined ? undefined : descriptionId}
+		aria-describedby={describedBy}
 	/>
 	<div class="checkbox__text">
 		<label class="checkbox__label" for={boxId}>{label}</label>
@@ -39,6 +52,9 @@
 				class:checkbox__description--unticked={!checked}
 				id={descriptionId}>{description}</span
 			>
+		{/if}
+		{#if note !== undefined}
+			<span class="checkbox__note" id={noteId}>{note}</span>
 		{/if}
 	</div>
 </div>
@@ -106,6 +122,12 @@
 
 	.checkbox__description--unticked {
 		color: var(--color-text-muted);
+	}
+
+	.checkbox__note {
+		margin-top: var(--space-1);
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
 	}
 
 	@media (forced-colors: active) {

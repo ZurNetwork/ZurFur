@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DISPLAY_MATCHED, DISPLAY_UNMATCHED, TICKED } from '$lib/api/bug-report';
 import { firstPartyOrigin } from '$lib/types/brand';
+import type { BugVersion } from '$lib/types/bug-report-rules';
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 const { echoOf, postedBugReport, readBugReportForm } = await import('./bug-report');
 type Posted = Parameters<typeof readBugReportForm>[0];
 
-const CONTEXT = { firstParty: firstPartyOrigin('http://127.0.0.1:8080'), buildId: 'build-9' };
+const CONTEXT = {
+	firstParty: firstPartyOrigin('http://127.0.0.1:8080'),
+	buildId: 'build-9' as BugVersion
+};
 const EMOJI = '😀';
 
 /** The filing `posted` reads as, or the refusal. */

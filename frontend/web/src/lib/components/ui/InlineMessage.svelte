@@ -9,16 +9,19 @@
 	/**
 	 * A short message in a live status region. Keep it mounted and give it
 	 * content when there is something to say: a screen reader announces
-	 * what appears in a region that already exists.
+	 * what appears in a region that already exists. `element` is the region,
+	 * so its owner can bring it into view.
 	 */
 	let {
 		tone,
 		testid,
-		children
+		children,
+		element = $bindable()
 	}: {
 		tone: MessageTone;
 		testid?: string | undefined;
 		children?: Snippet | undefined;
+		element?: HTMLElement | undefined;
 	} = $props();
 
 	function toneIcon(messageTone: MessageTone): IconName {
@@ -31,7 +34,7 @@
 	}
 </script>
 
-<div class="inline-message" role="status" data-testid={testid}>
+<div class="inline-message" role="status" data-testid={testid} bind:this={element}>
 	{#if children !== undefined}
 		<div class="inline-message__box inline-message__box--{tone}" data-tone={tone}>
 			<span class="inline-message__icon"><Icon name={toneIcon(tone)} /></span>

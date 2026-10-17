@@ -10,7 +10,14 @@ import {
 	unreachableFetch
 } from '$lib/testing/http';
 import { pageToken } from '$lib/types/brand';
-import type { BugBrowser, BugDescription, BugPage, BugVersion } from '$lib/types/bug-report-rules';
+import type {
+	BugBrowser,
+	BugDescription,
+	BugPage,
+	BugVersion,
+	ErrorStatus,
+	WindowSide
+} from '$lib/types/bug-report-rules';
 import {
 	RequestFetch,
 	ZurfurApi,
@@ -476,9 +483,9 @@ const FULL_FILING: BugReportFiling = {
 	pageType: 'My Den',
 	webVersion: 'build-7' as BugVersion,
 	browser: 'Mozilla/5.0' as BugBrowser,
-	window: { width: 1280, height: 720 },
+	window: { width: 1280 as WindowSide, height: 720 as WindowSide },
 	display: { reducedMotion: true, moreContrast: true, forcedColors: true },
-	errorStatus: 404
+	errorStatus: 404 as ErrorStatus
 };
 
 /** A fetch answering `respond`, recording each call's URL, method, content type and JSON body. */

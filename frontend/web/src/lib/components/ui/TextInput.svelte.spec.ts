@@ -76,6 +76,26 @@ describe('TextInput', () => {
 		await expect.element(field).toHaveAccessibleDescription('Steps help. Say what went wrong.');
 	});
 
+	it('reads the elements named in describedBy after the hint and the error', async () => {
+		const count = document.createElement('span');
+		count.id = 'outside-count';
+		count.textContent = '3,600 / 4,000';
+		document.body.append(count);
+		render(TextInput, {
+			label: 'What happened?',
+			multiline: true,
+			hint: 'Steps help.',
+			error: 'Say what went wrong.',
+			describedBy: 'outside-count'
+		});
+
+		const field = page.getByRole('textbox', { name: 'What happened?' });
+		await expect
+			.element(field)
+			.toHaveAccessibleDescription('Steps help. Say what went wrong. 3,600 / 4,000');
+		count.remove();
+	});
+
 	it('uses the id it is given, so a dialog can focus it', async () => {
 		render(TextInput, { label: 'What happened?', multiline: true, id: 'bug-description' });
 

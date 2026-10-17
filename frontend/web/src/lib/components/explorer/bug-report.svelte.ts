@@ -522,9 +522,12 @@ export function testStackLine(stack: TestStack): string | undefined {
 	}
 }
 
-/** Where a refusal is said: on the "What happened?" box, or in the form's status region. */
+/** A form field a refusal can be said on: "What happened?", or the report page's "Which page?". */
+export type MessageField = 'description' | 'page';
+
+/** Where a refusal is said: on its field, or in the form's status region. */
 export type ProblemMessage =
-	| { readonly place: 'field'; readonly text: string }
+	| { readonly place: 'field'; readonly field: MessageField; readonly text: string }
 	| { readonly place: 'status'; readonly tone: 'info' | 'error'; readonly text: string };
 
 const COULD_NOT_SEND_TEXT = "Couldn't send your report. Your text is still here; please try again.";
@@ -534,22 +537,32 @@ function info(text: string): ProblemMessage {
 	return { place: 'status', tone: 'info', text };
 }
 
+/** A message on `field`. */
+function onField(field: MessageField, text: string): ProblemMessage {
+	return { place: 'field', field, text };
+}
+
 /** What the form says about `problem`; `askingPage` when the page is the reporter's own "Which page?" text. */
 export function problemMessage(problem: SendProblem, askingPage: boolean): ProblemMessage {
 	switch (problem.kind) {
 		case 'descriptionEmpty':
-			return { place: 'field', text: 'Tell us what happened.' };
+			return onField('description', 'Tell us what happened.');
 		case 'descriptionTooLong':
-			return info('Your text is longer than 4,000 characters. Please shorten it.');
+			return onField(
+				'description',
+				'Your text is longer than 4,000 characters. Please shorten it.'
+			);
 		case 'hiddenCharacter':
-			return info(hiddenCharacterText(problem.item, askingPage));
+			return hiddenCharacterMessage(problem.item, askingPage);
 		case 'pageAddress':
-			return info("Paste the page's address, or leave this empty.");
+			return askingPage
+				? onField('page', "Paste the page's address, or leave this empty.")
+				: info(untickText('page'));
 		case 'itemRefused':
 			return info(
 				problem.item === 'description'
 					? "Your text couldn't be sent. Please change it and try again."
-					: `${itemName(problem.item)} couldn't be sent. Untick ${itemName(problem.item)} to send.`
+					: untickText(problem.item)
 			);
 		case 'limit':
 			return info("You've sent several reports in the last hour. Please try again a little later.");
@@ -558,18 +571,40 @@ export function problemMessage(problem: SendProblem, askingPage: boolean): Probl
 	}
 }
 
-function hiddenCharacterText(
+/** `message`'s text when it is said on `field`, else `undefined`. */
+export function fieldText(
+	message: ProblemMessage | undefined,
+	field: MessageField
+): string | undefined {
+	if (message === undefined) return undefined;
+	switch (message.place) {
+		case 'field':
+			return message.field === field ? message.text : undefined;
+		case 'status':
+			return undefined;
+	}
+}
+
+/** The per-item wording: the item couldn't be sent, untick it to send the rest. */
+function untickText(item: BugReportItem): string {
+	return `${itemName(item)} couldn't be sent. Untick ${itemName(item)} to send.`;
+}
+
+function hiddenCharacterMessage(
 	item: 'description' | 'page' | 'browser',
 	askingPage: boolean
-): string {
+): ProblemMessage {
 	switch (item) {
 		case 'description':
-			return 'Your text has a hidden formatting character. Please remove it.';
+			return onField(
+				'description',
+				'Your text has a hidden formatting character. Please remove it.'
+			);
 		case 'page':
 			return askingPage
-				? "Your page's address has a hidden character. Please remove it."
-				: "Your page's address has a hidden character. Untick Page to send.";
+				? onField('page', "Your page's address has a hidden character. Please remove it.")
+				: info("Your page's address has a hidden character. Untick Page to send.");
 		case 'browser':
-			return "Your browser's text has a hidden character. Untick Browser to send.";
+			return info("Your browser's text has a hidden character. Untick Browser to send.");
 	}
 }

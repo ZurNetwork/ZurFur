@@ -6,6 +6,7 @@ import type { AccountMembership, DeleteOutcome } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
+import { UNKNOWN_BUILD_ID } from '$lib/types/bug-report-rules';
 import { formStub } from '$lib/testing/superforms';
 import type { Trail } from '$lib/api/trail';
 
@@ -73,7 +74,7 @@ function listingData(
 ) {
 	return {
 		session: alice,
-		buildId: 'unknown',
+		buildId: UNKNOWN_BUILD_ID,
 		testStack: 'none' as const,
 		accounts,
 		deleted,
@@ -85,7 +86,7 @@ function listingData(
 function problemData(problem: Problem, form: ReturnType<typeof createForm> = createForm()) {
 	return {
 		session: alice,
-		buildId: 'unknown',
+		buildId: UNKNOWN_BUILD_ID,
 		testStack: 'none' as const,
 		problem,
 		deleted: undefined,

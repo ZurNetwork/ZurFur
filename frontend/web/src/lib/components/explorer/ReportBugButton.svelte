@@ -13,7 +13,8 @@
 	 * "Report a bug": a link to the report page that, once the script runs
 	 * inside the frame, opens the dialog on a plain click instead (a modified
 	 * or middle click still follows the link). On the report page itself it
-	 * is marked current and focuses the page's text box. `label` names it,
+	 * is marked current and focuses the page's text box; with no box there (a
+	 * report just sent) it is left to load the page afresh. `label` names it,
 	 * `extras` are the items its opener adds, and `closeFirst` closes the
 	 * modal it sits in (the drawer) before anything opens, answering the
 	 * control focus goes back to when the dialog closes.
@@ -60,8 +61,19 @@
 		openFrom(returnTo ?? clicked);
 	}
 
+	/** On the report page with no text box (the sent message shows): the link loads a fresh form. */
+	function loadsAfresh(): boolean {
+		return (
+			current && (document.getElementById(REPORT_PAGE_DESCRIPTION_ID) ?? undefined) === undefined
+		);
+	}
+
 	function click(event: MouseEvent & { currentTarget: HTMLAnchorElement }): void {
 		if (report === undefined || event.defaultPrevented || modified(event)) return;
+		if (loadsAfresh()) {
+			void closeFirst?.();
+			return;
+		}
 		event.preventDefault();
 		if (closeFirst === undefined) {
 			openFrom(event.currentTarget);
@@ -76,6 +88,7 @@
 	href={resolve('/report-a-bug')}
 	aria-haspopup={scripted && report !== undefined && !current ? 'dialog' : undefined}
 	aria-current={current ? 'page' : undefined}
+	data-sveltekit-reload={current ? '' : undefined}
 	onclick={click}
 	data-testid="report-bug-link"
 	><Icon name="bug" />

@@ -88,6 +88,33 @@ describe('the character rule', () => {
 		expect(refusedCharacter(field, 'a\tb')).toBe(0x09);
 	});
 
+	it.each(strictFields)('refuses LINE SEPARATOR and PARAGRAPH SEPARATOR in %s', (field) => {
+		expect(refusedCharacter(field, 'a\u2028b')).toBe(0x2028);
+		expect(refusedCharacter(field, 'a\u2029b')).toBe(0x2029);
+	});
+
+	it('keeps LINE SEPARATOR and PARAGRAPH SEPARATOR in the description', () => {
+		expect(refusedCharacter('description', 'a\u2028b\u2029c')).toBe(undefined);
+		expect(parseDescription('one\u2028two\u2029three')).toEqual({
+			kind: 'accepted',
+			value: 'one\u2028two\u2029three'
+		});
+	});
+
+	it.each([
+		['page', () => parsePage('/den\u2028x')],
+		['page', () => parsePage('/den\u2029x')],
+		['version', () => parseVersion('v\u20281')],
+		['version', () => parseVersion('v\u20291')],
+		['browser', () => parseBrowser('Mozilla\u2028/5.0')],
+		['browser', () => parseBrowser('Mozilla\u2029/5.0')]
+	])('refuses a separator inside the %s parser', (field, parse) => {
+		expect(parse()).toMatchObject({
+			kind: 'refused',
+			refusal: { kind: 'refusedCharacter', field }
+		});
+	});
+
 	it.each([...strictFields, 'description' as const])(
 		'refuses every bidi control and C1 control in %s',
 		(field) => {
@@ -100,7 +127,7 @@ describe('the character rule', () => {
 	it.each([...strictFields, 'description' as const])(
 		'passes tags, ZWJ and the neighbours of the bidi controls in %s',
 		(field) => {
-			const neighbours = String.fromCodePoint(0x2029, 0x202f, 0x2065, 0x206a, 0xa0);
+			const neighbours = String.fromCodePoint(0x202f, 0x2065, 0x206a, 0xa0);
 			expect(refusedCharacter(field, `${TAG_A}${ZWJ}${neighbours}`)).toBe(undefined);
 		}
 	);
@@ -125,9 +152,15 @@ describe('the page', () => {
 	it.each([
 		['a query', '/den?x=1', 'queryOrFragment'],
 		['a fragment', '/den#top', 'queryOrFragment'],
-		['no leading slash', 'den/accounts', 'notAPath']
+		['no leading slash', 'den/accounts', 'notAPath'],
+		['a leading double slash', '//evil.example/x', 'notAPath'],
+		['a bare double slash', '//', 'notAPath']
 	])('refuses %s', (_name, text, kind) => {
 		expect(parsePage(text)).toEqual({ kind: 'refused', refusal: { kind, field: 'page' } });
+	});
+
+	it('accepts a double slash that is not the first thing', () => {
+		expect(parsePage('/den//x')).toEqual({ kind: 'accepted', value: '/den//x' });
 	});
 
 	it.each([

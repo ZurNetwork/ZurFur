@@ -67,17 +67,17 @@
 			>
 		{:else}
 			<Button
-				variant="quiet"
-				onclick={() => {
-					report.close();
-				}}>Cancel</Button
-			>
-			<Button
 				variant="primary"
 				busy={sending}
 				onclick={() => {
 					formElement?.requestSubmit();
 				}}>{sending ? 'Sending…' : 'Send report'}</Button
+			>
+			<Button
+				variant="quiet"
+				onclick={() => {
+					report.close();
+				}}>Cancel</Button
 			>
 		{/if}
 	{/snippet}

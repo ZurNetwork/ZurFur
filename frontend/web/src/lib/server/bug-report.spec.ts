@@ -120,6 +120,8 @@ describe('pageOfReferer', () => {
 		'http://127.0.0.1:8080.evil.example/',
 		'http://127.0.0.1:80800/den',
 		'https://127.0.0.1:8080/den',
+		'http://127.0.0.1:8080//evil.example/x',
+		'http://127.0.0.1:8080/\\evil.example/x',
 		'/den',
 		'',
 		'not a url'
@@ -198,6 +200,8 @@ describe('judgePostedPage', () => {
 		'http://127.0.0.1:8080.evil.example/den',
 		'//evil.example/den',
 		'/\\evil.example/den',
+		'http://127.0.0.1:8080//evil.example/x',
+		'http://127.0.0.1:8080/\\evil.example/a',
 		'den/x',
 		'javascript:alert(1)',
 		`/${'a'.repeat(2048)}`
@@ -205,10 +209,13 @@ describe('judgePostedPage', () => {
 		expect(judgePostedPage(posted, FIRST_PARTY)).toStrictEqual({ kind: 'notAnAddress' });
 	});
 
-	it.each([0x202e, 0x9b, 0x0a])('refuses U+%s before reading it as an address', (codePoint) => {
-		const posted = `/den/${String.fromCodePoint(codePoint)}x`;
-		expect(judgePostedPage(posted, FIRST_PARTY)).toStrictEqual({ kind: 'hiddenCharacter' });
-	});
+	it.each([0x202e, 0x9b, 0x0a, 0x2028, 0x2029])(
+		'refuses U+%s before reading it as an address',
+		(codePoint) => {
+			const posted = `/den/${String.fromCodePoint(codePoint)}x`;
+			expect(judgePostedPage(posted, FIRST_PARTY)).toStrictEqual({ kind: 'hiddenCharacter' });
+		}
+	);
 
 	it('refuses every page when no first party is configured', () => {
 		expect(judgePostedPage('/den/x', undefined)).toStrictEqual({ kind: 'notAnAddress' });

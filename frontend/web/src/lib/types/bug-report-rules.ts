@@ -57,6 +57,22 @@ export type BugVersion = Brand<string, 'BugVersion'>;
 /** Browser text that passed {@link parseBrowser}: trimmed, cut to fit, free of control characters. */
 export type BugBrowser = Brand<string, 'BugBrowser'>;
 
+/** The most a window side may measure, in CSS pixels. */
+export const WINDOW_SIDE_MAX = 100_000;
+
+/** The lowest and highest HTTP status an error page can show. */
+export const ERROR_STATUS_MIN = 400;
+export const ERROR_STATUS_MAX = 599;
+
+/** One side of the browser window in CSS pixels: a whole number from 1 to {@link WINDOW_SIDE_MAX}. */
+export type WindowSide = Brand<number, 'WindowSide'>;
+
+/** An error page's HTTP status: a whole number from {@link ERROR_STATUS_MIN} to {@link ERROR_STATUS_MAX}. */
+export type ErrorStatus = Brand<number, 'ErrorStatus'>;
+
+/** The app version reported when the build's own id is unset or doesn't fit the version rule. */
+export const UNKNOWN_BUILD_ID = 'unknown' as BugVersion;
+
 /** How a length is measured. */
 export type LengthUnit = 'codePoints' | 'bytes';
 
@@ -88,6 +104,8 @@ export type OptionalFieldParse<T> = FieldParse<T> | { readonly kind: 'notSent' }
 
 const LINE_FEED = 0x0a;
 const TAB = 0x09;
+const LINE_SEPARATOR = 0x2028;
+const PARAGRAPH_SEPARATOR = 0x2029;
 
 /** CR LF becomes LF, then the text is trimmed. */
 export function normalizeDescription(text: string): string {
@@ -126,9 +144,19 @@ function isBidiControl(codePoint: number): boolean {
 	);
 }
 
-/** Whether `field` refuses `codePoint`: the description keeps LF and tab; no field keeps any other control. */
+/** LINE SEPARATOR (U+2028) or PARAGRAPH SEPARATOR (U+2029): a line end the one-line fields refuse. */
+function isLineSeparator(codePoint: number): boolean {
+	return codePoint === LINE_SEPARATOR || codePoint === PARAGRAPH_SEPARATOR;
+}
+
+/**
+ * Whether `field` refuses `codePoint`: the description keeps LF, tab and the
+ * two Unicode line separators; every other field refuses them, as it
+ * refuses every other control.
+ */
 function refuses(field: BugReportField, codePoint: number): boolean {
 	if (isBidiControl(codePoint)) return true;
+	if (field !== 'description' && isLineSeparator(codePoint)) return true;
 	if (!isControl(codePoint)) return false;
 	return !(field === 'description' && (codePoint === LINE_FEED || codePoint === TAB));
 }
@@ -169,7 +197,7 @@ export function parseDescription(text: string): FieldParse<BugDescription> {
 	return { kind: 'accepted', value: normalized as BugDescription };
 }
 
-/** The page address: trimmed, at most 2,048 bytes, starting with `/`, with no `?` or `#` and no control. */
+/** The page address: trimmed, at most 2,048 bytes, an app path (`/` but not `//` first), with no `?` or `#` and no control. */
 export function parsePage(text: string): OptionalFieldParse<BugPage> {
 	const trimmed = text.trim();
 	if (trimmed.length === 0) return { kind: 'notSent' };
@@ -178,7 +206,9 @@ export function parsePage(text: string): OptionalFieldParse<BugPage> {
 	if (utf8ByteLength(trimmed) > PAGE_MAX_BYTES) {
 		return refused({ kind: 'tooLong', field: 'page', limit: PAGE_MAX_BYTES, unit: 'bytes' });
 	}
-	if (!trimmed.startsWith('/')) return refused({ kind: 'notAPath', field: 'page' });
+	if (!trimmed.startsWith('/') || trimmed.startsWith('//')) {
+		return refused({ kind: 'notAPath', field: 'page' });
+	}
 	if (trimmed.includes('?') || trimmed.includes('#')) {
 		return refused({ kind: 'queryOrFragment', field: 'page' });
 	}
@@ -254,4 +284,16 @@ export function parseBrowser(text: string): OptionalFieldParse<BugBrowser> {
 	const badCharacter = characterRefusal('browser', cut);
 	if (badCharacter !== undefined) return refused(badCharacter);
 	return { kind: 'accepted', value: cut as BugBrowser };
+}
+
+/** `value` as a window side when it is a whole number from 1 to 100,000, else `undefined`. */
+export function parseWindowSide(value: number): WindowSide | undefined {
+	const fits = Number.isInteger(value) && value >= 1 && value <= WINDOW_SIDE_MAX;
+	return fits ? (value as WindowSide) : undefined;
+}
+
+/** `value` as an error status when it is a whole number from 400 to 599, else `undefined`. */
+export function parseErrorStatus(value: number): ErrorStatus | undefined {
+	const fits = Number.isInteger(value) && value >= ERROR_STATUS_MIN && value <= ERROR_STATUS_MAX;
+	return fits ? (value as ErrorStatus) : undefined;
 }

@@ -12,10 +12,12 @@
 	import { codePointCount, DESCRIPTION_MAX_CODE_POINTS } from '$lib/types/bug-report-rules';
 	import {
 		COUNT_SHOWN_FROM,
+		fieldText,
 		outcomeOf,
 		problemMessage,
 		testStackLine,
 		type BugReportDraft,
+		type MessageField,
 		type ProblemMessage,
 		type SentItem
 	} from './bug-report.svelte';
@@ -29,6 +31,8 @@
 	 * and never touching the page's own data. A sent report replaces the form
 	 * with its reference. On a stack that doesn't keep reports (`testStack`)
 	 * an info line says so, under the form's fixed lines or the sent message.
+	 * A refusal about a field is said on it and focuses it; any other is said
+	 * in the status region, scrolled into view, focus left where it is.
 	 * `askPage` adds the optional "Which page?" box; `submitButton` puts "Send
 	 * report" inside the form (the page), else the dialog's footer submits
 	 * `formElement`.
@@ -59,22 +63,57 @@
 	const message: ProblemMessage | undefined = $derived(
 		status.status === 'refused' ? problemMessage(status.problem, askPage) : undefined
 	);
-	const fieldError = $derived(message?.place === 'field' ? message.text : undefined);
+	const descriptionError = $derived(fieldText(message, 'description'));
+	const pageError = $derived(fieldText(message, 'page'));
 	const statusMessage = $derived(message?.place === 'status' ? message : undefined);
 	const count = $derived(codePointCount(draft.description));
+	const countShown = $derived(count >= COUNT_SHOWN_FROM);
 	const stackLine = $derived(testStackLine(testStack));
 	const sentAs = $derived(session.handle === undefined ? session.did : `@${session.handle}`);
 
-	let sentMessage: HTMLElement | undefined = $state();
+	const ownId = $props.id();
+	const pageId = `${ownId}-page`;
+	const countId = `${ownId}-count`;
 
-	// A sent report moves focus to its message; an empty description to its box.
+	let sentMessage: HTMLElement | undefined = $state();
+	let statusElement: HTMLElement | undefined = $state();
+
+	// A sent report moves focus to its message; a refusal shows where it is said.
 	$effect(() => {
-		if (status.status === 'sent') {
-			sentMessage?.focus();
-		} else if (status.status === 'refused' && status.problem.kind === 'descriptionEmpty') {
-			document.getElementById(descriptionId)?.focus();
+		switch (status.status) {
+			case 'sent':
+				sentMessage?.focus();
+				return;
+			case 'refused':
+				showRefusal(problemMessage(status.problem, askPage));
+				return;
+			case 'editing':
+			case 'sending':
+				return;
 		}
 	});
+
+	/** Focus the field a refusal is said on, or bring the status region into view, focus unmoved. */
+	function showRefusal(refusal: ProblemMessage): void {
+		switch (refusal.place) {
+			case 'field':
+				document.getElementById(fieldId(refusal.field))?.focus();
+				return;
+			case 'status':
+				statusElement?.scrollIntoView({ block: 'nearest' });
+				return;
+		}
+	}
+
+	/** The id of the box a field's message is said on. */
+	function fieldId(field: MessageField): string {
+		switch (field) {
+			case 'description':
+				return descriptionId;
+			case 'page':
+				return pageId;
+		}
+	}
 
 	/** Post once at a time, and settle the draft from whatever the action answers. */
 	const submit: SubmitFunction = ({ cancel }) => {
@@ -130,11 +169,12 @@
 					multiline
 					required
 					name={BUG_REPORT_FIELDS.description}
-					error={fieldError}
+					error={descriptionError}
+					describedBy={countShown ? countId : undefined}
 					bind:value={draft.description}
 				/>
-				{#if count >= COUNT_SHOWN_FROM}
-					<span class="report-form__count" data-testid="report-count"
+				{#if countShown}
+					<span class="report-form__count" id={countId} data-testid="report-count"
 						>{count.toLocaleString('en-GB')} / {DESCRIPTION_MAX_CODE_POINTS.toLocaleString(
 							'en-GB'
 						)}</span
@@ -145,7 +185,7 @@
 			<SentWithReport {draft} {items} before={askPage ? whichPage : undefined} />
 
 			<div class="report-form__fixed">
-				<p>Sent as {sentAs}. Zurfur also records when it arrives.</p>
+				<p>Sent as {sentAs}. Zurfur also records when it arrives, and its own version.</p>
 				<p>
 					Never sent: your cookies, sign-in tokens, other pages you visited, or what's on your
 					screen.
@@ -158,6 +198,7 @@
 				tone={statusMessage?.tone ?? 'info'}
 				testid="report-status"
 				children={statusMessage === undefined ? undefined : statusText}
+				bind:element={statusElement}
 			/>
 
 			{#if submitButton}
@@ -186,7 +227,13 @@
 
 {#snippet whichPage()}
 	<input type="hidden" name={BUG_REPORT_FIELDS.sendPage} value={TICKED} />
-	<TextInput label="Which page?" name={BUG_REPORT_FIELDS.page} bind:value={draft.pageText} />
+	<TextInput
+		id={pageId}
+		label="Which page?"
+		name={BUG_REPORT_FIELDS.page}
+		error={pageError}
+		bind:value={draft.pageText}
+	/>
 {/snippet}
 
 <style>

@@ -17,14 +17,13 @@ import {
 	parsePage,
 	parseVersion,
 	refusedCharacter,
+	UNKNOWN_BUILD_ID,
 	type BugPage,
+	type BugVersion,
 	type PageType
 } from '$lib/types/bug-report-rules';
 import { ZurfurApi, type BugReportFiling } from './api/zurfur-api';
 import { denQueryFromSearch } from './den/den-path';
-
-/** The build id the web reports when ZURFUR_BUILD_ID is unset or doesn't fit the version rule. */
-export const UNKNOWN_BUILD_ID = 'unknown';
 
 /**
  * The run-time environment, where any variable may be unset. `svelte-kit sync`
@@ -35,7 +34,7 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
 }
 
 /** The web's own build, read from ZURFUR_BUILD_ID at each call: {@link UNKNOWN_BUILD_ID} when unset or unfit. */
-export function webBuildId(): string {
+export function webBuildId(): BugVersion {
 	const configured = parseVersion(runtimeEnv().ZURFUR_BUILD_ID ?? '');
 	return configured.kind === 'accepted' ? configured.value : UNKNOWN_BUILD_ID;
 }
