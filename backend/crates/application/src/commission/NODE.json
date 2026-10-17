@@ -115,6 +115,11 @@
       "governs": "view grants"
     },
     {
+      "page": 29425666,
+      "title": "Commission Structural Authority — the Commission Admin Role",
+      "governs": "rename.rs: renaming a commission is owner-only, through require_owner"
+    },
+    {
       "page": 30408741,
       "title": "The Changelog — Structured Comms, Notes & the Linked Channel",
       "governs": "changelog"
@@ -127,7 +132,7 @@
     {
       "page": 59310081,
       "title": "The Changelog as the Only Record — Plugin Appends, Render-First Readability & the Eventlog as a Frontend Surface",
-      "governs": "changelog"
+      "governs": "changelog; rename.rs: a real rename appends a renamed entry, which carries no text"
     },
     {
       "page": 65110018,

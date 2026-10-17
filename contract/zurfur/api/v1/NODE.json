@@ -29,7 +29,7 @@
     },
     {
       "name": "commission.proto",
-      "role": "CreateCommission (owner POV), Maturity; google.protobuf.Timestamp; CommissionService. The owner's list (ListCommissions) is retired.",
+      "role": "CreateCommission (owner POV), RenameCommission (PATCH /commissions/{id}/title, owner-only, answers the commission as stored), Maturity; google.protobuf.Timestamp; CommissionService. The owner's list (ListCommissions) is retired.",
       "node": false
     },
     {

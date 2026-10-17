@@ -3470,6 +3470,362 @@ impl<'de> serde::Deserialize<'de> for Problem {
         deserializer.deserialize_struct("zurfur.api.v1.Problem", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for RenameCommissionRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.title.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.RenameCommissionRequest", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.title.is_empty() {
+            struct_ser.serialize_field("title", &self.title)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for RenameCommissionRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "title",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            Title,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "title" => Ok(GeneratedField::Title),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = RenameCommissionRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.RenameCommissionRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<RenameCommissionRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut title__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Title => {
+                            if title__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("title"));
+                            }
+                            title__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(RenameCommissionRequest {
+                    id: id__.unwrap_or_default(),
+                    title: title__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.RenameCommissionRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for RenameCommissionResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.title.is_empty() {
+            len += 1;
+        }
+        if !self.lifecycle.is_empty() {
+            len += 1;
+        }
+        if !self.visibility.is_empty() {
+            len += 1;
+        }
+        if self.deadline.is_some() {
+            len += 1;
+        }
+        if self.maturity.is_some() {
+            len += 1;
+        }
+        if self.direction_status.is_some() {
+            len += 1;
+        }
+        if self.deadline_status.is_some() {
+            len += 1;
+        }
+        if self.linked_channel.is_some() {
+            len += 1;
+        }
+        if self.created_at.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.RenameCommissionResponse", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.title.is_empty() {
+            struct_ser.serialize_field("title", &self.title)?;
+        }
+        if !self.lifecycle.is_empty() {
+            struct_ser.serialize_field("lifecycle", &self.lifecycle)?;
+        }
+        if !self.visibility.is_empty() {
+            struct_ser.serialize_field("visibility", &self.visibility)?;
+        }
+        if let Some(v) = self.deadline.as_ref() {
+            struct_ser.serialize_field("deadline", v)?;
+        }
+        if let Some(v) = self.maturity.as_ref() {
+            struct_ser.serialize_field("maturity", v)?;
+        }
+        if let Some(v) = self.direction_status.as_ref() {
+            struct_ser.serialize_field("directionStatus", v)?;
+        }
+        if let Some(v) = self.deadline_status.as_ref() {
+            struct_ser.serialize_field("deadlineStatus", v)?;
+        }
+        if let Some(v) = self.linked_channel.as_ref() {
+            struct_ser.serialize_field("linkedChannel", v)?;
+        }
+        if let Some(v) = self.created_at.as_ref() {
+            struct_ser.serialize_field("createdAt", v)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for RenameCommissionResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "title",
+            "lifecycle",
+            "visibility",
+            "deadline",
+            "maturity",
+            "direction_status",
+            "directionStatus",
+            "deadline_status",
+            "deadlineStatus",
+            "linked_channel",
+            "linkedChannel",
+            "created_at",
+            "createdAt",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            Title,
+            Lifecycle,
+            Visibility,
+            Deadline,
+            Maturity,
+            DirectionStatus,
+            DeadlineStatus,
+            LinkedChannel,
+            CreatedAt,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "title" => Ok(GeneratedField::Title),
+                            "lifecycle" => Ok(GeneratedField::Lifecycle),
+                            "visibility" => Ok(GeneratedField::Visibility),
+                            "deadline" => Ok(GeneratedField::Deadline),
+                            "maturity" => Ok(GeneratedField::Maturity),
+                            "directionStatus" | "direction_status" => Ok(GeneratedField::DirectionStatus),
+                            "deadlineStatus" | "deadline_status" => Ok(GeneratedField::DeadlineStatus),
+                            "linkedChannel" | "linked_channel" => Ok(GeneratedField::LinkedChannel),
+                            "createdAt" | "created_at" => Ok(GeneratedField::CreatedAt),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = RenameCommissionResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.RenameCommissionResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<RenameCommissionResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut title__ = None;
+                let mut lifecycle__ = None;
+                let mut visibility__ = None;
+                let mut deadline__ = None;
+                let mut maturity__ = None;
+                let mut direction_status__ = None;
+                let mut deadline_status__ = None;
+                let mut linked_channel__ = None;
+                let mut created_at__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Title => {
+                            if title__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("title"));
+                            }
+                            title__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Lifecycle => {
+                            if lifecycle__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("lifecycle"));
+                            }
+                            lifecycle__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Visibility => {
+                            if visibility__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("visibility"));
+                            }
+                            visibility__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Deadline => {
+                            if deadline__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("deadline"));
+                            }
+                            deadline__ = map_.next_value()?;
+                        }
+                        GeneratedField::Maturity => {
+                            if maturity__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("maturity"));
+                            }
+                            maturity__ = map_.next_value()?;
+                        }
+                        GeneratedField::DirectionStatus => {
+                            if direction_status__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("directionStatus"));
+                            }
+                            direction_status__ = map_.next_value()?;
+                        }
+                        GeneratedField::DeadlineStatus => {
+                            if deadline_status__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("deadlineStatus"));
+                            }
+                            deadline_status__ = map_.next_value()?;
+                        }
+                        GeneratedField::LinkedChannel => {
+                            if linked_channel__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("linkedChannel"));
+                            }
+                            linked_channel__ = map_.next_value()?;
+                        }
+                        GeneratedField::CreatedAt => {
+                            if created_at__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("createdAt"));
+                            }
+                            created_at__ = map_.next_value()?;
+                        }
+                    }
+                }
+                Ok(RenameCommissionResponse {
+                    id: id__.unwrap_or_default(),
+                    title: title__.unwrap_or_default(),
+                    lifecycle: lifecycle__.unwrap_or_default(),
+                    visibility: visibility__.unwrap_or_default(),
+                    deadline: deadline__,
+                    maturity: maturity__,
+                    direction_status: direction_status__,
+                    deadline_status: deadline_status__,
+                    linked_channel: linked_channel__,
+                    created_at: created_at__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.RenameCommissionResponse", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for SigninRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

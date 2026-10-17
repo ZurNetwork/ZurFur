@@ -35,7 +35,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse",
+      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse; a blank title or one the name rule refuses → 422 with a field error at #/title",
       "node": false
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping, and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping, title_write_problem (create's and rename's name-rule refusal as a field error at #/title; slots and files keep the plain mapping), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {
@@ -86,6 +86,11 @@
     {
       "name": "positioning.rs",
       "role": "account-side placement + view grants → commission::place, view::grant / view::revoke; grants are per-User (DD 29130754 amended 2026-09-04), so the route's {account_id} segment is dead (TODO(engineer))",
+      "node": false
+    },
+    {
+      "name": "rename.rs",
+      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the renamed row read back by id, rendered into RenameCommissionResponse; a refused title → 422 with a field error at #/title",
       "node": false
     },
     {
