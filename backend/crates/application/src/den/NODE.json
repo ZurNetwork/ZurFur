@@ -26,7 +26,7 @@
   "fs": [
     {
       "name": "access.rs",
-      "role": "den's access check: may this viewer open the node a read that bypasses the Den serves, named by typed ids; Atta's own resolve, open on exactly its real path, else the one not-found. Commission's download and changelog read call it; identity's reads (the viewer's own root, an Account) are next",
+      "role": "den's access check: may this viewer open the node a read that bypasses the Den serves, named by typed ids; Atta's own resolve, open on exactly its real path, else the one not-found; the check keeps the plain walk and never tells equal names apart, pinned by access/tests.rs. Commission's download and changelog read call it; identity's reads (the viewer's own root, an Account) are next",
       "node": false
     },
     {
@@ -139,7 +139,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
+      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); equal names in one folder told apart at read time, on nodes and crumbs too (D23); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "notes": [

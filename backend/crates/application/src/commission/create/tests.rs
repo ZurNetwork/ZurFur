@@ -31,8 +31,8 @@ async fn a_new_commission_s_created_entry_carries_no_title() {
         .expect("the store reads");
     let kinds: Vec<ChangelogEntryKind> = entries.iter().map(|entry| entry.kind).collect();
     assert_eq!(kinds, [ChangelogEntryKind::Created]);
-    let payload = &entries[0].payload;
-    assert!(payload.get("title").is_none(), "{payload}");
+    let empty_payload = serde_json::json!({});
+    assert_eq!(entries[0].payload, empty_payload);
 }
 
 #[tokio::test]

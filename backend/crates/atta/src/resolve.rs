@@ -69,8 +69,9 @@ pub struct Entry {
     pub ordinal: Option<NameOrdinal>,
 }
 
-/// A typed Den path, resolved for one viewer. Only [`Resolver::resolve_path`] builds one, and
-/// [`Resolver::list`] lists it only for that viewer.
+/// A typed Den path, resolved for one viewer. Only [`Resolver::resolve_path`] builds one;
+/// [`Resolver::list`] lists it, and [`Resolver::tell_apart`] numbers it, only for that viewer,
+/// each refusing another viewer's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub(crate) crumbs: Vec<Entry>,

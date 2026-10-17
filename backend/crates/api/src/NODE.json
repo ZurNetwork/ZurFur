@@ -25,7 +25,7 @@
     },
     {
       "name": "extract.rs",
-      "role": "CallingUser extractor — session → Did → UserId, 401 on absence",
+      "role": "CallingUser extractor — session → Did → UserId, 401 on absence; CommissionPath extractor — the route's {id} segment → CommissionId, every refusal (missing, undecodable, unparsable) the commission's one 404",
       "node": false
     },
     {

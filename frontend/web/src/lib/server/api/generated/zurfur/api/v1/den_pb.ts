@@ -254,10 +254,11 @@ export type DenNode = Message<"zurfur.api.v1.DenNode"> & {
   } | { case: undefined; value?: undefined };
 
   /**
-   * Set, from 2 up, when another entry this viewer sees in the same folder shows
-   * the same name; the server numbers such names in a fixed order (commissions
-   * oldest first). Clients show it after the name, as "Test 1 (2)". Unset
-   * otherwise. Computed for this viewer at read time, never stored.
+   * Set, from 2 up, on each entry after the first of those with the same name
+   * that this viewer sees in the same folder, in a fixed order (open entries by
+   * key, so commissions oldest first; then cards). Clients show it after the
+   * name, as "Test 1 (2)". Unset otherwise. Computed for this viewer at read
+   * time, never stored.
    *
    * @generated from field: optional uint32 name_ordinal = 8;
    */
@@ -412,7 +413,10 @@ export type DenCrumb = Message<"zurfur.api.v1.DenCrumb"> & {
   type: string;
 
   /**
-   * As DenNode.name_ordinal: the number its parent's listing gives it.
+   * The number its parent's listing gives it, as DenNode.name_ordinal: set, from 2
+   * up, on each entry after the first of those with the same name, in a fixed order
+   * (open entries by key, so commissions oldest first; then cards). Unset otherwise,
+   * and always for the root.
    *
    * @generated from field: optional uint32 name_ordinal = 4;
    */

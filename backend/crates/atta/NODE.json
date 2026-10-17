@@ -10,6 +10,7 @@
   ],
   "conventions": [
     "Never depends on another workspace crate and never names a Zurfur type — host-agnostic by construction, so it can be split out unchanged.",
+    "One exception: the test src/ordinal/tests.rs reads the shared case file contract/golden/name-ordinals.json from outside the crate; when Atta is split out, that test moves with the file.",
     "Used by application only; the API never imports it.",
     "Its role is fixed: resolve, enforce structure, route changes, render. How it does that grows only as real needs appear, never ahead of them.",
     "Nothing reads a node except through Atta; a payload is served only after its hash verifies, and until that check exists no payload is served at all.",

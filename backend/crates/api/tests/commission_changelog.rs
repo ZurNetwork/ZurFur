@@ -119,10 +119,10 @@ async fn creating_a_commission_appends_the_creation_entry() {
         entry["created_at"].is_string(),
         "the display timestamp is carried",
     );
-    assert!(
-        entry["payload"].get("title").is_none(),
-        "a new entry carries no title: {}",
-        entry["payload"],
+    let empty_payload = json!({});
+    assert_eq!(
+        entry["payload"], empty_payload,
+        "a new entry carries no parameters, the title least of all",
     );
 }
 

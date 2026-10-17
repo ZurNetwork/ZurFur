@@ -3,22 +3,25 @@
 
 use application::commission::{archive, unarchive};
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::CommissionId;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// Archives the commission: owner-only, leaves the active views while the
 /// record survives. Idempotent — archiving an already-archived commission is
 /// a no-op. Returns `204 No Content`.
 pub(super) async fn archive_commission(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = archive::Command {
         actor_id,
@@ -38,8 +41,8 @@ pub(super) async fn archive_commission(
 /// idempotent, mirroring [`archive_commission`]. Returns `204 No Content`.
 pub(super) async fn unarchive_commission(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = unarchive::Command {
         actor_id,

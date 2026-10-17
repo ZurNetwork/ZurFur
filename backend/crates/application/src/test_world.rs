@@ -263,14 +263,20 @@ pub(crate) async fn seed_file_named(
     key
 }
 
-/// Seeds a Private commission of alice's at the fixed `id`, titled `title`, archived or live,
+/// Whether [`seed_titled_at`] seeds its commission live or archived.
+pub(crate) enum ArchiveState {
+    Live,
+    Archived,
+}
+
+/// Seeds a Private commission of alice's at the fixed `id`, titled `title`, live or archived,
 /// with `others` as Participants beside her; its rows go in straight through the stores.
 pub(crate) async fn seed_titled_at(
     world: &World,
     backend: &MemBackend,
     id: Uuid,
     title: &'static str,
-    archived: bool,
+    archive_state: ArchiveState,
     others: &[UserId],
 ) -> CommissionId {
     let parsed_title = title
@@ -280,7 +286,7 @@ pub(crate) async fn seed_titled_at(
     let mut commission = Commission::create(parsed_title, adapter_mem::fixture::alice(), now, None);
     let commission_id = CommissionId::from(id);
     commission.id = commission_id;
-    let archived_at = archived.then_some(now);
+    let archived_at = matches!(archive_state, ArchiveState::Archived).then_some(now);
     world
         .runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {

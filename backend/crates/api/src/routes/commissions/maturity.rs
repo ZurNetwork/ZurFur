@@ -5,14 +5,18 @@
 use application::commission::maturity::set;
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::elements::{commission::CommissionId, maturity::MaturityRating};
+use domain::elements::maturity::MaturityRating;
 use serde::Deserialize;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `PUT /commissions/{id}/maturity` request body: the rating token, plus
 /// the optional Graphic flag (defaults to `false`).
@@ -28,8 +32,8 @@ pub(super) struct SetMaturityBody {
 /// `204 No Content`.
 pub(super) async fn set_maturity(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<SetMaturityBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;

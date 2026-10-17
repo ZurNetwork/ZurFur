@@ -5,15 +5,19 @@
 use application::commission::deadline;
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, DeadlineStatus};
+use domain::elements::commission::DeadlineStatus;
 use serde::Deserialize;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `PUT /commissions/{id}/deadline` request body: the new deadline as an
 /// RFC 3339 timestamp. Clearing is `DELETE`, not a null body.
@@ -35,8 +39,8 @@ pub(super) struct SetDeadlineStatusBody {
 /// `deadline_extended`. Returns `204 No Content`.
 pub(super) async fn set_deadline(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<SetDeadlineBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -65,8 +69,8 @@ pub(super) async fn set_deadline(
 /// Any-Participant-gated and idempotent. Returns `204 No Content`.
 pub(super) async fn clear_deadline(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = deadline::clear::Command {
         actor_id,
@@ -88,8 +92,8 @@ pub(super) async fn clear_deadline(
 /// already Late. Idempotent. Returns `204 No Content`.
 pub(super) async fn set_deadline_status(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<SetDeadlineStatusBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -123,8 +127,8 @@ pub(super) async fn set_deadline_status(
 /// deadline instead. Returns `204 No Content`.
 pub(super) async fn clear_deadline_status(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = deadline::status::clear::Command {
         actor_id,

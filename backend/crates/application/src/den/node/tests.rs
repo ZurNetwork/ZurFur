@@ -4,7 +4,7 @@ use uuid::Uuid;
 use super::*;
 use crate::{
     den::{DenNode, NameOrdinal},
-    test_world::{self, seed_titled_at},
+    test_world::{self, ArchiveState, seed_titled_at},
 };
 
 /// The older of the two commissions titled "Test 1": a fixed UUIDv7 a millisecond-scale age
@@ -103,13 +103,13 @@ async fn bob_sees_his_one_twin_plain_while_alice_sees_both_told_apart() {
     let (world, backend) = test_world::world_and_backend().await;
     let alice = adapter_mem::fixture::alice();
     let bob = adapter_mem::fixture::bob();
-    let older = seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, false, &[]).await;
+    let older = seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, ArchiveState::Live, &[]).await;
     let newer = seed_titled_at(
         &world,
         &backend,
         NEWER,
         TWIN_TITLE,
-        false,
+        ArchiveState::Live,
         std::slice::from_ref(&bob),
     )
     .await;
@@ -134,8 +134,8 @@ async fn bob_sees_his_one_twin_plain_while_alice_sees_both_told_apart() {
 async fn a_twin_s_crumb_carries_its_number_below_it() {
     let (world, backend) = test_world::world_and_backend().await;
     let alice = adapter_mem::fixture::alice();
-    seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, false, &[]).await;
-    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, false, &[]).await;
+    seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, ArchiveState::Live, &[]).await;
+    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, ArchiveState::Live, &[]).await;
 
     let attachments = read(
         &world.ports,
@@ -189,8 +189,16 @@ async fn a_path_with_no_twins_carries_no_number() {
 async fn an_archived_twin_numbers_only_with_include_deleted() {
     let (world, backend) = test_world::world_and_backend().await;
     let alice = adapter_mem::fixture::alice();
-    let older = seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, true, &[]).await;
-    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, false, &[]).await;
+    let older = seed_titled_at(
+        &world,
+        &backend,
+        OLDER,
+        TWIN_TITLE,
+        ArchiveState::Archived,
+        &[],
+    )
+    .await;
+    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, ArchiveState::Live, &[]).await;
     let newer_pieces = commission_pieces(newer, &[]);
     let older_pieces = commission_pieces(older, &[]);
 
@@ -215,8 +223,8 @@ async fn an_archived_twin_numbers_only_with_include_deleted() {
 async fn telling_twins_apart_stores_nothing() {
     let (world, backend) = test_world::world_and_backend().await;
     let alice = adapter_mem::fixture::alice();
-    let older = seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, false, &[]).await;
-    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, false, &[]).await;
+    let older = seed_titled_at(&world, &backend, OLDER, TWIN_TITLE, ArchiveState::Live, &[]).await;
+    let newer = seed_titled_at(&world, &backend, NEWER, TWIN_TITLE, ArchiveState::Live, &[]).await;
 
     let listed = twins_listed(&world.ports, &alice, false).await;
     let numbered = node_number(&world.ports, &alice, false, &commission_pieces(newer, &[])).await;

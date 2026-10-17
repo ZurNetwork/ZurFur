@@ -406,10 +406,11 @@ pub struct DenNode {
     /// Set when the entry is one of the viewer's mounts rather than a real child of its folder.
     #[prost(bool, tag = "5")]
     pub mount: bool,
-    /// Set, from 2 up, when another entry this viewer sees in the same folder shows
-    /// the same name; the server numbers such names in a fixed order (commissions
-    /// oldest first). Clients show it after the name, as "Test 1 (2)". Unset
-    /// otherwise. Computed for this viewer at read time, never stored.
+    /// Set, from 2 up, on each entry after the first of those with the same name
+    /// that this viewer sees in the same folder, in a fixed order (open entries by
+    /// key, so commissions oldest first; then cards). Clients show it after the
+    /// name, as "Test 1 (2)". Unset otherwise. Computed for this viewer at read
+    /// time, never stored.
     #[prost(uint32, optional, tag = "8")]
     pub name_ordinal: ::core::option::Option<u32>,
     /// The viewer's resolved access; unset or unknown renders as a card, never as open.
@@ -492,7 +493,10 @@ pub struct DenCrumb {
     /// Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
     #[prost(string, tag = "3")]
     pub r#type: ::prost::alloc::string::String,
-    /// As DenNode.name_ordinal: the number its parent's listing gives it.
+    /// The number its parent's listing gives it, as DenNode.name_ordinal: set, from 2
+    /// up, on each entry after the first of those with the same name, in a fixed order
+    /// (open entries by key, so commissions oldest first; then cards). Unset otherwise,
+    /// and always for the root.
     #[prost(uint32, optional, tag = "4")]
     pub name_ordinal: ::core::option::Option<u32>,
 }

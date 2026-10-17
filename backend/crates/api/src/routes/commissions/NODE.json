@@ -11,7 +11,7 @@
     "Commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto).",
     "Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403.",
     "A new act adds a file here rather than growing a hotspot.",
-    "The handler shape (ZMVP-205): `CallingUser` in, then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
+    "The handler shape (ZMVP-205): `CallingUser` in, then the `{id}` through `CommissionPath` (a malformed id answers the same 404 as an id that names nothing; a second path parameter keeps its own `Path` extraction, the id read there as `IgnoredAny`), then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
     "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists."
   ],
   "entry_points": [

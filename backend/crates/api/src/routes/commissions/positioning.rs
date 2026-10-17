@@ -12,14 +12,15 @@ use axum::{
 };
 use chrono::Utc;
 use domain::elements::{
-    account::AccountId,
-    commission::{CommissionId, GrantLevel},
-    user::UserId,
-    workflow::ColumnId,
+    account::AccountId, commission::GrantLevel, user::UserId, workflow::ColumnId,
 };
-use serde::Deserialize;
+use serde::{Deserialize, de::IgnoredAny};
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `POST /commissions/{id}/placements` body: the column to place the
 /// commission in, and where in it.
@@ -50,8 +51,8 @@ pub(super) struct RevokeBody {
 /// changelog entry: positioning is account-side view state. `204 No Content`.
 pub(super) async fn place_commission(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<PlaceBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -78,8 +79,8 @@ pub(super) async fn place_commission(
 /// Re-granting replaces the level. Returns `204 No Content`.
 pub(super) async fn grant_view(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<GrantBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -117,8 +118,9 @@ pub(super) async fn grant_view(
 pub(super) async fn revoke_view(
     State(state): State<AppState>,
     // TODO(engineer): `{account_id}` is dead since grants went per-User (DD 29130754).
-    Path((commission_id, _account_id)): Path<(CommissionId, AccountId)>,
+    Path((_, _account_id)): Path<(IgnoredAny, AccountId)>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<RevokeBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;

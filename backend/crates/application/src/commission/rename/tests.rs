@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use adapter_mem::MemBackend;
 use async_trait::async_trait;
@@ -97,6 +100,35 @@ impl World {
     async fn kinds(&self, id: CommissionId) -> Vec<ChangelogEntryKind> {
         let entries = self.entries(id).await;
         entries.iter().map(|entry| entry.kind).collect()
+    }
+
+    /// Counts every unit opened from here on, and answers the count.
+    fn count_units(&mut self) -> Arc<AtomicUsize> {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let counting = CountingDatabase {
+            inner: self.ports.database.clone(),
+            opened: opened.clone(),
+        };
+        self.ports.database = Arc::new(counting);
+        opened
+    }
+}
+
+/// A [`Database`] that counts the units it opens.
+struct CountingDatabase {
+    inner: Arc<dyn Database>,
+    opened: Arc<AtomicUsize>,
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a unit-of-work double delegates to the unit it wraps"
+)]
+#[async_trait]
+impl Database for CountingDatabase {
+    async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        self.inner.begin().await
     }
 }
 
@@ -379,4 +411,65 @@ async fn renaming_to_the_same_title_records_nothing() {
     assert_eq!(renamed.id, id);
     assert_eq!(renamed.title.as_str(), "A ref sheet");
     assert_eq!(world.kinds(id).await, [ChangelogEntryKind::Created]);
+}
+
+#[tokio::test]
+async fn a_refused_rename_opens_no_unit() {
+    let mut world = World::new();
+    let id = world.commission("A ref sheet").await;
+    let participant = UserId::from(Did::from("did:plc:rename-participant".to_owned()));
+    world
+        .backend
+        .seed_participant(id, participant.clone(), Utc::now());
+    let stranger = UserId::from(Did::from("did:plc:rename-stranger".to_owned()));
+    let opened = world.count_units();
+
+    let by_stranger = world.rename(stranger, id, "Mine now").await;
+    assert!(
+        matches!(by_stranger, Err(CommissionError::NotAMember)),
+        "{by_stranger:?}"
+    );
+    assert_eq!(opened.load(Ordering::SeqCst), 0, "a stranger opens no unit");
+
+    let by_participant = world.rename(participant, id, "Mine now").await;
+    assert!(
+        matches!(
+            by_participant,
+            Err(CommissionError::InsufficientPermissions)
+        ),
+        "{by_participant:?}"
+    );
+    assert_eq!(
+        opened.load(Ordering::SeqCst),
+        0,
+        "a Participant who isn't the owner opens no unit"
+    );
+
+    let refused_title = world.rename(owner(), id, "Ref/sheet").await;
+    assert!(
+        matches!(
+            refused_title,
+            Err(CommissionError::InvalidName(DenNameError::Slash))
+        ),
+        "{refused_title:?}"
+    );
+    assert_eq!(
+        opened.load(Ordering::SeqCst),
+        0,
+        "a title the name rule refuses opens no unit"
+    );
+}
+
+#[tokio::test]
+async fn a_real_rename_opens_one_unit() {
+    let mut world = World::new();
+    let id = world.commission("A ref sheet").await;
+    let opened = world.count_units();
+
+    world
+        .rename(owner(), id, "A full piece")
+        .await
+        .expect("renames");
+
+    assert_eq!(opened.load(Ordering::SeqCst), 1);
 }

@@ -5,19 +5,20 @@
 use application::commission::invitations::{self, issue::InvitationOutput};
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::{
-    commission::{CommissionId, element::SeatId},
-    user::UserId,
-};
+use domain::elements::{commission::element::SeatId, user::UserId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// `POST /commissions/{id}/invitations`'s body: the seat offer, in full — see
 /// [`invite_to_seat`].
@@ -65,8 +66,8 @@ pub(super) struct InviteToSeatBody {
 /// pending user returns the existing offer (`200`); otherwise `201 Created`.
 pub(super) async fn invite_to_seat(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<InviteToSeatBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| {
@@ -117,8 +118,8 @@ pub(super) struct RevokeSeatInvitationBody {
 /// no-op. Every path echoes `{ commission, seat, user }`.
 pub(super) async fn revoke_seat_invitation(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<RevokeSeatInvitationBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| {

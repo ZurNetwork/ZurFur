@@ -134,10 +134,10 @@ async fn the_owner_archives_and_the_record_survives() {
         json!(me.id.to_string()),
         "archiving is an owner act, never a system entry",
     );
-    assert!(
-        entries[1]["payload"].get("title").is_none(),
-        "a new entry carries no title: {}",
-        entries[1]["payload"],
+    let empty_payload = json!({});
+    assert_eq!(
+        entries[1]["payload"], empty_payload,
+        "a new entry carries no parameters, the title least of all",
     );
 }
 
@@ -193,10 +193,10 @@ async fn the_owner_unarchives_back_to_active() {
         ["created", "archived", "unarchived"],
         "both directions are changelog entries, in act order",
     );
-    assert!(
-        entries[2]["payload"].get("title").is_none(),
-        "a new entry carries no title: {}",
-        entries[2]["payload"],
+    let empty_payload = json!({});
+    assert_eq!(
+        entries[2]["payload"], empty_payload,
+        "a new entry carries no parameters, the title least of all",
     );
 }
 

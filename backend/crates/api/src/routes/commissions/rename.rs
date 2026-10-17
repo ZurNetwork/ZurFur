@@ -3,18 +3,18 @@
 use application::commission::{CommissionValues, rename};
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, CommissionTitle, CommissionTitleError};
+use domain::elements::commission::{CommissionTitle, CommissionTitleError};
 
 use super::{title_refused, title_write_problem, wire_timestamp};
 use crate::generated::{RenameCommissionRequest, RenameCommissionResponse};
 use crate::{
     AppState,
-    extract::CallingUser,
+    extract::{CallingUser, CommissionPath},
     problem::{FieldCode, Problem},
 };
 
@@ -48,8 +48,8 @@ impl From<CommissionValues> for RenameCommissionResponse {
 /// a Participant who isn't the owner; `404` for anyone else and for an id that names nothing.
 pub(super) async fn rename_commission(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<RenameCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
