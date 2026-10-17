@@ -18,25 +18,46 @@ const FORBIDDEN: &str = "ports";
 /// reason inline.
 const EXEMPT: &[&str] = &[];
 
-/// The domain crates, as their folder names beside this crate's.
-const DOMAIN_CRATES: &[&str] = &[
-    "kernel",
-    "identity",
-    "workflow",
-    "gallery",
-    "moderation",
-    "domain",
-];
+/// Domain crates that must have both `src/elements.rs` and `src/elements/`,
+/// as folder names beside this crate's.
+const REQUIRED_CRATES: &[&str] = &["kernel", "identity", "workflow"];
 
-/// The files this guard scans: in every domain crate that has them, the
-/// `src/elements.rs` façade and every leaf under `src/elements/`.
+/// Domain crates scanned for `src/elements.rs` and `src/elements/` when they
+/// have them, as folder names beside this crate's.
+const OPTIONAL_CRATES: &[&str] = &["gallery", "moderation"];
+
+/// The façade crate: only its `src/elements.rs` is required, and it has no
+/// `src/elements/` folder.
+const FACADE_CRATE: &str = "domain";
+
+/// The files this guard scans: the `src/elements.rs` façade and every leaf
+/// under `src/elements/` of each required crate and each optional crate that
+/// has them, plus the façade crate's `src/elements.rs`.
+///
+/// Panics when a required crate lacks one of them, so a moved or flattened
+/// layout cannot make the guard pass while checking nothing.
 fn scanned_files() -> Vec<PathBuf> {
     let crates = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the crates folder")
         .to_path_buf();
+    let missing = |name: &str, what: &str| {
+        format!(
+            "guard expects domain crate `{name}` to have {what} — if the crate's layout \
+             changed, update the guard's crate list"
+        )
+    };
     let mut files = Vec::new();
-    for name in DOMAIN_CRATES {
+    for name in REQUIRED_CRATES {
+        let src = crates.join(name).join("src");
+        let leaves = src.join("elements");
+        let facade = src.join("elements.rs");
+        assert!(leaves.is_dir(), "{}", missing(name, "`src/elements/`"));
+        assert!(facade.is_file(), "{}", missing(name, "`src/elements.rs`"));
+        files.extend(rust_files(&leaves));
+        files.push(facade);
+    }
+    for name in OPTIONAL_CRATES {
         let src = crates.join(name).join("src");
         let leaves = src.join("elements");
         if leaves.is_dir() {
@@ -47,6 +68,13 @@ fn scanned_files() -> Vec<PathBuf> {
             files.push(facade);
         }
     }
+    let facade = crates.join(FACADE_CRATE).join("src").join("elements.rs");
+    assert!(
+        facade.is_file(),
+        "{}",
+        missing(FACADE_CRATE, "`src/elements.rs`")
+    );
+    files.push(facade);
     files
 }
 
