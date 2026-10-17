@@ -26,6 +26,12 @@ import type { SegmentPath } from './path-builder';
 /** At most this many pages of the folder are read looking for a new commission's entry. */
 export const COMMISSION_SEARCH_PAGES = 4;
 
+/** What the create form says when the page's own address isn't found: the closed door, under its code. */
+export const CREATE_NODE_NOT_FOUND_PROBLEM: Problem = {
+	...NODE_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
 /** What the form says when creating wasn't answered: it may have gone through. */
 export const CREATE_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
 	"Zurfur didn't answer in time. Your commission may have been created: check your commissions before you try again."
@@ -91,7 +97,7 @@ export function createCommissionOutcome(
 	title: string
 ): Effect.Effect<CreateCommissionOutcome, ContractViolation, ZurfurApi> {
 	const folderHref = denHrefOf(folder, PLAIN_QUERY);
-	if (folderHref === undefined) return Effect.succeed({ problem: NODE_NOT_FOUND_PROBLEM });
+	if (folderHref === undefined) return Effect.succeed({ problem: CREATE_NODE_NOT_FOUND_PROBLEM });
 	const created = Effect.gen(function* () {
 		const api = yield* ZurfurApi;
 		const commission = yield* api.createCommission(title);

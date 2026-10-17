@@ -25,7 +25,12 @@
     },
     {
       "name": "extract.rs",
-      "role": "CallingUser extractor — session → Did → UserId, 401 on absence; CommissionPath extractor — the route's {id} segment → CommissionId, every refusal (missing, undecodable, unparsable) the commission's one 404",
+      "role": "CallingUser extractor — session → Did → UserId, 401 on absence; CommissionPath extractor — the route's {id} segment → CommissionId, a missing or unparsable id the commission's one 404 (a non-UTF-8 segment too, unless another Path extractor runs first and answers axum's 400)",
+      "node": false
+    },
+    {
+      "name": "extract/",
+      "role": "tests.rs: the source scan that fails when any file under routes/ puts CommissionId inside a Path<…>, so every commission route reads its id through CommissionPath",
       "node": false
     },
     {

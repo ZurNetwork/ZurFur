@@ -258,4 +258,13 @@ describe('the createCommission action', () => {
 		expect(createdAny).toBe(false);
 		expect(reads).toEqual([]);
 	});
+
+	it('shows "Nothing here" as the form’s message for an address the path builder refuses', async () => {
+		api(NEW_ID, []);
+
+		const failure = failureOf(await create('/den/a%2Fb', 'Fox'));
+
+		expect(failure.data.form.message?.detail).toBe('Nothing here');
+		expect(failure.data.form.errors.title).toBeUndefined();
+	});
 });

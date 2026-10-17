@@ -3,8 +3,8 @@ import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 import type { Actions, PageServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
-import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
 import {
+	CREATE_NODE_NOT_FOUND_PROBLEM,
 	createCommissionOutcome,
 	RENAME_COMMISSION_NOT_FOUND_PROBLEM,
 	RENAME_NODE_NOT_FOUND_PROBLEM,
@@ -61,7 +61,7 @@ export const actions = {
 		const form = await superValidate(request, effect(createCommissionForm));
 		if (!form.valid) return fail(HttpStatus.UnprocessableContent, { form });
 		const folder = denPathFromPathname(url.pathname);
-		if (folder === undefined) return problemMessage(form, NODE_NOT_FOUND_PROBLEM);
+		if (folder === undefined) return problemMessage(form, CREATE_NODE_NOT_FOUND_PROBLEM);
 
 		const outcome = await runApi(fetch, createCommissionOutcome(folder, form.data.title));
 

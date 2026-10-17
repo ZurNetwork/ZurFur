@@ -27,9 +27,10 @@ impl<S: Send + Sync> FromRequestParts<S> for CallingUser {
     }
 }
 
-/// The commission id in the route's `{id}` segment. A missing, undecodable or
-/// unparsable id answers the same 404 as an id that names no commission, and
-/// never echoes the input.
+/// The commission id in the route's `{id}` segment. A missing or unparsable id
+/// answers the same 404 as an id that names no commission, and never echoes the
+/// input. A segment that isn't UTF-8 gets that 404 only where no other `Path`
+/// extractor runs first; one that does answers axum's 400 instead.
 pub struct CommissionPath(pub CommissionId);
 impl<S: Send + Sync> FromRequestParts<S> for CommissionPath {
     type Rejection = Problem;
@@ -51,3 +52,6 @@ impl<S: Send + Sync> FromRequestParts<S> for CommissionPath {
         Ok(CommissionPath(commission_id))
     }
 }
+
+#[cfg(test)]
+mod tests;
