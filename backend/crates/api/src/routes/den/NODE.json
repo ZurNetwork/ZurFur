@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/den",
-  "charted": "2026-10-13",
+  "charted": "2026-10-17",
   "short": "The Den read over HTTP: GET /den and GET /den/{*path}",
   "is": "The den route group: a thin driver over `application::den` that checks the session (`CallingUser`), then parses the raw query string by hand, then splits the raw request path on `/` and percent-decodes each piece once, and maps the application's outputs onto den.proto's generated types. Every miss is the one `node_not_found`; every answer carries `Cache-Control: private, no-store`.",
   "type": "code",
@@ -49,7 +49,7 @@
     },
     {
       "name": "wire.rs",
-      "role": "the application's den outputs into the generated den.proto types",
+      "role": "the application's den outputs into the generated den.proto types: an open node's thing as `DenOpen.thing`'s case (`accountDid` or `commissionId`), a crumb's type as its word",
       "node": false
     }
   ],
@@ -72,7 +72,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole route group: the one not-found, the viewer from the session only, the query parameters and their spelling, page tokens"
+      "governs": "the whole route group: the one not-found, the viewer from the session only, the query parameters and their spelling, page tokens; wire.rs: an open node's thing (D2, amended 2026-10-15) and each crumb's type (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "notes": []

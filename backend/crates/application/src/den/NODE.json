@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/den",
-  "charted": "2026-10-12",
+  "charted": "2026-10-17",
   "short": "The Den read: the den Query and Zurfur's one Atta host",
-  "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; and `DenHost`, the one implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). Atta's types are imported only here; every public signature uses the application's own values.",
+  "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; `DenThing`, the Account or commission an open node stands for; and `DenHost`, the one implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). Atta's types are imported only here; every public signature uses the application's own values.",
   "type": "code",
   "tags": [
     "category:source"
@@ -14,7 +14,8 @@
     "`include_deleted` lives only in the host; Atta never sees it. The viewer comes from the session only, and every host method fails closed for any other viewer.",
     "`admit` answers from the request's record alone: no store call, no failure.",
     "The host keeps an arm's answer only when its place is a child of the folder's recorded place (`Place::is_child_of`) and, for `child`, its key is the key asked for; anything else is dropped unrecorded.",
-    "A place whose type doesn't show its content is closed: `child`, `children` and `mounts` below it answer nothing, so a listing and a typed path can't disagree. `/` and the top-level directories are traverse-only and list nothing. `/user/<did>` is looked up only for the session's own DID."
+    "A place whose type doesn't show its content is closed: `child`, `children` and `mounts` below it answer nothing, so a listing and a typed path can't disagree. `/` and the top-level directories are traverse-only and list nothing. `/user/<did>` is looked up only for the session's own DID.",
+    "An open node's thing comes from the host's record for its real path, the recorded `Place` (`Place::thing`), in the same lookup as its soft-deleted word: no path segment is parsed for it, a mount carries its target's, and a card carries none."
   ],
   "entry_points": [
     "../den.rs",
@@ -45,7 +46,7 @@
     },
     {
       "name": "host.rs",
-      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
+      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; its record answers each open node's soft-deleted word and thing; `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
       "node": false
     },
     {
@@ -75,7 +76,7 @@
     },
     {
       "name": "output.rs",
-      "role": "the Queries' output values: DenNode, DenAccess, DenCrumb, DenListing, DenContent",
+      "role": "the Queries' output values: DenNode, DenAccess (an open node's thing among its facts), DenCrumb (with its type), DenListing, DenContent",
       "node": false
     },
     {
@@ -85,7 +86,7 @@
     },
     {
       "name": "place.rs",
-      "role": "Place, Parent, TopLevel, Place::is_child_of, Node (an arm's answer), DenMount and the STANDING lift",
+      "role": "Place, Parent, TopLevel, Place::is_child_of, Place::thing (an Account's or a commission's directory names its id; every other place none), Node (an arm's answer), DenMount and the STANDING lift",
       "node": false
     },
     {
@@ -95,7 +96,7 @@
     },
     {
       "name": "read.rs",
-      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a SoftDeleteLookup, Atta's answers into output values",
+      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a RecordLookup (each open node's soft-deleted word and thing, in one lookup), Atta's answers into output values; a crumb carries its entry's type, an unknown one a store error",
       "node": false
     },
     {
@@ -117,6 +118,11 @@
       "name": "state.rs",
       "role": "NodeState: live, archived, deactivated (with whether the viewer is the Owner)",
       "node": false
+    },
+    {
+      "name": "thing.rs",
+      "role": "DenThing: the Account or commission an open node stands for, by its id",
+      "node": false
     }
   ],
   "refs": [
@@ -128,7 +134,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); page tokens (D24)"
+      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "notes": [
