@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { accountId, did, handle, handleFromTrusted, pathSegment, pageToken } from './brand';
+import {
+	accountId,
+	did,
+	firstPartyOrigin,
+	handle,
+	handleFromTrusted,
+	pathSegment,
+	pageToken
+} from './brand';
 import { HANDLE_MAX_LEN } from './handle-format';
 
 describe('handle (the validated mint)', () => {
@@ -63,5 +71,38 @@ describe('pageToken (validated mint)', () => {
 
 	it.each(['', 'a b', 'a\u0000b', 'é', 'a'.repeat(513)])('refuses %j', (raw) => {
 		expect(pageToken(raw)).toBeUndefined();
+	});
+});
+
+describe('firstPartyOrigin (validated mint)', () => {
+	it.each(['http://127.0.0.1:8080', 'http://[::1]:8080', 'https://zurfur.app'])(
+		'accepts %s as itself',
+		(raw) => {
+			expect(firstPartyOrigin(raw)).toBe(raw);
+		}
+	);
+
+	it('normalises the scheme case and drops the bare trailing slash', () => {
+		expect(firstPartyOrigin('HTTP://127.0.0.1:8080/')).toBe('http://127.0.0.1:8080');
+	});
+
+	it.each([
+		'http://127.0.0.1:8080/app',
+		'http://127.0.0.1:8080?x=1',
+		'http://127.0.0.1:8080?',
+		'http://127.0.0.1:8080/?',
+		'http://127.0.0.1:8080#top',
+		'http://127.0.0.1:8080#',
+		'http://user:pass@127.0.0.1:8080',
+		'http://user@127.0.0.1:8080',
+		'ftp://127.0.0.1:8080',
+		'file:///etc/passwd',
+		'ws://127.0.0.1:8080',
+		'wss://zurfur.app',
+		'not a url',
+		'',
+		'127.0.0.1:8080'
+	])('refuses %j without throwing', (raw) => {
+		expect(firstPartyOrigin(raw)).toBeUndefined();
 	});
 });

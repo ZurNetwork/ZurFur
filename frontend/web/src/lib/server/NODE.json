@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/lib/server",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Below the seam: runtime, port, programs, forms",
   "is": "Everything below the seam: one ManagedRuntime, one `ZurfurApi` port, outcome-returning programs per domain, one Schema module per form.",
   "type": "code",
@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, cross-site-writes, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
@@ -47,6 +47,11 @@
     {
       "name": "cookies.ts",
       "role": "every cookie name Zurfur sets (closed SessionCookieName | SignInBindingCookieName) and cookieOptions, the one set/clear options helper; the backend ZurfurCookie's twin",
+      "node": false
+    },
+    {
+      "name": "cross-site-writes.ts",
+      "role": "refuseCrossSiteWrites(firstParty), a plain handle hook: every write (any method but GET, HEAD, OPTIONS; any content type) whose Origin isn't exactly the configured origin — or, with no Origin, isn't Sec-Fetch-Site: same-origin — gets a 403 text/plain in SvelteKit's wording before resolve; with no configured origin, every write does",
       "node": false
     },
     {
@@ -126,6 +131,11 @@
     }
   ],
   "refs": [
+    {
+      "page": 24543244,
+      "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",
+      "governs": "cross-site-writes.ts"
+    },
     {
       "page": 26050561,
       "title": "Confusable Handles & the Punycode Policy",
