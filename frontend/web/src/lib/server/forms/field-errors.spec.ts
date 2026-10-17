@@ -44,6 +44,12 @@ const titleError: FieldError = {
 	detail: "This can't be blank."
 };
 
+const summaryError: FieldError = {
+	pointer: fieldPointer('#/summary'),
+	code: 'summary_too_long',
+	detail: 'Keep this to a few lines.'
+};
+
 const strangerError: FieldError = {
 	pointer: fieldPointer('#/linkedChannel'),
 	code: 'channel_unknown',
@@ -61,6 +67,18 @@ describe('problemOnFields', () => {
 		expect(form.errors.summary).toBeUndefined();
 		expect(form.message).toBeUndefined();
 		expect(form.valid).toBe(false);
+		expect(failure).toMatchObject({ status: 422 });
+	});
+
+	it('a title error and a summary error each land under their own field', async () => {
+		const form = await commissionForm();
+		const problem = invalidFieldsProblem([titleError, summaryError]);
+
+		const failure = problemOnFields(form, problem, fieldOf);
+
+		expect(form.errors.title).toEqual([titleError.detail]);
+		expect(form.errors.summary).toEqual([summaryError.detail]);
+		expect(form.message).toBeUndefined();
 		expect(failure).toMatchObject({ status: 422 });
 	});
 

@@ -65,9 +65,13 @@ impl From<FieldRefusal> for FieldError {
     }
 }
 
+/// The detail of every field refusal problem; each field error says why itself.
+const INVALID_FIELDS_DETAIL: &str = "Some fields need changing; each one says why.";
+
 impl Problem {
     /// `422`, code `invalid_request` — the request's fields need changing.
-    /// `errors` lists every refusal in order and is never empty.
+    /// It is [`Problem::invalid_request`] with a fixed detail, plus `errors`,
+    /// which lists every refusal in order and is never empty.
     pub fn invalid_fields(
         first: FieldRefusal,
         rest: impl IntoIterator<Item = FieldRefusal>,
@@ -76,13 +80,7 @@ impl Problem {
             .chain(rest)
             .map(FieldError::from)
             .collect();
-        let invalid_request = Self::new(
-            "urn:zurfur:error:invalid-request",
-            "invalid_request",
-            "Invalid request",
-            422,
-            "Some fields need changing; each one says why.",
-        );
+        let invalid_request = Self::invalid_request(INVALID_FIELDS_DETAIL);
         Self {
             errors,
             ..invalid_request
