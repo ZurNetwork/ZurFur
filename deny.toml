@@ -1,6 +1,8 @@
 # cargo-deny configuration (ZMVP-143). Run locally with `cargo deny check`;
 # CI runs it via the `deny` job in .github/workflows/ci.yml. Lint levels:
 # deny = fails the check, warn = printed but non-blocking, allow = silent.
+# [sources] sets both unknown-source lints to deny, so a new registry or git
+# source fails the check until it is listed there.
 #
 # All 7 workspace crates set `publish = false`, which is what keys cargo-deny's
 # private-crate exemptions ([licenses.private] and [bans] allow-wildcard-paths);
@@ -101,6 +103,13 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
+# The whole source policy: a crate from any registry or git repository not
+# listed below fails the check. A new source fails until it is added here.
+unknown-registry = "deny"
+unknown-git = "deny"
+# crates.io, the only registry in use.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Exact repository URLs only; no organization-wide allowance.
 allow-git = [
     # Tag-pinned codegen library (root Cargo.toml `[workspace.dependencies]`;
     # see that file's comment for why it's a git dependency, not a crates.io
