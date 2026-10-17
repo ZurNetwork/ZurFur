@@ -1,7 +1,8 @@
-//! Capability-scoped write gating, end to end. The account-scope
-//! authorization floor is now one shared `AccountRole` extractor every
-//! account-scoped write flows through; this pins the three tiers of authority it
-//! enforces, plus the two things it must **not** do:
+//! Capability-scoped write gating, end to end. An account-scoped write has two gates:
+//! the `CallingUser` extractor (no session → 401), then the use case's own check of the
+//! caller's standing on the Account (no role that allows the act → 403), made before it
+//! looks at anything else. This pins the three tiers of authority they enforce, plus
+//! the two things they must **not** do:
 //!
 //! - **anonymous → 401** on any account-scoped write (read-only for the signed-out);
 //! - **authed User with no role on the target Account → 403** `forbidden` (problem+json),
@@ -23,6 +24,8 @@ use domain::elements::{
     handle::Handle,
     profile::Profile,
     role::Role,
+    user::UserId,
+    user_account::UserAccount,
 };
 use test_support::http::{client, serve, sign_in};
 use uuid::Uuid;
@@ -118,12 +121,11 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
         .expect("POST /accounts/{id}/members");
     common::assert_problem(res, 403, "forbidden").await;
 
-    // The forbidden write changed nothing. The gate rejects at the `AccountRole`
-    // extractor — before the handler body runs at all — so nothing downstream (body
-    // parse, the rank check, and crucially the grantee `provision`) ever executes.
-    // Assert both halves: the stranger is still a non-member, AND the would-be grantee
-    // was NOT provisioned as a side effect (grant_role recognizes grantees by DID, so a
-    // leak here would mint a User the forbidden request should never have created).
+    // The forbidden write changed nothing. The use case refuses on the caller's own
+    // standing before it looks at the target, so the answer never depends on who the
+    // target is, and no unit of work is opened. Assert both halves: the stranger is
+    // still a non-member, AND no User exists for the would-be grantee (a grant writes
+    // no User row, refused or not).
     let me = backend
         .find_by_did(&Did::from("did:plc:stranger".to_string()))
         .await
@@ -140,7 +142,7 @@ async fn authed_user_without_a_role_is_forbidden_on_an_account_scoped_write() {
             .await
             .expect("find grantee")
             .is_none(),
-        "a forbidden grant provisions no User for the grantee (rejected before provisioning)",
+        "a forbidden grant leaves no User for the grantee",
     );
 }
 
@@ -162,34 +164,36 @@ async fn authed_user_with_the_role_succeeds_on_an_account_scoped_write() {
 
     // The signed-in user founds the account and is its Owner — an Owner may grant.
     let account_id = found_account(&client, &base, "Acme Studio", "acme.zurfur.app").await;
+    let account = account_id_from(&account_id);
+
+    // A grant changes an existing member's role, so seat the grantee as a Member first.
+    let grantee = UserId::from(Did::from("did:plc:grantee".to_string()));
+    let grantee_seat = UserAccount {
+        user_id: grantee.clone(),
+        account_id: account.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&grantee_seat);
 
     let res = client
         .post(format!("{base}/accounts/{account_id}/members"))
-        .json(&serde_json::json!({ "user": "did:plc:grantee", "role": "member" }))
+        .json(&serde_json::json!({ "user": "did:plc:grantee", "role": "manager" }))
         .send()
         .await
         .expect("POST /accounts/{id}/members");
     assert_eq!(res.status(), 200, "the Owner's grant succeeds");
 
-    // The grant took effect — the grantee now holds the seated role.
-    let grantee = backend
-        .find_by_did(&Did::from("did:plc:grantee".to_string()))
-        .await
-        .expect("find grantee")
-        .expect("the grant provisioned the grantee");
-    let account = account_id_from(&account_id);
+    // The grant took effect — the member now holds the granted role.
     assert_eq!(
-        backend
-            .role_of(&grantee.id, &account)
-            .await
-            .expect("role_of"),
-        Some(Role::Member),
-        "the grantee is seated as a Member",
+        backend.role_of(&grantee, &account).await.expect("role_of"),
+        Some(Role::Manager),
+        "the member is re-roled to Manager",
     );
 }
 
 // AC2 — a signed-in User with ZERO accounts can still make a *user-scoped* write:
-// founding an account is not account-scoped, so the `AccountRole` gate is not applied.
+// founding an account is not account-scoped, so no standing on an Account is checked.
 #[tokio::test]
 async fn authed_user_with_zero_accounts_can_make_a_user_scoped_write() {
     let served = serve(

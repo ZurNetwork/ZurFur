@@ -10,6 +10,7 @@ use domain::elements::{
     handle::Handle,
     profile::Profile,
     role::Role,
+    user::UserId,
     user_account::UserAccount,
 };
 use test_support::http::{client, serve, sign_in};
@@ -340,15 +341,13 @@ async fn a_non_owner_member_cannot_delete() {
         .create(&account, &owner_membership)
         .await
         .expect("found the account under another owner");
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: account.id.clone(),
-            role: Role::Admin,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a non-Owner Admin");
+    let my_seat = UserAccount {
+        user_id: me.id,
+        account_id: account.id.clone(),
+        role: Role::Admin,
+        alias: None,
+    };
+    backend.seed_member(&my_seat);
 
     let res = client
         .delete(format!("{base}/accounts/{}", account.id))
@@ -364,11 +363,10 @@ async fn a_non_owner_member_cannot_delete() {
     );
 }
 
-// ZMVP-15 — the heart: an Owner grants a role and the grantee is seated as a member
-// of the account at that role. The grantee is named by DID and need not have signed
-// in; the grant recognizes them. (Requires task ②, `Role::can_grant`, to be live.)
+// The heart: an Owner grants an existing member a new role, and the member holds it.
+// A grant only changes a member's role; a newcomer joins by accepting an invitation.
 #[tokio::test]
-async fn owner_grants_a_role_and_seats_the_member() {
+async fn owner_re_roles_an_existing_member() {
     let did = "did:plc:e2egranter";
     let served = serve(
         test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
@@ -382,29 +380,36 @@ async fn owner_grants_a_role_and_seats_the_member() {
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
+    let account = AccountId::from(Did::from(account_id.clone()));
 
+    // Seat the grantee as a plain Member first: a grant acts only on a member.
     let grantee_did = "did:plc:e2egrantee";
+    let grantee = backend
+        .provision(&Did::from(grantee_did.to_string()))
+        .await
+        .expect("provision the grantee");
+    let grantee_seat = UserAccount {
+        user_id: grantee.id.clone(),
+        account_id: account.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&grantee_seat);
+
     let res = client
         .post(format!("{base}/accounts/{account_id}/members"))
         .json(&serde_json::json!({ "user": grantee_did, "role": "admin" }))
         .send()
         .await
         .expect("POST /accounts/{id}/members");
-    assert_eq!(res.status(), 200, "an Owner's grant succeeds");
+    assert_eq!(res.status(), 200, "an Owner's grant to a member succeeds");
     let body: serde_json::Value = res.json().await.expect("json body");
-    assert_eq!(body["user"], grantee_did, "the response echoes the grantee");
+    assert_eq!(body["user"], grantee_did, "the response echoes the member");
     assert_eq!(
         body["role"], "admin",
         "the response echoes the granted role"
     );
 
-    // The grantee is now an Admin of the account. Provisioning their DID is
-    // idempotent — it returns the very User the grant recognized.
-    let grantee = backend
-        .provision(&Did::from(grantee_did.to_string()))
-        .await
-        .expect("provision the grantee");
-    let account = AccountId::from(Did::from(account_id));
     let role = backend
         .role_of(&grantee.id, &account)
         .await
@@ -412,7 +417,7 @@ async fn owner_grants_a_role_and_seats_the_member() {
     assert_eq!(
         role,
         Some(Role::Admin),
-        "the grantee holds the granted role"
+        "the member now holds the granted role"
     );
 }
 
@@ -444,15 +449,9 @@ async fn granting_owner_is_refused() {
     assert_eq!(res.status(), 403, "Owner cannot be granted here");
 
     // Nothing was seated for the would-be owner.
-    let grantee = backend
-        .provision(&Did::from(grantee_did.to_string()))
-        .await
-        .expect("provision");
+    let grantee = UserId::from(Did::from(grantee_did.to_string()));
     let account = AccountId::from(Did::from(account_id));
-    let role = backend
-        .role_of(&grantee.id, &account)
-        .await
-        .expect("role_of");
+    let role = backend.role_of(&grantee, &account).await.expect("role_of");
     assert_eq!(role, None, "a refused grant seats no one");
 }
 
@@ -600,15 +599,20 @@ async fn anonymous_visitor_cannot_found_an_account() {
     assert!(found.is_none());
 }
 
-/// Seats a member by granting them a role — the setup step for the revoke tests.
-async fn grant_role(client: &reqwest::Client, base: &str, account_id: &str, did: &str, role: &str) {
-    let res = client
-        .post(format!("{base}/accounts/{account_id}/members"))
-        .json(&serde_json::json!({ "user": did, "role": role }))
-        .send()
+/// Recognizes `did` as a User and seeds them as a member of `account_id` at `role` —
+/// the setup step for the revoke tests.
+async fn seed_member(backend: &MemBackend, account_id: &str, did: &str, role: Role) {
+    let member = backend
+        .provision(&Did::from(did.to_string()))
         .await
-        .expect("POST /accounts/{id}/members");
-    assert_eq!(res.status(), 200, "granting the setup role succeeds");
+        .expect("provision the member");
+    let seat = UserAccount {
+        user_id: member.id,
+        account_id: AccountId::from(Did::from(account_id.to_string())),
+        role,
+        alias: None,
+    };
+    backend.seed_member(&seat);
 }
 
 // ZMVP-16 — the heart: an Owner revokes a member and they hold no role afterward.
@@ -631,7 +635,7 @@ async fn owner_revokes_a_member_and_unseats_them() {
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
     let member_did = "did:plc:e2erevokee";
-    grant_role(&client, &base, &account_id, member_did, "admin").await;
+    seed_member(&backend, &account_id, member_did, Role::Admin).await;
 
     let res = client
         .delete(format!("{base}/accounts/{account_id}/members"))
@@ -1055,12 +1059,12 @@ async fn wellknown_does_not_serve_a_foreign_host() {
 
 // --- Finding 1: grant/revoke authorization symmetry (the current-rank guard) ---
 
-/// Seats the signed-in caller (`my_did`) as an ADMIN of an account owned by someone
-/// else, returning the account — the shared setup for the grant-rank tests below
-/// (the e2e harness signs in one DID, so the Owner is seeded via the backend, exactly
-/// as in `a_non_owner_member_cannot_delete`). Each test spawns its own backend, so the
-/// fixed owner/handle here never collide across tests.
-async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &str) -> Account {
+/// Seats the signed-in caller (`my_did`) at `role` in an account owned by someone else,
+/// returning the account — the shared setup for the grant-rank tests below (the e2e
+/// harness signs in one DID, so the Owner is seeded via the backend, exactly as in
+/// `a_non_owner_member_cannot_delete`). Each test spawns its own backend, so the fixed
+/// owner/handle here never collide across tests.
+async fn seat_me_on_a_foreign_account(backend: &MemBackend, my_did: &str, role: Role) -> Account {
     let me = backend
         .find_by_did(&Did::from(my_did.to_string()))
         .await
@@ -1081,15 +1085,13 @@ async fn seat_me_as_admin_on_a_foreign_account(backend: &MemBackend, my_did: &st
         .create(&account, &owner_membership)
         .await
         .expect("found the account under another owner");
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: account.id.clone(),
-            role: Role::Admin,
-            alias: None,
-        })
-        .await
-        .expect("seat me as an Admin");
+    let my_seat = UserAccount {
+        user_id: me.id,
+        account_id: account.id.clone(),
+        role,
+        alias: None,
+    };
+    backend.seed_member(&my_seat);
     account
 }
 
@@ -1111,7 +1113,7 @@ async fn admin_cannot_demote_a_peer_admin() {
     let (base, backend) = (served.base_url, served.backend);
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
-    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+    let account = seat_me_on_a_foreign_account(&backend, did, Role::Admin).await;
 
     // A peer Admin — the same rank as the actor.
     let peer_did = "did:plc:e2epeer-admin";
@@ -1119,15 +1121,13 @@ async fn admin_cannot_demote_a_peer_admin() {
         .provision(&Did::from(peer_did.to_string()))
         .await
         .expect("provision peer");
-    backend
-        .grant_role(&UserAccount {
-            user_id: peer.id.clone(),
-            account_id: account.id.clone(),
-            role: Role::Admin,
-            alias: None,
-        })
-        .await
-        .expect("seat the peer Admin");
+    let peer_seat = UserAccount {
+        user_id: peer.id.clone(),
+        account_id: account.id.clone(),
+        role: Role::Admin,
+        alias: None,
+    };
+    backend.seed_member(&peer_seat);
 
     // The actor tries to DEMOTE the peer Admin to Member — must be refused (403).
     let res = client
@@ -1149,10 +1149,11 @@ async fn admin_cannot_demote_a_peer_admin() {
     );
 }
 
-// The guard must not over-reach: an Admin can still seat a BRAND-NEW member — no current
-// rank to outrank — the ordinary grant path.
+// A grant never seats anyone: an Admin's grant to someone who is not a member is the
+// missing membership (404 `member_not_found`), and it seats and mints no one. The
+// newcomer joins only by accepting an invitation.
 #[tokio::test]
-async fn admin_can_grant_to_a_non_member() {
+async fn admin_cannot_grant_to_a_non_member() {
     let did = "did:plc:e2eadmin-granter";
     let served = serve(
         test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
@@ -1165,7 +1166,7 @@ async fn admin_can_grant_to_a_non_member() {
     let (base, backend) = (served.base_url, served.backend);
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
-    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+    let account = seat_me_on_a_foreign_account(&backend, did, Role::Admin).await;
 
     let newcomer_did = "did:plc:e2enewcomer";
     let res = client
@@ -1174,19 +1175,60 @@ async fn admin_can_grant_to_a_non_member() {
         .send()
         .await
         .expect("POST /accounts/{id}/members");
-    assert_eq!(res.status(), 200, "an Admin seats a brand-new member");
+    common::assert_problem(res, 404, "member_not_found").await;
 
-    let newcomer = backend
-        .provision(&Did::from(newcomer_did.to_string()))
-        .await
-        .expect("provision newcomer");
+    let newcomer = UserId::from(Did::from(newcomer_did.to_string()));
     assert_eq!(
         backend
-            .role_of(&newcomer.id, &account.id)
+            .role_of(&newcomer, &account.id)
             .await
             .expect("role_of"),
-        Some(Role::Member),
-        "the newcomer holds the granted role"
+        None,
+        "a refused grant seats no one"
+    );
+    assert!(
+        backend
+            .find_by_did(&Did::from(newcomer_did.to_string()))
+            .await
+            .expect("find the newcomer")
+            .is_none(),
+        "a refused grant mints no User for the newcomer"
+    );
+}
+
+// A Member may grant nothing, so a Member's grant is refused on their own standing
+// (403 `forbidden`) before the target is looked at: the answer is the same whether or
+// not the target is a member, and the grant cannot be used to learn the roster.
+#[tokio::test]
+async fn a_member_cannot_learn_membership_through_a_grant() {
+    let did = "did:plc:e2emember-prober";
+    let served = serve(
+        test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
+            Did::from(did.to_string()),
+            "owner.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "owner.bsky.social").await;
+    let account = seat_me_on_a_foreign_account(&backend, did, Role::Member).await;
+
+    let fresh_did = "did:plc:e2eprobed";
+    let res = client
+        .post(format!("{base}/accounts/{}/members", account.id))
+        .json(&serde_json::json!({ "user": fresh_did, "role": "member" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    common::assert_problem(res, 403, "forbidden").await;
+
+    let fresh = UserId::from(Did::from(fresh_did.to_string()));
+    assert_eq!(
+        backend.role_of(&fresh, &account.id).await.expect("role_of"),
+        None,
+        "a refused grant seats no one"
     );
 }
 
@@ -1206,7 +1248,7 @@ async fn admin_can_re_role_a_member_below_them() {
     let (base, backend) = (served.base_url, served.backend);
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
-    let account = seat_me_as_admin_on_a_foreign_account(&backend, did).await;
+    let account = seat_me_on_a_foreign_account(&backend, did, Role::Admin).await;
 
     // Seat a Member — a rank below the Admin actor.
     let member_did = "did:plc:e2emember";
@@ -1214,15 +1256,13 @@ async fn admin_can_re_role_a_member_below_them() {
         .provision(&Did::from(member_did.to_string()))
         .await
         .expect("provision member");
-    backend
-        .grant_role(&UserAccount {
-            user_id: member.id.clone(),
-            account_id: account.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat the member");
+    let member_seat = UserAccount {
+        user_id: member.id.clone(),
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&member_seat);
 
     let res = client
         .post(format!("{base}/accounts/{}/members", account.id))
@@ -1271,15 +1311,13 @@ async fn owner_can_re_role_an_admin() {
         .provision(&Did::from(admin_did.to_string()))
         .await
         .expect("provision admin");
-    backend
-        .grant_role(&UserAccount {
-            user_id: admin.id.clone(),
-            account_id: account.clone(),
-            role: Role::Admin,
-            alias: None,
-        })
-        .await
-        .expect("seat the admin");
+    let admin_seat = UserAccount {
+        user_id: admin.id.clone(),
+        account_id: account.clone(),
+        role: Role::Admin,
+        alias: None,
+    };
+    backend.seed_member(&admin_seat);
 
     // The Owner re-roles the Admin down to Manager — allowed (Owner outranks Admin).
     let res = client
