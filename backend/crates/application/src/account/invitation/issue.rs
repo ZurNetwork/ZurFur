@@ -92,6 +92,8 @@ impl Invitations<'_> {
         let target = uow.users().provision(target_id.did()).await?;
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 
+        // The store refuses an issuer who is no longer a member, so a departure that
+        // lands after the check above fails this unit instead of leaving a live offer.
         let stored = uow.accounts().create_invitation(&invitation).await?;
 
         let outcome = if invitation.id == stored.id {

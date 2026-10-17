@@ -123,6 +123,11 @@
       "governs": "src/lib.rs + src/commission.rs: the stage/commit/rollback contract"
     },
     {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "src/lib.rs: create_invitation refuses an issuer who is not a member of the account, before any write; a departure revokes the member's pending invitations"
+    },
+    {
       "page": 27852802,
       "title": "Account Handle Change Flow",
       "governs": "src/lib.rs: the append-only handle-change audit log"

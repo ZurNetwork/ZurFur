@@ -498,6 +498,24 @@ pub mod account {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/account/invitation_issuer_membership.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The issuer's membership, with their row key-share locked until the unit commits,
+    /// so a concurrent departure of the issuer either commits first or waits.
+    pub async fn invitation_issuer_membership(
+        conn: impl sqlx::PgExecutor<'_>,
+        account_id: &str,
+        user_id: &str,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!(
+            "../queries/account/invitation_issuer_membership.sql"
+        ))
+        .bind(account_id)
+        .bind(user_id)
+        .fetch_optional(conn)
+        .await
+    }
+
     /// `queries/account/list_deactivated_for_owner.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Every soft-deleted (deactivated) account in which `$1` holds the Owner

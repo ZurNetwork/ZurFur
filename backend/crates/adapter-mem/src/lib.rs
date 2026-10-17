@@ -1585,11 +1585,27 @@ impl AccountWrites for MemAccountWrites {
         self.settle_member_departure(user, account)
     }
 
-    /// Insert the pending invitation unless one is already pending for the same
-    /// `(account, invited_user)`, in which case this is a no-op. Returns the offer
-    /// that now stands — the fresh one, or the pending one already on file.
+    /// Refuse, writing nothing, an inviter who isn't a member; else insert the pending
+    /// invitation unless one is already pending for the same `(account, invited_user)`.
+    /// Returns the offer that now stands — the fresh one, or the pending one on file.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
+        let issuer_seat = (invitation.account.clone(), invitation.inviter.clone());
+        let issuer_is_member = self
+            .0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .contains_key(&issuer_seat);
+        if !issuer_is_member {
+            let issuer_not_a_member = anyhow::anyhow!(
+                "an invitation's issuer must be a member; account {} user {}",
+                AsRef::<str>::as_ref(&invitation.account),
+                invitation.inviter.as_ref()
+            );
+            return Err(issuer_not_a_member);
+        }
+
         let mut invitations = self
             .0
             .invitations

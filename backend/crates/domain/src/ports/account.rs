@@ -122,7 +122,8 @@ pub trait AccountWrites: Send {
 
     /// Persist a freshly issued, pending [`Invitation`]. At most one pending
     /// invitation may exist per (account, invited user); a duplicate is a no-op
-    /// rather than a second row.
+    /// rather than a second row. Fails, writing nothing, when the inviter isn't a
+    /// member of the account.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation>;
 
     /// Transition a pending invitation to revoked. Idempotent on a non-pending or

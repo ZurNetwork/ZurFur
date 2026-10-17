@@ -97,7 +97,7 @@
     {
       "page": 24182820,
       "title": "Invitation Validity & Issuer Departure",
-      "governs": "invitation validity & issuer departure"
+      "governs": "invitation validity & issuer departure; invitation/issue.rs: the store refuses an issuer who is no longer a member, so an issue racing its issuer's departure fails its unit"
     },
     {
       "page": 27852802,
