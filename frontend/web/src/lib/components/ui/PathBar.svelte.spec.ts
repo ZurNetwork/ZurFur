@@ -3,15 +3,15 @@ import '$lib/styles/base.css';
 import { cdp, page } from 'vitest/browser';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { denHref } from '$lib/types/brand';
+import { denHref, nameOrdinal } from '$lib/types/brand';
 import type { Trail } from '$lib/api/trail';
 import PathBar from './PathBar.svelte';
 
 /** `~ / accounts / Alice's Studio`, linked down to the parent. */
 const deepTrail: Trail = [
 	{ step: 'root', href: denHref('/den') },
-	{ step: 'named', label: 'accounts', href: '/accounts' },
-	{ step: 'named', label: "Alice's Studio", href: undefined }
+	{ step: 'named', label: 'accounts', ordinal: undefined, href: '/accounts' },
+	{ step: 'named', label: "Alice's Studio", ordinal: undefined, href: undefined }
 ];
 
 /** The text of the step marked `aria-current="page"`, if any. */
@@ -26,9 +26,10 @@ const longParentTrail: Trail = [
 	{
 		step: 'named',
 		label: 'Supreme Arts and Crafts Collective of the Northern Reaches',
+		ordinal: undefined,
 		href: '/accounts'
 	},
-	{ step: 'named', label: 'slots', href: undefined }
+	{ step: 'named', label: 'slots', ordinal: undefined, href: undefined }
 ];
 
 /** The viewport box of an element's focus ring: its border box grown by the outline. */
@@ -83,7 +84,9 @@ describe('PathBar', () => {
 	});
 
 	it('has no back link when the page has no parent', async () => {
-		const single: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
+		const single: Trail = [
+			{ step: 'named', label: 'Accounts', ordinal: undefined, href: undefined }
+		];
 		render(PathBar, { trail: single });
 
 		await expect.element(page.getByTestId('path-bar-back')).not.toBeInTheDocument();
@@ -94,7 +97,7 @@ describe('PathBar', () => {
 	it('isolates a right-to-left name so it cannot reorder the bar', async () => {
 		const rtl: Trail = [
 			{ step: 'root', href: denHref('/den') },
-			{ step: 'named', label: 'طلب رسم', href: undefined }
+			{ step: 'named', label: 'طلب رسم', ordinal: undefined, href: undefined }
 		];
 		render(PathBar, { trail: rtl });
 
@@ -149,11 +152,38 @@ describe('PathBar', () => {
 	});
 });
 
+describe('PathBar: equal names', () => {
+	/** `~ / Test 1 (2) / Test 1 (3)`: a numbered parent link and a numbered current step. */
+	const numberedTrail: Trail = [
+		{ step: 'root', href: denHref('/den') },
+		{ step: 'named', label: 'Test 1', ordinal: nameOrdinal(2), href: denHref('/den/c/b') },
+		{ step: 'named', label: 'Test 1', ordinal: nameOrdinal(3), href: undefined }
+	];
+
+	it('shows each numbered step as "name (n)", the number outside the isolate', async () => {
+		render(PathBar, { trail: numberedTrail });
+
+		const path = page.getByTestId('path-bar');
+		await expect.element(path.getByRole('link', { name: 'Test 1 (2)' })).toBeInTheDocument();
+		expect(currentStep()).toBe('Test 1 (3)');
+		const isolates = [...path.element().querySelectorAll('bdi')].map((bdi) => bdi.textContent);
+		expect(isolates).toEqual(['Test 1', 'Test 1']);
+	});
+
+	it('shows the numbered parent as the back link on a phone', async () => {
+		await page.viewport(320, 700);
+		render(PathBar, { trail: numberedTrail });
+
+		const back = page.getByTestId('path-bar-back').getByRole('link');
+		await expect.element(back).toHaveTextContent('Test 1 (2)');
+	});
+});
+
 describe('TrailStep links', () => {
 	it('take only a Den link or a fixed section page, never an off-site address', () => {
 		const offsite: Trail = [
 			// @ts-expect-error -- a protocol-relative address must not type-check as a path step's link
-			{ step: 'named', label: 'x', href: '//evil.example/' }
+			{ step: 'named', label: 'x', ordinal: undefined, href: '//evil.example/' }
 		];
 		expect(offsite).toHaveLength(1);
 	});

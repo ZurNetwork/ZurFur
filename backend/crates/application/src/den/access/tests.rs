@@ -280,6 +280,19 @@ async fn an_absent_and_another_commission_s_file_key_run_the_same_reads() {
 }
 
 #[tokio::test]
+async fn a_file_that_opens_runs_only_the_walk_s_reads_and_lists_no_folder() {
+    let (world, log) = recorded().await;
+    let [ref_abco, _] = untitled_files();
+
+    let reads = reads_for(&world, &log, &bob(), ServedNode::File(untitled(), ref_abco)).await;
+
+    assert_eq!(
+        reads,
+        ["find_summary", "is_participant", "files", "filename"]
+    );
+}
+
+#[tokio::test]
 async fn the_proof_carries_the_node_it_was_checked_for() {
     let world = test_world::world().await;
     let [ref_abco, _] = untitled_files();

@@ -29,7 +29,7 @@ const data = {
 	accounts: [],
 	deleted: undefined,
 	form: formStub({ name: '', handle: '' }),
-	trail: [{ step: 'named' as const, label: 'Accounts', href: undefined }]
+	trail: [{ step: 'named' as const, label: 'Accounts', ordinal: undefined, href: undefined }]
 };
 
 /** The sign-in gate's answer to an enhanced post when Zurfur isn't answering (its own spec pins it). */

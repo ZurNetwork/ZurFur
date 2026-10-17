@@ -119,9 +119,10 @@ async fn creating_a_commission_appends_the_creation_entry() {
         entry["created_at"].is_string(),
         "the display timestamp is carried",
     );
+    let empty_payload = json!({});
     assert_eq!(
-        entry["payload"]["title"], "A ref sheet",
-        "the payload renders a sentence without joins",
+        entry["payload"], empty_payload,
+        "a new entry carries no parameters, the title least of all",
     );
 }
 

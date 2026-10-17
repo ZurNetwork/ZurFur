@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -11,7 +11,7 @@
     "Commissions are user-scoped — no Account required (DD 26247170) — and entirely Index-side (never touch atproto).",
     "Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403.",
     "A new act adds a file here rather than growing a hotspot.",
-    "The handler shape (ZMVP-205): `CallingUser` in, then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
+    "The handler shape (ZMVP-205): `CallingUser` in, then the `{id}` through `CommissionPath` (a malformed id answers the same 404 as an id that names nothing; a second path parameter keeps its own `Path` extraction, the id read there as `IgnoredAny`), then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
     "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists."
   ],
   "entry_points": [
@@ -35,7 +35,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, then the created resource read back through commission::list and projected into CreateCommissionResponse (create::Output carries only the id — GAP)",
+      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse; a blank title or one the name rule refuses → 422 with a field error at #/title",
       "node": false
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping, and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping, title_write_problem (create's and rename's name-rule refusal as a field error at #/title; slots and files keep the plain mapping), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {
@@ -86,6 +86,11 @@
     {
       "name": "positioning.rs",
       "role": "account-side placement + view grants → commission::place, view::grant / view::revoke; grants are per-User (DD 29130754 amended 2026-09-04), so the route's {account_id} segment is dead (TODO(engineer))",
+      "node": false
+    },
+    {
+      "name": "rename.rs",
+      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the renamed row read back by id, rendered into RenameCommissionResponse; a refused title → 422 with a field error at #/title",
       "node": false
     },
     {

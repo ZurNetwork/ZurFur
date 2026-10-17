@@ -2,6 +2,8 @@
 //! refused. A refusal list cannot be empty, and a field's detail is fixed per
 //! code, so it can never echo what the caller sent.
 
+use application::den::DenNameError;
+
 use super::Problem;
 use crate::generated::FieldError;
 
@@ -31,9 +33,23 @@ impl FieldPointer {
     Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
 )]
 #[strum(serialize_all = "snake_case")]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "each variant spells its wire token; codes for fields other than names join later"
+)]
 pub enum FieldCode {
-    /// A name that is empty once trimmed.
+    /// A name that is empty once trimmed, or once the name rule strips what it strips.
     NameEmpty,
+    /// A name longer than the name rule allows.
+    NameTooLong,
+    /// A name that holds a `/`.
+    NameSlash,
+    /// A name that holds an invisible or direction-changing character.
+    NameInvisible,
+    /// A name that holds a line or paragraph separator.
+    NameSeparator,
+    /// A name that holds a character that can't be shown.
+    NameReserved,
 }
 
 impl FieldCode {
@@ -41,6 +57,25 @@ impl FieldCode {
     pub fn detail(self) -> &'static str {
         match self {
             Self::NameEmpty => "This can't be blank.",
+            Self::NameTooLong => "This is too long. Shorten it.",
+            Self::NameSlash => "Leave out “/”.",
+            Self::NameInvisible => "Leave out invisible and direction-changing characters.",
+            Self::NameSeparator => "Keep it on one line.",
+            Self::NameReserved => "Leave out characters that can't be shown.",
+        }
+    }
+}
+
+impl From<DenNameError> for FieldCode {
+    /// Why the name rule refused a name, whichever field it was typed in.
+    fn from(rule: DenNameError) -> Self {
+        match rule {
+            DenNameError::Empty => Self::NameEmpty,
+            DenNameError::TooLong => Self::NameTooLong,
+            DenNameError::Slash => Self::NameSlash,
+            DenNameError::Invisible => Self::NameInvisible,
+            DenNameError::Separator => Self::NameSeparator,
+            DenNameError::Reserved => Self::NameReserved,
         }
     }
 }

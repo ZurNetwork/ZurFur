@@ -522,6 +522,7 @@ fn a_crumb_of_an_unknown_type_is_a_store_error() {
             own_level: Level::Private,
             kind: Kind::Directory,
         },
+        ordinal: None,
     };
 
     let crumb = crumb(&entry);

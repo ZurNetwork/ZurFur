@@ -18,13 +18,17 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, FileKey, FileMetadata};
+use domain::elements::commission::{FileKey, FileMetadata};
 use futures_util::TryStreamExt;
-use serde::Serialize;
+use serde::{Serialize, de::IgnoredAny};
 use tokio_util::io::{ReaderStream, StreamReader};
 use uuid::Uuid;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// `POST /commissions/{id}/files`'s `201` body: the uploaded entry's key — see
 /// [`upload_file`].
@@ -38,8 +42,8 @@ struct UploadFileResponse {
 /// `201 Created` with `{ "id": "<uuid>" }`.
 pub(super) async fn upload_file(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     mut multipart: Multipart,
 ) -> Result<Response, Problem> {
     let part: UploadPart<'_> = loop {
@@ -104,8 +108,9 @@ pub(super) async fn upload_file(
 /// a stored SVG/HTML can never execute in the app origin.
 pub(super) async fn download_file(
     State(state): State<AppState>,
-    Path((commission_id, file_key)): Path<(CommissionId, FileKey)>,
+    Path((_, file_key)): Path<(IgnoredAny, FileKey)>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let query = download::Query {
         actor_id,

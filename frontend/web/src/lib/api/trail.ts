@@ -3,7 +3,7 @@
  * page's load hands the frame as `trail`. The last step is the page itself.
  */
 
-import type { DenHref } from '$lib/types/brand';
+import type { DenHref, NameOrdinal } from '$lib/types/brand';
 
 /** The fixed section pages a path step may link to: a closed list, so no other address type-checks. */
 export type SectionHref = '/accounts';
@@ -15,8 +15,13 @@ export type TrailHref = SectionHref | DenHref;
 export type TrailStep =
 	/** My Den's root, shown as `~` with "My Den" for screen readers. */
 	| { readonly step: 'root'; readonly href: TrailHref | undefined }
-	/** Any other step, shown by its name. */
-	| { readonly step: 'named'; readonly label: string; readonly href: TrailHref | undefined };
+	/** Any other step, shown by its name and, for an equal Den name, its number. */
+	| {
+			readonly step: 'named';
+			readonly label: string;
+			readonly ordinal: NameOrdinal | undefined;
+			readonly href: TrailHref | undefined;
+	  };
 
 /** The steps from the top down to the open page. */
 export type Trail = readonly TrailStep[];

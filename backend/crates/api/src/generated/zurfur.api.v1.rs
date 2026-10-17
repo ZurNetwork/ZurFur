@@ -262,6 +262,55 @@ pub struct CreateCommissionRequest {
     #[prost(message, optional, tag = "3")]
     pub maturity: ::core::option::Option<Maturity>,
 }
+/// `PATCH /api/v1/commissions/{id}/title` — the owner renames the commission.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameCommissionRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The new title. Required; a title the name rule refuses → 422 with a field error at `#/title`.
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+}
+/// `PATCH .../title` succeeds `200` with the renamed commission — the bare
+/// resource, field for field the shape CreateCommissionResponse renders, kept a
+/// separate message so each answer can evolve on its own. Its `title` is the
+/// title as stored: the name rule may strip characters, such as a zero-width
+/// space, from what was sent.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameCommissionResponse {
+    /// Opaque commission id (R6).
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The commission's title, as stored.
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+    /// Lifecycle step. Vocabulary (R8): `draft` | `batched` | `active` |
+    /// `completed` | `cancelled` | `disputed`.
+    #[prost(string, tag = "3")]
+    pub lifecycle: ::prost::alloc::string::String,
+    /// Who may see it. Vocabulary (R8): `private` | `listed` | `public`.
+    #[prost(string, tag = "4")]
+    pub visibility: ::prost::alloc::string::String,
+    /// The agreed deadline, if set. Absent = no deadline, nothing more (R4).
+    #[prost(message, optional, tag = "5")]
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
+    /// The maturity posture, if rated.
+    #[prost(message, optional, tag = "6")]
+    pub maturity: ::core::option::Option<Maturity>,
+    /// Direction axis of the two-dimensional status, if set (R8 vocabulary).
+    #[prost(string, optional, tag = "7")]
+    pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// Deadline axis of the two-dimensional status, if set (R8 vocabulary).
+    #[prost(string, optional, tag = "8")]
+    pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// The external chat channel pointer, if one is linked.
+    #[prost(string, optional, tag = "9")]
+    pub linked_channel: ::core::option::Option<::prost::alloc::string::String>,
+    /// When the commission was created.
+    #[prost(message, optional, tag = "10")]
+    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
+}
 /// `GET /api/v1/den`: the viewer's own root; the session is the argument.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDenRootRequest {
@@ -357,6 +406,13 @@ pub struct DenNode {
     /// Set when the entry is one of the viewer's mounts rather than a real child of its folder.
     #[prost(bool, tag = "5")]
     pub mount: bool,
+    /// Set, from 2 up, on each entry after the first of those with the same name
+    /// that this viewer sees in the same folder, in a fixed order (open entries by
+    /// key, so commissions oldest first; then cards). Clients show it after the
+    /// name, as "Test 1 (2)". Unset otherwise. Computed for this viewer at read
+    /// time, never stored.
+    #[prost(uint32, optional, tag = "8")]
+    pub name_ordinal: ::core::option::Option<u32>,
     /// The viewer's resolved access; unset or unknown renders as a card, never as open.
     #[prost(oneof = "den_node::Access", tags = "6, 7")]
     pub access: ::core::option::Option<den_node::Access>,
@@ -430,18 +486,26 @@ pub struct DenCrumb {
     /// Its Den path from the viewer's root; empty for the root.
     #[prost(string, repeated, tag = "1")]
     pub segments: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Its display name, the one its parent's listing uses; for the root, the viewer's own name.
+    /// Its display name, the one its parent's listing uses (with its `name_ordinal`,
+    /// what that listing shows); for the root, the viewer's own name.
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
     /// Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
     #[prost(string, tag = "3")]
     pub r#type: ::prost::alloc::string::String,
+    /// The number its parent's listing gives it, as DenNode.name_ordinal: set, from 2
+    /// up, on each entry after the first of those with the same name, in a fixed order
+    /// (open entries by key, so commissions oldest first; then cards). Unset otherwise,
+    /// and always for the root.
+    #[prost(uint32, optional, tag = "4")]
+    pub name_ordinal: ::core::option::Option<u32>,
 }
 /// One page of a directory's entries, after everything the viewer can't see is left out.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DenListing {
     /// The entries, in the order the server sends; clients keep it within each kind and may
-    /// show directories first. Today: by name, as the viewer is shown it.
+    /// show directories first. Today: by name, digit runs by value and without regard to
+    /// case; an entry's `name_ordinal` never moves it.
     #[prost(message, repeated, tag = "1")]
     pub entries: ::prost::alloc::vec::Vec<DenNode>,
     /// An opaque position in this viewer's listing that reveals no names, hashes or counts; absent on the last page.

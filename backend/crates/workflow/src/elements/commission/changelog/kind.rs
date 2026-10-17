@@ -96,4 +96,7 @@ pub enum ChangelogEntryKind {
     ChannelLinked,
     /// The external linked channel was cleared.
     ChannelUnlinked,
+    /// The commission was renamed. The entry carries neither the old title nor
+    /// the new one.
+    Renamed,
 }

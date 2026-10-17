@@ -11,6 +11,7 @@ function open(href: string, name: string, extra: Partial<OpenEntry> = {}): OpenE
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('folder'),
 		kind: 'directory',
 		mounted: false,
@@ -38,10 +39,12 @@ function data(outcome: DenOutcome): DenPageData {
 
 /** An open page of `node` holding `body`, below the root. */
 function openPage(node: OpenEntry, body: DenBody, root = false): DenPageData {
-	const crumbs = root ? [] : [{ href: denHref('/den'), name: denName('Alice') }];
+	const crumbs = root
+		? []
+		: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }];
 	return data({
 		outcome: 'page',
-		page: { view: 'open', node, crumbs, body },
+		page: { view: 'open', node, thing: undefined, crumbs, body },
 		flagLinks: { on: node.href, off: node.href }
 	});
 }
@@ -135,6 +138,7 @@ describe('DenPane', () => {
 				node: {
 					view: 'card',
 					name: denName('Some commission'),
+					ordinal: undefined,
 					type: denType('commission'),
 					mounted: true
 				},
@@ -156,6 +160,7 @@ describe('DenPane', () => {
 		const card: DenEntry = {
 			view: 'card',
 			name: denName('Some commission'),
+			ordinal: undefined,
 			type: denType('commission'),
 			mounted: true
 		};

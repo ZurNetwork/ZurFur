@@ -3,7 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
-import { denHref, denName, denType, did, type DenHref } from '$lib/types/brand';
+import { denHref, denName, denType, did, nameOrdinal, type DenHref } from '$lib/types/brand';
 import Tree from './Tree.svelte';
 import type { Preload } from './tree-loader';
 import { TreeMemory } from './tree-memory.svelte';
@@ -17,6 +17,7 @@ function entry(href: string, name: string, extra: Partial<OpenEntry> = {}): Open
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('folder'),
 		kind: 'directory',
 		mounted: false,
@@ -36,6 +37,7 @@ const untitled = entry('/den/commissions/c1', 'Untitled', { mounted: true });
 const someCard: DenEntry = {
 	view: 'card',
 	name: denName('Some commission'),
+	ordinal: undefined,
 	type: denType('commission'),
 	mounted: true
 };
@@ -61,6 +63,7 @@ function pageWith(href: DenHref, entries: readonly DenEntry[], more?: DenHref): 
 			page: {
 				view: 'open',
 				node: entry(href, 'x'),
+				thing: undefined,
 				crumbs: [],
 				body: { body: 'listing', entries, more }
 			},
@@ -531,5 +534,36 @@ describe('Tree: loading', () => {
 		await new Promise((settle) => setTimeout(settle, 50));
 
 		expect(document.activeElement).toBe(outside);
+	});
+});
+
+describe('Tree: equal names', () => {
+	it('shows each later twin as "name (n)" and titles it so, a card too', async () => {
+		const twin = entry('/den/commissions/c2', 'Untitled', { ordinal: nameOrdinal(2) });
+		const cardTwin: DenEntry = { ...someCard, name: denName('Untitled'), ordinal: nameOrdinal(3) };
+		const memory = new TreeMemory(did('did:plc:alice'));
+		memory.loaded(ROOT, rootEntries(), undefined);
+		memory.loaded(commissions.href, [untitled, twin, cardTwin], undefined);
+		memory.expanded.add(ROOT);
+		memory.expanded.add(commissions.href);
+		memory.rootHref = ROOT;
+		const current = { href: undefined, parentHref: undefined, entry: undefined };
+		render(Tree, { memory, current, fallbackRootHref: ROOT, preload: fakePreload });
+
+		await expect.element(item('Untitled (2)')).toBeInTheDocument();
+		const tree = page.getByTestId('tree').element();
+		const names = [...tree.querySelectorAll('[data-tree-parent="/den/commissions"]')].map((row) =>
+			row.querySelector('.tree-item__name')
+		);
+		expect(names.map((name) => name?.textContent)).toEqual([
+			'Untitled',
+			'Untitled (2)',
+			'Untitled (3)'
+		]);
+		expect(names.map((name) => name?.getAttribute('title'))).toEqual([
+			'\u2068Untitled\u2069',
+			'\u2068Untitled\u2069 (2)',
+			'\u2068Untitled\u2069 (3)'
+		]);
 	});
 });

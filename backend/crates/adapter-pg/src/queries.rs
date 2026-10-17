@@ -1883,6 +1883,20 @@ pub mod commission {
             .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/set_title.sql`, contract inferred from the SQL against the migrated schema.
+    pub async fn set_title(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        title: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/set_title.sql"))
+            .bind(id)
+            .bind(title)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/slots.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Every Slot declared on one commission, in declaration order (the carrying
@@ -2457,6 +2471,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::set_direction_status",
     "commission::set_linked_channel",
     "commission::set_maturity",
+    "commission::set_title",
     "file::delete",
     "file::put",
     "key_store::put",

@@ -12,11 +12,12 @@ use domain::elements::{
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
         CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionSummary,
-        DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
-        FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleStep, NewChangelogEntry,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
-        SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-        Visibility, VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+        CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow,
+        ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleStep,
+        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
+        TabName, TabRow, Visibility, VisibilityMode, declared_tabs, declares_surface,
+        derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
@@ -778,6 +779,29 @@ impl CommissionWrites for MemCommissionWrites {
             stored.updated_at = chrono::Utc::now();
         }
         Ok(())
+    }
+
+    /// Replace the stored title on this unit's staging snapshot; `false` when the
+    /// title is already the one stored, or the commission is absent.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_title(
+        &mut self,
+        id: &CommissionId,
+        title: &CommissionTitle,
+    ) -> anyhow::Result<bool> {
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(id) else {
+            return Ok(false);
+        };
+        if stored.title.as_str() == title.as_str() {
+            return Ok(false);
+        }
+        stored.title = StoredText::from(title.clone());
+        Ok(true)
     }
 
     /// Repoint (or clear) the linked-channel pointer, applying only when the

@@ -3,10 +3,12 @@
  * `accounts`, `characters` (Ember, Kael-sona), `commissions` (the commission
  * "Untitled") and `posts` — read the way the Den contract reads. Its
  * `accounts` folder comes from the mock's own account store, so founding or
- * deleting an Account on `/accounts` shows up here. A few HAND-MADE extras,
+ * deleting an Account on `/accounts` shows up here, and its `commissions`
+ * folder lists the commissions the mock created too. A few HAND-MADE extras,
  * marked below, cover what the seed can't produce: a card, an archived
  * commission, a deactivated Account, a folder with more than one page, a very
- * long name and a right-to-left name.
+ * long name and a right-to-left name. Equal names in one listing are told
+ * apart by number, as the backend numbers them.
  */
 
 import { Effect } from 'effect';
@@ -17,10 +19,25 @@ import {
 	NOT_AUTHENTICATED_PROBLEM
 } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
-import { commissionId, did } from '$lib/types/brand';
+import { commissionId, did, type CommissionId, type NameOrdinal } from '$lib/types/brand';
 import type { SegmentPath } from '../path-builder';
 import type { DenQuery, DenRead, DenReadCrumb, DenReadNode, DenReadThing } from './den-read';
 import { ApiProblem, NotAuthenticated } from './errors';
+import { nameOrdinals } from './name-ordinals';
+
+/** A commission the mock created: where it sits in `commissions`, its id and its title. */
+export interface MockCommission {
+	readonly segment: string;
+	readonly id: CommissionId;
+	readonly title: string;
+}
+
+/** What the mock Den is read from: who is signed in, their Accounts and the commissions created. */
+export interface MockDenWorld {
+	readonly session: Session | undefined;
+	readonly accounts: readonly AccountMembership[];
+	readonly commissions: readonly MockCommission[];
+}
 
 /** How many entries one page of a mock listing holds. */
 export const MOCK_PAGE_SIZE = 25;
@@ -126,6 +143,14 @@ function commissionMount(key: string, name: string, children: () => readonly Moc
 	};
 }
 
+/** A commission the mock created, mounted at its own segment and naming its own id. */
+function createdCommissionMount(commission: MockCommission): MockNode {
+	const mount = commissionMount(commission.segment, commission.title, () =>
+		commissionEntries([], [])
+	);
+	return { ...mount, thing: { thing: 'commission', id: commission.id } };
+}
+
 /** An open, empty slot. */
 function slot(key: string, name: string): MockNode {
 	return { ...systemFolder(key, 'commission.slot'), name };
@@ -205,6 +230,23 @@ const DEACTIVATED_ACCOUNT: MockNode = {
 	children: accountFolders
 };
 
+/** Every fixed commission in `commissions`: the seed's Untitled and the hand-made extras. */
+const FIXTURE_COMMISSIONS: readonly MockNode[] = [
+	UNTITLED,
+	ARCHIVED_COMMISSION,
+	CARD_COMMISSION,
+	PAGED_COMMISSION,
+	LONG_NAME_COMMISSION,
+	RTL_NAME_COMMISSION
+];
+
+/** Whether `id` is the thing of a fixed commission the mock Den shows open; a card names no thing. */
+export function isOpenFixtureCommission(id: CommissionId): boolean {
+	return FIXTURE_COMMISSIONS.some(
+		(node) => node.thing?.thing === 'commission' && node.thing.id === id
+	);
+}
+
 /** The fixture characters alice keeps: Ember (Public) and the Private Kael-sona. */
 const CHARACTERS: readonly MockNode[] = [
 	{
@@ -224,8 +266,12 @@ const CHARACTERS: readonly MockNode[] = [
 	}
 ];
 
-/** The viewer's own root: the four system folders, `accounts` read from the store. */
-function denRoot(session: Session, accounts: readonly AccountMembership[]): MockNode {
+/** The viewer's own root: the four system folders, `accounts` and `commissions` read from the store. */
+function denRoot(
+	session: Session,
+	accounts: readonly AccountMembership[],
+	commissions: readonly MockCommission[]
+): MockNode {
 	const name = session.displayName ?? session.handle ?? session.did;
 	return {
 		...FOLDER,
@@ -239,12 +285,8 @@ function denRoot(session: Session, accounts: readonly AccountMembership[]): Mock
 			]),
 			systemFolder('characters', 'user.characters', () => CHARACTERS),
 			systemFolder('commissions', 'user.commissions', () => [
-				UNTITLED,
-				ARCHIVED_COMMISSION,
-				CARD_COMMISSION,
-				PAGED_COMMISSION,
-				LONG_NAME_COMMISSION,
-				RTL_NAME_COMMISSION
+				...FIXTURE_COMMISSIONS,
+				...commissions.map(createdCommissionMount)
 			]),
 			{
 				...FOLDER,
@@ -259,17 +301,50 @@ function denRoot(session: Session, accounts: readonly AccountMembership[]): Mock
 	};
 }
 
-/** Listings sort by name as the viewer is shown it, then by key. */
+/** Open entries before cards, then by key: the order equal names are numbered in. */
+function inGroupOrder(left: MockNode, right: MockNode): number {
+	const rank = (node: MockNode) => (node.access === 'card' ? 1 : 0);
+	return rank(left) - rank(right) || left.key.localeCompare(right.key, 'en');
+}
+
+/** Listings sort by name as the viewer is shown it, then equal names in the order they are numbered in. */
 function byName(left: MockNode, right: MockNode): number {
-	return left.name.localeCompare(right.name, 'en') || left.key.localeCompare(right.key, 'en');
+	return left.name.localeCompare(right.name, 'en') || inGroupOrder(left, right);
+}
+
+/** One listed entry with its number among the equal names of its listing. */
+interface NumberedNode {
+	readonly node: MockNode;
+	readonly ordinal: NameOrdinal | undefined;
+}
+
+/**
+ * What `folder` lists to a viewer reading with `query`, in listing order and
+ * numbered over the whole listing: soft-deleted entries only with
+ * `includeDeleted`, and nothing when its content isn't shown.
+ */
+function listing(folder: MockNode, query: DenQuery): readonly NumberedNode[] {
+	const visible = folder.contentNotShown
+		? []
+		: folder
+				.children()
+				.filter((child) => query.includeDeleted || child.removed === undefined)
+				.toSorted(byName);
+	const ordinals = nameOrdinals(visible, (node) => node.name, inGroupOrder);
+	return visible.map((node, place) => ({ node, ordinal: ordinals[place] }));
 }
 
 /** `node` as the Den read shows it at `segments`. A card carries no path and no kind. */
-function readNode(node: MockNode, segments: readonly string[]): DenReadNode {
+function readNode(
+	node: MockNode,
+	segments: readonly string[],
+	ordinal: NameOrdinal | undefined
+): DenReadNode {
 	if (node.access === 'card') {
 		return {
 			segments: [],
 			name: node.name,
+			ordinal,
 			type: node.type,
 			kind: '',
 			mount: node.mount,
@@ -279,6 +354,7 @@ function readNode(node: MockNode, segments: readonly string[]): DenReadNode {
 	return {
 		segments,
 		name: node.name,
+		ordinal,
 		type: node.type,
 		kind: node.kind,
 		mount: node.mount,
@@ -303,15 +379,17 @@ function pageOffset(query: DenQuery): number | undefined {
  * The mock's Den read: walk `path` from the viewer's root, then answer the
  * node, its crumbs and one page of its listing. Every miss is the one
  * `node_not_found`; a malformed page token is the fixed 422, checked before
- * the path; a soft-deleted entry is listed only with `includeDeleted`.
+ * the path; a soft-deleted entry is listed only with `includeDeleted`. The
+ * node and each crumb take the number their parent's listing gives them; the
+ * root never has one.
  */
 export function mockDenRead(
-	session: Session | undefined,
-	accounts: readonly AccountMembership[],
+	world: MockDenWorld,
 	path: SegmentPath,
 	query: DenQuery
 ): Effect.Effect<DenRead, NotAuthenticated | ApiProblem> {
 	return Effect.suspend((): Effect.Effect<DenRead, NotAuthenticated | ApiProblem> => {
+		const { session } = world;
 		if (session === undefined)
 			return Effect.fail(new NotAuthenticated({ problem: NOT_AUTHENTICATED_PROBLEM }));
 		const offset = pageOffset(query);
@@ -321,21 +399,24 @@ export function mockDenRead(
 		}
 		const notFound = Effect.fail(new ApiProblem({ problem: NODE_NOT_FOUND_PROBLEM }));
 
-		let node = denRoot(session, accounts);
+		let node = denRoot(session, world.accounts, world.commissions);
+		let ordinal: NameOrdinal | undefined;
 		const crumbs: DenReadCrumb[] = [];
 		const walked: string[] = [];
 		for (const segment of path) {
 			if (node.access === 'card' || node.kind !== 'directory') return notFound;
-			crumbs.push({ segments: [...walked], name: node.name, type: node.type });
+			crumbs.push({ segments: [...walked], name: node.name, ordinal, type: node.type });
 			const child = node.children().find((candidate) => candidate.key === segment);
 			if (child === undefined) return notFound;
 			// A soft-deleted node the viewer could only see as a card is the same miss.
 			if (child.access === 'card' && child.removed !== undefined) return notFound;
+			// A node its parent's listing leaves out gets no number.
+			ordinal = listing(node, query).find((listed) => listed.node.key === segment)?.ordinal;
 			node = child;
 			walked.push(segment);
 		}
 
-		const self = readNode(node, walked);
+		const self = readNode(node, walked, ordinal);
 		if (node.access === 'card')
 			return Effect.succeed({ node: self, crumbs, content: { content: 'none' } });
 		if (node.kind === 'file')
@@ -343,12 +424,7 @@ export function mockDenRead(
 		if (node.kind === 'symlink')
 			return Effect.succeed({ node: self, crumbs, content: { content: 'link' } });
 
-		const visible = node.contentNotShown
-			? []
-			: node
-					.children()
-					.filter((child) => query.includeDeleted || child.removed === undefined)
-					.toSorted(byName);
+		const visible = listing(node, query);
 		const page = visible.slice(offset, offset + MOCK_PAGE_SIZE);
 		const nextOffset = offset + MOCK_PAGE_SIZE;
 		const read: DenRead = {
@@ -356,7 +432,9 @@ export function mockDenRead(
 			crumbs,
 			content: {
 				content: 'listing',
-				entries: page.map((child) => readNode(child, [...walked, child.key])),
+				entries: page.map((child) =>
+					readNode(child.node, [...walked, child.node.key], child.ordinal)
+				),
 				nextPageToken: nextOffset < visible.length ? `p1.${String(nextOffset)}` : undefined
 			}
 		};

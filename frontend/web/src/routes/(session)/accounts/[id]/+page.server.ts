@@ -25,8 +25,8 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 	const outcome = await runRead(fetch, accountOutcome(params.id));
 	const label = 'account' in outcome ? outcome.account.handle : 'Account';
 	const trail: Trail = [
-		{ step: 'named', label: 'Accounts', href: '/accounts' },
-		{ step: 'named', label, href: undefined }
+		{ step: 'named', label: 'Accounts', ordinal: undefined, href: '/accounts' },
+		{ step: 'named', label, ordinal: undefined, href: undefined }
 	];
 	return { ...outcome, trail };
 };

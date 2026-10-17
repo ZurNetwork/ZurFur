@@ -1,4 +1,4 @@
-use application::den::{DenName, DenType, NodeKind, NodeLevel, PageToken, SoftDelete};
+use application::den::{DenName, DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete};
 use domain::elements::{account::AccountId, commission::CommissionId, did::Did};
 use serde_json::json;
 use uuid::Uuid;
@@ -13,6 +13,7 @@ fn node(access: DenAccess) -> den::DenNode {
     den::DenNode {
         segments: Vec::new(),
         name: name("Old sketch"),
+        name_ordinal: None,
         den_type: DenType::Commission,
         mount: true,
         access,
@@ -176,9 +177,42 @@ fn a_crumb_carries_its_type() {
     let crumb = den::DenCrumb {
         segments: Vec::new(),
         name: name("Alice"),
+        name_ordinal: None,
         den_type: DenType::User,
     };
     let expected = json!({ "name": "Alice", "type": "user" });
+
+    let wire = serde_json::to_value(DenCrumb::from(crumb)).expect("serializes");
+
+    assert_eq!(wire, expected);
+}
+
+/// A number that tells a name apart.
+fn ordinal(number: u32) -> NameOrdinal {
+    NameOrdinal::try_from(number).expect("a valid test ordinal")
+}
+
+#[test]
+fn a_node_carries_its_name_ordinal() {
+    let numbered = den::DenNode {
+        name_ordinal: Some(ordinal(2)),
+        ..node(DenAccess::Card)
+    };
+
+    let wire = serde_json::to_value(DenNode::from(numbered)).expect("serializes");
+
+    assert_eq!(wire["nameOrdinal"], 2);
+}
+
+#[test]
+fn a_crumb_carries_its_name_ordinal() {
+    let crumb = den::DenCrumb {
+        segments: Vec::new(),
+        name: name("Test 1"),
+        name_ordinal: Some(ordinal(3)),
+        den_type: DenType::Commission,
+    };
+    let expected = json!({ "name": "Test 1", "type": "commission", "nameOrdinal": 3 });
 
     let wire = serde_json::to_value(DenCrumb::from(crumb)).expect("serializes");
 

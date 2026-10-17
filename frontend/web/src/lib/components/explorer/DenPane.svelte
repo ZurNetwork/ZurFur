@@ -1,11 +1,19 @@
 <script lang="ts">
-	import type { CardEntry, DenBody, DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
+	import type { Snippet } from 'svelte';
+	import type {
+		CardEntry,
+		DenBody,
+		DenEntry,
+		DenPageData,
+		DenThing,
+		OpenEntry
+	} from '$lib/api/den';
 	import type { Problem } from '$lib/api/problem';
 	import ProblemNote from '$lib/components/ProblemNote.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import type { DenHref } from '$lib/types/brand';
+	import type { CommissionId, DenHref, DenName } from '$lib/types/brand';
 	import EntryList from './EntryList.svelte';
 	import NodeHeader from './NodeHeader.svelte';
 	import { denRootPath } from '$lib/api/den-route';
@@ -16,7 +24,10 @@
 	 * link, a card, the one not-found, and an API problem. `busy` swaps the
 	 * entries for skeleton rows while the next item loads; `continuation`
 	 * carries the pages fetched in place after the first, with the link to
-	 * the one after them.
+	 * the one after them. `newCommission` shows under the header of the
+	 * viewer's own `commissions` folder, and nowhere else; `renameCommission`
+	 * shows under the header of an open node that stands for a commission,
+	 * given its id and its name.
 	 */
 	let {
 		data,
@@ -24,6 +35,8 @@
 		continuation,
 		moreState = 'idle',
 		onMore,
+		newCommission,
+		renameCommission,
 		heading = $bindable()
 	}: {
 		data: DenPageData;
@@ -32,6 +45,8 @@
 			{ readonly entries: readonly DenEntry[]; readonly more: DenHref | undefined } | undefined;
 		moreState?: 'idle' | 'loading' | 'failed';
 		onMore?: ((more: DenHref) => void) | undefined;
+		newCommission?: Snippet | undefined;
+		renameCommission?: Snippet<[CommissionId, DenName]> | undefined;
 		heading?: HTMLHeadingElement | undefined;
 	} = $props();
 
@@ -43,9 +58,13 @@
 		| {
 				readonly pane: 'open';
 				readonly node: OpenEntry;
+				readonly thing: DenThing | undefined;
 				readonly root: boolean;
 				readonly body: PaneBody;
 		  };
+
+	/** The type of the viewer's own `commissions` folder, the one place a commission is created. */
+	const USER_COMMISSIONS = 'user.commissions';
 
 	/** What sits under an open node's header. */
 	type PaneBody =
@@ -86,7 +105,8 @@
 				const { page } = outcome;
 				if (page.view === 'card') return { pane: 'card', node: page.node };
 				const root = page.crumbs.length === 0;
-				return { pane: 'open', node: page.node, root, body: paneBody(page.node, page.body) };
+				const body = paneBody(page.node, page.body);
+				return { pane: 'open', node: page.node, thing: page.thing, root, body };
 			}
 		}
 	});
@@ -108,6 +128,12 @@
 		<EmptyState message="You can see that this exists, but you can't open it." testid="den-card" />
 	{:else if view.pane === 'open'}
 		<NodeHeader node={view.node} root={view.root} bind:heading />
+		{#if view.node.type === USER_COMMISSIONS && newCommission !== undefined}
+			{@render newCommission()}
+		{/if}
+		{#if view.thing?.thing === 'commission' && renameCommission !== undefined}
+			{@render renameCommission(view.thing.id, view.node.name)}
+		{/if}
 		{#if busy}
 			<Skeleton rows={4} />
 		{:else if view.body.body === 'entries'}

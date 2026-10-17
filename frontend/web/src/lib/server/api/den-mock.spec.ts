@@ -6,7 +6,21 @@ import { denPage } from '../den';
 import { segmentPath } from '../path-builder';
 import type { DenRead, DenReadNode } from './den-read';
 import { createMockStore, zurfurApiMock, type MockStore } from './zurfur-api-mock';
-import { mockDenRead, MOCK_PAGE_SIZE } from './den-mock';
+import { ZurfurApi } from './zurfur-api';
+import { mockDenRead, MOCK_PAGE_SIZE, type MockDenWorld } from './den-mock';
+
+/** A mock Den world with nobody signed in. */
+const NOBODY: MockDenWorld = { session: undefined, accounts: [], commissions: [] };
+
+/** The first page, nothing deleted shown. */
+const PLAIN = { includeDeleted: false, pageToken: undefined };
+
+/** `segments` as a path the builder accepts, or a thrown test failure. */
+function segmentPathOf(segments: readonly string[]) {
+	const path = segmentPath(segments);
+	if (path === undefined) throw new Error('bad test path');
+	return path;
+}
 
 /** The fixture commission "Untitled". */
 const UNTITLED = '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90';
@@ -63,6 +77,30 @@ describe('the mock Den world', () => {
 		store.accounts.push(founded);
 
 		expect(names(await open('/den/accounts', store))).toEqual(["Alice's Studio", 'New Studio']);
+	});
+
+	it('lists a commission the mock created in commissions, naming its id', async () => {
+		const store = createMockStore();
+		const create = Effect.flatMap(ZurfurApi, (api) => api.createCommission('Fox in the snow'));
+		const created = await Effect.runPromise(create.pipe(Effect.provide(zurfurApiMock(store))));
+
+		const read = await Effect.runPromise(mockDenRead(store, segmentPathOf(['commissions']), PLAIN));
+
+		const row = rowWhere(rowsOf(read), (node) => node.name === 'Fox in the snow');
+		expect(row.access).toMatchObject({ thing: { thing: 'commission', id: created.id } });
+	});
+
+	it('mounts a store commission at its own segment, naming its own id', async () => {
+		const store = createMockStore();
+		const id = commissionId('c-0192f0c0');
+		if (id === undefined) throw new Error('bad test id');
+		store.commissions.push({ segment: 'fox-in-the-snow', id, title: 'Fox in the snow' });
+
+		const read = await Effect.runPromise(mockDenRead(store, segmentPathOf(['commissions']), PLAIN));
+
+		const row = rowWhere(rowsOf(read), (node) => node.name === 'Fox in the snow');
+		expect(row.segments).toEqual(['commissions', 'fox-in-the-snow']);
+		expect(row.access).toMatchObject({ thing: { thing: 'commission', id } });
 	});
 
 	it('keeps Ember and Kael-sona under characters, mounted', async () => {
@@ -188,7 +226,7 @@ describe('the hand-made extras', () => {
 describe('mockDenRead', () => {
 	it('answers not authenticated when nobody is signed in', async () => {
 		const failure = await Effect.runPromise(
-			Effect.flip(mockDenRead(undefined, [], [], { includeDeleted: false, pageToken: undefined }))
+			Effect.flip(mockDenRead(NOBODY, [], { includeDeleted: false, pageToken: undefined }))
 		);
 		expect(failure._tag).toBe('NotAuthenticated');
 	});
@@ -197,7 +235,7 @@ describe('mockDenRead', () => {
 		const store = createMockStore();
 		const token = pageToken('p1.999');
 		const read = await Effect.runPromise(
-			mockDenRead(store.session, store.accounts, [], { includeDeleted: false, pageToken: token })
+			mockDenRead(store, [], { includeDeleted: false, pageToken: token })
 		);
 		expect(read.content).toEqual({ content: 'listing', entries: [], nextPageToken: undefined });
 	});
@@ -209,7 +247,7 @@ async function readAt(segments: readonly string[]): Promise<DenRead> {
 	const path = segmentPath(segments);
 	if (path === undefined) throw new Error('bad test path');
 	const query = { includeDeleted: true, pageToken: undefined };
-	return Effect.runPromise(mockDenRead(store.session, store.accounts, path, query));
+	return Effect.runPromise(mockDenRead(store, path, query));
 }
 
 /** The entries of a listing read. */
@@ -308,5 +346,127 @@ describe('the mock Den read: an open node names its thing', () => {
 			await readAt(['accounts', createMockStore().accounts[0]?.did ?? ''])
 		);
 		expect(accountFolder.map(thingOf)).toEqual([undefined, undefined, undefined]);
+	});
+});
+
+/** Create a commission titled `title` in `store` through the mock port, answering its id. */
+async function createIn(store: MockStore, title: string): Promise<string> {
+	const create = Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
+	const created = await Effect.runPromise(create.pipe(Effect.provide(zurfurApiMock(store))));
+	return created.id;
+}
+
+/** The opened node of a page, or a thrown test failure. */
+function nodeOf(data: DenPageData) {
+	const { outcome } = data;
+	if (outcome.outcome !== 'page') throw new Error('expected a page');
+	return outcome.page;
+}
+
+/** The number each listed entry named `name` shows, in listing order. */
+function ordinalsNamed(data: DenPageData, name: string): readonly (number | undefined)[] {
+	return entries(data)
+		.filter((entry) => entry.name === name)
+		.map((entry) => entry.ordinal);
+}
+
+describe('the mock Den numbers equal names', () => {
+	it('gives the newer of two twins 2 and the older none', async () => {
+		const store = createMockStore();
+		const older = await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const listing = entries(await open('/den/commissions', store));
+
+		const sketches = listing.filter((entry) => entry.name === 'Sketch');
+		const byHref = sketches.map((entry) => [entry.view === 'open' && entry.href, entry.ordinal]);
+		expect(byHref).toEqual([
+			[`/den/commissions/${older}`, undefined],
+			[`/den/commissions/${newer}`, 2]
+		]);
+		const others = listing.filter((entry) => entry.name !== 'Sketch');
+		expect(others.map((entry) => entry.ordinal)).toEqual(others.map(() => undefined));
+	});
+
+	it('gives the opened twin the number its folder gives it, and no crumb a number', async () => {
+		const store = createMockStore();
+		const older = await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const newerPage = nodeOf(await open(`/den/commissions/${newer}`, store));
+		const olderPage = nodeOf(await open(`/den/commissions/${older}`, store));
+
+		expect(newerPage.node.ordinal).toBe(2);
+		expect(newerPage.crumbs.map((crumb) => crumb.ordinal)).toEqual([undefined, undefined]);
+		expect(olderPage.node.ordinal).toBeUndefined();
+	});
+
+	it('gives a crumb below a twin the twin’s number, and the path bar shows it', async () => {
+		const store = createMockStore();
+		await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const data = await open(`/den/commissions/${newer}/slots`, store);
+
+		expect(nodeOf(data).crumbs.map((crumb) => crumb.ordinal)).toEqual([undefined, undefined, 2]);
+		expect(data.trail).toEqual([
+			{ step: 'root', href: '/den' },
+			{ step: 'named', label: 'commissions', ordinal: undefined, href: '/den/commissions' },
+			{ step: 'named', label: 'Sketch', ordinal: 2, href: `/den/commissions/${newer}` },
+			{ step: 'named', label: 'slots', ordinal: undefined, href: undefined }
+		]);
+	});
+
+	it('counts an archived twin only with "Show archived and deactivated" on', async () => {
+		const store = createMockStore();
+		const created = await createIn(store, 'Winter YCH');
+
+		const plain = await open('/den/commissions', store);
+		const shown = await open('/den/commissions?includeDeleted=true', store);
+		const createdPlain = nodeOf(await open(`/den/commissions/${created}`, store));
+		const createdShown = nodeOf(
+			await open(`/den/commissions/${created}?includeDeleted=true`, store)
+		);
+
+		expect(ordinalsNamed(plain, 'Winter YCH')).toEqual([undefined]);
+		const twins = entries(shown).filter((entry) => entry.name === 'Winter YCH');
+		expect(twins.map((entry) => [entry.view === 'open' && entry.removed, entry.ordinal])).toEqual([
+			['archived', undefined],
+			[undefined, 2]
+		]);
+		expect(createdPlain.node.ordinal).toBeUndefined();
+		expect(createdShown.node.ordinal).toBe(2);
+	});
+
+	it('lists an open twin first and unnumbered, then a card of the same name numbered 2', async () => {
+		const store = createMockStore();
+		await createIn(store, 'Some commission');
+
+		const twins = entries(await open('/den/commissions', store)).filter(
+			(entry) => entry.name === 'Some commission'
+		);
+
+		expect(twins.map((entry) => [entry.view, entry.ordinal])).toEqual([
+			['open', undefined],
+			['card', 2]
+		]);
+	});
+
+	it('numbers over the whole listing, not one page', async () => {
+		const store = createMockStore();
+		for (let made = 0; made < 27; made += 1) await createIn(store, 'Sketch');
+
+		const first = await open('/den/commissions', store);
+		const firstPage = ordinalsNamed(first, 'Sketch');
+		const { outcome } = first;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open')
+			throw new Error('expected a page');
+		if (outcome.page.body.body !== 'listing' || outcome.page.body.more === undefined)
+			throw new Error('expected a second page');
+		const secondPage = ordinalsNamed(await open(outcome.page.body.more, store), 'Sketch');
+
+		const expected = [undefined, ...Array.from({ length: 26 }, (_, index) => index + 2)];
+		expect([...firstPage, ...secondPage]).toEqual(expected);
+		expect(secondPage.length).toBeGreaterThan(0);
 	});
 });

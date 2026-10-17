@@ -6,6 +6,7 @@ import {
 	fieldPointer,
 	handle,
 	handleFromTrusted,
+	nameOrdinal,
 	pathSegment,
 	pageToken
 } from './brand';
@@ -94,6 +95,19 @@ describe('fieldPointer (validated mint)', () => {
 			expect(fieldPointer(raw)).toBeUndefined();
 		}
 	});
+});
+
+describe('nameOrdinal (validated mint)', () => {
+	it.each([2, 7, 4_294_967_295])('accepts %d', (raw) => {
+		expect(nameOrdinal(raw)).toBe(raw);
+	});
+
+	it.each([undefined, 0, 1, -2, 2.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53])(
+		'refuses %s',
+		(raw) => {
+			expect(nameOrdinal(raw)).toBeUndefined();
+		}
+	);
 });
 
 describe('commissionId (the opaque mint)', () => {

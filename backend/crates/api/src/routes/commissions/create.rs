@@ -2,7 +2,7 @@
 //! Account required, a user-scoped write. The act itself is the
 //! changelog's genesis entry.
 
-use application::commission::{create, list};
+use application::commission::{CommissionValues, create};
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
@@ -11,16 +11,16 @@ use axum::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionTitle, CommissionTitleError},
+    commission::{CommissionTitle, CommissionTitleError},
     maturity::{Maturity, MaturityRating},
 };
 
-use super::{from_wire_timestamp, wire_timestamp};
+use super::{from_wire_timestamp, title_refused, title_write_problem, wire_timestamp};
 use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
 use crate::{
     AppState,
     extract::CallingUser,
-    problem::{FieldCode, FieldPointer, FieldRefusal, Problem},
+    problem::{FieldCode, Problem},
 };
 
 /// Renders a domain maturity posture as the contract's wire message.
@@ -33,9 +33,9 @@ impl From<Maturity> for crate::generated::Maturity {
     }
 }
 
-/// Renders a domain commission as the create response's created resource.
-impl From<Commission> for CreateCommissionResponse {
-    fn from(commission: Commission) -> Self {
+/// Renders the created commission, as stored, as the create response's resource.
+impl From<CommissionValues> for CreateCommissionResponse {
+    fn from(commission: CommissionValues) -> Self {
         let maturity = commission.maturity.map(crate::generated::Maturity::from);
         let linked_channel = commission
             .linked_channel
@@ -44,7 +44,7 @@ impl From<Commission> for CreateCommissionResponse {
         CreateCommissionResponse {
             id: commission.id.to_string(),
             title: commission.title.as_str().to_owned(),
-            lifecycle: commission.lifecycle_step.to_string(),
+            lifecycle: commission.lifecycle.to_string(),
             visibility: commission.visibility.to_string(),
             deadline: commission.deadline.map(wire_timestamp),
             maturity,
@@ -62,21 +62,16 @@ impl From<Commission> for CreateCommissionResponse {
 /// `201 Created` carrying the created resource on success; `422
 /// invalid_request` for a malformed body; `422 invalid_request` with a field
 /// error at `#/title` for a blank or missing title (a missing title decodes as
-/// empty, so it takes the same path); `422 unknown_maturity_rating` for an
-/// out-of-vocabulary `maturity.rating`.
+/// empty, so it takes the same path) or one the name rule refuses; `422
+/// unknown_maturity_rating` for an out-of-vocabulary `maturity.rating`.
 pub(super) async fn create_commission(
     State(state): State<AppState>,
     CallingUser(actor_id): CallingUser,
     body: Result<Json<CreateCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let title = CommissionTitle::try_from(body.title).map_err(|CommissionTitleError::Empty| {
-        let title_refusal = FieldRefusal {
-            pointer: FieldPointer::member("title"),
-            code: FieldCode::NameEmpty,
-        };
-        Problem::invalid_fields(title_refusal, [])
-    })?;
+    let title = CommissionTitle::try_from(body.title)
+        .map_err(|CommissionTitleError::Empty| title_refused(FieldCode::NameEmpty))?;
     let maturity = body
         .maturity
         .map(|input| {
@@ -104,7 +99,7 @@ pub(super) async fn create_commission(
     let command = create::Command {
         maturity,
         deadline,
-        actor_id: actor_id.clone(),
+        actor_id,
         title,
     };
 
@@ -112,21 +107,10 @@ pub(super) async fn create_commission(
         .app()
         .commissions()
         .create(command, Utc::now())
-        .await?;
+        .await
+        .map_err(title_write_problem)?;
 
-    // ⚠️ GAP: create::Output carries only the id, so the resource is read
-    // back through list rather than assumed.
-    let owned = list::Command { user_id: actor_id };
-    let listed = state.app().commissions().list(owned).await?;
-    let commission = listed
-        .commissions
-        .into_iter()
-        .find(|commission| commission.id == created.id)
-        .ok_or_else(|| {
-            Problem::internal_error("The commission was created but could not be read back.")
-        })?;
-
-    let body = CreateCommissionResponse::from(commission);
+    let body = CreateCommissionResponse::from(created);
     let response = (StatusCode::CREATED, Json(body)).into_response();
     Ok(response)
 }

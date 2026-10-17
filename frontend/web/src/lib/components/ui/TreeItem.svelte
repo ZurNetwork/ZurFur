@@ -1,22 +1,27 @@
 <script lang="ts">
 	import type { CardTypeWord, DenKind, DenRemoved } from '$lib/api/den';
+	import type { NameOrdinal } from '$lib/types/brand';
 	import Badge from './Badge.svelte';
 	import Icon from './Icon.svelte';
 	import type { IconName } from './icons';
 	import { removedWord } from './removed-word';
+	import ShownName from './ShownName.svelte';
+	import { shownNameText } from './shown-name';
 
 	/** What a row shows as: one of the node kinds, the root, or an item the viewer can't open. */
 	type TreeItemLook = DenKind | 'root' | 'cantOpen';
 
 	/**
 	 * The face of one tree row or list row: its kind marker, its name (cut
-	 * with an ellipsis, isolated for right-to-left text), the mounted marker,
+	 * with an ellipsis, isolated for right-to-left text) and its number among
+	 * equal names (never cut), the mounted marker,
 	 * the soft-delete word, the "not shown yet" hint and a card's type word. The interactive
 	 * element around it (link, tree item) belongs to the caller.
 	 */
 	let {
 		look,
 		name,
+		ordinal,
 		open = false,
 		mounted = false,
 		removed,
@@ -26,6 +31,8 @@
 	}: {
 		look: TreeItemLook;
 		name: string;
+		/** Its number among the equal names of its folder; absent when it needs none. */
+		ordinal: NameOrdinal | undefined;
 		open?: boolean;
 		mounted?: boolean;
 		removed?: DenRemoved | undefined;
@@ -61,7 +68,9 @@
 			>My Den</span
 		>
 	{:else}
-		<span class="tree-item__name" title={name}><bdi>{name}</bdi></span>
+		<span class="tree-item__name" title={shownNameText(name, ordinal)}
+			><ShownName {name} {ordinal} /></span
+		>
 	{/if}
 	{#if mounted}
 		<span class="tree-item__mounted" title="Mounted" data-testid="mounted-marker"
@@ -99,10 +108,17 @@
 	}
 
 	.tree-item__name {
+		display: flex;
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+	}
+
+	/* The name is cut with an ellipsis; its number beside it stays whole. */
+	.tree-item__name > :global(bdi) {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.tree-item--muted {

@@ -20,6 +20,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	COMMISSION_NOT_FOUND_PROBLEM,
 	type FieldError,
 	NODE_NOT_FOUND_PROBLEM,
 	PROBLEM_CONTENT_TYPE,
@@ -28,13 +29,26 @@ import {
 } from '$lib/api/problem';
 import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
-import { accountId, did, fieldPointer, handleFromTrusted } from '$lib/types/brand';
+import {
+	accountId,
+	commissionId,
+	did,
+	fieldPointer,
+	handleFromTrusted,
+	type CommissionId
+} from '$lib/types/brand';
 import {
 	CreateAccountRequestSchema,
 	CreateAccountResponseSchema,
 	DeleteAccountResponseSchema,
 	ListAccountsResponseSchema
 } from './generated/zurfur/api/v1/account_pb';
+import {
+	CreateCommissionRequestSchema,
+	CreateCommissionResponseSchema,
+	RenameCommissionRequestSchema,
+	RenameCommissionResponseSchema
+} from './generated/zurfur/api/v1/commission_pb';
 import {
 	type FieldError as WireFieldError,
 	ProblemSchema
@@ -120,6 +134,24 @@ export interface ZurfurApiShape {
 		id: string
 	) => Effect.Effect<DeleteOutcome, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
+	 * `POST /commissions` — create a commission the caller owns. A refused
+	 * title rejects with `invalid_request` (422) carrying its field errors.
+	 */
+	readonly createCommission: (
+		title: string
+	) => Effect.Effect<CreatedCommission, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
+	 * `PATCH /commissions/{id}/title` — the owner renames the commission.
+	 * Rejects with `invalid_request` (422) carrying field errors for a refused
+	 * title, `forbidden` (403) for a Participant who isn't the owner, and
+	 * `commission_not_found` (404) for anyone else and for an id that names
+	 * nothing.
+	 */
+	readonly renameCommission: (
+		id: CommissionId,
+		title: string
+	) => Effect.Effect<RenamedCommission, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
 	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
 	 * Fails `ApiProblem` `node_not_found` for every miss, `NotAuthenticated`
 	 * for an ended session; a failure names only the route template.
@@ -146,6 +178,15 @@ export interface StartedSignin {
 	readonly location: string;
 	readonly browserBinding: BrowserBindingCookie;
 }
+
+/** The commission `POST /commissions` created: its id and its title. */
+export interface CreatedCommission {
+	readonly id: CommissionId;
+	readonly title: string;
+}
+
+/** The commission `PATCH /commissions/{id}/title` renamed, as stored: its id and its title. */
+export type RenamedCommission = CreatedCommission;
 
 /** Every way a Den read fails. */
 export type DenReadError = NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
@@ -405,12 +446,12 @@ const liveSignout = (fetch: FetchFunction) =>
 	});
 
 /**
- * Any non-2xx account response, classified the shared way — 401
- * `not_authenticated` folds into `ApiProblem` too (unlike `me`, none of the
- * account calls has a distinct "am I signed in" branch for callers to key
+ * Any non-2xx account or commission response, classified the shared way —
+ * 401 `not_authenticated` folds into `ApiProblem` too (unlike `me`, none of
+ * these calls has a distinct "am I signed in" branch for callers to key
  * on; the session gate above these routes already owns that question).
  */
-function accountProblemFailure(
+function foldedProblemFailure(
 	response: Response,
 	path: string
 ): Effect.Effect<never, ApiProblem | ContractViolation> {
@@ -422,7 +463,7 @@ function accountProblemFailure(
 const liveListAccounts = (fetch: FetchFunction) =>
 	Effect.gen(function* () {
 		const response = yield* backendFetch(fetch, '/accounts');
-		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		if (!response.ok) return yield* foldedProblemFailure(response, '/accounts');
 		const raw = yield* parsedBody(response, '/accounts');
 		return yield* Effect.try({
 			try: () => {
@@ -460,7 +501,7 @@ const liveCreateAccount = (fetch: FetchFunction, name: string, handle: string) =
 			body: JSON.stringify(toJson(CreateAccountRequestSchema, request))
 		};
 		const response = yield* backendFetch(fetch, '/accounts', init);
-		if (!response.ok) return yield* accountProblemFailure(response, '/accounts');
+		if (!response.ok) return yield* foldedProblemFailure(response, '/accounts');
 		const raw = yield* parsedBody(response, '/accounts');
 		return yield* Effect.try({
 			try: () => {
@@ -500,7 +541,7 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 		const path = accountPath === undefined ? undefined : joinPath('/accounts', accountPath);
 		if (path === undefined) return yield* new ApiProblem({ problem: ACCOUNT_NOT_FOUND_PROBLEM });
 		const response = yield* backendFetch(fetch, path, { method: 'DELETE' });
-		if (!response.ok) return yield* accountProblemFailure(response, path);
+		if (!response.ok) return yield* foldedProblemFailure(response, path);
 		const raw = yield* parsedBody(response, path);
 		return yield* Effect.try({
 			try: () => {
@@ -514,6 +555,68 @@ const liveDeleteAccount = (fetch: FetchFunction, id: string) =>
 					detail: 'malformed delete outcome payload'
 				})
 		});
+	});
+
+/**
+ * `POST /commissions`, the request encoded through the generated schema. An
+ * answer whose id is empty, or that doesn't decode, is a `ContractViolation`.
+ */
+const liveCreateCommission = (fetch: FetchFunction, title: string) =>
+	Effect.gen(function* () {
+		const request = create(CreateCommissionRequestSchema, { title });
+		const init: BackendInit = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(CreateCommissionRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, '/commissions', init);
+		if (!response.ok) return yield* foldedProblemFailure(response, '/commissions');
+		const raw = yield* parsedBody(response, '/commissions');
+		const violation = (detail: string) =>
+			new ContractViolation({ path: '/commissions', status: response.status, detail });
+		const message = yield* Effect.try({
+			try: () => decodeContract(CreateCommissionResponseSchema, raw),
+			catch: () => violation('malformed created commission payload')
+		});
+		const id = commissionId(message.id);
+		if (id === undefined) return yield* violation('a created commission with no id');
+		const created: CreatedCommission = { id, title: message.title };
+		return created;
+	});
+
+/** The route every rename failure names, never the id it was sent with. */
+const RENAME_ROUTE = '/commissions/{id}/title';
+
+/**
+ * `PATCH /commissions/{id}/title`, its path built by the shared path
+ * builder: an id the builder refuses never reaches `fetch` and answers the
+ * commission not-found. An answer whose id is empty, or that doesn't
+ * decode, is a `ContractViolation`.
+ */
+const liveRenameCommission = (fetch: FetchFunction, id: CommissionId, title: string) =>
+	Effect.gen(function* () {
+		const titlePath = segmentPath([id, 'title']);
+		const path = titlePath === undefined ? undefined : joinPath('/commissions', titlePath);
+		if (path === undefined) return yield* new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM });
+		const request = create(RenameCommissionRequestSchema, { id, title });
+		const init: BackendInit = {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(RenameCommissionRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, path, init);
+		if (!response.ok) return yield* foldedProblemFailure(response, RENAME_ROUTE);
+		const raw = yield* parsedBody(response, RENAME_ROUTE);
+		const violation = (detail: string) =>
+			new ContractViolation({ path: RENAME_ROUTE, status: response.status, detail });
+		const message = yield* Effect.try({
+			try: () => decodeContract(RenameCommissionResponseSchema, raw),
+			catch: () => violation('malformed renamed commission payload')
+		});
+		const renamedId = commissionId(message.id);
+		if (renamedId === undefined) return yield* violation('a renamed commission with no id');
+		const renamed: RenamedCommission = { id: renamedId, title: message.title };
+		return renamed;
 	});
 
 /**
@@ -572,6 +675,8 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			listAccounts: liveListAccounts(fetch),
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
 			deleteAccount: (id) => liveDeleteAccount(fetch, id),
+			createCommission: (title) => liveCreateCommission(fetch, title),
+			renameCommission: (id, title) => liveRenameCommission(fetch, id, title),
 			denRoot: (query) => liveDenRoot(fetch, query),
 			denNode: (path, query) => liveDenNode(fetch, path, query)
 		});
@@ -595,6 +700,8 @@ const anonymousDefaults: ZurfurApiShape = {
 	listAccounts: Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	createCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	renameCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };

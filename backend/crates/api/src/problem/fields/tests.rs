@@ -119,7 +119,52 @@ fn each_code_has_its_own_fixed_detail() {
     distinct.sort_unstable();
     distinct.dedup();
     assert_eq!(distinct.len(), details.len(), "two codes share a detail");
-    assert_eq!(FieldCode::NameEmpty.detail(), "This can't be blank.");
+}
+
+#[test]
+fn each_code_s_detail_is_these_words() {
+    let details: Vec<(&'static str, &'static str)> = FieldCode::VARIANTS
+        .iter()
+        .map(|code| (<&'static str>::from(*code), code.detail()))
+        .collect();
+
+    let expected_details = [
+        ("name_empty", "This can't be blank."),
+        ("name_too_long", "This is too long. Shorten it."),
+        ("name_slash", "Leave out “/”."),
+        (
+            "name_invisible",
+            "Leave out invisible and direction-changing characters.",
+        ),
+        ("name_separator", "Keep it on one line."),
+        ("name_reserved", "Leave out characters that can't be shown."),
+    ];
+    assert_eq!(details, expected_details);
+}
+
+#[test]
+fn each_name_rule_refusal_has_its_own_code() {
+    let codes: Vec<FieldCode> = [
+        DenNameError::Empty,
+        DenNameError::TooLong,
+        DenNameError::Slash,
+        DenNameError::Invisible,
+        DenNameError::Separator,
+        DenNameError::Reserved,
+    ]
+    .into_iter()
+    .map(FieldCode::from)
+    .collect();
+
+    let expected_codes = [
+        FieldCode::NameEmpty,
+        FieldCode::NameTooLong,
+        FieldCode::NameSlash,
+        FieldCode::NameInvisible,
+        FieldCode::NameSeparator,
+        FieldCode::NameReserved,
+    ];
+    assert_eq!(codes, expected_codes);
 }
 
 #[test]
@@ -133,8 +178,16 @@ fn field_codes_are_these_tokens() {
         .map(|code| code.to_string())
         .collect();
 
-    assert_eq!(tokens, ["name_empty"]);
-    assert_eq!(displayed, ["name_empty"]);
+    let expected_tokens = [
+        "name_empty",
+        "name_too_long",
+        "name_slash",
+        "name_invisible",
+        "name_separator",
+        "name_reserved",
+    ];
+    assert_eq!(tokens, expected_tokens);
+    assert_eq!(displayed, expected_tokens);
 }
 
 /// A source file the scans read: its path under `src/` and its text.

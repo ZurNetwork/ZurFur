@@ -579,6 +579,83 @@ async fn every_crumb_carries_its_type() {
     }
 }
 
+/// The title the twin commissions share; no fixture commission uses it.
+const TWIN_TITLE: &str = "Twin sketch";
+
+/// Creates a commission titled `title` as `client`, answering its id.
+async fn create_commission(client: &reqwest::Client, base: &str, title: &str) -> String {
+    let body = json!({ "title": title });
+    let response = client
+        .post(format!("{base}/commissions"))
+        .json(&body)
+        .send()
+        .await
+        .expect("POST /commissions");
+    assert_eq!(response.status(), 201, "creates the commission");
+    let created: Value = response.json().await.expect("a JSON body");
+    created["id"].as_str().expect("an id").to_owned()
+}
+
+/// Asserts no crumb of `answer` carries a name ordinal.
+fn assert_no_crumb_numbered(answer: &Value, path: &str) {
+    let crumbs = answer["crumbs"].as_array().expect("crumbs");
+    for crumb in crumbs {
+        assert!(crumb.get("nameOrdinal").is_none(), "{path}: {crumb}");
+    }
+}
+
+#[tokio::test]
+async fn a_twin_carries_name_ordinal_and_others_omit_it() {
+    let (base, alice) = as_alice().await;
+    let first = create_commission(&alice, &base, TWIN_TITLE).await;
+    let second = create_commission(&alice, &base, TWIN_TITLE).await;
+    // The later UUIDv7 is the newer twin, whatever order the two creates landed in.
+    let newer = first.max(second);
+    let newer_path = format!("/den/commissions/{newer}");
+    let attachments_path = format!("{newer_path}/attachments");
+
+    let commissions = ok_json(get(&alice, &base, "/den/commissions").await).await;
+    let twin = ok_json(get(&alice, &base, &newer_path).await).await;
+    let attachments = ok_json(get(&alice, &base, &attachments_path).await).await;
+
+    let entries = commissions["listing"]["entries"]
+        .as_array()
+        .expect("an entries array");
+    let numbered: Vec<(&str, &Value)> = entries
+        .iter()
+        .filter_map(|entry| {
+            let ordinal = entry.get("nameOrdinal")?;
+            let segments = entry["segments"].as_array().expect("segments");
+            let last = segments.last().and_then(Value::as_str).expect("a segment");
+            Some((last, ordinal))
+        })
+        .collect();
+    let two = json!(2);
+    let expected_numbered = vec![(newer.as_str(), &two)];
+    assert_eq!(numbered, expected_numbered, "{commissions}");
+    let twins = entries
+        .iter()
+        .filter(|entry| entry["name"] == TWIN_TITLE)
+        .count();
+    assert_eq!(twins, 2, "{commissions}");
+
+    assert_eq!(twin["node"]["nameOrdinal"], 2, "{twin}");
+    assert_no_crumb_numbered(&twin, &newer_path);
+
+    let crumb_ordinals: Vec<Option<&Value>> = attachments["crumbs"]
+        .as_array()
+        .expect("crumbs")
+        .iter()
+        .map(|crumb| crumb.get("nameOrdinal"))
+        .collect();
+    let expected_crumb_ordinals = vec![None, None, Some(&two)];
+    assert_eq!(crumb_ordinals, expected_crumb_ordinals, "{attachments}");
+    assert!(
+        attachments["node"].get("nameOrdinal").is_none(),
+        "{attachments}"
+    );
+}
+
 /// `text` without its terminal color codes.
 fn without_colors(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());

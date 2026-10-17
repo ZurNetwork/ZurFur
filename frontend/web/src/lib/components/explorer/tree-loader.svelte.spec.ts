@@ -216,6 +216,7 @@ function fileEntry(name: string): OpenEntry {
 		view: 'open',
 		href: denHref(`/den/batch/${name}`),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('file'),
 		kind: 'file',
 		mounted: false,
@@ -250,7 +251,8 @@ function batchPage(address: DenHref, entries: readonly DenEntry[]): DenPageData 
 			page: {
 				view: 'open',
 				node: { ...fileEntry('batch'), href: FOLDER, kind: 'directory' },
-				crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
+				thing: undefined,
+				crumbs: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }],
 				body: { body: 'listing', entries, more: undefined }
 			},
 			flagLinks: { on: FOLDER, off: FOLDER }

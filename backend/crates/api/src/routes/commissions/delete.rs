@@ -4,21 +4,24 @@
 
 use application::commission::delete;
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::elements::commission::CommissionId;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// Hard-deletes a fact-free commission. Owner-only; `404` for a caller who
 /// may not see it. Fact-free → `204 No Content`; fact-bearing → `409
 /// commission_has_facts` pointing the caller at Archive.
 pub(super) async fn delete_commission(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = delete::Command {
         actor_id,

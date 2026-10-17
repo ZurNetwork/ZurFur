@@ -12,16 +12,19 @@ use axum::{
 use chrono::Utc;
 use domain::{
     elements::commission::{
-        CommissionId, ElementId, ElementPayload, ElementType, NewElement, SurfaceAddress,
-        SurfaceName, TabId,
+        ElementId, ElementPayload, ElementType, NewElement, SurfaceAddress, SurfaceName, TabId,
     },
     ports::{ElementNotFound, UnitOfWork, UnknownSurface, UnknownTab},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 use uuid::Uuid;
 
 use super::require_owner;
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `POST /commissions/{id}/elements` request body: where the element goes
 /// (`tab` by id, `surface` by declared name), what it is (`type`), and its
@@ -53,8 +56,8 @@ fn empty_object() -> serde_json::Value {
 /// pair, `422` for a malformed body. Returns `201 Created` with `{"id": "…"}`.
 pub(super) async fn add_element(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<AddElementBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     // TODO(engineer): no use case exists yet, so this still authorizes and
@@ -96,8 +99,9 @@ pub(super) async fn add_element(
 /// No Content`.
 pub(super) async fn remove_element(
     State(state): State<AppState>,
-    Path((commission_id, element)): Path<(CommissionId, ElementId)>,
+    Path((_, element)): Path<(IgnoredAny, ElementId)>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     // TODO(engineer): unmigrated for the same reason as add_element (no use case yet).
     require_owner(&state, &commission_id, &actor_id).await?;

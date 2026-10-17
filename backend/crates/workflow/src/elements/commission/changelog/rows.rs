@@ -9,9 +9,9 @@ use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
 
 /// A changelog entry to append; the store assigns `seq` on insert. Built via
-/// [`event`](Self::event) / [`system`](Self::system) / [`note`](Self::note) so
-/// the actor arm is explicit, then appended on an open unit of work — an entry
-/// commits atomically with the domain write it records.
+/// [`event`](Self::event) / [`system`](Self::system) / [`note`](Self::note) /
+/// [`renamed`](Self::renamed) so the actor arm is explicit, then appended on an
+/// open unit of work — an entry commits atomically with the domain write it records.
 #[derive(Debug)]
 pub struct NewChangelogEntry {
     /// The commission whose stream this entry joins.
@@ -20,8 +20,9 @@ pub struct NewChangelogEntry {
     pub kind: ChangelogEntryKind,
     /// Who did it — `None` for a system entry.
     pub actor_id: Option<UserId>,
-    /// Kind-specific parameters as JSON. Must be self-sufficient to render a
-    /// sentence without joins: name titles, handles and dates by value.
+    /// Kind-specific parameters as JSON, enough to render the entry's sentence without joins
+    /// (handles and dates by value); never the commission's title, since nothing written here
+    /// can be removed.
     pub payload: Value,
     /// Optional free text riding the entry, or the whole content of a
     /// standalone [`Note`](ChangelogEntryKind::Note) entry.
@@ -79,6 +80,20 @@ impl NewChangelogEntry {
             actor_id: Some(actor),
             payload: Value::Object(serde_json::Map::new()),
             note: Some(text),
+            created_at: at,
+        }
+    }
+
+    /// A rename: kind [`Renamed`](ChangelogEntryKind::Renamed), an empty
+    /// payload and no note. A named constructor, not a std conversion, because the
+    /// kind fixes the payload.
+    pub fn renamed(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self {
+        Self {
+            commission_id: commission,
+            kind: ChangelogEntryKind::Renamed,
+            actor_id: Some(actor),
+            payload: Value::Object(serde_json::Map::new()),
+            note: None,
             created_at: at,
         }
     }

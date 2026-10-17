@@ -44,7 +44,7 @@ impl Commissions<'_> {
             commission.id,
             ChangelogEntryKind::Unarchived,
             actor_id,
-            json!({ "title": commission.title.as_str() }),
+            json!({}),
             now,
         );
 

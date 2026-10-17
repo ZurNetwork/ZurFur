@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
-import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
+import { COMMISSION_NOT_FOUND_PROBLEM, NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
 import { fetchStub, problemResponse, requestUrl, unreachableFetch } from '$lib/testing/http';
-import { fieldPointer, pageToken } from '$lib/types/brand';
+import { commissionId, fieldPointer, pageToken, type CommissionId } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
 import type { DenQuery } from './den-read';
 import { ApiProblem, type ZurfurApiError } from './errors';
@@ -38,6 +38,17 @@ const listAccounts = Effect.flatMap(ZurfurApi, (api) => api.listAccounts);
 const createAccount = (name: string, handle: string) =>
 	Effect.flatMap(ZurfurApi, (api) => api.createAccount(name, handle));
 const deleteAccount = (id: string) => Effect.flatMap(ZurfurApi, (api) => api.deleteAccount(id));
+const createCommission = (title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
+const renameCommission = (id: CommissionId, title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.renameCommission(id, title));
+
+/** A minted commission id, or a thrown test failure. */
+function commissionIdOf(raw: string): CommissionId {
+	const id = commissionId(raw);
+	if (id === undefined) throw new Error('bad test id');
+	return id;
+}
 
 const aliceWire = {
 	did: 'did:plc:alice',
@@ -329,6 +340,154 @@ describe('ZurfurApi problems: field errors (live)', () => {
 		]);
 		expect(failure._tag).toBe('ApiProblem');
 		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+});
+
+describe('ZurfurApi.createCommission (live)', () => {
+	/** The 201 the backend answers a create with. */
+	const createdWire = {
+		id: '0192f0c0-0000-7000-8000-00000000c0de',
+		title: 'Fox in the snow',
+		lifecycle: 'draft',
+		visibility: 'private',
+		createdAt: '2026-10-17T12:00:00Z'
+	};
+
+	it('posts {title} to /commissions and decodes the 201 into the created commission', async () => {
+		const sent: { method: string | undefined; body: unknown }[] = [];
+		const { fetch, calls } = fetchStub(() => Response.json(createdWire, { status: 201 }));
+		const spyingFetch: typeof fetch = async (input, init) => {
+			const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+			sent.push({ method: init?.method, body });
+			return fetch(input, init);
+		};
+
+		const created = await runLive(spyingFetch, createCommission('Fox in the snow'));
+
+		expect(calls).toEqual(['/api/v1/commissions']);
+		expect(sent).toEqual([{ method: 'POST', body: { title: 'Fox in the snow' } }]);
+		expect(created).toEqual({ id: commissionId(createdWire.id), title: 'Fox in the snow' });
+	});
+
+	it('fails a refused title as the problem with its field errors', async () => {
+		const body = refusedFields([
+			{ pointer: '#/title', code: 'name_empty', detail: "This can't be blank." }
+		]);
+		const { fetch } = fetchStub(() => problemResponseWith(422, body));
+
+		const failure = await runLive(fetch, failureOf(createCommission(' ')));
+
+		const expected = refusedFields([
+			{ pointer: fieldPointer('#/title'), code: 'name_empty', detail: "This can't be blank." }
+		]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+
+	it('fails an answer whose id is empty as a ContractViolation, never a commission', async () => {
+		const { fetch } = fetchStub(() => Response.json({ ...createdWire, id: '' }, { status: 201 }));
+
+		const failure = await runLive(fetch, failureOf(createCommission('Fox in the snow')));
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(
+			/\/commissions responded 201 — a created commission with no id/
+		);
+	});
+
+	it('fails an answer that does not decode as a ContractViolation', async () => {
+		const { fetch } = fetchStub(() => Response.json({ id: 7 }, { status: 201 }));
+
+		const failure = await runLive(fetch, failureOf(createCommission('Fox in the snow')));
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/malformed created commission payload/);
+	});
+});
+
+describe('ZurfurApi.renameCommission (live)', () => {
+	const ID = commissionIdOf('0192f0c0-0000-7000-8000-00000000c0de');
+
+	/** The 200 the backend answers a rename with: the commission as stored, its title trimmed. */
+	const renamedWire = {
+		id: ID,
+		title: 'Winter fox',
+		lifecycle: 'draft',
+		visibility: 'private',
+		createdAt: '2026-10-17T12:00:00Z'
+	};
+
+	it('PATCHes {id, title} to /commissions/<id>/title and decodes the answer', async () => {
+		const sent: { method: string | undefined; body: unknown }[] = [];
+		const { fetch, calls } = fetchStub(() => Response.json(renamedWire));
+		const spyingFetch: typeof fetch = async (input, init) => {
+			const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+			sent.push({ method: init?.method, body });
+			return fetch(input, init);
+		};
+
+		const renamed = await runLive(spyingFetch, renameCommission(ID, '  Winter fox  '));
+
+		expect(calls).toEqual([`/api/v1/commissions/${ID}/title`]);
+		expect(sent).toEqual([{ method: 'PATCH', body: { id: ID, title: '  Winter fox  ' } }]);
+		expect(renamed).toEqual({ id: ID, title: 'Winter fox' });
+	});
+
+	it('fails a refused title as the problem with its field errors', async () => {
+		const body = refusedFields([
+			{ pointer: '#/title', code: 'name_empty', detail: "This can't be blank." }
+		]);
+		const { fetch } = fetchStub(() => problemResponseWith(422, body));
+
+		const failure = await runLive(fetch, failureOf(renameCommission(ID, ' ')));
+
+		const expected = refusedFields([
+			{ pointer: fieldPointer('#/title'), code: 'name_empty', detail: "This can't be blank." }
+		]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+
+	it('fails a Participant who is not the owner as the forbidden problem', async () => {
+		const { fetch } = fetchStub(() => problemResponse(403, 'forbidden', 'Nope.'));
+
+		const failure = await runLive(fetch, failureOf(renameCommission(ID, 'Winter fox')));
+
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') {
+			expect(failure.problem.code).toBe('forbidden');
+			expect(failure.problem.status).toBe(403);
+		}
+	});
+
+	it('a_crafted_commission_id_never_reaches_fetch', async () => {
+		let fetched = 0;
+		const spy: FetchFunction = () => {
+			fetched += 1;
+			return Promise.resolve(Response.json(renamedWire));
+		};
+
+		const failure = await runLive(
+			spy,
+			failureOf(renameCommission(commissionIdOf('../accounts/x'), 'Winter fox'))
+		);
+
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem')
+			expect(failure.problem).toEqual(COMMISSION_NOT_FOUND_PROBLEM);
+		expect(fetched).toBe(0);
+	});
+
+	it('fails an answer that does not decode as a ContractViolation naming the route, not the id', async () => {
+		const { fetch } = fetchStub(() => Response.json({ id: 7 }));
+
+		const failure = await runLive(fetch, failureOf(renameCommission(ID, 'Winter fox')));
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(
+			/\/commissions\/\{id\}\/title .*malformed renamed commission payload/
+		);
+		expect(failure.message).not.toContain(ID);
 	});
 });
 

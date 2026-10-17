@@ -5,16 +5,20 @@
 use application::commission::seats::declare;
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, SeatKind, SeatLink, SeatPrompt};
+use domain::elements::commission::{SeatKind, SeatLink, SeatPrompt};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// `POST /commissions/{id}/seats`'s `201` body: the new seat's element id — see
 /// [`declare_seat`].
@@ -41,8 +45,8 @@ pub(super) struct DeclareSeatBody {
 /// `201 Created` with `{"id": "…"}`.
 pub(super) async fn declare_seat(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<DeclareSeatBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;

@@ -5,13 +5,17 @@
 use application::commission::changelog::read;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     response::{IntoResponse, Response},
 };
-use domain::elements::commission::CommissionId;
 use serde::Serialize;
 
-use crate::{AppState, extract::CallingUser, problem::Problem, wire_time::WireTimestamp};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+    wire_time::WireTimestamp,
+};
 
 /// One changelog entry as the API serves it: the stored envelope, kind as its
 /// stable token, actor as a bare id (`null` = a system entry), `seq` as the
@@ -30,8 +34,8 @@ struct ChangelogEntryBody {
 /// entries, ascending `seq`. Participant-only; `404` otherwise. Unpaginated.
 pub(super) async fn read_changelog(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let query = read::Query {
         actor_id,

@@ -56,6 +56,10 @@ export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 export const ProblemKind = {
 	InvalidRequest: { type: 'urn:zurfur:error:invalid-request', code: 'invalid_request' },
 	AccountNotFound: { type: 'urn:zurfur:error:account-not-found', code: 'account_not_found' },
+	CommissionNotFound: {
+		type: 'urn:zurfur:error:commission-not-found',
+		code: 'commission_not_found'
+	},
 	NotAuthenticated: { type: 'urn:zurfur:error:not-authenticated', code: 'not_authenticated' },
 	Forbidden: { type: 'urn:zurfur:error:forbidden', code: 'forbidden' },
 	NodeNotFound: { type: 'urn:zurfur:error:node-not-found', code: 'node_not_found' },
@@ -115,6 +119,20 @@ export const ACCOUNT_NOT_FOUND_PROBLEM: Problem = {
 	...ProblemKind.AccountNotFound,
 	title: 'Account not found',
 	detail: 'No such account.',
+	status: HttpStatus.NotFound,
+	errors: []
+};
+
+/**
+ * Field-for-field the backend's own `Problem::commission_not_found()`: the
+ * one answer for a commission the caller can't see and an id that names
+ * nothing. The rename call answers it for an id the path builder refuses,
+ * and the mock for an id it doesn't hold.
+ */
+export const COMMISSION_NOT_FOUND_PROBLEM: Problem = {
+	...ProblemKind.CommissionNotFound,
+	title: 'Commission not found',
+	detail: 'No such commission.',
 	status: HttpStatus.NotFound,
 	errors: []
 };

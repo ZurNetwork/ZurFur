@@ -4,15 +4,18 @@
 use application::commission::notes::attach;
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::CommissionId;
 use serde::Deserialize;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `POST /commissions/{id}/notes` request body: just the free text.
 #[derive(Deserialize)]
@@ -24,8 +27,8 @@ pub(super) struct WriteNoteBody {
 /// Participant-only; `422` for an empty note. Returns `201 Created`.
 pub(super) async fn write_note(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<WriteNoteBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;

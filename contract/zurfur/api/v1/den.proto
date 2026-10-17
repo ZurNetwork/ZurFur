@@ -87,6 +87,12 @@ message DenNode {
     // The viewer may know it exists but can't open it.
     DenCard card = 7;
   }
+  // Set, from 2 up, on each entry after the first of those with the same name
+  // that this viewer sees in the same folder, in a fixed order (open entries by
+  // key, so commissions oldest first; then cards). Clients show it after the
+  // name, as "Test 1 (2)". Unset otherwise. Computed for this viewer at read
+  // time, never stored.
+  optional uint32 name_ordinal = 8;
 }
 
 // What a viewer who can open a node sees of it, beyond its entry.
@@ -128,16 +134,23 @@ message DenLink {}
 message DenCrumb {
   // Its Den path from the viewer's root; empty for the root.
   repeated string segments = 1;
-  // Its display name, the one its parent's listing uses; for the root, the viewer's own name.
+  // Its display name, the one its parent's listing uses (with its `name_ordinal`,
+  // what that listing shows); for the root, the viewer's own name.
   string name = 2;
   // Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
   string type = 3;
+  // The number its parent's listing gives it, as DenNode.name_ordinal: set, from 2
+  // up, on each entry after the first of those with the same name, in a fixed order
+  // (open entries by key, so commissions oldest first; then cards). Unset otherwise,
+  // and always for the root.
+  optional uint32 name_ordinal = 4;
 }
 
 // One page of a directory's entries, after everything the viewer can't see is left out.
 message DenListing {
   // The entries, in the order the server sends; clients keep it within each kind and may
-  // show directories first. Today: by name, as the viewer is shown it.
+  // show directories first. Today: by name, digit runs by value and without regard to
+  // case; an entry's `name_ordinal` never moves it.
   repeated DenNode entries = 1;
   // An opaque position in this viewer's listing that reveals no names, hashes or counts; absent on the last page.
   string next_page_token = 2;

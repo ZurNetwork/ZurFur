@@ -117,7 +117,12 @@ function expectedPage(entry: GoldenEntry): object {
 		content.case === 'listing'
 			? { body: 'listing', entries, more }
 			: { body: content.case ?? 'notShown' };
-	return { view: 'open', node, crumbs, body };
+	const { thing } = message.node.access.value;
+	const commission =
+		thing.case === 'commissionId' && thing.value !== ''
+			? { thing: 'commission', id: thing.value }
+			: undefined;
+	return { view: 'open', node, thing: commission, crumbs, body };
 }
 
 /** The API request the web makes for a browser address: its allowlisted query only. */
@@ -318,6 +323,7 @@ describe('a card of a type this build doesn’t know', () => {
 	const card: CardEntry = {
 		view: 'card',
 		name: denName('Locked characters'),
+		ordinal: undefined,
 		type: denType('account.characters'),
 		mounted: false
 	};

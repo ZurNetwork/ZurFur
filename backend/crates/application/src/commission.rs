@@ -9,8 +9,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, FileNameError, MarkupError,
-            NewChangelogEntry,
+            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, CommissionTitleError,
+            FileNameError, MarkupError, NewChangelogEntry,
         },
         user::UserId,
     },
@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
-    den::{DenError, DenNameError},
+    den::{DenError, DenName, DenNameError},
     transaction,
 };
 pub mod archive;
@@ -33,15 +33,18 @@ pub mod delete;
 pub(crate) mod den;
 pub mod files;
 pub mod invitations;
-pub mod list;
 pub mod markup;
 pub mod maturity;
 pub mod notes;
+pub mod rename;
 pub mod seats;
 pub mod slots;
 pub mod status;
 pub mod unarchive;
+mod values;
 pub mod view;
+
+pub use values::CommissionValues;
 
 /// Commission use cases, with the ports already bound. A namespace, not a
 /// mediator: one `impl Commissions<'_>` block per use-case file.
@@ -209,6 +212,15 @@ pub(crate) async fn require_owner(
         return Err(CommissionError::InsufficientPermissions);
     }
     Err(CommissionError::NotAMember)
+}
+
+/// The title as the Den's name rule keeps it: refused where the rule refuses, and stored
+/// without the characters the rule strips.
+pub(crate) fn den_title(title: &CommissionTitle) -> CommissionResult<CommissionTitle> {
+    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
+    name.as_ref()
+        .parse()
+        .map_err(|CommissionTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
 }
 
 /// Den's refusal as a commission answer: its one not-found becomes `not_found`, and a store

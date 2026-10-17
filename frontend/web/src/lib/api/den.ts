@@ -7,7 +7,15 @@
 
 import type { Problem } from './problem';
 import type { Trail } from './trail';
-import type { DenHref, DenName, DenType } from '$lib/types/brand';
+import {
+	commissionId,
+	nameOrdinal,
+	type CommissionId,
+	type DenHref,
+	type DenName,
+	type DenType,
+	type NameOrdinal
+} from '$lib/types/brand';
 
 /** A node's own visibility level, as only someone who can open it sees it. */
 export type DenLevel = 'private' | 'listed' | 'public' | 'unknown';
@@ -22,7 +30,10 @@ export type DenRemoved = 'archived' | 'deactivated' | 'unknown';
 export interface OpenEntry {
 	readonly view: 'open';
 	readonly href: DenHref;
+	/** Its own name, never carrying its number. */
 	readonly name: DenName;
+	/** Its number among the equal names its folder shows; absent when it needs none. */
+	readonly ordinal: NameOrdinal | undefined;
 	readonly type: DenType;
 	readonly kind: DenKind;
 	readonly mounted: boolean;
@@ -35,6 +46,7 @@ export interface OpenEntry {
 export interface CardEntry {
 	readonly view: 'card';
 	readonly name: DenName;
+	readonly ordinal: NameOrdinal | undefined;
 	readonly type: DenType;
 	readonly mounted: boolean;
 }
@@ -46,6 +58,8 @@ export type DenEntry = OpenEntry | CardEntry;
 export interface DenCrumb {
 	readonly href: DenHref;
 	readonly name: DenName;
+	/** Its number in its parent's listing; the root never has one. */
+	readonly ordinal: NameOrdinal | undefined;
 }
 
 /** What an open node holds. */
@@ -60,11 +74,19 @@ export type DenBody =
 	/** A content case this build doesn't know: shown as "content not shown yet". */
 	| { readonly body: 'notShown' };
 
+/** The thing an open node stands for, as far as the pane acts on it: a commission by its id. */
+export interface DenThing {
+	readonly thing: 'commission';
+	readonly id: CommissionId;
+}
+
 /** The node the address lands on, with what goes with it. */
 export type DenPage =
 	| {
 			readonly view: 'open';
 			readonly node: OpenEntry;
+			/** What the node stands for; absent on any node that stands for no commission. */
+			readonly thing: DenThing | undefined;
 			readonly crumbs: readonly DenCrumb[];
 			readonly body: DenBody;
 	  }
@@ -142,10 +164,17 @@ function isOptionalDenLink(value: unknown): boolean {
 	return value === undefined || isDenLink(value);
 }
 
+/** Whether `value` is absent, or a whole number of 2 or more. */
+function isOptionalOrdinal(value: unknown): boolean {
+	return value === undefined || (typeof value === 'number' && nameOrdinal(value) !== undefined);
+}
+
 /** Whether `value` is a listing row, every link in it a Den link. */
 function isDenEntry(value: unknown): boolean {
 	const names =
-		typeof field(value, 'name') === 'string' && typeof field(value, 'type') === 'string';
+		typeof field(value, 'name') === 'string' &&
+		isOptionalOrdinal(field(value, 'ordinal')) &&
+		typeof field(value, 'type') === 'string';
 	const mounted = typeof field(value, 'mounted') === 'boolean';
 	switch (field(value, 'view')) {
 		case 'card':
@@ -186,11 +215,25 @@ function isDenBody(value: unknown): boolean {
 	}
 }
 
-/** Whether `value` is a page: its node, its crumbs and (open) its body. */
+/** Whether `value` is absent, or a commission thing whose id mints. */
+function isOptionalThing(value: unknown): boolean {
+	if (value === undefined) return true;
+	const id = field(value, 'id');
+	return (
+		field(value, 'thing') === 'commission' &&
+		typeof id === 'string' &&
+		commissionId(id) !== undefined
+	);
+}
+
+/** Whether `value` is a page: its node, its crumbs and (open) its thing and body. */
 function isDenPage(value: unknown): boolean {
 	const crumbs = everyItem(
 		field(value, 'crumbs'),
-		(crumb) => isDenLink(field(crumb, 'href')) && typeof field(crumb, 'name') === 'string'
+		(crumb) =>
+			isDenLink(field(crumb, 'href')) &&
+			typeof field(crumb, 'name') === 'string' &&
+			isOptionalOrdinal(field(crumb, 'ordinal'))
 	);
 	const node = field(value, 'node');
 	switch (field(value, 'view')) {
@@ -201,6 +244,7 @@ function isDenPage(value: unknown): boolean {
 				crumbs &&
 				field(node, 'view') === 'open' &&
 				isDenEntry(node) &&
+				isOptionalThing(field(value, 'thing')) &&
 				isDenBody(field(value, 'body'))
 			);
 		default:
@@ -250,7 +294,8 @@ export function isDenPageData(value: unknown): value is DenPageData {
 		) &&
 		everyItem(field(value, 'trail'), (step) => {
 			const href = field(step, 'href');
-			return href === undefined || href === '/accounts' || isDenLink(href);
+			const linked = href === undefined || href === '/accounts' || isDenLink(href);
+			return linked && isOptionalOrdinal(field(step, 'ordinal'));
 		}) &&
 		isDenOutcome(field(value, 'outcome'))
 	);
