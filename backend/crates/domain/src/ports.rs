@@ -1,7 +1,7 @@
 //! Ports: traits named by the role they play for the domain, implemented by the
-//! adapter crates. Per-area ports live in submodules ([`commission`],
-//! [`changelog`], …) and are re-exported flat here, so a new area adds a file
-//! rather than growing this one.
+//! adapter crates. The identity and workflow ports are re-exported flat here
+//! (per-area submodules such as [`commission`] and [`changelog`] included); the
+//! unit of work lives here because it vends the write ports of both.
 
 mod unit_of_work;
 

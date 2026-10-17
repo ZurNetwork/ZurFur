@@ -1,4 +1,5 @@
-//! The domain elements — Zurfur's nouns.
+//! The domain elements — Zurfur's nouns, re-exported flat from `kernel`,
+//! `identity` and `workflow`.
 //!
 //! Each submodule holds one entity or closely-related cluster: its identity
 //! type, its value objects, and the pure construction and invariant logic that
