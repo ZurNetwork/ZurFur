@@ -3,7 +3,7 @@
 /// reader converts it through its own rule before serving it.
 ///
 /// ```
-/// use domain::elements::text::StoredText;
+/// use kernel::elements::text::StoredText;
 ///
 /// let stored = StoredText::from("  a name written long ago ".to_owned());
 /// assert_eq!(stored.as_str(), "  a name written long ago "); // kept verbatim

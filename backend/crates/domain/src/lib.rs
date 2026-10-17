@@ -6,7 +6,6 @@
 //! string-validation builder. The dependency rule runs one way: adapters point
 //! at the domain, never the reverse.
 
-pub mod datetime;
 pub mod elements;
 pub mod ports;
-pub mod string_builder;
+pub use ::kernel::{datetime, string_builder};

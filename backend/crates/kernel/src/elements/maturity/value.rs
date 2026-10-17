@@ -18,7 +18,7 @@ impl Maturity {
 
     /// Every atproto self-label this posture emits at publish time. Empty
     /// means Safe and not graphic. Publish paths wrap these into
-    /// [`SelfLabels`](crate::elements::public_record::SelfLabels); commissions
+    /// `SelfLabels`; commissions
     /// never do.
     pub fn self_labels(&self) -> Vec<&'static str> {
         let mut labels: Vec<&'static str> = self.rating.self_label().into_iter().collect();

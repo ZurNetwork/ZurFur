@@ -1,5 +1,5 @@
 //! [`StringBuilder`] — the shared, explicit-rule builder every trimmed/capped
-//! string newtype in [`elements`](crate::elements) validates through.
+//! string newtype in `elements` validates through.
 //!
 //! Each rule is its own method, so a newtype's constructor reads as the rules it
 //! enforces, in order; there are no negation flags. A rule called after a
@@ -8,7 +8,7 @@
 //! the shared [`StringBuilderViolation`] onto its own typed error.
 //!
 //! ```
-//! # use domain::string_builder::{StringBuilder, StringBuilderViolation};
+//! # use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 //! # #[derive(Debug, PartialEq, Eq)]
 //! # struct Example(String);
 //! # #[derive(Debug, PartialEq, Eq)]
