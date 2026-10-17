@@ -113,6 +113,7 @@ async fn alice_s_accounts_mounts_supreme_arts() {
     let world = pg_app::den_world(api::app).await;
     let supreme_arts_did = world.supreme_arts.to_string();
     let expected_crumbs = json!([{ "name": "Alice", "type": "user" }]);
+    let expected_thing = json!(supreme_arts_did);
 
     let accounts = ok_json(get(&world.alice, world.base_url(), "/den/accounts").await).await;
 
@@ -127,13 +128,16 @@ async fn alice_s_accounts_mounts_supreme_arts() {
         supreme_arts["segments"],
         json!(["accounts", supreme_arts_did])
     );
-    assert!(supreme_arts.get("open").is_some(), "{supreme_arts}");
+    let open = &supreme_arts["open"];
+    assert_eq!(open["accountDid"], expected_thing, "{supreme_arts}");
+    assert!(open.get("commissionId").is_none(), "{supreme_arts}");
 }
 
 #[tokio::test]
 async fn untitled_opens_to_its_entries_and_its_attachments_list_the_file() {
     let world = pg_app::den_world(api::app).await;
     let untitled = format!("/den/commissions/{}", world.untitled.id);
+    let expected_thing = json!(world.untitled.id.to_string());
 
     let commission = ok_json(get(&world.alice, world.base_url(), &untitled).await).await;
     let attachments_path = format!("{untitled}/attachments");
@@ -141,6 +145,7 @@ async fn untitled_opens_to_its_entries_and_its_attachments_list_the_file() {
 
     assert_eq!(commission["node"]["name"], "Untitled");
     assert_eq!(commission["node"]["type"], "commission");
+    assert_eq!(commission["node"]["open"]["commissionId"], expected_thing);
     assert_eq!(
         entry_names(&commission["listing"]),
         ["attachments", "changelog", "products", "slots"]

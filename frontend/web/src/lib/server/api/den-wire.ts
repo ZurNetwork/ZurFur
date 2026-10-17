@@ -22,8 +22,9 @@ export const DEN_ROUTES = { root: '/den', node: '/den/{path}' } as const;
 export type DenRoute = (typeof DEN_ROUTES)[keyof typeof DEN_ROUTES];
 
 /**
- * The thing an open node names. A case this build doesn't know, no case, or
- * an empty value is no thing.
+ * The thing an open node names. A case this build doesn't know, no case, an
+ * empty commission id, or an empty or whitespace-only account did is no thing.
+ * A kept value is passed on untrimmed.
  */
 function toThing(thing: DenOpen['thing']): DenReadThing | undefined {
 	switch (thing.case) {
@@ -32,7 +33,7 @@ function toThing(thing: DenOpen['thing']): DenReadThing | undefined {
 			return id === undefined ? undefined : { thing: 'commission', id };
 		}
 		case 'accountDid':
-			return thing.value === '' ? undefined : { thing: 'account', did: did(thing.value) };
+			return thing.value.trim() === '' ? undefined : { thing: 'account', did: did(thing.value) };
 		case undefined:
 			return undefined;
 	}

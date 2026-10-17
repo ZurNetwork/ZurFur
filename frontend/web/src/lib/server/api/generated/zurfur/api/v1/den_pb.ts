@@ -295,7 +295,7 @@ export type DenOpen = Message<"zurfur.api.v1.DenOpen"> & {
 
   /**
    * The thing this node stands for, for a typed write call to act on. It names the
-   * thing, never the node, and is set only on the kinds below. A mount carries its
+   * thing, never the node, and is set only in the cases below. A mount carries its
    * target's; a symlink carries none until links open. A client that finds no case
    * it knows, or an empty value, acts on nothing.
    *

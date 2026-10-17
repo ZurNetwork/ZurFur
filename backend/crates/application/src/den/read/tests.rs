@@ -205,6 +205,15 @@ impl RecordLookup for FakeHost {
     }
 }
 
+/// A record the host never wrote to: every lookup answers `None`.
+struct NothingRecorded;
+
+impl RecordLookup for NothingRecorded {
+    fn recorded(&self, _path: &RealPath) -> Option<RecordedFacts> {
+        None
+    }
+}
+
 /// alice's root, with one node of each shape the read answers for.
 fn tree() -> FakeHost {
     FakeHost::default()
@@ -373,6 +382,25 @@ async fn an_open_node_carries_its_soft_deleted_word() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn an_open_node_the_host_never_recorded_is_a_store_error() {
+    let host = tree();
+    let viewer = Viewer::from("did:plc:alice".to_owned());
+    let reader = Reader::new(&host, viewer, &NothingRecorded, Caps::default());
+    let resolved = reader
+        .walk(&path("/user/alice"), &[segment("notes")])
+        .await
+        .expect("the notes resolve");
+    let expected_message = "an open den node has no host record";
+
+    let node = reader.node(resolved.node());
+
+    let Err(DenError::Store(store_error)) = node else {
+        panic!("an unrecorded open node is a store error: {node:?}");
+    };
+    assert_eq!(store_error.to_string(), expected_message);
 }
 
 #[tokio::test]

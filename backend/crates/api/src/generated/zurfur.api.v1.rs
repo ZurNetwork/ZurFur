@@ -392,7 +392,7 @@ pub struct DenOpen {
     #[prost(string, tag = "3")]
     pub soft_delete: ::prost::alloc::string::String,
     /// The thing this node stands for, for a typed write call to act on. It names the
-    /// thing, never the node, and is set only on the kinds below. A mount carries its
+    /// thing, never the node, and is set only in the cases below. A mount carries its
     /// target's; a symlink carries none until links open. A client that finds no case
     /// it knows, or an empty value, acts on nothing.
     #[prost(oneof = "den_open::Thing", tags = "4, 5")]
@@ -401,7 +401,7 @@ pub struct DenOpen {
 /// Nested message and enum types in `DenOpen`.
 pub mod den_open {
     /// The thing this node stands for, for a typed write call to act on. It names the
-    /// thing, never the node, and is set only on the kinds below. A mount carries its
+    /// thing, never the node, and is set only in the cases below. A mount carries its
     /// target's; a symlink carries none until links open. A client that finds no case
     /// it knows, or an empty value, acts on nothing.
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]

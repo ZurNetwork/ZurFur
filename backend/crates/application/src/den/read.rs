@@ -85,7 +85,7 @@ pub(crate) fn crumb(entry: &Entry) -> Result<DenCrumb, DenError> {
 
 /// What the host recorded about a node it answered for: its soft-deleted word and the thing
 /// it stands for.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedFacts {
     /// Its soft-deleted word; `None` when live.
     pub(crate) soft_delete: Option<SoftDelete>,

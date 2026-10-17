@@ -36,7 +36,7 @@
     },
     {
       "name": "den-wire.ts",
-      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined, an unknown or empty thing is no thing, a crumb without a type reads empty); DEN_ROUTES, the route templates Den failures name",
+      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined, an unknown or empty thing, or a blank Account DID, is no thing, a crumb without a type reads empty); DEN_ROUTES, the route templates Den failures name",
       "node": false
     },
     {

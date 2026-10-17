@@ -6,14 +6,13 @@ import { Effect } from 'effect';
 import { cardTypeWord, type DenEntry, type DenPage } from '$lib/api/den';
 import { fetchStub } from '$lib/testing/http';
 import { denPage, type DenPageResult } from '../den';
-import { RequestFetch, ZurfurApiLive } from './zurfur-api';
+import { decodeContract, RequestFetch, ZurfurApiLive } from './zurfur-api';
 import type { ContractViolation, NetworkFailure } from './errors';
 import type { JsonObject, JsonValue } from '@bufbuild/protobuf';
 import { commissionId, did } from '$lib/types/brand';
 import { denReadFromNode } from './den-wire';
 import type { DenRead, DenReadAccess, DenReadNode } from './den-read';
 import { GetDenNodeResponseSchema } from './generated/zurfur/api/v1/den_pb';
-import { decodeContract } from './zurfur-api';
 
 /** Run the den page program for `address` over the live port, every read answered by `body`. */
 function runPage(
@@ -269,6 +268,15 @@ describe('the thing an open node names', () => {
 		const access = firstEntry(readOf(answerWith(node))).access;
 		expect(access).toMatchObject({ access: 'open' });
 		expect(thingOf(access)).toBeUndefined();
+	});
+
+	it('a whitespace account did is no thing', () => {
+		for (const accountDid of [' ', '\t', ' \n ']) {
+			const node = { ...entry, type: 'account', open: { ownLevel: 'private', accountDid } };
+			const access = firstEntry(readOf(answerWith(node))).access;
+			expect(access).toMatchObject({ access: 'open' });
+			expect(thingOf(access)).toBeUndefined();
+		}
 	});
 
 	it('an empty commission id is no thing', () => {
