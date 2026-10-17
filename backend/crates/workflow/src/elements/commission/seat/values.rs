@@ -1,4 +1,4 @@
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 use super::{SeatKindError, SeatLinkError, SeatPromptError};
 
@@ -7,7 +7,7 @@ use super::{SeatKindError, SeatLinkError, SeatPromptError};
 /// non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS), no control characters.
 ///
 /// ```
-/// use domain::elements::commission::SeatKind;
+/// use workflow::elements::commission::SeatKind;
 ///
 /// let kind = "  Creator  ".parse::<SeatKind>().unwrap();
 /// assert_eq!(kind.as_str(), "Creator"); // trimmed
@@ -68,7 +68,7 @@ impl AsRef<str> for SeatKind {
 /// rejected. Trimmed, non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS).
 ///
 /// ```
-/// use domain::elements::commission::SeatPrompt;
+/// use workflow::elements::commission::SeatPrompt;
 ///
 /// let prompt = "Show two refs.\nLink your portfolio.".parse::<SeatPrompt>().unwrap();
 /// assert!(prompt.as_str().contains('\n')); // multi-line is fine
@@ -131,7 +131,7 @@ impl AsRef<str> for SeatPrompt {
 /// non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS), no control characters.
 ///
 /// ```
-/// use domain::elements::commission::SeatLink;
+/// use workflow::elements::commission::SeatLink;
 ///
 /// let link = " https://forms.example/apply ".parse::<SeatLink>().unwrap();
 /// assert_eq!(link.as_str(), "https://forms.example/apply"); // trimmed

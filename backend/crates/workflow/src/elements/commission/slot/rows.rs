@@ -1,13 +1,9 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{
-        commission::{
-            CommissionId,
-            element::{ElementId, SurfaceAddress},
-        },
-        user::UserId,
-    },
+use crate::elements::commission::{
+    CommissionId,
+    element::{ElementId, SurfaceAddress},
 };
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 /// A freshly declared Slot, ready to persist into a declared surface
 /// ([`CommissionWrites::declare_slots`](crate::ports::CommissionWrites::declare_slots)).
@@ -42,10 +38,10 @@ impl NewSlot {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{CommissionId, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, TabId},
-    ///     did::Did,
-    ///     user::UserId,
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::user::UserId;
+    /// use workflow::elements::commission::{
+    ///     CommissionId, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, TabId,
     /// };
     ///
     /// let commission = CommissionId::from(uuid::Uuid::now_v7());

@@ -1,7 +1,6 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{commission::CommissionId, user::UserId},
-};
+use crate::elements::commission::CommissionId;
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 use super::{Band, ElementId, ElementType, SurfaceName, TabId, TabName, VisibilityMode};
 
@@ -84,13 +83,11 @@ impl NewElement {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{
-    ///         Band, CommissionId, ElementPayload, ElementType, NewElement, SurfaceAddress,
-    ///         SurfaceName, TabId,
-    ///     },
-    ///     did::Did,
-    ///     user::UserId,
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::user::UserId;
+    /// use workflow::elements::commission::{
+    ///     Band, CommissionId, ElementPayload, ElementType, NewElement, SurfaceAddress,
+    ///     SurfaceName, TabId,
     /// };
     ///
     /// let commission = CommissionId::from(uuid::Uuid::now_v7());

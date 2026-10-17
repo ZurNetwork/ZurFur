@@ -1,5 +1,6 @@
 use super::*;
-use crate::elements::{commission::file::FileName, text::StoredText};
+use crate::elements::commission::file::FileName;
+use kernel::elements::text::StoredText;
 
 #[test]
 fn content_type_is_normalized_to_a_safe_header_value() {

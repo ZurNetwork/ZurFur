@@ -1,11 +1,9 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{
-        commission::{CommissionId, ElementId},
-        invitation::{InvitationError, InvitationState},
-        user::UserId,
-    },
+use crate::elements::commission::{CommissionId, ElementId};
+use identity::elements::{
+    invitation::{InvitationError, InvitationState},
+    user::UserId,
 };
+use kernel::datetime::DateTimeUtc;
 
 use super::SeatInvitationId;
 
@@ -39,12 +37,9 @@ impl SeatInvitation {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{CommissionId, ElementId, SeatInvitation},
-    ///     did::Did,
-    ///     invitation::InvitationState,
-    ///     user::UserId,
-    /// };
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::{invitation::InvitationState, user::UserId};
+    /// use workflow::elements::commission::{CommissionId, ElementId, SeatInvitation};
     ///
     /// let commission = CommissionId::from(uuid::Uuid::now_v7());
     /// let seat = ElementId::from(uuid::Uuid::now_v7());
@@ -81,12 +76,12 @@ impl SeatInvitation {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{CommissionId, ElementId, SeatInvitation},
-    ///     did::Did,
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::{
     ///     invitation::{InvitationError, InvitationState},
     ///     user::UserId,
     /// };
+    /// use workflow::elements::commission::{CommissionId, ElementId, SeatInvitation};
     ///
     /// let mut invitation = SeatInvitation::issue(
     ///     CommissionId::from(uuid::Uuid::now_v7()),

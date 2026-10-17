@@ -1,5 +1,7 @@
 use super::*;
-use crate::elements::{commission::CommissionId, did::Did, user::UserId};
+use crate::elements::commission::CommissionId;
+use identity::elements::user::UserId;
+use kernel::elements::did::Did;
 
 // System vs event constructors set the actor arm explicitly.
 #[test]

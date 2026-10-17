@@ -1,7 +1,5 @@
-use crate::elements::{
-    account::AccountId,
-    commission::{CommissionId, Visibility},
-};
+use crate::elements::commission::{CommissionId, Visibility};
+use identity::elements::account::AccountId;
 
 use super::{
     errors::WorkflowError,

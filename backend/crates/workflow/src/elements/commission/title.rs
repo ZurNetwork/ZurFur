@@ -1,11 +1,11 @@
 use super::CommissionTitleError;
-use crate::elements::text::StoredText;
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::elements::text::StoredText;
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// A commission's Title: trimmed, and non-empty. No length cap yet.
 ///
 /// ```
-/// use domain::elements::commission::CommissionTitle;
+/// use workflow::elements::commission::CommissionTitle;
 ///
 /// let title = "  A ref sheet  ".parse::<CommissionTitle>().unwrap();
 /// assert_eq!(title.as_str(), "A ref sheet"); // trimmed

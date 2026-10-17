@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 use super::CompositionLabelError;
 
@@ -42,7 +42,7 @@ pub const LABEL_MAX_CHARS: usize = 64;
 /// legal is the [`SKELETON`]'s to say.
 ///
 /// ```
-/// use domain::elements::commission::TabName;
+/// use workflow::elements::commission::TabName;
 ///
 /// let tab = "  main  ".parse::<TabName>().unwrap();
 /// assert_eq!(tab.as_ref(), "main"); // trimmed
@@ -67,7 +67,7 @@ pub struct TabName(CompositionLabel);
 /// shape, while [`SKELETON`] owns the vocabulary.
 ///
 /// ```
-/// use domain::elements::commission::SurfaceName;
+/// use workflow::elements::commission::SurfaceName;
 ///
 /// let surface = "  content  ".parse::<SurfaceName>().unwrap();
 /// assert_eq!(surface.as_ref(), "content"); // trimmed
@@ -92,7 +92,7 @@ pub struct SurfaceName(CompositionLabel);
 /// and [`seat`](Self::seat) are the two tags already spoken for.
 ///
 /// ```
-/// use domain::elements::commission::ElementType;
+/// use workflow::elements::commission::ElementType;
 ///
 /// assert_eq!("  note ".parse::<ElementType>().unwrap().as_ref(), "note");
 /// assert_eq!(ElementType::seat().as_ref(), "seat");
@@ -136,7 +136,7 @@ impl ElementType {
 /// Do not add a vocabulary check here ahead of the type-catalog decision.
 ///
 /// ```
-/// use domain::elements::commission::Band;
+/// use workflow::elements::commission::Band;
 ///
 /// assert_eq!(Band::default().as_ref(), "body"); // the placeholder default
 /// ```

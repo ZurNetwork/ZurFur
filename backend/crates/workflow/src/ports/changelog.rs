@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::elements::commission::{ChangelogEntry, CommissionId, NewChangelogEntry};
 
 /// The **append** surface of the commission changelog — reachable only on an open
-/// [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.changelog()`), so an entry
+/// `UnitOfWork` (`uow.changelog()`), so an entry
 /// commits atomically with the domain write it records. This is the whole write
 /// vocabulary: with no update or delete anywhere, editing history is
 /// unrepresentable at the port layer.

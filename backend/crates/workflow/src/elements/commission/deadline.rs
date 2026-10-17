@@ -1,5 +1,5 @@
 use super::{CommissionId, DeadlineStatusError, LifecycleStep};
-use crate::datetime::DateTimeUtc;
+use kernel::datetime::DateTimeUtc;
 
 /// The deadline-axis Status a commission may carry — how the work stands
 /// against its deadline. One nullable cell, so a set replaces; a commission with

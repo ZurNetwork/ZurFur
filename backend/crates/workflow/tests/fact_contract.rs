@@ -4,7 +4,7 @@
 //! future work), so a stub implementor exercises the
 //! contract's shape here.
 
-use domain::elements::commission::{CommissionId, Fact};
+use workflow::elements::commission::{CommissionId, Fact};
 
 /// A stand-in fact-bearing type: the minimal shape a future fact (a Product, a
 /// rating, …) will have — some payload plus the commission it anchors to.

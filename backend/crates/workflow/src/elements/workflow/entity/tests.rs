@@ -1,6 +1,6 @@
 use super::super::ordering::LexOrdering;
 use super::*;
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 fn account() -> AccountId {
     AccountId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())))

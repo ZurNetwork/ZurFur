@@ -4,20 +4,17 @@
 
 use async_trait::async_trait;
 
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{
-        commission::{
-            ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
-            FileKey, FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
-        },
-        maturity::Maturity,
-        user::UserId,
-        workflow::{Column, ColumnId, WorkflowId},
+use crate::elements::{
+    commission::{
+        ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId, FileKey,
+        FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
+    workflow::{Column, ColumnId, WorkflowId},
 };
+use identity::elements::user::UserId;
+use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
 
 pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
@@ -137,7 +134,7 @@ pub trait CommissionStore: Send + Sync {
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
-/// open [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.commissions()`). Authority
+/// open `UnitOfWork` (`uow.commissions()`). Authority
 /// and the commission's own existence are always the caller's checks, settled
 /// before any of these is reached.
 #[async_trait]
@@ -336,7 +333,7 @@ pub trait CommissionReads: Send {
 }
 
 /// A commission unit of work: [`CommissionReads`] + [`CommissionWrites`] on one
-/// connection. Vended by [`UnitOfWork::commissions`](crate::ports::UnitOfWork::commissions).
+/// connection. Vended by `UnitOfWork::commissions`.
 pub trait CommissionRepo: CommissionReads + CommissionWrites {}
 
 impl<T: CommissionReads + CommissionWrites> CommissionRepo for T {}

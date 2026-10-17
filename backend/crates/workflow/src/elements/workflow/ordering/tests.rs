@@ -1,5 +1,7 @@
 use super::*;
-use crate::elements::{account::AccountId, commission::Visibility, did::Did};
+use crate::elements::commission::Visibility;
+use identity::elements::account::AccountId;
+use kernel::elements::did::Did;
 
 // ---- columns -----------------------------------------------------------
 

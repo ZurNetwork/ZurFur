@@ -1,7 +1,7 @@
 use tokio::io::AsyncRead;
 
 use super::FileKey;
-use crate::{datetime::DateTimeUtc, elements::text::StoredText};
+use kernel::{datetime::DateTimeUtc, elements::text::StoredText};
 
 /// One file entry as a commission's file list reads it: its key and upload
 /// time. Who uploaded it is not part of this read.

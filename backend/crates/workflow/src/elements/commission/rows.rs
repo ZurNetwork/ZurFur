@@ -2,9 +2,10 @@ use super::{
     ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
     Visibility,
 };
-use crate::{
+use identity::elements::user::UserId;
+use kernel::{
     datetime::DateTimeUtc,
-    elements::{maturity::Maturity, text::StoredText, user::UserId},
+    elements::{maturity::Maturity, text::StoredText},
 };
 
 /// A freshly created commission, ready to persist through
@@ -13,7 +14,8 @@ use crate::{
 /// [`CommissionTitle`], so no unchecked title can reach the write.
 ///
 /// ```compile_fail,E0308
-/// use domain::elements::{commission::NewCommission, text::StoredText};
+/// use kernel::elements::text::StoredText;
+/// use workflow::elements::commission::NewCommission;
 ///
 /// fn store_unchecked(new: &mut NewCommission) {
 ///     new.title = StoredText::from("   ".to_owned()); // refused: not a CommissionTitle

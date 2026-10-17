@@ -1,4 +1,5 @@
-use crate::elements::{commission::element::ElementId, user::UserId};
+use crate::elements::commission::element::ElementId;
+use identity::elements::user::UserId;
 
 use super::{SeatKind, SeatLink, SeatPrompt};
 

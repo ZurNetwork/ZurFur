@@ -2,7 +2,8 @@ use chrono::Utc;
 
 use super::super::SlotTitle;
 use super::*;
-use crate::elements::{commission::TabId, did::Did};
+use crate::elements::commission::TabId;
+use kernel::elements::did::Did;
 
 // A new Slot's envelope: fresh id, address, acting user, title, notes.
 #[test]

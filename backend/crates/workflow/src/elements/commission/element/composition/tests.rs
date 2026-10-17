@@ -2,7 +2,8 @@ use chrono::Utc;
 
 use super::super::{Band, ElementId, ElementPayload, SurfaceAddress};
 use super::*;
-use crate::elements::{did::Did, user::UserId};
+use identity::elements::user::UserId;
+use kernel::elements::did::Did;
 
 fn element(surface: &str, mode: VisibilityMode, tab: TabId) -> ElementRow {
     ElementRow {

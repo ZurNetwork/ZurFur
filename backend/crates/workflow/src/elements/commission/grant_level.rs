@@ -3,7 +3,7 @@
 //! in-commission authority.
 //!
 //! Placement is not here — a commission's placement IS its card on an account's
-//! board, so it lives in `domain::elements::workflow`. What remains is
+//! board, so it lives in `workflow::elements::workflow`. What remains is
 //! [`GrantLevel`], the level of a commission-side key to see.
 
 /// The level a view grant confers — one of the three raw root modes, explicitly

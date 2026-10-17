@@ -42,7 +42,7 @@ impl VisibilityMode {
     /// [`Visibility`](crate::elements::commission::Visibility), which the caller gates on first.
     ///
     /// ```
-    /// use domain::elements::commission::VisibilityMode;
+    /// use workflow::elements::commission::VisibilityMode;
     ///
     /// // An element over-claiming under a closed surface stays closed.
     /// let effective = VisibilityMode::effective_visibility(

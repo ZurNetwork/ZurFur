@@ -8,10 +8,8 @@
 use async_trait::async_trait;
 use tokio::io::AsyncRead;
 
-use crate::elements::{
-    commission::{FileDownload, FileKey, FileName},
-    text::StoredText,
-};
+use crate::elements::commission::{FileDownload, FileKey, FileName};
+use kernel::elements::text::StoredText;
 
 /// The private blob store behind a commission file entry, keyed by an opaque
 /// [`FileKey`] (a UUIDv7 handle, never a content-address). The commission link

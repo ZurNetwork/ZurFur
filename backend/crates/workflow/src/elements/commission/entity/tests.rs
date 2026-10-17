@@ -5,7 +5,7 @@ use super::*;
 fn a_fresh_commission_has_no_deadline_status() {
     let c = Commission::create(
         "Ref".parse::<CommissionTitle>().unwrap(),
-        crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+        identity::elements::user::UserId::from(kernel::elements::did::Did::from(format!(
             "did:plc:{}",
             uuid::Uuid::now_v7()
         ))),
@@ -20,7 +20,7 @@ fn a_fresh_commission_has_no_deadline_status() {
 fn a_fresh_commission_has_no_direction_status() {
     let c = Commission::create(
         "Ref".parse::<CommissionTitle>().unwrap(),
-        crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+        identity::elements::user::UserId::from(kernel::elements::did::Did::from(format!(
             "did:plc:{}",
             uuid::Uuid::now_v7()
         ))),
@@ -33,7 +33,7 @@ fn a_fresh_commission_has_no_direction_status() {
 // A new commission carries its checked title, trimmed.
 #[test]
 fn a_new_commission_carries_its_checked_title() {
-    let owner = crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+    let owner = identity::elements::user::UserId::from(kernel::elements::did::Did::from(format!(
         "did:plc:{}",
         uuid::Uuid::now_v7()
     )));
@@ -62,7 +62,7 @@ fn stored(new: NewCommission) -> Commission {
 
 /// A freshly created commission, as stored, owned by a fresh DID.
 fn fresh_stored_commission() -> Commission {
-    let owner = crate::elements::user::UserId::from(crate::elements::did::Did::from(format!(
+    let owner = identity::elements::user::UserId::from(kernel::elements::did::Did::from(format!(
         "did:plc:{}",
         uuid::Uuid::now_v7()
     )));

@@ -1,5 +1,5 @@
 use super::FileNameError;
-use crate::elements::text::StoredText;
+use kernel::elements::text::StoredText;
 
 /// A file entry's filename — the save-name hint behind the download's
 /// `Content-Disposition` header, which serves it as the Den names it. Enforced
@@ -26,7 +26,7 @@ impl TryFrom<String> for FileName {
     /// character, a path separator (`/`/`\`), or a leading `.`.
     ///
     /// ```
-    /// use domain::elements::commission::FileName;
+    /// use workflow::elements::commission::FileName;
     ///
     /// assert_eq!(FileName::try_from("  ref.png  ").unwrap().as_str(), "ref.png");
     /// assert!(FileName::try_from("   ").is_err());        // empty after trim

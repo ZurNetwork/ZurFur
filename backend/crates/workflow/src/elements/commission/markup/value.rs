@@ -33,7 +33,7 @@ impl Markup {
     /// violation; a markup that passes is stored exactly as submitted.
     ///
     /// ```
-    /// use domain::elements::commission::{Markup, MarkupError, MarkupShape};
+    /// use workflow::elements::commission::{Markup, MarkupError, MarkupShape};
     ///
     /// let ok = Markup {
     ///     shape: MarkupShape::Circle { cx: 0.5, cy: 0.5, r: 0.1 },

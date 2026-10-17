@@ -1,13 +1,13 @@
 use std::str::FromStr;
 
-use crate::elements::text::StoredText;
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::elements::text::StoredText;
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// A Slot's title — the one required facet of a declared Slot: trimmed, and
 /// non-empty. No length cap yet.
 ///
 /// ```
-/// use domain::elements::commission::SlotTitle;
+/// use workflow::elements::commission::SlotTitle;
 ///
 /// let title = "  The knight  ".parse::<SlotTitle>().unwrap();
 /// assert_eq!(title.as_str(), "The knight"); // trimmed

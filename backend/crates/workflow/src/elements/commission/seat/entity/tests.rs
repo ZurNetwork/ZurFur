@@ -3,7 +3,7 @@ use chrono::Utc;
 use super::*;
 use crate::elements::commission::element::SurfaceAddress;
 use crate::elements::commission::{CommissionId, NewSeat};
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 // A declared seat's envelope, with no occupant field anywhere.
 #[test]

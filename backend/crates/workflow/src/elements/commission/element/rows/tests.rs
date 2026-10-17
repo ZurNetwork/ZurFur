@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::json;
 
 use super::*;
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 // A new element's envelope: fresh id, address, acting user, payload
 // verbatim, placeholder band — and no mode field to set.

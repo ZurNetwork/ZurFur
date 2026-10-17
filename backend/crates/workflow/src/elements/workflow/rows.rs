@@ -1,5 +1,5 @@
 use super::WorkflowId;
-use crate::elements::text::StoredText;
+use kernel::elements::text::StoredText;
 
 /// One Workflow as an Account's listing reads it: its id and stored name.
 /// Its columns and cards are not part of this read.

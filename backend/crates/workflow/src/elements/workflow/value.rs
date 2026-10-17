@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// A board's name: trimmed, never blank, at most 196 characters.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::AsRef)]

@@ -1,12 +1,12 @@
-use crate::datetime::DateTimeUtc;
 use crate::elements::commission::{CommissionId, file::FileKey};
-use crate::elements::user::UserId;
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 use super::{Markup, MarkupKey};
 
 /// One stored markup: a validated [`Markup`] anchored to a file entry, with the
 /// Participant who drew it and when. Canonical for the geometry; written on the
-/// same [`UnitOfWork`](crate::ports::UnitOfWork) as its `markup_added` entry.
+/// same `UnitOfWork` as its `markup_added` entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommissionMarkup {
     /// The markup's opaque key and this row's primary key.

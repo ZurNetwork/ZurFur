@@ -4,7 +4,9 @@ mod tests;
 use serde_json::Value;
 
 use super::ChangelogEntryKind;
-use crate::{datetime::DateTimeUtc, elements::commission::CommissionId, elements::user::UserId};
+use crate::elements::commission::CommissionId;
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 /// A changelog entry to append; the store assigns `seq` on insert. Built via
 /// [`event`](Self::event) / [`system`](Self::system) / [`note`](Self::note) so

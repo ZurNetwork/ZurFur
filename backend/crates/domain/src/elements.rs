@@ -6,8 +6,6 @@
 //! is the single source of truth for what it means; [`achievement`], [`blob`],
 //! [`character`] and [`markdown`] are still stubs.
 
-pub mod commission;
-pub mod workflow;
-
 pub use ::identity::elements::*;
 pub use ::kernel::elements::*;
+pub use ::workflow::elements::*;

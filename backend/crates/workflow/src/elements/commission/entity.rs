@@ -2,10 +2,10 @@ use super::{
     ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
     NewCommission, Visibility,
 };
-use crate::datetime::DateTimeUtc;
-use crate::elements::maturity::Maturity;
-use crate::elements::text::StoredText;
-use crate::elements::user::UserId;
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::maturity::Maturity;
+use kernel::elements::text::StoredText;
 
 /// A stored commission and its fixed metadata, as a load returns it. A new one
 /// starts as the [`NewCommission`] that [`Commission::create`] builds; it holds
@@ -58,9 +58,9 @@ impl Commission {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{Commission, CommissionTitle, LifecycleStep}, did::Did, user::UserId,
-    /// };
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::user::UserId;
+    /// use workflow::elements::commission::{Commission, CommissionTitle, LifecycleStep};
     ///
     /// let owner = UserId::from(Did::from("did:plc:alice".to_string()));
     /// let title = "A ref sheet".parse::<CommissionTitle>().unwrap();

@@ -1,8 +1,7 @@
 use super::FileKey;
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{commission::CommissionId, user::UserId},
-};
+use crate::elements::commission::CommissionId;
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 /// The Index-canonical record that a file entry belongs to a commission — the
 /// private link the retrieval path reads to authorize a participant. Not a fact:

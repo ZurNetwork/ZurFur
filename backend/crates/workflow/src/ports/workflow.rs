@@ -7,13 +7,13 @@
 use async_trait::async_trait;
 
 use crate::elements::{
-    account::AccountId,
     commission::CommissionId,
     workflow::{Column, ColumnId, Workflow, WorkflowId, WorkflowName, WorkflowSummary},
 };
+use identity::elements::account::AccountId;
 
 /// The **write** surface of an account's workflows — reachable only on an open
-/// [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.workflows()`), because a board
+/// `UnitOfWork` (`uow.workflows()`), because a board
 /// mutation is rarely one row and none of it may half-land. Everything
 /// board-local lives on the (workflow, commission) edge; the commission stores
 /// none of it and never learns it exists.
@@ -50,7 +50,7 @@ pub trait WorkflowStore: Send + Sync {
 }
 
 /// The **write** surface of a workflow's columns — reachable only on an open
-/// [`UnitOfWork`](crate::ports::UnitOfWork) (`uow.columns()`). A column rarely
+/// `UnitOfWork` (`uow.columns()`). A column rarely
 /// moves alone: removing one has to say where its cards went, and reordering
 /// touches the board's own column list.
 #[async_trait]

@@ -2,7 +2,7 @@
 mod tests;
 
 use super::ChannelPointerError;
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// The commission's external linked-channel pointer — "where we talk": any URL
 /// or handle, stored as raw text and rendered as an opaque pointer that never
@@ -10,7 +10,7 @@ use crate::string_builder::{StringBuilder, StringBuilderViolation};
 /// non-empty, at most [`MAX_CHARS`](Self::MAX_CHARS), no control characters.
 ///
 /// ```
-/// use domain::elements::commission::ChannelPointer;
+/// use workflow::elements::commission::ChannelPointer;
 ///
 /// let url = "  https://t.me/refsheet-chat  ".parse::<ChannelPointer>().unwrap();
 /// assert_eq!(url.as_str(), "https://t.me/refsheet-chat"); // trimmed

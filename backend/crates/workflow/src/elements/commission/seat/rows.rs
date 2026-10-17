@@ -1,13 +1,9 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{
-        commission::{
-            CommissionId,
-            element::{ElementId, SurfaceAddress},
-        },
-        user::UserId,
-    },
+use crate::elements::commission::{
+    CommissionId,
+    element::{ElementId, SurfaceAddress},
 };
+use identity::elements::user::UserId;
+use kernel::datetime::DateTimeUtc;
 
 use super::{SeatKind, SeatLink, SeatPrompt};
 
@@ -46,10 +42,10 @@ impl NewSeat {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     commission::{CommissionId, NewSeat, SeatKind, SurfaceAddress, SurfaceName, TabId},
-    ///     did::Did,
-    ///     user::UserId,
+    /// use kernel::elements::did::Did;
+    /// use identity::elements::user::UserId;
+    /// use workflow::elements::commission::{
+    ///     CommissionId, NewSeat, SeatKind, SurfaceAddress, SurfaceName, TabId,
     /// };
     ///
     /// let commission = CommissionId::from(uuid::Uuid::now_v7());
