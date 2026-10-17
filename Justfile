@@ -60,7 +60,7 @@ dev-web:
 # without OAuth. Deliberately skips `just up`/wait-for-*: there is nothing to
 # wait for.
 dev-mock:
-    cd frontend/web && ZURFUR_WEB_MOCK=1 bash ../../scripts/dev-log.sh dev-mock yarn dev
+    cd frontend/web && ZURFUR_WEB_MOCK=1 ZURFUR_PUBLIC_URL="http://127.0.0.1:${ZURFUR_WEB_PORT:-5174}" bash ../../scripts/dev-log.sh dev-mock yarn dev
 
 # The dev profile (no Docker, no PostgreSQL, no PDS): the API on the in-memory
 # fixture world, where every sign-in is alice. The `dev-profile` Cargo feature
@@ -96,7 +96,7 @@ _dev-profile-web proxy_port api_upstream web_port:
     export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
     trap 'docker compose --profile dev-profile down caddy-dev-profile' EXIT
     docker compose --profile dev-profile up -d caddy-dev-profile
-    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" yarn dev)
+    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" ZURFUR_PUBLIC_URL="http://127.0.0.1:$1" yarn dev)
 
 # --- Docker ---
 

@@ -149,3 +149,18 @@ export function pageToken(raw: string): PageToken | undefined {
 	if (raw.length === 0 || raw.length > PAGE_TOKEN_MAX_LEN) return undefined;
 	return PAGE_TOKEN_PATTERN.test(raw) ? (raw as PageToken) : undefined;
 }
+
+/** The browser-visible origin of this site (scheme, host and port), parsed once ({@link firstPartyOrigin}). */
+export type FirstPartyOrigin = Brand<string, 'FirstPartyOrigin'>;
+
+/**
+ * Validated mint from configuration: `raw`'s origin when it is a bare `http:`
+ * or `https:` origin (no credentials, path, query or fragment, not even an
+ * empty `?` or `#`), else `undefined`. The value is the ASCII serialisation.
+ */
+export function firstPartyOrigin(raw: string): FirstPartyOrigin | undefined {
+	const url = URL.parse(raw) ?? undefined;
+	if (url === undefined || (url.protocol !== 'http:' && url.protocol !== 'https:'))
+		return undefined;
+	return url.href === `${url.origin}/` ? (url.origin as FirstPartyOrigin) : undefined;
+}
