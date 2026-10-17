@@ -2516,8 +2516,15 @@ async fn an_issue_from_a_departed_member_is_refused() {
     let o = provision(&pool, "did:plc:goneissuer-o").await.id;
     let x = provision(&pool, "did:plc:goneissuer-x").await.id;
     let y = provision(&pool, "did:plc:goneissuer-y").await.id;
+    let other_owner = provision(&pool, "did:plc:goneissuer-o2").await.id;
     let account = found_with_member(&pool, &o, &x, "goneissuer").await;
+    // X keeps a seat elsewhere, so only a check scoped to this Account refuses.
+    let other_account = found_with_member(&pool, &other_owner, &x, "goneissuer-other").await;
     leave(&pool, &x, &account).await;
+    assert!(
+        role_of(&pool, &x, &other_account).await.is_some(),
+        "X is still a member of the Account they didn't leave"
+    );
     let x_invites_y = Invitation::issue(
         account.clone(),
         y.clone(),
