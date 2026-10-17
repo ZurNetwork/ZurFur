@@ -1,6 +1,6 @@
 {
   "path": "contract/zurfur/api/v1",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The v1 proto corpus (session, account, commission, den, problem)",
   "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, den, error), welded to `/api/v1`.",
   "type": "code",
@@ -14,7 +14,8 @@
     "Request messages exist even when empty (\"the session is the argument\").",
     "Timestamps are RFC 3339, Z-normalized.",
     "Success bodies are bare/flat resources, never wrapped; Problem `detail` is REQUIRED and never empty.",
-    "Field comments carry the semantic contract — normative, not decoration."
+    "Field comments carry the semantic contract — normative, not decoration.",
+    "A field error's pointer is `#/` plus the field's lowerCamelCase ProtoJSON name; its detail is fixed per code."
   ],
   "entry_points": [
     "session.proto (smallest surface, shows the whole pattern)",
@@ -38,7 +39,7 @@
     },
     {
       "name": "problem.proto",
-      "role": "the RFC 9457 Problem shape declared ONCE for every surface",
+      "role": "the RFC 9457 Problem shape declared ONCE for every surface; also FieldError, the request fields a problem refused",
       "node": false
     },
     {
@@ -51,7 +52,7 @@
     {
       "page": 23592962,
       "title": "API Response Shape & Error Model",
-      "governs": "commission.proto: CreateCommissionResponse is a bare, unwrapped resource; problem.proto: the Problem shape itself"
+      "governs": "commission.proto: CreateCommissionResponse is a bare, unwrapped resource; problem.proto: the Problem shape itself and its `errors` member (`FieldError`)"
     },
     {
       "page": 27852802,
