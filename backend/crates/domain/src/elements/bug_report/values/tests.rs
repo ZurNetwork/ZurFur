@@ -297,6 +297,18 @@ fn the_page_refuses_a_leading_double_slash() {
 }
 
 #[test]
+fn the_page_refuses_any_backslash() {
+    let another_host = PageAddress::try_from("/\\evil.example/x");
+    let inside_a_path = PageAddress::try_from("/a\\b");
+    let a_lone_backslash = PageAddress::try_from("\\");
+
+    let backslash_error = Err(PageAddressError::Backslash);
+    assert_eq!(another_host, backslash_error);
+    assert_eq!(inside_a_path, backslash_error);
+    assert_eq!(a_lone_backslash, backslash_error);
+}
+
+#[test]
 fn the_page_refuses_a_query_and_a_fragment() {
     let with_a_query = PageAddress::try_from("/den?includeDeleted=true");
     let with_a_fragment = PageAddress::try_from("/den#top");

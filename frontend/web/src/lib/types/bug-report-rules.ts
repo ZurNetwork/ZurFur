@@ -197,7 +197,7 @@ export function parseDescription(text: string): FieldParse<BugDescription> {
 	return { kind: 'accepted', value: normalized as BugDescription };
 }
 
-/** The page address: trimmed, at most 2,048 bytes, an app path (`/` but not `//` first), with no `?` or `#` and no control. */
+/** The page address: trimmed, at most 2,048 bytes, an app path (`/` but not `//` first), with no backslash, no `?` or `#` and no control. */
 export function parsePage(text: string): OptionalFieldParse<BugPage> {
 	const trimmed = text.trim();
 	if (trimmed.length === 0) return { kind: 'notSent' };
@@ -206,7 +206,7 @@ export function parsePage(text: string): OptionalFieldParse<BugPage> {
 	if (utf8ByteLength(trimmed) > PAGE_MAX_BYTES) {
 		return refused({ kind: 'tooLong', field: 'page', limit: PAGE_MAX_BYTES, unit: 'bytes' });
 	}
-	if (!trimmed.startsWith('/') || trimmed.startsWith('//')) {
+	if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
 		return refused({ kind: 'notAPath', field: 'page' });
 	}
 	if (trimmed.includes('?') || trimmed.includes('#')) {

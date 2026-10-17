@@ -31,6 +31,9 @@ pub enum PageAddressError {
     /// character.
     #[error("a page holds a control or bidirectional formatting character")]
     ControlCharacter,
+    /// Holds a `\`, which a browser reads as `/`.
+    #[error("a page holds no backslash")]
+    Backslash,
     /// Doesn't start with `/`.
     #[error("a page starts with `/`")]
     NotAbsolute,

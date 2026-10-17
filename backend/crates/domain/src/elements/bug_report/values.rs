@@ -74,7 +74,7 @@ impl TryFrom<&str> for BugDescription {
 
 /// The app path a report was filed from: a one-line text starting with one `/` (never `//`,
 /// which a browser reads as another host), at most [`MAX_BYTES`](Self::MAX_BYTES) bytes, with no
-/// query (`?`) and no fragment (`#`).
+/// backslash (which a browser reads as `/`), no query (`?`) and no fragment (`#`).
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::AsRef)]
 #[as_ref(str)]
 pub struct PageAddress(String);
@@ -93,6 +93,9 @@ impl TryFrom<String> for PageAddress {
             LineViolation::TooLong => PageAddressError::TooLong,
             LineViolation::ControlCharacter => PageAddressError::ControlCharacter,
         })?;
+        if page.contains('\\') {
+            return Err(PageAddressError::Backslash);
+        }
         if !page.starts_with('/') {
             return Err(PageAddressError::NotAbsolute);
         }

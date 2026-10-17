@@ -11,7 +11,8 @@
 -- page, page_kind, web_version, browser
 --                Each one tick box: NULL when unticked or not sent, never an
 --                empty string, and capped in bytes. A page never starts with
---                `//`, which a browser reads as another host.
+--                `//`, which a browser reads as another host, and holds no
+--                backslash, which a browser reads as `/`.
 -- window_width, window_height
 --                One tick box: both set or both NULL; 1 to 100,000 pixels.
 -- reduced_motion, more_contrast, forced_colors
@@ -52,6 +53,8 @@ CREATE TABLE bug_report (
         CHECK (octet_length(page) >= 1),
     CONSTRAINT bug_report_page_not_protocol_relative
         CHECK (left(page, 2) <> '//'),
+    CONSTRAINT bug_report_page_no_backslash
+        CHECK (position(E'\\' in page) = 0),
 
     CONSTRAINT bug_report_page_kind_max_bytes
         CHECK (octet_length(page_kind) <= 64),

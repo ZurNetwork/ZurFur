@@ -154,7 +154,10 @@ describe('the page', () => {
 		['a fragment', '/den#top', 'queryOrFragment'],
 		['no leading slash', 'den/accounts', 'notAPath'],
 		['a leading double slash', '//evil.example/x', 'notAPath'],
-		['a bare double slash', '//', 'notAPath']
+		['a bare double slash', '//', 'notAPath'],
+		['a backslash after the leading slash', '/\\evil.example/x', 'notAPath'],
+		['a backslash inside the path', '/a\\b', 'notAPath'],
+		['a lone backslash', '\\', 'notAPath']
 	])('refuses %s', (_name, text, kind) => {
 		expect(parsePage(text)).toEqual({ kind: 'refused', refusal: { kind, field: 'page' } });
 	});

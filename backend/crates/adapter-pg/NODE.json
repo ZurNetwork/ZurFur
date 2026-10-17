@@ -40,7 +40,7 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> (a page never starts with //; api_version 1 to 64 bytes) and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> (a page never starts with // and holds no backslash; api_version 1 to 64 bytes) and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
       "node": false
     },
     {

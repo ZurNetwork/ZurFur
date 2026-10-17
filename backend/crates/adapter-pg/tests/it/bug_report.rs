@@ -348,6 +348,24 @@ async fn a_page_with_a_query_or_fragment_or_no_single_leading_slash_is_refused()
 }
 
 #[tokio::test]
+async fn a_page_holding_a_backslash_is_refused() {
+    let (pool, _container) = fresh_pool().await;
+    let reporter = provision(&pool, "did:plc:raw-page-backslash").await;
+    let valid = RawRow::valid(&reporter);
+    let another_host = RawRow {
+        page: Some("/\\evil.example/x".to_owned()),
+        ..valid.clone()
+    };
+    let inside_a_path = RawRow {
+        page: Some("/a\\b".to_owned()),
+        ..valid.clone()
+    };
+
+    assert_refused_by(&pool, &another_host, "bug_report_page_no_backslash").await;
+    assert_refused_by(&pool, &inside_a_path, "bug_report_page_no_backslash").await;
+}
+
+#[tokio::test]
 async fn a_description_is_1_to_4000_code_points() {
     let (pool, _container) = fresh_pool().await;
     let reporter = provision(&pool, "did:plc:raw-description").await;

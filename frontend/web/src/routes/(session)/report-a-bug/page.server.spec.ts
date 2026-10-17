@@ -276,6 +276,7 @@ describe('the report action: the page', () => {
 		'http://127.0.0.1:8080@evil.example/den',
 		'//evil.example/den',
 		'/\\evil.example/den',
+		'/\\evil.example/x',
 		'http://127.0.0.1:8080//evil.example/x',
 		'http://127.0.0.1:8080/\\evil.example/a',
 		'den/x',
