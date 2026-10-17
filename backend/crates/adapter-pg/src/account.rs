@@ -220,8 +220,8 @@ pub struct PgAccountWrites<'a> {
 impl PgAccountWrites<'_> {
     /// Settle a member's departure, shared by [`leave`](AccountWrites::leave) and
     /// [`revoke_role`](AccountWrites::revoke_role): locks the membership and refuses the
-    /// Owner before writing anything, else re-homes the children, deletes the membership
-    /// and revokes pending issued invitations. No-op if already gone.
+    /// Owner before writing anything, else revokes pending issued invitations, then
+    /// re-homes the children and deletes the membership. No-op if already gone.
     async fn settle_member_departure(
         &mut self,
         user: &UserId,
@@ -244,6 +244,18 @@ impl PgAccountWrites<'_> {
             return Err(owner_departing);
         }
 
+        // Revoke before re-homing: an accept of one of these offers either loses to the
+        // revocation or commits first, and then the re-homing below sees its new seat.
+        sql::departure_revoke_invitations(
+            &mut *self.conn,
+            <&'static str>::from(InvitationState::Revoked),
+            Utc::now(),
+            account.as_ref(),
+            user.as_ref(),
+            <&'static str>::from(InvitationState::Pending),
+        )
+        .await?;
+
         // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
         sql::departure_rehome_children(
             &mut *self.conn,
@@ -254,16 +266,6 @@ impl PgAccountWrites<'_> {
         .await?;
 
         sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?;
-
-        sql::departure_revoke_invitations(
-            &mut *self.conn,
-            <&'static str>::from(InvitationState::Revoked),
-            Utc::now(),
-            account.as_ref(),
-            user.as_ref(),
-            <&'static str>::from(InvitationState::Pending),
-        )
-        .await?;
 
         Ok(())
     }
@@ -581,8 +583,8 @@ impl AccountWrites for PgAccountWrites<'_> {
         self.settle_member_departure(user, account).await
     }
 
-    /// Settles a member leaving: re-homes children, deletes the membership,
-    /// revokes pending issued invitations. Refuses the Owner, writing nothing;
+    /// Settles a member leaving: revokes pending issued invitations, re-homes
+    /// children, deletes the membership. Refuses the Owner, writing nothing;
     /// every other precondition is the caller's.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {

@@ -2218,3 +2218,48 @@ async fn a_departure_waiting_on_a_transfer_never_removes_the_new_owner() {
     assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
     assert_eq!(owner_count(&pool, &account).await, 1);
 }
+
+#[tokio::test]
+async fn an_accept_committing_during_a_departure_is_re_homed() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:race-o").await.id;
+    let x = provision(&pool, "did:plc:race-x").await.id;
+    let y = provision(&pool, "did:plc:race-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "race").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    let invitation_id = x_invites_y.id;
+    create_invitation(&pool, &x_invites_y).await;
+    let db = PgDatabase::new(pool.clone());
+    let mut accept_unit = db.begin().await.expect("begin the accept");
+    accept_unit
+        .accounts()
+        .accept_invitation(x_invites_y, true)
+        .await
+        .expect("accept_invitation");
+
+    let departure = try_leave(&pool, &x, &account);
+    let commit_the_accept = async {
+        wait_for_a_lock_wait(&pool).await;
+        accept_unit.commit().await.expect("commit the accept");
+    };
+    let (left, ()) = tokio::join!(departure, commit_the_accept);
+
+    left.expect("the inviter leaves");
+    assert_eq!(role_of(&pool, &y, &account).await, Some(Role::Member));
+    assert_eq!(
+        parent_of(&pool, &account, &y).await,
+        Some(o.clone()),
+        "the invitee seated during the departure is re-homed to the leaver's parent"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    let accepted = find_invitation(&pool, invitation_id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(accepted.state, InvitationState::Accepted);
+}
