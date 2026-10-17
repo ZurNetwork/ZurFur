@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/lib/server",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Below the seam: runtime, port, programs, forms",
   "is": "Everything below the seam: one ManagedRuntime, one `ZurfurApi` port, outcome-returning programs per domain, one Schema module per form.",
   "type": "code",
@@ -71,7 +71,7 @@
     },
     {
       "name": "forms/",
-      "role": "one Effect Schema per form (login, create-account, delete-account) over a shared handle field; problem-message.ts bridges a Problem onto the superform message",
+      "role": "one Effect Schema per form (login, create-account, delete-account) over a shared handle field; problem-message.ts bridges a Problem onto the superform message; field-errors.ts (problemOnFields) puts a problem's field errors under the fields they name, any the form can't place as the form message",
       "node": false
     },
     {
@@ -126,6 +126,11 @@
     }
   ],
   "refs": [
+    {
+      "page": 23592962,
+      "title": "API Response Shape & Error Model",
+      "governs": "`forms/field-errors.ts`: field errors land under the fields their pointers name (decision 4)"
+    },
     {
       "page": 26050561,
       "title": "Confusable Handles & the Punycode Policy",
