@@ -65,18 +65,23 @@
       "node": false
     },
     {
+      "name": "name_ordinal.rs",
+      "role": "NameOrdinal and NameOrdinalError: the application's own number that tells equal names apart, over Atta's, 2 or more (TryFrom<u32>, From into u32)",
+      "node": false
+    },
+    {
       "name": "names.rs",
       "role": "the fixed folder words, the id and DID keys, and the stored-text name with its `Unnamed` fallback",
       "node": false
     },
     {
       "name": "node.rs",
-      "role": "the `node` Query: a Den path below the viewer's root",
+      "role": "the `node` Query: a Den path below the viewer's root; after the plain walk succeeds, Atta's tell_apart numbers the node and its crumbs; node/tests.rs: per-viewer numbering, the archived twin, nothing stored",
       "node": false
     },
     {
       "name": "output.rs",
-      "role": "the Queries' output values: DenNode, DenAccess (an open node's thing among its facts), DenCrumb (with its type), DenListing, DenContent",
+      "role": "the Queries' output values: DenNode, DenAccess (an open node's thing among its facts), DenCrumb (with its type), each DenNode and DenCrumb with its name_ordinal, DenListing, DenContent",
       "node": false
     },
     {
@@ -96,7 +101,7 @@
     },
     {
       "name": "read.rs",
-      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a RecordLookup (each open node's soft-deleted word and thing, in one lookup), Atta's answers into output values; a crumb carries its entry's type, an unknown one a store error",
+      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a RecordLookup (each open node's soft-deleted word and thing, in one lookup), Atta's answers into output values; a crumb carries its entry's type, an unknown one a store error; Reader::tell_apart numbers a walked node and its crumbs, and every node and crumb carries Atta's number as its name_ordinal",
       "node": false
     },
     {

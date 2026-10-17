@@ -1,6 +1,6 @@
 use crate::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Lift, NodeName, Reach, RealPath,
-    Relationship, Scope, Segment, Type, Via, Viewer,
+    Access, Admission, Found, Host, HostError, Kind, Level, Lift, NameOrdinal, NodeName, Reach,
+    RealPath, Relationship, Scope, Segment, Type, Via, Viewer,
 };
 
 /// The read caps the host sets for one request.
@@ -63,18 +63,31 @@ pub struct Entry {
     pub mount: bool,
     /// What the viewer sees of it.
     pub view: View,
+    /// Its number among the entries of the same name in the listing it is in, or for a node and
+    /// its crumbs the listing they were reached through; `None` for the first of them, and on a
+    /// plain walk.
+    pub ordinal: Option<NameOrdinal>,
 }
 
 /// A typed Den path, resolved for one viewer. Only [`Resolver::resolve_path`] builds one, and
 /// [`Resolver::list`] lists it only for that viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
-    crumbs: Vec<Entry>,
-    node: Entry,
+    pub(crate) crumbs: Vec<Entry>,
+    pub(crate) node: Entry,
     /// The viewer it was resolved for.
     pub(crate) viewer: Viewer,
     /// The directory to list, when the viewer can open the node and it is one.
     pub(crate) folder: Option<Folder>,
+    /// Each step of the walk, one per crumb: the folder it left and the segment it took.
+    pub(crate) steps: Vec<Step>,
+}
+
+/// One step of a walk: the open directory it left, and the segment it took there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Step {
+    pub(crate) from: Folder,
+    pub(crate) segment: Segment,
 }
 
 /// What listing a resolved open directory needs: where it is, and the lifts that reach below it.
@@ -83,6 +96,17 @@ pub(crate) struct Folder {
     pub(crate) den_path: Vec<Segment>,
     pub(crate) real_path: RealPath,
     pub(crate) below: Vec<Lift>,
+}
+
+impl Folder {
+    /// The folder for the open directory `located`, at `den_path`.
+    fn of(located: &Located, den_path: Vec<Segment>) -> Self {
+        Self {
+            den_path,
+            real_path: located.path.clone(),
+            below: located.below.clone(),
+        }
+    }
 }
 
 impl Resolved {
@@ -201,12 +225,18 @@ impl Resolver<'_> {
         }
         let mut current = self.locate(root).await?.ok_or(Error::NotFound)?;
         let mut crumbs = Vec::new();
+        let mut steps = Vec::new();
         let mut mount = false;
         let mut walked = Vec::new();
         for segment in den_path {
             self.enter(&current, false)?;
             crumbs.push(self.entry(&current, walked.clone(), mount));
             let (next, next_mount) = self.step(&current, segment).await?;
+            let step = Step {
+                from: Folder::of(&current, walked.clone()),
+                segment: segment.clone(),
+            };
+            steps.push(step);
             walked.push(segment.clone());
             current = next;
             mount = next_mount;
@@ -214,17 +244,14 @@ impl Resolver<'_> {
         self.enter(&current, true)?;
         let opens_as_directory =
             current.access.level == Level::Public && self.kind(&current) == Kind::Directory;
-        let folder = opens_as_directory.then(|| Folder {
-            den_path: walked.clone(),
-            real_path: current.path.clone(),
-            below: current.below.clone(),
-        });
+        let folder = opens_as_directory.then(|| Folder::of(&current, walked.clone()));
         let node = self.entry(&current, walked, mount);
         let resolved = Resolved {
             crumbs,
             node,
             viewer: self.viewer.clone(),
             folder,
+            steps,
         };
         Ok(resolved)
     }
@@ -353,6 +380,7 @@ impl Resolver<'_> {
             typ: metadata.typ.clone(),
             mount,
             view,
+            ordinal: None,
         }
     }
 }

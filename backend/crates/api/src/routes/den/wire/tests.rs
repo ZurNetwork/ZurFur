@@ -13,6 +13,7 @@ fn node(access: DenAccess) -> den::DenNode {
     den::DenNode {
         segments: Vec::new(),
         name: name("Old sketch"),
+        name_ordinal: None,
         den_type: DenType::Commission,
         mount: true,
         access,
@@ -176,6 +177,7 @@ fn a_crumb_carries_its_type() {
     let crumb = den::DenCrumb {
         segments: Vec::new(),
         name: name("Alice"),
+        name_ordinal: None,
         den_type: DenType::User,
     };
     let expected = json!({ "name": "Alice", "type": "user" });

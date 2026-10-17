@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application",
-  "charted": "2026-09-19",
+  "charted": "2026-10-17",
   "short": "Use cases: one #[use_case] method each",
   "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
   "type": "code",
@@ -111,7 +111,7 @@
     },
     {
       "name": "src/test_world.rs",
-      "role": "test-only (cfg(test)): the Den arms' shared world — the identity and commission fixtures seeded in memory, this crate's Ports over them, a DenContext, and a Den read from any node directly under a top-level directory; for commission's reads behind den's check: the recorded world (commission, file and changelog stores logging every read), a stranger, absent commission and file ids, the four stranger targets (Untitled Private live; Old sketch Private archived; alice's Public and Listed archived) and the seeders seed_alice_s and seed_file",
+      "role": "test-only (cfg(test)): the Den arms' shared world — the identity and commission fixtures seeded in memory, this crate's Ports over them, a DenContext, and a Den read from any node directly under a top-level directory; for commission's reads behind den's check: the recorded world (commission, file and changelog stores logging every read), a stranger, absent commission and file ids, the four stranger targets (Untitled Private live; Old sketch Private archived; alice's Public and Listed archived) and the seeders seed_alice_s, seed_file and seed_titled_at (a fixed id, title and Participants, through world_and_backend)",
       "node": false
     },
     {

@@ -1,5 +1,5 @@
 use crate::den::{
-    DenName, DenSegment, DenThing, DenType, NodeKind, NodeLevel, PageToken, SoftDelete,
+    DenName, DenSegment, DenThing, DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete,
 };
 
 /// One node as the Den shows it to its viewer.
@@ -9,6 +9,9 @@ pub struct DenNode {
     pub segments: Vec<DenSegment>,
     /// Its display name, from what it holds.
     pub name: DenName,
+    /// Its number among the nodes of the same name the viewer sees in the folder it is listed
+    /// in or was reached through; `None` for the first of them, and for the root.
+    pub name_ordinal: Option<NameOrdinal>,
     /// Its type.
     pub den_type: DenType,
     /// Whether it is one of the viewer's mounts rather than a real child of its folder.
@@ -44,6 +47,9 @@ pub struct DenCrumb {
     pub segments: Vec<DenSegment>,
     /// Its display name.
     pub name: DenName,
+    /// Its number among the nodes of the same name the viewer sees in the folder it was
+    /// reached through; `None` for the first of them, and for the root.
+    pub name_ordinal: Option<NameOrdinal>,
     /// Its type; a mount shows its target's.
     pub den_type: DenType,
 }

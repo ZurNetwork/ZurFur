@@ -8,7 +8,8 @@ use domain::elements::user::UserId;
 
 use crate::den::{
     DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenThing,
-    DenType, NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost, names,
+    DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost,
+    names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -78,6 +79,7 @@ pub(crate) fn crumb(entry: &Entry) -> Result<DenCrumb, DenError> {
     let crumb = DenCrumb {
         segments: segments(&entry.view),
         name: DenName::new(entry.name.clone()),
+        name_ordinal: entry.ordinal.map(NameOrdinal::new),
         den_type: den_type(entry)?,
     };
     Ok(crumb)
@@ -139,6 +141,15 @@ impl<'h> Reader<'h> {
             .map_err(engine_error)
     }
 
+    /// The walked node and its crumbs, each numbered among its twins in the listing of the
+    /// folder it was reached through. Lists each folder on the path once more.
+    pub(crate) async fn tell_apart(&self, resolved: Resolved) -> Result<Resolved, DenError> {
+        self.resolver
+            .tell_apart(resolved)
+            .await
+            .map_err(engine_error)
+    }
+
     /// One entry as the Den shows it; an open entry is marked with its soft-deleted word and
     /// the thing it stands for, read from the host's record for its real path.
     pub(crate) fn node(&self, entry: &Entry) -> Result<DenNode, DenError> {
@@ -168,6 +179,7 @@ impl<'h> Reader<'h> {
         let node = DenNode {
             segments: segments(&entry.view),
             name: DenName::new(entry.name.clone()),
+            name_ordinal: entry.ordinal.map(NameOrdinal::new),
             den_type,
             mount: entry.mount,
             access,

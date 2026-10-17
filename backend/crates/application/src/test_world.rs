@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use adapter_mem::MemBackend;
 use atta::{Caps, RealPath, Segment};
 use domain::{
     elements::{
@@ -38,6 +39,12 @@ pub(crate) struct World {
 
 /// The fixture world: identity's people and Account, then commission's rows.
 pub(crate) async fn world() -> World {
+    let (world, _) = world_and_backend().await;
+    world
+}
+
+/// The fixture world, and the in-memory backend under it for seeding what no port writes.
+pub(crate) async fn world_and_backend() -> (World, MemBackend) {
     let did = Did::from("did:plc:den-arms-test".to_owned());
     let built = test_support::runtime::mem(&did).build();
     adapter_mem::fixture::seed_identity(&built.backend)
@@ -50,10 +57,11 @@ pub(crate) async fn world() -> World {
         .await
         .expect("commission's fixture seeds");
     let ports = Ports::from(&built.runtime);
-    World {
+    let world = World {
         runtime: built.runtime,
         ports,
-    }
+    };
+    (world, built.backend)
 }
 
 /// A context for `viewer` over `ports`, as the host hands its arms.
@@ -253,4 +261,41 @@ pub(crate) async fn seed_file_named(
         .await
         .expect("the file links to its commission");
     key
+}
+
+/// Seeds a Private commission of alice's at the fixed `id`, titled `title`, archived or live,
+/// with `others` as Participants beside her; its rows go in straight through the stores.
+pub(crate) async fn seed_titled_at(
+    world: &World,
+    backend: &MemBackend,
+    id: Uuid,
+    title: &'static str,
+    archived: bool,
+    others: &[UserId],
+) -> CommissionId {
+    let parsed_title = title
+        .parse::<CommissionTitle>()
+        .expect("a valid test title");
+    let now = chrono::Utc::now();
+    let mut commission = Commission::create(parsed_title, adapter_mem::fixture::alice(), now, None);
+    let commission_id = CommissionId::from(id);
+    commission.id = commission_id;
+    let archived_at = archived.then_some(now);
+    world
+        .runtime
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions().create(&commission).await?;
+            if let Some(archived_at) = archived_at {
+                uow.commissions()
+                    .set_archived(&commission_id, Some(archived_at))
+                    .await?;
+            }
+            Ok(())
+        })
+        .await
+        .expect("the commission seeds");
+    for other in others {
+        backend.seed_participant(commission_id, other.clone(), now);
+    }
+    commission_id
 }

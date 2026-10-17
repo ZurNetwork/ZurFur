@@ -3,7 +3,8 @@ use crate::fake::{
     Call, FakeHost, GRANT_CARD, STANDING, den_path, kind, own_level, path, real_path, segment,
 };
 use crate::{
-    Access, Caps, Entry, Error, Kind, Level, Listing, PageToken, Reach, Resolver, Via, View, Viewer,
+    Access, Caps, Entry, Error, Kind, Level, Listing, NameOrdinal, PageToken, Reach, Resolver, Via,
+    View, Viewer,
 };
 
 /// The access a viewer holds at `level`, given by `via`.
@@ -309,4 +310,144 @@ async fn names_list_by_number_value_and_without_regard_to_case() {
         .collect();
     let expected_names = ["apple", "File2", "file02", "file2", "file10"];
     assert_eq!(listed_names, expected_names);
+}
+
+/// A number the tests expect.
+fn ordinal(number: u32) -> Option<NameOrdinal> {
+    let ordinal = NameOrdinal::try_from(number).expect("a valid test ordinal");
+    Some(ordinal)
+}
+
+/// alice's folder `twins`, holding a real child at each key with its name.
+fn twins(children: &[(&str, &str)]) -> FakeHost {
+    let folder = world().node("/user/alice/twins", "folder", Level::Private, &[]);
+    children.iter().fold(folder, |host, (key, name)| {
+        let at = format!("/user/alice/twins/{key}");
+        host.node(&at, "file", Level::Private, &[]).named(&at, name)
+    })
+}
+
+/// One page of alice's folder `twins`.
+async fn twins_page(host: &FakeHost, page_size: usize, page: Option<PageToken>) -> Listing {
+    list(host, &["twins"], page_size, page)
+        .await
+        .expect("the folder resolves")
+        .expect("the folder lists")
+}
+
+/// Each entry's last Den path segment (or card name) with its number.
+fn numbered(entries: &[Entry]) -> Vec<(String, Option<NameOrdinal>)> {
+    let shown = segments(entries);
+    let numbers = entries.iter().map(|entry| entry.ordinal);
+    shown.into_iter().zip(numbers).collect()
+}
+
+/// `(segment, number)` pairs from test text.
+fn expected_numbers(pairs: &[(&str, Option<NameOrdinal>)]) -> Vec<(String, Option<NameOrdinal>)> {
+    pairs
+        .iter()
+        .map(|(segment, number)| ((*segment).to_owned(), *number))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_folder_with_no_equal_names_carries_no_number() {
+    let host = twins(&[("a", "Alpha"), ("b", "Beta"), ("c", "Gamma")]);
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let numbers: Vec<_> = listing.entries.iter().map(|entry| entry.ordinal).collect();
+    assert_eq!(numbers, [None, None, None]);
+}
+
+#[tokio::test]
+async fn a_twin_the_viewer_cannot_see_gives_no_number() {
+    let host = twins(&[("a", "Test 1"), ("z", "Test 1")])
+        .refuse("/user/alice/twins/a", Reach::Listing)
+        .mount("/user/alice/twins", "m", "/commission/stranger")
+        .named("/commission/stranger", "Test 1");
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let expected = expected_numbers(&[("z", None)]);
+    assert_eq!(numbered(&listing.entries), expected);
+}
+
+#[tokio::test]
+async fn a_hidden_entry_named_like_a_number_does_not_shift_it() {
+    let host = twins(&[("a", "Test 1"), ("b", "Test 1"), ("h", "Test 1 (2)")])
+        .refuse("/user/alice/twins/h", Reach::Listing);
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let expected = expected_numbers(&[("a", None), ("b", ordinal(2))]);
+    assert_eq!(numbered(&listing.entries), expected);
+}
+
+#[tokio::test]
+async fn twins_split_across_a_page_keep_their_numbers() {
+    let host = twins(&[("a", "Test 1"), ("b", "Test 1"), ("c", "Test 1")]);
+
+    let first = twins_page(&host, 2, None).await;
+    let second = twins_page(&host, 2, first.next).await;
+
+    let expected_first = expected_numbers(&[("a", None), ("b", ordinal(2))]);
+    let expected_second = expected_numbers(&[("c", ordinal(3))]);
+    assert_eq!(numbered(&first.entries), expected_first);
+    assert_eq!(numbered(&second.entries), expected_second);
+}
+
+#[tokio::test]
+async fn a_number_skips_a_name_another_entry_already_shows() {
+    let host = twins(&[("a", "Test 1"), ("b", "Test 1"), ("c", "Test 1 (2)")]);
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let expected = expected_numbers(&[("a", None), ("b", ordinal(3)), ("c", None)]);
+    assert_eq!(numbered(&listing.entries), expected);
+}
+
+#[tokio::test]
+async fn the_newer_commission_gets_the_number() {
+    let older = "01930000-0000-7000-8000-000000000001";
+    let newer = "01940000-0000-7000-8000-000000000002";
+    let host = [newer, older].into_iter().fold(
+        world().node("/user/alice/commissions", "folder", Level::Private, &[]),
+        |host, id| {
+            let target = format!("/commission/{id}");
+            host.mount("/user/alice/commissions", id, &target)
+                .node(&target, "commission", Level::Private, &[STANDING])
+                .named(&target, "Test 1")
+        },
+    );
+
+    let listing = list(&host, &["commissions"], 50, None)
+        .await
+        .expect("the folder resolves")
+        .expect("the folder lists");
+
+    let expected = expected_numbers(&[(older, None), (newer, ordinal(2))]);
+    assert_eq!(numbered(&listing.entries), expected);
+}
+
+#[tokio::test]
+async fn names_differing_only_in_case_get_no_number() {
+    let host = twins(&[("a", "Test 1"), ("b", "test 1"), ("c", "TEST 1")]);
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let numbers: Vec<_> = listing.entries.iter().map(|entry| entry.ordinal).collect();
+    assert_eq!(numbers, [None, None, None]);
+}
+
+#[tokio::test]
+async fn a_card_twin_is_numbered_after_the_open_one() {
+    let host = twins(&[("a", "Test 1")])
+        .mount("/user/alice/twins", "m", "/commission/card")
+        .named("/commission/card", "Test 1");
+
+    let listing = twins_page(&host, 50, None).await;
+
+    let expected = expected_numbers(&[("a", None), ("card:Test 1", ordinal(2))]);
+    assert_eq!(numbered(&listing.entries), expected);
 }

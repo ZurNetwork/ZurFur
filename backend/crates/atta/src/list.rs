@@ -7,6 +7,7 @@ use std::{
 use crate::{
     Admission, Entry, Error, Level, Listing, PageToken, Reach, Resolved, Resolver, Segment,
     ordering::name_order,
+    ordinal::ordinals,
     resolve::{Folder, Located, Outcome},
 };
 
@@ -19,6 +20,14 @@ static CARD_ORDER_KEYS: OnceLock<RandomState> = OnceLock::new();
 enum Tiebreak {
     Open(Segment),
     Card(u64),
+}
+
+/// One entry of a listing, with the segment it sits at in its folder and its [`Tiebreak`].
+#[derive(Debug, Clone)]
+struct Ranked {
+    segment: Segment,
+    entry: Entry,
+    tiebreak: Tiebreak,
 }
 
 /// The keyed hash a card sorts by among cards of the same name.
@@ -65,11 +74,7 @@ impl Resolver<'_> {
         let Some(folder) = &resolved.folder else {
             return Ok(None);
         };
-        let mut ranked = self.visible_entries(folder).await?;
-        ranked.sort_by(|(left, left_tiebreak), (right, right_tiebreak)| {
-            name_order(left.name.as_ref(), right.name.as_ref())
-                .then_with(|| left_tiebreak.cmp(right_tiebreak))
-        });
+        let ranked = self.numbered_entries(folder).await?;
         let offset = page.map_or(0, |token| token.offset());
         let page_size = self.caps.page_size.max(1);
         let end = offset.saturating_add(page_size);
@@ -78,15 +83,61 @@ impl Resolver<'_> {
             .into_iter()
             .skip(offset)
             .take(page_size)
-            .map(|(entry, _)| entry)
+            .map(|ranked| ranked.entry)
             .collect();
         let listing = Listing { entries, next };
         Ok(Some(listing))
     }
 
-    /// Every entry of `folder` the viewer can see and the host admits, unsorted, each with
-    /// its [`Tiebreak`].
-    async fn visible_entries(&self, folder: &Folder) -> Result<Vec<(Entry, Tiebreak)>, Error> {
+    /// The resolved node and its crumbs, each numbered as the listing of the folder it was
+    /// reached through numbers it: its parent on the Den path, listed with the same admission a
+    /// listing uses. The root, and a node that listing leaves out, get no number. Run only on a
+    /// walk that succeeded; each folder on the path is listed once.
+    pub async fn tell_apart(&self, mut resolved: Resolved) -> Result<Resolved, Error> {
+        if resolved.viewer != self.viewer {
+            return Err(Error::NotFound);
+        }
+        let mut numbers = Vec::with_capacity(resolved.steps.len());
+        for step in &resolved.steps {
+            let listed = self.numbered_entries(&step.from).await?;
+            let number = listed
+                .into_iter()
+                .find(|ranked| ranked.segment == step.segment)
+                .and_then(|ranked| ranked.entry.ordinal);
+            numbers.push(number);
+        }
+        let reached = resolved
+            .crumbs
+            .iter_mut()
+            .skip(1)
+            .chain(std::iter::once(&mut resolved.node));
+        for (entry, number) in reached.zip(numbers) {
+            entry.ordinal = number;
+        }
+        Ok(resolved)
+    }
+
+    /// Every entry of `folder` the viewer can see and the host admits, in listing order, each
+    /// numbered among the entries of the same name.
+    async fn numbered_entries(&self, folder: &Folder) -> Result<Vec<Ranked>, Error> {
+        let mut ranked = self.visible_entries(folder).await?;
+        ranked.sort_by(|left, right| {
+            name_order(left.entry.name.as_ref(), right.entry.name.as_ref())
+                .then_with(|| left.tiebreak.cmp(&right.tiebreak))
+        });
+        let named: Vec<(&str, &Tiebreak)> = ranked
+            .iter()
+            .map(|ranked| (ranked.entry.name.as_ref(), &ranked.tiebreak))
+            .collect();
+        let numbers = ordinals(&named);
+        for (ranked, number) in ranked.iter_mut().zip(numbers) {
+            ranked.entry.ordinal = number;
+        }
+        Ok(ranked)
+    }
+
+    /// Every entry of `folder` the viewer can see and the host admits, unsorted and unnumbered.
+    async fn visible_entries(&self, folder: &Folder) -> Result<Vec<Ranked>, Error> {
         let children = self.host.children(&self.viewer, &folder.real_path).await?;
         let mounts = self.host.mounts(&self.viewer, &folder.real_path).await?;
         let mut uses = HashMap::<Segment, usize>::new();
@@ -134,7 +185,7 @@ impl Resolver<'_> {
         segment: Segment,
         node: &Located,
         mount: bool,
-    ) -> Option<(Entry, Tiebreak)> {
+    ) -> Option<Ranked> {
         if node.access.level == Level::Private {
             return None;
         }
@@ -154,9 +205,14 @@ impl Resolver<'_> {
             Tiebreak::Card(card_order(&node.path))
         };
         let mut den_path = folder_den_path.to_vec();
-        den_path.push(segment);
+        den_path.push(segment.clone());
         let entry = self.entry(node, den_path, mount);
-        Some((entry, tiebreak))
+        let ranked = Ranked {
+            segment,
+            entry,
+            tiebreak,
+        };
+        Some(ranked)
     }
 }
 
