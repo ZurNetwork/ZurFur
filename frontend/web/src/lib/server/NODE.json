@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
+      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; upstream-origin.spec.ts sends POST, PATCH and DELETE writes through kit's real event.fetch and handleFetch to a real local server and checks each arrives with origin equal to the page's origin; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
