@@ -4,7 +4,7 @@
 /// which is a handle Zurfur has claimed.
 ///
 /// ```
-/// use domain::elements::profile::DisplayHandle;
+/// use identity::elements::profile::DisplayHandle;
 ///
 /// let handle = DisplayHandle::from("alice.bsky.social");
 /// assert_eq!(handle.to_string(), "alice.bsky.social");

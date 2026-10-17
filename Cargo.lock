@@ -1607,6 +1607,7 @@ dependencies = [
  "chrono",
  "cid",
  "derive_more 2.1.1",
+ "identity",
  "kernel",
  "proptest",
  "serde",

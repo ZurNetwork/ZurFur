@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 /// An [`Account`]'s identifier: its [`Did`] — the DID is the only identifier,
 /// with no separate surrogate id behind it.

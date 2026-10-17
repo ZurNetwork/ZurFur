@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::errors::PublicRecordsError;
-use crate::elements::did::Did;
 use crate::elements::public_record::{AtUri, BlobRef, PublicRecord, RecordRef};
+use kernel::elements::did::Did;
 
 /// The **write** surface of the public data boundary: create / put / delete /
 /// read a record, and upload a blob, in the acting identity's atproto repo.

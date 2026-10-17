@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::elements::did::Did;
 use crate::elements::profile::Profile;
+use kernel::elements::did::Did;
 
 /// Reads a visitor's public profile from its source of truth, the user's PDS —
 /// a public-boundary read: async, fallible, and possibly lagging.

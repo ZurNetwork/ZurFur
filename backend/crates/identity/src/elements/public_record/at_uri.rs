@@ -1,4 +1,4 @@
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 use super::{AtUriParseError, Nsid, RecordKey};
 

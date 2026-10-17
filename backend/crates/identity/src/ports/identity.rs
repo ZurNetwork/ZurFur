@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 
 use crate::elements::account_keys::AccountKeys;
-use crate::elements::did::Did;
 use crate::elements::handle::Handle;
 use crate::elements::plc_operation::PlcOperationRecord;
+use kernel::elements::did::Did;
 
 /// Mints a sovereign `did:plc` for a platform-custodied entity, server-side —
 /// unlike a visitor's DID, which precedes us and is only recognized. The live

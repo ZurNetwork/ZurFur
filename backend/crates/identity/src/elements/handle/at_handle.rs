@@ -11,7 +11,7 @@ use super::syntax;
 /// Zurfur reserves for itself.
 ///
 /// ```
-/// use domain::elements::handle::AtHandle;
+/// use identity::elements::handle::AtHandle;
 ///
 /// let handle: AtHandle = "Alice.Bsky.Social".parse().unwrap();
 /// assert_eq!(handle.to_string(), "alice.bsky.social");
@@ -37,7 +37,7 @@ impl FromStr for AtHandle {
     /// disallowed TLDs. Whitespace and a trailing dot are refused, never stripped.
     ///
     /// ```
-    /// use domain::elements::handle::{AtHandle, HandleError};
+    /// use identity::elements::handle::{AtHandle, HandleError};
     ///
     /// assert_eq!("alice".parse::<AtHandle>(), Err(HandleError::TooFewSegments));
     /// assert_eq!("alice.bsky.social.".parse::<AtHandle>(), Err(HandleError::EmptySegment));

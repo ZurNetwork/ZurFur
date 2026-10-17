@@ -6,6 +6,7 @@ edition = "2024"
 
 [dependencies]
 kernel = { path = "../kernel" }
+identity = { path = "../identity" }
 chrono = { workspace = true }
 uuid = { workspace = true }
 cid = { workspace = true }

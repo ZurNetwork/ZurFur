@@ -1,5 +1,5 @@
-use crate::elements::did::Did;
 use crate::elements::profile::DisplayHandle;
+use kernel::elements::did::Did;
 
 /// A visitor's public profile, read from their PDS. `display_name` and
 /// `avatar_url` are optional — a PDS may carry neither, and a page must still

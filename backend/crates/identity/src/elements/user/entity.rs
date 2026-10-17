@@ -1,5 +1,5 @@
-use crate::datetime::DateTimeUtc;
-use crate::elements::did::Did;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::did::Did;
 
 use super::UserId;
 
@@ -21,7 +21,8 @@ impl User {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{did::Did, user::User};
+    /// use identity::elements::user::User;
+    /// use kernel::elements::did::Did;
     ///
     /// let user = User::recognize(Did::from("did:plc:example".to_string()), Utc::now());
     /// assert_eq!(user.id.to_string(), "did:plc:example");

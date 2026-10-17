@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::elements::did::Did;
 use crate::elements::user::{User, UserId};
+use kernel::elements::did::Did;
 
 /// The write surface of Zurfur's record of recognized visitors — reachable only
 /// on an open [`UnitOfWork`].

@@ -1,5 +1,5 @@
 use super::*;
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 #[test]
 fn at_uri_round_trips_through_string() {

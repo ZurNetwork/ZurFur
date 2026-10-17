@@ -1,4 +1,4 @@
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 /// The identity of a Character: its own [`Did`]. Every actor mints a DID and
 /// the DID IS the key, Characters included — there is no separate private id.

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::elements::text::{NonEmptyString, NonEmptyStringError};
+use kernel::elements::text::{NonEmptyString, NonEmptyStringError};
 
 /// A Character's name: trimmed, never blank.
 #[derive(

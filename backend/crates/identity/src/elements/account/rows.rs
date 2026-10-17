@@ -1,7 +1,6 @@
-use crate::elements::{
-    did::Did,
-    role::{Role, RoleAlias},
-};
+use kernel::elements::did::Did;
+
+use crate::elements::role::{Role, RoleAlias};
 
 use super::Account;
 

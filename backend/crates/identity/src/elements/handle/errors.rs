@@ -9,7 +9,7 @@ use super::LABEL_MAX_LEN;
 /// [`Handle::ensure_unreserved`] against the configured namespace.
 ///
 /// ```
-/// use domain::elements::handle::{Handle, HandleError};
+/// use identity::elements::handle::{Handle, HandleError};
 ///
 /// assert_eq!("".parse::<Handle>(), Err(HandleError::Empty));
 /// assert_eq!("alice".parse::<Handle>(), Err(HandleError::TooFewSegments));
@@ -62,7 +62,7 @@ pub enum HandleError {
 /// Why a string was rejected as a [`HandleDomain`].
 ///
 /// ```
-/// use domain::elements::handle::{HandleDomain, HandleDomainError, HandleError};
+/// use identity::elements::handle::{HandleDomain, HandleDomainError, HandleError};
 ///
 /// assert_eq!("  . ".parse::<HandleDomain>(), Err(HandleDomainError::Empty));
 /// assert_eq!(

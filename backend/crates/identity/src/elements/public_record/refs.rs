@@ -39,8 +39,8 @@ pub struct BlobRef {
 
 impl BlobRef {
     /// The blob's content-addressed identity — the
-    /// [`BlobId`](crate::elements::blob::BlobId) the rest of the domain uses.
-    pub fn id(&self) -> crate::elements::blob::BlobId {
-        crate::elements::blob::BlobId::new(self.cid)
+    /// [`BlobId`](kernel::elements::blob::BlobId) the rest of the domain uses.
+    pub fn id(&self) -> kernel::elements::blob::BlobId {
+        kernel::elements::blob::BlobId::new(self.cid)
     }
 }

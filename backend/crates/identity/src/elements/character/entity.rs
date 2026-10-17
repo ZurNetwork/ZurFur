@@ -1,7 +1,6 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{did::Did, user::UserId},
-};
+use kernel::{datetime::DateTimeUtc, elements::did::Did};
+
+use crate::elements::user::UserId;
 
 use super::{CharacterAttributes, CharacterId, Presence};
 

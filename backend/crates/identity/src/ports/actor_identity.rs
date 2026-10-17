@@ -1,13 +1,13 @@
 //! Ports for the actor super-table: [`ActorIdentityStore`] pool-backed,
 //! [`ActorIdentityWrites`] reachable only on an open
-//! [`UnitOfWork`](crate::ports::UnitOfWork). Neither carries a delete — identity
+//! `UnitOfWork`. Neither carries a delete — identity
 //! rows are immortal, and liveness is a state on the row.
 
 use async_trait::async_trait;
 
-use crate::datetime::DateTimeUtc;
 use crate::elements::actor_identity::{ActorIdentity, ActorIdentityId, ActorKind};
-use crate::elements::did::Did;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::did::Did;
 
 /// The read surface of the actor super-table. Pool-backed, non-transactional.
 #[async_trait]
@@ -22,7 +22,7 @@ pub trait ActorIdentityStore: Send + Sync {
 }
 
 /// The write surface of the actor super-table — reachable only on an open
-/// [`UnitOfWork`](crate::ports::UnitOfWork), so no identity write can skip a
+/// `UnitOfWork`, so no identity write can skip a
 /// transaction.
 #[async_trait]
 pub trait ActorIdentityWrites: Send {

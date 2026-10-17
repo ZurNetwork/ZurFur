@@ -1,4 +1,4 @@
-use crate::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 
 /// The longest an account name may be, in `char`s (counted after trimming).
 pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
@@ -7,7 +7,7 @@ pub const ACCOUNT_NAME_MAX_LEN: usize = 120;
 /// [`ACCOUNT_NAME_MAX_LEN`] chars.
 ///
 /// ```
-/// use domain::elements::account::AccountName;
+/// use identity::elements::account::AccountName;
 ///
 /// let name = "  Acme Studio  ".parse::<AccountName>().unwrap();
 /// assert_eq!(name.as_str(), "Acme Studio"); // trimmed

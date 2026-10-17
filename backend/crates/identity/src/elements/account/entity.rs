@@ -1,7 +1,6 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{did::Did, handle::Handle, role::Role, user::UserId, user_account::UserAccount},
-};
+use kernel::{datetime::DateTimeUtc, elements::did::Did};
+
+use crate::elements::{handle::Handle, role::Role, user::UserId, user_account::UserAccount};
 
 use super::{AccountId, AccountName};
 
@@ -33,7 +32,8 @@ impl Account {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{account::{Account, AccountName}, did::Did, handle::Handle, role::Role, user::UserId};
+    /// use identity::elements::{account::{Account, AccountName}, handle::Handle, role::Role, user::UserId};
+    /// use kernel::elements::did::Did;
     ///
     /// let owner = UserId::from(Did::from("did:plc:owner".to_string()));
     /// let (account, membership) = Account::open(

@@ -9,7 +9,7 @@ use super::syntax;
 /// always lowercase, trimmed, and has no trailing dot.
 ///
 /// ```
-/// use domain::elements::handle::Handle;
+/// use identity::elements::handle::Handle;
 ///
 /// // Normalized: trimmed, lowercased, trailing dot stripped.
 /// let h = "  Alice.Zurfur.APP.  ".parse::<Handle>().unwrap();
@@ -34,7 +34,7 @@ impl FromStr for Handle {
     /// [`Handle::ensure_unreserved`] checks them at the claim.
     ///
     /// ```
-    /// use domain::elements::handle::{Handle, HandleError};
+    /// use identity::elements::handle::{Handle, HandleError};
     ///
     /// assert_eq!("alice.zurfur.app".parse::<Handle>().unwrap().as_str(), "alice.zurfur.app");
     /// assert_eq!("XN--abc.com".parse::<Handle>(), Err(HandleError::PunycodeLabel)); // case-insensitive
@@ -75,7 +75,7 @@ impl Handle {
     /// The one namespace test the whole system shares.
     ///
     /// ```
-    /// use domain::elements::handle::{Handle, HandleDomain};
+    /// use identity::elements::handle::{Handle, HandleDomain};
     ///
     /// let zurfur: HandleDomain = "zurfur.app".parse().unwrap();
     /// assert!("alice.zurfur.app".parse::<Handle>().unwrap().is_in_namespace(&zurfur));
@@ -95,7 +95,7 @@ impl Handle {
     /// the rule needs the configured namespace.
     ///
     /// ```
-    /// use domain::elements::handle::{Handle, HandleDomain, HandleError};
+    /// use identity::elements::handle::{Handle, HandleDomain, HandleError};
     ///
     /// let staging: HandleDomain = "zurfur.foo".parse().unwrap();
     /// let admin: Handle = "admin.zurfur.foo".parse().unwrap();

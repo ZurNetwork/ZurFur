@@ -6,7 +6,7 @@
 //! against `plc.directory` compares. Persisted through
 //! [`crate::ports::PlcOperationLog`].
 
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 /// One submitted `did:plc` operation, as recorded in the operation log — enough
 /// to chain the next operation and to audit what was published. The stored

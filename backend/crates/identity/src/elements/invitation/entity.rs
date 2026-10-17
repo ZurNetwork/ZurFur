@@ -1,7 +1,6 @@
-use crate::{
-    datetime::DateTimeUtc,
-    elements::{account::AccountId, role::Role, user::UserId},
-};
+use kernel::datetime::DateTimeUtc;
+
+use crate::elements::{account::AccountId, role::Role, user::UserId};
 
 use super::{InvitationError, InvitationId, InvitationState};
 
@@ -36,10 +35,10 @@ impl Invitation {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     account::AccountId, did::Did, invitation::{Invitation, InvitationState}, role::Role,
-    ///     user::UserId,
+    /// use identity::elements::{
+    ///     account::AccountId, invitation::{Invitation, InvitationState}, role::Role, user::UserId,
     /// };
+    /// use kernel::elements::did::Did;
     ///
     /// let account = AccountId::from(Did::from("did:plc:acme".to_string()));
     /// let invited = UserId::from(Did::from("did:plc:alice".to_string()));
@@ -75,10 +74,11 @@ impl Invitation {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::{
-    ///     account::AccountId, did::Did, invitation::{Invitation, InvitationError, InvitationState},
+    /// use identity::elements::{
+    ///     account::AccountId, invitation::{Invitation, InvitationError, InvitationState},
     ///     role::Role, user::UserId,
     /// };
+    /// use kernel::elements::did::Did;
     ///
     /// let mut invitation = Invitation::issue(
     ///     AccountId::from(Did::from("did:plc:acme".to_string())),

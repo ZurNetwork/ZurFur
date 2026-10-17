@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::errors::ResolveError;
-use crate::elements::did::Did;
 use crate::elements::handle::AtHandle;
+use kernel::elements::did::Did;
 
 /// Resolves the identities of actors Zurfur does not own: a handle to its DID
 /// and a DID to its handle, each answer confirmed both ways.

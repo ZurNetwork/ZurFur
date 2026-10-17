@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::elements::did::Did;
+use kernel::elements::did::Did;
 
 /// The identity of a [`super::User`]: their [`Did`]. The DID IS the key — there is no
 /// separate private surrogate.

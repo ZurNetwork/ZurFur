@@ -6,20 +6,8 @@
 //! is the single source of truth for what it means; [`achievement`], [`blob`],
 //! [`character`] and [`markdown`] are still stubs.
 
-pub mod account;
-pub mod account_keys;
-pub mod achievement;
-pub mod actor_identity;
-pub mod character;
 pub mod commission;
-pub mod handle;
-pub mod invitation;
-pub mod plc_operation;
-pub mod profile;
-pub mod public_record;
-pub mod role;
-pub mod user;
-pub mod user_account;
 pub mod workflow;
 
+pub use ::identity::elements::*;
 pub use ::kernel::elements::*;

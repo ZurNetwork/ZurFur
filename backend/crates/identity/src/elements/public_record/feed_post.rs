@@ -1,5 +1,5 @@
-use crate::datetime::DateTimeUtc;
-use crate::elements::did::Did;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::did::Did;
 
 use super::{BlobRef, StrongRef};
 

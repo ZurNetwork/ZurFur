@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::elements::did::Did;
 use crate::elements::handle::AtHandle;
+use kernel::elements::did::Did;
 
 /// Authenticates a visitor against their PDS, yielding the DID they already own.
 /// The two methods mirror the OAuth handshake and speak only a handle, an opaque

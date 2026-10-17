@@ -8,7 +8,7 @@ use super::{Handle, HandleDomainError};
 /// bare hostname that itself parses as a [`Handle`].
 ///
 /// ```
-/// use domain::elements::handle::HandleDomain;
+/// use identity::elements::handle::HandleDomain;
 ///
 /// let domain: HandleDomain = "  Zurfur.App.  ".parse().unwrap();
 /// assert_eq!(domain.as_str(), "zurfur.app");
@@ -27,7 +27,7 @@ impl FromStr for HandleDomain {
     /// port, a scheme, a path, an IP literal).
     ///
     /// ```
-    /// use domain::elements::handle::{HandleDomain, HandleDomainError, HandleError};
+    /// use identity::elements::handle::{HandleDomain, HandleDomainError, HandleError};
     ///
     /// assert_eq!(".zurfur.app.".parse::<HandleDomain>().unwrap().as_str(), "zurfur.app");
     /// assert_eq!("".parse::<HandleDomain>(), Err(HandleDomainError::Empty));

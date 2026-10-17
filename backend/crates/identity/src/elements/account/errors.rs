@@ -3,7 +3,7 @@ use super::ACCOUNT_NAME_MAX_LEN;
 /// Why a string was rejected as an account name.
 ///
 /// ```
-/// use domain::elements::account::{AccountName, AccountNameError};
+/// use identity::elements::account::{AccountName, AccountNameError};
 ///
 /// assert_eq!("".parse::<AccountName>(), Err(AccountNameError::Empty));
 /// ```

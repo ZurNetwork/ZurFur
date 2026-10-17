@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 
-use crate::datetime::DateTimeUtc;
 use crate::elements::account::{Account, AccountId, AccountMembership, ListingScope};
-use crate::elements::did::Did;
 use crate::elements::handle::Handle;
 use crate::elements::invitation::{Invitation, InvitationId};
 use crate::elements::role::Role;
 use crate::elements::user::UserId;
 use crate::elements::user_account::UserAccount;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::did::Did;
 
 /// The **read** surface of Zurfur's record of accounts and who owns them —
 /// pool-backed and non-transactional; every write lives on [`AccountWrites`].

@@ -1,5 +1,5 @@
-use crate::datetime::DateTimeUtc;
-use crate::elements::did::Did;
+use kernel::datetime::DateTimeUtc;
+use kernel::elements::did::Did;
 
 use super::{ActorIdentityId, ActorKind, ActorState};
 
@@ -31,7 +31,7 @@ impl ActorIdentity {
     ///
     /// ```
     /// use chrono::Utc;
-    /// use domain::elements::actor_identity::{ActorIdentity, ActorKind};
+    /// use identity::elements::actor_identity::{ActorIdentity, ActorKind};
     ///
     /// let a = ActorIdentity::mint(ActorKind::Character, Utc::now());
     /// let b = ActorIdentity::mint(ActorKind::Character, Utc::now());
