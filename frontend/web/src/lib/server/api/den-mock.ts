@@ -17,8 +17,9 @@ import {
 	NOT_AUTHENTICATED_PROBLEM
 } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
+import { commissionId, did } from '$lib/types/brand';
 import type { SegmentPath } from '../path-builder';
-import type { DenQuery, DenRead, DenReadCrumb, DenReadNode } from './den-read';
+import type { DenQuery, DenRead, DenReadCrumb, DenReadNode, DenReadThing } from './den-read';
 import { ApiProblem, NotAuthenticated } from './errors';
 
 /** How many entries one page of a mock listing holds. */
@@ -38,6 +39,8 @@ interface MockNode {
 	readonly access: 'open' | 'card';
 	readonly contentNotShown: boolean;
 	readonly removed: 'archived' | 'deactivated' | undefined;
+	/** What the node stands for, as an open node's read shows it; none on a folder, a file or a slot. */
+	readonly thing: DenReadThing | undefined;
 	readonly children: () => readonly MockNode[];
 }
 
@@ -49,6 +52,7 @@ const FOLDER: Omit<MockNode, 'key' | 'name' | 'type'> = {
 	access: 'open',
 	contentNotShown: false,
 	removed: undefined,
+	thing: undefined,
 	children: () => []
 };
 
@@ -72,10 +76,22 @@ function accountFolders(): readonly MockNode[] {
 	];
 }
 
+/** The Account a node stands for, named by its DID. */
+function accountThing(accountDid: string): DenReadThing {
+	return { thing: 'account', did: did(accountDid) };
+}
+
+/** The commission a node stands for, named by its id; none when the id is empty. */
+function commissionThing(id: string): DenReadThing | undefined {
+	const minted = commissionId(id);
+	return minted === undefined ? undefined : { thing: 'commission', id: minted };
+}
+
 /** One of the viewer's Accounts, mounted into `accounts`. */
 function accountMount(account: AccountMembership): MockNode {
 	return {
 		...FOLDER,
+		thing: accountThing(account.did),
 		key: account.did,
 		name: account.name,
 		type: 'account',
@@ -99,7 +115,15 @@ function commissionEntries(
 
 /** A commission mounted into `commissions`. */
 function commissionMount(key: string, name: string, children: () => readonly MockNode[]): MockNode {
-	return { ...FOLDER, key, name, type: 'commission', mount: true, children };
+	return {
+		...FOLDER,
+		key,
+		name,
+		type: 'commission',
+		mount: true,
+		thing: commissionThing(key),
+		children
+	};
 }
 
 /** An open, empty slot. */
@@ -173,6 +197,7 @@ const RTL_NAME_COMMISSION = commissionMount(
 const DEACTIVATED_ACCOUNT: MockNode = {
 	...FOLDER,
 	key: 'did:plc:mockformerstudioaaaaaaaa',
+	thing: accountThing('did:plc:mockformerstudioaaaaaaaa'),
 	name: 'Former Studio',
 	type: 'account',
 	mount: true,
@@ -261,7 +286,8 @@ function readNode(node: MockNode, segments: readonly string[]): DenReadNode {
 			access: 'open',
 			ownLevel: node.level,
 			contentNotShown: node.contentNotShown,
-			removed: node.removed
+			removed: node.removed,
+			thing: node.thing
 		}
 	};
 }
@@ -300,7 +326,7 @@ export function mockDenRead(
 		const walked: string[] = [];
 		for (const segment of path) {
 			if (node.access === 'card' || node.kind !== 'directory') return notFound;
-			crumbs.push({ segments: [...walked], name: node.name });
+			crumbs.push({ segments: [...walked], name: node.name, type: node.type });
 			const child = node.children().find((candidate) => candidate.key === segment);
 			if (child === undefined) return notFound;
 			// A soft-deleted node the viewer could only see as a card is the same miss.

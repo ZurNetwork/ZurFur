@@ -115,6 +115,18 @@ export function denHref(value: string): DenHref {
 	return value as DenHref;
 }
 
+/** A commission's id: an opaque value the web only passes on, never reads. */
+export type CommissionId = Brand<string, 'CommissionId'>;
+
+/**
+ * Mint from an id off the wire: the value as a {@link CommissionId}, or
+ * `undefined` when it is empty. The id is opaque: the web never parses it,
+ * so there is no format check, no length cap and no trimming.
+ */
+export function commissionId(raw: string): CommissionId | undefined {
+	return raw.length === 0 ? undefined : (raw as CommissionId);
+}
+
 /** A Den node's display name: text to show, never HTML and never a key. */
 export type DenName = Brand<string, 'DenName'>;
 

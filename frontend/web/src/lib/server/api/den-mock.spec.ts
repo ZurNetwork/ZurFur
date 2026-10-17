@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { Effect } from 'effect';
 import type { DenEntry, DenPageData } from '$lib/api/den';
-import { accountId, did, pageToken } from '$lib/types/brand';
+import { accountId, commissionId, did, pageToken } from '$lib/types/brand';
 import { denPage } from '../den';
+import { segmentPath } from '../path-builder';
+import type { DenRead, DenReadNode } from './den-read';
 import { createMockStore, zurfurApiMock, type MockStore } from './zurfur-api-mock';
 import { mockDenRead, MOCK_PAGE_SIZE } from './den-mock';
 
@@ -198,5 +200,113 @@ describe('mockDenRead', () => {
 			mockDenRead(store.session, store.accounts, [], { includeDeleted: false, pageToken: token })
 		);
 		expect(read.content).toEqual({ content: 'listing', entries: [], nextPageToken: undefined });
+	});
+});
+
+/** The mock read at `segments` for the fixture store, with the archived and deactivated shown. */
+async function readAt(segments: readonly string[]): Promise<DenRead> {
+	const store = createMockStore();
+	const path = segmentPath(segments);
+	if (path === undefined) throw new Error('bad test path');
+	const query = { includeDeleted: true, pageToken: undefined };
+	return Effect.runPromise(mockDenRead(store.session, store.accounts, path, query));
+}
+
+/** The entries of a listing read. */
+function rowsOf(read: DenRead): readonly DenReadNode[] {
+	if (read.content.content !== 'listing') throw new Error('expected a listing');
+	return read.content.entries;
+}
+
+/** The first row `matches`, or a thrown test failure. */
+function rowWhere(
+	rows: readonly DenReadNode[],
+	matches: (row: DenReadNode) => boolean
+): DenReadNode {
+	const row = rows.find(matches);
+	if (row === undefined) throw new Error('expected a row');
+	return row;
+}
+
+/** What a row names: its thing when open, and none for a card. */
+function thingOf(row: DenReadNode) {
+	return row.access.access === 'open' ? row.access.thing : undefined;
+}
+
+describe('the mock Den read: crumbs carry their type', () => {
+	it('types each crumb by the node it stands for, the root as a user', async () => {
+		const read = await readAt(['commissions', UNTITLED, 'slots']);
+		expect(read.crumbs).toEqual([
+			{ segments: [], name: 'Alice', type: 'user' },
+			{ segments: ['commissions'], name: 'commissions', type: 'user.commissions' },
+			{ segments: ['commissions', UNTITLED], name: 'Untitled', type: 'commission' }
+		]);
+	});
+
+	it('types the crumbs of an Account path', async () => {
+		const accountDid = createMockStore().accounts[0]?.did;
+		const read = await readAt(['accounts', accountDid ?? '', 'commissions']);
+		expect(read.crumbs.map((crumb) => crumb.type)).toEqual(['user', 'user.accounts', 'account']);
+	});
+});
+
+describe('the mock Den read: an open node names its thing', () => {
+	it('gives a commission node its id', async () => {
+		const read = await readAt(['commissions', UNTITLED]);
+		expect(read.node.access).toMatchObject({
+			thing: { thing: 'commission', id: commissionId(UNTITLED) }
+		});
+	});
+
+	it('gives each commission entry its id, the archived one too, and the card none', async () => {
+		const rows = rowsOf(await readAt(['commissions']));
+		const named = rows.filter((row) => row.access.access === 'open');
+		expect(named.length).toBeGreaterThan(1);
+		for (const row of named)
+			expect(thingOf(row)).toEqual({
+				thing: 'commission',
+				id: commissionId(row.segments.at(-1) ?? '')
+			});
+		const archived = rowWhere(rows, (row) => row.segments.at(-1) === ARCHIVED);
+		expect(thingOf(archived)).toEqual({
+			thing: 'commission',
+			id: commissionId(ARCHIVED)
+		});
+		const card = rows.find((row) => row.access.access === 'card');
+		expect(card).toBeDefined();
+		expect(card?.access).toEqual({ access: 'card' });
+	});
+
+	it('gives each Account entry its DID, the deactivated one too', async () => {
+		const store = createMockStore();
+		const rows = rowsOf(await readAt(['accounts']));
+		const studio = store.accounts[0];
+		expect(studio).toBeDefined();
+		expect(thingOf(rowWhere(rows, (row) => row.name === studio?.name))).toEqual({
+			thing: 'account',
+			did: studio?.did
+		});
+		const former = rowWhere(rows, (row) => row.name === 'Former Studio');
+		expect(thingOf(former)).toEqual({
+			thing: 'account',
+			did: did('did:plc:mockformerstudioaaaaaaaa')
+		});
+	});
+
+	it('gives system folders, files, slots, characters and the root none', async () => {
+		const root = await readAt([]);
+		expect(thingOf(root.node)).toBeUndefined();
+		expect(rowsOf(root).map(thingOf)).toEqual([undefined, undefined, undefined, undefined]);
+		const inside = rowsOf(await readAt(['commissions', UNTITLED]));
+		expect(inside.map(thingOf)).toEqual([undefined, undefined, undefined, undefined]);
+		const slots = rowsOf(await readAt(['commissions', UNTITLED, 'slots']));
+		expect(slots).toHaveLength(4);
+		expect(slots.map(thingOf)).toEqual([undefined, undefined, undefined, undefined]);
+		const characters = rowsOf(await readAt(['characters']));
+		expect(characters.map(thingOf)).toEqual([undefined, undefined]);
+		const accountFolder = rowsOf(
+			await readAt(['accounts', createMockStore().accounts[0]?.did ?? ''])
+		);
+		expect(accountFolder.map(thingOf)).toEqual([undefined, undefined, undefined]);
 	});
 });

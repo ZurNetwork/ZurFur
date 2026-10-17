@@ -26,17 +26,17 @@
     },
     {
       "name": "den-mock.ts",
-      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); 25-entry pages, `p1.<offset>` tokens",
+      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); every crumb typed, commission and Account nodes naming their thing; 25-entry pages, `p1.<offset>` tokens",
       "node": false
     },
     {
       "name": "den-read.ts",
-      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it",
+      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode, DenReadThing…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it (an open node's optional thing, a crumb's type)",
       "node": false
     },
     {
       "name": "den-wire.ts",
-      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined); DEN_ROUTES, the route templates Den failures name",
+      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined, an unknown or empty thing is no thing, a crumb without a type reads empty); DEN_ROUTES, the route templates Den failures name",
       "node": false
     },
     {

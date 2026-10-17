@@ -71,7 +71,13 @@ function folder(
 		type: 'folder',
 		kind: 'directory',
 		mount: false,
-		access: { access: 'open', ownLevel: 'private', contentNotShown: false, removed: undefined },
+		access: {
+			access: 'open',
+			ownLevel: 'private',
+			contentNotShown: false,
+			removed: undefined,
+			thing: undefined
+		},
 		...extra
 	};
 }
@@ -84,7 +90,8 @@ function folderRead(
 ): DenRead {
 	const crumbs = segments.map((_, index) => ({
 		segments: segments.slice(0, index),
-		name: index === 0 ? 'Alice' : (segments[index - 1] ?? '')
+		name: index === 0 ? 'Alice' : (segments[index - 1] ?? ''),
+		type: ''
 	}));
 	return {
 		node: folder(segments, segments.at(-1) ?? 'Alice'),
@@ -180,7 +187,13 @@ describe('denPage: reading and mapping', () => {
 	it('folds unknown kinds, levels and soft-delete words to unknown', async () => {
 		const odd = folder(['x', 'y'], 'Odd', {
 			kind: 'portal',
-			access: { access: 'open', ownLevel: 'secret', contentNotShown: false, removed: 'vanished' }
+			access: {
+				access: 'open',
+				ownLevel: 'secret',
+				contentNotShown: false,
+				removed: 'vanished',
+				thing: undefined
+			}
 		});
 		const { layer } = listingPort([odd]);
 		const data = pageData(await run(layer, '/den/x'));
@@ -229,8 +242,8 @@ describe('denPage: reading and mapping', () => {
 				access: { access: 'card' }
 			},
 			crumbs: [
-				{ segments: [], name: 'Alice' },
-				{ segments: ['commissions'], name: 'commissions' }
+				{ segments: [], name: 'Alice', type: '' },
+				{ segments: ['commissions'], name: 'commissions', type: '' }
 			],
 			content: { content: 'none' }
 		};
@@ -526,8 +539,8 @@ describe('denPage: an Account node shows the Account’s own name', () => {
 				const read: DenRead = {
 					node: account(ACDC, ACDC_HANDLE),
 					crumbs: [
-						{ segments: [], name: 'Alice' },
-						{ segments: ['accounts'], name: 'accounts' }
+						{ segments: [], name: 'Alice', type: '' },
+						{ segments: ['accounts'], name: 'accounts', type: '' }
 					],
 					content: { content: 'listing', entries: [], nextPageToken: undefined }
 				};

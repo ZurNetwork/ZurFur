@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	accountId,
+	commissionId,
 	did,
 	fieldPointer,
 	handle,
@@ -92,5 +93,15 @@ describe('fieldPointer (validated mint)', () => {
 			expect(() => fieldPointer(raw)).not.toThrow();
 			expect(fieldPointer(raw)).toBeUndefined();
 		}
+	});
+});
+
+describe('commissionId (the opaque mint)', () => {
+	it('a commission id is not parsed', () => {
+		expect(commissionId('not-a-uuid')).toBe('not-a-uuid');
+		const long = 'x'.repeat(2048);
+		expect(commissionId(long)).toBe(long);
+		expect(commissionId(' padded ')).toBe(' padded ');
+		expect(commissionId('')).toBeUndefined();
 	});
 });

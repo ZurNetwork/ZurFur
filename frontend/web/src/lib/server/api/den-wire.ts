@@ -4,20 +4,39 @@
  * this build knows.
  */
 
+import { commissionId, did } from '$lib/types/brand';
 import type {
 	DenCrumb,
 	DenListing,
 	DenNode,
+	DenOpen,
 	GetDenNodeResponse,
 	GetDenRootResponse
 } from './generated/zurfur/api/v1/den_pb';
-import type { DenRead, DenReadContent, DenReadCrumb, DenReadNode } from './den-read';
+import type { DenRead, DenReadContent, DenReadCrumb, DenReadNode, DenReadThing } from './den-read';
 
 /** The route templates a Den read's failures name: never the built path, which carries private names. */
 export const DEN_ROUTES = { root: '/den', node: '/den/{path}' } as const;
 
 /** One of {@link DEN_ROUTES}: a built path is not assignable to it. */
 export type DenRoute = (typeof DEN_ROUTES)[keyof typeof DEN_ROUTES];
+
+/**
+ * The thing an open node names. A case this build doesn't know, no case, or
+ * an empty value is no thing.
+ */
+function toThing(thing: DenOpen['thing']): DenReadThing | undefined {
+	switch (thing.case) {
+		case 'commissionId': {
+			const id = commissionId(thing.value);
+			return id === undefined ? undefined : { thing: 'commission', id };
+		}
+		case 'accountDid':
+			return thing.value === '' ? undefined : { thing: 'account', did: did(thing.value) };
+		case undefined:
+			return undefined;
+	}
+}
 
 /** One node; anything but an `open` access, unset included, is a card. */
 function toReadNode(node: DenNode): DenReadNode {
@@ -36,7 +55,8 @@ function toReadNode(node: DenNode): DenReadNode {
 			access: 'open',
 			ownLevel: open.ownLevel,
 			contentNotShown: open.contentNotShown,
-			removed: open.softDelete === '' ? undefined : open.softDelete
+			removed: open.softDelete === '' ? undefined : open.softDelete,
+			thing: toThing(open.thing)
 		}
 	};
 }
@@ -51,7 +71,7 @@ function toListing(listing: DenListing): DenReadContent {
 }
 
 function toCrumb(crumb: DenCrumb): DenReadCrumb {
-	return { segments: crumb.segments, name: crumb.name };
+	return { segments: crumb.segments, name: crumb.name, type: crumb.type };
 }
 
 /** The root's answer as a read with no crumbs, or `undefined` when it has no node. */

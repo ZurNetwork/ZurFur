@@ -63,7 +63,7 @@
     },
     {
       "name": "types/",
-      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, DenHref/DenName/DenType, PageToken, FieldPointer via the validated fieldPointer) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts)",
+      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, the opaque CommissionId, DenHref/DenName/DenType, PageToken, FieldPointer via the validated fieldPointer) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts)",
       "node": false
     }
   ],
