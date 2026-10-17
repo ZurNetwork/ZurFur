@@ -1,8 +1,8 @@
 //! Capability-scoped write gating, end to end. An account-scoped write has two gates:
 //! the `CallingUser` extractor (no session → 401), then the use case's own check of the
-//! caller's standing on the Account (no role that allows the act → 403), made before it
-//! looks at anything else. This pins the three tiers of authority they enforce, plus
-//! the two things they must **not** do:
+//! caller's standing on the Account (no role that allows the act → 403), made after the
+//! Account's liveness check and before the target. This pins the three tiers of
+//! authority they enforce, plus the two things they must **not** do:
 //!
 //! - **anonymous → 401** on any account-scoped write (read-only for the signed-out);
 //! - **authed User with no role on the target Account → 403** `forbidden` (problem+json),

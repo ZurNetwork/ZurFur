@@ -101,8 +101,9 @@ pub mod account {
     /// `queries/account/accept_invitation_seat.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Seat the invited User at the offered role. If the pair is already seated
-    /// (another invitation was accepted while this one sat pending, which a narrow
-    /// issue/accept race allows), `ON CONFLICT DO NOTHING` skips the insert and
+    /// (a narrow issue/accept race: this invitation passed its membership check,
+    /// another invitation for the pair was then accepted, and only then was this
+    /// one stored), `ON CONFLICT DO NOTHING` skips the insert and
     /// leaves the existing row untouched rather than raising a primary-key
     /// violation; RETURNING then yields no row, and the caller
     /// (`PgAccountWrites::accept_invitation`) falls back to reading the

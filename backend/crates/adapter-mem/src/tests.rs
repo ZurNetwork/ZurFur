@@ -556,10 +556,11 @@ async fn find_unknown_invitation_returns_none() {
 }
 
 // Bug guard — mirrors pg's `ON CONFLICT (account_id, user_id) DO NOTHING`: a
-// pending invitation accepted for a pair that's ALREADY seated (by another
-// invitation while this offer sat pending) must not overwrite the existing
-// membership. It's a no-op that keeps the ORIGINAL role and listing, not the
-// invitation's offer.
+// pending invitation accepted for a pair that's ALREADY seated (a narrow
+// issue/accept race: this offer passed its membership check, another invitation
+// for the pair was then accepted, and only then was this offer stored) must not
+// overwrite the existing membership. It's a no-op that keeps the ORIGINAL role
+// and listing, not the invitation's offer.
 #[tokio::test]
 async fn accepting_an_invitation_for_an_already_seated_pair_keeps_the_original_role() {
     let backend = MemBackend::new();
@@ -665,7 +666,7 @@ async fn grant_role_on_a_non_member_fails_and_seats_no_one() {
     uow.commit().await.unwrap();
 
     assert!(
-        refused.to_string().contains("nothing changed"),
+        refused.to_string().contains("is not a non-Owner member"),
         "unexpected refusal: {refused}"
     );
     assert_eq!(
@@ -716,7 +717,9 @@ async fn grant_role_never_grants_or_changes_an_owner() {
         .expect_err("a grant never changes the Owner's role");
     uow.commit().await.unwrap();
     assert!(
-        owner_change.to_string().contains("nothing changed"),
+        owner_change
+            .to_string()
+            .contains("is not a non-Owner member"),
         "unexpected refusal: {owner_change}"
     );
     assert_eq!(

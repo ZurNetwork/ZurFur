@@ -549,10 +549,12 @@ async fn find_unknown_invitation_is_none() {
 
 // Bug guard — `account_members`'s PRIMARY KEY is `(account_id, user_id)`, and the
 // seat insert had no `ON CONFLICT` clause: accepting a still-pending invitation
-// for a pair that's ALREADY seated (by another invitation while this offer sat
-// pending) raised a PK violation and 500'd, leaving the invitation permanently
-// pending (a repeatable 500). `ON CONFLICT DO NOTHING` makes the seat a no-op
-// that keeps the ORIGINAL membership row: role, parent and listing.
+// for a pair that's ALREADY seated (a narrow issue/accept race: this offer passed
+// its membership check, another invitation for the pair was then accepted, and
+// only then was this offer stored) raised a PK violation and 500'd, leaving the
+// invitation permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING`
+// makes the seat a no-op that keeps the ORIGINAL membership row: role, parent
+// and listing.
 #[tokio::test]
 async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
     let (pool, _container) = fresh_pool().await;
@@ -618,7 +620,7 @@ async fn grant_role_on_a_non_member_fails_and_seats_no_one() {
         .expect_err("a grant to a non-member is refused");
 
     assert!(
-        refused.to_string().contains("nothing changed"),
+        refused.to_string().contains("is not a non-Owner member"),
         "unexpected refusal: {refused}"
     );
     assert_eq!(
@@ -653,7 +655,9 @@ async fn grant_role_never_grants_or_changes_an_owner() {
         .await
         .expect_err("a grant never changes the Owner's role");
     assert!(
-        owner_change.to_string().contains("nothing changed"),
+        owner_change
+            .to_string()
+            .contains("is not a non-Owner member"),
         "unexpected refusal: {owner_change}"
     );
     assert_eq!(

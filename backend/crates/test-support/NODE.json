@@ -75,6 +75,11 @@
       "node": false
     },
     {
+      "name": "src/membership/tests.rs",
+      "role": "pins seat_member's seat as listed: the member's public profile shows the Account",
+      "node": false
+    },
+    {
       "name": "src/pds.rs",
       "role": "ThrowawayPds::boot — container lifecycle, teardown on drop",
       "node": false

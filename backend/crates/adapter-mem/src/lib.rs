@@ -360,7 +360,10 @@ impl MemBackend {
     /// through [`merge_log`].
     ///
     /// Not modeled: a same-key write-write conflict is last-writer-wins here,
-    /// where pg would serialize the second writer on a row lock.
+    /// where pg would serialize the second writer on a row lock. Concurrent
+    /// units can therefore undo the guards a write checked against its own
+    /// snapshot (a grant whose unit opened before a leave committed seats the
+    /// leaver again); this fake runs in dev and tests only.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),

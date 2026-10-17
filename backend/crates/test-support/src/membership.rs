@@ -24,3 +24,6 @@ pub async fn seat_member(
     let invitation = uow.accounts().create_invitation(&issued).await?;
     uow.accounts().accept_invitation(invitation, true).await
 }
+
+#[cfg(test)]
+mod tests;

@@ -1214,16 +1214,35 @@ async fn a_member_cannot_learn_membership_through_a_grant() {
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
     let account = seat_me_on_a_foreign_account(&backend, did, Role::Member).await;
+    let member_did = "did:plc:e2eprobedmember";
+    seed_member(&backend, account.id.as_ref(), member_did, Role::Member).await;
+
+    let member_probe = client
+        .post(format!("{base}/accounts/{}/members", account.id))
+        .json(&serde_json::json!({ "user": member_did, "role": "member" }))
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members");
+    common::assert_problem(member_probe, 403, "forbidden").await;
 
     let fresh_did = "did:plc:e2eprobed";
-    let res = client
+    let fresh_probe = client
         .post(format!("{base}/accounts/{}/members", account.id))
         .json(&serde_json::json!({ "user": fresh_did, "role": "member" }))
         .send()
         .await
         .expect("POST /accounts/{id}/members");
-    common::assert_problem(res, 403, "forbidden").await;
+    common::assert_problem(fresh_probe, 403, "forbidden").await;
 
+    let member = UserId::from(Did::from(member_did.to_string()));
+    assert_eq!(
+        backend
+            .role_of(&member, &account.id)
+            .await
+            .expect("role_of"),
+        Some(Role::Member),
+        "a refused grant leaves the member's role as it was"
+    );
     let fresh = UserId::from(Did::from(fresh_did.to_string()));
     assert_eq!(
         backend.role_of(&fresh, &account.id).await.expect("role_of"),
