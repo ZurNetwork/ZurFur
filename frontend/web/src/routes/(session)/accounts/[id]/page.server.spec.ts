@@ -85,7 +85,8 @@ describe('/accounts/[id] load', () => {
 				code: 'account_not_found',
 				title: 'Account not found',
 				detail: 'No such account.',
-				status: 404
+				status: 404,
+				errors: []
 			}
 		});
 	});

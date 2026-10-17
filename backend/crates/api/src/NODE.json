@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
@@ -45,7 +45,12 @@
     },
     {
       "name": "problem.rs",
-      "role": "the single RFC 9457 error type and its code→URN mapping",
+      "role": "the single RFC 9457 error type and its code→URN mapping; its leaf problem/fields.rs builds field refusals",
+      "node": false
+    },
+    {
+      "name": "problem/",
+      "role": "fields.rs: FieldPointer, FieldCode, FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
       "node": false
     },
     {
@@ -68,7 +73,7 @@
     {
       "page": 23592962,
       "title": "API Response Shape & Error Model",
-      "governs": "`problem.rs` module doc"
+      "governs": "`problem.rs` module doc; `problem/fields.rs`: the `errors` member — field refusals, the `#/` pointer from ProtoJSON names, fixed detail per code (decision 4)"
     },
     {
       "page": 24543244,

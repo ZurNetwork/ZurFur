@@ -41,7 +41,8 @@ const rateLimitedProblem: Problem = {
 	code: 'rate_limited',
 	title: 'rate_limited',
 	detail: 'Slow down.',
-	status: 429
+	status: 429,
+	errors: []
 };
 
 const handleTakenProblem: Problem = {
@@ -49,7 +50,8 @@ const handleTakenProblem: Problem = {
 	code: 'handle_taken',
 	title: 'handle_taken',
 	detail: 'That handle is already claimed.',
-	status: 409
+	status: 409,
+	errors: []
 };
 
 /** Thin wrapper over the shared {@link formStub}: this page's field defaults. */

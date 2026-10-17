@@ -105,7 +105,8 @@ describe('signinOutcome', () => {
 			code: 'invalid_request',
 			title: 'invalid_request',
 			detail: 'That handle is not usable.',
-			status: 422
+			status: 422,
+			errors: []
 		};
 		const rejected = () => Effect.fail(new ApiProblem({ problem }));
 		const outcome = await runTest({ startSignin: rejected }, signinOutcome('not a handle'));

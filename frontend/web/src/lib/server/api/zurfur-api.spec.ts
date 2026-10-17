@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
 import { fetchStub, problemResponse, requestUrl, unreachableFetch } from '$lib/testing/http';
-import { pageToken } from '$lib/types/brand';
+import { fieldPointer, pageToken } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
 import type { DenQuery } from './den-read';
 import { ApiProblem, type ZurfurApiError } from './errors';
@@ -241,6 +241,94 @@ describe('ZurfurApi.createAccount (live)', () => {
 		const failure = await runLive(fetch, failureOf(createAccount('', 'xn--bad')));
 		expect(failure._tag).toBe('ApiProblem');
 		if (failure._tag === 'ApiProblem') expect(failure.problem.code).toBe('invalid_request');
+	});
+});
+
+/** A refused-fields problem as the backend words it, carrying `errors` as given (well-typed or not). */
+function refusedFields(errors: unknown): object {
+	return {
+		type: 'urn:zurfur:error:invalid-request',
+		code: 'invalid_request',
+		title: 'Invalid request',
+		detail: 'Some fields need changing; each one says why.',
+		status: 422,
+		errors
+	};
+}
+
+/** Run createAccount against a backend that answers `body` as a 422 problem. */
+function createAccountRefusedWith(body: object) {
+	const { fetch } = fetchStub(() => problemResponseWith(422, body));
+	return runLive(fetch, failureOf(createAccount('New Studio', 'new.zurfur.app')));
+}
+
+describe('ZurfurApi problems: field errors (live)', () => {
+	it('a problem carries its field errors', async () => {
+		const body = refusedFields([
+			{ pointer: '#/title', code: 'name_empty', detail: "This can't be blank." }
+		]);
+
+		const failure = await createAccountRefusedWith(body);
+
+		const expected = refusedFields([
+			{ pointer: fieldPointer('#/title'), code: 'name_empty', detail: "This can't be blank." }
+		]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+
+	it('a problem without errors has none', async () => {
+		const { fetch } = fetchStub(() => problemResponse(409, 'handle_taken'));
+		const failure = await runLive(
+			fetch,
+			failureOf(createAccount('New Studio', 'taken.zurfur.app'))
+		);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.errors).toEqual([]);
+	});
+
+	it.each([
+		['a string', 'oops'],
+		['a number item', [7]],
+		['an item with a mistyped member', [{ pointer: 7, code: 'name_empty', detail: 'x' }]],
+		['an object', { pointer: '#/title' }]
+	])('a mistyped errors member (%s) keeps the problem code and detail', async (_, mistyped) => {
+		const failure = await createAccountRefusedWith(refusedFields(mistyped));
+
+		const expected = refusedFields([]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
+	});
+
+	it('a body malformed elsewhere is still a ContractViolation', async () => {
+		const body = { ...refusedFields([]), status: 'x' };
+
+		const failure = await createAccountRefusedWith(body);
+
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/malformed problem body/);
+	});
+
+	it('a body malformed elsewhere and in errors is still a ContractViolation', async () => {
+		const body = { ...refusedFields('oops'), status: 'x' };
+
+		const failure = await createAccountRefusedWith(body);
+
+		expect(failure._tag).toBe('ContractViolation');
+	});
+
+	it("an item whose pointer doesn't parse keeps the item, without a pointer", async () => {
+		const body = refusedFields([
+			{ pointer: '/title', code: 'name_empty', detail: "This can't be blank." }
+		]);
+
+		const failure = await createAccountRefusedWith(body);
+
+		const expected = refusedFields([
+			{ pointer: undefined, code: 'name_empty', detail: "This can't be blank." }
+		]);
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem).toEqual(expected);
 	});
 });
 

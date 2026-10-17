@@ -23,7 +23,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/problem.proto.
  */
 export const file_zurfur_api_v1_problem: GenFile = /*@__PURE__*/
-  fileDesc("Cht6dXJmdXIvYXBpL3YxL3Byb2JsZW0ucHJvdG8SDXp1cmZ1ci5hcGkudjEiVAoHUHJvYmxlbRIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDQoFdGl0bGUYAyABKAkSDgoGZGV0YWlsGAQgASgJEg4KBnN0YXR1cxgFIAEoBWIGcHJvdG8z");
+  fileDesc("Cht6dXJmdXIvYXBpL3YxL3Byb2JsZW0ucHJvdG8SDXp1cmZ1ci5hcGkudjEifwoHUHJvYmxlbRIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDQoFdGl0bGUYAyABKAkSDgoGZGV0YWlsGAQgASgJEg4KBnN0YXR1cxgFIAEoBRIpCgZlcnJvcnMYBiADKAsyGS56dXJmdXIuYXBpLnYxLkZpZWxkRXJyb3IiOwoKRmllbGRFcnJvchIPCgdwb2ludGVyGAEgASgJEgwKBGNvZGUYAiABKAkSDgoGZGV0YWlsGAMgASgJYgZwcm90bzM");
 
 /**
  * One RFC 9457 problem-details document.
@@ -68,6 +68,14 @@ export type Problem = Message<"zurfur.api.v1.Problem"> & {
    * @generated from field: int32 status = 5;
    */
   status: number;
+
+  /**
+   * The request fields that were refused, one item per field. Present only on a
+   * problem that refuses fields (a `422 invalid_request`), omitted when empty.
+   *
+   * @generated from field: repeated zurfur.api.v1.FieldError errors = 6;
+   */
+  errors: FieldError[];
 };
 
 /**
@@ -76,4 +84,41 @@ export type Problem = Message<"zurfur.api.v1.Problem"> & {
  */
 export const ProblemSchema: GenMessage<Problem> = /*@__PURE__*/
   messageDesc(file_zurfur_api_v1_problem, 0);
+
+/**
+ * One request field the server refused, as RFC 9457 §3's example problem type does.
+ *
+ * @generated from message zurfur.api.v1.FieldError
+ */
+export type FieldError = Message<"zurfur.api.v1.FieldError"> & {
+  /**
+   * Where the field sits in the request body: a JSON Pointer in its URI-fragment form,
+   * built from the field's JSON name (its lowerCamelCase ProtoJSON name), such as
+   * `#/title` or `#/linkedChannel`. Always set.
+   *
+   * @generated from field: string pointer = 1;
+   */
+  pointer: string;
+
+  /**
+   * The machine token for why, such as `name_empty`; clients branch on it. Always set.
+   *
+   * @generated from field: string code = 2;
+   */
+  code: string;
+
+  /**
+   * Plain words a form shows under the field; fixed per code, never the value sent. Always set.
+   *
+   * @generated from field: string detail = 3;
+   */
+  detail: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.FieldError.
+ * Use `create(FieldErrorSchema)` to create a new message.
+ */
+export const FieldErrorSchema: GenMessage<FieldError> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_problem, 1);
 

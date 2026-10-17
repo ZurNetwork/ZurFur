@@ -67,7 +67,8 @@ describe('/login page', () => {
 			code: 'invalid_request',
 			title: 'Invalid request',
 			detail: 'the handle could not be used to start sign-in',
-			status: 422
+			status: 422,
+			errors: []
 		};
 		render(Login, { data: loginData(loginForm({ message: problem })) });
 

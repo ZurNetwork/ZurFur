@@ -149,3 +149,18 @@ export function pageToken(raw: string): PageToken | undefined {
 	if (raw.length === 0 || raw.length > PAGE_TOKEN_MAX_LEN) return undefined;
 	return PAGE_TOKEN_PATTERN.test(raw) ? (raw as PageToken) : undefined;
 }
+
+/** Where a refused field sits in a request body: a JSON Pointer in its URI-fragment form, such as `#/title`. */
+export type FieldPointer = Brand<string, 'FieldPointer'>;
+
+/** `#/` then one or more `/`-separated member names, each one or more ASCII letters or digits. */
+const FIELD_POINTER_PATTERN = /^#(?:\/[A-Za-z0-9]+)+$/;
+
+/**
+ * Validated mint from UNTRUSTED input (a problem's field error off the wire):
+ * `raw` as a {@link FieldPointer} when it follows the pointer rule above,
+ * else `undefined`. Never throws.
+ */
+export function fieldPointer(raw: string): FieldPointer | undefined {
+	return FIELD_POINTER_PATTERN.test(raw) ? (raw as FieldPointer) : undefined;
+}

@@ -1,12 +1,17 @@
 //! The RFC 9457 problem-document type served as `application/problem+json` for
 //! every JSON API error; success responses stay bare resources with the status
 //! line as outcome. Construct via the named registry below, never field-by-field.
+//! A `422` that refuses request fields names them in `errors`, built only by
+//! [`Problem::invalid_fields`].
 
 use axum::{
     Json,
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
+
+mod fields;
+pub use fields::{FieldCode, FieldPointer, FieldRefusal};
 
 /// The generated RFC 9457 problem type. Construct only via the
 /// named registry methods below — never field by field — so `type`/`code`/
@@ -35,6 +40,7 @@ impl Problem {
             title: title.to_owned(),
             detail,
             status: i32::from(status),
+            errors: Vec::new(),
         }
     }
 
