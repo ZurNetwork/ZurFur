@@ -12,21 +12,29 @@
 # Environment:
 #   ZURFUR_API_UPSTREAM  the API's internal origin (default http://127.0.0.1:8081);
 #                        plain http only on loopback, otherwise https
+#   ZURFUR_PUBLIC_URL    the browser-visible origin (default http://127.0.0.1:8080),
+#                        sent as every call's Origin header; a bare origin only:
+#                        https, or http on 127.0.0.1 or [::1], with an optional port
 #   ZURFUR_FILL_PSQL     the psql command the tab read is piped into (default
 #                        `docker compose exec -T db psql -U admin -d zurfur -tA`)
 #
 # The cookie stays in an unexported shell variable. It reaches curl only on
 # stdin, as a `--config -` line the printf builtin writes into the pipe: never
 # in an argument, the environment, a file or a message. curl runs with
-# --disable (no ~/.curlrc), never verbose, and without an Origin header. xtrace
-# and allexport are turned off first, whatever the caller's SHELLOPTS turned on.
+# --disable (no ~/.curlrc), never verbose, and with the public origin as its
+# Origin header, an argument checked to be a bare origin before the cookie is
+# read. xtrace and allexport are turned off first, whatever the caller's
+# SHELLOPTS turned on.
 set +x +a
 set -euo pipefail
 
 readonly default_api="http://127.0.0.1:8081"
+readonly default_origin="http://127.0.0.1:8080"
 readonly default_psql="docker compose exec -T db psql -U admin -d zurfur -tA"
 readonly uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 readonly loopback_http_pattern='^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?$'
+readonly https_origin_pattern='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
+readonly loopback_origin_pattern='^http://(127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?$'
 readonly cookie_value_pattern='^[A-Za-z0-9._~+/=%-]{1,512}$'
 readonly plain_path_pattern='^[A-Za-z0-9._/-]+$'
 
@@ -53,6 +61,11 @@ api="${ZURFUR_API_UPSTREAM:-$default_api}"
 api="${api%/}"
 if [[ $api != https://* && ! $api =~ $loopback_http_pattern ]]; then
     die "ZURFUR_API_UPSTREAM must be https, or http on loopback: $api"
+fi
+origin="${ZURFUR_PUBLIC_URL:-$default_origin}"
+origin="${origin%/}"
+if [[ ! $origin =~ $https_origin_pattern && ! $origin =~ $loopback_origin_pattern ]]; then
+    die "ZURFUR_PUBLIC_URL must be a bare origin, https or http on 127.0.0.1 or [::1]: $origin"
 fi
 read -r -a psql_command <<<"${ZURFUR_FILL_PSQL:-$default_psql}"
 
@@ -85,7 +98,7 @@ request() {
     shift 3
     local reply
     if ! reply="$("$writer" | curl --disable --silent --show-error --noproxy '*' \
-        --connect-timeout 5 --max-time 60 --config - \
+        --connect-timeout 5 --max-time 60 --config - --header "Origin: $origin" \
         --request "$method" --write-out '\n%{http_code}' "$@" --url "$api$path")"; then
         die "$method $path: the API at $api didn't answer"
     fi

@@ -101,14 +101,15 @@ passed_section() {
 # fill <case dir> <stdin text> [env assignments...]: runs the script with the
 # shims on PATH, the cookie on stdin, its own TMPDIR and a caller-exported
 # `session_cookie` that must not carry the real one; records the exit status in
-# <case>/exit.
+# <case>/exit. ZURFUR_PUBLIC_URL is unset unless a case sets it, so the one an
+# outer `just` loads from .env never leaks in.
 fill() {
     case_dir="$1"
     input="$2"
     shift 2
     mkdir -p "$case_dir/tmp"
     status=0
-    printf '%s\n' "$input" | env PATH="$work/bin:$PATH" SHIM_DIR="$case_dir" TMPDIR="$case_dir/tmp" \
+    printf '%s\n' "$input" | env -u ZURFUR_PUBLIC_URL PATH="$work/bin:$PATH" SHIM_DIR="$case_dir" TMPDIR="$case_dir/tmp" \
         ZURFUR_API_UPSTREAM=http://127.0.0.1:8081 ZURFUR_FILL_PSQL="$work/bin/fake-psql" \
         session_cookie=caller-exported "$@" \
         bash "$under_test" >"$case_dir/out" 2>"$case_dir/err" || status=$?
@@ -117,6 +118,21 @@ fill() {
 
 # holds <file...>: whether any of the files contains the cookie.
 holds() { grep -qF -- "$cookie" "$@" 2>/dev/null; }
+
+# origin_once <argv file> <origin>: whether the argv names an Origin exactly once,
+# as the one argument `Origin: <origin>` right after a --header.
+origin_once() {
+    awk -v want="Origin: $2" '
+        tolower($0) ~ /^[[:space:]]*origin[[:space:]]*:/ {
+            n++
+            if ($0 != want || prev != "--header") bad = 1
+        }
+        { prev = $0 }
+        END { exit (n == 1 && !bad) ? 0 : 1 }' "$1"
+}
+
+# no_stdin_origin <stdin file>: whether the curl config carries no Origin.
+no_stdin_origin() { ! grep -qi 'origin' "$1"; }
 
 # --- A full fill: ten calls, the cookie only ever on curl's stdin.
 run="$work/full"
@@ -149,10 +165,18 @@ while [ "$i" -le "$calls" ]; do
     grep -qx -- '--config' "$run/$i.argv" || fail "call $i: no --config"
     awk 'prev == "--config" && $0 != "-" { bad = 1 } { prev = $0 } END { exit bad ? 0 : 1 }' "$run/$i.argv" &&
         fail "call $i: --config reads something other than stdin"
-    grep -qi '^origin' "$run/$i.stdin" "$run/$i.argv" && fail "call $i: sends an Origin"
     i=$((i + 1))
 done
 passed_section "the cookie is on every call's stdin and in no argv or environment"
+section
+i=1
+while [ "$i" -le "$calls" ]; do
+    origin_once "$run/$i.argv" "http://127.0.0.1:8080" ||
+        fail "call $i: argv doesn't send Origin: http://127.0.0.1:8080 once, as a --header argument: $(grep -i origin "$run/$i.argv")"
+    no_stdin_origin "$run/$i.stdin" || fail "call $i: the config on stdin carries an Origin"
+    i=$((i + 1))
+done
+passed_section "with ZURFUR_PUBLIC_URL unset, every call sends Origin: http://127.0.0.1:8080 as an argument, never on stdin"
 section
 grep -qF 'cookie = "zurfur.sid='"$cookie"'"' "$run/1.stdin" || fail "the config line is not cookie = \"zurfur.sid=...\""
 grep -qF 'form = "file=@' "$run/3.stdin" || fail "the upload's form is not in its config"
@@ -173,7 +197,7 @@ passed_section "psql never sees the cookie; the output never holds it"
 traced="$work/traced"
 mkdir -p "$traced/tmp"
 status=0
-printf '%s\n' "$cookie" | env PATH="$work/bin:$PATH" SHIM_DIR="$traced" TMPDIR="$traced/tmp" \
+printf '%s\n' "$cookie" | env -u ZURFUR_PUBLIC_URL PATH="$work/bin:$PATH" SHIM_DIR="$traced" TMPDIR="$traced/tmp" \
     ZURFUR_API_UPSTREAM=http://127.0.0.1:8081 ZURFUR_FILL_PSQL="$work/bin/fake-psql" \
     bash -x "$under_test" >"$traced/out" 2>"$traced/err" || status=$?
 [ "$status" = 0 ] || fail "the traced fill exited $status"
@@ -222,6 +246,43 @@ fill "$remote" "$cookie" ZURFUR_API_UPSTREAM=http://example.com
 [ "$(cat "$remote/exit")" != 0 ] || fail "plain http off loopback exits 0"
 [ -f "$remote/calls" ] && fail "plain http off loopback still called curl"
 passed_section "plain http off loopback is refused"
+
+# --- A set ZURFUR_PUBLIC_URL is every call's Origin, one trailing / stripped.
+for case in "set-loopback http://127.0.0.1:8180/ http://127.0.0.1:8180" \
+    "set-https https://zurfur.example:8443 https://zurfur.example:8443"; do
+    set -- $case
+    section
+    fill "$work/$1" "$cookie" ZURFUR_PUBLIC_URL="$2"
+    [ "$(cat "$work/$1/exit")" = 0 ] || fail "ZURFUR_PUBLIC_URL=$2: the fill exited $(cat "$work/$1/exit"): $(cat "$work/$1/err")"
+    n=$(cat "$work/$1/calls" 2>/dev/null || echo 0)
+    [ "$n" = 10 ] || fail "ZURFUR_PUBLIC_URL=$2: expected 10 calls, got $n"
+    i=1
+    while [ "$i" -le "$n" ]; do
+        origin_once "$work/$1/$i.argv" "$3" ||
+            fail "ZURFUR_PUBLIC_URL=$2: call $i doesn't send Origin: $3 once: $(grep -i origin "$work/$1/$i.argv")"
+        no_stdin_origin "$work/$1/$i.stdin" || fail "ZURFUR_PUBLIC_URL=$2: call $i's config carries an Origin"
+        i=$((i + 1))
+    done
+    passed_section "ZURFUR_PUBLIC_URL=$2 is sent as Origin: $3 on every call"
+done
+
+# --- A ZURFUR_PUBLIC_URL that isn't a bare origin is refused before the cookie is read.
+newline_origin="http://127.0.0.1:8080
+X-Injected: 1"
+cr_origin="$(printf 'http://127.0.0.1:8080\r')"
+for bad in "http://127.0.0.1:8080/api" "http://127.0.0.1:8080?next=1" "http://example.com" \
+    "http://localhost:8080" "https://zurfur.example/path" "$newline_origin" "$cr_origin"; do
+    section
+    bad_case="$work/bad-origin"
+    rm -rf "$bad_case"
+    fill "$bad_case" "$cookie" ZURFUR_PUBLIC_URL="$bad"
+    shown="$(printf '%s' "$bad" | tr '\r\n' '^~')"
+    [ "$(cat "$bad_case/exit")" != 0 ] || fail "ZURFUR_PUBLIC_URL=$shown exits 0"
+    [ -f "$bad_case/calls" ] && fail "ZURFUR_PUBLIC_URL=$shown still called curl"
+    grep -q 'ZURFUR_PUBLIC_URL must be a bare origin' "$bad_case/err" || fail "ZURFUR_PUBLIC_URL=$shown isn't refused by name: $(cat "$bad_case/err")"
+    grep -q 'Sign out' "$bad_case/err" && fail "ZURFUR_PUBLIC_URL=$shown was refused after the cookie was read"
+    passed_section "ZURFUR_PUBLIC_URL=$shown is refused before the cookie is read"
+done
 
 # --- An inherited allexport never exports the cookie.
 section
