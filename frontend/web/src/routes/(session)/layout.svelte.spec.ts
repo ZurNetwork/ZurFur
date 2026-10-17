@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet } from 'svelte';
 import type { DenPageData } from '$lib/api/den';
+import type { TestStack } from '$lib/api/bug-report';
 import { denHref, did, handleFromTrusted, type DenHref, type Did } from '$lib/types/brand';
 
 /** The callbacks the layout registered with `afterNavigate`, to fire as a navigation would. */
@@ -94,8 +95,8 @@ const session = {
 
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
-function renderLayout() {
-	return render(Layout, { data: { session, buildId: 'unknown' }, children });
+function renderLayout(testStack: TestStack = 'none') {
+	return render(Layout, { data: { session, buildId: 'unknown', testStack }, children });
 }
 
 afterEach(() => {
@@ -204,6 +205,84 @@ describe('(session) layout: the frame around every signed-in page', () => {
 			.toBeInTheDocument();
 	});
 
+	it('opens "Report a bug" from the drawer: the drawer shuts first, and focus goes back to ☰', async () => {
+		await page.viewport(320, 640);
+		renderLayout();
+		const menu = page.getByTestId('open-drawer');
+		await menu.click();
+		const drawer = page.getByRole('dialog', { name: 'My Den' });
+		const drawerLink = drawer.getByRole('link', { name: 'Report a bug' });
+		await expect.element(drawerLink).toBeVisible();
+
+		await drawerLink.click();
+
+		const dialog = page.getByRole('dialog', { name: 'Report a bug' });
+		await expect.element(dialog).toBeVisible();
+		await expect.element(page.getByRole('textbox', { name: 'What happened?' })).toHaveFocus();
+		await expect.element(page.getByTestId('sidebar-drawer')).not.toBeInTheDocument();
+		expect(document.querySelectorAll('dialog[open]')).toHaveLength(1);
+
+		await userEvent.keyboard('{Escape}');
+
+		await expect.element(dialog).not.toBeInTheDocument();
+		await expect.element(menu).toHaveFocus();
+	});
+
+	it('gives focus back to ☰ even when clicks focus nothing (as in Safari)', async () => {
+		await page.viewport(320, 640);
+		renderLayout();
+		const menu = page.getByTestId('open-drawer');
+		const active = document.activeElement;
+		if (active instanceof HTMLElement) active.blur();
+		(menu.element() as HTMLElement).click();
+		const drawerLink = page.getByRole('dialog', { name: 'My Den' }).getByRole('link', {
+			name: 'Report a bug'
+		});
+		await expect.element(drawerLink).toBeVisible();
+		(drawerLink.element() as HTMLElement).click();
+		await expect.element(page.getByRole('textbox', { name: 'What happened?' })).toHaveFocus();
+
+		await userEvent.keyboard('{Escape}');
+
+		await expect
+			.element(page.getByRole('dialog', { name: 'Report a bug' }))
+			.not.toBeInTheDocument();
+		await expect.element(menu).toHaveFocus();
+	});
+
+	it('puts "Report a bug" in the drawer’s footer, under Accounts and above Sign out', async () => {
+		await page.viewport(320, 640);
+		renderLayout();
+		await page.getByTestId('open-drawer').click();
+
+		const footer = page.getByTestId('sidebar-drawer').element();
+		const labels = [...footer.querySelectorAll('a, button')]
+			.map((control) => control.textContent.trim())
+			.filter((text) => ['Accounts', 'Report a bug', 'Sign out'].includes(text));
+		expect(labels).toEqual(['Accounts', 'Report a bug', 'Sign out']);
+	});
+
+	it('hands the form the stack it runs on: mock mode says it keeps no reports', async () => {
+		await page.viewport(1280, 800);
+		renderLayout('mock');
+
+		await page.getByTestId('report-bug-link').click();
+
+		await expect
+			.element(page.getByRole('dialog').getByTestId('report-test-stack'))
+			.toHaveTextContent("Mock mode doesn't keep reports.");
+	});
+
+	it('says nothing about the stack on a real one', async () => {
+		await page.viewport(1280, 800);
+		renderLayout('none');
+
+		await page.getByTestId('report-bug-link').click();
+
+		await expect.element(page.getByRole('textbox', { name: 'What happened?' })).toBeVisible();
+		await expect.element(page.getByTestId('report-test-stack')).not.toBeInTheDocument();
+	});
+
 	it('keeps the report’s draft for the visitor, and starts it over for another', async () => {
 		await page.viewport(1280, 800);
 		const bob = {
@@ -216,12 +295,12 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await page.getByTestId('report-bug-link').click();
 		await textBox.fill("Alice's draft");
 		await userEvent.keyboard('{Escape}');
-		await rerender({ data: { session, buildId: 'unknown' }, children });
+		await rerender({ data: { session, buildId: 'unknown', testStack: 'none' }, children });
 		await page.getByTestId('report-bug-link').click();
 		await expect.element(textBox).toHaveValue("Alice's draft");
 		await userEvent.keyboard('{Escape}');
 
-		await rerender({ data: { session: bob, buildId: 'unknown' }, children });
+		await rerender({ data: { session: bob, buildId: 'unknown', testStack: 'none' }, children });
 		await page.getByTestId('report-bug-link').click();
 
 		await expect.element(textBox).toHaveValue('');
@@ -313,7 +392,7 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
 		for (const callback of nav.callbacks) callback();
-		await rerender({ data: { session: bob, buildId: 'unknown' }, children });
+		await rerender({ data: { session: bob, buildId: 'unknown', testStack: 'none' }, children });
 		for (const callback of nav.callbacks) callback();
 
 		expect(trees.built.map((built) => built.owner)).toEqual([session.did]);

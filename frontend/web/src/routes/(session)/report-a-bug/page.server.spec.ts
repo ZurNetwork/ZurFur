@@ -572,6 +572,13 @@ describe('the report page load', () => {
 		expect(data.offer.pageType).toBeUndefined();
 	});
 
+	it('asks "Which page?" when the Referer is the report page itself, as after a post without script', async () => {
+		const data = await loadWith({ referer: `${FIRST_PARTY}/report-a-bug` });
+
+		expect(data.offer.page).toStrictEqual({ kind: 'ask' });
+		expect(data.offer.pageType).toBeUndefined();
+	});
+
 	it('asks "Which page?" with no Referer at all', async () => {
 		const data = await loadWith({});
 

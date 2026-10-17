@@ -4,22 +4,26 @@
 	import type { Session } from '$lib/api/session';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import type { FrameSection } from './frame-section';
+	import ReportBugButton from './ReportBugButton.svelte';
 	import SignOut from './SignOut.svelte';
 
 	/**
 	 * The frame's left column: its navigation content, plus — inside the
-	 * phone drawer only — the section links, who is signed in and Sign out,
-	 * which the top bar shows on a desktop.
+	 * phone drawer only — the section links, "Report a bug", who is signed in
+	 * and Sign out, which the top bar shows on a desktop. `closeDrawer` closes
+	 * the drawer before "Report a bug" opens anything, answering ☰.
 	 */
 	let {
 		session,
 		section,
 		inDrawer,
+		closeDrawer,
 		children
 	}: {
 		session: Session;
 		section: FrameSection;
 		inDrawer: boolean;
+		closeDrawer?: (() => Promise<HTMLElement | undefined>) | undefined;
 		children: Snippet;
 	} = $props();
 </script>
@@ -35,6 +39,9 @@
 					data-testid="drawer-accounts-link">Accounts</a
 				>
 			</nav>
+			<div>
+				<ReportBugButton current={section === 'report'} closeFirst={closeDrawer} />
+			</div>
 			<div class="sidebar__session">
 				<Avatar {session} />
 				<SignOut />

@@ -71,11 +71,27 @@ function listingData(
 	deleted?: DeleteOutcome,
 	form: ReturnType<typeof createForm> = createForm()
 ) {
-	return { session: alice, buildId: 'unknown', accounts, deleted, form, trail };
+	return {
+		session: alice,
+		buildId: 'unknown',
+		testStack: 'none' as const,
+		accounts,
+		deleted,
+		form,
+		trail
+	};
 }
 
 function problemData(problem: Problem, form: ReturnType<typeof createForm> = createForm()) {
-	return { session: alice, buildId: 'unknown', problem, deleted: undefined, form, trail };
+	return {
+		session: alice,
+		buildId: 'unknown',
+		testStack: 'none' as const,
+		problem,
+		deleted: undefined,
+		form,
+		trail
+	};
 }
 
 describe('/accounts page', () => {

@@ -27,6 +27,7 @@ const data = {
 		avatarUrl: undefined
 	},
 	buildId: 'unknown',
+	testStack: 'none' as const,
 	accounts: [],
 	deleted: undefined,
 	form: formStub({ name: '', handle: '' }),

@@ -1,10 +1,12 @@
 /**
  * Filing a bug report, below the seam: the outcome program over the
- * {@link ZurfurApi} port, the web's own build id, and the one way an address
- * becomes the report's page (judged against the configured first party,
- * never the request's own address).
+ * {@link ZurfurApi} port, the web's own build id, whether the web runs on
+ * the dev profile's test stack, and the one way an address becomes the
+ * report's page (judged against the configured first party, never the
+ * request's own address).
  */
 
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { Effect } from 'effect';
 import { ARCHIVED_SUFFIX } from '$lib/api/bug-report';
@@ -36,6 +38,14 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
 export function webBuildId(): string {
 	const configured = parseVersion(runtimeEnv().ZURFUR_BUILD_ID ?? '');
 	return configured.kind === 'accepted' ? configured.value : UNKNOWN_BUILD_ID;
+}
+
+/** The value of ZURFUR_WEB_STACK that `just dev-profile-web` sets. */
+export const DEV_PROFILE_STACK = 'dev-profile';
+
+/** Whether the web runs on the dev profile's test stack: ZURFUR_WEB_STACK=dev-profile, in a dev build only, read at each call. */
+export function onDevProfileStack(): boolean {
+	return dev && runtimeEnv().ZURFUR_WEB_STACK === DEV_PROFILE_STACK;
 }
 
 /** An address on this site, reduced to what a report keeps. */
@@ -76,8 +86,9 @@ export interface RefererPage {
 }
 
 /**
- * The page a `Referer` names, when its origin is exactly `firstParty`;
- * otherwise `undefined`, and the report page asks "Which page?".
+ * The page a `Referer` names, when its origin is exactly `firstParty` and it
+ * isn't the report page itself (a post without script comes back from
+ * there); otherwise `undefined`, and the report page asks "Which page?".
  */
 export function pageOfReferer(
 	referer: string | undefined,
@@ -86,8 +97,10 @@ export function pageOfReferer(
 	if (referer === undefined) return undefined;
 	const site = sitePathOf(referer, firstParty, false);
 	if (site === undefined) return undefined;
+	const pageType = pageTypeOf(site.pathname);
+	if (pageType === 'Report a bug') return undefined;
 	const page = bugPageOf(site);
-	return page === undefined ? undefined : { page, pageType: pageTypeOf(site.pathname) };
+	return page === undefined ? undefined : { page, pageType };
 }
 
 /** How a posted page is judged. */

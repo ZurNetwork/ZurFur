@@ -83,4 +83,4 @@
 	{/snippet}
 	{@render children()}
 </AppShell>
-<ReportBugDialog session={data.session} buildId={data.buildId} />
+<ReportBugDialog session={data.session} buildId={data.buildId} testStack={data.testStack} />

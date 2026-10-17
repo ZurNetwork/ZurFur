@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/routes",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The SvelteKit route tree",
   "is": "The route tree: a root layout that resolves whoami once per render and loads the tokens, base styles and fonts; a `(public)` group (landing, `/login`) under today's plain header; and an auth-gated `(session)` group inside the Explorer frame.",
   "type": "code",
@@ -45,7 +45,7 @@
     },
     {
       "name": "error.svelte.spec.ts",
-      "role": "proves the public error page never shows the error's own text ($app/state mocked)",
+      "role": "proves the public error page never shows the error's own text, nor a way to report the problem ($app/state mocked)",
       "node": false
     },
     {

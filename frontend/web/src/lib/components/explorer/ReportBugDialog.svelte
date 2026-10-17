@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TestStack } from '$lib/api/bug-report';
 	import type { Session } from '$lib/api/session';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
@@ -10,9 +11,11 @@
 	 * shared form over the frame's draft and the snapshot read at opening,
 	 * "Send report" and "Cancel" in the footer. Focus starts on "What
 	 * happened?" (or on the sent message) and goes back to the control that
-	 * opened it. Outside the frame it renders nothing.
+	 * opened it. `testStack` says whether the stack keeps reports. Outside the
+	 * frame it renders nothing.
 	 */
-	let { session, buildId }: { session: Session; buildId: string } = $props();
+	let { session, buildId, testStack }: { session: Session; buildId: string; testStack: TestStack } =
+		$props();
 
 	const report = bugReportFromContext();
 	const ownId = $props.id();
@@ -45,6 +48,7 @@
 					draft={report.draft}
 					items={snapshotItems(report.snapshot, buildId)}
 					{session}
+					{testStack}
 					{descriptionId}
 					{sentId}
 					bind:formElement

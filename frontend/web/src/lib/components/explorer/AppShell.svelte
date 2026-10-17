@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import type { Session } from '$lib/api/session';
 	import type { Trail } from '$lib/api/trail';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
@@ -11,7 +11,8 @@
 	 * The signed-in frame: a "Skip to content" link, the top bar, and the
 	 * sidebar beside the main pane; on a phone the sidebar is a drawer.
 	 * `navigation` renders its content, once inline and once in the drawer
-	 * (only while it is open).
+	 * (only while it is open). "Report a bug" in the drawer closes it before
+	 * the dialog opens, so two modals never stack, and focus goes back to ☰.
 	 */
 	let {
 		session,
@@ -30,6 +31,16 @@
 	} = $props();
 
 	const drawerId = 'explorer-drawer';
+
+	/** ☰: the one control of the drawer, bound from the top bar. */
+	let menuButton: HTMLButtonElement | undefined = $state();
+
+	/** Close the drawer, wait until it is shut, and answer ☰. */
+	async function closeDrawer(): Promise<HTMLElement | undefined> {
+		drawerOpen = false;
+		await tick();
+		return menuButton;
+	}
 </script>
 
 <a class="skip-link" href="#main" data-testid="skip-link">Skip to content</a>
@@ -41,6 +52,7 @@
 		{drawerOpen}
 		{drawerId}
 		onOpenDrawer={() => (drawerOpen = true)}
+		bind:menuButton
 	/>
 	<div class="app-shell__body">
 		<div class="app-shell__sidebar desktop-only">
@@ -54,7 +66,7 @@
 	</div>
 </div>
 <Dialog bind:open={drawerOpen} label="My Den" variant="drawer" id={drawerId}>
-	<Sidebar {session} {section} inDrawer={true}>
+	<Sidebar {session} {section} inDrawer={true} {closeDrawer}>
 		{@render navigation({ inDrawer: true })}
 	</Sidebar>
 </Dialog>

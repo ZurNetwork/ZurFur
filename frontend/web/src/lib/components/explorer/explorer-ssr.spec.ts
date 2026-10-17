@@ -127,6 +127,7 @@ describe('the report form before the page’s script runs', () => {
 				session: alice,
 				descriptionId: 'report-a-bug-description',
 				sentId: 'sent',
+				testStack: 'none',
 				submitButton: true
 			}
 		}).body;
@@ -141,5 +142,38 @@ describe('the report form before the page’s script runs', () => {
 		expect(inside).toMatch(/<input[^>]*type="hidden"[^>]*name="page"[^>]*value="\/den"/);
 		expect(inside).toMatch(/<button[^>]*type="submit"[^>]*>[\s\S]*?Send report/);
 		expect(html).toMatch(/aria-live="polite"/);
+	});
+	it('says, in its fixed lines, that the dev profile’s test stack forgets reports', () => {
+		const html = render(ReportBugForm, {
+			props: {
+				draft: new BugReportDraft(),
+				items: [],
+				session: alice,
+				descriptionId: 'report-a-bug-description',
+				sentId: 'sent',
+				testStack: 'devProfile',
+				submitButton: true
+			}
+		}).body;
+
+		const fixed = /<div class="report-form__fixed[^"]*">([\s\S]*?)<\/div>/.exec(html);
+		expect(fixed?.[1]).toContain('This test stack forgets reports when it stops.');
+	});
+
+	it('says nothing about the stack on a real one', () => {
+		const html = render(ReportBugForm, {
+			props: {
+				draft: new BugReportDraft(),
+				items: [],
+				session: alice,
+				descriptionId: 'report-a-bug-description',
+				sentId: 'sent',
+				testStack: 'none',
+				submitButton: true
+			}
+		}).body;
+
+		expect(html).not.toContain('report-test-stack');
+		expect(html).not.toContain('test stack');
 	});
 });

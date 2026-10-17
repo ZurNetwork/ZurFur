@@ -46,7 +46,7 @@
     },
     {
       "name": "bug-report.ts",
-      "role": "filing a bug report: fileBugReportOutcome (201 sent with the reference, 429 the limit, 401 signed out, anything else — 422, 403, 5xx, unreachable, out of time — could not send); webBuildId (ZURFUR_BUILD_ID at each call, \"unknown\" when unset or unfit); pageOfReferer and judgePostedPage, the one way an address becomes the report's page — exactly on the configured first party (or a path), query and fragment dropped, the archived words kept",
+      "role": "filing a bug report: fileBugReportOutcome (201 sent with the reference, 429 the limit, 401 signed out, anything else — 422, 403, 5xx, unreachable, out of time — could not send); webBuildId (ZURFUR_BUILD_ID at each call, \"unknown\" when unset or unfit); onDevProfileStack (ZURFUR_WEB_STACK=dev-profile, which only `just dev-profile-web` sets, in a dev build only, at each call); pageOfReferer and judgePostedPage, the one way an address becomes the report's page — exactly on the configured first party (or a path), query and fragment dropped, the archived words kept; a Referer on the report page itself names no page",
       "node": false
     },
     {

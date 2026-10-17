@@ -2,15 +2,33 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { bugReportFromContext, REPORT_PAGE_DESCRIPTION_ID } from './bug-report.svelte';
+	import {
+		bugReportFromContext,
+		NO_EXTRAS,
+		REPORT_PAGE_DESCRIPTION_ID,
+		type BugReportExtras
+	} from './bug-report.svelte';
 
 	/**
 	 * "Report a bug": a link to the report page that, once the script runs
 	 * inside the frame, opens the dialog on a plain click instead (a modified
 	 * or middle click still follows the link). On the report page itself it
-	 * is marked current and focuses the page's text box.
+	 * is marked current and focuses the page's text box. `label` names it,
+	 * `extras` are the items its opener adds, and `closeFirst` closes the
+	 * modal it sits in (the drawer) before anything opens, answering the
+	 * control focus goes back to when the dialog closes.
 	 */
-	let { current }: { current: boolean } = $props();
+	let {
+		current,
+		label = 'Report a bug',
+		extras = NO_EXTRAS,
+		closeFirst
+	}: {
+		current: boolean;
+		label?: string;
+		extras?: BugReportExtras;
+		closeFirst?: (() => Promise<HTMLElement | undefined>) | undefined;
+	} = $props();
 
 	const report = bugReportFromContext();
 	let scripted = $state(false);
@@ -24,14 +42,32 @@
 		return event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
 	}
 
-	function click(event: MouseEvent & { currentTarget: HTMLAnchorElement }): void {
-		if (report === undefined || event.defaultPrevented || modified(event)) return;
-		event.preventDefault();
+	/** Open the dialog (or, on the report page, focus its text box), giving focus back to `returnTo`. */
+	function openFrom(returnTo: HTMLElement): void {
 		if (current) {
 			document.getElementById(REPORT_PAGE_DESCRIPTION_ID)?.focus();
 			return;
 		}
-		report.open(event.currentTarget);
+		report?.open(returnTo, extras);
+	}
+
+	/** Close the modal the link sits in, then open from the control it answers (else the link). */
+	async function openAfterClosing(
+		close: () => Promise<HTMLElement | undefined>,
+		clicked: HTMLElement
+	): Promise<void> {
+		const returnTo = await close();
+		openFrom(returnTo ?? clicked);
+	}
+
+	function click(event: MouseEvent & { currentTarget: HTMLAnchorElement }): void {
+		if (report === undefined || event.defaultPrevented || modified(event)) return;
+		event.preventDefault();
+		if (closeFirst === undefined) {
+			openFrom(event.currentTarget);
+			return;
+		}
+		void openAfterClosing(closeFirst, event.currentTarget);
 	}
 </script>
 
@@ -43,7 +79,7 @@
 	onclick={click}
 	data-testid="report-bug-link"
 	><Icon name="bug" />
-	<span>Report a bug</span></a
+	<span>{label}</span></a
 >
 
 <style>

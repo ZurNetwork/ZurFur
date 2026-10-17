@@ -14,6 +14,7 @@
 	 * The frame's top row. On a desktop: the brand, the path, the section
 	 * links, "Report a bug", who is signed in and Sign out. On a phone: the drawer's ☰ and
 	 * the back link to the parent, the rest moving into the drawer.
+	 * `menuButton` binds ☰, so the frame can give it focus back.
 	 */
 	let {
 		session,
@@ -21,7 +22,8 @@
 		section,
 		drawerOpen,
 		drawerId,
-		onOpenDrawer
+		onOpenDrawer,
+		menuButton = $bindable()
 	}: {
 		session: Session;
 		trail: Trail;
@@ -29,6 +31,7 @@
 		drawerOpen: boolean;
 		drawerId: string;
 		onOpenDrawer: () => void;
+		menuButton?: HTMLButtonElement | undefined;
 	} = $props();
 </script>
 
@@ -41,6 +44,7 @@
 			controls={drawerId}
 			onclick={onOpenDrawer}
 			testid="open-drawer"
+			bind:element={menuButton}
 		/>
 	</span>
 	<a class="top-bar__brand desktop-only" href={resolve('/')}>zurfur</a>

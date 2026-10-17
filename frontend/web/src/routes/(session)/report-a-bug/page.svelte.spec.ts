@@ -3,7 +3,7 @@ import '$lib/styles/base.css';
 import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import type { BugReportOffer } from '$lib/api/bug-report';
+import type { BugReportOffer, TestStack } from '$lib/api/bug-report';
 import { REPORT_PAGE_DESCRIPTION_ID } from '$lib/components/explorer/bug-report.svelte';
 import { devalued, kitCalls as kit, resetKitCalls } from '$lib/testing/kit-client';
 import { did, handleFromTrusted } from '$lib/types/brand';
@@ -36,10 +36,10 @@ const knownOffer: BugReportOffer = {
 
 const askOffer: BugReportOffer = { page: { kind: 'ask' }, pageType: undefined, browser: undefined };
 
-function renderPage(offer: BugReportOffer, form?: unknown): void {
+function renderPage(offer: BugReportOffer, form?: unknown, testStack: TestStack = 'none'): void {
 	render(ReportPage, {
 		props: {
-			data: { session, buildId: 'web-1.2.3', offer, trail: [] },
+			data: { session, buildId: 'web-1.2.3', testStack, offer, trail: [] },
 			form
 		}
 	} as never);
@@ -103,10 +103,30 @@ describe('/report-a-bug', () => {
 	});
 
 	it('shows the reference a post without script answered', async () => {
-		renderPage(knownOffer, { kind: 'sent', reference: 'BR-9' });
+		renderPage(knownOffer, { kind: 'sent', reference: '9f8e7d6c' });
 
 		await expect.element(page.getByText('Thanks. Your report is saved.')).toBeInTheDocument();
-		await expect.element(page.getByTestId('report-reference')).toHaveTextContent('BR-9');
+		await expect.element(page.getByTestId('report-reference')).toHaveTextContent('9f8e7d6c');
+		await expect
+			.element(page.getByTestId('report-reference-line'))
+			.toHaveTextContent(/^Reference: …9f8e7d6c$/);
+	});
+
+	it('says mock mode keeps no reports, still under the reference a post without script answered', async () => {
+		renderPage(knownOffer, { kind: 'sent', reference: '9f8e7d6c' }, 'mock');
+
+		await expect.element(page.getByText('Thanks. Your report is saved.')).toBeVisible();
+		await expect
+			.element(page.getByTestId('report-test-stack'))
+			.toHaveTextContent("Mock mode doesn't keep reports.");
+	});
+
+	it('says the dev profile’s test stack forgets reports, in the form’s fixed lines', async () => {
+		renderPage(knownOffer, undefined, 'devProfile');
+
+		await expect
+			.element(page.getByTestId('report-test-stack'))
+			.toHaveTextContent('This test stack forgets reports when it stops.');
 	});
 
 	it('posts in place with script, the shared field names, and shows the reference', async () => {

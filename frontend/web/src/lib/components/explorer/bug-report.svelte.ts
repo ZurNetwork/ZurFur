@@ -20,8 +20,10 @@ import {
 	type BugReportFieldName,
 	type BugReportItem,
 	type BugReportOffer,
-	type BugReportRefusalKind
+	type BugReportRefusalKind,
+	type TestStack
 } from '$lib/api/bug-report';
+import { isRenderableErrorStatus } from '$lib/api/problem';
 import type { BugReference, Did } from '$lib/types/brand';
 import { cutBrowser, pageTypeOf, type PageType } from '$lib/types/bug-report-rules';
 
@@ -32,7 +34,8 @@ export const REPORT_PAGE_DESCRIPTION_ID = 'report-a-bug-description';
 export const COUNT_SHOWN_FROM = 3600;
 
 /** The items a reporter ticks or unticks. */
-export type TickItem = 'page' | 'pageType' | 'webVersion' | 'browser' | 'window' | 'display';
+export type TickItem =
+	'page' | 'pageType' | 'errorStatus' | 'webVersion' | 'browser' | 'window' | 'display';
 
 /** Which items go with the report. */
 export type BugReportTicks = Readonly<Record<TickItem, boolean>>;
@@ -41,6 +44,7 @@ export type BugReportTicks = Readonly<Record<TickItem, boolean>>;
 export const FRESH_TICKS: BugReportTicks = {
 	page: true,
 	pageType: true,
+	errorStatus: true,
 	webVersion: true,
 	browser: true,
 	window: true,
@@ -66,7 +70,7 @@ export type SendOutcome =
 
 /** Extra items an opener adds to the report (the error view adds its status). */
 export interface BugReportExtras {
-	/** The error page's HTTP status. */
+	/** The error page's HTTP status, when the error view opened the form; else `undefined`. */
 	readonly errorStatus: number | undefined;
 }
 
@@ -104,11 +108,11 @@ export interface BugReportSnapshot {
 	readonly extras: BugReportExtras;
 }
 
-/** The snapshot of `source`. */
+/** The snapshot of `source`: opened from the error view, its page type is "Error page". */
 export function snapshotOf(source: SnapshotSource): BugReportSnapshot {
 	return {
 		page: source.showingArchived ? `${source.pathname}${ARCHIVED_SUFFIX}` : source.pathname,
-		pageType: pageTypeOf(source.pathname),
+		pageType: source.extras.errorStatus === undefined ? pageTypeOf(source.pathname) : 'Error page',
 		browser: cutBrowser(source.userAgent),
 		width: source.width,
 		height: source.height,
@@ -196,6 +200,23 @@ function pageTypeItem(value: PageType): SentItem {
 	};
 }
 
+/** The error view's status as an item: only a whole 400 to 599 is one, anything else is none. */
+function errorStatusItems(status: number | undefined): readonly SentItem[] {
+	if (status === undefined || !Number.isInteger(status) || !isRenderableErrorStatus(status)) {
+		return [];
+	}
+	const value = String(status);
+	return [
+		{
+			item: 'errorStatus',
+			label: 'Error',
+			value: `Status ${value} on this page`,
+			note: undefined,
+			fields: [{ name: BUG_REPORT_FIELDS.errorStatus, value }]
+		}
+	];
+}
+
 function versionItem(buildId: string): SentItem {
 	return {
 		item: 'webVersion',
@@ -222,6 +243,7 @@ export function snapshotItems(snapshot: BugReportSnapshot, buildId: string): rea
 	return [
 		pageItem(snapshot.page),
 		pageTypeItem(snapshot.pageType),
+		...errorStatusItems(snapshot.extras.errorStatus),
 		versionItem(buildId),
 		browserItem(snapshot.browser),
 		{
@@ -484,7 +506,19 @@ export function itemName(item: BugReportItem): string {
 		case 'display':
 			return 'Display settings';
 		case 'errorStatus':
-			return 'Error status';
+			return 'Error';
+	}
+}
+
+/** The form's line about a stack that doesn't keep reports, or `undefined` for a real one. */
+export function testStackLine(stack: TestStack): string | undefined {
+	switch (stack) {
+		case 'devProfile':
+			return 'This test stack forgets reports when it stops.';
+		case 'mock':
+			return "Mock mode doesn't keep reports.";
+		case 'none':
+			return undefined;
 	}
 }
 

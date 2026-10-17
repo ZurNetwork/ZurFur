@@ -3,10 +3,12 @@ import '$lib/styles/base.css';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { render } from 'vitest-browser-svelte';
+import type { TestStack } from '$lib/api/bug-report';
 import type { Session } from '$lib/api/session';
 import { devalued, kitCalls as kit, resetKitCalls } from '$lib/testing/kit-client';
 import { denHref, did, handleFromTrusted } from '$lib/types/brand';
 import { BUG_REPORT_KEY, BugReport } from './bug-report.svelte';
+import ErrorView from './ErrorView.svelte';
 import ReportBugButton from './ReportBugButton.svelte';
 import ReportBugDialog from './ReportBugDialog.svelte';
 import { TREE_MEMORY_KEY, TreeMemory } from './tree-memory.svelte';
@@ -40,7 +42,8 @@ const alice: Session = {
 	avatarUrl: undefined
 };
 
-const REFERENCE = 'BR-7Q2X';
+/** The backend's reference: the last 8 characters of the report's id. */
+const REFERENCE = '1a2b3c4d';
 const COULD_NOT_SEND = "Couldn't send your report. Your text is still here; please try again.";
 
 function actionResponse(body: object, status = 200): Response {
@@ -89,8 +92,46 @@ function posted(spy: MockInstance<typeof fetch>, index = 0): URLSearchParams {
 	return new URLSearchParams(init?.body as URLSearchParams);
 }
 
-/** The top bar's link and the dialog, sharing one frame's bug report and tree memory. */
-function renderFrame(): { report: BugReport; memory: TreeMemory } {
+/**
+ * Records every run of a form's `submit` listener (the one `enhance` adds),
+ * so a spec can wait until `enhance` is done with an answer, its callback
+ * included. Call before the form renders.
+ */
+function recordSubmits(): { settled: () => Promise<void> } {
+	const runs: Promise<unknown>[] = [];
+	vi.spyOn(HTMLFormElement.prototype, 'addEventListener').mockImplementation(function (
+		this: HTMLFormElement,
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions
+	) {
+		if (type !== 'submit' || typeof listener !== 'function') {
+			EventTarget.prototype.addEventListener.call(this, type, listener, options);
+			return;
+		}
+		// `enhance`'s listener is async: read its run as the promise it returns.
+		const handle: (this: HTMLFormElement, event: Event) => unknown = listener;
+		const recorded = (event: Event): void => {
+			runs.push(Promise.resolve(handle.call(this, event)));
+		};
+		EventTarget.prototype.addEventListener.call(this, type, recorded, options);
+	});
+	return {
+		/** Every submit run finished, then one macrotask more for anything it left queued. */
+		settled: async () => {
+			expect(runs.length).toBeGreaterThan(0);
+			await Promise.all(runs);
+			await new Promise((done) => setTimeout(done, 0));
+		}
+	};
+}
+
+/** One frame's bug report and tree memory, shared by whatever renders in it. */
+function frameContext(): {
+	report: BugReport;
+	memory: TreeMemory;
+	context: Map<symbol, unknown>;
+} {
 	const report = new BugReport(alice.did);
 	const memory = new TreeMemory(alice.did);
 	memory.loaded(denHref('/den/accounts'), [], undefined);
@@ -98,9 +139,35 @@ function renderFrame(): { report: BugReport; memory: TreeMemory } {
 		[BUG_REPORT_KEY, report],
 		[TREE_MEMORY_KEY, memory]
 	]);
+	return { report, memory, context };
+}
+
+/** The dialog in `context`, on a stack of kind `testStack`. */
+function renderDialog(context: Map<symbol, unknown>, testStack: TestStack): void {
+	render(ReportBugDialog, {
+		props: { session: alice, buildId: 'web-1.2.3', testStack },
+		context
+	} as never);
+}
+
+/** The top bar's link and the dialog, sharing one frame's bug report and tree memory. */
+function renderFrame(testStack: TestStack = 'none'): { report: BugReport; memory: TreeMemory } {
+	const { report, memory, context } = frameContext();
 	render(ReportBugButton, { props: { current: false }, context } as never);
-	render(ReportBugDialog, { props: { session: alice, buildId: 'web-1.2.3' }, context } as never);
+	renderDialog(context, testStack);
 	return { report, memory };
+}
+
+/** The frame's error view for `status`, the top bar's link and the dialog. */
+function renderErrorFrame(status: number): { report: BugReport } {
+	const { report, context } = frameContext();
+	render(ErrorView, {
+		props: { status, routeId: '/(session)/den/[...path]', inFrame: true },
+		context
+	} as never);
+	render(ReportBugButton, { props: { current: false }, context } as never);
+	renderDialog(context, 'none');
+	return { report };
 }
 
 const link = () => page.getByTestId('report-bug-link');
@@ -318,6 +385,9 @@ describe('ReportBugDialog: sending', () => {
 		await expect.element(announcer).toHaveTextContent('Report sent.');
 		await expect.element(page.getByText('Thanks. Your report is saved.')).toBeInTheDocument();
 		await expect.element(page.getByTestId('report-reference')).toHaveTextContent(REFERENCE);
+		await expect
+			.element(page.getByTestId('report-reference-line'))
+			.toHaveTextContent(/^Reference: …1a2b3c4d$/);
 		await expect.element(page.getByText('Thanks. Your report is saved.')).toBeVisible();
 		expect(document.activeElement?.textContent).toContain('Thanks. Your report is saved.');
 	});
@@ -385,9 +455,125 @@ describe('ReportBugDialog: sending', () => {
 	});
 });
 
+describe('ReportBugDialog: a stack that keeps no reports', () => {
+	it('says mock mode keeps no reports, in the form and still under the sent message', async () => {
+		answerWith(sentResponse());
+		renderFrame('mock');
+		await openDialog();
+		const line = page.getByTestId('report-test-stack');
+		await expect.element(line).toHaveTextContent("Mock mode doesn't keep reports.");
+		await textBox().fill('It broke');
+
+		await sendButton().click();
+
+		await expect.element(page.getByText('Thanks. Your report is saved.')).toBeVisible();
+		await expect.element(line).toBeVisible();
+		await expect.element(line).toHaveTextContent("Mock mode doesn't keep reports.");
+	});
+
+	it('says the dev profile’s test stack forgets reports when it stops', async () => {
+		renderFrame('devProfile');
+		await openDialog();
+
+		await expect
+			.element(page.getByTestId('report-test-stack'))
+			.toHaveTextContent('This test stack forgets reports when it stops.');
+	});
+
+	it('says nothing about the stack on a real one', async () => {
+		renderFrame('none');
+		await openDialog();
+
+		await expect.element(page.getByTestId('report-test-stack')).not.toBeInTheDocument();
+	});
+});
+
+describe('ReportBugDialog: opened from the error view', () => {
+	const reportProblem = () => page.getByRole('link', { name: 'Report this problem' });
+
+	it('carries the error’s status, ticked, and the page type "Error page"', async () => {
+		renderErrorFrame(500);
+		await expect.element(reportProblem()).toBeVisible();
+
+		await reportProblem().click();
+
+		await expect.element(textBox()).toHaveFocus();
+		await expect.element(tick('Error')).toBeChecked();
+		await expect.element(tick('Error')).toHaveAccessibleDescription('Status 500 on this page');
+		await expect.element(tick('Page type')).toHaveAccessibleDescription('Error page');
+	});
+
+	it('posts the status while "Error" is ticked', async () => {
+		const spy = answerWith(sentResponse());
+		renderErrorFrame(500);
+		await reportProblem().click();
+		await textBox().fill('It broke');
+
+		await sendButton().click();
+
+		await expect.poll(() => spy.mock.calls.length).toBe(1);
+		expect(posted(spy).get('sendErrorStatus')).toBe('on');
+		expect(posted(spy).get('errorStatus')).toBe('500');
+		expect(posted(spy).get('pageType')).toBe('Error page');
+	});
+
+	it('posts no status once "Error" is unticked', async () => {
+		const spy = answerWith(sentResponse());
+		renderErrorFrame(500);
+		await reportProblem().click();
+		await textBox().fill('It broke');
+		await tick('Error').click();
+		await expect
+			.element(tick('Error'))
+			.toHaveAccessibleDescription('Not sent · Status 500 on this page');
+
+		await sendButton().click();
+
+		await expect.poll(() => spy.mock.calls.length).toBe(1);
+		expect(posted(spy).has('sendErrorStatus')).toBe(false);
+		expect(posted(spy).has('errorStatus')).toBe(false);
+	});
+
+	it.each([399, 600, 302])(
+		'offers no "Error" item for status %i, outside 400 to 599',
+		async (status) => {
+			renderErrorFrame(status);
+			await reportProblem().click();
+
+			await expect.element(textBox()).toHaveFocus();
+			await expect.element(tick('Error')).not.toBeInTheDocument();
+		}
+	);
+
+	it('gives focus back to "Report this problem" when the form closes', async () => {
+		renderErrorFrame(404);
+		await reportProblem().click();
+		await expect.element(textBox()).toHaveFocus();
+
+		await userEvent.keyboard('{Escape}');
+
+		await expect.element(dialog()).not.toBeInTheDocument();
+		await expect.element(reportProblem()).toHaveFocus();
+	});
+
+	it('leaves the status out when the top bar opens the form next', async () => {
+		renderErrorFrame(500);
+		await reportProblem().click();
+		await expect.element(tick('Error')).toBeInTheDocument();
+		await closeDialog();
+
+		await page.getByRole('link', { name: 'Report a bug' }).click();
+
+		await expect.element(textBox()).toHaveFocus();
+		await expect.element(tick('Error')).not.toBeInTheDocument();
+		await expect.element(tick('Page type')).toHaveAccessibleDescription('My Den');
+	});
+});
+
 describe('ReportBugDialog: every answer the action gives', () => {
 	it('success: the sent state, no invalidation, no applied result, the tree kept', async () => {
 		answerWith(sentResponse());
+		const submits = recordSubmits();
 		const { memory } = renderFrame();
 		await openDialog();
 		await textBox().fill('It broke');
@@ -395,6 +581,7 @@ describe('ReportBugDialog: every answer the action gives', () => {
 		await sendButton().click();
 
 		await expect.element(page.getByTestId('report-reference')).toHaveTextContent(REFERENCE);
+		await submits.settled();
 		expect(kit.invalidations).toBe(0);
 		expect(kit.applied).toEqual([]);
 		expect(kit.gotos).toEqual([]);
@@ -462,6 +649,7 @@ describe('ReportBugDialog: every answer the action gives', () => {
 		'failure $name: its message in the status region, the text kept',
 		async ({ data, status, text }) => {
 			answerWith(failureResponse(data, status));
+			const submits = recordSubmits();
 			renderFrame();
 			await openDialog();
 			await textBox().fill('It broke');
@@ -472,6 +660,7 @@ describe('ReportBugDialog: every answer the action gives', () => {
 			await expect.element(statusRegion()).toHaveAttribute('role', 'status');
 			await expect.element(textBox()).toHaveValue('It broke');
 			await expect.element(sendButton()).toHaveTextContent('Send report');
+			await submits.settled();
 			expect(kit.applied).toEqual([]);
 		}
 	);
@@ -498,6 +687,7 @@ describe('ReportBugDialog: every answer the action gives', () => {
 				503
 			)
 		);
+		const submits = recordSubmits();
 		renderFrame();
 		await openDialog();
 		await textBox().fill('It broke');
@@ -506,11 +696,13 @@ describe('ReportBugDialog: every answer the action gives', () => {
 
 		await expect.element(statusRegion()).toHaveTextContent(COULD_NOT_SEND);
 		await expect.element(textBox()).toHaveValue('It broke');
+		await submits.settled();
 		expect(kit.applied).toEqual([]);
 	});
 
 	it('an unreadable 403: "Couldn\'t send…", the text kept', async () => {
 		answerWith(new Response('Cross-site POST form submissions are forbidden', { status: 403 }));
+		const submits = recordSubmits();
 		renderFrame();
 		await openDialog();
 		await textBox().fill('It broke');
@@ -519,11 +711,13 @@ describe('ReportBugDialog: every answer the action gives', () => {
 
 		await expect.element(statusRegion()).toHaveTextContent(COULD_NOT_SEND);
 		await expect.element(textBox()).toHaveValue('It broke');
+		await submits.settled();
 		expect(kit.applied).toEqual([]);
 	});
 
 	it('redirect: goes where it points', async () => {
 		answerWith(actionResponse({ type: 'redirect', status: 303, location: '/login' }));
+		const submits = recordSubmits();
 		renderFrame();
 		await openDialog();
 		await textBox().fill('It broke');
@@ -531,6 +725,7 @@ describe('ReportBugDialog: every answer the action gives', () => {
 		await sendButton().click();
 
 		await expect.poll(() => kit.gotos).toEqual(['/login']);
+		await submits.settled();
 		expect(kit.applied).toEqual([]);
 	});
 });

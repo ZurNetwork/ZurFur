@@ -127,6 +127,24 @@ describe('pageOfReferer', () => {
 		expect(pageOfReferer(referer, FIRST_PARTY)).toBeUndefined();
 	});
 
+	it.each([
+		'http://127.0.0.1:8080/report-a-bug',
+		'http://127.0.0.1:8080/report-a-bug/',
+		'http://127.0.0.1:8080/report-a-bug?x=1#top'
+	])(
+		'reads nothing from the report page itself (%j): a post without script came back from there',
+		(referer) => {
+			expect(pageOfReferer(referer, FIRST_PARTY)).toBeUndefined();
+		}
+	);
+
+	it('still reads a page below the report page’s address as an ordinary page', () => {
+		expect(pageOfReferer('http://127.0.0.1:8080/report-a-bug/x', FIRST_PARTY)).toStrictEqual({
+			page: '/report-a-bug/x',
+			pageType: 'Other'
+		});
+	});
+
 	it('reads nothing with no Referer, or with no first party configured', () => {
 		expect(pageOfReferer(undefined, FIRST_PARTY)).toBeUndefined();
 		expect(pageOfReferer('http://127.0.0.1:8080/den', undefined)).toBeUndefined();

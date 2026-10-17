@@ -126,6 +126,12 @@ export type BugReportPageOffer =
 	/** No page of this site came before: ask "Which page?". */
 	| { readonly kind: 'ask' };
 
+/**
+ * What kind of stack the web runs on, for the form's line about keeping
+ * reports: the dev profile's test stack, mock mode, or neither.
+ */
+export type TestStack = 'devProfile' | 'mock' | 'none';
+
 /** What the report page's load offers to send. */
 export interface BugReportOffer {
 	readonly page: BugReportPageOffer;

@@ -31,6 +31,8 @@
 				return BUG_REPORT_FIELDS.sendPage;
 			case 'pageType':
 				return BUG_REPORT_FIELDS.sendPageType;
+			case 'errorStatus':
+				return BUG_REPORT_FIELDS.sendErrorStatus;
 			case 'webVersion':
 				return BUG_REPORT_FIELDS.sendWebVersion;
 			case 'browser':

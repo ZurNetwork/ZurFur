@@ -10,8 +10,10 @@ import {
 	FRESH_TICKS,
 	offerItems,
 	outcomeOf,
+	itemName,
 	snapshotItems,
 	snapshotOf,
+	testStackLine,
 	type BugReportSnapshot,
 	type SnapshotSource
 } from './bug-report.svelte';
@@ -98,6 +100,7 @@ describe('the items offered', () => {
 		expect(FRESH_TICKS).toEqual({
 			page: true,
 			pageType: true,
+			errorStatus: true,
 			webVersion: true,
 			browser: true,
 			window: true,
@@ -224,5 +227,56 @@ describe('BugReport', () => {
 		expect(report.isOpen).toBe(false);
 		expect(report.draft.description).toBe('');
 		expect(report.draft.ticks).toEqual(FRESH_TICKS);
+	});
+});
+
+describe('the error view’s status item', () => {
+	const fromErrorView = (status: number): BugReportSnapshot =>
+		snapshotOf({ ...source, extras: { errorStatus: status } });
+
+	it('is "Error", ticked from the start, reading and posting the status', () => {
+		const item = snapshotItems(fromErrorView(500), 'web-1').find(
+			(offered) => offered.item === 'errorStatus'
+		);
+		expect(item).toStrictEqual({
+			item: 'errorStatus',
+			label: 'Error',
+			value: 'Status 500 on this page',
+			note: undefined,
+			fields: [{ name: 'errorStatus', value: '500' }]
+		});
+		expect(FRESH_TICKS.errorStatus).toBe(true);
+	});
+
+	it('makes the page type "Error page"', () => {
+		expect(fromErrorView(404).pageType).toBe('Error page');
+		expect(snapshotOf(source).pageType).toBe('My Den');
+	});
+
+	it.each([400, 599])('offers status %i, the edges of 400 to 599', (status) => {
+		const items = snapshotItems(fromErrorView(status), 'web-1');
+		expect(items.some((offered) => offered.item === 'errorStatus')).toBe(true);
+	});
+
+	it.each([399, 600, 200, 302, 500.5, Number.NaN])('offers no item for status %d', (status) => {
+		const items = snapshotItems(fromErrorView(status), 'web-1');
+		expect(items.some((offered) => offered.item === 'errorStatus')).toBe(false);
+	});
+
+	it('is absent when no error view opened the form', () => {
+		const items = snapshotItems(fixedSnapshot(), 'web-1');
+		expect(items.some((offered) => offered.item === 'errorStatus')).toBe(false);
+	});
+
+	it('is named as its box is in a refusal', () => {
+		expect(itemName('errorStatus')).toBe('Error');
+	});
+});
+
+describe('testStackLine', () => {
+	it('says the dev profile’s test stack forgets reports, mock mode keeps none, a real stack nothing', () => {
+		expect(testStackLine('devProfile')).toBe('This test stack forgets reports when it stops.');
+		expect(testStackLine('mock')).toBe("Mock mode doesn't keep reports.");
+		expect(testStackLine('none')).toBeUndefined();
 	});
 });

@@ -39,6 +39,7 @@
 		{draft}
 		{items}
 		session={data.session}
+		testStack={data.testStack}
 		descriptionId={REPORT_PAGE_DESCRIPTION_ID}
 		{sentId}
 		{askPage}
