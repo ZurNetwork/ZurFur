@@ -6,7 +6,6 @@
 //! session on the next request, and a second sign-out from a stale tab is harmless.
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
-use reqwest::redirect::Policy;
 use tower_sessions::MemoryStore;
 
 #[tokio::test]
@@ -37,14 +36,11 @@ async fn sign_out_destroys_the_session_and_a_second_sign_out_is_harmless() {
             .unwrap();
     });
 
+    let base = format!("http://{addr}");
     // Keeps cookies (so the session survives across requests) but does not auto-follow
     // redirects, so each hop can be asserted on its own.
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds");
-    let base = format!("http://{addr}");
+    // Sends `Origin: {base}`, as the app's own pages do, so its writes pass the CSRF guard.
+    let client = test_support::http::client_with_origin(&base);
     let home = format!("{base}/");
 
     // Sign in: start the flow and complete the callback, leaving a live session.

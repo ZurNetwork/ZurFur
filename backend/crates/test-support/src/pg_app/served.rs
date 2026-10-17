@@ -10,7 +10,7 @@ use http_stack::{Detach, Stacked};
 use reqwest::header::SET_COOKIE;
 
 use super::{InProcessPds, StatementLog, record_statements};
-use crate::http::client;
+use crate::http::client_with_origin;
 use crate::pg::{TestDb, fresh_db};
 
 /// A running app on its own migrated PostgreSQL database, plus what a test
@@ -148,7 +148,8 @@ pub async fn pg_runtime() -> PgRuntime {
 
 impl PgServed {
     /// Registers `profile` with the in-process PDS, then signs it in through
-    /// the app's own sign-in routes. Returns a client holding the session.
+    /// the app's own sign-in routes. Returns a client holding the session,
+    /// which sends `Origin: {base_url}` on every request.
     pub async fn sign_in(&self, profile: Profile) -> reqwest::Client {
         let signed_in = self.sign_in_with_cookie(profile).await;
         signed_in.client
@@ -163,7 +164,7 @@ impl PgServed {
     pub async fn sign_in_with_cookie(&self, profile: Profile) -> SignedIn {
         let handle = profile.handle.to_string();
         self.pds.register(profile);
-        let browser = client();
+        let browser = client_with_origin(&self.base_url);
 
         let started = browser
             .post(format!("{}/signin", self.base_url))

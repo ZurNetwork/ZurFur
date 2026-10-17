@@ -44,8 +44,9 @@ pub(crate) const SESSION_USER_KEY: &str = "user_id";
 
 /// Builds the axum [`Router`], composing route groups from `routes`; the
 /// canonical route table for tests and `main` (`main` additionally layers the
-/// session middleware). The first-party-`Origin` CSRF guard and a
-/// `Cache-Control: no-store` layer wrap the cookie surface only — never
+/// session middleware). The CSRF guard, which refuses a write without the
+/// configured `Origin` or, with no `Origin`, `Sec-Fetch-Site: same-origin`,
+/// and a `Cache-Control: no-store` layer wrap the cookie surface only — never
 /// `/health` or `/.well-known`.
 pub fn app(state: AppState) -> Router {
     // no-store on the cookie surface so authenticated JSON is never cached (CWE-525).
@@ -63,7 +64,7 @@ pub fn app(state: AppState) -> Router {
             usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX),
         ))
         .layer(middleware::from_fn_with_state(
-            state.clone(),
+            state.config.public_url.clone(),
             routes::require_first_party_origin,
         ))
         .layer(no_store_cookie_surface);

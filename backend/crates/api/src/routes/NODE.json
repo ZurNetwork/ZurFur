@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Route groups, one policy zone each",
   "is": "Route groups split along the DESIGN subdomain→namespace→router seam, each an independently mounted policy zone.",
   "type": "code",
@@ -43,7 +43,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "group index + require_first_party_origin CSRF middleware (an Origin header must equal public_url's origin; an opaque origin matches nothing)",
+      "role": "group index + require_first_party_origin, the CSRF guard over the cookie surface: a write (any method but GET, HEAD, OPTIONS, exact case) passes only with one Origin equal to public_url's origin byte for byte (whatever Sec-Fetch-Site says; an opaque origin matches nothing), or no Origin and one Sec-Fetch-Site of exactly same-origin; else 403 cross_origin before the handler; its state is the BareOrigin alone, so no environment is in reach",
       "node": false
     },
     {
