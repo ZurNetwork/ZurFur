@@ -66,7 +66,7 @@
     },
     {
       "name": "src/ordinal.rs",
-      "role": "NameOrdinal, 2 or more (TryFrom<u32>, Into<u32>), and the numbering rule: entries grouped by comparison_key (the exact name for now; NFC later changes only that function), each group in tiebreak order, the first plain, each later the smallest rising n whose \"name (n)\" key no visible entry holds and none was given",
+      "role": "NameOrdinal, 2 or more (TryFrom<u32>, Into<u32>), and the numbering rule: entries grouped by comparison_key (the exact name for now; NFC later changes only that function), each group in tiebreak order, the first plain, each later the smallest rising n whose \"name (n)\" key no visible entry holds and none was given; ordinal/tests.rs also checks every case in contract/golden/name-ordinals.json, the file the web's copy of the rule answers to",
       "node": false
     },
     {

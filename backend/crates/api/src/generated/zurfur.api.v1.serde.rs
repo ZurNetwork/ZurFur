@@ -1318,6 +1318,9 @@ impl serde::Serialize for DenCrumb {
         if !self.r#type.is_empty() {
             len += 1;
         }
+        if self.name_ordinal.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenCrumb", len)?;
         if !self.segments.is_empty() {
             struct_ser.serialize_field("segments", &self.segments)?;
@@ -1327,6 +1330,9 @@ impl serde::Serialize for DenCrumb {
         }
         if !self.r#type.is_empty() {
             struct_ser.serialize_field("type", &self.r#type)?;
+        }
+        if let Some(v) = self.name_ordinal.as_ref() {
+            struct_ser.serialize_field("nameOrdinal", v)?;
         }
         struct_ser.end()
     }
@@ -1341,6 +1347,8 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
             "segments",
             "name",
             "type",
+            "name_ordinal",
+            "nameOrdinal",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -1348,6 +1356,7 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
             Segments,
             Name,
             Type,
+            NameOrdinal,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1372,6 +1381,7 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
                             "segments" => Ok(GeneratedField::Segments),
                             "name" => Ok(GeneratedField::Name),
                             "type" => Ok(GeneratedField::Type),
+                            "nameOrdinal" | "name_ordinal" => Ok(GeneratedField::NameOrdinal),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1394,6 +1404,7 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
                 let mut segments__ = None;
                 let mut name__ = None;
                 let mut r#type__ = None;
+                let mut name_ordinal__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Segments => {
@@ -1414,12 +1425,21 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
                             }
                             r#type__ = Some(map_.next_value()?);
                         }
+                        GeneratedField::NameOrdinal => {
+                            if name_ordinal__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("nameOrdinal"));
+                            }
+                            name_ordinal__ = 
+                                map_.next_value::<::std::option::Option<::pbjson::private::NumberDeserialize<_>>>()?.map(|x| x.0)
+                            ;
+                        }
                     }
                 }
                 Ok(DenCrumb {
                     segments: segments__.unwrap_or_default(),
                     name: name__.unwrap_or_default(),
                     r#type: r#type__.unwrap_or_default(),
+                    name_ordinal: name_ordinal__,
                 })
             }
         }
@@ -1700,6 +1720,9 @@ impl serde::Serialize for DenNode {
         if self.mount {
             len += 1;
         }
+        if self.name_ordinal.is_some() {
+            len += 1;
+        }
         if self.access.is_some() {
             len += 1;
         }
@@ -1718,6 +1741,9 @@ impl serde::Serialize for DenNode {
         }
         if self.mount {
             struct_ser.serialize_field("mount", &self.mount)?;
+        }
+        if let Some(v) = self.name_ordinal.as_ref() {
+            struct_ser.serialize_field("nameOrdinal", v)?;
         }
         if let Some(v) = self.access.as_ref() {
             match v {
@@ -1744,6 +1770,8 @@ impl<'de> serde::Deserialize<'de> for DenNode {
             "type",
             "kind",
             "mount",
+            "name_ordinal",
+            "nameOrdinal",
             "open",
             "card",
         ];
@@ -1755,6 +1783,7 @@ impl<'de> serde::Deserialize<'de> for DenNode {
             Type,
             Kind,
             Mount,
+            NameOrdinal,
             Open,
             Card,
         }
@@ -1783,6 +1812,7 @@ impl<'de> serde::Deserialize<'de> for DenNode {
                             "type" => Ok(GeneratedField::Type),
                             "kind" => Ok(GeneratedField::Kind),
                             "mount" => Ok(GeneratedField::Mount),
+                            "nameOrdinal" | "name_ordinal" => Ok(GeneratedField::NameOrdinal),
                             "open" => Ok(GeneratedField::Open),
                             "card" => Ok(GeneratedField::Card),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
@@ -1809,6 +1839,7 @@ impl<'de> serde::Deserialize<'de> for DenNode {
                 let mut r#type__ = None;
                 let mut kind__ = None;
                 let mut mount__ = None;
+                let mut name_ordinal__ = None;
                 let mut access__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
@@ -1842,6 +1873,14 @@ impl<'de> serde::Deserialize<'de> for DenNode {
                             }
                             mount__ = Some(map_.next_value()?);
                         }
+                        GeneratedField::NameOrdinal => {
+                            if name_ordinal__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("nameOrdinal"));
+                            }
+                            name_ordinal__ = 
+                                map_.next_value::<::std::option::Option<::pbjson::private::NumberDeserialize<_>>>()?.map(|x| x.0)
+                            ;
+                        }
                         GeneratedField::Open => {
                             if access__.is_some() {
                                 return Err(serde::de::Error::duplicate_field("open"));
@@ -1864,6 +1903,7 @@ impl<'de> serde::Deserialize<'de> for DenNode {
                     r#type: r#type__.unwrap_or_default(),
                     kind: kind__.unwrap_or_default(),
                     mount: mount__.unwrap_or_default(),
+                    name_ordinal: name_ordinal__,
                     access: access__,
                 })
             }

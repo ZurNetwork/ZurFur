@@ -406,6 +406,12 @@ pub struct DenNode {
     /// Set when the entry is one of the viewer's mounts rather than a real child of its folder.
     #[prost(bool, tag = "5")]
     pub mount: bool,
+    /// Set, from 2 up, when another entry this viewer sees in the same folder shows
+    /// the same name; the server numbers such names in a fixed order (commissions
+    /// oldest first). Clients show it after the name, as "Test 1 (2)". Unset
+    /// otherwise. Computed for this viewer at read time, never stored.
+    #[prost(uint32, optional, tag = "8")]
+    pub name_ordinal: ::core::option::Option<u32>,
     /// The viewer's resolved access; unset or unknown renders as a card, never as open.
     #[prost(oneof = "den_node::Access", tags = "6, 7")]
     pub access: ::core::option::Option<den_node::Access>,
@@ -479,18 +485,23 @@ pub struct DenCrumb {
     /// Its Den path from the viewer's root; empty for the root.
     #[prost(string, repeated, tag = "1")]
     pub segments: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Its display name, the one its parent's listing uses; for the root, the viewer's own name.
+    /// Its display name, the one its parent's listing uses (with its `name_ordinal`,
+    /// what that listing shows); for the root, the viewer's own name.
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
     /// Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
     #[prost(string, tag = "3")]
     pub r#type: ::prost::alloc::string::String,
+    /// As DenNode.name_ordinal: the number its parent's listing gives it.
+    #[prost(uint32, optional, tag = "4")]
+    pub name_ordinal: ::core::option::Option<u32>,
 }
 /// One page of a directory's entries, after everything the viewer can't see is left out.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DenListing {
     /// The entries, in the order the server sends; clients keep it within each kind and may
-    /// show directories first. Today: by name, as the viewer is shown it.
+    /// show directories first. Today: by name, digit runs by value and without regard to
+    /// case; an entry's `name_ordinal` never moves it.
     #[prost(message, repeated, tag = "1")]
     pub entries: ::prost::alloc::vec::Vec<DenNode>,
     /// An opaque position in this viewer's listing that reveals no names, hashes or counts; absent on the last page.

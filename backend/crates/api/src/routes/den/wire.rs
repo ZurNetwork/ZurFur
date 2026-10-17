@@ -25,7 +25,8 @@ impl From<DenThing> for den_open::Thing {
 
 impl From<den::DenNode> for DenNode {
     /// An open node carries its kind and its `open` access, with the thing it stands for; a
-    /// card carries neither kind nor anything beyond its entry.
+    /// card carries neither kind nor anything beyond its entry. Either carries the number
+    /// that tells its name apart, when it has one.
     fn from(node: den::DenNode) -> Self {
         let (kind, access) = match node.access {
             DenAccess::Open {
@@ -51,18 +52,21 @@ impl From<den::DenNode> for DenNode {
             r#type: node.den_type.to_string(),
             kind,
             mount: node.mount,
+            name_ordinal: node.name_ordinal.map(u32::from),
             access: Some(access),
         }
     }
 }
 
 impl From<den::DenCrumb> for DenCrumb {
-    /// A crumb carries its type's word for its icon.
+    /// A crumb carries its type's word for its icon, and the number its parent's listing
+    /// gives its name.
     fn from(crumb: den::DenCrumb) -> Self {
         DenCrumb {
             segments: segments(crumb.segments),
             name: crumb.name.to_string(),
             r#type: crumb.den_type.to_string(),
+            name_ordinal: crumb.name_ordinal.map(u32::from),
         }
     }
 }

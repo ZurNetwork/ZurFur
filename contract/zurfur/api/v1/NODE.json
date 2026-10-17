@@ -34,7 +34,7 @@
     },
     {
       "name": "den.proto",
-      "role": "GetDenRoot (GET /den), GetDenNode (GET /den/{path=**}): a signed-in viewer reads their own Den one node at a time; an open node names the thing it stands for (`DenOpen.thing`), a crumb carries its type; DenService",
+      "role": "GetDenRoot (GET /den), GetDenNode (GET /den/{path=**}): a signed-in viewer reads their own Den one node at a time; an open node names the thing it stands for (`DenOpen.thing`), a crumb carries its type; a node and a crumb carry `name_ordinal` when another entry the viewer sees in the same folder shows the same name; DenService",
       "node": false
     },
     {
@@ -87,7 +87,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`; `DenOpen.thing` (`accountDid` or `commissionId`): an open node carries the id of the thing it stands for, never on a card (D2, amended 2026-10-15); `DenCrumb.type`, each crumb's icon (the breadcrumbs row, amended 2026-10-15)"
+      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`; `DenOpen.thing` (`accountDid` or `commissionId`): an open node carries the id of the thing it stands for, never on a card (D2, amended 2026-10-15); `DenCrumb.type`, each crumb's icon (the breadcrumbs row, amended 2026-10-15); `name_ordinal` on DenNode and DenCrumb, the per-viewer number that tells equal names in one folder apart (D23)"
     }
   ],
   "notes": [

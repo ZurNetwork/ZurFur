@@ -49,7 +49,7 @@
     },
     {
       "name": "wire.rs",
-      "role": "the application's den outputs into the generated den.proto types: an open node's thing as `DenOpen.thing`'s case (`accountDid` or `commissionId`), a crumb's type as its word",
+      "role": "the application's den outputs into the generated den.proto types: an open node's thing as `DenOpen.thing`'s case (`accountDid` or `commissionId`), a crumb's type as its word, a node's and a crumb's name ordinal as `nameOrdinal` (omitted when unset)",
       "node": false
     }
   ],
