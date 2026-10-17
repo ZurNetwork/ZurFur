@@ -31,7 +31,8 @@ const UNREADABLE_BODY: &str = "The request body isn't a bug report this endpoint
 const DESCRIPTION_REFUSED: &str = "The description must be 1 to 4000 characters, with no control \
                                    characters other than newlines and tabs.";
 const PAGE_REFUSED: &str = "The page must be an app path starting with `/`, one line of at most \
-                            2048 bytes, with no query and no fragment.";
+                            2048 bytes, not starting with `//`, with no query, no fragment and no \
+                            backslash.";
 const PAGE_KIND_REFUSED: &str = "The page kind must be one line of at most 64 bytes.";
 const WEB_VERSION_REFUSED: &str = "The web version must be one line of at most 64 bytes.";
 const BROWSER_REFUSED: &str = "The browser must be one line of at most 512 bytes.";

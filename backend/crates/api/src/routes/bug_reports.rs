@@ -34,7 +34,8 @@ const DESCRIPTION_REFUSED: &str = "The description must be 1 to 4000 characters,
                                    characters other than newlines and tabs.";
 /// The answer to a refused page.
 const PAGE_REFUSED: &str = "The page must be an app path starting with `/`, one line of at most \
-                            2048 bytes, with no query and no fragment.";
+                            2048 bytes, not starting with `//`, with no query, no fragment and no \
+                            backslash.";
 /// The answer to a refused page kind.
 const PAGE_KIND_REFUSED: &str = "The page kind must be one line of at most 64 bytes.";
 /// The answer to a refused web version.
