@@ -40,8 +40,8 @@ message FileBugReportRequest {
   // What went wrong, in the reporter's words. Trimmed, non-empty, at most
   // 4000 characters (code points); newlines and tabs are kept.
   string description = 1;
-  // The app path the report was filed from: starts with `/`, at most 2048
-  // bytes, with no query (`?`) and no fragment (`#`).
+  // The app path the report was filed from: starts with `/` but not `//`, at
+  // most 2048 bytes, with no query (`?`), no fragment (`#`) and no backslash.
   optional string page = 2;
   // The kind of page the report was filed from, at most 64 bytes.
   optional string page_kind = 3;

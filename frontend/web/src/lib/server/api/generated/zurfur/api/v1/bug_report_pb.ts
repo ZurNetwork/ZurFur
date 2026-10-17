@@ -42,8 +42,8 @@ export type FileBugReportRequest = Message<"zurfur.api.v1.FileBugReportRequest">
   description: string;
 
   /**
-   * The app path the report was filed from: starts with `/`, at most 2048
-   * bytes, with no query (`?`) and no fragment (`#`).
+   * The app path the report was filed from: starts with `/` but not `//`, at
+   * most 2048 bytes, with no query (`?`), no fragment (`#`) and no backslash.
    *
    * @generated from field: optional string page = 2;
    */

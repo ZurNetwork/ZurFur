@@ -412,8 +412,8 @@ pub struct FileBugReportRequest {
     /// 4000 characters (code points); newlines and tabs are kept.
     #[prost(string, tag = "1")]
     pub description: ::prost::alloc::string::String,
-    /// The app path the report was filed from: starts with `/`, at most 2048
-    /// bytes, with no query (`?`) and no fragment (`#`).
+    /// The app path the report was filed from: starts with `/` but not `//`, at
+    /// most 2048 bytes, with no query (`?`), no fragment (`#`) and no backslash.
     #[prost(string, optional, tag = "2")]
     pub page: ::core::option::Option<::prost::alloc::string::String>,
     /// The kind of page the report was filed from, at most 64 bytes.
