@@ -10,11 +10,14 @@
 	 * "New commission": a button that opens a dialog with the Title field and
 	 * the line saying new commissions are private, with no choice of level.
 	 * A refused title shows under its field, any other problem below the
-	 * form. A redirect closes the dialog and starts the tree over.
+	 * form. Closing the dialog clears the form; a redirect closes it and starts
+	 * the tree over.
 	 */
 	let { form: given }: { form: SuperValidated<{ title: string }> } = $props();
 
 	let open = $state(false);
+	/** Whether the dialog was open when the last close was looked for. */
+	let wasOpen = false;
 	const treeMemory = treeMemoryFromContext();
 	// superForm seeds from the initial value by design and manages its own
 	// reactivity from there.
@@ -24,9 +27,13 @@
 		onResult: ({ result }) => {
 			if (result.type !== 'redirect') return;
 			open = false;
-			reset();
 			treeMemory?.restart(denRootFallback());
 		}
+	});
+
+	$effect(() => {
+		if (wasOpen && !open) reset();
+		wasOpen = open;
 	});
 </script>
 

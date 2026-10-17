@@ -26,7 +26,7 @@
     },
     {
       "name": "den-mock.ts",
-      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) and the commissions the mock created, from the store, plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); every crumb typed, commission and Account nodes naming their thing; equal names numbered by name-ordinals.ts over the viewer's whole filtered listing (open entries before cards, then key), the node and each crumb numbered as their parent's listing numbers them; 25-entry pages, `p1.<offset>` tokens",
+      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) and the commissions the mock created, from the store, plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); every crumb typed, commission and Account nodes naming their thing; equal names numbered by name-ordinals.ts over the viewer's whole filtered listing (open entries before cards, then key), listed in that same order (by name, then open entries before cards, then key); the node and each crumb numbered as their parent's listing numbers them; isOpenFixtureCommission tells the mock which fixed commissions it shows open; 25-entry pages, `p1.<offset>` tokens",
       "node": false
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "name": "zurfur-api-mock.ts",
-      "role": "the mock ZurfurApi Layer — full in-memory stand-in for ZurfurApiLive so `yarn dev` renders a signed-in app with no backend; the one place mock-mode-enabled is read; createCommission refuses a blank title (name_empty) and one holding a bidirectional control (name_invisible) at #/title with the backend's details, and stores the rest under a fresh time-ordered (UUIDv7-shaped) id that is also its segment, so a later twin sorts after an earlier one; renameCommission renames a commission it created with the same title refusals, and answers the commission not-found for any other id, the fixed fixtures included",
+      "role": "the mock ZurfurApi Layer — full in-memory stand-in for ZurfurApiLive so `yarn dev` renders a signed-in app with no backend; the one place mock-mode-enabled is read; createCommission refuses a blank title (name_empty) and one holding a bidirectional control (name_invisible) at #/title with the backend's details, and stores the rest under a fresh time-ordered (UUIDv7-shaped) id that is also its segment, so a later twin sorts after an earlier one; renameCommission renames a commission it created with the same title refusals, answers a fixed commission the Den shows open 403 forbidden (as the backend answers a Participant who isn't the owner), and any other id the commission not-found",
       "node": false
     },
     {

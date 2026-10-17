@@ -438,7 +438,7 @@ describe('the mock Den numbers equal names', () => {
 		expect(createdShown.node.ordinal).toBe(2);
 	});
 
-	it('numbers an open twin before a card of the same name, though the card lists first', async () => {
+	it('lists an open twin first and unnumbered, then a card of the same name numbered 2', async () => {
 		const store = createMockStore();
 		await createIn(store, 'Some commission');
 
@@ -447,8 +447,8 @@ describe('the mock Den numbers equal names', () => {
 		);
 
 		expect(twins.map((entry) => [entry.view, entry.ordinal])).toEqual([
-			['card', 2],
-			['open', undefined]
+			['open', undefined],
+			['card', 2]
 		]);
 	});
 

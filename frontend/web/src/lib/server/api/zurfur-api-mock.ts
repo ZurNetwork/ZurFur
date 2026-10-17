@@ -17,6 +17,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
 	COMMISSION_NOT_FOUND_PROBLEM,
+	FORBIDDEN_PROBLEM,
 	invalidFieldsProblem,
 	invalidRequestProblem,
 	NOT_AUTHENTICATED_PROBLEM,
@@ -34,7 +35,7 @@ import {
 	type CommissionId,
 	type Did
 } from '$lib/types/brand';
-import { mockDenRead, type MockCommission } from './den-mock';
+import { isOpenFixtureCommission, mockDenRead, type MockCommission } from './den-mock';
 import { ApiProblem, ContractViolation, NotAuthenticated } from './errors';
 import {
 	ZurfurApi,
@@ -365,8 +366,9 @@ function mockCreateCommission(
 
 /**
  * `renameCommission`: renames a commission the mock created, refusing a
- * title the way `createCommission` does; the fixed fixture commissions, and
- * any id the store doesn't hold, answer the commission not-found.
+ * title the way `createCommission` does; a fixed commission the mock Den
+ * shows open answers 403, as the backend answers a Participant who isn't the
+ * owner, and any other id the store doesn't hold the commission not-found.
  */
 function mockRenameCommission(
 	store: MockStore,
@@ -378,8 +380,12 @@ function mockRenameCommission(
 			return Effect.fail(new ApiProblem({ problem: NOT_AUTHENTICATED_PROBLEM }));
 		const index = store.commissions.findIndex((commission) => commission.id === id);
 		const held = store.commissions[index];
-		if (held === undefined)
-			return Effect.fail(new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM }));
+		if (held === undefined) {
+			const problem = isOpenFixtureCommission(id)
+				? FORBIDDEN_PROBLEM
+				: COMMISSION_NOT_FOUND_PROBLEM;
+			return Effect.fail(new ApiProblem({ problem }));
+		}
 		const refusal = titleRefusal(title);
 		if (refusal !== undefined)
 			return Effect.fail(new ApiProblem({ problem: invalidFieldsProblem([refusal]) }));

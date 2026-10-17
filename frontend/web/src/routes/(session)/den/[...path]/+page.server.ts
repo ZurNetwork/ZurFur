@@ -3,10 +3,20 @@ import { superValidate } from 'sveltekit-superforms';
 import { effect } from 'sveltekit-superforms/adapters';
 import type { Actions, PageServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
-import { COMMISSION_NOT_FOUND_PROBLEM, NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
-import { createCommissionOutcome, renameCommissionOutcome } from '$lib/server/commissions';
+import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
+import {
+	createCommissionOutcome,
+	RENAME_COMMISSION_NOT_FOUND_PROBLEM,
+	RENAME_NODE_NOT_FOUND_PROBLEM,
+	renameCommissionOutcome
+} from '$lib/server/commissions';
 import { denPage } from '$lib/server/den';
-import { denHrefOf, denPathFromPathname, PLAIN_QUERY } from '$lib/server/den/den-path';
+import {
+	denHrefOf,
+	denPathFromPathname,
+	denQueryFromSearch,
+	PLAIN_QUERY
+} from '$lib/server/den/den-path';
 import { createCommissionField, createCommissionForm } from '$lib/server/forms/create-commission';
 import {
 	renameCommissionField,
@@ -61,18 +71,21 @@ export const actions = {
 
 	/**
 	 * Rename the commission the hidden field names, then go back to this
-	 * address (303). An id that doesn't mint is the commission not-found and
-	 * calls nothing. A refused title shows under its field; any other
-	 * problem, and a refused address, shows as the form's message.
+	 * address (303), keeping only the post's "Show archived" flag. An id that
+	 * doesn't mint is the commission not-found and calls nothing. A refused
+	 * title shows under its field; any other problem, and a refused address,
+	 * shows as the form's message.
 	 */
 	renameCommission: async ({ request, fetch, url }) => {
 		const form = await superValidate(request, effect(renameCommissionForm));
 		if (!form.valid) return fail(HttpStatus.UnprocessableContent, { form });
 		const id = renameTarget(form.data.id);
-		if (id === undefined) return problemMessage(form, COMMISSION_NOT_FOUND_PROBLEM);
+		if (id === undefined) return problemMessage(form, RENAME_COMMISSION_NOT_FOUND_PROBLEM);
 		const here = denPathFromPathname(url.pathname);
-		const back = here === undefined ? undefined : denHrefOf(here, PLAIN_QUERY);
-		if (back === undefined) return problemMessage(form, NODE_NOT_FOUND_PROBLEM);
+		const { includeDeleted } = denQueryFromSearch(url.searchParams);
+		const back =
+			here === undefined ? undefined : denHrefOf(here, { ...PLAIN_QUERY, includeDeleted });
+		if (back === undefined) return problemMessage(form, RENAME_NODE_NOT_FOUND_PROBLEM);
 
 		const outcome = await runApi(fetch, renameCommissionOutcome(id, form.data.title));
 

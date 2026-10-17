@@ -46,7 +46,7 @@
     },
     {
       "name": "commissions.ts",
-      "role": "commission programs: createCommissionOutcome creates through the port, then lands on the new entry's link as the folder's listing gives it (found by the thing it names, over at most 4 pages), or on the folder when it isn't found; never a link built from the id; a create that isn't answered becomes a 503 problem saying it may have gone through; renameCommissionOutcome renames through the port, a 403 becoming the owner-only words and a rename that isn't answered a 503 problem",
+      "role": "commission programs: createCommissionOutcome creates through the port, then lands on the new entry's link as the folder's listing gives it (found by the thing it names, over at most 4 pages), or on the folder when it isn't found; never a link built from the id; a create that isn't answered becomes a 503 problem saying it may have gone through; renameCommissionOutcome renames through the port, a 403 becoming the owner-only words, a commission not-found \"Nothing here\" (its code kept) and a rename that isn't answered a 503 problem",
       "node": false
     },
     {

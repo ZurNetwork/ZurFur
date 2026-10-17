@@ -230,6 +230,23 @@ const DEACTIVATED_ACCOUNT: MockNode = {
 	children: accountFolders
 };
 
+/** Every fixed commission in `commissions`: the seed's Untitled and the hand-made extras. */
+const FIXTURE_COMMISSIONS: readonly MockNode[] = [
+	UNTITLED,
+	ARCHIVED_COMMISSION,
+	CARD_COMMISSION,
+	PAGED_COMMISSION,
+	LONG_NAME_COMMISSION,
+	RTL_NAME_COMMISSION
+];
+
+/** Whether `id` is the thing of a fixed commission the mock Den shows open; a card names no thing. */
+export function isOpenFixtureCommission(id: CommissionId): boolean {
+	return FIXTURE_COMMISSIONS.some(
+		(node) => node.thing?.thing === 'commission' && node.thing.id === id
+	);
+}
+
 /** The fixture characters alice keeps: Ember (Public) and the Private Kael-sona. */
 const CHARACTERS: readonly MockNode[] = [
 	{
@@ -268,13 +285,8 @@ function denRoot(
 			]),
 			systemFolder('characters', 'user.characters', () => CHARACTERS),
 			systemFolder('commissions', 'user.commissions', () => [
-				UNTITLED,
-				...commissions.map(createdCommissionMount),
-				ARCHIVED_COMMISSION,
-				CARD_COMMISSION,
-				PAGED_COMMISSION,
-				LONG_NAME_COMMISSION,
-				RTL_NAME_COMMISSION
+				...FIXTURE_COMMISSIONS,
+				...commissions.map(createdCommissionMount)
 			]),
 			{
 				...FOLDER,
@@ -289,15 +301,15 @@ function denRoot(
 	};
 }
 
-/** Listings sort by name as the viewer is shown it, then by key. */
-function byName(left: MockNode, right: MockNode): number {
-	return left.name.localeCompare(right.name, 'en') || left.key.localeCompare(right.key, 'en');
-}
-
 /** Open entries before cards, then by key: the order equal names are numbered in. */
 function inGroupOrder(left: MockNode, right: MockNode): number {
 	const rank = (node: MockNode) => (node.access === 'card' ? 1 : 0);
 	return rank(left) - rank(right) || left.key.localeCompare(right.key, 'en');
+}
+
+/** Listings sort by name as the viewer is shown it, then equal names in the order they are numbered in. */
+function byName(left: MockNode, right: MockNode): number {
+	return left.name.localeCompare(right.name, 'en') || inGroupOrder(left, right);
 }
 
 /** One listed entry with its number among the equal names of its listing. */

@@ -249,7 +249,10 @@ describe('zurfurApiMock', () => {
 
 	it.each([
 		['an id it does not hold', 'c-unknown'],
-		['the fixed fixture "Untitled"', '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90']
+		[
+			'the card "Some commission", which it shows but not open',
+			'0192c0de-7a11-7000-8000-00000000ca7d'
+		]
 	])('renameCommission answers %s with the commission not-found', async (_, raw) => {
 		const store = createMockStore();
 		const id = commissionId(raw);
@@ -259,6 +262,22 @@ describe('zurfurApiMock', () => {
 
 		expect(failure).toMatchObject({ problem: { code: 'commission_not_found', status: 404 } });
 	});
+
+	it.each([
+		['the fixed fixture "Untitled"', '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90'],
+		['the archived fixture "Winter YCH"', '0192b7e0-0aa0-7000-8000-00000000a7c1']
+	])(
+		'renameCommission answers %s, which it shows open but never created, 403 forbidden',
+		async (_, raw) => {
+			const store = createMockStore();
+			const id = commissionId(raw);
+			if (id === undefined) throw new Error('bad test id');
+
+			const failure = await runOn(store, Effect.flip(renameCommission(id, 'Winter fox')));
+
+			expect(failure).toMatchObject({ problem: { code: 'forbidden', status: 403 } });
+		}
+	);
 
 	it('deleteAccount removes a known row and reports the outcome', async () => {
 		const store = createMockStore();

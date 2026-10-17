@@ -12,16 +12,23 @@
 	 * from the commission's `name`, and a hidden field carrying its `id`. A
 	 * refused title shows under its field, any other problem below the form.
 	 * Closing the dialog clears the form; a redirect also starts the tree over.
+	 * The post keeps "Show archived" when `includeDeleted` is on.
 	 */
 	let {
 		form: given,
 		id,
-		name
+		name,
+		includeDeleted
 	}: {
 		form: SuperValidated<{ id: string; title: string }>;
 		id: CommissionId;
 		name: DenName;
+		includeDeleted: boolean;
 	} = $props();
+
+	const action = $derived(
+		includeDeleted ? '?/renameCommission&includeDeleted=true' : '?/renameCommission'
+	);
 
 	let open = $state(false);
 	/** Whether the dialog was open when the last close was looked for. */
@@ -56,7 +63,7 @@
 </div>
 
 <Dialog bind:open label="Rename">
-	<form class="rename-commission__form" method="post" action="?/renameCommission" use:enhance>
+	<form class="rename-commission__form" method="post" {action} use:enhance>
 		<input type="hidden" name="id" value={id} />
 		<label>
 			Title

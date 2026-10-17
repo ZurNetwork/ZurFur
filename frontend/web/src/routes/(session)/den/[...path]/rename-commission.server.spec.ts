@@ -1,19 +1,29 @@
 import type { ActionFailure } from '@sveltejs/kit';
-import { Effect, type Layer } from 'effect';
+import { Effect, Layer } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	COMMISSION_NOT_FOUND_PROBLEM,
 	FORBIDDEN_PROBLEM,
 	invalidFieldsProblem,
+	invalidRequestProblem,
 	type FieldError,
 	type Problem
 } from '$lib/api/problem';
 import {
 	RENAME_COMMISSION_FORBIDDEN_PROBLEM,
-	RENAME_COMMISSION_UNANSWERED_PROBLEM
+	RENAME_COMMISSION_NOT_FOUND_PROBLEM,
+	RENAME_COMMISSION_UNANSWERED_PROBLEM,
+	RENAME_NODE_NOT_FOUND_PROBLEM,
+	renameCommissionOutcome
 } from '$lib/server/commissions';
 import { ApiProblem, NetworkFailure } from '$lib/server/api/errors';
-import { zurfurApiTest, type ZurfurApi } from '$lib/server/api/zurfur-api';
+import { createMockStore, zurfurApiMock } from '$lib/server/api/zurfur-api-mock';
+import {
+	RequestFetch,
+	ZurfurApiLive,
+	zurfurApiTest,
+	type ZurfurApi
+} from '$lib/server/api/zurfur-api';
 import { fetchStub } from '$lib/testing/http';
 import { expectRedirect } from '$lib/testing/redirect';
 import { commissionId, fieldPointer, type CommissionId } from '$lib/types/brand';
@@ -45,6 +55,9 @@ function idOf(raw: string): CommissionId {
 /** The commission's id: never its Den segment below. */
 const THING_ID = idOf('0192f0c0-0000-7000-8000-00000000c0de');
 
+/** The mock Den's fixture "Untitled": shown open, never created by the mock. */
+const UNTITLED_ID = idOf('01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90');
+
 /** The open commission's address, whose last segment is not its thing id. */
 const ADDRESS = '/den/commissions/fox-in-the-snow';
 
@@ -66,9 +79,12 @@ function api(answer: 'renamed' | ApiProblem | NetworkFailure): RenameCall[] {
 	return calls;
 }
 
-/** Run the rename action from the page at `address`, with the hidden `id` and `title`. */
-async function rename(address: string, id: string, title: string): Promise<unknown> {
-	const url = new URL(`${address}?/renameCommission`, 'http://127.0.0.1:5174');
+/**
+ * Run the rename action from the page at `address`, with the hidden `id` and
+ * `title`; `query` follows the action's name in the posted URL.
+ */
+async function rename(address: string, id: string, title: string, query = ''): Promise<unknown> {
+	const url = new URL(`${address}?/renameCommission${query}`, 'http://127.0.0.1:5174');
 	const body = new FormData();
 	body.set('id', id);
 	body.set('title', title);
@@ -115,22 +131,68 @@ describe('the renameCommission action', () => {
 		expect(landing.location).toBe(ADDRESS);
 	});
 
+	it('keeps "Show archived" on the way back when the post carries it', async () => {
+		api('renamed');
+
+		const landing = await expectRedirect(() =>
+			rename(ADDRESS, THING_ID, 'Winter fox', '&includeDeleted=true')
+		);
+
+		expect(landing.status).toBe(303);
+		expect(landing.location).toBe(`${ADDRESS}?includeDeleted=true`);
+	});
+
+	it.each([
+		['a page token', '&pageToken=p1.25', ADDRESS],
+		[
+			'a page token beside the flag',
+			'&includeDeleted=true&pageToken=p1.25',
+			`${ADDRESS}?includeDeleted=true`
+		],
+		['a flag that isn’t exactly one true', '&includeDeleted=true&includeDeleted=true', ADDRESS]
+	])('drops %s from the way back, keeping only the flag', async (_, query, expected) => {
+		api('renamed');
+
+		const landing = await expectRedirect(() => rename(ADDRESS, THING_ID, 'Winter fox', query));
+
+		expect(landing.location).toBe(expected);
+	});
+
 	it.each([
 		['an empty id', ''],
 		['an oversized id', 'x'.repeat(2049)],
 		['an id the path builder refuses', '../accounts/x']
-	])(
-		'calls nothing for %s and shows the commission not-found as the form’s message',
-		async (_, raw) => {
-			const calls = api('renamed');
+	])('calls nothing for %s and shows "Nothing here" as the form’s message', async (_, raw) => {
+		const calls = api('renamed');
 
-			const failure = failureOf(await rename(ADDRESS, raw, 'Winter fox'));
+		const failure = failureOf(await rename(ADDRESS, raw, 'Winter fox'));
 
-			expect(calls).toEqual([]);
-			expect(failure.status).toBe(404);
-			expect(failure.data.form.message).toEqual(COMMISSION_NOT_FOUND_PROBLEM);
-		}
-	);
+		expect(calls).toEqual([]);
+		expect(failure.status).toBe(404);
+		expect(failure.data.form.message?.detail).toBe('Nothing here');
+		expect(failure.data.form.message).toEqual(RENAME_COMMISSION_NOT_FOUND_PROBLEM);
+		expect(failure.data.form.message?.code).toBe('commission_not_found');
+	});
+
+	it('shows "Nothing here" for the backend’s commission not-found, under no field', async () => {
+		api(new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM }));
+
+		const failure = failureOf(await rename(ADDRESS, THING_ID, 'Winter fox'));
+
+		expect(failure.status).toBe(404);
+		expect(failure.data.form.message?.detail).toBe('Nothing here');
+		expect(failure.data.form.message?.code).toBe('commission_not_found');
+		expect(failure.data.form.errors.title).toBeUndefined();
+	});
+
+	it('shows the owner-only words for an open fixture of the mock Den', async () => {
+		seam.layer = zurfurApiMock(createMockStore());
+
+		const failure = failureOf(await rename('/den/commissions/untitled', UNTITLED_ID, 'Winter fox'));
+
+		expect(failure.status).toBe(403);
+		expect(failure.data.form.message?.detail).toBe("Only the commission's owner can rename it.");
+	});
 
 	it('shows the owner-only words when the backend refuses a Participant who isn’t the owner', async () => {
 		api(new ApiProblem({ problem: FORBIDDEN_PROBLEM }));
@@ -154,12 +216,13 @@ describe('the renameCommission action', () => {
 	});
 
 	it('shows any other problem as the form’s message, under no field', async () => {
-		api(new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM }));
+		const other = invalidRequestProblem('That title is not one this API reads.');
+		api(new ApiProblem({ problem: other }));
 
 		const failure = failureOf(await rename(ADDRESS, THING_ID, 'Winter fox'));
 
-		expect(failure.status).toBe(404);
-		expect(failure.data.form.message).toEqual(COMMISSION_NOT_FOUND_PROBLEM);
+		expect(failure.status).toBe(422);
+		expect(failure.data.form.message).toEqual(other);
 		expect(failure.data.form.errors.title).toBeUndefined();
 	});
 
@@ -180,5 +243,22 @@ describe('the renameCommission action', () => {
 		expect(calls).toEqual([]);
 		expect(failure.status).toBe(404);
 		expect(failure.data.form.message?.code).toBe('node_not_found');
+		expect(failure.data.form.message?.detail).toBe('Nothing here');
+		expect(failure.data.form.message).toEqual(RENAME_NODE_NOT_FOUND_PROBLEM);
+	});
+});
+
+describe('renameCommissionOutcome over the live API', () => {
+	it('shows "Nothing here" for an id the path builder refuses, fetching nothing', async () => {
+		const { fetch, calls } = fetchStub(() => Response.json({}));
+		const live = ZurfurApiLive.pipe(Layer.provide(Layer.succeed(RequestFetch, fetch)));
+
+		const outcome = await Effect.runPromise(
+			renameCommissionOutcome(idOf('../accounts/x'), 'Winter fox').pipe(Effect.provide(live))
+		);
+
+		expect(calls).toEqual([]);
+		expect(outcome).toEqual({ problem: RENAME_COMMISSION_NOT_FOUND_PROBLEM });
+		expect('problem' in outcome && outcome.problem.detail).toBe('Nothing here');
 	});
 });

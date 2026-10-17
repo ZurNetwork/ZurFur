@@ -24,7 +24,7 @@ describe('TreeItem', () => {
 		});
 
 		const shown = container.querySelector('.tree-item__name');
-		expect(shown?.getAttribute('title')).toBe('⁨Test 1⁩ (2)');
+		expect(shown?.getAttribute('title')).toBe('\u2068Test 1\u2069 (2)');
 	});
 
 	it('titles a name with no number by the isolated name alone', () => {
@@ -32,6 +32,6 @@ describe('TreeItem', () => {
 
 		const shown = container.querySelector('.tree-item__name');
 		expect(shown?.textContent).toBe('Test 1');
-		expect(shown?.getAttribute('title')).toBe('⁨Test 1⁩');
+		expect(shown?.getAttribute('title')).toBe('\u2068Test 1\u2069');
 	});
 });

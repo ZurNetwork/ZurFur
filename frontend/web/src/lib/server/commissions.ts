@@ -9,6 +9,7 @@
 
 import { Effect } from 'effect';
 import {
+	COMMISSION_NOT_FOUND_PROBLEM,
 	FORBIDDEN_PROBLEM,
 	NODE_NOT_FOUND_PROBLEM,
 	ProblemKind,
@@ -112,6 +113,18 @@ export const RENAME_COMMISSION_FORBIDDEN_PROBLEM: Problem = {
 	detail: "Only the commission's owner can rename it."
 };
 
+/** What the form says when the commission isn't found: the closed door, under the backend's code. */
+export const RENAME_COMMISSION_NOT_FOUND_PROBLEM: Problem = {
+	...COMMISSION_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
+/** What the form says when the page's own address isn't found: the same closed door. */
+export const RENAME_NODE_NOT_FOUND_PROBLEM: Problem = {
+	...NODE_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
 /** What the form says when renaming wasn't answered. */
 export const RENAME_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
 	"Zurfur isn't answering right now."
@@ -120,11 +133,20 @@ export const RENAME_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableP
 /** How renaming comes back: done, or a problem to show on the form. */
 export type RenameCommissionOutcome = { readonly renamed: true } | { readonly problem: Problem };
 
+/** The backend's problem as the rename form shows it: the owner-only words, the closed door, or as it came. */
+function renameProblem(problem: Problem): Problem {
+	if (problem.code === ProblemKind.Forbidden.code) return RENAME_COMMISSION_FORBIDDEN_PROBLEM;
+	if (problem.code === ProblemKind.CommissionNotFound.code)
+		return RENAME_COMMISSION_NOT_FOUND_PROBLEM;
+	return problem;
+}
+
 /**
  * Rename the commission `id` to `title`. A refusal to someone who isn't the
- * owner is {@link RENAME_COMMISSION_FORBIDDEN_PROBLEM}; a refused title, or
- * any other problem, comes back as the backend's problem; a backend that
- * doesn't answer is {@link RENAME_COMMISSION_UNANSWERED_PROBLEM}.
+ * owner is {@link RENAME_COMMISSION_FORBIDDEN_PROBLEM}, a not-found is
+ * {@link RENAME_COMMISSION_NOT_FOUND_PROBLEM}; a refused title, or any other
+ * problem, comes back as the backend's problem; a backend that doesn't
+ * answer is {@link RENAME_COMMISSION_UNANSWERED_PROBLEM}.
  */
 export function renameCommissionOutcome(
 	id: CommissionId,
@@ -138,12 +160,7 @@ export function renameCommissionOutcome(
 	return renamed.pipe(
 		Effect.catchTags({
 			ApiProblem: ({ problem }) =>
-				Effect.succeed<RenameCommissionOutcome>({
-					problem:
-						problem.code === ProblemKind.Forbidden.code
-							? RENAME_COMMISSION_FORBIDDEN_PROBLEM
-							: problem
-				}),
+				Effect.succeed<RenameCommissionOutcome>({ problem: renameProblem(problem) }),
 			NetworkFailure: () =>
 				Effect.succeed<RenameCommissionOutcome>({ problem: RENAME_COMMISSION_UNANSWERED_PROBLEM })
 		})

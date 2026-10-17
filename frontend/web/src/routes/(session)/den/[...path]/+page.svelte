@@ -168,7 +168,12 @@
 			<NewCommission form={data.createCommission} />
 		{/snippet}
 		{#snippet renameCommission(id: CommissionId, name: DenName)}
-			<RenameCommission form={data.renameCommission} {id} {name} />
+			<RenameCommission
+				form={data.renameCommission}
+				{id}
+				{name}
+				includeDeleted={den.includeDeleted}
+			/>
 		{/snippet}
 	</DenPane>
 </div>

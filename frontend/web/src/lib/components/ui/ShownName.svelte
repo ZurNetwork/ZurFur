@@ -2,9 +2,10 @@
 	import type { NameOrdinal } from '$lib/types/brand';
 
 	/**
-	 * A Den name as shown: the name isolated for right-to-left text, then
-	 * " (n)" outside the isolate when an earlier equal name sits in the same
-	 * folder. No wrapper: the caller's box decides how a long name is cut.
+	 * A Den name in its <bdi>, then " (n)" outside it after an earlier equal
+	 * name in the same folder; no wrapper, so the caller's box cuts a long name.
+	 * The number's placement relies on the backend's name rule, which refuses
+	 * or strips bidi controls in Den names.
 	 */
 	let { name, ordinal }: { name: string; ordinal: NameOrdinal | undefined } = $props();
 </script>

@@ -223,6 +223,27 @@ describe('"Rename" in My Den', () => {
 		await expect.element(title).toHaveAttribute('aria-invalid', 'true');
 	});
 
+	it('announces a refused title’s message as an alert', async () => {
+		renderPage(COMMISSION_PAGE, { errors: { title: ["This can't be blank."] } });
+		await openDialog();
+
+		await expect.element(page.getByTestId('rename-title-error')).toHaveAttribute('role', 'alert');
+	});
+
+	it.each([
+		['shows archived entries', true, '?/renameCommission&includeDeleted=true'],
+		['hides them', false, '?/renameCommission']
+	])(
+		'posts with the page’s "Show archived" flag only when it %s',
+		async (_, includeDeleted, action) => {
+			renderPage({ ...COMMISSION_PAGE, includeDeleted });
+			await openDialog();
+
+			const form = page.getByRole('dialog', { name: 'Rename' }).element().querySelector('form');
+			expect(form?.getAttribute('action')).toBe(action);
+		}
+	);
+
 	it('clears the form when the dialog closes, so it opens again from the name', async () => {
 		renderPage(COMMISSION_PAGE, { errors: { title: ["This can't be blank."] } });
 		await openDialog();
