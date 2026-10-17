@@ -23,8 +23,8 @@ Each domain crate keeps the same layout: `src/elements/…` for the nouns, `src/
 
 The guards live in this crate's one test binary, `tests/it/`:
 
-- `elements_do_not_import_ports` — no domain crate's elements reference its ports;
-- `domain_crates_point_one_way` — each domain crate declares only its allowed workspace dependencies, and consumers declare only `domain`;
+- `elements_do_not_import_ports` — no domain crate's elements reference its ports; its crate lists equal the one-way table minus the façade;
+- `domain_crates_point_one_way` — each domain crate declares only its allowed workspace dependencies, and consumers declare only `domain`; its table is the one list of domain crates, and `scripts/gate-light.sh`'s list is checked against it;
 - `facade_paths` — every path the façade re-exports still resolves.
 
 ## Architecture

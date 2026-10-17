@@ -8,7 +8,7 @@ Architecture is ports & adapters:
 - `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, and their ports
 - `backend/crates/workflow` — Commission and Workflow boards, and their ports
 - `backend/crates/gallery`, `backend/crates/moderation` — stub crates until their first types
-- `backend/crates/domain` — the façade: re-exports the domain crates as `domain::…` and owns the cross-domain unit of work; pure types and ports, no IO
+- `backend/crates/domain` — the façade: re-exports the domain crates that hold types as `domain::…` and owns the cross-domain unit of work, its only code of its own; no IO
 - `backend/crates/atta` — the Den's engine
 - `backend/crates/application` — use cases, called by every driver
 - `backend/crates/adapter-pg` — PostgreSQL adapter (private data boundary; sqlx; migrations live here)

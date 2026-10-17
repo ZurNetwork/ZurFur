@@ -7,7 +7,10 @@
 //! type-level check: `cargo check` cannot see an import that compiles fine but
 //! points the wrong direction on purpose.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+use crate::domain_crates_point_one_way::{FACADE, behind_the_facade};
 
 /// The path segment this guard forbids outside comments.
 const FORBIDDEN: &str = "ports";
@@ -25,10 +28,6 @@ const REQUIRED_CRATES: &[&str] = &["kernel", "identity", "workflow"];
 /// Domain crates scanned for `src/elements.rs` and `src/elements/` when they
 /// have them, as folder names beside this crate's.
 const OPTIONAL_CRATES: &[&str] = &["gallery", "moderation"];
-
-/// The façade crate: only its `src/elements.rs` is required, and it has no
-/// `src/elements/` folder.
-const FACADE_CRATE: &str = "domain";
 
 /// The files this guard scans: the `src/elements.rs` façade and every leaf
 /// under `src/elements/` of each required crate and each optional crate that
@@ -68,12 +67,8 @@ fn scanned_files() -> Vec<PathBuf> {
             files.push(facade);
         }
     }
-    let facade = crates.join(FACADE_CRATE).join("src").join("elements.rs");
-    assert!(
-        facade.is_file(),
-        "{}",
-        missing(FACADE_CRATE, "`src/elements.rs`")
-    );
+    let facade = crates.join(FACADE).join("src").join("elements.rs");
+    assert!(facade.is_file(), "{}", missing(FACADE, "`src/elements.rs`"));
     files.push(facade);
     files
 }
@@ -201,4 +196,20 @@ fn detector_ignores_lookalikes() {
     assert!(!references_ports("let ports_len = 3;"));
     assert!(!references_ports("let ports = Vec::new();"));
     assert!(!references_ports("fn transports() {}"));
+}
+
+#[test]
+fn the_scanned_crates_are_the_crates_behind_the_facade() {
+    let scanned: BTreeSet<&str> = REQUIRED_CRATES
+        .iter()
+        .chain(OPTIONAL_CRATES)
+        .copied()
+        .collect();
+    assert_eq!(
+        scanned,
+        behind_the_facade(),
+        "the elements guard's required and optional crates must equal the one-way \
+         guard's `ALLOWED` table minus the façade, so a new domain crate goes into one \
+         of them"
+    );
 }

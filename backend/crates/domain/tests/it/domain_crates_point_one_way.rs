@@ -9,6 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
+/// The façade crate: the one domain crate consumers may name.
+pub(crate) const FACADE: &str = "domain";
+
 /// Each domain crate and the workspace crates it may declare, of any kind.
 /// Every other workspace crate is forbidden to it, itself and the façade
 /// included. Gallery and moderation widen deliberately with their first types.
@@ -18,12 +21,25 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("workflow", &["kernel", "identity", "shared"]),
     ("gallery", &["kernel", "shared"]),
     ("moderation", &["kernel", "shared"]),
-    ("domain", &["kernel", "identity", "workflow", "shared"]),
+    (FACADE, &["kernel", "identity", "workflow", "shared"]),
 ];
 
-/// The domain crates behind the façade: no crate outside the domain crates may
-/// declare one.
-const BEHIND_THE_FACADE: &[&str] = &["kernel", "identity", "workflow", "gallery", "moderation"];
+/// The path of the light gate script, which carries its own copy of the domain
+/// crate list.
+const GATE_LIGHT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../scripts/gate-light.sh"
+);
+
+/// The domain crates behind the façade, derived from `ALLOWED`: no crate
+/// outside the domain crates may declare one.
+pub(crate) fn behind_the_facade() -> BTreeSet<&'static str> {
+    ALLOWED
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| *name != FACADE)
+        .collect()
+}
 
 /// Each workspace member's name, with the workspace members it declares as
 /// dependencies of any kind.
@@ -91,6 +107,7 @@ fn edges_outside_the_allowed_sets(declared: &Declared) -> Vec<String> {
 /// behind the façade, as `from -> to`.
 fn consumers_naming_a_crate_behind_the_facade(declared: &Declared) -> Vec<String> {
     let domain_crates: BTreeSet<&str> = ALLOWED.iter().map(|(name, _)| *name).collect();
+    let behind_the_facade = behind_the_facade();
     let mut offenders = Vec::new();
     for (name, dependencies) in declared {
         if domain_crates.contains(name.as_str()) {
@@ -98,7 +115,7 @@ fn consumers_naming_a_crate_behind_the_facade(declared: &Declared) -> Vec<String
         }
         let behind = dependencies
             .iter()
-            .filter(|dependency| BEHIND_THE_FACADE.contains(&dependency.as_str()));
+            .filter(|dependency| behind_the_facade.contains(dependency.as_str()));
         offenders.extend(behind.map(|dependency| format!("{name} -> {dependency}")));
     }
     offenders
@@ -179,4 +196,25 @@ fn the_checks_flag_planted_edges() {
     let consumer_edges = consumers_naming_a_crate_behind_the_facade(&declared);
     let expected_consumer_edges = ["application -> identity"];
     assert_eq!(consumer_edges, expected_consumer_edges);
+}
+
+#[test]
+fn gate_light_lists_the_crates_behind_the_facade() {
+    let script = std::fs::read_to_string(GATE_LIGHT)
+        .unwrap_or_else(|e| panic!("cannot read scripts/gate-light.sh: {e}"));
+    let listed = script
+        .lines()
+        .map(str::trim)
+        .find_map(|line| {
+            line.strip_prefix("domain_crates=(")
+                .and_then(|rest| rest.strip_suffix(')'))
+        })
+        .expect("scripts/gate-light.sh has a `domain_crates=(…)` line");
+    let listed: BTreeSet<&str> = listed.split_whitespace().collect();
+    assert_eq!(
+        listed,
+        behind_the_facade(),
+        "scripts/gate-light.sh's `domain_crates` must list exactly the crates in this \
+         guard's `ALLOWED` table but the façade"
+    );
 }
