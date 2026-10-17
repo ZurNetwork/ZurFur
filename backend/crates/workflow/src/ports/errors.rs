@@ -7,7 +7,7 @@
 pub struct UnknownTab;
 
 /// Error source of an element write whose surface the composition
-/// [`SKELETON`](workflow::elements::commission::SKELETON) does not declare **in that
+/// [`SKELETON`](crate::elements::commission::SKELETON) does not declare **in that
 /// tab** — the refusal is about the pair, not the surface alone. Surfaces are
 /// code-declared and global, so this leaks nothing and routes answer `422`.
 /// Adapters resolve the tab first, so an address wrong in both ways refuses as
