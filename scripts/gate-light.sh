@@ -106,6 +106,14 @@ if [ "$whole_workspace" = 0 ]; then
     done <<<"$classified"
 fi
 
+# The domain crates' guards (the one-way dependency check) live in domain's
+# tests, so a change to any domain crate also tests domain.
+for name in kernel identity workflow gallery moderation; do
+    if [ -n "${crates[$name]:-}" ]; then
+        crates[domain]=1
+    fi
+done
+
 step() {
     echo "gate-light: $*"
     [ "$plan" = 1 ] || "$@"

@@ -82,14 +82,23 @@ Ports and adapters, per the design page "Domains and Applications" (`11763713`):
 
 ```
 backend/crates/
-  domain/            # Pure domain elements (Account, User, Golem, Character, Commission, …); will define ports (traits) named by role
+  shared/            # Build-time constants every layer may read, the domain crates included
+  kernel/            # The base domain crate: the clock, the string builder, Did, text, maturity, BlobId, Markdown
+  identity/          # User, Account, Character, actor identities, handles, roles, invitations, profiles, public records; their ports
+  workflow/          # Commission (elements, slots, seats, changelog, files) and Workflow boards; their ports
+  gallery/           # Posts and the Gallery (a stub crate until the first post type)
+  moderation/        # Platform safety (a stub crate until the first moderation type)
+  domain/            # The façade: re-exports the domain crates as `domain::…`; owns the cross-domain unit of work
+  atta/              # The Den's engine: depends on nothing in the workspace; application is its one consumer
+  application/       # Use cases: one `#[use_case]` per command or query, called by every driver
   adapter-pg/        # Private data boundary: PostgreSQL (app-owned rows, UUIDv7 keys, transactions)
   adapter-atproto/   # Public data boundary: the user's PDS (user-owned records, AT-URI via DID)
   adapter-mem/       # Both boundaries faked in-process; core development runs against this
-  api/               # Composition root: config, tracing, HTTP; the only crate that knows which adapter is live
+  composition/       # Composition root: config and the port bag; the only crate that knows which adapter is live
+  api/  cli/         # The HTTP and terminal drivers
 ```
 
-**Dependency rule:** adapters depend on domain crates, never the reverse; `api` composes. Ports are named by role (`PrivateStore`, `PublicRecords`, per-domain repos); crates are named by tech — so a second backend never makes a name a lie. The single `domain` crate is transitional — it splits into per-domain crates (`identity`, `gallery`, `workflow`, `plugin`; `plugin` serves the public `plugin-api`) as those namespaces get built.
+**Dependency rule:** adapters depend on domain crates, never the reverse; `composition` composes, and `api` and `cli` drive it. Ports are named by role (`PrivateStore`, `PublicRecords`, per-domain repos); crates are named by tech — so a second backend never makes a name a lie. The domain is split into per-domain crates over the base crate `kernel` (`identity`, `workflow`, `gallery`, `moderation`, with `plugin` later), and the thin `domain` façade re-exports them, so every consumer names `domain::…` and nothing else. Domain crates point one way (kernel ← identity ← workflow), each may also read `shared`, and none depends on the façade, an adapter or a driver. Where `gallery` and `moderation` sit is decided with their first types. `domain/tests/it/domain_crates_point_one_way.rs` fails otherwise.
 
 **No cross-store transactions:** anything touching both boundaries (e.g. lock private facts in PostgreSQL + publish an atproto record) is a dual write, run as a separate retryable step (outbox-style), never one unit of work.
 
