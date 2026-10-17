@@ -106,6 +106,21 @@ if [ "$whole_workspace" = 0 ]; then
     done <<<"$classified"
 fi
 
+# The crates behind the domain façade. domain's guard binary checks this list
+# against its one-way dependency table, so a crate added there fails the guard
+# until it is added here too.
+domain_crates=(kernel identity workflow gallery moderation)
+
+# The domain crates' guards live in domain's tests. A dependency edit changes
+# Cargo.lock, which already tests the whole workspace, so what this rule buys is
+# the elements guard and the façade-paths check on a source-only edit to a
+# domain crate.
+for name in "${domain_crates[@]}"; do
+    if [ -n "${crates[$name]:-}" ]; then
+        crates[domain]=1
+    fi
+done
+
 step() {
     echo "gate-light: $*"
     [ "$plan" = 1 ] || "$@"

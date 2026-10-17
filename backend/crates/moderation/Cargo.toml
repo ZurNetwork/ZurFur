@@ -1,0 +1,8 @@
+[package]
+publish = false
+name = "moderation"
+version = "0.1.0"
+edition = "2024"
+
+# A stub: no dependencies and no dependents until its first types arrive.
+[dependencies]

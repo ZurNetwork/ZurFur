@@ -3,13 +3,21 @@
 Zurfur is an AT Protocol-native art commission platform in Rust (edition 2024).
 Architecture is ports & adapters:
 
-- `backend/crates/domain` — pure domain types and ports (traits); no IO
+- `backend/crates/shared` — build-time constants every layer may read, the domain crates included
+- `backend/crates/kernel` — the base domain crate: the clock, the string builder, `Did`, text, maturity, `BlobId`, `Markdown`
+- `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, and their ports
+- `backend/crates/workflow` — Commission and Workflow boards, and their ports
+- `backend/crates/gallery`, `backend/crates/moderation` — stub crates until their first types
+- `backend/crates/domain` — the façade: re-exports the domain crates that hold types as `domain::…` and owns the cross-domain unit of work, its only code of its own; no IO
+- `backend/crates/atta` — the Den's engine
+- `backend/crates/application` — use cases, called by every driver
 - `backend/crates/adapter-pg` — PostgreSQL adapter (private data boundary; sqlx; migrations live here)
 - `backend/crates/adapter-atproto` — AT Protocol adapter (public data boundary)
 - `backend/crates/adapter-mem` — in-process fakes for both boundaries
-- `backend/crates/api` — composition root: axum HTTP, config, tracing
+- `backend/crates/composition` — composition root: config and the port bag; the only crate that knows which adapter is live
+- `backend/crates/api`, `backend/crates/cli` — the HTTP and terminal drivers
 
-Dependency rule: adapters depend on domain, never the reverse; only `api` knows which adapter is live.
+Dependency rule: adapters depend on domain crates, never the reverse; consumers name only `domain::…`; domain crates point one way (kernel ← identity ← workflow) and never depend on the façade, an adapter or a driver; only `composition` knows which adapter is live.
 
 ## Commands
 

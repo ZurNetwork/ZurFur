@@ -1,12 +1,13 @@
-//! Zurfur's pure domain core — the entities, value objects and ports of the
-//! art-commission platform, with no I/O of its own.
+//! Zurfur's domain façade — one `domain::…` path over the domain crates, with
+//! no I/O of its own.
 //!
-//! [`elements`] holds the nouns, [`ports`] the role-named traits the adapters
-//! implement, [`datetime`] the one clock type, and [`string_builder`] the shared
+//! [`elements`] re-exports the nouns of `kernel`, `identity` and `workflow`;
+//! [`ports`] re-exports their role-named traits and owns the unit of work, which
+//! vends the write ports of both identity and workflow and so sits above them;
+//! [`datetime`] is the one clock type and [`string_builder`] the shared
 //! string-validation builder. The dependency rule runs one way: adapters point
 //! at the domain, never the reverse.
 
-pub mod datetime;
 pub mod elements;
 pub mod ports;
-pub mod string_builder;
+pub use ::kernel::{datetime, string_builder};

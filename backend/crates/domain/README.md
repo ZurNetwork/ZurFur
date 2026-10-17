@@ -1,97 +1,32 @@
-# Zurfur Domain Crate
+# Zurfur Domain Façade
 
-The `domain` crate is the core of Zurfur's ports-and-adapters architecture. It contains all domain logic without any I/O dependencies, making it a pure representation of the business rules and entities.
+The `domain` crate is the one path every other crate uses into Zurfur's domain. It holds no domain types of its own: it re-exports the domain crates below it, so `domain::elements::…`, `domain::ports::…`, `domain::datetime` and `domain::string_builder` resolve exactly as they did before the domain was split. The only code it owns is the unit of work.
 
-## Architecture Overview
+## The domain crates
 
-Zurfur follows a ports-and-adapters pattern where the `domain` layer acts as the center of the architecture:
+| Crate | Holds | Depends on (workspace) |
+|---|---|---|
+| `kernel` | the shared vocabulary: `did`, `text`, `maturity`, `markdown`, `blob`, plus `datetime` and `string_builder` | nothing (`shared` allowed) |
+| `identity` | who acts: users, accounts, actor identities, handles, custody keys, profiles, public records, and their ports | `kernel` |
+| `workflow` | the work: the commission aggregate and an account's boards, and their ports | `kernel`, `identity` |
+| `gallery`, `moderation` | stubs, with no types and no dependencies yet | none |
+| `domain` | this façade, plus the unit of work | `kernel`, `identity`, `workflow` |
 
-- **Domain Layer**: Contains entities, value objects, and traits (ports) that define how the system interacts with the outside world
-- **Adapter Layers**: Implement the domain traits for different storage backends (`adapter-pg`, `adapter-atproto`, `adapter-mem`)
-- **Composition Root**: The `api` crate composes the system by selecting which adapters to use
+Each domain crate keeps the same layout: `src/elements/…` for the nouns, `src/ports/…` for the role-named traits the adapters implement. Elements never import ports.
 
-## Modules
+## The rules
 
-### 1. elements/
+- **Consumers name only `domain`.** No crate outside the domain crates depends on `kernel`, `identity`, `workflow`, `gallery` or `moderation` directly.
+- **Dependencies point down.** A domain crate depends only on the crates below it in the table (and on `shared`), never on an adapter, a driver, `application` or this façade — dev-dependencies included.
+- **The unit of work lives here.** `Database`, `UnitOfWork`, `Unit` and `UnitOfWorkFn` vend the write ports of both identity and workflow, so they sit above both. Every private-store write goes through `Database::begin()` and an open `UnitOfWork`.
+- **Elements mirror the glossary.** Every element has a glossary page in the design corpus; the pointer lives in the owning crate's `NODE.json` under `refs`, never in a doc comment.
 
-The `elements` module contains the core domain entities and value objects that represent the business concepts in Zurfur:
+The guards live in this crate's one test binary, `tests/it/`:
 
-- **Account** - Represents platform-custodied entities with their own sovereign identity
-- **User** - A recognized visitor who has been provisioned by the system
-- **Role** - Member's rank inside an account, defining what authority they have
-- **Commission** - The basic unit of work in the system, representing a collaborative project
-- **Handle** - A validated, normalized atproto-style account handle
-- **Did** - A decentralized identifier used for authentication and identity
-- And many more specialized elements like `profile`, `maturity`, `invitation` etc.
+- `elements_do_not_import_ports` — no domain crate's elements reference its ports; its crate lists equal the one-way table minus the façade;
+- `domain_crates_point_one_way` — each domain crate declares only its allowed workspace dependencies, and consumers declare only `domain`; its table is the one list of domain crates, and `scripts/gate-light.sh`'s list is checked against it;
+- `facade_paths` — every path the façade re-exports still resolves.
 
-### 2. ports/
+## Architecture
 
-The `ports` module contains traits (the "seams") that define how the domain interacts with external systems:
-
-- **Database** - Interface for database transactions using UnitOfWork pattern
-- **UserStore/UserWrites** - Stores and writes user data
-- **AccountStore/AccountWrites** - Manages accounts and memberships
-- **PublicRecords** - Interface for writing to public atproto repositories
-- **DidMinter** - Mints decentralized identifiers (DIDs) for accounts
-- **KeyStore** - Manages private keys for DID custody
-- **PlcOperationLog** - Tracks operations performed on DIDs
-
-### 3. datetime/
-
-Contains the single clock type the domain speaks in, ensuring time is handled consistently across all domains.
-
-## Design Principles
-
-### Transactional Operations
-
-All writes to the private store go through a transactional `UnitOfWork` pattern which ensures data integrity and atomicity of multi-step operations.
-
-### Identity Rules
-
-- Visitor identity precedes the platform (ZMVP-9, design page User `786439`)
-- Account identity is platform-custodied (ZMVP-14, design page Account `1966081`)
-- Role granting follows strict rules where only Owners and Admins can grant roles (design page Roles `2162692`)
-
-### Domain-Driven Design
-
-- Every domain element has a glossary page in the design corpus; the pointer to it lives in this crate's `NODE.json` under `refs`, not in the doc comments
-- The domain layer is completely independent - no adapters can depend on it
-- The architecture allows for easy swapping of storage mechanisms via adapter pattern
-
-## Key Features
-
-### 1. Account Management
-
-- Accounts have sovereign identities with DIDs
-- Membership system with roles (Owner, Admin, Manager, Member)
-- Invitation and acceptance flow for joining accounts
-- Soft-delete functionality to preserve data integrity
-
-### 2. Commission System  
-
-- Independent work units with lifecycle tracking
-- Content tree structure managed separately via `node` submodule
-- Visibility levels (Private, Listed, Public)
-- Deadline and status tracking
-
-### 3. Authentication
-
-- DID-based authentication following atproto principals
-- Profile fetching from PDS (Public Data Boundary)
-- Session management through authenticator traits
-
-## Usage Pattern
-
-1. **Reading from domain** - Use the store ports (like `AccountStore`, `UserStore`)
-2. **Writing to domain** - Use the write ports (like `AccountWrites`, `UserWrites`)
-3. **Transactions** - All writes must go through `Database::begin()` and `UnitOfWork`
-4. **Error Handling** - Domain-specific errors are wrapped in `anyhow::Result` with contextual information
-
-## Testing
-
-The domain crate includes tests that validate:
-
-- Fact contract compliance for commissioned facts
-- Lifecycle step transitions and validations
-- Role granting rules
-- Various entity validation logic
+Zurfur follows ports and adapters. The domain crates are the I/O-free centre: entities, value objects and the ports that say how the system reaches the outside world. The adapters (`adapter-pg`, `adapter-atproto`, `adapter-mem`) implement those ports; `application` holds the use cases; `composition` wires the live adapters, and the drivers (`api`, `cli`) run on top of it.
