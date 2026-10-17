@@ -20,6 +20,7 @@ import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/
 import { API_PREFIX, type FetchFunction } from '$lib/api/client';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	COMMISSION_NOT_FOUND_PROBLEM,
 	type FieldError,
 	NODE_NOT_FOUND_PROBLEM,
 	PROBLEM_CONTENT_TYPE,
@@ -44,7 +45,9 @@ import {
 } from './generated/zurfur/api/v1/account_pb';
 import {
 	CreateCommissionRequestSchema,
-	CreateCommissionResponseSchema
+	CreateCommissionResponseSchema,
+	RenameCommissionRequestSchema,
+	RenameCommissionResponseSchema
 } from './generated/zurfur/api/v1/commission_pb';
 import {
 	type FieldError as WireFieldError,
@@ -138,6 +141,17 @@ export interface ZurfurApiShape {
 		title: string
 	) => Effect.Effect<CreatedCommission, ApiProblem | NetworkFailure | ContractViolation>;
 	/**
+	 * `PATCH /commissions/{id}/title` — the owner renames the commission.
+	 * Rejects with `invalid_request` (422) carrying field errors for a refused
+	 * title, `forbidden` (403) for a Participant who isn't the owner, and
+	 * `commission_not_found` (404) for anyone else and for an id that names
+	 * nothing.
+	 */
+	readonly renameCommission: (
+		id: CommissionId,
+		title: string
+	) => Effect.Effect<RenamedCommission, ApiProblem | NetworkFailure | ContractViolation>;
+	/**
 	 * `GET /den` — the viewer's own root (My Den) and one page of its entries.
 	 * Fails `ApiProblem` `node_not_found` for every miss, `NotAuthenticated`
 	 * for an ended session; a failure names only the route template.
@@ -170,6 +184,9 @@ export interface CreatedCommission {
 	readonly id: CommissionId;
 	readonly title: string;
 }
+
+/** The commission `PATCH /commissions/{id}/title` renamed, as stored: its id and its title. */
+export type RenamedCommission = CreatedCommission;
 
 /** Every way a Den read fails. */
 export type DenReadError = NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation;
@@ -567,6 +584,41 @@ const liveCreateCommission = (fetch: FetchFunction, title: string) =>
 		return created;
 	});
 
+/** The route every rename failure names, never the id it was sent with. */
+const RENAME_ROUTE = '/commissions/{id}/title';
+
+/**
+ * `PATCH /commissions/{id}/title`, its path built by the shared path
+ * builder: an id the builder refuses never reaches `fetch` and answers the
+ * commission not-found. An answer whose id is empty, or that doesn't
+ * decode, is a `ContractViolation`.
+ */
+const liveRenameCommission = (fetch: FetchFunction, id: CommissionId, title: string) =>
+	Effect.gen(function* () {
+		const titlePath = segmentPath([id, 'title']);
+		const path = titlePath === undefined ? undefined : joinPath('/commissions', titlePath);
+		if (path === undefined) return yield* new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM });
+		const request = create(RenameCommissionRequestSchema, { id, title });
+		const init: BackendInit = {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(RenameCommissionRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, path, init);
+		if (!response.ok) return yield* foldedProblemFailure(response, RENAME_ROUTE);
+		const raw = yield* parsedBody(response, RENAME_ROUTE);
+		const violation = (detail: string) =>
+			new ContractViolation({ path: RENAME_ROUTE, status: response.status, detail });
+		const message = yield* Effect.try({
+			try: () => decodeContract(RenameCommissionResponseSchema, raw),
+			catch: () => violation('malformed renamed commission payload')
+		});
+		const renamedId = commissionId(message.id);
+		if (renamedId === undefined) return yield* violation('a renamed commission with no id');
+		const renamed: RenamedCommission = { id: renamedId, title: message.title };
+		return renamed;
+	});
+
 /**
  * A Den read over HTTP: `path` is the built API path, `route` the template
  * every failure names instead. A 401 stays `NotAuthenticated`; an answer
@@ -624,6 +676,7 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			createAccount: (name, handle) => liveCreateAccount(fetch, name, handle),
 			deleteAccount: (id) => liveDeleteAccount(fetch, id),
 			createCommission: (title) => liveCreateCommission(fetch, title),
+			renameCommission: (id, title) => liveRenameCommission(fetch, id, title),
 			denRoot: (query) => liveDenRoot(fetch, query),
 			denNode: (path, query) => liveDenNode(fetch, path, query)
 		});
@@ -648,6 +701,7 @@ const anonymousDefaults: ZurfurApiShape = {
 	createAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	deleteAccount: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	createCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
+	renameCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
 	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };

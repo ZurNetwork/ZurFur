@@ -54,6 +54,7 @@ function folderData(node: OpenEntry): DenPageData {
 			page: {
 				view: 'open',
 				node,
+				thing: undefined,
 				crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
 				body: { body: 'listing', entries: [], more: undefined }
 			},

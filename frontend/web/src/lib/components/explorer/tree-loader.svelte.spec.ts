@@ -250,6 +250,7 @@ function batchPage(address: DenHref, entries: readonly DenEntry[]): DenPageData 
 			page: {
 				view: 'open',
 				node: { ...fileEntry('batch'), href: FOLDER, kind: 'directory' },
+				thing: undefined,
 				crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
 				body: { body: 'listing', entries, more: undefined }
 			},

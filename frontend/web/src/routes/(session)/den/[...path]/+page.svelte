@@ -5,9 +5,10 @@
 	import type { DenEntry } from '$lib/api/den';
 	import DenPane from '$lib/components/explorer/DenPane.svelte';
 	import NewCommission from '$lib/components/explorer/NewCommission.svelte';
+	import RenameCommission from '$lib/components/explorer/RenameCommission.svelte';
 	import { fetchListing } from '$lib/components/explorer/tree-loader';
 	import { treeMemoryFromContext } from '$lib/components/explorer/tree-memory.svelte';
-	import type { DenHref } from '$lib/types/brand';
+	import type { CommissionId, DenHref, DenName } from '$lib/types/brand';
 	import type { PageData } from './$types';
 
 	/**
@@ -19,7 +20,7 @@
 	 * path bar moves focus to the pane's heading; opening one from the tree
 	 * leaves focus in the tree. The title stays generic; a live region says
 	 * which item opened. The viewer's own `commissions` folder offers "New
-	 * commission".
+	 * commission"; an open commission offers "Rename".
 	 */
 	let { data }: { data: PageData } = $props();
 
@@ -162,6 +163,9 @@
 	>
 		{#snippet newCommission()}
 			<NewCommission form={data.createCommission} />
+		{/snippet}
+		{#snippet renameCommission(id: CommissionId, name: DenName)}
+			<RenameCommission form={data.renameCommission} {id} {name} />
 		{/snippet}
 	</DenPane>
 </div>

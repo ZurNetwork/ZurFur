@@ -61,6 +61,7 @@ function pageWith(href: DenHref, entries: readonly DenEntry[], more?: DenHref): 
 			page: {
 				view: 'open',
 				node: entry(href, 'x'),
+				thing: undefined,
 				crumbs: [],
 				body: { body: 'listing', entries, more }
 			},

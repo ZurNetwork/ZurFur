@@ -10,6 +10,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { Effect } from 'effect';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kitEventFetch } from '$lib/testing/kit-fetch';
+import { commissionId } from '$lib/types/brand';
 import { RequestFetch, ZurfurApi, ZurfurApiLive } from './api/zurfur-api';
 import { countdown, TIME_LIMITS } from './time-limits';
 
@@ -103,6 +104,7 @@ function runLive(
 }
 
 const ACCOUNT_ID = '0192c3a4-0000-7000-8000-000000000001';
+const COMMISSION_ID = '0192f0c0-0000-7000-8000-00000000c0de';
 
 const startSignin = () =>
 	runLive(
@@ -124,13 +126,14 @@ const createCommission = () =>
 		Effect.flatMap(ZurfurApi, (api) => api.createCommission('Fox in the snow')),
 		requestFetch('/den/commissions', '/(session)/den/[...path]')
 	);
-/** No live PATCH exists yet: one sent through the same `event.fetch` and `handleFetch`. */
-const patchCommission = () =>
-	requestFetch('/den', '/(session)/den/[...path]')('/api/v1/commissions/c-1', {
-		method: 'PATCH',
-		headers: { 'content-type': 'application/json' },
-		body: '{"title":"Renamed"}'
-	}).then((response) => response.status);
+const renameCommission = () => {
+	const id = commissionId(COMMISSION_ID);
+	if (id === undefined) throw new Error('bad test id');
+	return runLive(
+		Effect.flatMap(ZurfurApi, (api) => api.renameCommission(id, 'Renamed')),
+		requestFetch(`/den/commissions/${COMMISSION_ID}`, '/(session)/den/[...path]')
+	);
+};
 
 describe("SvelteKit's server-side writes reach the API carrying the page's origin", () => {
 	it('the page origin differs from the API stand-in’s own', () => {
@@ -141,7 +144,7 @@ describe("SvelteKit's server-side writes reach the API carrying the page's origi
 		['startSignin', 'POST', '/signin', startSignin],
 		['createAccount', 'POST', '/accounts', createAccount],
 		['createCommission', 'POST', '/commissions', createCommission],
-		['a PATCH to /api/v1/...', 'PATCH', '/commissions/c-1', patchCommission],
+		['renameCommission', 'PATCH', `/commissions/${COMMISSION_ID}/title`, renameCommission],
 		['deleteAccount', 'DELETE', `/accounts/${ACCOUNT_ID}`, deleteAccount]
 	] as const)('%s (%s) arrives with origin set to the page’s', async (_, method, path, send) => {
 		await send();

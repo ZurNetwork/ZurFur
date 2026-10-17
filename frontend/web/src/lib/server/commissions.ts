@@ -2,12 +2,19 @@
  * Commission programs over the {@link import('./api/zurfur-api').ZurfurApi}
  * port. Creating one lands on its entry in the folder it was created from,
  * found by the thing the entry names in that folder's listing; the link is
- * the one the listing gives, never one built from the id. Pages run these
- * through {@link import('./runtime').runApi}.
+ * the one the listing gives, never one built from the id. Renaming one says
+ * only whether it went through. Pages run these through
+ * {@link import('./runtime').runApi}.
  */
 
 import { Effect } from 'effect';
-import { NODE_NOT_FOUND_PROBLEM, serviceUnavailableProblem, type Problem } from '$lib/api/problem';
+import {
+	FORBIDDEN_PROBLEM,
+	NODE_NOT_FOUND_PROBLEM,
+	ProblemKind,
+	serviceUnavailableProblem,
+	type Problem
+} from '$lib/api/problem';
 import { pageToken, type CommissionId, type DenHref, type PageToken } from '$lib/types/brand';
 import type { DenRead, DenReadNode } from './api/den-read';
 import type { ContractViolation } from './api/errors';
@@ -95,6 +102,50 @@ export function createCommissionOutcome(
 			ApiProblem: ({ problem }) => Effect.succeed<CreateCommissionOutcome>({ problem }),
 			NetworkFailure: () =>
 				Effect.succeed<CreateCommissionOutcome>({ problem: CREATE_COMMISSION_UNANSWERED_PROBLEM })
+		})
+	);
+}
+
+/** What the form says when the backend refuses a rename to someone who isn't the owner. */
+export const RENAME_COMMISSION_FORBIDDEN_PROBLEM: Problem = {
+	...FORBIDDEN_PROBLEM,
+	detail: "Only the commission's owner can rename it."
+};
+
+/** What the form says when renaming wasn't answered. */
+export const RENAME_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
+	"Zurfur isn't answering right now."
+);
+
+/** How renaming comes back: done, or a problem to show on the form. */
+export type RenameCommissionOutcome = { readonly renamed: true } | { readonly problem: Problem };
+
+/**
+ * Rename the commission `id` to `title`. A refusal to someone who isn't the
+ * owner is {@link RENAME_COMMISSION_FORBIDDEN_PROBLEM}; a refused title, or
+ * any other problem, comes back as the backend's problem; a backend that
+ * doesn't answer is {@link RENAME_COMMISSION_UNANSWERED_PROBLEM}.
+ */
+export function renameCommissionOutcome(
+	id: CommissionId,
+	title: string
+): Effect.Effect<RenameCommissionOutcome, ContractViolation, ZurfurApi> {
+	const renamed = Effect.gen(function* () {
+		const api = yield* ZurfurApi;
+		yield* api.renameCommission(id, title);
+		return { renamed: true } satisfies RenameCommissionOutcome;
+	});
+	return renamed.pipe(
+		Effect.catchTags({
+			ApiProblem: ({ problem }) =>
+				Effect.succeed<RenameCommissionOutcome>({
+					problem:
+						problem.code === ProblemKind.Forbidden.code
+							? RENAME_COMMISSION_FORBIDDEN_PROBLEM
+							: problem
+				}),
+			NetworkFailure: () =>
+				Effect.succeed<RenameCommissionOutcome>({ problem: RENAME_COMMISSION_UNANSWERED_PROBLEM })
 		})
 	);
 }

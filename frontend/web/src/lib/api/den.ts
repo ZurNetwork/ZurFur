@@ -7,7 +7,13 @@
 
 import type { Problem } from './problem';
 import type { Trail } from './trail';
-import type { DenHref, DenName, DenType } from '$lib/types/brand';
+import {
+	commissionId,
+	type CommissionId,
+	type DenHref,
+	type DenName,
+	type DenType
+} from '$lib/types/brand';
 
 /** A node's own visibility level, as only someone who can open it sees it. */
 export type DenLevel = 'private' | 'listed' | 'public' | 'unknown';
@@ -60,11 +66,19 @@ export type DenBody =
 	/** A content case this build doesn't know: shown as "content not shown yet". */
 	| { readonly body: 'notShown' };
 
+/** The thing an open node stands for, as far as the pane acts on it: a commission by its id. */
+export interface DenThing {
+	readonly thing: 'commission';
+	readonly id: CommissionId;
+}
+
 /** The node the address lands on, with what goes with it. */
 export type DenPage =
 	| {
 			readonly view: 'open';
 			readonly node: OpenEntry;
+			/** What the node stands for; absent on any node that stands for no commission. */
+			readonly thing: DenThing | undefined;
 			readonly crumbs: readonly DenCrumb[];
 			readonly body: DenBody;
 	  }
@@ -186,7 +200,18 @@ function isDenBody(value: unknown): boolean {
 	}
 }
 
-/** Whether `value` is a page: its node, its crumbs and (open) its body. */
+/** Whether `value` is absent, or a commission thing whose id mints. */
+function isOptionalThing(value: unknown): boolean {
+	if (value === undefined) return true;
+	const id = field(value, 'id');
+	return (
+		field(value, 'thing') === 'commission' &&
+		typeof id === 'string' &&
+		commissionId(id) !== undefined
+	);
+}
+
+/** Whether `value` is a page: its node, its crumbs and (open) its thing and body. */
 function isDenPage(value: unknown): boolean {
 	const crumbs = everyItem(
 		field(value, 'crumbs'),
@@ -201,6 +226,7 @@ function isDenPage(value: unknown): boolean {
 				crumbs &&
 				field(node, 'view') === 'open' &&
 				isDenEntry(node) &&
+				isOptionalThing(field(value, 'thing')) &&
 				isDenBody(field(value, 'body'))
 			);
 		default:

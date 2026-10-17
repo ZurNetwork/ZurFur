@@ -15,7 +15,7 @@ import {
 import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
 import { ApiProblem, ContractViolation, NetworkFailure, NotAuthenticated } from './api/errors';
 import type { AccountMembership } from '$lib/api/account';
-import { accountId, did, handleFromTrusted } from '$lib/types/brand';
+import { accountId, commissionId, did, handleFromTrusted } from '$lib/types/brand';
 import type { SegmentPath } from './path-builder';
 
 /** Every Den read the stubbed port saw: the path (empty for the root) and the query. */
@@ -182,6 +182,44 @@ describe('denPage: reading and mapping', () => {
 			throw new Error('expected a listing');
 
 		expect(outcome.page.body.entries.map((entry) => entry.view)).toEqual(['card', 'card']);
+	});
+
+	it.each([
+		[
+			'a commission carries its id',
+			{ thing: 'commission', id: 'c-0192' },
+			{ thing: 'commission', id: 'c-0192' }
+		],
+		['an Account carries no thing', { thing: 'account', did: 'did:plc:studio' }, undefined],
+		['a node naming no thing carries none', undefined, undefined]
+	] as const)('the open page says what its node stands for: %s', async (_, readThing, shown) => {
+		const id = commissionId('c-0192');
+		if (id === undefined) throw new Error('bad test id');
+		const thing =
+			readThing === undefined
+				? undefined
+				: readThing.thing === 'commission'
+					? { thing: 'commission' as const, id }
+					: { thing: 'account' as const, did: did(readThing.did) };
+		const node = folder(['commissions', 'fox'], 'Fox', {
+			type: 'commission',
+			access: {
+				access: 'open',
+				ownLevel: 'private',
+				contentNotShown: false,
+				removed: undefined,
+				thing
+			}
+		});
+		const read: DenRead = { ...folderRead(['commissions', 'fox'], []), node };
+		const { layer } = denPort(() => Effect.succeed(read));
+
+		const data = pageData(await run(layer, '/den/commissions/fox'));
+
+		const outcome = data.outcome;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open')
+			throw new Error('expected an open page');
+		expect(outcome.page.thing).toEqual(shown);
 	});
 
 	it('folds unknown kinds, levels and soft-delete words to unknown', async () => {

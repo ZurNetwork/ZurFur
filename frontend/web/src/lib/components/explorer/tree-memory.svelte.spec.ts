@@ -36,6 +36,7 @@ function denPage(
 			page: {
 				view: 'open',
 				node,
+				thing: undefined,
 				crumbs: crumbs.map((crumb) => ({ href: crumb.href, name: crumb.name })),
 				body: { body: 'listing', entries, more: undefined }
 			},

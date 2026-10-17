@@ -16,6 +16,7 @@ import { Effect, Layer } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	COMMISSION_NOT_FOUND_PROBLEM,
 	invalidFieldsProblem,
 	invalidRequestProblem,
 	NOT_AUTHENTICATED_PROBLEM,
@@ -30,11 +31,17 @@ import {
 	fieldPointer,
 	handle,
 	handleFromTrusted,
+	type CommissionId,
 	type Did
 } from '$lib/types/brand';
 import { mockDenRead, type MockCommission } from './den-mock';
 import { ApiProblem, ContractViolation, NotAuthenticated } from './errors';
-import { ZurfurApi, type CreatedCommission, type ZurfurApiShape } from './zurfur-api';
+import {
+	ZurfurApi,
+	type CreatedCommission,
+	type RenamedCommission,
+	type ZurfurApiShape
+} from './zurfur-api';
 
 /** The mock world's mutable state: who is signed in, which accounts they hold roles in, and the commissions created. */
 export interface MockStore {
@@ -335,6 +342,32 @@ function mockCreateCommission(
 }
 
 /**
+ * `renameCommission`: renames a commission the mock created, refusing a
+ * title the way `createCommission` does; the fixed fixture commissions, and
+ * any id the store doesn't hold, answer the commission not-found.
+ */
+function mockRenameCommission(
+	store: MockStore,
+	id: CommissionId,
+	title: string
+): ReturnType<ZurfurApiShape['renameCommission']> {
+	return Effect.suspend((): ReturnType<ZurfurApiShape['renameCommission']> => {
+		if (store.session === undefined)
+			return Effect.fail(new ApiProblem({ problem: NOT_AUTHENTICATED_PROBLEM }));
+		const index = store.commissions.findIndex((commission) => commission.id === id);
+		const held = store.commissions[index];
+		if (held === undefined)
+			return Effect.fail(new ApiProblem({ problem: COMMISSION_NOT_FOUND_PROBLEM }));
+		const refusal = titleRefusal(title);
+		if (refusal !== undefined)
+			return Effect.fail(new ApiProblem({ problem: invalidFieldsProblem([refusal]) }));
+		const renamed: RenamedCommission = { id, title: title.trim() };
+		store.commissions[index] = { ...held, title: renamed.title };
+		return Effect.succeed(renamed);
+	});
+}
+
+/**
  * The dev-mode Layer: the full {@link ZurfurApiShape} over `store` (the
  * shared singleton by default): the `mock*`-named entries, plus the Den
  * reads over the mock Den world (`den-mock.ts`), which reads this store's
@@ -356,6 +389,7 @@ export function zurfurApiMock(store: MockStore = sharedStore): Layer.Layer<Zurfu
 		createAccount: (name, requestedHandle) => mockCreateAccount(store, name, requestedHandle),
 		deleteAccount: (id) => mockDeleteAccount(store, id),
 		createCommission: (title) => mockCreateCommission(store, title),
+		renameCommission: (id, title) => mockRenameCommission(store, id, title),
 		denRoot: (query) => mockDenRead(store, [], query),
 		denNode: (path, query) => mockDenRead(store, path, query)
 	};

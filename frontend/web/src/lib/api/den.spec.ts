@@ -75,6 +75,19 @@ describe('isDenPageData', () => {
 		expect(isDenPageData({ ...pageData(), address: '/accounts' })).toBe(false);
 	});
 
+	it.each([
+		['no thing', undefined, true],
+		['a commission thing', { thing: 'commission', id: 'c-1' }, true],
+		['a commission thing with an empty id', { thing: 'commission', id: '' }, false],
+		['a commission thing whose id is not a string', { thing: 'commission', id: 7 }, false],
+		['a thing of another kind', { thing: 'account', did: 'did:plc:x' }, false]
+	])('takes an open page with %s only when it is well formed', (_, thing, accepted) => {
+		const data = pageData();
+		const page = Reflect.get(Reflect.get(data, 'outcome') as object, 'page') as object;
+		Reflect.set(page, 'thing', thing);
+		expect(isDenPageData(data)).toBe(accepted);
+	});
+
 	it('refuses something that only claims to be a den page', () => {
 		expect(isDenPageData({ kind: 'denPage' })).toBe(false);
 		expect(isDenPageData(undefined)).toBe(false);

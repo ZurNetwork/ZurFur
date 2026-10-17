@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
 import { fetchStub } from '$lib/testing/http';
-import { fieldPointer, handleFromTrusted } from '$lib/types/brand';
+import { commissionId, fieldPointer, handleFromTrusted, type CommissionId } from '$lib/types/brand';
+import { segmentPath } from '../path-builder';
 import { accountsOutcome, createAccountOutcome, deleteAccountOutcome } from '../accounts';
 import { optionalSession, signinOutcome, signoutOutcome } from '../session';
 import {
@@ -23,6 +24,19 @@ function runOn<A, E>(store: MockStore, program: Effect.Effect<A, E, ZurfurApi>):
 /** The raw create call. */
 const createCommission = (title: string) =>
 	Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
+
+/** The raw rename call. */
+const renameCommission = (id: CommissionId, title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.renameCommission(id, title));
+
+/** The names the mock Den lists in `commissions`. */
+const commissionNames = Effect.gen(function* () {
+	const api = yield* ZurfurApi;
+	const path = segmentPath(['commissions']);
+	if (path === undefined) return [];
+	const read = yield* api.denNode(path, { includeDeleted: false, pageToken: undefined });
+	return read.content.content === 'listing' ? read.content.entries.map((node) => node.name) : [];
+});
 
 /** The one raw `api.me` case this file keeps — {@link optionalSession} folds `NotAuthenticated` to `undefined`, so the tag itself is only observable below the outcome helper. */
 const me = Effect.gen(function* () {
@@ -193,6 +207,57 @@ describe('zurfurApiMock', () => {
 
 		expect(failure).toMatchObject({ problem: { code: 'not_authenticated' } });
 		expect(store.commissions).toEqual([]);
+	});
+
+	it('renameCommission renames a created commission, and the Den lists the new title', async () => {
+		const store = createMockStore();
+		const created = await runOn(store, createCommission('Fox in the snow'));
+
+		const renamed = await runOn(store, renameCommission(created.id, '  Winter fox  '));
+
+		expect(renamed).toEqual({ id: created.id, title: 'Winter fox' });
+		const names = await runOn(store, commissionNames);
+		expect(names).toContain('Winter fox');
+		expect(names).not.toContain('Fox in the snow');
+	});
+
+	it.each([
+		['a blank title', '', 'name_empty', "This can't be blank."],
+		['a title of spaces', '   ', 'name_empty', "This can't be blank."],
+		[
+			'a title holding U+202E',
+			'Fox\u202Ein the snow',
+			'name_invisible',
+			'Leave out invisible and direction-changing characters.'
+		]
+	])(
+		'renameCommission refuses %s as invalid_request at #/title',
+		async (_, title, code, detail) => {
+			const store = createMockStore();
+			const created = await runOn(store, createCommission('Fox in the snow'));
+
+			const failure = await runOn(store, Effect.flip(renameCommission(created.id, title)));
+
+			expect(failure._tag).toBe('ApiProblem');
+			if (failure._tag !== 'ApiProblem') return;
+			expect(failure.problem.code).toBe('invalid_request');
+			expect(failure.problem.status).toBe(422);
+			expect(failure.problem.errors).toEqual([{ pointer: fieldPointer('#/title'), code, detail }]);
+			expect(store.commissions.map((commission) => commission.title)).toEqual(['Fox in the snow']);
+		}
+	);
+
+	it.each([
+		['an id it does not hold', 'c-unknown'],
+		['the fixed fixture "Untitled"', '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90']
+	])('renameCommission answers %s with the commission not-found', async (_, raw) => {
+		const store = createMockStore();
+		const id = commissionId(raw);
+		if (id === undefined) throw new Error('bad test id');
+
+		const failure = await runOn(store, Effect.flip(renameCommission(id, 'Winter fox')));
+
+		expect(failure).toMatchObject({ problem: { code: 'commission_not_found', status: 404 } });
 	});
 
 	it('deleteAccount removes a known row and reports the outcome', async () => {

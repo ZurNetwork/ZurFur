@@ -19,6 +19,7 @@ import type {
 	DenPage,
 	DenPageData,
 	DenRemoved,
+	DenThing,
 	OpenEntry
 } from '$lib/api/den';
 import { ProblemKind } from '$lib/api/problem';
@@ -26,7 +27,7 @@ import { HttpStatus } from '$lib/api/http-status';
 import type { Trail, TrailStep } from '$lib/api/trail';
 import { denName, denType, pageToken, type DenHref } from '$lib/types/brand';
 import { ContractViolation, type NetworkFailure } from './api/errors';
-import type { DenQuery, DenRead, DenReadContent, DenReadNode } from './api/den-read';
+import type { DenQuery, DenRead, DenReadContent, DenReadNode, DenReadThing } from './api/den-read';
 import { DEN_ROUTES } from './api/den-wire';
 import { ZurfurApi, type DenReadError } from './api/zurfur-api';
 import type { SegmentPath } from './path-builder';
@@ -106,6 +107,17 @@ function toEntry(node: DenReadNode, query: DenQuery): DenEntry {
 		removed: toRemoved(node.access.removed)
 	};
 	return open;
+}
+
+/** The thing the pane acts on: a commission, by its id; no other thing. */
+function toThing(thing: DenReadThing | undefined): DenThing | undefined {
+	if (thing === undefined) return undefined;
+	switch (thing.thing) {
+		case 'commission':
+			return { thing: 'commission', id: thing.id };
+		case 'account':
+			return undefined;
+	}
 }
 
 /** The query every link inside a listing carries: the flag, never a page token. */
@@ -194,6 +206,7 @@ function toPage(
 	const page: DenPage = {
 		view: 'open',
 		node: open,
+		thing: toThing(node.access.thing),
 		crumbs,
 		body: toBody(read.content, path, query)
 	};

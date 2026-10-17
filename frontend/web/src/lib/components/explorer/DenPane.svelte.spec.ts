@@ -41,7 +41,7 @@ function openPage(node: OpenEntry, body: DenBody, root = false): DenPageData {
 	const crumbs = root ? [] : [{ href: denHref('/den'), name: denName('Alice') }];
 	return data({
 		outcome: 'page',
-		page: { view: 'open', node, crumbs, body },
+		page: { view: 'open', node, thing: undefined, crumbs, body },
 		flagLinks: { on: node.href, off: node.href }
 	});
 }
