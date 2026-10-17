@@ -25,6 +25,7 @@ async fn health_is_green_against_fresh_postgres() {
         workflows: backend.workflow_store(),
         columns: backend.column_store(),
         characters: backend.character_store(),
+        bug_reports: backend.bug_report_store(),
         changelog: backend.changelog_store(),
         files: backend.file_store(),
         database: backend.database(),
@@ -42,6 +43,7 @@ async fn health_is_green_against_fresh_postgres() {
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
             max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
+            build_id: "unknown".try_into().expect("a build id"),
         },
         pool,
         // /health touches neither the PDS nor the repo; the mem adapters keep both

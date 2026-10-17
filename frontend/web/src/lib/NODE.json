@@ -23,7 +23,7 @@
   "fs": [
     {
       "name": "api/",
-      "role": "component-facing plain-data contracts: Problem, Session, Account, Trail (the path bar's steps: a Den link or a fixed section page), the Den view (den.ts: DenPageData, its full shape check isDenPageData, DenOutcome, DenEntry…, cardTypeWord — a card's type as a word for exactly account/character/commission, none otherwise) and its root route (den-route.ts, pinned to an app with no base path), the sign-out notice (signout.ts: the unconfirmed-sign-out address and its words), HttpStatus, API_PREFIX, FetchFunction",
+      "role": "component-facing plain-data contracts: Problem, Session, Account, Trail (the path bar's steps: a Den link or a fixed section page), the Den view (den.ts: DenPageData, its full shape check isDenPageData, DenOutcome, DenEntry…, cardTypeWord — a card's type as a word for exactly account/character/commission, none otherwise) and its root route (den-route.ts, pinned to an app with no base path), the sign-out notice (signout.ts: the unconfirmed-sign-out address and its words), HttpStatus, API_PREFIX, FetchFunction; the bug report (bug-report.ts: BUG_REPORT_FIELDS — the field names the dialog and the report page post —, BugReportActionData — sent with its reference, or a failure kind carrying the reporter's text — and its runtime check isBugReportActionData, BugReportOffer, ARCHIVED_SUFFIX)",
       "node": false
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "name": "components/",
-      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState, TreeItem, Toggle, Badge, VisibilityMarker, Skeleton — each placeholder row as tall as --row-height); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, ErrorView with its fixed copy in error-copy.ts) and the tree's memory, model and loader",
+      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog — modal, drawer or full screen on a phone (by base.css's switches), with a chosen initial focus, a return-focus target and a footer outside its scrolling body — EmptyState, TreeItem, Toggle, Checkbox, TextInput — never length-capped, a multi-line one at least six rows — InlineMessage — info or error in a live status region — Badge, VisibilityMarker, Skeleton — each placeholder row as tall as --row-height); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, ErrorView with its fixed copy in error-copy.ts, ReportBugButton — the top bar's \"Report a bug\" link that opens the dialog —, ReportBugDialog, ReportBugForm — the form the dialog and the report page share —, SentWithReport — the \"Sent with your report\" tick boxes) and the tree's memory, model and loader; the frame's bug report (bug-report.svelte.ts: the BugReport context — open, the draft, the snapshot re-read at each open, the opener —, the BugReportDraft both forms keep, the items offered and outcomeOf, the exhaustive reading of an action's answer)",
       "node": false
     },
     {
@@ -58,12 +58,12 @@
     },
     {
       "name": "testing/",
-      "role": "spec-only harnesses: fetch stub, hanging fetch (a backend that never answers until the signal aborts), kit-fetch (SvelteKit's real server event.fetch, through its internals), problem-body builder, redirect assert, superform prop stub",
+      "role": "spec-only harnesses: fetch stub, hanging fetch (a backend that never answers until the signal aborts), kit-fetch (SvelteKit's real server event.fetch, through its internals), problem-body builder, redirect assert, superform prop stub, kit-client (a stand-in for SvelteKit's client runtime: a form posts through the real enhance, an action's data decodes, and navigations, invalidations and applied results are recorded, not done)",
       "node": false
     },
     {
       "name": "types/",
-      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, DenHref/DenName/DenType, PageToken, FirstPartyOrigin) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts)",
+      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, DenHref/DenName/DenType, PageToken, FirstPartyOrigin, BugReference) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts, bug-report-rules.ts — a bug report's field parsers, limits, closed page-type list, pageTypeOf — a path's page type —, and the browser text's 512-byte cut)",
       "node": false
     }
   ],

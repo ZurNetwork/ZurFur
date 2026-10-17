@@ -8,6 +8,7 @@
 //! operational reality; intentional divergence is called out on the item.
 
 mod actor_identity;
+mod bug_report;
 mod character;
 mod commission;
 mod file_store;
@@ -17,6 +18,7 @@ mod identity_resolver;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
+pub use bug_report::{MemBugReportStore, MemBugReportWrites};
 pub use character::{MemCharacterStore, MemCharacterWrites};
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
@@ -48,6 +50,7 @@ use domain::elements::{
     account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
+    bug_report::NewBugReport,
     character::{Character, CharacterId},
     commission::{
         CommissionFile, CommissionId, CommissionMarkup, ElementId, FileKey, GrantLevel, MarkupKey,
@@ -67,10 +70,10 @@ use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::character::{CharacterStore, CharacterWrites};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
-    ActorIdentityWrites, Authenticator, BrowserBinding, ChangelogStore, ChangelogWrites,
-    ColumnStore, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
-    HandleTaken, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, SigninStarted, UnitOfWork,
-    UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+    ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
+    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionStore,
+    Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache,
+    ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -149,6 +152,9 @@ pub struct MemBackend {
     /// [`StoredCharacter`] parts keyed by [`CharacterId`]; staged, so creation
     /// commits with the rest of the unit.
     pub(crate) characters: Arc<Mutex<HashMap<CharacterId, StoredCharacter>>>,
+    /// Filed bug reports in filing order. Staged, so a report lands only when
+    /// its unit commits; nothing ever mutates or removes a pushed report.
+    pub(crate) bug_reports: Arc<Mutex<Vec<NewBugReport>>>,
 }
 
 impl MemBackend {
@@ -191,6 +197,11 @@ impl MemBackend {
     /// The [`CharacterStore`] read port over this backend's shared state.
     pub fn character_store(&self) -> Arc<dyn CharacterStore> {
         Arc::new(MemCharacterStore(self.clone()))
+    }
+
+    /// The [`BugReportStore`] read port over this backend's shared state.
+    pub fn bug_report_store(&self) -> Arc<dyn BugReportStore> {
+        Arc::new(MemBugReportStore(self.clone()))
     }
 
     /// The [`ProfileCache`] read port over this backend's shared state.
@@ -347,6 +358,12 @@ impl MemBackend {
                 self.characters
                     .lock()
                     .expect("MemBackend characters mutex poisoned")
+                    .clone(),
+            )),
+            bug_reports: Arc::new(Mutex::new(
+                self.bug_reports
+                    .lock()
+                    .expect("MemBackend bug_reports mutex poisoned")
                     .clone(),
             )),
         }
@@ -625,6 +642,20 @@ impl MemBackend {
                 .characters
                 .lock()
                 .expect("MemBackend characters mutex poisoned"),
+        );
+        merge_log(
+            &mut self
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
+            &base
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
+            &staged
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
         );
     }
 
@@ -1880,6 +1911,11 @@ impl UnitOfWork for MemUnitOfWork {
     /// The character write surface over this unit's staged snapshot.
     fn characters(&mut self) -> Box<dyn CharacterWrites + '_> {
         Box::new(MemCharacterWrites(self.staged.clone()))
+    }
+
+    /// The bug-report write surface over this unit's staged snapshot.
+    fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_> {
+        Box::new(MemBugReportWrites(self.staged.clone()))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]

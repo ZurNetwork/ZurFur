@@ -25,7 +25,10 @@ pub use host::{
 };
 pub use level::Level;
 pub use metadata::{Metadata, Type};
-pub use name::{MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError};
+pub use name::{
+    MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError, is_default_ignorable,
+    is_format,
+};
 pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;
 pub use resolve::{Caps, Entry, Error, Resolved, Resolver, View};

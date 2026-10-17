@@ -404,3 +404,72 @@ pub struct DenListing {
     #[prost(string, tag = "2")]
     pub next_page_token: ::prost::alloc::string::String,
 }
+/// `POST /api/v1/bug-reports`: what went wrong, and the page and browser it
+/// went wrong in.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FileBugReportRequest {
+    /// What went wrong, in the reporter's words. Trimmed, non-empty, at most
+    /// 4000 characters (code points); newlines and tabs are kept.
+    #[prost(string, tag = "1")]
+    pub description: ::prost::alloc::string::String,
+    /// The app path the report was filed from: starts with `/`, at most 2048
+    /// bytes, with no query (`?`) and no fragment (`#`).
+    #[prost(string, optional, tag = "2")]
+    pub page: ::core::option::Option<::prost::alloc::string::String>,
+    /// The kind of page the report was filed from, at most 64 bytes.
+    #[prost(string, optional, tag = "3")]
+    pub page_kind: ::core::option::Option<::prost::alloc::string::String>,
+    /// The web app's build, at most 64 bytes.
+    #[prost(string, optional, tag = "4")]
+    pub web_version: ::core::option::Option<::prost::alloc::string::String>,
+    /// The browser's user agent, at most 512 bytes.
+    #[prost(string, optional, tag = "5")]
+    pub browser: ::core::option::Option<::prost::alloc::string::String>,
+    /// The browser window's size.
+    #[prost(message, optional, tag = "6")]
+    pub window: ::core::option::Option<file_bug_report_request::Window>,
+    /// The browser's display preferences.
+    #[prost(message, optional, tag = "7")]
+    pub display: ::core::option::Option<file_bug_report_request::Display>,
+    /// The HTTP status of the error page the report was filed from, 400 to 599;
+    /// absent when the report wasn't filed from an error page.
+    #[prost(int32, optional, tag = "8")]
+    pub error_status: ::core::option::Option<i32>,
+}
+/// Nested message and enum types in `FileBugReportRequest`.
+pub mod file_bug_report_request {
+    /// The size of the browser window, in CSS pixels.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+    pub struct Window {
+        /// Width, 1 to 100000.
+        #[prost(int32, tag = "1")]
+        pub width: i32,
+        /// Height, 1 to 100000.
+        #[prost(int32, tag = "2")]
+        pub height: i32,
+    }
+    /// The display preferences the browser reported.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+    pub struct Display {
+        /// `prefers-reduced-motion: reduce` matched.
+        #[prost(bool, tag = "1")]
+        pub reduced_motion: bool,
+        /// `prefers-contrast: more` matched.
+        #[prost(bool, tag = "2")]
+        pub more_contrast: bool,
+        /// `forced-colors: active` matched.
+        #[prost(bool, tag = "3")]
+        pub forced_colors: bool,
+    }
+}
+/// `POST /api/v1/bug-reports` succeeds with the report's receipt.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FileBugReportResponse {
+    /// A short reference to quote about this report: the last 8 characters of
+    /// its id.
+    #[prost(string, tag = "1")]
+    pub reference: ::prost::alloc::string::String,
+    /// When the server received the report.
+    #[prost(message, optional, tag = "2")]
+    pub received_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
+}

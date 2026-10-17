@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application",
-  "charted": "2026-09-19",
+  "charted": "2026-10-17",
   "short": "Use cases: one #[use_case] method each",
-  "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
+  "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `bug_report` module (the `BugReports` namespace: `file`, a rate-limited filing that counts through the pool before it opens a unit, and `list`, the reports oldest first), the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
   "type": "code",
   "tags": [
     "category:source"
@@ -31,12 +31,13 @@
     "src/character.rs",
     "src/transaction.rs",
     "src/lazy_unit.rs",
-    "src/den.rs"
+    "src/den.rs",
+    "src/bug_report.rs"
   ],
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk, and the fake PDS the profile-wait tests slow down)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+uuid (a bug report's UUIDv7 id)+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk, and the fake PDS the profile-wait tests slow down)+proptest+tokio(test-util for the paused-clock profile-wait tests)+chrono+async-trait",
       "node": false
     },
     {
@@ -57,6 +58,16 @@
     {
       "name": "src/app.rs",
       "role": "the Ports bag the composition root assembles, App over it, MissingPort",
+      "node": false
+    },
+    {
+      "name": "src/bug_report.rs",
+      "role": "bug_report module root — the `BugReports` root namespace, BugReportError (RateLimited, or Infrastructure), BugReportResult",
+      "node": false
+    },
+    {
+      "name": "src/bug_report/",
+      "role": "file.rs — ReportBody (the checked items), Command { reporter, report }, Output { reference, received_at }: counts the reporter's reports in the window through the pool, refuses at the limit without opening a unit, then mints the id and files in a lazy unit; list.rs — Query { since }, Output { reports }, oldest first; tests beside each in file/tests.rs and list/tests.rs",
       "node": false
     },
     {

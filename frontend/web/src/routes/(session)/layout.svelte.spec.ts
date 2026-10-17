@@ -29,6 +29,7 @@ vi.mock('$app/navigation', () => ({
 		});
 	},
 	goto: () => Promise.resolve(),
+	invalidateAll: () => Promise.resolve(),
 	preloadData: async (href: string) => {
 		nav.preloaded.push(href);
 		const { load } = nav;
@@ -52,6 +53,7 @@ vi.mock('$app/state', () => ({
 			};
 		},
 		route: { id: '/(session)/accounts/[id]' },
+		url: new URL('http://localhost/accounts/acct-1'),
 		status: 200
 	}
 }));
@@ -93,7 +95,7 @@ const session = {
 const children = createRawSnippet(() => ({ render: () => '<h1>Pane heading</h1>' }));
 
 function renderLayout() {
-	return render(Layout, { data: { session }, children });
+	return render(Layout, { data: { session, buildId: 'unknown' }, children });
 }
 
 afterEach(() => {
@@ -183,6 +185,48 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 	});
 
+	it('opens "Report a bug" from the top bar over the page, reporting it', async () => {
+		await page.viewport(1280, 800);
+		renderLayout();
+
+		await page.getByTestId('report-bug-link').click();
+
+		const dialog = page.getByRole('dialog', { name: 'Report a bug' });
+		await expect.element(dialog).toBeVisible();
+		await expect
+			.element(dialog.getByRole('checkbox', { name: 'Page', exact: true }))
+			.toHaveAccessibleDescription('/accounts/acct-1');
+		await expect
+			.element(dialog.getByRole('checkbox', { name: 'Page type' }))
+			.toHaveAccessibleDescription('An Account');
+		await expect
+			.element(dialog.getByText('Sent as @alice.zurfur.app. Zurfur also records when it arrives.'))
+			.toBeInTheDocument();
+	});
+
+	it('keeps the report’s draft for the visitor, and starts it over for another', async () => {
+		await page.viewport(1280, 800);
+		const bob = {
+			...session,
+			did: did('did:plc:bob'),
+			handle: handleFromTrusted('bob.zurfur.app')
+		};
+		const { rerender } = renderLayout();
+		const textBox = page.getByRole('textbox', { name: 'What happened?' });
+		await page.getByTestId('report-bug-link').click();
+		await textBox.fill("Alice's draft");
+		await userEvent.keyboard('{Escape}');
+		await rerender({ data: { session, buildId: 'unknown' }, children });
+		await page.getByTestId('report-bug-link').click();
+		await expect.element(textBox).toHaveValue("Alice's draft");
+		await userEvent.keyboard('{Escape}');
+
+		await rerender({ data: { session: bob, buildId: 'unknown' }, children });
+		await page.getByTestId('report-bug-link').click();
+
+		await expect.element(textBox).toHaveValue('');
+	});
+
 	it('fetches every folder above the open item that the tree lacks, after an in-app navigation', async () => {
 		const crumb = (href: string, name: string) => ({ href, name });
 		nav.den = {
@@ -269,7 +313,7 @@ describe('(session) layout: the frame around every signed-in page', () => {
 		await expect.element(page.getByRole('banner')).toBeInTheDocument();
 
 		for (const callback of nav.callbacks) callback();
-		await rerender({ data: { session: bob }, children });
+		await rerender({ data: { session: bob, buildId: 'unknown' }, children });
 		for (const callback of nav.callbacks) callback();
 
 		expect(trees.built.map((built) => built.owner)).toEqual([session.did]);

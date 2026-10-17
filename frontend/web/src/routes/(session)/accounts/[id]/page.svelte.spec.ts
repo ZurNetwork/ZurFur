@@ -40,11 +40,11 @@ const notFoundProblem: Problem = {
 };
 
 function accountData(account: AccountMembership) {
-	return { session: alice, account, trail };
+	return { session: alice, buildId: 'unknown', account, trail };
 }
 
 function problemData(problem: Problem) {
-	return { session: alice, problem, trail };
+	return { session: alice, buildId: 'unknown', problem, trail };
 }
 
 describe('/accounts/[id] page', () => {

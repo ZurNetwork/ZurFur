@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { HttpStatus } from '$lib/api/http-status';
+import { webBuildId } from '$lib/server/bug-report';
 
 /**
  * Hands the frame the signed-in visitor. The sign-in gate itself is the
@@ -9,10 +10,11 @@ import { HttpStatus } from '$lib/api/http-status';
  * them runs. The one request it lets through is the sign-out route's
  * default action, so the redirect here only narrows the type (a backstop
  * should anything else on that route ever render). The backend still
- * checks the session on every call.
+ * checks the session on every call. The frame also gets the web's own
+ * build id ("unknown" when ZURFUR_BUILD_ID is unset).
  */
 export const load: LayoutServerLoad = async ({ parent }) => {
 	const { session } = await parent();
 	if (session === undefined) redirect(HttpStatus.SeeOther, '/login');
-	return { session };
+	return { session, buildId: webBuildId() };
 };

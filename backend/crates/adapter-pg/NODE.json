@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-pg",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Private boundary: the PostgreSQL adapter",
   "is": "The private data boundary in PostgreSQL: app-owned rows (actors keyed by their DID, everything else UUIDv7), SQL kept in per-statement files, and typed accessors generated from a live migrated schema.",
   "type": "code",
@@ -40,12 +40,12 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (46 files, latest deletes every stored atproto OAuth session and pending sign-in once, after sign-in became identity-only; before it, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
       "node": false
     },
     {
       "name": "queries/",
-      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), bug_report/ (file, count_filed_since, list_since; error_status bound and read as integer, the generator mapping no smallint), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
       "node": false
     },
     {
@@ -55,12 +55,12 @@
     },
     {
       "name": "src/",
-      "role": "port impls — uow (PgDatabase/PgUnitOfWork), account, user, commission (+markup), commission_changelog, workflow (boards/columns + placement), actor_identity, profile, session_store, file_store (streaming, buffers internally), key_store, key_vault, plc_operation_log; @generated queries.rs; lib.rs pool/migrator",
+      "role": "port impls — uow (PgDatabase/PgUnitOfWork), account, user, commission (+markup), commission_changelog, workflow (boards/columns + placement), actor_identity, bug_report (PgBugReportStore/PgBugReportWrites), profile, session_store, file_store (streaming, buffers internally), key_store, key_vault, plc_operation_log; @generated queries.rs; lib.rs pool/migrator",
       "node": false
     },
     {
       "name": "tests/it/",
-      "role": "one integration binary sharing a Postgres container across ~22 modules — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
+      "role": "one integration binary sharing a Postgres container across ~24 modules (bug_report: the table checks asserted by constraint name, the users foreign key, the count, the list and round trips) — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
       "node": false
     }
   ],

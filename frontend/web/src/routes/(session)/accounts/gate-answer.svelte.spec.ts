@@ -26,6 +26,7 @@ const data = {
 		displayName: 'Alice',
 		avatarUrl: undefined
 	},
+	buildId: 'unknown',
 	accounts: [],
 	deleted: undefined,
 	form: formStub({ name: '', handle: '' }),

@@ -4,6 +4,8 @@
 	import type { DenPageData } from '$lib/api/den';
 	import type { Trail } from '$lib/api/trail';
 	import AppShell from '$lib/components/explorer/AppShell.svelte';
+	import { BugReport, provideBugReport } from '$lib/components/explorer/bug-report.svelte';
+	import ReportBugDialog from '$lib/components/explorer/ReportBugDialog.svelte';
 	import { frameSectionOf } from '$lib/components/explorer/frame-section';
 	import Tree from '$lib/components/explorer/Tree.svelte';
 	import {
@@ -26,7 +28,8 @@
 	 * open folder the tree lacks is fetched through its server-built link, at
 	 * most four at a time. A flip of "Show archived" starts the memory over,
 	 * and so does a form action's success (the page that ran it says so),
-	 * keeping `~` open.
+	 * keeping `~` open. The frame also keeps the bug report's draft, starting
+	 * it over when the signed-in visitor changes.
 	 */
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 
@@ -37,6 +40,14 @@
 	const memory = new TreeMemory(data.session.did);
 	provideTreeMemory(memory);
 	memory.absorb(page.data.den);
+
+	// svelte-ignore state_referenced_locally
+	const bugReport = new BugReport(data.session.did);
+	provideBugReport(bugReport);
+
+	$effect(() => {
+		bugReport.ensureOwner(data.session.did);
+	});
 
 	afterNavigate(() => {
 		drawerOpen = false;
@@ -72,3 +83,4 @@
 	{/snippet}
 	{@render children()}
 </AppShell>
+<ReportBugDialog session={data.session} buildId={data.buildId} />

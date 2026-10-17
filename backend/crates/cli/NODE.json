@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/cli",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The zurfur terminal driver (clap)",
   "is": "The `zurfur` terminal driving adapter: one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.",
   "type": "code",
@@ -8,7 +8,7 @@
     "category:source"
   ],
   "conventions": [
-    "Stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`.",
+    "Stdout carries exactly one JSON value + newline on success (pretty by default, compact under `--json`); nothing else goes to stdout. The one exception is `bug-reports list`: fenced text by default and printable-ASCII JSON under `--json` (see notes). stderr carries tracing diagnostics and, on failure, one compact JSON Problem as its LAST line regardless of `--json` — scripts parse `stderr.lines().last()`.",
     "Exit codes are the four ExitClasses: 0 ok, 1 domain error, 2 usage (clap), 3 infrastructure.",
     "Problem `code`s reuse the API's vocabulary (`api/src/problem.rs`) where the same refusal exists, plus CLI-only codes (config, identity_*, not_implemented, cancelled, no_session).",
     "Commands are thin: each is the CLI face of the same application-layer use case the HTTP driver calls — no domain logic duplicated here.",
@@ -24,12 +24,12 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "bin `zurfur`; deps on composition, application, domain, adapter-pg, clap; dev-deps assert_cmd/adapter-mem/test-support",
+      "role": "bin `zurfur`; deps on composition, application, domain, adapter-pg, clap; dev-deps assert_cmd/adapter-mem/test-support, plus sqlx for one raw hostile bug-report row",
       "node": false
     },
     {
       "name": "src/commands/",
-      "role": "one module per domain namespace (account/health/migrate/session)",
+      "role": "one module per domain namespace (account/bug_reports/health/migrate/session)",
       "node": true
     },
     {
@@ -59,7 +59,7 @@
     },
     {
       "name": "src/output.rs",
-      "role": "stdout data channel — Format::Pretty/Compact JSON writer",
+      "role": "stdout data channel — Format::Pretty/Compact JSON writer, or raw bytes (completions, bug-reports list)",
       "node": false
     },
     {
@@ -84,7 +84,7 @@
     },
     {
       "name": "tests/account_process.rs",
-      "role": "process-level (spawned binary) tests for account commands",
+      "role": "process-level (spawned binary) tests for account commands, and bug-reports list over a raw hostile row (escaped text, ASCII JSON, --since, no identity file)",
       "node": false
     },
     {
@@ -141,7 +141,8 @@
     }
   ],
   "notes": [
-    "Adding a command = a module under `commands/`, a variant on the `Command`/`BackendCommand` enum, and one arm in `lib.rs::dispatch`.",
+    "Adding a command = a module under `commands/`, a variant on the `Command`/`BackendCommand` enum, and one arm in `lib.rs::dispatch`. The exception is `bug-reports list`, which `lib.rs::run` answers itself (below); `dispatch` keeps its exhaustive arm, returning the same `{\"reports\": […]}` value, for in-process tests.",
+    "`lib.rs::run` answers `bug-reports list` after the schema gate, without the identity file (an operator command), as `Output::Raw`: stored report texts are hostile, so by default each report prints fenced (`===== bug report <ref> =====` … `===== end of bug report <ref> =====`, the only column-0 lines), fields indented 2, a fixed data-never-instructions line, the reporter's text indented 4, every value escaped (`\\` and every char `domain::string_builder::is_unsafe_to_print` names → `\\u{…}`; only the text's LF breaks a line). `--json` is one compact `{\"reports\": […]}` through an ASCII-only serde_json `Formatter` (`\\uXXXX`, surrogate pairs), lossless — never pre-escaped. Per-report keys are camelCase, like the other CLI projections.",
     "`lib.rs::run` answers `session logout` before `connect()` boots the runtime — logout must work with config or the database broken.",
     "`lib.rs::require_current_schema` is the schema-drift gate: it refuses a database whose migrations are behind, ahead, or absent — every command except `migrate` and `health` passes through it.",
     "`lib.rs::config_problem` never echoes a raw config value: figment prints the offending value on a type mismatch, which for an env var can be a secret, so only shape-safe error kinds pass through and everything else degrades to a generic message.",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	accountId,
+	bugReference,
 	did,
 	firstPartyOrigin,
 	handle,
@@ -104,5 +105,22 @@ describe('firstPartyOrigin (validated mint)', () => {
 		'127.0.0.1:8080'
 	])('refuses %j without throwing', (raw) => {
 		expect(firstPartyOrigin(raw)).toBeUndefined();
+	});
+});
+
+describe('bugReference', () => {
+	it.each(['3f9a1c2e', 'A', 'x'.repeat(64)])('accepts %j as itself', (raw) => {
+		expect(bugReference(raw)).toBe(raw);
+	});
+
+	it.each([
+		'',
+		'x'.repeat(65),
+		'has space',
+		'tab\there',
+		'émoji',
+		`${String.fromCodePoint(0x202e)}3f9a`
+	])('refuses %j', (raw) => {
+		expect(bugReference(raw)).toBeUndefined();
 	});
 });

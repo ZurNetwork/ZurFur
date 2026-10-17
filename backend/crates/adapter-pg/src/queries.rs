@@ -721,6 +721,102 @@ pub mod actor_identity {
     }
 }
 
+pub mod bug_report {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct BugReportRow {
+        pub id: uuid::Uuid,
+        pub reporter_id: String,
+        pub description: String,
+        pub page: Option<String>,
+        pub page_kind: Option<String>,
+        pub web_version: Option<String>,
+        pub browser: Option<String>,
+        pub window_width: Option<i32>,
+        pub window_height: Option<i32>,
+        pub reduced_motion: Option<bool>,
+        pub more_contrast: Option<bool>,
+        pub forced_colors: Option<bool>,
+        pub error_status: Option<i32>,
+        pub api_version: String,
+        pub received_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    /// `queries/bug_report/count_filed_since.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// How many reports one reporter filed at or after `received_at`; a report
+    /// filed exactly then counts.
+    pub async fn count_filed_since(
+        conn: impl sqlx::PgExecutor<'_>,
+        reporter_id: &str,
+        received_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<i64> {
+        sqlx::query_scalar(include_str!("../queries/bug_report/count_filed_since.sql"))
+            .bind(reporter_id)
+            .bind(received_at)
+            .fetch_one(conn)
+            .await
+    }
+
+    /// `queries/bug_report/file.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// File one bug report. Written once and never changed. `error_status` is a
+    /// smallint column, bound as an integer (the generator maps no smallint).
+    pub async fn file(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        reporter_id: &str,
+        description: &str,
+        page: Option<&str>,
+        page_kind: Option<&str>,
+        web_version: Option<&str>,
+        browser: Option<&str>,
+        window_width: Option<i32>,
+        window_height: Option<i32>,
+        reduced_motion: Option<bool>,
+        more_contrast: Option<bool>,
+        forced_colors: Option<bool>,
+        error_status: Option<i32>,
+        api_version: &str,
+        received_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/bug_report/file.sql"))
+            .bind(id)
+            .bind(reporter_id)
+            .bind(description)
+            .bind(page)
+            .bind(page_kind)
+            .bind(web_version)
+            .bind(browser)
+            .bind(window_width)
+            .bind(window_height)
+            .bind(reduced_motion)
+            .bind(more_contrast)
+            .bind(forced_colors)
+            .bind(error_status)
+            .bind(api_version)
+            .bind(received_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/bug_report/list_since.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every report received at or after `received_at`, or every report when it is
+    /// NULL, oldest first, ties broken by id. `error_status` is a smallint
+    /// column, read as an integer (the generator maps no smallint).
+    pub async fn list_since(
+        conn: impl sqlx::PgExecutor<'_>,
+        received_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> sqlx::Result<Vec<BugReportRow>> {
+        sqlx::query_as(include_str!("../queries/bug_report/list_since.sql"))
+            .bind(received_at)
+            .fetch_all(conn)
+            .await
+    }
+}
+
 pub mod changelog {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
@@ -2439,6 +2535,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "actor_identity::cache_handle",
     "actor_identity::create",
     "actor_identity::intern",
+    "bug_report::file",
     "changelog::append",
     "column::add_card",
     "column::clear_cards",
