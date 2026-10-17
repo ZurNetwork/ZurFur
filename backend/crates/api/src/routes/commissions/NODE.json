@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -35,7 +35,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, then the created resource read back through commission::list and projected into CreateCommissionResponse (create::Output carries only the id — GAP)",
+      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse",
       "node": false
     },
     {

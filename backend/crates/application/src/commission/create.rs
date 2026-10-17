@@ -2,10 +2,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, CommissionTitleError,
-            NewChangelogEntry,
-        },
+        commission::{ChangelogEntryKind, Commission, CommissionTitle, NewChangelogEntry},
         maturity::Maturity,
         user::UserId,
     },
@@ -14,8 +11,8 @@ use domain::{
 use serde_json::json;
 
 use crate::{
-    commission::{CommissionError, CommissionResult, Commissions},
-    den::{DenName, DenNameError},
+    commission::{CommissionResult, CommissionValues, Commissions, den_title},
+    common_error::CommonError,
 };
 
 pub struct Command {
@@ -24,18 +21,17 @@ pub struct Command {
     pub maturity: Option<Maturity>,
     pub deadline: Option<DateTimeUtc>,
 }
-pub struct Output {
-    pub id: CommissionId,
-}
 
 impl Commissions<'_> {
+    /// Create a commission owned by the caller, with its `created` entry, and answer the row
+    /// as the store holds it. The entry names no title.
     #[use_case]
     pub async fn create(
         &self,
         #[unit] uow: Unit<'_>,
         cmd: Command,
         now: DateTimeUtc,
-    ) -> CommissionResult<Output> {
+    ) -> CommissionResult<CommissionValues> {
         let Command {
             actor_id,
             title,
@@ -50,22 +46,24 @@ impl Commissions<'_> {
             commission.id,
             ChangelogEntryKind::Created,
             actor_id,
-            json!({ "title": commission.title.as_str() }),
+            json!({}),
             now,
         );
 
         uow.commissions().create(&commission).await?;
         uow.changelog().append(&entry).await?;
 
-        Ok(Output { id: commission.id })
+        let stored = uow
+            .commissions()
+            .find(&commission.id)
+            .await?
+            .ok_or_else(|| {
+                let unread = anyhow::anyhow!("the created commission could not be read back");
+                CommonError::Infrastructure(unread)
+            })?;
+        Ok(CommissionValues::from(stored))
     }
 }
 
-/// The title as the Den's name rule keeps it: refused where the rule refuses, and stored
-/// without the characters the rule strips.
-fn den_title(title: &CommissionTitle) -> CommissionResult<CommissionTitle> {
-    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
-    name.as_ref()
-        .parse()
-        .map_err(|CommissionTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
-}
+#[cfg(test)]
+mod tests;

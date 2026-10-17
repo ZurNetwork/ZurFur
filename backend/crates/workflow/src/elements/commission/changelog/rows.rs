@@ -20,8 +20,8 @@ pub struct NewChangelogEntry {
     pub kind: ChangelogEntryKind,
     /// Who did it — `None` for a system entry.
     pub actor_id: Option<UserId>,
-    /// Kind-specific parameters as JSON. Must be self-sufficient to render a
-    /// sentence without joins: name titles, handles and dates by value.
+    /// Kind-specific parameters as JSON, never the commission's title: the title
+    /// is read from the commission's row, so history never holds a stale copy.
     pub payload: Value,
     /// Optional free text riding the entry, or the whole content of a
     /// standalone [`Note`](ChangelogEntryKind::Note) entry.
@@ -79,6 +79,20 @@ impl NewChangelogEntry {
             actor_id: Some(actor),
             payload: Value::Object(serde_json::Map::new()),
             note: Some(text),
+            created_at: at,
+        }
+    }
+
+    /// The owner's rename: kind [`Renamed`](ChangelogEntryKind::Renamed), an empty
+    /// payload and no note. A named constructor, not a std conversion, because the
+    /// kind fixes the payload.
+    pub fn renamed(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self {
+        Self {
+            commission_id: commission,
+            kind: ChangelogEntryKind::Renamed,
+            actor_id: Some(actor),
+            payload: Value::Object(serde_json::Map::new()),
+            note: None,
             created_at: at,
         }
     }

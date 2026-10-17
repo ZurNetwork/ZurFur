@@ -41,3 +41,19 @@ fn constructors_set_the_actor_arm() {
     .with_note("love the colors!".to_string());
     assert_eq!(attached.note.as_deref(), Some("love the colors!"));
 }
+
+// A rename entry is built only by its constructor, which leaves no room for text.
+#[test]
+fn a_rename_entry_carries_no_title_and_no_note() {
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
+    let actor = UserId::from(Did::from(format!("did:plc:{}", uuid::Uuid::now_v7())));
+    let now = chrono::Utc::now();
+
+    let renamed = NewChangelogEntry::renamed(commission, actor.clone(), now);
+
+    let empty_payload = serde_json::json!({});
+    assert!(matches!(renamed.kind, ChangelogEntryKind::Renamed));
+    assert_eq!(renamed.actor_id, Some(actor));
+    assert_eq!(renamed.payload, empty_payload, "the payload names no title");
+    assert_eq!(renamed.note, None, "a rename carries no note");
+}
