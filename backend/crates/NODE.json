@@ -1,8 +1,8 @@
 {
   "path": "backend/crates",
-  "charted": "2026-10-01",
-  "short": "The fourteen workspace crates",
-  "is": "Fourteen workspace crates arranged as a hexagon: one I/O-free core, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
+  "charted": "2026-10-17",
+  "short": "The twenty-one workspace crates",
+  "is": "Twenty-one workspace crates arranged as a hexagon: an I/O-free core of domain crates (kernel, identity, workflow and the gallery and moderation stubs) behind the domain façade, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
   "tags": [
     "category:source"
@@ -70,8 +70,13 @@
     },
     {
       "name": "domain/",
-      "role": "I/O-free core: elements (the nouns), ports (trait seams), the injected clock, the string-validation builder",
+      "role": "the domain façade: re-exports kernel, identity and workflow so every `domain::…` path resolves, and owns the unit of work",
       "node": true
+    },
+    {
+      "name": "gallery/",
+      "role": "gallery domain stub: a documented crate with no types, no dependencies and no dependents yet",
+      "node": false
     },
     {
       "name": "http-cookies/",
@@ -82,6 +87,21 @@
       "name": "http-stack/",
       "role": "the one HTTP stack every mount serves through: the detach layer around the session layer, and the server with its graceful shutdown; consumed by api and test-support",
       "node": true
+    },
+    {
+      "name": "identity/",
+      "role": "identity domain crate: who acts — users, accounts, actor identities, handles, keys, profiles, public records — and their ports; depends on kernel",
+      "node": true
+    },
+    {
+      "name": "kernel/",
+      "role": "bottom domain crate: the shared vocabulary (did, text, maturity, blob, markdown), the clock and the string-validation builder; no workspace deps",
+      "node": true
+    },
+    {
+      "name": "moderation/",
+      "role": "moderation domain stub: a documented crate with no types, no dependencies and no dependents yet",
+      "node": false
     },
     {
       "name": "query-codegen/",
@@ -96,6 +116,11 @@
     {
       "name": "test-support/",
       "role": "shared test rig: throwaway PDS + stub PLC, one-container/template-clone Postgres, PublicRecords conformance suite",
+      "node": true
+    },
+    {
+      "name": "workflow/",
+      "role": "workflow domain crate: the commission aggregate and an account's boards, and their ports; depends on kernel and identity",
       "node": true
     }
   ],

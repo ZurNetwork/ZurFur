@@ -1,0 +1,126 @@
+{
+  "path": "backend/crates/kernel",
+  "charted": "2026-10-17",
+  "short": "The shared domain vocabulary",
+  "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the maturity posture, the blob and markdown stubs, the one clock type and the string-validation builder — with no I/O and no workspace dependency (shared allowed).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "Depends on no other domain crate; every other domain crate may depend on it. Doc links up a layer are plain code text.",
+    "Every element mirrors a design glossary page (`entities/` in the corpus); the page pointer lives in this node's `refs`, never in a doc comment.",
+    "Stub modules are allowed, and documented honestly as stubs.",
+    "Time is injected, never read from the ambient clock.",
+    "Each file owns its id type, value objects, and pure invariant logic.",
+    "The serde-deriving id newtypes are `Did`, `UserId` and `AccountId` — the CLI identity file needs them.",
+    "Ids derive `FromStr` forwarding to the inner type's error (`uuid::Error` for Uuid-backed ids, `DidParseError` for Did-backed ids); `From`/`Into`/`AsRef`/`Display` likewise forward, with no `Deref` and no `new` wrapper. Every error type is a `thiserror` derive.",
+    "Enum vocabularies derive strum (Display, EnumString, IntoStaticStr, VariantArray; serialize_all = snake_case), keep their typed Unknown* parse errors through parse_err_ty/parse_err_fn, and pin their literal token list in the sibling tests.rs; no hand-written ALL consts or as_str tables."
+  ],
+  "entry_points": [
+    "src/lib.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "chrono (the clock), cid (BlobId), serde, thiserror, derive_more, strum; dev-dep proptest",
+      "node": false
+    },
+    {
+      "name": "src/datetime.rs",
+      "role": "DateTimeUtc — the single injected clock type",
+      "node": false
+    },
+    {
+      "name": "src/elements.rs",
+      "role": "module index for elements/: did, text, maturity; blob and markdown are stubs",
+      "node": false
+    },
+    {
+      "name": "src/elements/blob.rs",
+      "role": "BlobId, a blob's content address (stub)",
+      "node": false
+    },
+    {
+      "name": "src/elements/did.rs",
+      "role": "DID newtype",
+      "node": false
+    },
+    {
+      "name": "src/elements/did/",
+      "role": "split of did.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "src/elements/markdown.rs",
+      "role": "markdown value object",
+      "node": false
+    },
+    {
+      "name": "src/elements/maturity.rs",
+      "role": "atproto self-label axis + orthogonal Graphic flag",
+      "node": false
+    },
+    {
+      "name": "src/elements/maturity/",
+      "role": "split of maturity.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "src/elements/text.rs",
+      "role": "text primitives — NonEmptyString, the trimmed never-blank string free-text names wrap; StoredText, text as the store holds it, loaded without a re-check",
+      "node": false
+    },
+    {
+      "name": "src/elements/text/",
+      "role": "split of text.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "crate root: the module declarations",
+      "node": false
+    },
+    {
+      "name": "src/string_builder.rs",
+      "role": "StringBuilder: the one trimmed/capped-string gate every newtype validates through (ZMVP-113)",
+      "node": false
+    },
+    {
+      "name": "src/string_builder/",
+      "role": "split of string_builder.rs; no information beyond its façade",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 4358151,
+      "title": "DID:PLC vs DID:Web",
+      "governs": "src/elements/did.rs"
+    },
+    {
+      "page": 9994275,
+      "title": "Blob",
+      "governs": "src/elements/blob.rs"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "src/elements/maturity.rs"
+    },
+    {
+      "page": 57081857,
+      "title": "Actor Addressing",
+      "governs": "src/elements/did.rs"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
+    }
+  ],
+  "notes": [
+    "Persisted enums (`MaturityRating`) own their storage tokens: renaming one is a migration, and an unknown token is always an error, never a silent default.",
+    "See also: the design corpus glossary — `entities/` in ZurNetwork/zurfur-design, indexed by `docs/design-index.md`."
+  ]
+}
