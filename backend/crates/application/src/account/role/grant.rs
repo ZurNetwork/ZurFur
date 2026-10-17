@@ -1,6 +1,6 @@
 use crate::LazyUnit;
 use crate::use_case;
-use domain::elements::{account::AccountId, role::Role, user::UserId, user_account::UserAccount};
+use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
@@ -49,29 +49,24 @@ impl Roles<'_> {
             .filter(|r| r.can_grant(&role))
             .ok_or(AccountError::IncorrectRole)?;
 
-        if let Some(current_role) = ports.accounts.role_of(&target_id, &account_id).await?
-            && !actor_role.can_grant(&current_role)
-        {
+        let target_role = ports
+            .accounts
+            .role_of(&target_id, &account_id)
+            .await?
+            .ok_or(AccountError::NotAMember)?;
+
+        if !actor_role.can_grant(&target_role) {
             return Err(AccountError::IncorrectRole);
         }
 
-        // Provisioning is a write: an unauthorized grant must not leave a User
-        // row behind for the DID it named.
         let uow = uow.open().await?;
-        let target = uow.users().provision(target_id.did()).await?;
-
-        let member = UserAccount {
-            user_id: target.id.clone(),
-            account_id: account_id.clone(),
-            alias: None,
-            role: role.clone(),
-        };
-
-        uow.accounts().grant_role(&member).await?;
+        uow.accounts()
+            .grant_role(&target_id, &account_id, &role)
+            .await?;
         Ok(Output {
             account_id,
             role,
-            user_id: target.id.clone(),
+            user_id: target_id,
         })
     }
 }

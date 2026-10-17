@@ -1,11 +1,14 @@
 import { isRedirect, type HandleFetch, type RequestEvent } from '@sveltejs/kit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { hangingFetch } from '$lib/testing/http';
 import { kitEventFetch } from '$lib/testing/kit-fetch';
 import { FRAME_ANCESTORS_POLICY, X_FRAME_OPTIONS } from '$lib/server/frame-headers';
 import { SESSION_CACHE_CONTROL, SESSION_REFERRER_POLICY } from '$lib/server/session-headers';
 import { UNANSWERED_PAGE } from '$lib/server/unanswered';
 import { handle, handleError, handleFetch } from './hooks.server';
+
+// The run-time env starts empty, so no case reads the ZURFUR_* values the gate exports from `.env`.
+vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 type HandleInput = Parameters<typeof handle>[0];
 
@@ -241,5 +244,179 @@ describe('handleFetch under SvelteKit’s server fetch', () => {
 
 		expect(leaving.signal.aborted).toBe(true);
 		expect((leaving.signal.reason as DOMException).message).toBe('deadline');
+	});
+});
+
+/** The two facts the origin check is configured from: the build, and ZURFUR_PUBLIC_URL. */
+interface OriginEnv {
+	readonly dev: boolean;
+	readonly publicUrl: string | undefined;
+}
+
+/**
+ * Load `hooks.server` fresh with `$app/environment` and `$env/dynamic/private`
+ * stubbed to `stub`, so the origin it reads at load is the case's own, never
+ * the `.env` the gate exports into the test run.
+ */
+async function hooksUnder(stub: OriginEnv): Promise<typeof import('./hooks.server')> {
+	vi.resetModules();
+	vi.doMock('$app/environment', () => ({
+		dev: stub.dev,
+		building: false,
+		browser: false,
+		version: 'test'
+	}));
+	vi.doMock('$env/dynamic/private', () => ({ env: { ZURFUR_PUBLIC_URL: stub.publicUrl } }));
+	return await import('./hooks.server');
+}
+
+/** A form post to a page, as the browser sends it. */
+interface Post {
+	readonly url: string;
+	readonly routeId: string;
+	readonly origin: string;
+	readonly cookie?: string;
+}
+
+/** What `handle` did with a post: its response, and what behind it ran. */
+interface PostOutcome {
+	readonly response: Response;
+	readonly resolved: boolean;
+	readonly fetched: boolean;
+}
+
+/** Put `post` through `hook`, with SvelteKit's resolve and `event.fetch` stubbed. */
+async function postThrough(hook: typeof handle, post: Post): Promise<PostOutcome> {
+	const headers = new Headers({
+		'content-type': 'application/x-www-form-urlencoded',
+		origin: post.origin
+	});
+	if (post.cookie !== undefined) headers.set('cookie', post.cookie);
+	const request = new Request(post.url, { method: 'POST', headers, body: 'x=1' });
+	const fetchSpy = vi.fn(() => Promise.reject(new TypeError('fetch failed')));
+	const event = {
+		route: { id: post.routeId },
+		url: new URL(post.url),
+		request,
+		fetch: fetchSpy,
+		locals: {},
+		isDataRequest: false
+	} as unknown as RequestEvent;
+	const resolve = vi.fn(() => Promise.resolve(new Response('RESOLVED')));
+
+	const response = await hook({ event, resolve });
+
+	return {
+		response,
+		resolved: resolve.mock.calls.length > 0,
+		fetched: fetchSpy.mock.calls.length > 0
+	};
+}
+
+/** A sign-in form post arriving at `url` from `origin`. */
+function loginPost(origin: string, url = 'http://127.0.0.1:5174/login'): Post {
+	return { url, routeId: '/(public)/login', origin };
+}
+
+/** How long the one cold import may take on a loaded machine. */
+const WARM_IMPORT_TIMEOUT_MS = 60_000;
+
+describe('handle, refusing cross-site writes', () => {
+	// Pay the cold transform of the module graph once, under its own timeout, so
+	// each test's fresh import after `vi.resetModules()` is only an evaluation.
+	beforeAll(async () => {
+		await import('./hooks.server');
+	}, WARM_IMPORT_TIMEOUT_MS);
+
+	afterEach(() => {
+		vi.doUnmock('$app/environment');
+		vi.doUnmock('$env/dynamic/private');
+		vi.resetModules();
+		vi.restoreAllMocks();
+	});
+
+	/** Silence the dev request log a dev build writes for every request. */
+	function quietDevLog(): void {
+		vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+	}
+
+	it('in dev with ZURFUR_PUBLIC_URL unset, takes http://127.0.0.1:8080 as the origin', async () => {
+		quietDevLog();
+		const hooks = await hooksUnder({ dev: true, publicUrl: undefined });
+
+		const fromDefault = await postThrough(hooks.handle, loginPost('http://127.0.0.1:8080'));
+		const fromVite = await postThrough(hooks.handle, loginPost('http://127.0.0.1:5174'));
+
+		expect(fromDefault.resolved).toBe(true);
+		expect(fromVite.response.status).toBe(403);
+		expect(fromVite.resolved).toBe(false);
+	});
+
+	it('outside dev with ZURFUR_PUBLIC_URL unset, refuses every write', async () => {
+		const hooks = await hooksUnder({ dev: false, publicUrl: undefined });
+
+		const outcome = await postThrough(
+			hooks.handle,
+			loginPost('http://127.0.0.1:8080', 'http://127.0.0.1:8080/login')
+		);
+
+		expect(outcome.response.status).toBe(403);
+		expect(outcome.resolved).toBe(false);
+	});
+
+	it('takes ZURFUR_PUBLIC_URL when it is set, not the dev default', async () => {
+		quietDevLog();
+		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:9180' });
+
+		const fromConfigured = await postThrough(hooks.handle, loginPost('http://127.0.0.1:9180'));
+		const fromDefault = await postThrough(hooks.handle, loginPost('http://127.0.0.1:8080'));
+
+		expect(fromConfigured.resolved).toBe(true);
+		expect(fromDefault.response.status).toBe(403);
+		expect(fromDefault.resolved).toBe(false);
+	});
+
+	it.each(['http://127.0.0.1:8080/?', 'http://127.0.0.1:8080/app', 'not a url', ''])(
+		'with a malformed ZURFUR_PUBLIC_URL (%j), refuses every write, even in dev',
+		async (malformed) => {
+			quietDevLog();
+			const hooks = await hooksUnder({ dev: true, publicUrl: malformed });
+
+			const fromDefault = await postThrough(hooks.handle, loginPost('http://127.0.0.1:8080'));
+
+			expect(fromDefault.response.status).toBe(403);
+			expect(fromDefault.resolved).toBe(false);
+		}
+	);
+
+	it('refuses a cross-origin sign-in post in a dev build too', async () => {
+		quietDevLog();
+		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:8080' });
+
+		const outcome = await postThrough(hooks.handle, loginPost('https://evil.example'));
+
+		expect(outcome.response.status).toBe(403);
+		expect(await outcome.response.text()).toBe('Cross-site POST form submissions are forbidden');
+		expect(outcome.resolved).toBe(false);
+	});
+
+	it('refuses inside the framing and session stamps, before the sign-in gate asks the backend', async () => {
+		quietDevLog();
+		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:8080' });
+		const signedInPost: Post = {
+			url: 'http://127.0.0.1:5174/accounts',
+			routeId: '/(session)/accounts',
+			origin: 'https://evil.example',
+			cookie: 'zurfur.sid=s3ss10n'
+		};
+
+		const outcome = await postThrough(hooks.handle, signedInPost);
+
+		expect(outcome.response.status).toBe(403);
+		expect(outcome.response.headers.get('content-security-policy')).toBe(FRAME_ANCESTORS_POLICY);
+		expect(outcome.response.headers.get('x-frame-options')).toBe(X_FRAME_OPTIONS);
+		expect(outcome.response.headers.get('cache-control')).toBe(SESSION_CACHE_CONTROL);
+		expect(outcome.fetched).toBe(false);
+		expect(outcome.resolved).toBe(false);
 	});
 });

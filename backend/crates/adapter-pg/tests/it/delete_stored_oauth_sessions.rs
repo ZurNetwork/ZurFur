@@ -1,8 +1,8 @@
 //! The one-time delete of every stored atproto OAuth session and pending
 //! sign-in: run every migration before it, seed both tables beside Users, an
-//! Account, its custody keys and a login session, let the migrator catch up,
-//! and check that both tables are empty while every other table keeps exactly
-//! its rows. Requires a container runtime socket (DOCKER_HOST honored).
+//! Account, its custody keys and a login session, run the delete and nothing
+//! after it, and check that both tables are empty while every other table
+//! keeps exactly its rows. Requires a container runtime socket (DOCKER_HOST honored).
 
 use std::collections::BTreeMap;
 
@@ -19,7 +19,7 @@ use domain::{
 };
 
 /// The delete's migration, as sqlx numbers it. The test runs everything before
-/// it, seeds, then lets the full migrator catch up.
+/// it, seeds, then runs it.
 const DELETE_STORED_OAUTH_SESSIONS: i64 = 20261012014616;
 
 /// A fresh, empty private database with no migrations applied; the second
@@ -49,6 +49,20 @@ async fn migrate_to_just_before_the_delete(pool: &PgPool) {
         .collect();
     before.migrations = migrations.into();
     before.run(pool).await.expect("the earlier migrations run");
+}
+
+/// Run the delete itself and nothing after it, so a later migration's new
+/// table never reads as a change the delete made.
+async fn migrate_through_the_delete(pool: &PgPool) {
+    let mut through = adapter_pg::migrator();
+    let migrations: Vec<_> = through
+        .migrations
+        .iter()
+        .filter(|migration| migration.version <= DELETE_STORED_OAUTH_SESSIONS)
+        .cloned()
+        .collect();
+    through.migrations = migrations.into();
+    through.run(pool).await.expect("the delete runs");
 }
 
 /// Recognize a visitor in its own committed unit of work.
@@ -204,7 +218,7 @@ async fn the_delete_empties_both_oauth_tables_and_touches_nothing_else() {
         assert!(seeded, "{table} holds a row before the delete");
     }
 
-    adapter_pg::migrate(&pool).await.expect("the delete runs");
+    migrate_through_the_delete(&pool).await;
 
     let sessions_after = rows_in(&pool, "atproto_oauth.client_session").await;
     let requests_after = rows_in(&pool, "atproto_oauth.auth_request").await;

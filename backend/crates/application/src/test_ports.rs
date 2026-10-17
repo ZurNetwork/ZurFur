@@ -23,6 +23,7 @@ impl From<&composition::Runtime> for Ports {
             workflows: runtime.workflows.clone(),
             columns: runtime.columns.clone(),
             characters: runtime.characters.clone(),
+            bug_reports: runtime.bug_reports.clone(),
         }
     }
 }

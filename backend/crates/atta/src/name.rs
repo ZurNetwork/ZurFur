@@ -226,7 +226,7 @@ impl From<ShowableNameError> for NodeNameError {
 }
 
 /// Whether `character` is in Unicode's general category Cf.
-fn is_format(character: char) -> bool {
+pub fn is_format(character: char) -> bool {
     let code = u32::from(character);
     FORMAT_CHARACTERS
         .iter()
@@ -234,7 +234,7 @@ fn is_format(character: char) -> bool {
 }
 
 /// Whether `character` has Unicode's `Default_Ignorable_Code_Point` property.
-fn is_default_ignorable(character: char) -> bool {
+pub fn is_default_ignorable(character: char) -> bool {
     let code = u32::from(character);
     DEFAULT_IGNORABLE
         .iter()

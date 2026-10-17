@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/domain/src",
-  "charted": "2026-09-19",
+  "charted": "2026-10-17",
   "short": "Elements, ports, the clock, the string builder",
   "is": "Four public modules: the nouns (elements), the seams (ports), the one clock type, and the shared string-validation builder.",
   "type": "code",
@@ -42,7 +42,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), changelog, commission, character, file, workflow, authenticator, public_records ports; errors.rs shared (incl. ResolveError)",
+      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), changelog, commission, character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), file, workflow, authenticator, public_records ports; errors.rs shared (incl. ResolveError)",
       "node": false
     },
     {
@@ -53,6 +53,11 @@
     {
       "name": "string_builder/",
       "role": "split of string_builder.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "string_builder/unicode.rs",
+      "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, copied from atta (atta depends on no workspace crate) and pinned equal over every char by application/tests/den_names.rs; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter, as StringBuilder::no_line_separator does U+2028 and U+2029) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
       "node": false
     }
   ],
@@ -135,7 +140,7 @@
   ],
   "notes": [
     "Adapters: `adapter-pg` implements the private-store ports, `adapter-atproto` the public ones (`PublicRecords`, the real `DidMinter`), `adapter-mem` fakes both.",
-    "`UnitOfWork` vends exactly eight write ports: `accounts`, `commissions`, `changelog`, `users`, `actor_identities`, `workflows`, `columns`, `characters`. `ports::Unit<'a>` names `&'a mut dyn UnitOfWork`, the type a `#[unit]` parameter takes.",
+    "`UnitOfWork` vends exactly nine write ports: `accounts`, `commissions`, `changelog`, `users`, `actor_identities`, `workflows`, `columns`, `characters`, `bug_reports`. `ports::Unit<'a>` names `&'a mut dyn UnitOfWork`, the type a `#[unit]` parameter takes.",
     "Documented exceptions to the Unit of Work — pool-backed `&self` writes: `ProfileCache` (read-through cache fill), `FileStore` (blob bytes can't ride a Postgres transaction), and the api-side `session_store`/`auth_store`.",
     "Changelog entries are appended in the same unit as the domain write they record, and nothing is derived from them (59310081).",
     "`commission_element` carries a **composite** FK `(tab_id, commission_id) → commission_tab (id, commission_id)`, so an element citing another commission's tab is unwritable; `UnknownTab` is the friendly 404 half of that rule (45514754).",

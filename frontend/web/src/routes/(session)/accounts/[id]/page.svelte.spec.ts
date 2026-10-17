@@ -7,6 +7,7 @@ import type { AccountMembership } from '$lib/api/account';
 import type { Problem } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { accountId, did, handleFromTrusted } from '$lib/types/brand';
+import { UNKNOWN_BUILD_ID } from '$lib/types/bug-report-rules';
 import type { Trail } from '$lib/api/trail';
 
 /** The frame's path on this page; the page itself doesn't render it. */
@@ -40,11 +41,11 @@ const notFoundProblem: Problem = {
 };
 
 function accountData(account: AccountMembership) {
-	return { session: alice, account, trail };
+	return { session: alice, buildId: UNKNOWN_BUILD_ID, testStack: 'none' as const, account, trail };
 }
 
 function problemData(problem: Problem) {
-	return { session: alice, problem, trail };
+	return { session: alice, buildId: UNKNOWN_BUILD_ID, testStack: 'none' as const, problem, trail };
 }
 
 describe('/accounts/[id] page', () => {

@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/composition",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "HTTP-free composition root: Config + Runtime",
   "is": "The HTTP-free composition root shared by every driving adapter (api, cli): loads Config and wires the live Runtime bag of domain ports.",
   "type": "code",
@@ -26,7 +26,7 @@
     },
     {
       "name": "src/config.rs",
-      "role": "Config struct (public_url a BareOrigin), figment loader (Config::load/load_from, failing with LoadError: Figment or Refused) with the environment guard ConfigRefusal, Environment enum, boot-time custody guard ensure_custody_hardened",
+      "role": "Config struct (public_url a BareOrigin; build_id a BuildId read verbatim from ZURFUR_BUILD_ID — layered past the env provider so a numeric id stays text — defaulting to \"unknown\", an invalid one failing the load), figment loader (Config::load/load_from, failing with LoadError: Figment or Refused) with the environment guard ConfigRefusal, Environment enum, boot-time custody guard ensure_custody_hardened",
       "node": false
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone), Runtime::connect wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), transaction convenience",
+      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, BugReportStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone), Runtime::connect wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), transaction convenience",
       "node": false
     },
     {
@@ -78,7 +78,7 @@
     }
   ],
   "notes": [
-    "**Live adapter per port** (`Runtime::wire`): `auth`/`profile_source`/`did_minter` → adapter-atproto (`AtprotoAuthenticator`, `AtprotoProfileSource`, `RealDidMinter` over `PgKeyStore` + `PgPlcOperationLog` + the directory); every other port → adapter-pg (`PgUserStore`, `PgAccountStore`, `PgCommissionStore`, `PgChangelogStore`, `PgWorkflowStore`, `PgColumnStore`, `PgFileStore`, `PgProfileCache` at a one-hour TTL, `PgDatabase`). Tests swap in the mem fakes. Adding a capability = a field on `Runtime` plus a line in `wire`.",
+    "**Live adapter per port** (`Runtime::wire`): `auth`/`profile_source`/`did_minter` → adapter-atproto (`AtprotoAuthenticator`, `AtprotoProfileSource`, `RealDidMinter` over `PgKeyStore` + `PgPlcOperationLog` + the directory); every other port → adapter-pg (`PgUserStore`, `PgAccountStore`, `PgCommissionStore`, `PgChangelogStore`, `PgWorkflowStore`, `PgColumnStore`, `PgBugReportStore`, `PgFileStore`, `PgProfileCache` at a one-hour TTL, `PgDatabase`). Tests swap in the mem fakes. Adding a capability = a field on `Runtime` plus a line in `wire`.",
     "Two ports are pool-backed on purpose, the documented exceptions to the unit of work: the `profile_cache` fill (a read-path write with no transactional invariant) and `files` (blob bytes cannot ride a transaction).",
     "`Runtime::connect` connects the pool but deliberately does NOT run migrations — the driver calls `adapter_pg::migrate` explicitly.",
     "Config layering, lowest first: `config/{profile}.toml` → the unprefixed `DATABASE_URL` (the name sqlx tooling expects) → `ZURFUR_*` env. `ZURFUR_ENV` both picks the profile file and deserializes into `Config::env`, so the two spellings must agree; it is validated as a bare name so it cannot walk out of the config dir. The config dir is anchored to `CARGO_MANIFEST_DIR`, never the CWD.",

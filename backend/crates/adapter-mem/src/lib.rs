@@ -8,6 +8,7 @@
 //! operational reality; intentional divergence is called out on the item.
 
 mod actor_identity;
+mod bug_report;
 mod character;
 mod commission;
 mod file_store;
@@ -17,6 +18,7 @@ mod identity_resolver;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
+pub use bug_report::{MemBugReportStore, MemBugReportWrites};
 pub use character::{MemCharacterStore, MemCharacterWrites};
 pub use commission::{
     MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
@@ -48,6 +50,7 @@ use domain::elements::{
     account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
+    bug_report::NewBugReport,
     character::{Character, CharacterId},
     commission::{
         CommissionFile, CommissionId, CommissionMarkup, ElementId, FileKey, GrantLevel, MarkupKey,
@@ -67,10 +70,10 @@ use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::character::{CharacterStore, CharacterWrites};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
-    ActorIdentityWrites, Authenticator, BrowserBinding, ChangelogStore, ChangelogWrites,
-    ColumnStore, ColumnWrites, CommissionRepo, CommissionStore, Database, DidMinter, FileStore,
-    HandleTaken, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, SigninStarted, UnitOfWork,
-    UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+    ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
+    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionStore,
+    Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache,
+    ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -149,6 +152,12 @@ pub struct MemBackend {
     /// [`StoredCharacter`] parts keyed by [`CharacterId`]; staged, so creation
     /// commits with the rest of the unit.
     pub(crate) characters: Arc<Mutex<HashMap<CharacterId, StoredCharacter>>>,
+    /// Filed bug reports in filing order. Staged, so a report lands only when
+    /// its unit commits; nothing ever mutates or removes a pushed report.
+    pub(crate) bug_reports: Arc<Mutex<Vec<NewBugReport>>>,
+    /// The rate limit's lock, the fake of pg's reporter row lock: one for every
+    /// reporter, held by a unit from its locked count until it ends. Shared, NOT staged.
+    pub(crate) bug_report_filing: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl MemBackend {
@@ -191,6 +200,11 @@ impl MemBackend {
     /// The [`CharacterStore`] read port over this backend's shared state.
     pub fn character_store(&self) -> Arc<dyn CharacterStore> {
         Arc::new(MemCharacterStore(self.clone()))
+    }
+
+    /// The [`BugReportStore`] read port over this backend's shared state.
+    pub fn bug_report_store(&self) -> Arc<dyn BugReportStore> {
+        Arc::new(MemBugReportStore(self.clone()))
     }
 
     /// The [`ProfileCache`] read port over this backend's shared state.
@@ -313,6 +327,7 @@ impl MemBackend {
             )),
             // Shared, not copied: the blob store is a Unit-of-Work exemption.
             blobs: self.blobs.clone(),
+            bug_report_filing: self.bug_report_filing.clone(),
             slots: Arc::new(Mutex::new(
                 self.slots
                     .lock()
@@ -349,6 +364,12 @@ impl MemBackend {
                     .expect("MemBackend characters mutex poisoned")
                     .clone(),
             )),
+            bug_reports: Arc::new(Mutex::new(
+                self.bug_reports
+                    .lock()
+                    .expect("MemBackend bug_reports mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -360,7 +381,10 @@ impl MemBackend {
     /// through [`merge_log`].
     ///
     /// Not modeled: a same-key write-write conflict is last-writer-wins here,
-    /// where pg would serialize the second writer on a row lock.
+    /// where pg would serialize the second writer on a row lock. Concurrent
+    /// units can therefore undo the guards a write checked against its own
+    /// snapshot (a grant whose unit opened before a leave committed seats the
+    /// leaver again); this fake runs in dev and tests only.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),
@@ -623,6 +647,20 @@ impl MemBackend {
                 .lock()
                 .expect("MemBackend characters mutex poisoned"),
         );
+        merge_log(
+            &mut self
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
+            &base
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
+            &staged
+                .bug_reports
+                .lock()
+                .expect("MemBackend bug_reports mutex poisoned"),
+        );
     }
 
     // --- Seed/inspection helpers for tests: they write straight to the shared
@@ -687,9 +725,18 @@ impl MemBackend {
         MemProfileCache(self.clone()).put(profile).await
     }
 
-    /// Seat or replace a member's role (test seed).
-    pub async fn grant_role(&self, member: &UserAccount) -> anyhow::Result<()> {
-        MemAccountWrites(self.clone()).grant_role(member).await
+    /// Seat `member` straight into the membership map, listed, replacing any entry
+    /// (test seed). Writes no User row. Panics only on a poisoned lock.
+    pub fn seed_member(&self, member: &UserAccount) {
+        let seeded = StoredMembership {
+            role: member.role.clone(),
+            alias: member.alias.clone(),
+            listed_on_profile: true,
+        };
+        self.memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .insert((member.account_id.clone(), member.user_id.clone()), seeded);
     }
 
     /// Seed a member's [`RoleAlias`] onto an already-seated membership
@@ -1305,15 +1352,30 @@ impl AccountStore for MemAccountStore {
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
-    /// Shared store effects of a member departing: remove the membership and
-    /// revoke their still-pending issued invitations. The mem fake models no role
-    /// tree, so there are no children to re-home.
-    fn settle_member_departure(&self, user: &UserId, account: &AccountId) {
-        self.0
+    /// A member departing: refuses the Owner before touching anything, else removes the
+    /// membership and revokes their pending issued invitations (no role tree to re-home).
+    /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
+    /// before a transfer committed can still remove the new Owner, in dev and tests only.
+    fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+        let mut memberships = self
+            .0
             .memberships
             .lock()
-            .expect("MemBackend memberships mutex poisoned")
-            .remove(&(account.clone(), user.clone()));
+            .expect("MemBackend memberships mutex poisoned");
+        let seat = (account.clone(), user.clone());
+        let Some(departing) = memberships.get(&seat) else {
+            return Ok(());
+        };
+        if matches!(departing.role, Role::Owner) {
+            let owner_departing = anyhow::anyhow!(
+                "the Owner never departs; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+            return Err(owner_departing);
+        }
+        memberships.remove(&seat);
+        drop(memberships);
 
         let mut invitations = self
             .0
@@ -1328,6 +1390,7 @@ impl MemAccountWrites {
                 invitation.state = InvitationState::Revoked;
             }
         }
+        Ok(())
     }
 }
 
@@ -1477,46 +1540,72 @@ impl AccountWrites for MemAccountWrites {
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn grant_role(&mut self, member: &UserAccount) -> anyhow::Result<()> {
-        // Upsert into the (account, user) -> role map. A role grant never
-        // clobbers a member's already-set alias.
-        let UserAccount {
-            user_id: user,
-            account_id,
-            role,
-            alias: _,
-        } = member;
+    async fn grant_role(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+        role: &Role,
+    ) -> anyhow::Result<()> {
+        if matches!(role, Role::Owner) {
+            anyhow::bail!(
+                "grant_role: ownership moves only by transfer; account {} user {}",
+                AsRef::<str>::as_ref(account),
+                user.as_ref()
+            );
+        }
         let mut memberships = self
             .0
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        memberships.insert(
-            (account_id.clone(), user.clone()),
-            StoredMembership::listed(role.clone()),
-        );
+        // Only an existing non-Owner member's role changes; alias and listing stay.
+        let Some(stored) = memberships
+            .get_mut(&(account.clone(), user.clone()))
+            .filter(|stored| !matches!(stored.role, Role::Owner))
+        else {
+            anyhow::bail!(
+                "grant_role: user {} is not a non-Owner member of account {}; nothing changed",
+                user.as_ref(),
+                AsRef::<str>::as_ref(account)
+            );
+        };
+        stored.role = role.clone();
         Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         // A revoke is a departure, identical to `leave` at the store level.
-        self.settle_member_departure(user, account);
-        Ok(())
+        self.settle_member_departure(user, account)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
-        // Self-removal; the preconditions are the caller's.
-        self.settle_member_departure(user, account);
-        Ok(())
+        // Self-removal; the store refuses the Owner, every other precondition is the caller's.
+        self.settle_member_departure(user, account)
     }
 
-    /// Insert the pending invitation unless one is already pending for the same
-    /// `(account, invited_user)`, in which case this is a no-op. Returns the offer
-    /// that now stands — the fresh one, or the pending one already on file.
+    /// Refuse, writing nothing, an inviter who isn't a member; else insert the pending
+    /// invitation unless one is already pending for the same `(account, invited_user)`.
+    /// Returns the offer that now stands — the fresh one, or the pending one on file.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
+        let issuer_seat = (invitation.account.clone(), invitation.inviter.clone());
+        let issuer_is_member = self
+            .0
+            .memberships
+            .lock()
+            .expect("MemBackend memberships mutex poisoned")
+            .contains_key(&issuer_seat);
+        if !issuer_is_member {
+            let issuer_not_a_member = anyhow::anyhow!(
+                "an invitation's issuer must be a member; account {} user {}",
+                AsRef::<str>::as_ref(&invitation.account),
+                invitation.inviter.as_ref()
+            );
+            return Err(issuer_not_a_member);
+        }
+
         let mut invitations = self
             .0
             .invitations
@@ -1602,7 +1691,7 @@ impl AccountWrites for MemAccountWrites {
             .memberships
             .lock()
             .expect("MemBackend memberships mutex poisoned");
-        // `or_insert_with` writes only when the pair is absent, so a re-seat
+        // `or_insert` writes only when the pair is absent, so a re-seat
         // leaves the existing role and listing choice untouched.
         let seated = StoredMembership {
             role: invitation.role.clone(),
@@ -1793,6 +1882,7 @@ impl Database for MemDatabase {
             shared: self.0.clone(),
             base,
             staged,
+            bug_report_filing: None,
         }))
     }
 }
@@ -1811,6 +1901,9 @@ pub struct MemUnitOfWork {
     /// A private deep copy the unit's writes land in, reaching `shared` only on
     /// `commit`. The profile-cache `Arc` is shared, never staged.
     staged: MemBackend,
+    /// The bug-report filing lock once this unit has taken it; released when the
+    /// unit is dropped, after `commit` has merged.
+    bug_report_filing: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 #[async_trait]
@@ -1856,6 +1949,16 @@ impl UnitOfWork for MemUnitOfWork {
     /// The character write surface over this unit's staged snapshot.
     fn characters(&mut self) -> Box<dyn CharacterWrites + '_> {
         Box::new(MemCharacterWrites(self.staged.clone()))
+    }
+
+    /// The bug-report write surface over this unit's staged snapshot; its locked
+    /// count also reads the shared log, and parks the lock on this unit.
+    fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_> {
+        Box::new(MemBugReportWrites {
+            shared: self.shared.clone(),
+            staged: self.staged.clone(),
+            filing_lock: &mut self.bug_report_filing,
+        })
     }
 
     #[tracing::instrument(level = "debug", skip_all)]

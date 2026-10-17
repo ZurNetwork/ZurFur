@@ -75,14 +75,14 @@ async fn seed_account(backend: &MemBackend, owner: UserId, label: &str, stored: 
 }
 
 /// Seats `member` as a Member of `account`.
-async fn seat_member(backend: &MemBackend, member: UserId, account: &Account) {
+fn seat_member(backend: &MemBackend, member: UserId, account: &Account) {
     let seat = UserAccount {
         user_id: member,
         account_id: account.id.clone(),
         role: Role::Member,
         alias: None,
     };
-    backend.grant_role(&seat).await.expect("seat the Member");
+    backend.seed_member(&seat);
 }
 
 /// `GET /accounts` as `client`: the raw body and the name served for each handle.
@@ -146,7 +146,7 @@ async fn a_member_s_list_serves_a_refused_stored_name_as_the_handle() {
         .await
         .expect("provision the Owner");
     let account = seed_account(backend, owner.id, "bidi", WITH_A_BIDI_OVERRIDE).await;
-    seat_member(backend, viewer, &account).await;
+    seat_member(backend, viewer, &account);
 
     let (raw, names) = listed_names(&client, &served.base_url).await;
 

@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/lib/styles",
-  "charted": "2026-10-13",
+  "charted": "2026-10-17",
   "short": "Design tokens, base styles and the contrast gate",
   "is": "The two global stylesheets the root layout imports once (tokens.css, base.css), and the contrast gate: a declared list of the dark theme's colour pairs that a node spec checks against WCAG 2.2 AA on every gate.",
   "type": "code",
@@ -9,8 +9,9 @@
     "category:source"
   ],
   "conventions": [
-    "Components name a semantic `--color-*` token, never a palette step; a control's identifying edge (text box, secondary or form button, toggle track) uses `--color-control-edge`, and `--color-border` stays for decoration.",
+    "Components name a semantic `--color-*` token, never a palette step; a control's identifying edge (text box, checkbox, secondary or form button, toggle track) uses `--color-control-edge`, and `--color-border` stays for decoration.",
     "Every token painted as a text, icon, edge, outline, fill, stroke or ring colour has a pair in `contrast-pairs.ts` (or a commented entry in its decorative list); a `background` names only a declared background token or a named filled part; `--color-*` and `--palette-*` tokens are defined only in `tokens.css`. The contrast spec fails on each.",
+    "A greyed value (an unticked checkbox's value) is painted `--color-text-muted`, never lowered with `opacity`: the guard cannot see opacity or which background a component sits on, so a dialog's colours are paired on `--color-surface` by name.",
     "The pairs cover the dark theme only — every top-level `:root` block of `tokens.css`, a later one winning — the theme 0.1 ships; light and the `prefers-contrast: more` overrides are not checked.",
     "A failing pair is fixed in the token, not in the test: the palette is a placeholder until the design sync."
   ],
@@ -21,7 +22,7 @@
   "fs": [
     {
       "name": "base.css",
-      "role": "element defaults, text-box and form-button edges, the focus ring, .visually-hidden, the one 48rem phone breakpoint behind .desktop-only/.phone-only and --shell-columns",
+      "role": "element defaults, text-box and form-button edges, the focus ring, .visually-hidden, the one 48rem phone breakpoint behind .desktop-only/.phone-only, --shell-columns and the full-screen dialog's --full-dialog-* switches",
       "node": false
     },
     {
