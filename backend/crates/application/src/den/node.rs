@@ -49,7 +49,11 @@ impl Den<'_> {
         let reader = Reader::over(&host, caps);
         let resolved = reader.walk(&root, &segments).await?;
         let node = reader.node(resolved.node())?;
-        let crumbs = resolved.crumbs().iter().map(crumb).collect();
+        let crumbs = resolved
+            .crumbs()
+            .iter()
+            .map(crumb)
+            .collect::<Result<_, _>>()?;
         let content = reader.content(&resolved, query.page).await?;
         let output = Output {
             node,

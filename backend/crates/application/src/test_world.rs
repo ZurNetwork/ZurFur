@@ -100,7 +100,12 @@ pub(crate) async fn read(
     let segments: Vec<Segment> = den_path.iter().map(|text| segment(text)).collect();
     let resolved = reader.walk(root, &segments).await?;
     let node = reader.node(resolved.node())?;
-    let crumbs = resolved.crumbs().iter().map(crumb).count();
+    let crumbs = resolved
+        .crumbs()
+        .iter()
+        .map(crumb)
+        .collect::<Result<Vec<_>, _>>()?
+        .len();
     let content = reader.content(&resolved, None).await?;
     let read = Read {
         node,

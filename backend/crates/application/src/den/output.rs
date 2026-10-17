@@ -1,4 +1,6 @@
-use crate::den::{DenName, DenSegment, DenType, NodeKind, NodeLevel, PageToken, SoftDelete};
+use crate::den::{
+    DenName, DenSegment, DenThing, DenType, NodeKind, NodeLevel, PageToken, SoftDelete,
+};
 
 /// One node as the Den shows it to its viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,7 +18,7 @@ pub struct DenNode {
 }
 
 /// The viewer's access to a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenAccess {
     /// The viewer can open it.
     Open {
@@ -28,6 +30,8 @@ pub enum DenAccess {
         content_not_shown: bool,
         /// Its soft-deleted state; `None` when live.
         soft_delete: Option<SoftDelete>,
+        /// The thing it stands for, an Account or a commission; a mount carries its target's.
+        thing: Option<DenThing>,
     },
     /// The viewer may know it exists but can't open it.
     Card,
@@ -40,6 +44,8 @@ pub struct DenCrumb {
     pub segments: Vec<DenSegment>,
     /// Its display name.
     pub name: DenName,
+    /// Its type; a mount shows its target's.
+    pub den_type: DenType,
 }
 
 /// One page of an open directory's entries, after everything the viewer can't see is left out.

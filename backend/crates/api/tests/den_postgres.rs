@@ -112,7 +112,7 @@ async fn characters_lists_nothing_and_is_not_flagged() {
 async fn alice_s_accounts_mounts_supreme_arts() {
     let world = pg_app::den_world(api::app).await;
     let supreme_arts_did = world.supreme_arts.to_string();
-    let expected_crumbs = json!([{ "name": "Alice" }]);
+    let expected_crumbs = json!([{ "name": "Alice", "type": "user" }]);
 
     let accounts = ok_json(get(&world.alice, world.base_url(), "/den/accounts").await).await;
 

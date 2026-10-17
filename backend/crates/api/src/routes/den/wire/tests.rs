@@ -1,5 +1,7 @@
 use application::den::{DenName, DenType, NodeKind, NodeLevel, PageToken, SoftDelete};
+use domain::elements::{account::AccountId, commission::CommissionId, did::Did};
 use serde_json::json;
+use uuid::Uuid;
 
 use super::*;
 
@@ -24,6 +26,7 @@ fn an_open_node_carries_its_words() {
         own_level: NodeLevel::Listed,
         content_not_shown: true,
         soft_delete: Some(SoftDelete::Archived),
+        thing: None,
     };
     let expected = json!({
         "name": "Old sketch",
@@ -49,6 +52,7 @@ fn a_live_node_carries_no_soft_deleted_word() {
         own_level: NodeLevel::Private,
         content_not_shown: false,
         soft_delete: None,
+        thing: None,
     };
     let expected = json!({ "ownLevel": "private" });
 
@@ -101,4 +105,82 @@ fn a_file_s_content_is_an_empty_file() {
     let content = get_den_node_response::Content::from(DenContent::File);
 
     assert_eq!(content, get_den_node_response::Content::File(DenFile {}));
+}
+
+/// Every key anywhere in `value`, at any depth.
+fn keys(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Object(object) => object
+            .iter()
+            .flat_map(|(key, inner)| std::iter::once(key.clone()).chain(keys(inner)))
+            .collect(),
+        serde_json::Value::Array(items) => items.iter().flat_map(keys).collect(),
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => Vec::new(),
+    }
+}
+
+/// An open, live, Private directory standing for `thing`.
+fn open_standing_for(thing: DenThing) -> DenAccess {
+    DenAccess::Open {
+        kind: NodeKind::Directory,
+        own_level: NodeLevel::Private,
+        content_not_shown: false,
+        soft_delete: None,
+        thing: Some(thing),
+    }
+}
+
+#[test]
+fn an_open_commission_carries_its_id() {
+    let commission = CommissionId::from(Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0001));
+    let access = open_standing_for(DenThing::Commission(commission));
+    let expected = json!({
+        "ownLevel": "private",
+        "commissionId": "01a00000-0000-7000-8000-000000000001",
+    });
+
+    let wire = serde_json::to_value(DenNode::from(node(access))).expect("serializes");
+
+    assert_eq!(wire["open"], expected);
+}
+
+#[test]
+fn an_open_account_carries_its_did() {
+    let account = AccountId::from(Did::from("did:plc:supreme-arts".to_owned()));
+    let access = open_standing_for(DenThing::Account(account));
+    let expected = json!({
+        "ownLevel": "private",
+        "accountDid": "did:plc:supreme-arts",
+    });
+
+    let wire = serde_json::to_value(DenNode::from(node(access))).expect("serializes");
+
+    assert_eq!(wire["open"], expected);
+}
+
+#[test]
+fn a_card_carries_no_thing() {
+    let wire = serde_json::to_value(DenNode::from(node(DenAccess::Card))).expect("serializes");
+
+    let keys = keys(&wire);
+
+    assert!(!keys.iter().any(|key| key == "commissionId"), "{wire}");
+    assert!(!keys.iter().any(|key| key == "accountDid"), "{wire}");
+}
+
+#[test]
+fn a_crumb_carries_its_type() {
+    let crumb = den::DenCrumb {
+        segments: Vec::new(),
+        name: name("Alice"),
+        den_type: DenType::User,
+    };
+    let expected = json!({ "name": "Alice", "type": "user" });
+
+    let wire = serde_json::to_value(DenCrumb::from(crumb)).expect("serializes");
+
+    assert_eq!(wire, expected);
 }

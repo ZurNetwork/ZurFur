@@ -1,13 +1,15 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "commissions",
       "segments": [
         "commissions"
-      ]
+      ],
+      "type": "user.commissions"
     }
   ],
   "node": {

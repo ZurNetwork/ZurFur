@@ -164,6 +164,7 @@ fn open(node: &DenNode) -> (NodeKind, NodeLevel, bool, Option<SoftDelete>) {
         own_level,
         content_not_shown,
         soft_delete,
+        thing: _,
     } = node.access
     else {
         panic!("expected {} to be open", node.name);

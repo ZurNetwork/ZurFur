@@ -3,7 +3,7 @@ use domain::elements::{commission::CommissionId, did::Did};
 use uuid::Uuid;
 
 use super::*;
-use crate::test_world::World;
+use crate::{den::SoftDelete, test_world::World};
 
 /// A bag over the in-memory runtime's ports, built as this crate's own [`Ports`].
 fn ports() -> Ports {
@@ -244,8 +244,16 @@ async fn admit_answers_from_the_record() {
 
     assert_eq!(recorded, Admission::Admit);
     assert_eq!(unrecorded, Admission::Refuse);
-    assert_eq!(host.soft_delete(&path(&["commission"])), Some(None));
-    assert_eq!(host.soft_delete(&path(&["post"])), None);
+    assert_eq!(
+        host.recorded(&path(&["commission"]))
+            .map(|facts| facts.soft_delete),
+        Some(None)
+    );
+    assert_eq!(
+        host.recorded(&path(&["post"]))
+            .map(|facts| facts.soft_delete),
+        None
+    );
 }
 
 #[tokio::test]
@@ -429,7 +437,7 @@ async fn alice_s_commission_mounts(
             open_by_standing(),
             Reach::Listing,
         );
-        let word = host.soft_delete(&mount.target);
+        let word = host.recorded(&mount.target).map(|facts| facts.soft_delete);
         answers.push((found.metadata.name.to_string(), admission, word));
     }
     answers

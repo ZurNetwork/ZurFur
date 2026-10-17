@@ -1,8 +1,8 @@
-use application::den::{self, DenAccess, DenContent, DenSegment, node, root};
+use application::den::{self, DenAccess, DenContent, DenSegment, DenThing, node, root};
 
 use crate::generated::{
     DenCard, DenCrumb, DenFile, DenListing, DenNode, DenOpen, GetDenNodeResponse,
-    GetDenRootResponse, den_node, get_den_node_response, get_den_root_response,
+    GetDenRootResponse, den_node, den_open, get_den_node_response, get_den_root_response,
 };
 
 /// A Den path as the wire carries it: each piece as the application answered it.
@@ -13,9 +13,19 @@ fn segments(segments: Vec<DenSegment>) -> Vec<String> {
         .collect()
 }
 
+impl From<DenThing> for den_open::Thing {
+    /// An Account as its DID, a commission as its id.
+    fn from(thing: DenThing) -> Self {
+        match thing {
+            DenThing::Account(account) => Self::AccountDid(account.to_string()),
+            DenThing::Commission(commission) => Self::CommissionId(commission.to_string()),
+        }
+    }
+}
+
 impl From<den::DenNode> for DenNode {
-    /// An open node carries its kind and its `open` access; a card carries neither kind nor
-    /// anything beyond its entry.
+    /// An open node carries its kind and its `open` access, with the thing it stands for; a
+    /// card carries neither kind nor anything beyond its entry.
     fn from(node: den::DenNode) -> Self {
         let (kind, access) = match node.access {
             DenAccess::Open {
@@ -23,11 +33,13 @@ impl From<den::DenNode> for DenNode {
                 own_level,
                 content_not_shown,
                 soft_delete,
+                thing,
             } => {
                 let open = DenOpen {
                     own_level: own_level.to_string(),
                     content_not_shown,
                     soft_delete: soft_delete.map(|word| word.to_string()).unwrap_or_default(),
+                    thing: thing.map(den_open::Thing::from),
                 };
                 (kind.to_string(), den_node::Access::Open(open))
             }
@@ -45,10 +57,12 @@ impl From<den::DenNode> for DenNode {
 }
 
 impl From<den::DenCrumb> for DenCrumb {
+    /// A crumb carries its type's word for its icon.
     fn from(crumb: den::DenCrumb) -> Self {
         DenCrumb {
             segments: segments(crumb.segments),
             name: crumb.name.to_string(),
+            r#type: crumb.den_type.to_string(),
         }
     }
 }
