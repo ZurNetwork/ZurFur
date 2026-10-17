@@ -206,3 +206,30 @@ async fn commission_wire_shapes() {
     // Z-normalized (§7.3); vocabulary stays lowercase (R8).
     insta::assert_json_snapshot!("commission_created", created);
 }
+
+/// A refused field: a `422` problem names the request member it refused in
+/// `errors`, with a `#/` pointer, a machine code and a fixed detail.
+#[tokio::test]
+async fn invalid_fields_wire_shape() {
+    let _golden = golden().bind_to_scope();
+    let profile = Profile {
+        did: Did::from("did:plc:fieldgold".to_string()),
+        handle: "fieldgold.bsky.social".to_string().into(),
+        display_name: None,
+        avatar_url: None,
+    };
+    let did = profile.did.clone();
+    let served = serve(test_support::runtime::mem(&did).profile(profile), api::app).await;
+    let c = client();
+    sign_in(&c, &served.base_url, "fieldgold.bsky.social").await;
+
+    let res = c
+        .post(format!("{}/commissions", served.base_url))
+        .json(&json!({ "title": "   " }))
+        .send()
+        .await
+        .expect("POST /commissions");
+    assert_eq!(res.status(), 422);
+    let body: Value = res.json().await.expect("json");
+    insta::assert_json_snapshot!("invalid_fields", body);
+}

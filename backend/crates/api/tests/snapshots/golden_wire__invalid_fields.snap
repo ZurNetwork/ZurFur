@@ -1,0 +1,18 @@
+---
+source: backend/crates/api/tests/golden_wire.rs
+expression: body
+---
+{
+  "code": "invalid_request",
+  "detail": "Some fields need changing; each one says why.",
+  "errors": [
+    {
+      "code": "name_empty",
+      "detail": "This can't be blank.",
+      "pointer": "#/title"
+    }
+  ],
+  "status": 422,
+  "title": "Invalid request",
+  "type": "urn:zurfur:error:invalid-request"
+}

@@ -11,13 +11,17 @@ use axum::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionTitle},
+    commission::{Commission, CommissionTitle, CommissionTitleError},
     maturity::{Maturity, MaturityRating},
 };
 
 use super::{from_wire_timestamp, wire_timestamp};
 use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::CallingUser,
+    problem::{FieldCode, FieldPointer, FieldRefusal, Problem},
+};
 
 /// Renders a domain maturity posture as the contract's wire message.
 impl From<Maturity> for crate::generated::Maturity {
@@ -56,16 +60,23 @@ impl From<Commission> for CreateCommissionResponse {
 /// records its `created` changelog entry atomically with the row.
 ///
 /// `201 Created` carrying the created resource on success; `422
-/// invalid_request` for a missing/malformed body or blank title; `422
-/// unknown_maturity_rating` for an out-of-vocabulary `maturity.rating`.
+/// invalid_request` for a malformed body; `422 invalid_request` with a field
+/// error at `#/title` for a blank or missing title (a missing title decodes as
+/// empty, so it takes the same path); `422 unknown_maturity_rating` for an
+/// out-of-vocabulary `maturity.rating`.
 pub(super) async fn create_commission(
     State(state): State<AppState>,
     CallingUser(actor_id): CallingUser,
     body: Result<Json<CreateCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let title = CommissionTitle::try_from(body.title)
-        .map_err(|e| Problem::invalid_request(e.to_string()))?;
+    let title = CommissionTitle::try_from(body.title).map_err(|CommissionTitleError::Empty| {
+        let title_refusal = FieldRefusal {
+            pointer: FieldPointer::member("title"),
+            code: FieldCode::NameEmpty,
+        };
+        Problem::invalid_fields(title_refusal, [])
+    })?;
     let maturity = body
         .maturity
         .map(|input| {

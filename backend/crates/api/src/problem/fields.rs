@@ -1,0 +1,94 @@
+//! The one registry through which a [`Problem`] names the request fields it
+//! refused. A refusal list cannot be empty, and a field's detail is fixed per
+//! code, so it can never echo what the caller sent.
+
+use super::Problem;
+use crate::generated::FieldError;
+
+/// A JSON Pointer in URI-fragment form that points at one member of a request
+/// body: `#/title`.
+///
+/// The member name is the field's ProtoJSON (lowerCamelCase) name as it appears
+/// on the wire, such as `title` or `linkedChannel`. A member name becomes a
+/// pointer by this rule, not by a conversion, so there is no `From<&str>`.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::AsRef, derive_more::Display)]
+#[as_ref(str)]
+pub struct FieldPointer(String);
+
+impl FieldPointer {
+    /// Points at the request body's member with this ProtoJSON name.
+    pub fn member(name: &'static str) -> Self {
+        debug_assert!(
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()),
+            "a member name is non-empty ASCII letters and digits, got {name:?}"
+        );
+        Self(format!("#/{name}"))
+    }
+}
+
+/// Why one field was refused. Each code has one fixed, plain-words detail.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum FieldCode {
+    /// A name that is empty once trimmed.
+    NameEmpty,
+}
+
+impl FieldCode {
+    /// The plain words shown under the field. Fixed per code; never the value sent.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::NameEmpty => "This can't be blank.",
+        }
+    }
+}
+
+/// One refused field: where it sits in the request and why it was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRefusal {
+    /// The request member that was refused.
+    pub pointer: FieldPointer,
+    /// Why it was refused.
+    pub code: FieldCode,
+}
+
+impl From<FieldRefusal> for FieldError {
+    /// The wire form: the pointer text, the code's token and the code's fixed detail.
+    fn from(refusal: FieldRefusal) -> Self {
+        Self {
+            pointer: refusal.pointer.to_string(),
+            code: refusal.code.to_string(),
+            detail: refusal.code.detail().to_owned(),
+        }
+    }
+}
+
+impl Problem {
+    /// `422`, code `invalid_request` — the request's fields need changing.
+    /// `errors` lists every refusal in order and is never empty.
+    pub fn invalid_fields(
+        first: FieldRefusal,
+        rest: impl IntoIterator<Item = FieldRefusal>,
+    ) -> Self {
+        let errors = std::iter::once(first)
+            .chain(rest)
+            .map(FieldError::from)
+            .collect();
+        let invalid_request = Self::new(
+            "urn:zurfur:error:invalid-request",
+            "invalid_request",
+            "Invalid request",
+            422,
+            "Some fields need changing; each one says why.",
+        );
+        Self {
+            errors,
+            ..invalid_request
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
