@@ -4,7 +4,7 @@
 
 use axum::{
     Router,
-    http::{HeaderValue, header},
+    http::{HeaderValue, StatusCode, header},
     middleware,
 };
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -42,11 +42,10 @@ pub use sweep::run_deadline_sweeper;
 /// Session key holding the recognized visitor's `UserId` (never the DID).
 pub(crate) const SESSION_USER_KEY: &str = "user_id";
 
-/// Builds the axum [`Router`], composing route groups from `routes`; the
-/// canonical route table for tests and `main` (`main` additionally layers the
-/// session middleware). The first-party-`Origin` CSRF guard and a
-/// `Cache-Control: no-store` layer wrap the cookie surface only — never
-/// `/health` or `/.well-known`.
+/// Builds the axum [`Router`]; `main` adds the session layer. The cookie
+/// surface sits under the CSRF guard and `Cache-Control: no-store`; `/health`,
+/// `/.well-known`, the future bearer `/plugin/v1` (no ambient credential) and
+/// the bare 404 for a path no route matches stay outside both.
 pub fn app(state: AppState) -> Router {
     // no-store on the cookie surface so authenticated JSON is never cached (CWE-525).
     let no_store_cookie_surface = SetResponseHeaderLayer::if_not_present(
@@ -63,15 +62,23 @@ pub fn app(state: AppState) -> Router {
             usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX),
         ))
         .layer(middleware::from_fn_with_state(
-            state.clone(),
+            state.config.public_url.clone(),
             routes::require_first_party_origin,
         ))
         .layer(no_store_cookie_surface);
 
-    // /health and /.well-known mount top-level, outside CSRF (no cookie, no state change).
+    // /health and /.well-known (no cookie, no state change) and the future bearer
+    // /plugin/v1 (no ambient credential) mount outside CSRF, as does the not-found
+    // fallback, which replaces the guarded one `merge` carries over from the cookie surface.
     Router::new()
         .merge(routes::health_router())
         .merge(routes::wellknown_router())
         .merge(cookie_surface)
+        .fallback(not_found)
         .with_state(state)
+}
+
+/// Answers a path no route matches with a bare `404` and an empty body.
+async fn not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
 }

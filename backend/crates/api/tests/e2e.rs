@@ -6,7 +6,6 @@
 //! session→User resolution without a network or a database.
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
-use reqwest::redirect::Policy;
 use tower_sessions::MemoryStore;
 
 #[tokio::test]
@@ -36,14 +35,11 @@ async fn first_sign_in_provisions_a_user_and_the_session_resolves_to_it() {
             .unwrap();
     });
 
+    let base = format!("http://{addr}");
     // Keeps cookies (so the session survives across requests) but does not auto-follow
     // redirects, so each hop of the flow can be asserted on its own.
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds");
-    let base = format!("http://{addr}");
+    // Sends `Origin: {base}`, as the app's own pages do, so its writes pass the CSRF guard.
+    let client = test_support::http::client_with_origin(&base);
 
     // 1. Start sign-in: the handler redirects to the PDS authorization URL.
     let res = client

@@ -136,7 +136,7 @@ db-shell:
 
 # Fill your Den on `just dev` with two commissions, one archived, as you: sign
 # in, then paste your zurfur.sid cookie's value at the hidden prompt. Run it
-# once: each run adds two more commissions.
+# once: each run adds two more commissions. It sends ZURFUR_PUBLIC_URL as its Origin.
 den-fill:
     bash scripts/den-fill.sh
 

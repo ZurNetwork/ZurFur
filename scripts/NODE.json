@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -32,7 +32,7 @@
     },
     {
       "name": "den-fill.sh",
-      "role": "fills your Den on just dev with two commissions, one archived, as you, through the commission routes (one read-only SELECT for the skeleton tab id); the session cookie reaches curl only on stdin (just den-fill; tested by den-fill.test.sh and api/tests/den_postgres.rs)",
+      "role": "fills your Den on just dev with two commissions, one archived, as you, through the commission routes (one read-only SELECT for the skeleton tab id); the session cookie reaches curl only on stdin, and ZURFUR_PUBLIC_URL, checked to be a bare origin before the cookie is read, goes as every call's Origin header in an argument (just den-fill; tested by den-fill.test.sh and api/tests/den_postgres.rs)",
       "node": false
     },
     {

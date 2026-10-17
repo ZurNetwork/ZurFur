@@ -35,7 +35,7 @@
     },
     {
       "name": "lib.rs",
-      "role": "app() composition + no-store header layer; ports/Config now shared via the composition crate",
+      "role": "app() composition + no-store header layer; the outer router's not-found fallback (a bare 404) sits outside the CSRF guard and no-store; ports/Config now shared via the composition crate",
       "node": false
     },
     {
@@ -78,7 +78,7 @@
     {
       "page": 24543244,
       "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",
-      "governs": "`routes/mod.rs::require_first_party_origin`"
+      "governs": "`routes/mod.rs::require_first_party_origin`: on the cookie surface only, a write (any method but GET, HEAD, OPTIONS) needs an Origin equal to the configured origin, or no Origin and Sec-Fetch-Site: same-origin, in every environment; else 403 cross_origin (`problem.rs`) before the handler"
     },
     {
       "page": 40992770,

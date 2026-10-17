@@ -79,16 +79,16 @@ impl Problem {
         )
     }
 
-    /// `403` — a state-changing request arrived with a non-first-party `Origin`
-    /// (CSRF defense-in-depth on top of `SameSite=Lax`). Non-browser callers (no
-    /// `Origin` header) are never rejected here.
+    /// `403` — a state-changing request on the cookie surface carried no
+    /// first-party signal: neither the configured `Origin` nor, with no `Origin`,
+    /// `Sec-Fetch-Site: same-origin` (CSRF, on top of `SameSite=Lax`).
     pub fn cross_origin() -> Self {
         Self::new(
             "urn:zurfur:error:cross-origin",
             "cross_origin",
             "Cross-origin request blocked",
             403,
-            "This state-changing request came from an untrusted origin.",
+            "This state-changing request didn't come from Zurfur's own pages.",
         )
     }
 

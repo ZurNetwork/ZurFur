@@ -533,6 +533,7 @@ async fn run_den_fill(served: &pg_app::PgServed, cookie: &str) -> FillRun {
     let mut child = Command::new("bash")
         .arg(DEN_FILL)
         .env("ZURFUR_API_UPSTREAM", &served.base_url)
+        .env("ZURFUR_PUBLIC_URL", &served.base_url)
         .env("ZURFUR_FILL_PSQL", served.psql_command())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

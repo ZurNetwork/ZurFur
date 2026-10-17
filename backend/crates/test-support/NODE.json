@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -46,12 +46,12 @@
     },
     {
       "name": "src/http.rs",
-      "role": "serve / serve_wrapped / client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, serves through http-stack's stack with the real session layer (http-cookies), router passed as a closure so test-support never depends on api; Served carries the Detach)",
+      "role": "serve / serve_wrapped / client / client_with_origin / bare_client / sign_in — the api tests' HTTP fixture (binds 127.0.0.1:0, serves through http-stack's stack with the real session layer (http-cookies), router passed as a closure so test-support never depends on api; Served carries the Detach); client() sends Sec-Fetch-Site: same-origin on every request, client_with_origin(base) sends Origin: base, bare_client sends no first-party signal; sign_in's POST /signin sends Origin: base, so any client signs in",
       "node": false
     },
     {
       "name": "src/http/tests.rs",
-      "role": "pins the served rig running a cut request to its end through the detach layer",
+      "role": "pins the served rig running a cut request to its end through the detach layer, and each client's first-party signal (same-origin fetch metadata, its Origin, none) with a per-request header replacing the default, and sign_in's POST /signin sending Origin: base",
       "node": false
     },
     {
@@ -106,7 +106,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
       "node": false
     },
     {
