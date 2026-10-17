@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/atta",
-  "charted": "2026-10-07",
+  "charted": "2026-10-17",
   "short": "Atta — the engine for the Den: resolve, route, render",
   "is": "Atta, the host-agnostic engine for the Den: it resolves the tree, enforces its structural rules, asks the host about each node through one object-safe trait Atta defines, and renders files. Types and content are opaque to it; the host answers per type with an exhaustive match in application, never a runtime registry. It lives in this workspace as a crate only until it is split into its own library.",
   "type": "code",
@@ -56,7 +56,7 @@
     },
     {
       "name": "src/name.rs",
-      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length)",
+      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length). is_format and is_default_ignorable are public, re-exported from the root, so domain's copies of the two tables are pinned equal to these (application/tests/den_names.rs)",
       "node": false
     },
     {

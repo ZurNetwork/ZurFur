@@ -91,6 +91,25 @@ export const ICONS = {
 		{ shape: 'rect', x: 2, y: 3, width: 20, height: 5, rx: 1 },
 		{ shape: 'path', d: 'M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8' },
 		{ shape: 'path', d: 'M10 12h4' }
+	],
+	bug: [
+		{ shape: 'path', d: 'M12 20v-9' },
+		{ shape: 'path', d: 'M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z' },
+		{ shape: 'path', d: 'M14.12 3.88 16 2' },
+		{ shape: 'path', d: 'M21 21a4 4 0 0 0-3.81-4' },
+		{ shape: 'path', d: 'M21 5a4 4 0 0 1-3.55 3.97' },
+		{ shape: 'path', d: 'M22 13h-4' },
+		{ shape: 'path', d: 'M3 21a4 4 0 0 1 3.81-4' },
+		{ shape: 'path', d: 'M3 5a4 4 0 0 0 3.55 3.97' },
+		{ shape: 'path', d: 'M6 13H2' },
+		{ shape: 'path', d: 'm8 2 1.88 1.88' },
+		{ shape: 'path', d: 'M9 7.13V6a3 3 0 1 1 6 0v1.13' }
+	],
+	// Lucide draws its two strokes as <line>s; these paths trace the same lines.
+	'circle-alert': [
+		{ shape: 'circle', cx: 12, cy: 12, r: 10 },
+		{ shape: 'path', d: 'M12 8v4' },
+		{ shape: 'path', d: 'M12 16h.01' }
 	]
 } as const satisfies Record<string, readonly IconShape[]>;
 

@@ -4,6 +4,7 @@ import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
 import { refuseCrossSiteWrites } from '$lib/server/cross-site-writes';
+import { firstParty } from '$lib/server/first-party-origin';
 import { consoleSink, logRequests, logUpstreamCalls } from '$lib/server/dev-log';
 import { logUnexpectedError } from '$lib/server/error-log';
 import { refuseFraming } from '$lib/server/frame-headers';
@@ -12,7 +13,6 @@ import { requestDeadline } from '$lib/server/request-deadline';
 import { firstAbortOf, readWhole, settleBy, whileHeld } from '$lib/server/bounded-fetch';
 import { sessionGate } from '$lib/server/session-gate';
 import { sessionHeaders } from '$lib/server/session-headers';
-import { firstPartyOrigin, type FirstPartyOrigin } from '$lib/types/brand';
 
 /**
  * PROD GUARD: mock mode must be UNREACHABLE in a real server, checked at
@@ -36,30 +36,12 @@ if (mockModeMisconfigured()) {
 const DEFAULT_API_UPSTREAM = 'http://127.0.0.1:8081';
 
 /**
- * The browser-visible origin a dev build assumes when ZURFUR_PUBLIC_URL is
- * unset — matches the Caddyfile, `.env.example` and the backend's dev config.
- */
-const DEV_PUBLIC_URL = 'http://127.0.0.1:8080';
-
-/**
  * The run-time environment, where any variable may be unset. `svelte-kit sync`
  * types a variable it finds set as always present, so reads go through this view.
  */
 function runtimeEnv(): Readonly<Record<string, string | undefined>> {
 	return env;
 }
-
-/**
- * The origin every write must come from, read once from ZURFUR_PUBLIC_URL. A dev
- * build falls back to {@link DEV_PUBLIC_URL} only when it is unset; a malformed
- * value, or an unset one outside dev, leaves none, and every write is refused.
- */
-function configuredFirstParty(): FirstPartyOrigin | undefined {
-	const raw = runtimeEnv().ZURFUR_PUBLIC_URL ?? (dev ? DEV_PUBLIC_URL : undefined);
-	return raw === undefined ? undefined : firstPartyOrigin(raw);
-}
-
-const firstParty = configuredFirstParty();
 
 /**
  * Server-side `fetch` rewrite so in-app `fetch('/api/...')` is ONE code path in
@@ -103,9 +85,10 @@ export const handleFetch: HandleFetch = logUpstreamCalls(dev, consoleSink, bound
  * their address (`private, no-store`, `Referrer-Policy: same-origin`); and no
  * `(session)` load or action runs without a session. A write (any method but
  * GET, HEAD and OPTIONS) gets a 403 unless its `Origin` is ZURFUR_PUBLIC_URL's
- * origin ({@link DEV_PUBLIC_URL} in a dev build where it is unset) or it sends
- * no `Origin` and `Sec-Fetch-Site: same-origin`. In dev, each request is logged
- * by its method, route template, status and time (`logRequests`).
+ * origin (`http://127.0.0.1:8080` in a dev build where it is unset; read once
+ * by `first-party-origin.ts`) or it sends no `Origin` and `Sec-Fetch-Site:
+ * same-origin`. In dev, each request is logged by its method, route template,
+ * status and time (`logRequests`).
  */
 export const handle: Handle = handleChain(
 	logRequests(dev, consoleSink),

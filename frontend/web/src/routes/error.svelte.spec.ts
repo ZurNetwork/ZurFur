@@ -31,6 +31,17 @@ describe('public error page', () => {
 		expect(document.body.textContent).not.toContain('secret');
 	});
 
+	it('offers no way to report the problem outside the frame', async () => {
+		errorState.status = 500;
+		render(ErrorPage);
+
+		await expect.element(page.getByRole('link', { name: 'Back to the start' })).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Report this problem' }))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByTestId('report-bug-link')).not.toBeInTheDocument();
+	});
+
 	it('shows the generic copy for a 500, never the error’s own text', async () => {
 		errorState.status = 500;
 		render(ErrorPage);

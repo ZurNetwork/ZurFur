@@ -38,6 +38,24 @@ describe('ErrorView', () => {
 		await expect.element(page.getByRole('link', { name: 'Back to the start' })).toBeInTheDocument();
 	});
 
+	it('offers "Report this problem" only inside the frame', async () => {
+		const { unmount } = render(ErrorView, {
+			status: 500,
+			routeId: '/(session)/accounts',
+			inFrame: true
+		});
+		await expect
+			.element(page.getByRole('link', { name: 'Report this problem' }))
+			.toHaveAttribute('href', '/report-a-bug');
+		unmount();
+
+		render(ErrorView, { status: 500, routeId: undefined });
+		await expect.element(page.getByRole('link', { name: 'Back to the start' })).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Report this problem' }))
+			.not.toBeInTheDocument();
+	});
+
 	it('leads back to My Den inside the frame', async () => {
 		render(ErrorView, { status: 404, routeId: '/(session)/den/[...path]', inFrame: true });
 

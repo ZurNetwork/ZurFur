@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/domain/src/elements",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The domain's nouns and value objects",
   "is": "The domain's nouns: identity (user, account, actor identity, did, handle, keys), the commission aggregate, and value objects for maturity/markdown/profile/public records.",
   "type": "code",
@@ -50,6 +50,16 @@
     {
       "name": "actor_identity/",
       "role": "split of actor_identity.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "bug_report.rs",
+      "role": "bug reports a signed-in User files from the web app — BugReportId (UUIDv7, minted by generate()) and BugReportReference (the id's last 8 characters); the values BugDescription (≤4000 code points, keeps LF and tab), PageAddress (starts with / but not //, ≤2048 bytes, no backslash, ? or #), PageKind and BuildId (≤64 bytes), BrowserText (≤512 bytes), WindowSide/WindowSize (1–100000), ErrorStatus (400–599, TryFrom<i32>), DisplaySettings; every text trimmed, never empty, refusing Cc and the nine bidi controls, the four one-line values U+2028 and U+2029 too, and nothing else (byte caps checked in the values, not the builder); rows NewBugReport (the write shape) and StoredBugReport (texts as StoredText, loaded without a re-check). No serde",
+      "node": false
+    },
+    {
+      "name": "bug_report/",
+      "role": "split of bug_report.rs; no information beyond its façade",
       "node": false
     },
     {
@@ -315,6 +325,11 @@
       "governs": "commission/markup.rs (Markup, MarkupShape, MarkupKey, CommissionMarkup) is REPLACED by the Comment entity: CommentId, text (trim + non-empty + 2000), optional anchor (closed envelope, alpha vocabulary point {x,y} normalized 0–1), optional root+parent with the same-commission and parent.root == root invariants; changelog kinds MarkupAdded {comment_id,file_id,anchor}, CommentAdded, CommentEdited, CommentDeleted"
     },
     {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type"
+    },
+    {
       "page": 2026101201,
       "title": "Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers",
       "governs": "commission/markup: the alpha anchor vocabulary widens (D4) — circle, arrow and freehand join point as variants of the closed envelope; MarkupShape is shelved, not deleted. handle/reserved.rs: 'studio' is a reserved label (D10)"
@@ -323,11 +338,6 @@
       "page": 2026101202,
       "title": "Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core",
       "governs": "commission/changelog: the Linked Channel pointer stays opaque; Zurfur's page offers 'Open chat' when it holds a Telegram chat reference and hands it to Unofficial Mini Telegram as-is (D6, D9); the Telegram login never touches Zurfur (D4)"
-    },
-    {
-      "page": 2026100701,
-      "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type"
     }
   ],
   "notes": [

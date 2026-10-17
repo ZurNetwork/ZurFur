@@ -34,10 +34,20 @@ default:
 # compose service into logs/compose/<service>/. `just logs-tail [name]` follows
 # them; `just logs-clean` removes them.
 
+# ZURFUR_BUILD_ID names the build in every bug report: scripts/build-id.sh's
+# jj or git commit, " (local changes)" when the working copy differs, else
+# "unknown". dev, dev-back, dev-web, dev-mock, dev-profile and dev-profile-web
+# export it only when it is unset, so a parent recipe's value wins (`dev`'s
+# dev-back and dev-web share one) and so does your shell's. It is stamped when
+# the recipe starts; cargo watch and vite reloads keep it until you restart the
+# recipe. Never put it in .env: dotenv-load would push one stale value into
+# every recipe.
+_export_build_id := 'export ZURFUR_BUILD_ID="${ZURFUR_BUILD_ID:-$(bash scripts/build-id.sh)}"'
+
 # The whole stack: compose, then the API and the web. It logs as `dev`, and the
 # recipes it runs log for themselves too.
 dev:
-    bash scripts/dev-log.sh dev just _dev
+    {{_export_build_id}} && bash scripts/dev-log.sh dev just _dev
 
 _dev:
     just up
@@ -48,11 +58,11 @@ _dev:
 dev-back:
     # -p api: the workspace has a second binary (contract-gen) since ZMVP-25;
     # a bare `run` is ambiguous and cargo-watch dies silently under `just dev`.
-    bash scripts/dev-log.sh dev-back cargo watch -C backend -x 'run -p api'
+    {{_export_build_id}} && bash scripts/dev-log.sh dev-back cargo watch -C backend -x 'run -p api'
 
 # The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
 dev-web:
-    cd frontend/web && bash ../../scripts/dev-log.sh dev-web yarn dev
+    {{_export_build_id}} && cd frontend/web && bash ../../scripts/dev-log.sh dev-web yarn dev
 
 # Mock-mode dev loop (ZMVP-198): the SvelteKit app alone, no axum, no Docker,
 # no Caddy — ZurfurApi is served by the in-memory mock Layer (runtime.ts's
@@ -60,7 +70,7 @@ dev-web:
 # without OAuth. Deliberately skips `just up`/wait-for-*: there is nothing to
 # wait for.
 dev-mock:
-    cd frontend/web && ZURFUR_WEB_MOCK=1 ZURFUR_PUBLIC_URL="http://127.0.0.1:${ZURFUR_WEB_PORT:-5174}" bash ../../scripts/dev-log.sh dev-mock yarn dev
+    {{_export_build_id}} && cd frontend/web && ZURFUR_WEB_MOCK=1 ZURFUR_PUBLIC_URL="http://127.0.0.1:${ZURFUR_WEB_PORT:-5174}" bash ../../scripts/dev-log.sh dev-mock yarn dev
 
 # The dev profile (no Docker, no PostgreSQL, no PDS): the API on the in-memory
 # fixture world, where every sign-in is alice. The `dev-profile` Cargo feature
@@ -73,7 +83,7 @@ dev-mock:
 # so target/debug/api is never the profile. Override either:
 # `just dev-profile 127.0.0.1:9191 http://127.0.0.1:9190`.
 dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
-    ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile bash scripts/dev-log.sh dev-profile cargo run -p api --features dev-profile
+    {{_export_build_id}} && ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile bash scripts/dev-log.sh dev-profile cargo run -p api --features dev-profile
 
 # The dev profile in a browser: its one origin (the `caddy-dev-profile` compose
 # service, the same Caddyfile, loopback only) on `proxy_port`, in front of the
@@ -88,7 +98,7 @@ dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
 # `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
 # `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
 dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port="5184":
-    bash scripts/dev-log.sh dev-profile-web just _dev-profile-web "$1" "$2" "$3"
+    {{_export_build_id}} && bash scripts/dev-log.sh dev-profile-web just _dev-profile-web "$1" "$2" "$3"
 
 _dev-profile-web proxy_port api_upstream web_port:
     #!/usr/bin/env bash
@@ -96,7 +106,7 @@ _dev-profile-web proxy_port api_upstream web_port:
     export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
     trap 'docker compose --profile dev-profile down caddy-dev-profile' EXIT
     docker compose --profile dev-profile up -d caddy-dev-profile
-    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" ZURFUR_PUBLIC_URL="http://127.0.0.1:$1" yarn dev)
+    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" ZURFUR_PUBLIC_URL="http://127.0.0.1:$1" ZURFUR_WEB_STACK=dev-profile yarn dev)
 
 # --- Docker ---
 
@@ -206,6 +216,12 @@ test:
 zurfur *ARGS:
     cargo run --quiet --package cli -- "$@"
 
+# The bug reports filed from the web, oldest first, through the operator command
+# `zurfur bug-reports list`: fenced text with every invisible character escaped,
+# or `--json` (printable ASCII). `just bug-reports --since 2026-10-17T00:00:00Z`.
+bug-reports *ARGS:
+    cargo run --quiet --package cli -- bug-reports list "$@"
+
 # Regenerate both adapters' src/queries.rs (typed query functions) from the
 # queries/*.sql trees, described against a throwaway migrated Postgres. Run
 # after adding/changing a .sql file or a migration, then commit the result —
@@ -296,7 +312,7 @@ scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/build-id.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

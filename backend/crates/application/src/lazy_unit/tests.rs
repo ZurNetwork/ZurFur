@@ -121,6 +121,7 @@ fn recording_ports() -> (Ports, CallLog) {
         workflows: runtime.workflows,
         columns: runtime.columns,
         characters: runtime.characters,
+        bug_reports: runtime.bug_reports,
     };
     (ports, log)
 }

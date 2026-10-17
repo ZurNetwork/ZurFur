@@ -136,7 +136,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "shared test runtime helper",
+      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }",
       "node": false
     },
     {
