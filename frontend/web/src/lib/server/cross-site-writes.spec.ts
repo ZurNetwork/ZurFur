@@ -66,7 +66,12 @@ function writeFrom(method: string, origin: string): Visit {
 	return { method, headers: [['origin', origin]], body: 'x' };
 }
 
-describe('refuseCrossSiteWrites: refused (R1)', () => {
+/** A POST with no body, so no content type, carrying `headers` (as `sendBeacon(url)` sends). */
+function bodilessPost(headers: readonly HeaderPair[]): Visit {
+	return { method: 'POST', headers };
+}
+
+describe('refuseCrossSiteWrites: refused', () => {
 	it.each([
 		['another site', [['origin', 'https://evil.example']]],
 		['a same-site neighbour on another port', [['origin', 'http://127.0.0.1:9999']]],
@@ -89,9 +94,33 @@ describe('refuseCrossSiteWrites: refused (R1)', () => {
 				['origin', ''],
 				['sec-fetch-site', 'same-origin']
 			]
+		],
+		[
+			'another site even beside Sec-Fetch-Site: same-origin',
+			[
+				['origin', 'https://evil.example'],
+				['sec-fetch-site', 'same-origin']
+			]
 		]
 	] as const)('refuses a form post from %s', async (_label, headers) => {
 		const { response, resolved } = await visitWith(configured(), formPost(headers));
+
+		expect(response.status).toBe(403);
+		expect(resolved).toBe(false);
+	});
+
+	it('refuses a POST with no body and no content type from another site', async () => {
+		const { response, resolved } = await visitWith(
+			configured(),
+			bodilessPost([['origin', 'https://evil.example']])
+		);
+
+		expect(response.status).toBe(403);
+		expect(resolved).toBe(false);
+	});
+
+	it('refuses a POST with no body and no content type that sends neither header', async () => {
+		const { response, resolved } = await visitWith(configured(), bodilessPost([]));
 
 		expect(response.status).toBe(403);
 		expect(resolved).toBe(false);
@@ -156,7 +185,7 @@ describe('refuseCrossSiteWrites: refused (R1)', () => {
 	});
 });
 
-describe('refuseCrossSiteWrites: accepted (R2)', () => {
+describe('refuseCrossSiteWrites: accepted', () => {
 	it('lets a post from the configured origin through, whatever address it arrived at', async () => {
 		const { response, resolved } = await visitWith(
 			configured(),
@@ -188,7 +217,7 @@ describe('refuseCrossSiteWrites: accepted (R2)', () => {
 	});
 });
 
-describe('refuseCrossSiteWrites: no Origin (R3)', () => {
+describe('refuseCrossSiteWrites: no Origin', () => {
 	it('lets a write with Sec-Fetch-Site: same-origin through', async () => {
 		const { resolved } = await visitWith(
 			configured(),
@@ -219,7 +248,7 @@ describe('refuseCrossSiteWrites: no Origin (R3)', () => {
 	});
 });
 
-describe('refuseCrossSiteWrites: safe methods (R4)', () => {
+describe('refuseCrossSiteWrites: safe methods', () => {
 	it.each(['GET', 'HEAD', 'OPTIONS'])('lets a %s from another site through', async (method) => {
 		const read: Visit = { method, headers: [['origin', 'https://evil.example']] };
 
@@ -230,7 +259,7 @@ describe('refuseCrossSiteWrites: safe methods (R4)', () => {
 	});
 });
 
-describe('refuseCrossSiteWrites: the refusal (R8)', () => {
+describe('refuseCrossSiteWrites: the refusal', () => {
 	it('is a plain-text 403 naming the method sent', async () => {
 		const { response } = await visitWith(configured(), writeFrom('PUT', 'https://evil.example'));
 

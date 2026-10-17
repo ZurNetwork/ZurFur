@@ -97,6 +97,8 @@ describe('firstPartyOrigin (validated mint)', () => {
 		'http://user@127.0.0.1:8080',
 		'ftp://127.0.0.1:8080',
 		'file:///etc/passwd',
+		'ws://127.0.0.1:8080',
+		'wss://zurfur.app',
 		'not a url',
 		'',
 		'127.0.0.1:8080'

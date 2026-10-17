@@ -7,6 +7,9 @@ import { SESSION_CACHE_CONTROL, SESSION_REFERRER_POLICY } from '$lib/server/sess
 import { UNANSWERED_PAGE } from '$lib/server/unanswered';
 import { handle, handleError, handleFetch } from './hooks.server';
 
+// The run-time env starts empty, so no case reads the ZURFUR_* values the gate exports from `.env`.
+vi.mock('$env/dynamic/private', () => ({ env: {} }));
+
 type HandleInput = Parameters<typeof handle>[0];
 
 /** The app's origin; the API upstream (`127.0.0.1:8081`) shares its hostname, as in dev. */
@@ -337,7 +340,7 @@ describe('handle, refusing cross-site writes', () => {
 		vi.spyOn(console, 'debug').mockImplementation(() => undefined);
 	}
 
-	it('in dev with ZURFUR_PUBLIC_URL unset, takes http://127.0.0.1:8080 as the origin (R5)', async () => {
+	it('in dev with ZURFUR_PUBLIC_URL unset, takes http://127.0.0.1:8080 as the origin', async () => {
 		quietDevLog();
 		const hooks = await hooksUnder({ dev: true, publicUrl: undefined });
 
@@ -349,7 +352,7 @@ describe('handle, refusing cross-site writes', () => {
 		expect(fromVite.resolved).toBe(false);
 	});
 
-	it('outside dev with ZURFUR_PUBLIC_URL unset, refuses every write (R5)', async () => {
+	it('outside dev with ZURFUR_PUBLIC_URL unset, refuses every write', async () => {
 		const hooks = await hooksUnder({ dev: false, publicUrl: undefined });
 
 		const outcome = await postThrough(
@@ -361,7 +364,7 @@ describe('handle, refusing cross-site writes', () => {
 		expect(outcome.resolved).toBe(false);
 	});
 
-	it('takes ZURFUR_PUBLIC_URL when it is set, not the dev default (R5)', async () => {
+	it('takes ZURFUR_PUBLIC_URL when it is set, not the dev default', async () => {
 		quietDevLog();
 		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:9180' });
 
@@ -374,7 +377,7 @@ describe('handle, refusing cross-site writes', () => {
 	});
 
 	it.each(['http://127.0.0.1:8080/?', 'http://127.0.0.1:8080/app', 'not a url', ''])(
-		'with a malformed ZURFUR_PUBLIC_URL (%j), refuses every write, even in dev (R5)',
+		'with a malformed ZURFUR_PUBLIC_URL (%j), refuses every write, even in dev',
 		async (malformed) => {
 			quietDevLog();
 			const hooks = await hooksUnder({ dev: true, publicUrl: malformed });
@@ -386,7 +389,7 @@ describe('handle, refusing cross-site writes', () => {
 		}
 	);
 
-	it('refuses a cross-origin sign-in post in a dev build too (R6)', async () => {
+	it('refuses a cross-origin sign-in post in a dev build too', async () => {
 		quietDevLog();
 		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:8080' });
 
@@ -397,7 +400,7 @@ describe('handle, refusing cross-site writes', () => {
 		expect(outcome.resolved).toBe(false);
 	});
 
-	it('refuses inside the framing and session stamps, before the sign-in gate asks the backend (R7)', async () => {
+	it('refuses inside the framing and session stamps, before the sign-in gate asks the backend', async () => {
 		quietDevLog();
 		const hooks = await hooksUnder({ dev: true, publicUrl: 'http://127.0.0.1:8080' });
 		const signedInPost: Post = {

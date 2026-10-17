@@ -37,7 +37,7 @@ const DEFAULT_API_UPSTREAM = 'http://127.0.0.1:8081';
 
 /**
  * The browser-visible origin a dev build assumes when ZURFUR_PUBLIC_URL is
- * unset — matches the Caddyfile, `.env.example` and the backend's dev profile.
+ * unset — matches the Caddyfile, `.env.example` and the backend's dev config.
  */
 const DEV_PUBLIC_URL = 'http://127.0.0.1:8080';
 
@@ -101,9 +101,11 @@ export const handleFetch: HandleFetch = logUpstreamCalls(dev, consoleSink, bound
  * Every request gets one deadline for all its backend calls; every response
  * refuses to be framed; signed-in responses are never stored and never leak
  * their address (`private, no-store`, `Referrer-Policy: same-origin`); and no
- * `(session)` load or action runs without a session. Every write from another
- * origin than ZURFUR_PUBLIC_URL's is refused. In dev, each request is logged by
- * its method, route template, status and time (`logRequests`).
+ * `(session)` load or action runs without a session. A write (any method but
+ * GET, HEAD and OPTIONS) gets a 403 unless its `Origin` is ZURFUR_PUBLIC_URL's
+ * origin ({@link DEV_PUBLIC_URL} in a dev build where it is unset) or it sends
+ * no `Origin` and `Sec-Fetch-Site: same-origin`. In dev, each request is logged
+ * by its method, route template, status and time (`logRequests`).
  */
 export const handle: Handle = handleChain(
 	logRequests(dev, consoleSink),
