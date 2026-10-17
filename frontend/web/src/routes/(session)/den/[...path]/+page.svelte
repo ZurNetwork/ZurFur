@@ -8,6 +8,7 @@
 	import RenameCommission from '$lib/components/explorer/RenameCommission.svelte';
 	import { fetchListing } from '$lib/components/explorer/tree-loader';
 	import { treeMemoryFromContext } from '$lib/components/explorer/tree-memory.svelte';
+	import { shownNameText } from '$lib/components/ui/shown-name';
 	import type { CommissionId, DenHref, DenName } from '$lib/types/brand';
 	import type { PageData } from './$types';
 
@@ -60,12 +61,14 @@
 		};
 	});
 
-	/** What the live region says once an item has opened: its name, or what the pane shows instead. */
+	/** What the live region says once an item has opened: its name and number, or what the pane shows instead. */
 	function spoken(): string {
 		const { outcome } = den;
 		switch (outcome.outcome) {
 			case 'page':
-				return outcome.page.crumbs.length === 0 ? 'My Den' : outcome.page.node.name;
+				return outcome.page.crumbs.length === 0
+					? 'My Den'
+					: shownNameText(outcome.page.node.name, outcome.page.node.ordinal);
 			case 'notFound':
 				return 'Nothing here';
 			case 'problem':

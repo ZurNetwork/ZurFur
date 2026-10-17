@@ -48,6 +48,7 @@ function commissionEntry(segment: string, id: CommissionId, name: string): DenRe
 	return {
 		segments: ['commissions', segment],
 		name,
+		ordinal: undefined,
 		type: 'commission',
 		kind: 'directory',
 		mount: true,
@@ -65,6 +66,7 @@ function commissionEntry(segment: string, id: CommissionId, name: string): DenRe
 const ACCOUNT_ENTRY: DenReadNode = {
 	segments: ['accounts', 'did:plc:studio'],
 	name: 'Studio',
+	ordinal: undefined,
 	type: 'account',
 	kind: 'directory',
 	mount: true,
@@ -83,6 +85,7 @@ function commissionsPage(entries: readonly DenReadNode[], next?: string): DenRea
 		node: {
 			segments: ['commissions'],
 			name: 'commissions',
+			ordinal: undefined,
 			type: 'user.commissions',
 			kind: 'directory',
 			mount: false,
@@ -94,7 +97,7 @@ function commissionsPage(entries: readonly DenReadNode[], next?: string): DenRea
 				thing: undefined
 			}
 		},
-		crumbs: [{ segments: [], name: 'Alice', type: 'user' }],
+		crumbs: [{ segments: [], name: 'Alice', ordinal: undefined, type: 'user' }],
 		content: { content: 'listing', entries, nextPageToken: next }
 	};
 }

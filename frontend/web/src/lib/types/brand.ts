@@ -135,6 +135,22 @@ export function denName(value: string): DenName {
 	return value as DenName;
 }
 
+/** The number that tells a Den name apart from an earlier equal name in the same folder: 2 or more. */
+export type NameOrdinal = Brand<number, 'NameOrdinal'>;
+
+/** The first number a later equal name can get. */
+const FIRST_NAME_ORDINAL = 2;
+
+/**
+ * Validated mint from UNTRUSTED input (a Den read's number): a whole number
+ * of 2 or more as a {@link NameOrdinal}; absent, 0, 1, a fraction or anything
+ * else is no number.
+ */
+export function nameOrdinal(raw: number | undefined): NameOrdinal | undefined {
+	if (raw === undefined || !Number.isSafeInteger(raw) || raw < FIRST_NAME_ORDINAL) return undefined;
+	return raw as NameOrdinal;
+}
+
 /** A Den node's provisional type name, such as `commission`: opaque, it only picks a marker. */
 export type DenType = Brand<string, 'DenType'>;
 

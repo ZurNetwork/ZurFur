@@ -11,6 +11,7 @@ function folder(href: string, name: string): OpenEntry {
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('folder'),
 		kind: 'directory',
 		mounted: false,
@@ -37,7 +38,7 @@ function denPage(
 				view: 'open',
 				node,
 				thing: undefined,
-				crumbs: crumbs.map((crumb) => ({ href: crumb.href, name: crumb.name })),
+				crumbs: crumbs.map((crumb) => ({ href: crumb.href, name: crumb.name, ordinal: undefined })),
 				body: { body: 'listing', entries, more: undefined }
 			},
 			flagLinks: { on: denHref(`${node.href}?includeDeleted=true`), off: node.href }

@@ -23,7 +23,7 @@
   "fs": [
     {
       "name": "api/",
-      "role": "component-facing plain-data contracts: Problem (COMMISSION_NOT_FOUND_PROBLEM among the backend's own, field for field; with its field errors: errors, FieldError, and invalidFieldsProblem mirroring the backend's refused-fields 422), Session, Account, Trail (the path bar's steps: a Den link or a fixed section page), the Den view (den.ts: DenPageData, its full shape check isDenPageData, DenOutcome, DenEntry…, DenThing — the commission an open page stands for, by its id, cardTypeWord — a card's type as a word for exactly account/character/commission, none otherwise) and its root route (den-route.ts, pinned to an app with no base path), the sign-out notice (signout.ts: the unconfirmed-sign-out address and its words), HttpStatus, API_PREFIX, FetchFunction",
+      "role": "component-facing plain-data contracts: Problem (COMMISSION_NOT_FOUND_PROBLEM among the backend's own, field for field; with its field errors: errors, FieldError, and invalidFieldsProblem mirroring the backend's refused-fields 422), Session, Account, Trail (the path bar's steps: a Den link or a fixed section page, a named step with its name's number), the Den view (den.ts: DenPageData — entries, crumbs and the opened node carry a bare name and its own ordinal, never a composed \"name (n)\" —, its full shape check isDenPageData, DenOutcome, DenEntry…, DenThing — the commission an open page stands for, by its id, cardTypeWord — a card's type as a word for exactly account/character/commission, none otherwise) and its root route (den-route.ts, pinned to an app with no base path), the sign-out notice (signout.ts: the unconfirmed-sign-out address and its words), HttpStatus, API_PREFIX, FetchFunction",
       "node": false
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "name": "components/",
-      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState, TreeItem, Toggle, Badge, VisibilityMarker, Skeleton — each placeholder row as tall as --row-height); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, NewCommission (the create dialog, shown only on the viewer's own commissions folder), RenameCommission (the rename dialog, shown only on an open node standing for a commission: Title starts from the node's name, a hidden field carries the thing's id), ErrorView with its fixed copy in error-copy.ts) and the tree's memory, model and loader",
+      "role": "ProblemNote (the one way a problem renders) + SessionHeader (public pages); `ui/` = the design language's core components by their names (Button, IconButton, Icon, PathBar, Avatar, Dialog, EmptyState, TreeItem, Toggle, Badge, VisibilityMarker, Skeleton — each placeholder row as tall as --row-height — and ShownName, a Den name in its <bdi> with \" (n)\" outside it, whose text twin for the live region, tooltips and aria labels is shown-name.ts's shownNameText, the name in U+2068…U+2069 with \" (n)\" outside); `explorer/` = the signed-in frame's own compositions (AppShell, TopBar, Sidebar, Tree + TreeBranch, ViewOptions, NodeHeader, EntryList, DenPane, NewCommission (the create dialog, shown only on the viewer's own commissions folder), RenameCommission (the rename dialog, shown only on an open node standing for a commission: Title starts from the node's bare name, never the shown \"name (n)\", a hidden field carries the thing's id), ErrorView with its fixed copy in error-copy.ts) and the tree's memory, model and loader",
       "node": false
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "name": "types/",
-      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, the opaque CommissionId, DenHref/DenName/DenType, PageToken, FieldPointer via the validated fieldPointer) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts)",
+      "role": "branded primitives (brand.ts — the one blessed `as` site: ids, handles, PathSegment, the opaque CommissionId, DenHref/DenName/DenType, NameOrdinal via the validated nameOrdinal (a whole number of 2 or more), PageToken, FieldPointer via the validated fieldPointer) + Effect-free rules shared by both sides (handle-format.ts, segment-format.ts)",
       "node": false
     }
   ],

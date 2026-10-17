@@ -323,6 +323,7 @@ describe('a card of a type this build doesn’t know', () => {
 	const card: CardEntry = {
 		view: 'card',
 		name: denName('Locked characters'),
+		ordinal: undefined,
 		type: denType('account.characters'),
 		mounted: false
 	};

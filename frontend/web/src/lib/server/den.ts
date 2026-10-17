@@ -87,6 +87,7 @@ function toEntry(node: DenReadNode, query: DenQuery): DenEntry {
 	const card: DenEntry = {
 		view: 'card',
 		name: denName(node.name),
+		ordinal: node.ordinal,
 		type: denType(node.type),
 		mounted: node.mount
 	};
@@ -99,6 +100,7 @@ function toEntry(node: DenReadNode, query: DenQuery): DenEntry {
 		view: 'open',
 		href,
 		name: denName(node.name),
+		ordinal: node.ordinal,
 		type: denType(node.type),
 		kind: toKind(node.kind),
 		mounted: node.mount,
@@ -162,7 +164,7 @@ function toCrumbs(read: DenRead, query: DenQuery): readonly DenCrumb[] | undefin
 		const path = denPathFromSegments(crumb.segments);
 		const href = path === undefined ? undefined : denHrefOf(path, linkQuery(query));
 		if (href === undefined) return undefined;
-		crumbs.push({ href, name: denName(crumb.name) });
+		crumbs.push({ href, name: denName(crumb.name), ordinal: crumb.ordinal });
 	}
 	return crumbs;
 }
@@ -185,6 +187,7 @@ function toPage(
 			node: {
 				view: 'card',
 				name: denName(node.name),
+				ordinal: node.ordinal,
 				type: denType(node.type),
 				mounted: node.mount
 			},
@@ -196,6 +199,7 @@ function toPage(
 		view: 'open',
 		href: selfHref,
 		name: denName(node.name),
+		ordinal: node.ordinal,
 		type: denType(node.type),
 		kind: toKind(node.kind),
 		mounted: node.mount,
@@ -279,10 +283,18 @@ function pageTrail(rootHref: DenHref, outcome: DenOutcome): Trail {
 	if (outcome.outcome !== 'page') return [root];
 	const { page } = outcome;
 	if (page.crumbs.length === 0 && page.view === 'open') return [{ step: 'root', href: undefined }];
-	const below: TrailStep[] = page.crumbs
-		.slice(1)
-		.map((crumb) => ({ step: 'named', label: crumb.name, href: crumb.href }));
-	const self: TrailStep = { step: 'named', label: page.node.name, href: undefined };
+	const below: TrailStep[] = page.crumbs.slice(1).map((crumb) => ({
+		step: 'named',
+		label: crumb.name,
+		ordinal: crumb.ordinal,
+		href: crumb.href
+	}));
+	const self: TrailStep = {
+		step: 'named',
+		label: page.node.name,
+		ordinal: page.node.ordinal,
+		href: undefined
+	};
 	return [root, ...below, self];
 }
 

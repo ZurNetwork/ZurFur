@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { DenEntry, DenPageData, OpenEntry } from '$lib/api/den';
 import { TREE_MEMORY_KEY, TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
-import { denHref, denName, denType, did } from '$lib/types/brand';
+import { denHref, denName, denType, did, nameOrdinal } from '$lib/types/brand';
 
 /** What the mocked SvelteKit runtime holds for this spec. */
 interface Kit {
@@ -68,6 +68,7 @@ function open(href: string, name: string, extra: Partial<OpenEntry> = {}): OpenE
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('folder'),
 		kind: 'file',
 		mounted: false,
@@ -90,7 +91,7 @@ function folderData(entries: readonly DenEntry[], more?: string): DenPageData {
 				view: 'open',
 				node,
 				thing: undefined,
-				crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
+				crumbs: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }],
 				body: { body: 'listing', entries, more: more === undefined ? undefined : denHref(more) }
 			},
 			flagLinks: { on: node.href, off: node.href }
@@ -183,6 +184,19 @@ describe('den page', () => {
 		expect(document.title).not.toContain('Big ref batch');
 	});
 
+	it('announces a numbered item by its name, isolated, and its number; the title stays generic', async () => {
+		const den = folderData([]);
+		const { outcome } = den;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open') throw new Error('fixture');
+		const node = open('/den/batch', 'Test 1', { kind: 'directory', ordinal: nameOrdinal(2) });
+		renderPage({ ...den, outcome: { ...outcome, page: { ...outcome.page, node } } });
+		navigated('link');
+
+		const announcer = page.getByTestId('den-announcer');
+		await expect.poll(() => announcer.element().textContent).toBe('\u2068Test 1\u2069 (2)');
+		expect(document.title).toBe('My Den · Zurfur');
+	});
+
 	it('announces a second item with the same name as the first', async () => {
 		renderPage(folderData([]));
 		navigated('link');
@@ -200,7 +214,7 @@ describe('den page', () => {
 
 		navigated('link');
 
-		await expect.poll(() => spokenTexts).toEqual(['', 'Big ref batch']);
+		await expect.poll(() => spokenTexts).toEqual(['', '\u2068Big ref batch\u2069']);
 		observer.disconnect();
 	});
 
@@ -222,9 +236,9 @@ describe('den page', () => {
 		await screen.rerender({ data: { den: next, trail: next.trail } } as never);
 		navigated('link');
 
-		await expect.poll(() => spokenTexts.at(-1)).toBe('Other folder');
+		await expect.poll(() => spokenTexts.at(-1)).toBe('\u2068Other folder\u2069');
 		await new Promise((settle) => setTimeout(settle, 200));
-		expect(spokenTexts).not.toContain('Big ref batch');
+		expect(spokenTexts).not.toContain('\u2068Big ref batch\u2069');
 		observer.disconnect();
 	});
 

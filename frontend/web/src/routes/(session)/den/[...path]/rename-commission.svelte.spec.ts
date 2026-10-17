@@ -5,7 +5,15 @@ import type { DenPage, DenPageData, DenThing, OpenEntry } from '$lib/api/den';
 import { type Problem } from '$lib/api/problem';
 import { TREE_MEMORY_KEY, TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
 import { formStub } from '$lib/testing/superforms';
-import { commissionId, denHref, denName, denType, did, type CommissionId } from '$lib/types/brand';
+import {
+	commissionId,
+	denHref,
+	denName,
+	denType,
+	did,
+	nameOrdinal,
+	type CommissionId
+} from '$lib/types/brand';
 
 /** The options the page's last form handed superForm, captured to play a result through. */
 const captured = vi.hoisted((): { onResult: unknown } => ({ onResult: undefined }));
@@ -45,6 +53,7 @@ function node(href: string, name: string, type: string): OpenEntry {
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType(type),
 		kind: 'directory',
 		mounted: false,
@@ -79,7 +88,7 @@ function openPage(entry: OpenEntry, thing: DenThing | undefined): DenPage {
 		view: 'open',
 		node: entry,
 		thing,
-		crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
+		crumbs: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }],
 		body: { body: 'listing', entries: [], more: undefined }
 	};
 }
@@ -159,10 +168,11 @@ describe('"Rename" in My Den', () => {
 					node: {
 						view: 'card',
 						name: denName('Hidden'),
+						ordinal: undefined,
 						type: denType('commission'),
 						mounted: true
 					},
-					crumbs: [{ href: denHref('/den'), name: denName('Alice') }]
+					crumbs: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }]
 				},
 				'/den/commissions/hidden'
 			)
@@ -172,6 +182,22 @@ describe('"Rename" in My Den', () => {
 
 		await expect.element(page.getByTestId('node-header')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
+	});
+
+	it('starts_with_the_name_not_the_shown_name', async () => {
+		const twin: OpenEntry = {
+			...node(COMMISSION.href, 'Test 1', 'commission'),
+			ordinal: nameOrdinal(2)
+		};
+		renderPage(pageData(openPage(twin, { thing: 'commission', id: THING_ID }), twin.href));
+		await expect.element(page.getByRole('heading', { name: 'Test 1 (2)' })).toBeInTheDocument();
+
+		await openDialog();
+
+		const title = page
+			.getByRole('dialog', { name: 'Rename' })
+			.getByRole('textbox', { name: 'Title' });
+		await expect.element(title).toHaveValue('Test 1');
 	});
 
 	it('starts the Title field from the node’s name, carrying the thing’s id, with Save and Cancel', async () => {

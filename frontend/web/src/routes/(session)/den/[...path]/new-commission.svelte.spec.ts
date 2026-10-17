@@ -35,6 +35,7 @@ function folder(href: string, name: string, type: string): OpenEntry {
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType(type),
 		kind: 'directory',
 		mounted: false,
@@ -55,7 +56,7 @@ function folderData(node: OpenEntry): DenPageData {
 				view: 'open',
 				node,
 				thing: undefined,
-				crumbs: [{ href: denHref('/den'), name: denName('Alice') }],
+				crumbs: [{ href: denHref('/den'), name: denName('Alice'), ordinal: undefined }],
 				body: { body: 'listing', entries: [], more: undefined }
 			},
 			flagLinks: { on: node.href, off: node.href }

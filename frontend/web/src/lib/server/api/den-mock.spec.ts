@@ -348,3 +348,125 @@ describe('the mock Den read: an open node names its thing', () => {
 		expect(accountFolder.map(thingOf)).toEqual([undefined, undefined, undefined]);
 	});
 });
+
+/** Create a commission titled `title` in `store` through the mock port, answering its id. */
+async function createIn(store: MockStore, title: string): Promise<string> {
+	const create = Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
+	const created = await Effect.runPromise(create.pipe(Effect.provide(zurfurApiMock(store))));
+	return created.id;
+}
+
+/** The opened node of a page, or a thrown test failure. */
+function nodeOf(data: DenPageData) {
+	const { outcome } = data;
+	if (outcome.outcome !== 'page') throw new Error('expected a page');
+	return outcome.page;
+}
+
+/** The number each listed entry named `name` shows, in listing order. */
+function ordinalsNamed(data: DenPageData, name: string): readonly (number | undefined)[] {
+	return entries(data)
+		.filter((entry) => entry.name === name)
+		.map((entry) => entry.ordinal);
+}
+
+describe('the mock Den numbers equal names', () => {
+	it('gives the newer of two twins 2 and the older none', async () => {
+		const store = createMockStore();
+		const older = await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const listing = entries(await open('/den/commissions', store));
+
+		const sketches = listing.filter((entry) => entry.name === 'Sketch');
+		const byHref = sketches.map((entry) => [entry.view === 'open' && entry.href, entry.ordinal]);
+		expect(byHref).toEqual([
+			[`/den/commissions/${older}`, undefined],
+			[`/den/commissions/${newer}`, 2]
+		]);
+		const others = listing.filter((entry) => entry.name !== 'Sketch');
+		expect(others.map((entry) => entry.ordinal)).toEqual(others.map(() => undefined));
+	});
+
+	it('gives the opened twin the number its folder gives it, and no crumb a number', async () => {
+		const store = createMockStore();
+		const older = await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const newerPage = nodeOf(await open(`/den/commissions/${newer}`, store));
+		const olderPage = nodeOf(await open(`/den/commissions/${older}`, store));
+
+		expect(newerPage.node.ordinal).toBe(2);
+		expect(newerPage.crumbs.map((crumb) => crumb.ordinal)).toEqual([undefined, undefined]);
+		expect(olderPage.node.ordinal).toBeUndefined();
+	});
+
+	it('gives a crumb below a twin the twin’s number, and the path bar shows it', async () => {
+		const store = createMockStore();
+		await createIn(store, 'Sketch');
+		const newer = await createIn(store, 'Sketch');
+
+		const data = await open(`/den/commissions/${newer}/slots`, store);
+
+		expect(nodeOf(data).crumbs.map((crumb) => crumb.ordinal)).toEqual([undefined, undefined, 2]);
+		expect(data.trail).toEqual([
+			{ step: 'root', href: '/den' },
+			{ step: 'named', label: 'commissions', ordinal: undefined, href: '/den/commissions' },
+			{ step: 'named', label: 'Sketch', ordinal: 2, href: `/den/commissions/${newer}` },
+			{ step: 'named', label: 'slots', ordinal: undefined, href: undefined }
+		]);
+	});
+
+	it('counts an archived twin only with "Show archived and deactivated" on', async () => {
+		const store = createMockStore();
+		const created = await createIn(store, 'Winter YCH');
+
+		const plain = await open('/den/commissions', store);
+		const shown = await open('/den/commissions?includeDeleted=true', store);
+		const createdPlain = nodeOf(await open(`/den/commissions/${created}`, store));
+		const createdShown = nodeOf(
+			await open(`/den/commissions/${created}?includeDeleted=true`, store)
+		);
+
+		expect(ordinalsNamed(plain, 'Winter YCH')).toEqual([undefined]);
+		const twins = entries(shown).filter((entry) => entry.name === 'Winter YCH');
+		expect(twins.map((entry) => [entry.view === 'open' && entry.removed, entry.ordinal])).toEqual([
+			['archived', undefined],
+			[undefined, 2]
+		]);
+		expect(createdPlain.node.ordinal).toBeUndefined();
+		expect(createdShown.node.ordinal).toBe(2);
+	});
+
+	it('numbers an open twin before a card of the same name, though the card lists first', async () => {
+		const store = createMockStore();
+		await createIn(store, 'Some commission');
+
+		const twins = entries(await open('/den/commissions', store)).filter(
+			(entry) => entry.name === 'Some commission'
+		);
+
+		expect(twins.map((entry) => [entry.view, entry.ordinal])).toEqual([
+			['card', 2],
+			['open', undefined]
+		]);
+	});
+
+	it('numbers over the whole listing, not one page', async () => {
+		const store = createMockStore();
+		for (let made = 0; made < 27; made += 1) await createIn(store, 'Sketch');
+
+		const first = await open('/den/commissions', store);
+		const firstPage = ordinalsNamed(first, 'Sketch');
+		const { outcome } = first;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open')
+			throw new Error('expected a page');
+		if (outcome.page.body.body !== 'listing' || outcome.page.body.more === undefined)
+			throw new Error('expected a second page');
+		const secondPage = ordinalsNamed(await open(outcome.page.body.more, store), 'Sketch');
+
+		const expected = [undefined, ...Array.from({ length: 26 }, (_, index) => index + 2)];
+		expect([...firstPage, ...secondPage]).toEqual(expected);
+		expect(secondPage.length).toBeGreaterThan(0);
+	});
+});

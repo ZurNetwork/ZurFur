@@ -111,6 +111,27 @@ function nextMockDid(): Did {
 	return fixtureDid(`mock${toBase32(mockDidCounter)}`);
 }
 
+/** The millisecond the last mock commission id was minted at: each later one is minted later. */
+let lastCommissionMillis = 0;
+
+/** Lowercase hex for `bytes`, two digits a byte. */
+function hexOf(bytes: Uint8Array): string {
+	return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * A fresh UUIDv7-shaped commission id, time-ordered like the backend's: a
+ * later create always sorts after an earlier one, even within one millisecond.
+ */
+function nextMockCommissionId(): string {
+	lastCommissionMillis = Math.max(Date.now(), lastCommissionMillis + 1);
+	const millis = lastCommissionMillis.toString(16).padStart(12, '0');
+	const random = hexOf(crypto.getRandomValues(new Uint8Array(10)));
+	const variant = ((Number.parseInt(random.slice(3, 4), 16) & 0x3) | 0x8).toString(16);
+	const timeLow = `${millis.slice(0, 8)}-${millis.slice(8, 12)}`;
+	return `${timeLow}-7${random.slice(0, 3)}-${variant}${random.slice(4, 7)}-${random.slice(7, 19)}`;
+}
+
 /** The fixture visitor mock mode boots signed in as. */
 const FIXTURE_SESSION: Session = {
 	did: fixtureDid('mockalice'),
@@ -317,7 +338,8 @@ function titleRefusal(title: string): FieldError | undefined {
 /**
  * `createCommission`: refuses a blank title and one holding a bidirectional
  * control as the backend does, at `#/title`; otherwise stores the trimmed
- * title under a fresh id, which is also its segment in `commissions`.
+ * title under a fresh time-ordered id, which is also its segment in
+ * `commissions`, so a later twin sorts after an earlier one.
  */
 function mockCreateCommission(
 	store: MockStore,
@@ -329,7 +351,7 @@ function mockCreateCommission(
 		const refusal = titleRefusal(title);
 		if (refusal !== undefined)
 			return Effect.fail(new ApiProblem({ problem: invalidFieldsProblem([refusal]) }));
-		const raw = crypto.randomUUID();
+		const raw = nextMockCommissionId();
 		const id = commissionId(raw);
 		if (id === undefined)
 			return Effect.fail(

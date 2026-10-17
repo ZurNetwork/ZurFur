@@ -112,11 +112,12 @@
 				<span class="tree-row__arrow tree-row__arrow--none" aria-hidden="true"></span>
 			{/if}
 			{#if node.item === 'root'}
-				<TreeItem look="root" name="My Den" open={expanded} />
+				<TreeItem look="root" name="My Den" ordinal={undefined} open={expanded} />
 			{:else if node.item === 'folder' || node.item === 'leaf'}
 				<TreeItem
 					look={node.entry.kind}
 					name={node.entry.name}
+					ordinal={node.entry.ordinal}
 					open={expanded}
 					mounted={node.entry.mounted}
 					removed={node.entry.removed}
@@ -143,6 +144,7 @@
 			<TreeItem
 				look="cantOpen"
 				name={node.entry.name}
+				ordinal={node.entry.ordinal}
 				mounted={node.entry.mounted}
 				typeWord={cardTypeWord(node.entry.type)}
 			/>

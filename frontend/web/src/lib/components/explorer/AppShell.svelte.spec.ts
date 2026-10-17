@@ -14,7 +14,7 @@ const alice: Session = {
 	avatarUrl: undefined
 };
 
-const trail: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
+const trail: Trail = [{ step: 'named', label: 'Accounts', ordinal: undefined, href: undefined }];
 
 /** The sidebar's content: one link, so the drawer has something to hold. */
 const navigation = createRawSnippet(() => ({

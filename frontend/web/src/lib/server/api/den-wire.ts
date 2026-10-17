@@ -4,7 +4,7 @@
  * this build knows.
  */
 
-import { commissionId, did } from '$lib/types/brand';
+import { commissionId, did, nameOrdinal } from '$lib/types/brand';
 import type {
 	DenCrumb,
 	DenListing,
@@ -39,11 +39,15 @@ function toThing(thing: DenOpen['thing']): DenReadThing | undefined {
 	}
 }
 
-/** One node; anything but an `open` access, unset included, is a card. */
+/**
+ * One node; anything but an `open` access, unset included, is a card, and a
+ * number that isn't a whole number of 2 or more is none.
+ */
 function toReadNode(node: DenNode): DenReadNode {
 	const base = {
 		segments: node.segments,
 		name: node.name,
+		ordinal: nameOrdinal(node.nameOrdinal),
 		type: node.type,
 		kind: node.kind,
 		mount: node.mount
@@ -71,8 +75,14 @@ function toListing(listing: DenListing): DenReadContent {
 	};
 }
 
+/** One crumb; a number that isn't a whole number of 2 or more is none. */
 function toCrumb(crumb: DenCrumb): DenReadCrumb {
-	return { segments: crumb.segments, name: crumb.name, type: crumb.type };
+	return {
+		segments: crumb.segments,
+		name: crumb.name,
+		ordinal: nameOrdinal(crumb.nameOrdinal),
+		type: crumb.type
+	};
 }
 
 /** The root's answer as a read with no crumbs, or `undefined` when it has no node. */

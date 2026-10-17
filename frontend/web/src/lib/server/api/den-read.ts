@@ -6,7 +6,7 @@
  * web's own view, building every link through the path builder.
  */
 
-import type { CommissionId, Did, PageToken } from '$lib/types/brand';
+import type { CommissionId, Did, NameOrdinal, PageToken } from '$lib/types/brand';
 
 /** What a Den read asks for besides the path. */
 export interface DenQuery {
@@ -42,7 +42,10 @@ export type DenReadAccess =
 export interface DenReadNode {
 	/** Its Den path from the viewer's root; empty on a card. */
 	readonly segments: readonly string[];
+	/** Its own name, never carrying its number. */
 	readonly name: string;
+	/** Its number among the equal names its folder shows this viewer; absent when it needs none. */
+	readonly ordinal: NameOrdinal | undefined;
 	readonly type: string;
 	/** `directory` | `file` | `symlink`; empty on a card. */
 	readonly kind: string;
@@ -54,6 +57,8 @@ export interface DenReadNode {
 export interface DenReadCrumb {
 	readonly segments: readonly string[];
 	readonly name: string;
+	/** Its number in its parent's listing; the root never has one. */
+	readonly ordinal: NameOrdinal | undefined;
 	/** The type of the node the crumb stands for; empty when the answer gives none. */
 	readonly type: string;
 }

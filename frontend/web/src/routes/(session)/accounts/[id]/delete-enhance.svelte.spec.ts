@@ -37,7 +37,7 @@ const data = {
 		avatarUrl: undefined
 	},
 	account: aliceOwner,
-	trail: [{ step: 'named' as const, label: 'Accounts', href: '/accounts' }]
+	trail: [{ step: 'named' as const, label: 'Accounts', ordinal: undefined, href: '/accounts' }]
 };
 
 /** What the delete action says when the DELETE wasn't answered (the server spec pins it). */

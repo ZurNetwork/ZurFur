@@ -15,7 +15,7 @@ import {
 import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
 import { ApiProblem, ContractViolation, NetworkFailure, NotAuthenticated } from './api/errors';
 import type { AccountMembership } from '$lib/api/account';
-import { accountId, commissionId, did, handleFromTrusted } from '$lib/types/brand';
+import { accountId, commissionId, did, handleFromTrusted, nameOrdinal } from '$lib/types/brand';
 import type { SegmentPath } from './path-builder';
 
 /** Every Den read the stubbed port saw: the path (empty for the root) and the query. */
@@ -68,6 +68,7 @@ function folder(
 	return {
 		segments,
 		name,
+		ordinal: undefined,
 		type: 'folder',
 		kind: 'directory',
 		mount: false,
@@ -91,6 +92,7 @@ function folderRead(
 	const crumbs = segments.map((_, index) => ({
 		segments: segments.slice(0, index),
 		name: index === 0 ? 'Alice' : (segments[index - 1] ?? ''),
+		ordinal: undefined,
 		type: ''
 	}));
 	return {
@@ -274,14 +276,15 @@ describe('denPage: reading and mapping', () => {
 			node: {
 				segments: [],
 				name: 'Some commission',
+				ordinal: undefined,
 				type: 'commission',
 				kind: '',
 				mount: true,
 				access: { access: 'card' }
 			},
 			crumbs: [
-				{ segments: [], name: 'Alice', type: '' },
-				{ segments: ['commissions'], name: 'commissions', type: '' }
+				{ segments: [], name: 'Alice', ordinal: undefined, type: '' },
+				{ segments: ['commissions'], name: 'commissions', ordinal: undefined, type: '' }
 			],
 			content: { content: 'none' }
 		};
@@ -297,6 +300,68 @@ describe('denPage: reading and mapping', () => {
 			{ step: 'root', href: '/den' },
 			{ step: 'named', label: 'commissions', href: '/den/commissions' },
 			{ step: 'named', label: 'Some commission', href: undefined }
+		]);
+	});
+
+	it('carries each number to the page as its own field, never into a name or the title', async () => {
+		const two = nameOrdinal(2);
+		const three = nameOrdinal(3);
+		const card: DenRead = {
+			node: {
+				segments: [],
+				name: 'Some commission',
+				ordinal: three,
+				type: 'commission',
+				kind: '',
+				mount: true,
+				access: { access: 'card' }
+			},
+			crumbs: [
+				{ segments: [], name: 'Alice', ordinal: undefined, type: '' },
+				{ segments: ['commissions'], name: 'commissions', ordinal: two, type: '' }
+			],
+			content: { content: 'none' }
+		};
+		const { layer } = denPort(() => Effect.succeed(card));
+		const data = pageData(await run(layer, '/den/commissions/c9'));
+
+		expect(data.outcome).toMatchObject({
+			page: {
+				node: { view: 'card', name: 'Some commission', ordinal: 3 },
+				crumbs: [
+					{ name: 'Alice', ordinal: undefined },
+					{ name: 'commissions', ordinal: 2 }
+				]
+			}
+		});
+		expect(data.trail).toEqual([
+			{ step: 'root', href: '/den' },
+			{ step: 'named', label: 'commissions', ordinal: 2, href: '/den/commissions' },
+			{ step: 'named', label: 'Some commission', ordinal: 3, href: undefined }
+		]);
+		expect(data.title).toBe('My Den · Zurfur');
+	});
+
+	it('carries a listed card’s and an open entry’s numbers to their rows', async () => {
+		const two = nameOrdinal(2);
+		const openTwin = folder(['x', 'b'], 'Twin', { ordinal: two });
+		const cardTwin: DenReadNode = {
+			...folder([], 'Twin', { ordinal: nameOrdinal(3) }),
+			access: { access: 'card' }
+		};
+		const { layer } = listingPort([folder(['x', 'a'], 'Twin'), openTwin, cardTwin]);
+		const data = pageData(await run(layer, '/den/x'));
+
+		const { outcome } = data;
+		if (outcome.outcome !== 'page' || outcome.page.view !== 'open')
+			throw new Error('expected a page');
+		if (outcome.page.body.body !== 'listing') throw new Error('expected a listing');
+		expect(
+			outcome.page.body.entries.map((entry) => [entry.view, entry.name, entry.ordinal])
+		).toEqual([
+			['open', 'Twin', undefined],
+			['open', 'Twin', 2],
+			['card', 'Twin', 3]
 		]);
 	});
 
@@ -577,8 +642,8 @@ describe('denPage: an Account node shows the Account’s own name', () => {
 				const read: DenRead = {
 					node: account(ACDC, ACDC_HANDLE),
 					crumbs: [
-						{ segments: [], name: 'Alice', type: '' },
-						{ segments: ['accounts'], name: 'accounts', type: '' }
+						{ segments: [], name: 'Alice', ordinal: undefined, type: '' },
+						{ segments: ['accounts'], name: 'accounts', ordinal: undefined, type: '' }
 					],
 					content: { content: 'listing', entries: [], nextPageToken: undefined }
 				};

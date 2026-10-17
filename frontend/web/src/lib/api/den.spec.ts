@@ -88,6 +88,32 @@ describe('isDenPageData', () => {
 		expect(isDenPageData(data)).toBe(accepted);
 	});
 
+	it.each([
+		['no number', undefined, true],
+		['2', 2, true],
+		['7', 7, true],
+		['1', 1, false],
+		['0', 0, false],
+		['a fraction', 2.5, false],
+		['a number as text', '2', false]
+	])('takes a name’s number that is %s only when it is well formed', (_, ordinal, accepted) => {
+		const places = ['entry', 'crumb', 'node', 'step'] as const;
+		for (const place of places) {
+			const data = pageData();
+			const page = Reflect.get(Reflect.get(data, 'outcome') as object, 'page') as object;
+			const body = Reflect.get(page, 'body') as { entries: object[] };
+			const target = {
+				entry: body.entries[0],
+				crumb: (Reflect.get(page, 'crumbs') as object[])[0],
+				node: Reflect.get(page, 'node') as object,
+				step: (Reflect.get(data, 'trail') as object[])[0]
+			}[place];
+			if (target === undefined) throw new Error('fixture');
+			Reflect.set(target, 'ordinal', ordinal);
+			expect([place, isDenPageData(data)]).toEqual([place, accepted]);
+		}
+	});
+
 	it('refuses something that only claims to be a den page', () => {
 		expect(isDenPageData({ kind: 'denPage' })).toBe(false);
 		expect(isDenPageData(undefined)).toBe(false);
