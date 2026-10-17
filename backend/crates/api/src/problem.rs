@@ -35,6 +35,7 @@ impl Problem {
             title: title.to_owned(),
             detail,
             status: i32::from(status),
+            errors: Vec::new(),
         }
     }
 

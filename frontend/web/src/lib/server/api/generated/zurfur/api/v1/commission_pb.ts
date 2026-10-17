@@ -153,7 +153,7 @@ export const MaturitySchema: GenMessage<Maturity> = /*@__PURE__*/
  */
 export type CreateCommissionRequest = Message<"zurfur.api.v1.CreateCommissionRequest"> & {
   /**
-   * Required; missing/invalid → 422.
+   * Required; a refused title → 422 with a field error at `#/title`.
    *
    * @generated from field: string title = 1;
    */

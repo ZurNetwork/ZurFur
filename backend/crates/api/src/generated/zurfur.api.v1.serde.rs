@@ -1982,6 +1982,131 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
         deserializer.deserialize_struct("zurfur.api.v1.DenOpen", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for FieldError {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.pointer.is_empty() {
+            len += 1;
+        }
+        if !self.code.is_empty() {
+            len += 1;
+        }
+        if !self.detail.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.FieldError", len)?;
+        if !self.pointer.is_empty() {
+            struct_ser.serialize_field("pointer", &self.pointer)?;
+        }
+        if !self.code.is_empty() {
+            struct_ser.serialize_field("code", &self.code)?;
+        }
+        if !self.detail.is_empty() {
+            struct_ser.serialize_field("detail", &self.detail)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for FieldError {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "pointer",
+            "code",
+            "detail",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Pointer,
+            Code,
+            Detail,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "pointer" => Ok(GeneratedField::Pointer),
+                            "code" => Ok(GeneratedField::Code),
+                            "detail" => Ok(GeneratedField::Detail),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = FieldError;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.FieldError")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<FieldError, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut pointer__ = None;
+                let mut code__ = None;
+                let mut detail__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Pointer => {
+                            if pointer__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pointer"));
+                            }
+                            pointer__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Code => {
+                            if code__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("code"));
+                            }
+                            code__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Detail => {
+                            if detail__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("detail"));
+                            }
+                            detail__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(FieldError {
+                    pointer: pointer__.unwrap_or_default(),
+                    code: code__.unwrap_or_default(),
+                    detail: detail__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.FieldError", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for GetDenNodeRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -3138,6 +3263,9 @@ impl serde::Serialize for Problem {
         if self.status != 0 {
             len += 1;
         }
+        if !self.errors.is_empty() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.Problem", len)?;
         if !self.r#type.is_empty() {
             struct_ser.serialize_field("type", &self.r#type)?;
@@ -3154,6 +3282,9 @@ impl serde::Serialize for Problem {
         if self.status != 0 {
             struct_ser.serialize_field("status", &self.status)?;
         }
+        if !self.errors.is_empty() {
+            struct_ser.serialize_field("errors", &self.errors)?;
+        }
         struct_ser.end()
     }
 }
@@ -3169,6 +3300,7 @@ impl<'de> serde::Deserialize<'de> for Problem {
             "title",
             "detail",
             "status",
+            "errors",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -3178,6 +3310,7 @@ impl<'de> serde::Deserialize<'de> for Problem {
             Title,
             Detail,
             Status,
+            Errors,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -3204,6 +3337,7 @@ impl<'de> serde::Deserialize<'de> for Problem {
                             "title" => Ok(GeneratedField::Title),
                             "detail" => Ok(GeneratedField::Detail),
                             "status" => Ok(GeneratedField::Status),
+                            "errors" => Ok(GeneratedField::Errors),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3228,6 +3362,7 @@ impl<'de> serde::Deserialize<'de> for Problem {
                 let mut title__ = None;
                 let mut detail__ = None;
                 let mut status__ = None;
+                let mut errors__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Type => {
@@ -3262,6 +3397,12 @@ impl<'de> serde::Deserialize<'de> for Problem {
                                 Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
                             ;
                         }
+                        GeneratedField::Errors => {
+                            if errors__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("errors"));
+                            }
+                            errors__ = Some(map_.next_value()?);
+                        }
                     }
                 }
                 Ok(Problem {
@@ -3270,6 +3411,7 @@ impl<'de> serde::Deserialize<'de> for Problem {
                     title: title__.unwrap_or_default(),
                     detail: detail__.unwrap_or_default(),
                     status: status__.unwrap_or_default(),
+                    errors: errors__.unwrap_or_default(),
                 })
             }
         }

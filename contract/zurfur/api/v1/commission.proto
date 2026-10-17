@@ -58,7 +58,7 @@ message Maturity {
 
 // `POST /api/v1/commissions` — the fixed metadata a caller supplies at birth.
 message CreateCommissionRequest {
-  // Required; missing/invalid → 422.
+  // Required; a refused title → 422 with a field error at `#/title`.
   string title = 1;
   // Optional deadline.
   optional google.protobuf.Timestamp deadline = 2;
