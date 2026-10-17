@@ -1,6 +1,7 @@
 //! `POST /bug-reports` through the real router, on the in-memory stores and on
 //! PostgreSQL: the reporter is the session's, the API build is the server's,
-//! absent items store nothing, and no answer repeats what was sent.
+//! absent items store nothing, a burst of parallel posts stores exactly the
+//! limit, and no answer repeats what was sent.
 
 use domain::elements::{
     bug_report::{BuildId, DisplaySettings, StoredBugReport},
@@ -8,6 +9,7 @@ use domain::elements::{
     profile::Profile,
 };
 use serde_json::{Value, json};
+use sqlx::Connection as _;
 use test_support::http::{Served, client, serve, sign_in};
 use test_support::pg_app::{self, PgServed};
 use test_support::runtime::{MemRuntimeBuilder, mem};
@@ -17,6 +19,9 @@ mod common;
 /// The reporter every case signs in as: no fixture user, so a hard-coded one can't pass.
 const REPORTER_DID: &str = "did:plc:bugreporterq7m4k2zx";
 const REPORTER_HANDLE: &str = "bugreporter.test";
+
+/// How many reports a burst posts at once: the number the security review sent.
+const BURST: usize = 60;
 
 /// The API build the build-id cases configure.
 const API_BUILD: &str = "bugtest-7f3a";
@@ -420,6 +425,108 @@ async fn the_11th_report_within_the_hour_is_refused_with_429() {
 
     common::assert_problem(eleventh, 429, "rate_limited").await;
     assert_eq!(stored_in_memory(&served).await.len(), 10);
+}
+
+/// Posts [`BURST`] reports at once and returns how many answered 201 and how many 429,
+/// asserting every answer is one of the two.
+async fn post_a_burst(browser: &reqwest::Client, base: &str) -> (usize, usize) {
+    let mut posts = tokio::task::JoinSet::new();
+    for _ in 0..BURST {
+        let browser = browser.clone();
+        let base = base.to_owned();
+        posts.spawn(async move {
+            let body = json!({ "description": "Burst." });
+            post_report(&browser, &base, &body).await.status().as_u16()
+        });
+    }
+    let statuses = posts.join_all().await;
+    let created = statuses.iter().filter(|&&status| status == 201).count();
+    let limited = statuses.iter().filter(|&&status| status == 429).count();
+    assert_eq!(
+        created + limited,
+        BURST,
+        "every answer is 201 or 429: {statuses:?}"
+    );
+    (created, limited)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_parallel_reports_stores_exactly_the_limit() {
+    let (served, browser) = signed_in(reporter_runtime()).await;
+
+    let (created, limited) = post_a_burst(&browser, &served.base_url).await;
+
+    assert_eq!((created, limited), (10, BURST - 10));
+    assert_eq!(stored_in_memory(&served).await.len(), 10);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_parallel_reports_stores_exactly_the_limit_on_postgres() {
+    let (served, browser) = signed_in_on_postgres("unknown").await;
+
+    let (created, limited) = post_a_burst(&browser, &served.base_url).await;
+
+    assert_eq!((created, limited), (10, BURST - 10));
+    assert_eq!(stored_on_postgres(&served).await.len(), 10);
+}
+
+/// Waits until at least `waiters` backends of `watcher`'s database wait on a lock.
+async fn wait_for_lock_waiters(watcher: &mut sqlx::PgConnection, waiters: i64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&mut *watcher)
+        .await
+        .expect("pg_stat_activity reads");
+        if waiting >= waiters {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "only {waiting} backends wait on a lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Nine reports filed, then a burst held at the reporter's `users` row until several filing
+/// units queue on it: without the rate limit's lock they would all count nine and file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_racing_for_the_last_report_stores_exactly_the_limit_on_postgres() {
+    let (served, browser) = signed_in_on_postgres("unknown").await;
+    let body = json!({ "description": "Before the burst." });
+    for nth in 1..=9 {
+        let filed = post_report(&browser, &served.base_url, &body).await;
+        assert_eq!(filed.status(), 201, "report {nth} is accepted");
+    }
+    let options = served.runtime.pool.connect_options();
+    let mut holder = sqlx::PgConnection::connect_with(&options)
+        .await
+        .expect("the holder connects");
+    let mut watcher = sqlx::PgConnection::connect_with(&options)
+        .await
+        .expect("the watcher connects");
+    // FOR UPDATE blocks the rate limit's FOR NO KEY UPDATE, and an insert's
+    // foreign-key check too, but not a bare count.
+    let mut holding = holder.begin().await.expect("the holder begins");
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(REPORTER_DID)
+        .execute(&mut *holding)
+        .await
+        .expect("the holder locks the reporter");
+
+    let burst_browser = browser.clone();
+    let burst_base = served.base_url.clone();
+    let burst = tokio::spawn(async move { post_a_burst(&burst_browser, &burst_base).await });
+    wait_for_lock_waiters(&mut watcher, 2).await;
+    holding.rollback().await.expect("the holder lets go");
+    let (created, limited) = burst.await.expect("the burst ran");
+
+    assert_eq!((created, limited), (1, BURST - 1));
+    assert_eq!(stored_on_postgres(&served).await.len(), 10);
 }
 
 #[tokio::test]

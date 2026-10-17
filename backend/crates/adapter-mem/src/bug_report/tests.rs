@@ -1,5 +1,6 @@
 use chrono::TimeDelta;
 use domain::elements::bug_report::{BugDescription, BugReportId, BuildId};
+use domain::elements::did::Did;
 
 use super::*;
 
@@ -14,7 +15,7 @@ fn did(text: &str) -> Did {
 /// A report with only its required items, filed by `reporter` at `received_at`.
 fn report(reporter: &Did, received_at: DateTimeUtc) -> NewBugReport {
     NewBugReport {
-        id: BugReportId::from(uuid::Uuid::now_v7()),
+        id: BugReportId::generate(),
         reporter: UserId::from(reporter.clone()),
         description: BugDescription::try_from("The page went blank").expect("a description"),
         page: None,
@@ -50,8 +51,21 @@ async fn filing_refuses_a_reporter_who_is_not_a_user() {
     assert!(filed.is_err());
 }
 
+/// Lock `reporter` and count their reports since `since` in a fresh unit, then
+/// roll it back.
+async fn locked_count(backend: &MemBackend, reporter: &Did, since: DateTimeUtc) -> i64 {
+    let mut uow = backend.database().begin().await.expect("a unit");
+    let filed = uow
+        .bug_reports()
+        .lock_reporter_and_count_since(&UserId::from(reporter.clone()), since)
+        .await
+        .expect("a count");
+    uow.rollback().await.expect("rolled back");
+    filed
+}
+
 #[tokio::test]
-async fn count_filed_since_window_boundary() {
+async fn lock_reporter_and_count_since_window_boundary() {
     let backend = MemBackend::new();
     let reporter = did("did:plc:reporter");
     backend.provision(&reporter).await.expect("a User");
@@ -60,17 +74,13 @@ async fn count_filed_since_window_boundary() {
     let reports = [report(&reporter, since), report(&reporter, just_before)];
     file_committed(&backend, &reports).await;
 
-    let filed = backend
-        .bug_report_store()
-        .count_filed_since(&UserId::from(reporter), since)
-        .await
-        .expect("a count");
+    let filed = locked_count(&backend, &reporter, since).await;
 
     assert_eq!(filed, 1);
 }
 
 #[tokio::test]
-async fn count_filed_since_counts_only_this_reporter() {
+async fn lock_reporter_and_count_since_counts_only_this_reporter() {
     let backend = MemBackend::new();
     let reporter = did("did:plc:reporter");
     let other = did("did:plc:other");
@@ -80,13 +90,97 @@ async fn count_filed_since_counts_only_this_reporter() {
     let reports = [report(&reporter, since), report(&other, since)];
     file_committed(&backend, &reports).await;
 
-    let filed = backend
-        .bug_report_store()
-        .count_filed_since(&UserId::from(reporter), since)
+    let filed = locked_count(&backend, &reporter, since).await;
+
+    assert_eq!(filed, 1);
+}
+
+#[tokio::test]
+async fn the_locked_count_includes_the_unit_s_own_staged_reports() {
+    let backend = MemBackend::new();
+    let reporter = did("did:plc:reporter");
+    backend.provision(&reporter).await.expect("a User");
+    let since = at("2026-10-17T12:00:00Z");
+    file_committed(&backend, &[report(&reporter, since)]).await;
+
+    let mut uow = backend.database().begin().await.expect("a unit");
+    uow.bug_reports()
+        .file(&report(&reporter, since))
+        .await
+        .expect("filed");
+    let filed = uow
+        .bug_reports()
+        .lock_reporter_and_count_since(&UserId::from(reporter.clone()), since)
         .await
         .expect("a count");
 
-    assert_eq!(filed, 1);
+    assert_eq!(filed, 2, "one committed, one staged in this unit");
+}
+
+#[tokio::test]
+async fn a_second_unit_waits_for_the_lock_then_counts_the_first_unit_s_report() {
+    let backend = MemBackend::new();
+    let reporter = did("did:plc:reporter");
+    backend.provision(&reporter).await.expect("a User");
+    let since = at("2026-10-17T12:00:00Z");
+    let mut first = backend.database().begin().await.expect("a unit");
+    // The second unit begins before the first files, so its snapshot is stale.
+    let mut second = backend.database().begin().await.expect("a unit");
+    let first_count = first
+        .bug_reports()
+        .lock_reporter_and_count_since(&UserId::from(reporter.clone()), since)
+        .await
+        .expect("a count");
+    first
+        .bug_reports()
+        .file(&report(&reporter, since))
+        .await
+        .expect("filed");
+
+    let second_reporter = UserId::from(reporter.clone());
+    let mut second_count = tokio::spawn(async move {
+        second
+            .bug_reports()
+            .lock_reporter_and_count_since(&second_reporter, since)
+            .await
+            .expect("a count")
+    });
+    let counted_while_the_first_held =
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut second_count)
+            .await
+            .is_ok();
+    assert!(
+        !counted_while_the_first_held,
+        "the second unit counted while the first held the lock"
+    );
+    first.commit().await.expect("committed");
+    let second_count = second_count.await.expect("the second unit ran");
+
+    assert_eq!(first_count, 0);
+    assert_eq!(second_count, 1, "the second unit counts the first's report");
+}
+
+#[tokio::test]
+async fn a_dropped_unit_releases_the_lock() {
+    let backend = MemBackend::new();
+    let reporter = did("did:plc:reporter");
+    backend.provision(&reporter).await.expect("a User");
+    let since = at("2026-10-17T12:00:00Z");
+    let mut dropped = backend.database().begin().await.expect("a unit");
+    dropped
+        .bug_reports()
+        .lock_reporter_and_count_since(&UserId::from(reporter.clone()), since)
+        .await
+        .expect("a count");
+    drop(dropped);
+
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        locked_count(&backend, &reporter, since),
+    )
+    .await;
+
+    assert_eq!(next.ok(), Some(0), "the next unit takes the lock");
 }
 
 #[tokio::test]

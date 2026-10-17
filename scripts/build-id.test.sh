@@ -20,13 +20,21 @@ fail() {
 }
 
 # A `jj` that prints $STUB_JJ_OUT, or fails when $STUB_JJ_FAIL is set; it
-# complains on stderr either way, which build-id.sh must swallow.
+# complains on stderr either way, which build-id.sh must swallow. When
+# $STUB_JJ_CHANGED is set (the working copy differs), it adds " (local
+# changes)", but only if the template it was given asks for that suffix.
 write_jj() {
     cat >"$1/jj" <<'STUB'
 #!/bin/sh
 echo "jj stub noise" >&2
 [ -z "${STUB_JJ_FAIL:-}" ] || exit 1
-printf '%s\n' "$STUB_JJ_OUT"
+suffix=""
+if [ -n "${STUB_JJ_CHANGED:-}" ]; then
+    case "$*" in
+        *'if(empty, "", " (local changes)")'*) suffix=" (local changes)" ;;
+    esac
+fi
+printf '%s%s\n' "$STUB_JJ_OUT" "$suffix"
 STUB
     chmod +x "$1/jj"
 }
@@ -78,7 +86,7 @@ check() {
 export STUB_GIT_HEAD=bbbbbbbbbbbb STUB_GIT_STATUS=""
 
 STUB_JJ_OUT="aaaaaaaaaaaa" check "jj comes first" "$both" "aaaaaaaaaaaa"
-STUB_JJ_OUT="aaaaaaaaaaaa (local changes)" check "jj's local-changes suffix passes through" "$both" "aaaaaaaaaaaa (local changes)"
+STUB_JJ_OUT="aaaaaaaaaaaa" STUB_JJ_CHANGED=1 check "jj's template asks for the local-changes suffix" "$both" "aaaaaaaaaaaa (local changes)"
 STUB_JJ_FAIL=1 check "git answers when jj fails" "$both" "bbbbbbbbbbbb"
 check "git answers when jj is missing" "$git_only" "bbbbbbbbbbbb"
 STUB_GIT_STATUS=" M Justfile" check "git adds the local-changes suffix" "$git_only" "bbbbbbbbbbbb (local changes)"

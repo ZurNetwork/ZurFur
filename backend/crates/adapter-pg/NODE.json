@@ -40,12 +40,12 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> (a page never starts with //; api_version 1 to 64 bytes) and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
       "node": false
     },
     {
       "name": "queries/",
-      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), bug_report/ (file, count_filed_since, list_since; error_status bound and read as integer, the generator mapping no smallint), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), bug_report/ (file, lock_reporter (the reporter's users row FOR NO KEY UPDATE), count_filed_since (run after it, in the same unit), list_since; error_status bound and read as integer, the generator mapping no smallint), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
       "node": false
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "tests/it/",
-      "role": "one integration binary sharing a Postgres container across ~24 modules (bug_report: the table checks asserted by constraint name, the users foreign key, the count, the list and round trips) — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
+      "role": "one integration binary sharing a Postgres container across ~24 modules (bug_report: the table checks asserted by constraint name, the users foreign key, the locked count (a second unit waits for the first, then counts its report), the list and round trips) — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
       "node": false
     }
   ],

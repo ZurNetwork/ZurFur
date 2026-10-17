@@ -17,7 +17,7 @@ const OTHER_ID: u128 = 0x0199_f2a0_7c00_7000_8000_0000_5e6f_7a8b;
 
 /// The characters that must never reach a terminal raw, each with the escape
 /// that must stand in for it.
-const HOSTILE: [(&str, &str); 11] = [
+const HOSTILE: [(&str, &str); 13] = [
     ("\u{9b}", "\\u{9b}"),
     ("\u{202e}", "\\u{202e}"),
     ("\u{1b}", "\\u{1b}"),
@@ -32,6 +32,9 @@ const HOSTILE: [(&str, &str); 11] = [
     ("\u{feff}", "\\u{feff}"),
     ("\u{ad}", "\\u{ad}"),
     ("\u{115f}", "\\u{115f}"),
+    // Format characters that are not default-ignorable.
+    ("\u{fff9}", "\\u{fff9}"),
+    ("\u{600}", "\\u{600}"),
 ];
 
 /// A report with every optional item sent, every text set to `text`.

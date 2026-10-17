@@ -42,7 +42,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), changelog, commission, character, bug_report (BugReportStore: count_filed_since, list_since; BugReportWrites: file), file, workflow, authenticator, public_records ports; errors.rs shared (incl. ResolveError)",
+      "role": "trait seams: unit_of_work.rs = Database/UnitOfWork traits; account, user, profile, identity, identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), changelog, commission, character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), file, workflow, authenticator, public_records ports; errors.rs shared (incl. ResolveError)",
       "node": false
     },
     {
@@ -57,7 +57,7 @@
     },
     {
       "name": "string_builder/unicode.rs",
-      "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, copied from atta (atta depends on no workspace crate) and pinned equal over every char by application/tests/den_names.rs; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
+      "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, copied from atta (atta depends on no workspace crate) and pinned equal over every char by application/tests/den_names.rs; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter, as StringBuilder::no_line_separator does U+2028 and U+2029) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
       "node": false
     }
   ],

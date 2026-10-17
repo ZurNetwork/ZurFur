@@ -10,13 +10,14 @@
 -- description    What went wrong: trimmed, 1 to 4,000 code points.
 -- page, page_kind, web_version, browser
 --                Each one tick box: NULL when unticked or not sent, never an
---                empty string, and capped in bytes.
+--                empty string, and capped in bytes. A page never starts with
+--                `//`, which a browser reads as another host.
 -- window_width, window_height
 --                One tick box: both set or both NULL; 1 to 100,000 pixels.
 -- reduced_motion, more_contrast, forced_colors
 --                One tick box: all three set or all three NULL.
 -- error_status   Only when filed from an error page: 400 to 599.
--- api_version    The receiving API's build id, or "unknown".
+-- api_version    The receiving API's build id, or "unknown": 1 to 64 bytes.
 -- received_at    The server's clock when the report arrived.
 CREATE TABLE bug_report (
     id             uuid        PRIMARY KEY,
@@ -49,6 +50,8 @@ CREATE TABLE bug_report (
         CHECK (strpos(page, '?') = 0 AND strpos(page, '#') = 0),
     CONSTRAINT bug_report_page_not_empty
         CHECK (octet_length(page) >= 1),
+    CONSTRAINT bug_report_page_not_protocol_relative
+        CHECK (left(page, 2) <> '//'),
 
     CONSTRAINT bug_report_page_kind_max_bytes
         CHECK (octet_length(page_kind) <= 64),
@@ -76,7 +79,10 @@ CREATE TABLE bug_report (
         CHECK (num_nulls(reduced_motion, more_contrast, forced_colors) IN (0, 3)),
 
     CONSTRAINT bug_report_error_status_range
-        CHECK (error_status BETWEEN 400 AND 599)
+        CHECK (error_status BETWEEN 400 AND 599),
+
+    CONSTRAINT bug_report_api_version_bytes
+        CHECK (octet_length(api_version) BETWEEN 1 AND 64)
 );
 
 -- The rate limit's count: one reporter's reports since a moment. It also

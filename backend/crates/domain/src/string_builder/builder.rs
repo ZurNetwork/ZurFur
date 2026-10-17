@@ -1,4 +1,7 @@
-use super::{errors::StringBuilderViolation, unicode::is_bidi_control};
+use super::{
+    errors::StringBuilderViolation,
+    unicode::{LINE_SEPARATOR, PARAGRAPH_SEPARATOR, is_bidi_control},
+};
 
 /// The explicit-rule string-validation builder. Rule methods take and return
 /// `Self`, so a chain reads as the rules applied in order with no `?` until
@@ -84,6 +87,18 @@ impl StringBuilder {
     pub fn no_bidi_control(self) -> Self {
         Self(self.0.and_then(|s| {
             if s.chars().any(is_bidi_control) {
+                Err(StringBuilderViolation::ControlCharacter)
+            } else {
+                Ok(s)
+            }
+        }))
+    }
+
+    /// Reject U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR with
+    /// [`StringBuilderViolation::ControlCharacter`]: either breaks a one-line text.
+    pub fn no_line_separator(self) -> Self {
+        Self(self.0.and_then(|s| {
+            if s.contains([LINE_SEPARATOR, PARAGRAPH_SEPARATOR]) {
                 Err(StringBuilderViolation::ControlCharacter)
             } else {
                 Ok(s)

@@ -48,10 +48,10 @@ pub const DEFAULT_IGNORABLE: &[(u32, u32)] = &[
 ];
 
 /// U+2028 LINE SEPARATOR.
-const LINE_SEPARATOR: char = '\u{2028}';
+pub(super) const LINE_SEPARATOR: char = '\u{2028}';
 
 /// U+2029 PARAGRAPH SEPARATOR.
-const PARAGRAPH_SEPARATOR: char = '\u{2029}';
+pub(super) const PARAGRAPH_SEPARATOR: char = '\u{2029}';
 
 /// Whether `code` falls in one of `ranges`.
 fn in_ranges(ranges: &[(u32, u32)], code: u32) -> bool {

@@ -54,7 +54,7 @@
     },
     {
       "name": "bug_report.rs",
-      "role": "bug reports a signed-in User files from the web app — BugReportId (UUIDv7) and BugReportReference (the id's last 8 characters); the values BugDescription (≤4000 code points, keeps LF and tab), PageAddress (starts with /, ≤2048 bytes, no ? or #), PageKind and BuildId (≤64 bytes), BrowserText (≤512 bytes), WindowSide/WindowSize (1–100000), ErrorStatus (400–599, TryFrom<i32>), DisplaySettings; every text trimmed, never empty, refusing Cc and the nine bidi controls and nothing else (byte caps checked in the values, not the builder); rows NewBugReport (the write shape) and StoredBugReport (texts as StoredText, loaded without a re-check). No serde",
+      "role": "bug reports a signed-in User files from the web app — BugReportId (UUIDv7, minted by generate()) and BugReportReference (the id's last 8 characters); the values BugDescription (≤4000 code points, keeps LF and tab), PageAddress (starts with / but not //, ≤2048 bytes, no ? or #), PageKind and BuildId (≤64 bytes), BrowserText (≤512 bytes), WindowSide/WindowSize (1–100000), ErrorStatus (400–599, TryFrom<i32>), DisplaySettings; every text trimmed, never empty, refusing Cc and the nine bidi controls, the four one-line values U+2028 and U+2029 too, and nothing else (byte caps checked in the values, not the builder); rows NewBugReport (the write shape) and StoredBugReport (texts as StoredText, loaded without a re-check). No serde",
       "node": false
     },
     {

@@ -1,9 +1,12 @@
 //! Bug reports over PostgreSQL, against a throwaway container: the table's
 //! checks refuse every out-of-rule row by name, the reporter must be a User,
-//! the count and the list read what was filed, and a full report and an empty
-//! one round-trip. Requires a container runtime socket (DOCKER_HOST honored).
+//! the locked count serializes two units and reads what was filed, the list
+//! reads it too, and a full report and an empty one round-trip. Requires a
+//! container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{PgBugReportStore, PgDatabase, PgPool};
+use std::time::Duration;
+
 use chrono::TimeDelta;
 use domain::datetime::DateTimeUtc;
 use domain::elements::actor_identity::ActorKind;
@@ -135,6 +138,7 @@ struct RawRow {
     more_contrast: Option<bool>,
     forced_colors: Option<bool>,
     error_status: Option<i16>,
+    api_version: String,
 }
 
 impl RawRow {
@@ -153,6 +157,7 @@ impl RawRow {
             more_contrast: Some(false),
             forced_colors: Some(false),
             error_status: Some(404),
+            api_version: "api-1".to_owned(),
         }
     }
 
@@ -162,7 +167,7 @@ impl RawRow {
                  id, reporter_id, description, page, page_kind, web_version, browser,
                  window_width, window_height, reduced_motion, more_contrast, forced_colors,
                  error_status, api_version, received_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'api-1', now())",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())",
         )
         .bind(uuid::Uuid::now_v7())
         .bind(&self.reporter_id)
@@ -177,6 +182,7 @@ impl RawRow {
         .bind(self.more_contrast)
         .bind(self.forced_colors)
         .bind(self.error_status)
+        .bind(&self.api_version)
         .execute(pool)
         .await
         .map(|_| ())
@@ -258,6 +264,14 @@ async fn a_window_side_outside_1_to_100000_is_refused() {
         window_height: Some(100_001),
         ..valid.clone()
     };
+    let wide_width = RawRow {
+        window_width: Some(100_001),
+        ..valid.clone()
+    };
+    let zero_height = RawRow {
+        window_height: Some(0),
+        ..valid.clone()
+    };
     let widest = RawRow {
         window_width: Some(100_000),
         window_height: Some(1),
@@ -266,6 +280,8 @@ async fn a_window_side_outside_1_to_100000_is_refused() {
 
     assert_refused_by(&pool, &zero_width, "bug_report_window_width_range").await;
     assert_refused_by(&pool, &wide_height, "bug_report_window_height_range").await;
+    assert_refused_by(&pool, &wide_width, "bug_report_window_width_range").await;
+    assert_refused_by(&pool, &zero_height, "bug_report_window_height_range").await;
     assert_accepted(&pool, &widest).await;
 }
 
@@ -289,7 +305,7 @@ async fn one_or_two_display_settings_are_refused() {
 }
 
 #[tokio::test]
-async fn a_page_with_a_query_or_fragment_or_no_leading_slash_is_refused() {
+async fn a_page_with_a_query_or_fragment_or_no_single_leading_slash_is_refused() {
     let (pool, _container) = fresh_pool().await;
     let reporter = provision(&pool, "did:plc:raw-page").await;
     let valid = RawRow::valid(&reporter);
@@ -305,6 +321,14 @@ async fn a_page_with_a_query_or_fragment_or_no_leading_slash_is_refused() {
         page: Some("den/files".to_owned()),
         ..valid.clone()
     };
+    let protocol_relative = RawRow {
+        page: Some("//evil.example/x".to_owned()),
+        ..valid.clone()
+    };
+    let double_slash_inside = RawRow {
+        page: Some("/den//x".to_owned()),
+        ..valid.clone()
+    };
 
     assert_refused_by(
         &pool,
@@ -314,6 +338,13 @@ async fn a_page_with_a_query_or_fragment_or_no_leading_slash_is_refused() {
     .await;
     assert_refused_by(&pool, &with_query, "bug_report_page_no_query_or_fragment").await;
     assert_refused_by(&pool, &relative, "bug_report_page_starts_with_slash").await;
+    assert_refused_by(
+        &pool,
+        &protocol_relative,
+        "bug_report_page_not_protocol_relative",
+    )
+    .await;
+    assert_accepted(&pool, &double_slash_inside).await;
 }
 
 #[tokio::test]
@@ -398,18 +429,67 @@ async fn a_byte_cap_counts_bytes_not_characters() {
     let (pool, _container) = fresh_pool().await;
     let reporter = provision(&pool, "did:plc:raw-bytes").await;
     let valid = RawRow::valid(&reporter);
-    // 33 two-byte characters: 33 characters, 66 bytes.
+    // Each over its cap in bytes and under it in characters: "é" is two bytes.
+    let page_over_cap_in_bytes = RawRow {
+        page: Some(format!("/{}", "é".repeat(1024))),
+        ..valid.clone()
+    };
     let page_kind_over_cap_in_bytes = RawRow {
         page_kind: Some("é".repeat(33)),
         ..valid.clone()
     };
+    let web_version_over_cap_in_bytes = RawRow {
+        web_version: Some("é".repeat(33)),
+        ..valid.clone()
+    };
+    let browser_over_cap_in_bytes = RawRow {
+        browser: Some("é".repeat(257)),
+        ..valid.clone()
+    };
 
+    assert_refused_by(&pool, &page_over_cap_in_bytes, "bug_report_page_max_bytes").await;
     assert_refused_by(
         &pool,
         &page_kind_over_cap_in_bytes,
         "bug_report_page_kind_max_bytes",
     )
     .await;
+    assert_refused_by(
+        &pool,
+        &web_version_over_cap_in_bytes,
+        "bug_report_web_version_max_bytes",
+    )
+    .await;
+    assert_refused_by(
+        &pool,
+        &browser_over_cap_in_bytes,
+        "bug_report_browser_max_bytes",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_api_version_is_1_to_64_bytes() {
+    let (pool, _container) = fresh_pool().await;
+    let reporter = provision(&pool, "did:plc:raw-api-version").await;
+    let valid = RawRow::valid(&reporter);
+    let empty = RawRow {
+        api_version: String::new(),
+        ..valid.clone()
+    };
+    // 33 two-byte characters: 66 bytes, under 65 characters.
+    let over_cap_in_bytes = RawRow {
+        api_version: "é".repeat(33),
+        ..valid.clone()
+    };
+    let at_cap = RawRow {
+        api_version: "v".repeat(64),
+        ..valid.clone()
+    };
+
+    assert_refused_by(&pool, &empty, "bug_report_api_version_bytes").await;
+    assert_refused_by(&pool, &over_cap_in_bytes, "bug_report_api_version_bytes").await;
+    assert_accepted(&pool, &at_cap).await;
 }
 
 #[tokio::test]
@@ -505,10 +585,24 @@ async fn a_report_whose_reporter_is_an_account_fails_the_foreign_key() {
     assert_eq!(database_error.constraint(), Some("bug_report_reporter"));
 }
 
-// ---- The count and the list ------------------------------------------------
+// ---- The locked count and the list -----------------------------------------
+
+/// Lock `reporter` and count their reports since `since` in a fresh unit, then
+/// roll it back.
+async fn locked_count(pool: &PgPool, reporter: &UserId, since: DateTimeUtc) -> i64 {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let filed = uow
+        .bug_reports()
+        .lock_reporter_and_count_since(reporter, since)
+        .await
+        .expect("a count");
+    uow.rollback().await.expect("rollback");
+    filed
+}
 
 #[tokio::test]
-async fn count_filed_since_counts_only_this_reporter() {
+async fn lock_reporter_and_count_since_counts_only_this_reporter() {
     let (pool, _container) = fresh_pool().await;
     let reporter = provision(&pool, "did:plc:count-reporter").await;
     let other = provision(&pool, "did:plc:count-other").await;
@@ -520,16 +614,13 @@ async fn count_filed_since_counts_only_this_reporter() {
     ];
     file(&pool, &reports).await;
 
-    let filed = PgBugReportStore::new(pool.clone())
-        .count_filed_since(&reporter, since)
-        .await
-        .expect("a count");
+    let filed = locked_count(&pool, &reporter, since).await;
 
     assert_eq!(filed, 1);
 }
 
 #[tokio::test]
-async fn count_filed_since_window_boundary() {
+async fn lock_reporter_and_count_since_window_boundary() {
     let (pool, _container) = fresh_pool().await;
     let reporter = provision(&pool, "did:plc:count-boundary").await;
     let since = at("2026-10-17T12:00:00Z");
@@ -540,12 +631,54 @@ async fn count_filed_since_window_boundary() {
     ];
     file(&pool, &reports).await;
 
-    let filed = PgBugReportStore::new(pool.clone())
-        .count_filed_since(&reporter, since)
-        .await
-        .expect("a count");
+    let filed = locked_count(&pool, &reporter, since).await;
 
     assert_eq!(filed, 1);
+}
+
+#[tokio::test]
+async fn a_second_unit_waits_for_the_lock_then_counts_the_first_unit_s_report() {
+    let (pool, _container) = fresh_pool().await;
+    let reporter = provision(&pool, "did:plc:count-serialized").await;
+    let since = at("2026-10-17T12:00:00Z");
+    let db = PgDatabase::new(pool.clone());
+    let mut first = db.begin().await.expect("begin");
+    let first_count = first
+        .bug_reports()
+        .lock_reporter_and_count_since(&reporter, since)
+        .await
+        .expect("a count");
+    first
+        .bug_reports()
+        .file(&bare_report(&reporter, since))
+        .await
+        .expect("filed");
+
+    let second_db = PgDatabase::new(pool.clone());
+    let second_reporter = reporter.clone();
+    let mut second = tokio::spawn(async move {
+        let mut uow = second_db.begin().await.expect("begin");
+        let filed = uow
+            .bug_reports()
+            .lock_reporter_and_count_since(&second_reporter, since)
+            .await
+            .expect("a count");
+        uow.rollback().await.expect("rollback");
+        filed
+    });
+    let counted_while_the_first_held =
+        tokio::time::timeout(Duration::from_millis(500), &mut second)
+            .await
+            .is_ok();
+    assert!(
+        !counted_while_the_first_held,
+        "the second unit counted while the first held the lock"
+    );
+    first.commit().await.expect("commit");
+    let second_count = second.await.expect("the second unit ran");
+
+    assert_eq!(first_count, 0);
+    assert_eq!(second_count, 1, "the second unit counts the first's report");
 }
 
 #[tokio::test]

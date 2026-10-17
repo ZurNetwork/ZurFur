@@ -7,12 +7,11 @@ use domain::{
         },
         user::UserId,
     },
+    ports::Unit,
 };
 use shared::settings::{BUG_REPORT_LIMIT, BUG_REPORT_WINDOW};
-use uuid::Uuid;
 
 use crate::{
-    LazyUnit, Ports,
     bug_report::{BugReportError, BugReportResult, BugReports},
     use_case,
 };
@@ -46,21 +45,21 @@ pub struct Output {
 }
 
 impl BugReports<'_> {
-    /// Files the report, received at `now` by the API build `api_version`. Refused,
-    /// opening no unit, once the reporter has filed the limit within the window.
+    /// Files the report, received at `now` by the API build `api_version`. Counts inside
+    /// the filing unit with the reporter locked, so concurrent filings can't overshoot;
+    /// refused, the unit rolled back, once the reporter has filed the limit within the window.
     #[use_case]
     pub async fn file(
         &self,
-        #[ports] ports: &Ports,
-        #[lazy_unit] uow: &mut LazyUnit<'_>,
+        #[unit] uow: Unit<'_>,
         cmd: Command,
         api_version: &BuildId,
         now: DateTimeUtc,
     ) -> BugReportResult<Output> {
         let Command { reporter, report } = cmd;
-        let filed_recently = ports
-            .bug_reports
-            .count_filed_since(&reporter, now - BUG_REPORT_WINDOW)
+        let filed_recently = uow
+            .bug_reports()
+            .lock_reporter_and_count_since(&reporter, now - BUG_REPORT_WINDOW)
             .await?;
         if filed_recently >= BUG_REPORT_LIMIT {
             return Err(BugReportError::RateLimited);
@@ -76,7 +75,7 @@ impl BugReports<'_> {
             display,
             error_status,
         } = report;
-        let id = BugReportId::from(Uuid::now_v7());
+        let id = BugReportId::generate();
         let new_report = NewBugReport {
             id,
             reporter,
@@ -92,7 +91,6 @@ impl BugReports<'_> {
             received_at: now,
         };
 
-        let uow = uow.open().await?;
         uow.bug_reports().file(&new_report).await?;
 
         let reference = BugReportReference::from(&id);

@@ -27,12 +27,16 @@ pub enum PageAddressError {
     /// Longer than [`PageAddress::MAX_BYTES`] bytes once trimmed.
     #[error("a page is longer than {} bytes", PageAddress::MAX_BYTES)]
     TooLong,
-    /// Holds a control or bidirectional formatting character.
+    /// Holds a control, bidirectional formatting, line separator or paragraph separator
+    /// character.
     #[error("a page holds a control or bidirectional formatting character")]
     ControlCharacter,
     /// Doesn't start with `/`.
     #[error("a page starts with `/`")]
     NotAbsolute,
+    /// Starts with `//`, which a browser reads as another host.
+    #[error("a page does not start with `//`")]
+    ProtocolRelative,
     /// Holds a `?` or a `#`: a query or a fragment.
     #[error("a page holds no query and no fragment")]
     QueryOrFragment,
@@ -47,7 +51,8 @@ pub enum PageKindError {
     /// Longer than [`PageKind::MAX_BYTES`] bytes once trimmed.
     #[error("a page kind is longer than {} bytes", PageKind::MAX_BYTES)]
     TooLong,
-    /// Holds a control or bidirectional formatting character.
+    /// Holds a control, bidirectional formatting, line separator or paragraph separator
+    /// character.
     #[error("a page kind holds a control or bidirectional formatting character")]
     ControlCharacter,
 }
@@ -61,7 +66,8 @@ pub enum BuildIdError {
     /// Longer than [`BuildId::MAX_BYTES`] bytes once trimmed.
     #[error("a build id is longer than {} bytes", BuildId::MAX_BYTES)]
     TooLong,
-    /// Holds a control or bidirectional formatting character.
+    /// Holds a control, bidirectional formatting, line separator or paragraph separator
+    /// character.
     #[error("a build id holds a control or bidirectional formatting character")]
     ControlCharacter,
 }
@@ -75,7 +81,8 @@ pub enum BrowserTextError {
     /// Longer than [`BrowserText::MAX_BYTES`] bytes once trimmed.
     #[error("a browser is longer than {} bytes", BrowserText::MAX_BYTES)]
     TooLong,
-    /// Holds a control or bidirectional formatting character.
+    /// Holds a control, bidirectional formatting, line separator or paragraph separator
+    /// character.
     #[error("a browser holds a control or bidirectional formatting character")]
     ControlCharacter,
 }

@@ -5,6 +5,7 @@ use domain::elements::did::Did;
 use test_support::recording::{CallLog, RecordingDatabase};
 
 use super::*;
+use crate::Ports;
 
 /// The instant the first reports are filed at.
 fn t0() -> DateTimeUtc {
@@ -116,27 +117,31 @@ async fn bob_s_reports_do_not_count_for_alice() {
 }
 
 #[tokio::test]
-async fn a_refused_report_opens_no_unit() {
+async fn a_refused_report_stores_nothing() {
     let (ports, log) = recording_ports().await;
     file_accepted(&ports, &alice(), 10, t0()).await;
-    let begins_before = log
-        .events()
-        .iter()
-        .filter(|event| **event == "begin")
-        .count();
+    let events_before = log.events().len();
 
     let refused = BugReports::from(&ports)
         .file(command_for(alice()), &api_version(), t0())
         .await;
 
-    assert!(matches!(refused, Err(BugReportError::RateLimited)));
-    let begins_after = log
-        .events()
-        .iter()
-        .filter(|event| **event == "begin")
-        .count();
-    assert_eq!(begins_before, 10, "each accepted report opened one unit");
-    assert_eq!(begins_after, begins_before, "the refusal opened no unit");
+    assert!(
+        matches!(refused, Err(BugReportError::RateLimited)),
+        "the 11th is refused: {refused:?}"
+    );
+    let stored = ports
+        .bug_reports
+        .list_since(None)
+        .await
+        .expect("the reports list");
+    assert_eq!(stored.len(), 10, "the refused report is not stored");
+    let refusal_events = log.events()[events_before..].to_vec();
+    assert_eq!(
+        refusal_events,
+        ["begin", "rollback"],
+        "the refusal counted in a unit and rolled it back"
+    );
 }
 
 #[tokio::test]

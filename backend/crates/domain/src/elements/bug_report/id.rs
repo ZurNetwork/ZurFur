@@ -14,6 +14,13 @@
 )]
 pub struct BugReportId(uuid::Uuid);
 
+impl BugReportId {
+    /// Mint a fresh id for a new report. Sorts as filing order.
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+}
+
 /// The short reference a reporter quotes about their report: the last 8
 /// characters of its id.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, derive_more::AsRef)]

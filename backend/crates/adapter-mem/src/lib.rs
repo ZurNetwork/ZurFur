@@ -155,6 +155,9 @@ pub struct MemBackend {
     /// Filed bug reports in filing order. Staged, so a report lands only when
     /// its unit commits; nothing ever mutates or removes a pushed report.
     pub(crate) bug_reports: Arc<Mutex<Vec<NewBugReport>>>,
+    /// The rate limit's lock, the fake of pg's reporter row lock: one for every
+    /// reporter, held by a unit from its locked count until it ends. Shared, NOT staged.
+    pub(crate) bug_report_filing: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl MemBackend {
@@ -324,6 +327,7 @@ impl MemBackend {
             )),
             // Shared, not copied: the blob store is a Unit-of-Work exemption.
             blobs: self.blobs.clone(),
+            bug_report_filing: self.bug_report_filing.clone(),
             slots: Arc::new(Mutex::new(
                 self.slots
                     .lock()
@@ -1848,6 +1852,7 @@ impl Database for MemDatabase {
             shared: self.0.clone(),
             base,
             staged,
+            bug_report_filing: None,
         }))
     }
 }
@@ -1866,6 +1871,9 @@ pub struct MemUnitOfWork {
     /// A private deep copy the unit's writes land in, reaching `shared` only on
     /// `commit`. The profile-cache `Arc` is shared, never staged.
     staged: MemBackend,
+    /// The bug-report filing lock once this unit has taken it; released when the
+    /// unit is dropped, after `commit` has merged.
+    bug_report_filing: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 #[async_trait]
@@ -1913,9 +1921,14 @@ impl UnitOfWork for MemUnitOfWork {
         Box::new(MemCharacterWrites(self.staged.clone()))
     }
 
-    /// The bug-report write surface over this unit's staged snapshot.
+    /// The bug-report write surface over this unit's staged snapshot; its locked
+    /// count also reads the shared log, and parks the lock on this unit.
     fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_> {
-        Box::new(MemBugReportWrites(self.staged.clone()))
+        Box::new(MemBugReportWrites {
+            shared: self.shared.clone(),
+            staged: self.staged.clone(),
+            filing_lock: &mut self.bug_report_filing,
+        })
     }
 
     #[tracing::instrument(level = "debug", skip_all)]

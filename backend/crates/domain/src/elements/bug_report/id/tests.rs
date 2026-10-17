@@ -12,7 +12,7 @@ fn the_reference_is_the_id_s_last_eight_characters() {
 
 #[test]
 fn a_minted_id_is_a_version_seven_uuid_whose_reference_ends_it() {
-    let id = BugReportId::from(uuid::Uuid::now_v7());
+    let id = BugReportId::generate();
 
     let reference = BugReportReference::from(&id);
 

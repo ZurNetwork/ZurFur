@@ -11,12 +11,13 @@ enum LineViolation {
     ControlCharacter,
 }
 
-/// Trim `raw`, then refuse it when empty, holding a control or bidirectional formatting
-/// character, or longer than `max_bytes`.
+/// Trim `raw`, then refuse it when empty, holding a control, bidirectional formatting, line
+/// separator or paragraph separator character, or longer than `max_bytes`.
 fn one_line(raw: String, max_bytes: usize) -> Result<String, LineViolation> {
     let text = StringBuilder::non_empty_from(raw)
         .no_control()
         .no_bidi_control()
+        .no_line_separator()
         .build()
         .map_err(|violation| match violation {
             StringBuilderViolation::Empty => LineViolation::Empty,
@@ -71,8 +72,9 @@ impl TryFrom<&str> for BugDescription {
     }
 }
 
-/// The app path a report was filed from: a one-line text starting with `/`, at most
-/// [`MAX_BYTES`](Self::MAX_BYTES) bytes, with no query (`?`) and no fragment (`#`).
+/// The app path a report was filed from: a one-line text starting with one `/` (never `//`,
+/// which a browser reads as another host), at most [`MAX_BYTES`](Self::MAX_BYTES) bytes, with no
+/// query (`?`) and no fragment (`#`).
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::AsRef)]
 #[as_ref(str)]
 pub struct PageAddress(String);
@@ -93,6 +95,9 @@ impl TryFrom<String> for PageAddress {
         })?;
         if !page.starts_with('/') {
             return Err(PageAddressError::NotAbsolute);
+        }
+        if page.starts_with("//") {
+            return Err(PageAddressError::ProtocolRelative);
         }
         if page.contains(['?', '#']) {
             return Err(PageAddressError::QueryOrFragment);

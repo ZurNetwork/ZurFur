@@ -43,6 +43,8 @@ fn is_unsafe_to_print_holds_for_controls_formats_ignorables_and_separators() {
         '\u{E0041}', // TAG LATIN CAPITAL LETTER A
         '\u{2028}',  // LINE SEPARATOR
         '\u{2029}',  // PARAGRAPH SEPARATOR
+        '\u{FFF9}',  // INTERLINEAR ANNOTATION ANCHOR, format but not default-ignorable
+        '\u{0600}',  // ARABIC NUMBER SIGN, format but not default-ignorable
     ];
     for character in unsafe_characters {
         assert!(

@@ -745,7 +745,8 @@ pub mod bug_report {
     /// `queries/bug_report/count_filed_since.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// How many reports one reporter filed at or after `received_at`; a report
-    /// filed exactly then counts.
+    /// filed exactly then counts. Run inside the filing unit, after
+    /// `lock_reporter`.
     pub async fn count_filed_since(
         conn: impl sqlx::PgExecutor<'_>,
         reporter_id: &str,
@@ -813,6 +814,23 @@ pub mod bug_report {
         sqlx::query_as(include_str!("../queries/bug_report/list_since.sql"))
             .bind(received_at)
             .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/bug_report/lock_reporter.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Lock one reporter's User row until the unit of work ends, so two units filing
+    /// for the same reporter count and insert one after the other. The rate limit's
+    /// count runs as its own statement after this one, so it sees what the previous
+    /// holder committed.
+    /// FOR NO KEY UPDATE serializes these units as FOR UPDATE would, without stalling child inserts.
+    pub async fn lock_reporter(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: &str,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!("../queries/bug_report/lock_reporter.sql"))
+            .bind(id)
+            .fetch_optional(conn)
             .await
     }
 }

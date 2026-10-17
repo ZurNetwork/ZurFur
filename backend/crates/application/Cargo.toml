@@ -34,8 +34,6 @@ serde_json = { workspace = true }
 # `workspace = true` cannot itself drop `default-features` here).
 tokio = { version = "1.49.0", default-features = false, features = ["io-util", "rt", "sync", "time"] }
 application-macros = { path = "../application-macros" }
-# Mints a bug report's UUIDv7 id at filing time.
-uuid = { workspace = true }
 # The Den's engine: the den module implements its one host trait and calls its
 # resolver. Imported only inside `src/den*`; no driver sees an Atta type.
 atta = { path = "../atta" }
@@ -48,6 +46,7 @@ async-trait = { workspace = true }
 test-support = { path = "../test-support" }
 # `test-util` for the profile-wait tests' paused clock.
 tokio = { workspace = true, features = ["test-util"] }
+uuid = { workspace = true }
 # The den keys' property tests over UUIDs and DIDs, and the identity arms' name
 # properties: every segment and every handle is a name.
 proptest = { workspace = true }

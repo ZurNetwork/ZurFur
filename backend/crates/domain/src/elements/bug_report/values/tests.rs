@@ -6,8 +6,12 @@ const BIDI_CONTROLS: [char; 9] = [
     '\u{2069}',
 ];
 
-/// Characters beside the nine that the bidi rule lets through.
-const BIDI_NEIGHBOURS: [char; 4] = ['\u{2029}', '\u{202F}', '\u{2065}', '\u{206A}'];
+/// Characters beside the nine that the bidi rule lets through. U+2029, the nine's other
+/// neighbour, is a paragraph separator, which the one-line values refuse on their own rule.
+const BIDI_NEIGHBOURS: [char; 3] = ['\u{202F}', '\u{2065}', '\u{206A}'];
+
+/// LINE SEPARATOR and PARAGRAPH SEPARATOR.
+const LINE_SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
 
 /// Text that is empty once trimmed.
 const BLANKS: [&str; 4] = ["", " ", "  \u{3000} ", "\u{00A0}"];
@@ -157,6 +161,51 @@ fn the_one_line_values_refuse_newline_and_tab() {
 }
 
 #[test]
+fn the_one_line_values_refuse_the_line_and_paragraph_separators() {
+    for separator in LINE_SEPARATORS {
+        let raw = format!("/a{separator}b");
+        let page = PageAddress::try_from(raw.as_str());
+        let page_kind = PageKind::try_from(raw.as_str());
+        let build_id = BuildId::try_from(raw.as_str());
+        let browser = BrowserText::try_from(raw.as_str());
+
+        let code_point = u32::from(separator);
+        assert_eq!(
+            page,
+            Err(PageAddressError::ControlCharacter),
+            "U+{code_point:04X} in a page"
+        );
+        assert_eq!(
+            page_kind,
+            Err(PageKindError::ControlCharacter),
+            "U+{code_point:04X} in a page kind"
+        );
+        assert_eq!(
+            build_id,
+            Err(BuildIdError::ControlCharacter),
+            "U+{code_point:04X} in a build id"
+        );
+        assert_eq!(
+            browser,
+            Err(BrowserTextError::ControlCharacter),
+            "U+{code_point:04X} in a browser"
+        );
+    }
+}
+
+#[test]
+fn the_description_keeps_the_line_and_paragraph_separators() {
+    for separator in LINE_SEPARATORS {
+        let raw = format!("one{separator}two");
+
+        let description = BugDescription::try_from(raw.as_str());
+
+        let kept = description.map(|kept| kept.to_string());
+        assert_eq!(kept, Ok(raw), "U+{:04X}", u32::from(separator));
+    }
+}
+
+#[test]
 fn the_description_holds_4000_code_points_and_no_more() {
     let at_cap = "\u{1F98A}".repeat(4000);
     let over_cap = "\u{1F98A}".repeat(4001);
@@ -235,6 +284,16 @@ fn the_page_starts_with_a_slash() {
     let refused = PageAddress::try_from("den/commissions");
 
     assert_eq!(refused, Err(PageAddressError::NotAbsolute));
+}
+
+#[test]
+fn the_page_refuses_a_leading_double_slash() {
+    let protocol_relative = PageAddress::try_from("//evil.example/x");
+    let double_slash_inside = PageAddress::try_from("/den//x");
+
+    assert_eq!(protocol_relative, Err(PageAddressError::ProtocolRelative));
+    let kept = double_slash_inside.map(|page| page.to_string());
+    assert_eq!(kept, Ok("/den//x".to_owned()));
 }
 
 #[test]

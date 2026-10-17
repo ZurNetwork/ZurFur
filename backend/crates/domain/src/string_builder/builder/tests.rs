@@ -154,3 +154,26 @@ fn no_bidi_control_passes_every_other_character() {
         assert_eq!(result, Ok(text), "U+{:04X} passes", u32::from(neighbour));
     }
 }
+
+#[test]
+fn no_line_separator_rejects_both_separators_as_a_control_character() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        let text = format!("a{separator}b");
+        let result = StringBuilder::new(text).no_line_separator().build();
+        assert_eq!(
+            result,
+            Err(StringBuilderViolation::ControlCharacter),
+            "U+{:04X} is refused",
+            u32::from(separator)
+        );
+    }
+}
+
+#[test]
+fn no_line_separator_passes_newline_and_the_separators_neighbours() {
+    for neighbour in ['\n', '\u{2027}', '\u{202A}', '\u{0085}'] {
+        let text = format!("a{neighbour}b");
+        let result = StringBuilder::new(text.clone()).no_line_separator().build();
+        assert_eq!(result, Ok(text), "U+{:04X} passes", u32::from(neighbour));
+    }
+}

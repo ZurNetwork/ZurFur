@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "domain + async-trait + cid/sha2 (real CIDv1 addressing in the fake) + tokio io-util for the streaming FileStore seam, time for MemProfileSource's slow and silent PDS",
+      "role": "domain + async-trait + cid/sha2 (real CIDv1 addressing in the fake) + tokio io-util for the streaming FileStore seam, sync for the bug-report filing lock, time for MemProfileSource's slow and silent PDS",
       "node": false
     },
     {
@@ -32,7 +32,7 @@
     },
     {
       "name": "src/bug_report.rs",
-      "role": "MemBugReportStore/Writes over the staged append-only bug_reports log (NewBugReport rows, merged with merge_log); file refuses a reporter missing from users and a repeated id; tests in src/bug_report/tests.rs",
+      "role": "MemBugReportStore/Writes over the staged append-only bug_reports log (NewBugReport rows, merged with merge_log); lock_reporter_and_count_since takes the backend's one filing lock, parks its guard on the unit until the unit ends, and counts the committed log plus the unit's own staged reports; file refuses a reporter missing from users and a repeated id; tests in src/bug_report/tests.rs",
       "node": false
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "shared MemBackend (incl. markups map and the staged bug_reports log, bug_report_store()) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one; answer_after / never_answer latency), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
+      "role": "shared MemBackend (incl. markups map, the staged bug_reports log, bug_report_store(), and the shared bug_report_filing lock a MemUnitOfWork holds until it ends) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one; answer_after / never_answer latency), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
       "node": false
     },
     {

@@ -1,7 +1,7 @@
-//! [`BugReportStore`] (reads) and [`BugReportWrites`] (filing) over
-//! PostgreSQL, in the `bug_report` table. Reads are pool-backed; filing is a
-//! write, reachable only on an open [`UnitOfWork`](domain::ports::UnitOfWork)
-//! (`uow.bug_reports()`).
+//! [`BugReportStore`] (reads) and [`BugReportWrites`] (the locked count and
+//! filing) over PostgreSQL, in the `bug_report` table. Reads are pool-backed;
+//! the count and filing are reachable only on an open
+//! [`UnitOfWork`](domain::ports::UnitOfWork) (`uow.bug_reports()`).
 
 use domain::datetime::DateTimeUtc;
 use domain::elements::bug_report::{
@@ -30,8 +30,8 @@ impl PgBugReportStore {
     }
 }
 
-/// PostgreSQL write view for filing bug reports (the [`BugReportWrites`]
-/// surface), over an open transaction. Built by `uow.bug_reports()`.
+/// PostgreSQL write view for the rate limit's locked count and filing (the
+/// [`BugReportWrites`] surface), over an open transaction. Built by `uow.bug_reports()`.
 pub struct PgBugReportWrites<'a> {
     /// The open transaction, borrowed from the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub(crate) conn: &'a mut PgConnection,
@@ -39,16 +39,6 @@ pub struct PgBugReportWrites<'a> {
 
 #[async_trait::async_trait]
 impl BugReportStore for PgBugReportStore {
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn count_filed_since(
-        &self,
-        reporter: &UserId,
-        since: DateTimeUtc,
-    ) -> anyhow::Result<i64> {
-        let filed = sql::count_filed_since(&self.pool, reporter.as_ref(), since).await?;
-        Ok(filed)
-    }
-
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_since(&self, since: Option<DateTimeUtc>) -> anyhow::Result<Vec<StoredBugReport>> {
         let rows = sql::list_since(&self.pool, since).await?;
@@ -58,6 +48,20 @@ impl BugReportStore for PgBugReportStore {
 
 #[async_trait::async_trait]
 impl BugReportWrites for PgBugReportWrites<'_> {
+    /// Locks the reporter's `users` row, then counts in a second statement, which
+    /// at READ COMMITTED reads the reports the previous holder of the lock committed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_reporter_and_count_since(
+        &mut self,
+        reporter: &UserId,
+        since: DateTimeUtc,
+    ) -> anyhow::Result<i64> {
+        // No row means the reporter is no User; filing's foreign key refuses them.
+        let _locked = sql::lock_reporter(&mut *self.conn, reporter.as_ref()).await?;
+        let filed = sql::count_filed_since(&mut *self.conn, reporter.as_ref(), since).await?;
+        Ok(filed)
+    }
+
     /// Inserts the report. The `users` foreign key refuses a reporter who is
     /// not a User.
     #[tracing::instrument(level = "debug", skip_all)]
