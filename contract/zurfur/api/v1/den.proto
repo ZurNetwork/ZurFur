@@ -102,6 +102,16 @@ message DenOpen {
   // with a generic soft-deleted label, never the unknown value itself: never as live,
   // and never with another value's word.
   string soft_delete = 3;
+  // The thing this node stands for, for a typed write call to act on. It names the
+  // thing, never the node, and is set only in the cases below. A mount carries its
+  // target's; a symlink carries none until links open. A client that finds no case
+  // it knows, or an empty value, acts on nothing.
+  oneof thing {
+    // An Account's DID.
+    string account_did = 4;
+    // A commission's opaque id.
+    string commission_id = 5;
+  }
 }
 
 // A node the viewer may know exists but can't open. Its entry carries only its name, its
@@ -120,6 +130,8 @@ message DenCrumb {
   repeated string segments = 1;
   // Its display name, the one its parent's listing uses; for the root, the viewer's own name.
   string name = 2;
+  // Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
+  string type = 3;
 }
 
 // One page of a directory's entries, after everything the viewer can't see is left out.

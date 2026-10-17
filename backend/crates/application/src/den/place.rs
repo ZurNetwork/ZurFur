@@ -4,7 +4,7 @@ use crate::{
     account::{den::AccountPlace, workflow::den::WorkflowPlace},
     character::den::CharacterPlace,
     commission::den::CommissionPlace,
-    den::{DenType, NodeState, names, post::PostPlace},
+    den::{DenThing, DenType, NodeState, names, post::PostPlace},
     user::den::UserPlace,
 };
 
@@ -102,6 +102,35 @@ impl Place {
             Place::Commission(place) => place.top_level(),
             Place::Workflow(place) => place.top_level(),
             Place::Post(place) => place.top_level(),
+        }
+    }
+
+    /// The thing the node at this place stands for: an Account's directory its Account, a
+    /// commission's directory its commission; every other place stands for none.
+    pub(crate) fn thing(&self) -> Option<DenThing> {
+        match self {
+            Place::Account(AccountPlace::Account(account)) => {
+                Some(DenThing::Account(account.clone()))
+            }
+            Place::Commission(CommissionPlace::Commission(commission)) => {
+                Some(DenThing::Commission(*commission))
+            }
+            Place::TopLevel(_)
+            | Place::User(_)
+            | Place::Account(AccountPlace::Characters(_))
+            | Place::Character(_)
+            | Place::Commission(
+                CommissionPlace::UserCommissions(_)
+                | CommissionPlace::AccountCommissions(_)
+                | CommissionPlace::Attachments(_)
+                | CommissionPlace::Changelog(_)
+                | CommissionPlace::Products(_)
+                | CommissionPlace::Slots(_)
+                | CommissionPlace::Slot(..)
+                | CommissionPlace::File(..),
+            )
+            | Place::Workflow(_)
+            | Place::Post(_) => None,
         }
     }
 

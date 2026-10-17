@@ -1,13 +1,15 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "accounts",
       "segments": [
         "accounts"
-      ]
+      ],
+      "type": "user.accounts"
     }
   ],
   "listing": {
@@ -59,6 +61,7 @@
     "mount": true,
     "name": "Supreme Arts",
     "open": {
+      "accountDid": "did:plc:t7nesupremeartsfixtureaa",
       "ownLevel": "private"
     },
     "segments": [

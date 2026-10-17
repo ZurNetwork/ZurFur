@@ -1,13 +1,15 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "commissions",
       "segments": [
         "commissions"
-      ]
+      ],
+      "type": "user.commissions"
     }
   ],
   "listing": {
@@ -72,6 +74,7 @@
     "mount": true,
     "name": "Old sketch",
     "open": {
+      "commissionId": "019e830e-1a00-7a00-8000-000000000002",
       "ownLevel": "private",
       "softDelete": "archived"
     },

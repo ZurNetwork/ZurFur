@@ -391,6 +391,28 @@ pub struct DenOpen {
     /// and never with another value's word.
     #[prost(string, tag = "3")]
     pub soft_delete: ::prost::alloc::string::String,
+    /// The thing this node stands for, for a typed write call to act on. It names the
+    /// thing, never the node, and is set only in the cases below. A mount carries its
+    /// target's; a symlink carries none until links open. A client that finds no case
+    /// it knows, or an empty value, acts on nothing.
+    #[prost(oneof = "den_open::Thing", tags = "4, 5")]
+    pub thing: ::core::option::Option<den_open::Thing>,
+}
+/// Nested message and enum types in `DenOpen`.
+pub mod den_open {
+    /// The thing this node stands for, for a typed write call to act on. It names the
+    /// thing, never the node, and is set only in the cases below. A mount carries its
+    /// target's; a symlink carries none until links open. A client that finds no case
+    /// it knows, or an empty value, acts on nothing.
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Thing {
+        /// An Account's DID.
+        #[prost(string, tag = "4")]
+        AccountDid(::prost::alloc::string::String),
+        /// A commission's opaque id.
+        #[prost(string, tag = "5")]
+        CommissionId(::prost::alloc::string::String),
+    }
 }
 /// A node the viewer may know exists but can't open. Its entry carries only its name, its
 /// type and, on the viewer's own mount, the mount mark; this message carries nothing more yet.
@@ -411,6 +433,9 @@ pub struct DenCrumb {
     /// Its display name, the one its parent's listing uses; for the root, the viewer's own name.
     #[prost(string, tag = "2")]
     pub name: ::prost::alloc::string::String,
+    /// Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
+    #[prost(string, tag = "3")]
+    pub r#type: ::prost::alloc::string::String,
 }
 /// One page of a directory's entries, after everything the viewer can't see is left out.
 #[derive(Clone, PartialEq, ::prost::Message)]

@@ -1315,12 +1315,18 @@ impl serde::Serialize for DenCrumb {
         if !self.name.is_empty() {
             len += 1;
         }
+        if !self.r#type.is_empty() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenCrumb", len)?;
         if !self.segments.is_empty() {
             struct_ser.serialize_field("segments", &self.segments)?;
         }
         if !self.name.is_empty() {
             struct_ser.serialize_field("name", &self.name)?;
+        }
+        if !self.r#type.is_empty() {
+            struct_ser.serialize_field("type", &self.r#type)?;
         }
         struct_ser.end()
     }
@@ -1334,12 +1340,14 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
         const FIELDS: &[&str] = &[
             "segments",
             "name",
+            "type",
         ];
 
         #[allow(clippy::enum_variant_names)]
         enum GeneratedField {
             Segments,
             Name,
+            Type,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1363,6 +1371,7 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
                         match value {
                             "segments" => Ok(GeneratedField::Segments),
                             "name" => Ok(GeneratedField::Name),
+                            "type" => Ok(GeneratedField::Type),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1384,6 +1393,7 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
             {
                 let mut segments__ = None;
                 let mut name__ = None;
+                let mut r#type__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Segments => {
@@ -1398,11 +1408,18 @@ impl<'de> serde::Deserialize<'de> for DenCrumb {
                             }
                             name__ = Some(map_.next_value()?);
                         }
+                        GeneratedField::Type => {
+                            if r#type__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("type"));
+                            }
+                            r#type__ = Some(map_.next_value()?);
+                        }
                     }
                 }
                 Ok(DenCrumb {
                     segments: segments__.unwrap_or_default(),
                     name: name__.unwrap_or_default(),
+                    r#type: r#type__.unwrap_or_default(),
                 })
             }
         }
@@ -1871,6 +1888,9 @@ impl serde::Serialize for DenOpen {
         if !self.soft_delete.is_empty() {
             len += 1;
         }
+        if self.thing.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DenOpen", len)?;
         if !self.own_level.is_empty() {
             struct_ser.serialize_field("ownLevel", &self.own_level)?;
@@ -1880,6 +1900,16 @@ impl serde::Serialize for DenOpen {
         }
         if !self.soft_delete.is_empty() {
             struct_ser.serialize_field("softDelete", &self.soft_delete)?;
+        }
+        if let Some(v) = self.thing.as_ref() {
+            match v {
+                den_open::Thing::AccountDid(v) => {
+                    struct_ser.serialize_field("accountDid", v)?;
+                }
+                den_open::Thing::CommissionId(v) => {
+                    struct_ser.serialize_field("commissionId", v)?;
+                }
+            }
         }
         struct_ser.end()
     }
@@ -1897,6 +1927,10 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
             "contentNotShown",
             "soft_delete",
             "softDelete",
+            "account_did",
+            "accountDid",
+            "commission_id",
+            "commissionId",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -1904,6 +1938,8 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
             OwnLevel,
             ContentNotShown,
             SoftDelete,
+            AccountDid,
+            CommissionId,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1928,6 +1964,8 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
                             "ownLevel" | "own_level" => Ok(GeneratedField::OwnLevel),
                             "contentNotShown" | "content_not_shown" => Ok(GeneratedField::ContentNotShown),
                             "softDelete" | "soft_delete" => Ok(GeneratedField::SoftDelete),
+                            "accountDid" | "account_did" => Ok(GeneratedField::AccountDid),
+                            "commissionId" | "commission_id" => Ok(GeneratedField::CommissionId),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1950,6 +1988,7 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
                 let mut own_level__ = None;
                 let mut content_not_shown__ = None;
                 let mut soft_delete__ = None;
+                let mut thing__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::OwnLevel => {
@@ -1970,12 +2009,25 @@ impl<'de> serde::Deserialize<'de> for DenOpen {
                             }
                             soft_delete__ = Some(map_.next_value()?);
                         }
+                        GeneratedField::AccountDid => {
+                            if thing__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("accountDid"));
+                            }
+                            thing__ = map_.next_value::<::std::option::Option<_>>()?.map(den_open::Thing::AccountDid);
+                        }
+                        GeneratedField::CommissionId => {
+                            if thing__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("commissionId"));
+                            }
+                            thing__ = map_.next_value::<::std::option::Option<_>>()?.map(den_open::Thing::CommissionId);
+                        }
                     }
                 }
                 Ok(DenOpen {
                     own_level: own_level__.unwrap_or_default(),
                     content_not_shown: content_not_shown__.unwrap_or_default(),
                     soft_delete: soft_delete__.unwrap_or_default(),
+                    thing: thing__,
                 })
             }
         }

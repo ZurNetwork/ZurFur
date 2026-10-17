@@ -1,20 +1,23 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "accounts",
       "segments": [
         "accounts"
-      ]
+      ],
+      "type": "user.accounts"
     },
     {
       "name": "Supreme Arts",
       "segments": [
         "accounts",
         "did:plc:t7nesupremeartsfixtureaa"
-      ]
+      ],
+      "type": "account"
     }
   ],
   "listing": {},

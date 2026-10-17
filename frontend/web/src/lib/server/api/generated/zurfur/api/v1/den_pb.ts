@@ -25,7 +25,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/den.proto.
  */
 export const file_zurfur_api_v1_den: GenFile = /*@__PURE__*/
-  fileDesc("Chd6dXJmdXIvYXBpL3YxL2Rlbi5wcm90bxINenVyZnVyLmFwaS52MSJAChFHZXREZW5Sb290UmVxdWVzdBIXCg9pbmNsdWRlX2RlbGV0ZWQYASABKAgSEgoKcGFnZV90b2tlbhgCIAEoCSJzChJHZXREZW5Sb290UmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRIsCgdsaXN0aW5nGAIgASgLMhkuenVyZnVyLmFwaS52MS5EZW5MaXN0aW5nSABCCQoHY29udGVudCJOChFHZXREZW5Ob2RlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhcKD2luY2x1ZGVfZGVsZXRlZBgCIAEoCBISCgpwYWdlX3Rva2VuGAMgASgJIuwBChJHZXREZW5Ob2RlUmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRInCgZjcnVtYnMYAiADKAsyFy56dXJmdXIuYXBpLnYxLkRlbkNydW1iEiwKB2xpc3RpbmcYAyABKAsyGS56dXJmdXIuYXBpLnYxLkRlbkxpc3RpbmdIABImCgRmaWxlGAQgASgLMhYuenVyZnVyLmFwaS52MS5EZW5GaWxlSAASJgoEbGluaxgFIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTGlua0gAQgkKB2NvbnRlbnQirgEKB0Rlbk5vZGUSEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCRIMCgR0eXBlGAMgASgJEgwKBGtpbmQYBCABKAkSDQoFbW91bnQYBSABKAgSJgoEb3BlbhgGIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuT3BlbkgAEiYKBGNhcmQYByABKAsyFi56dXJmdXIuYXBpLnYxLkRlbkNhcmRIAEIICgZhY2Nlc3MiTAoHRGVuT3BlbhIRCglvd25fbGV2ZWwYASABKAkSGQoRY29udGVudF9ub3Rfc2hvd24YAiABKAgSEwoLc29mdF9kZWxldGUYAyABKAkiCQoHRGVuQ2FyZCIJCgdEZW5GaWxlIgkKB0RlbkxpbmsiKgoIRGVuQ3J1bWISEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCSJOCgpEZW5MaXN0aW5nEicKB2VudHJpZXMYASADKAsyFi56dXJmdXIuYXBpLnYxLkRlbk5vZGUSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJMuYBCgpEZW5TZXJ2aWNlEmYKCkdldERlblJvb3QSIC56dXJmdXIuYXBpLnYxLkdldERlblJvb3RSZXF1ZXN0GiEuenVyZnVyLmFwaS52MS5HZXREZW5Sb290UmVzcG9uc2UiE4LT5JMCDRILL2FwaS92MS9kZW4ScAoKR2V0RGVuTm9kZRIgLnp1cmZ1ci5hcGkudjEuR2V0RGVuTm9kZVJlcXVlc3QaIS56dXJmdXIuYXBpLnYxLkdldERlbk5vZGVSZXNwb25zZSIdgtPkkwIXEhUvYXBpL3YxL2Rlbi97cGF0aD0qKn1iBnByb3RvMw", [file_google_api_annotations]);
+  fileDesc("Chd6dXJmdXIvYXBpL3YxL2Rlbi5wcm90bxINenVyZnVyLmFwaS52MSJAChFHZXREZW5Sb290UmVxdWVzdBIXCg9pbmNsdWRlX2RlbGV0ZWQYASABKAgSEgoKcGFnZV90b2tlbhgCIAEoCSJzChJHZXREZW5Sb290UmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRIsCgdsaXN0aW5nGAIgASgLMhkuenVyZnVyLmFwaS52MS5EZW5MaXN0aW5nSABCCQoHY29udGVudCJOChFHZXREZW5Ob2RlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhcKD2luY2x1ZGVfZGVsZXRlZBgCIAEoCBISCgpwYWdlX3Rva2VuGAMgASgJIuwBChJHZXREZW5Ob2RlUmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRInCgZjcnVtYnMYAiADKAsyFy56dXJmdXIuYXBpLnYxLkRlbkNydW1iEiwKB2xpc3RpbmcYAyABKAsyGS56dXJmdXIuYXBpLnYxLkRlbkxpc3RpbmdIABImCgRmaWxlGAQgASgLMhYuenVyZnVyLmFwaS52MS5EZW5GaWxlSAASJgoEbGluaxgFIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTGlua0gAQgkKB2NvbnRlbnQirgEKB0Rlbk5vZGUSEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCRIMCgR0eXBlGAMgASgJEgwKBGtpbmQYBCABKAkSDQoFbW91bnQYBSABKAgSJgoEb3BlbhgGIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuT3BlbkgAEiYKBGNhcmQYByABKAsyFi56dXJmdXIuYXBpLnYxLkRlbkNhcmRIAEIICgZhY2Nlc3MihQEKB0Rlbk9wZW4SEQoJb3duX2xldmVsGAEgASgJEhkKEWNvbnRlbnRfbm90X3Nob3duGAIgASgIEhMKC3NvZnRfZGVsZXRlGAMgASgJEhUKC2FjY291bnRfZGlkGAQgASgJSAASFwoNY29tbWlzc2lvbl9pZBgFIAEoCUgAQgcKBXRoaW5nIgkKB0RlbkNhcmQiCQoHRGVuRmlsZSIJCgdEZW5MaW5rIjgKCERlbkNydW1iEhAKCHNlZ21lbnRzGAEgAygJEgwKBG5hbWUYAiABKAkSDAoEdHlwZRgDIAEoCSJOCgpEZW5MaXN0aW5nEicKB2VudHJpZXMYASADKAsyFi56dXJmdXIuYXBpLnYxLkRlbk5vZGUSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJMuYBCgpEZW5TZXJ2aWNlEmYKCkdldERlblJvb3QSIC56dXJmdXIuYXBpLnYxLkdldERlblJvb3RSZXF1ZXN0GiEuenVyZnVyLmFwaS52MS5HZXREZW5Sb290UmVzcG9uc2UiE4LT5JMCDRILL2FwaS92MS9kZW4ScAoKR2V0RGVuTm9kZRIgLnp1cmZ1ci5hcGkudjEuR2V0RGVuTm9kZVJlcXVlc3QaIS56dXJmdXIuYXBpLnYxLkdldERlbk5vZGVSZXNwb25zZSIdgtPkkwIXEhUvYXBpL3YxL2Rlbi97cGF0aD0qKn1iBnByb3RvMw", [file_google_api_annotations]);
 
 /**
  * `GET /api/v1/den`: the viewer's own root; the session is the argument.
@@ -292,6 +292,32 @@ export type DenOpen = Message<"zurfur.api.v1.DenOpen"> & {
    * @generated from field: string soft_delete = 3;
    */
   softDelete: string;
+
+  /**
+   * The thing this node stands for, for a typed write call to act on. It names the
+   * thing, never the node, and is set only in the cases below. A mount carries its
+   * target's; a symlink carries none until links open. A client that finds no case
+   * it knows, or an empty value, acts on nothing.
+   *
+   * @generated from oneof zurfur.api.v1.DenOpen.thing
+   */
+  thing: {
+    /**
+     * An Account's DID.
+     *
+     * @generated from field: string account_did = 4;
+     */
+    value: string;
+    case: "accountDid";
+  } | {
+    /**
+     * A commission's opaque id.
+     *
+     * @generated from field: string commission_id = 5;
+     */
+    value: string;
+    case: "commissionId";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -366,6 +392,13 @@ export type DenCrumb = Message<"zurfur.api.v1.DenCrumb"> & {
    * @generated from field: string name = 2;
    */
   name: string;
+
+  /**
+   * Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
+   *
+   * @generated from field: string type = 3;
+   */
+  type: string;
 };
 
 /**

@@ -10,8 +10,12 @@ use std::{
 use crate::{
     Ports, account, character, commission,
     den::{
-        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, RootNaming, SoftDelete,
-        TopLevel, admission::admission, names, place::Parent, post, read::SoftDeleteLookup,
+        DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, RootNaming, TopLevel,
+        admission::admission,
+        names,
+        place::Parent,
+        post,
+        read::{RecordLookup, RecordedFacts},
     },
     user,
 };
@@ -31,8 +35,8 @@ struct Recorded {
 }
 
 /// Zurfur's one host for Atta, built per request for the session's viewer. It records every
-/// node it answers for, keyed by its real path, so `admit` and the read's soft-delete words
-/// answer from that record alone.
+/// node it answers for, keyed by its real path, so `admit`, the read's soft-delete words and
+/// each open node's thing answer from that record alone.
 pub(crate) struct DenHost<'a> {
     context: DenContext<'a>,
     viewer: Viewer,
@@ -353,12 +357,17 @@ impl Host for DenHost<'_> {
     }
 }
 
-impl SoftDeleteLookup for DenHost<'_> {
-    /// The word recorded for the node this host answered for at `path`.
-    fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>> {
+impl RecordLookup for DenHost<'_> {
+    /// The soft-deleted word and the thing recorded for the node this host answered for at
+    /// `path`, both from its recorded state and place.
+    fn recorded(&self, path: &RealPath) -> Option<RecordedFacts> {
         let record = self.record();
         let recorded = record.get(path)?;
-        Some(recorded.state.soft_delete())
+        let facts = RecordedFacts {
+            soft_delete: recorded.state.soft_delete(),
+            thing: recorded.place.thing(),
+        };
+        Some(facts)
     }
 }
 

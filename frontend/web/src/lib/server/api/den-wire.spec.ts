@@ -6,8 +6,13 @@ import { Effect } from 'effect';
 import { cardTypeWord, type DenEntry, type DenPage } from '$lib/api/den';
 import { fetchStub } from '$lib/testing/http';
 import { denPage, type DenPageResult } from '../den';
-import { RequestFetch, ZurfurApiLive } from './zurfur-api';
+import { decodeContract, RequestFetch, ZurfurApiLive } from './zurfur-api';
 import type { ContractViolation, NetworkFailure } from './errors';
+import type { JsonObject, JsonValue } from '@bufbuild/protobuf';
+import { commissionId, did } from '$lib/types/brand';
+import { denReadFromNode } from './den-wire';
+import type { DenRead, DenReadAccess, DenReadNode } from './den-read';
+import { GetDenNodeResponseSchema } from './generated/zurfur/api/v1/den_pb';
 
 /** Run the den page program for `address` over the live port, every read answered by `body`. */
 function runPage(
@@ -188,5 +193,117 @@ describe('the tolerant reader: broken answers', () => {
 		const node = await runPage('/den/commissions', respond);
 		expect('_tag' in root && root._tag).toBe('ContractViolation');
 		expect('_tag' in node && node._tag).toBe('ContractViolation');
+	});
+});
+
+/** The read a node answer's JSON decodes to, through the live port's own decode, or a thrown test failure. */
+function readOf(body: JsonValue): DenRead {
+	const read = denReadFromNode(decodeContract(GetDenNodeResponseSchema, body));
+	if (read === undefined) throw new Error('expected a read');
+	return read;
+}
+
+/** The first listing entry of a read, or a thrown test failure. */
+function firstEntry(read: DenRead): DenReadNode {
+	if (read.content.content !== 'listing') throw new Error('expected a listing');
+	const [first] = read.content.entries;
+	if (first === undefined) throw new Error('expected an entry');
+	return first;
+}
+
+/** The thing an access names; none for a card. */
+function thingOf(access: DenReadAccess) {
+	return access.access === 'open' ? access.thing : undefined;
+}
+
+/** A one-entry answer at `/den/commissions` whose entry is `node`. */
+function answerWith(node: JsonObject): JsonValue {
+	return { node: openNode, crumbs: [], listing: { entries: [node] } };
+}
+
+describe('the thing an open node names', () => {
+	it('an open commission maps its thing', () => {
+		const node = { ...entry, open: { ownLevel: 'private', commissionId: 'c1' } };
+		const id = commissionId('c1');
+		expect(thingOf(firstEntry(readOf(answerWith(node))).access)).toEqual({
+			thing: 'commission',
+			id
+		});
+		const own = { node: { ...entry, open: { ownLevel: 'private', commissionId: 'c1' } } };
+		expect(thingOf(readOf(own).node.access)).toEqual({ thing: 'commission', id });
+	});
+
+	it('an account maps its did', () => {
+		const node = {
+			...entry,
+			type: 'account',
+			open: { ownLevel: 'private', accountDid: 'did:plc:a1' }
+		};
+		expect(thingOf(firstEntry(readOf(answerWith(node))).access)).toEqual({
+			thing: 'account',
+			did: did('did:plc:a1')
+		});
+	});
+
+	it('an open node that names nothing has no thing', () => {
+		expect(thingOf(firstEntry(readOf(answerWith(entry))).access)).toBeUndefined();
+	});
+
+	it('a thing case this build does not know is no thing', () => {
+		const node = { ...entry, open: { ownLevel: 'private', characterDid: 'did:plc:c1' } };
+		const access = firstEntry(readOf(answerWith(node))).access;
+		expect(access).toMatchObject({ access: 'open', ownLevel: 'private' });
+		expect(thingOf(access)).toBeUndefined();
+	});
+
+	it('a card with a stray thing key stays a card', () => {
+		const onNode = { name: 'Locked', type: 'commission', card: {}, commissionId: 'c1' };
+		const inCard = { name: 'Locked', type: 'account', card: { accountDid: 'did:plc:a1' } };
+		for (const node of [onNode, inCard])
+			expect(firstEntry(readOf(answerWith(node))).access).toEqual({ access: 'card' });
+	});
+
+	it('an empty account did is no thing', () => {
+		const node = { ...entry, type: 'account', open: { ownLevel: 'private', accountDid: '' } };
+		const access = firstEntry(readOf(answerWith(node))).access;
+		expect(access).toMatchObject({ access: 'open' });
+		expect(thingOf(access)).toBeUndefined();
+	});
+
+	it('a whitespace account did is no thing', () => {
+		for (const accountDid of [' ', '\t', ' \n ']) {
+			const node = { ...entry, type: 'account', open: { ownLevel: 'private', accountDid } };
+			const access = firstEntry(readOf(answerWith(node))).access;
+			expect(access).toMatchObject({ access: 'open' });
+			expect(thingOf(access)).toBeUndefined();
+		}
+	});
+
+	it('an empty commission id is no thing', () => {
+		const node = { ...entry, open: { ownLevel: 'private', commissionId: '' } };
+		const access = firstEntry(readOf(answerWith(node))).access;
+		expect(access).toMatchObject({ access: 'open' });
+		expect(thingOf(access)).toBeUndefined();
+	});
+});
+
+describe('a crumb’s type', () => {
+	it('a crumb carries its type', () => {
+		const crumbs = [
+			{ name: 'Alice', type: 'user' },
+			{ name: 'commissions', type: 'user.commissions' }
+		];
+		expect(readOf({ node: openNode, crumbs }).crumbs.map((crumb) => crumb.type)).toEqual([
+			'user',
+			'user.commissions'
+		]);
+	});
+
+	it('a crumb without a type reads empty', () => {
+		const crumbs = [{ name: 'Alice' }, { name: 'commissions', segments: ['commissions'] }];
+		expect(readOf({ node: openNode, crumbs }).crumbs).toEqual([
+			{ segments: [], name: 'Alice', type: '' },
+			{ segments: ['commissions'], name: 'commissions', type: '' }
+		]);
 	});
 });

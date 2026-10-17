@@ -147,3 +147,32 @@ fn every_place_has_a_key_and_only_entities_are_anchored() {
         assert_eq!(anchored.is_some(), place.top_level().is_some(), "{place:?}");
     }
 }
+
+#[test]
+fn an_account_s_directory_stands_for_its_account() {
+    let account = AccountId::from(did("account-a"));
+    let place = Place::Account(AccountPlace::Account(account.clone()));
+    let expected_thing = Some(DenThing::Account(account));
+
+    assert_eq!(place.thing(), expected_thing);
+}
+
+#[test]
+fn a_commission_s_directory_stands_for_its_commission() {
+    let commission = CommissionId::from(uuid(1));
+    let place = Place::Commission(CommissionPlace::Commission(commission));
+    let expected_thing = Some(DenThing::Commission(commission));
+
+    assert_eq!(place.thing(), expected_thing);
+}
+
+#[test]
+fn every_other_place_stands_for_nothing() {
+    let others = places("a", 1)
+        .into_iter()
+        .chain(top_levels())
+        .filter(|place| ![DenType::Account, DenType::Commission].contains(&place.den_type()));
+    for place in others {
+        assert_eq!(place.thing(), None, "{place:?}");
+    }
+}

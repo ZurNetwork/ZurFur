@@ -4,6 +4,8 @@ use atta::{
     Access, Admission, Found, HostError, Lift, Metadata, Mount, NodeName, Reach, Relationship,
     Scope, Type,
 };
+use domain::elements::commission::CommissionId;
+use uuid::Uuid;
 
 use super::*;
 use crate::den::{DenAccess, DenContent};
@@ -80,6 +82,7 @@ struct FakeHost {
     nodes: Vec<(RealPath, Found)>,
     mounts: HashMap<RealPath, Vec<Mount>>,
     words: HashMap<RealPath, SoftDelete>,
+    things: HashMap<RealPath, DenThing>,
     listed: Mutex<Vec<RealPath>>,
 }
 
@@ -120,6 +123,12 @@ impl FakeHost {
     /// Marks the node at `at` soft-deleted with `word`.
     fn soft_deleted(mut self, at: &str, word: SoftDelete) -> Self {
         self.words.insert(path(at), word);
+        self
+    }
+
+    /// Records that the node at `at` stands for `thing`.
+    fn thing(mut self, at: &str, thing: DenThing) -> Self {
+        self.things.insert(path(at), thing);
         self
     }
 
@@ -186,9 +195,22 @@ impl Host for FakeHost {
     }
 }
 
-impl SoftDeleteLookup for FakeHost {
-    fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>> {
-        Some(self.words.get(path).copied())
+impl RecordLookup for FakeHost {
+    fn recorded(&self, path: &RealPath) -> Option<RecordedFacts> {
+        let facts = RecordedFacts {
+            soft_delete: self.words.get(path).copied(),
+            thing: self.things.get(path).cloned(),
+        };
+        Some(facts)
+    }
+}
+
+/// A record the host never wrote to: every lookup answers `None`.
+struct NothingRecorded;
+
+impl RecordLookup for NothingRecorded {
+    fn recorded(&self, _path: &RealPath) -> Option<RecordedFacts> {
+        None
     }
 }
 
@@ -340,6 +362,7 @@ async fn each_own_level_shows_its_word() {
             own_level: own,
             content_not_shown: false,
             soft_delete: None,
+            thing: None,
         };
         assert_eq!(node.access, expected, "{piece}");
         assert_eq!(node.segments.len(), 1, "{piece}");
@@ -362,6 +385,25 @@ async fn an_open_node_carries_its_soft_deleted_word() {
 }
 
 #[tokio::test]
+async fn an_open_node_the_host_never_recorded_is_a_store_error() {
+    let host = tree();
+    let viewer = Viewer::from("did:plc:alice".to_owned());
+    let reader = Reader::new(&host, viewer, &NothingRecorded, Caps::default());
+    let resolved = reader
+        .walk(&path("/user/alice"), &[segment("notes")])
+        .await
+        .expect("the notes resolve");
+    let expected_message = "an open den node has no host record";
+
+    let node = reader.node(resolved.node());
+
+    let Err(DenError::Store(store_error)) = node else {
+        panic!("an unrecorded open node is a store error: {node:?}");
+    };
+    assert_eq!(store_error.to_string(), expected_message);
+}
+
+#[tokio::test]
 async fn a_mount_shows_its_target_s_soft_deleted_word() {
     let host = tree();
 
@@ -376,4 +418,113 @@ async fn a_mount_shows_its_target_s_soft_deleted_word() {
             ..
         }
     ));
+}
+
+/// A commission id that no segment in the test trees spells.
+fn recorded_commission() -> CommissionId {
+    CommissionId::from(Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0042))
+}
+
+/// alice's `commissions` folder, mounting the commission keyed `c3` under the segment `mine`;
+/// the host recorded that `c3` stands for [`recorded_commission`].
+fn mounted_commission() -> FakeHost {
+    FakeHost::default()
+        .node("/user", DenType::TopLevel, Level::Public, &[])
+        .node("/commission", DenType::TopLevel, Level::Public, &[])
+        .node("/user/alice", DenType::User, Level::Private, &[STANDING])
+        .node(
+            "/user/alice/commissions",
+            DenType::UserCommissions,
+            Level::Private,
+            &[],
+        )
+        .node("/commission/c3", DenType::Commission, Level::Public, &[])
+        .node(
+            "/commission/c3/attachments",
+            DenType::CommissionAttachments,
+            Level::Public,
+            &[],
+        )
+        .thing(
+            "/commission/c3",
+            DenThing::Commission(recorded_commission()),
+        )
+        .mount("/user/alice/commissions", "mine", "/commission/c3")
+}
+
+#[tokio::test]
+async fn the_thing_comes_from_the_recorded_place_not_the_den_path() {
+    let host = mounted_commission();
+    let expected_thing = Some(DenThing::Commission(recorded_commission()));
+
+    let (node, _) = read(&host, &["commissions", "mine"]).await;
+
+    let DenAccess::Open { thing, .. } = node.access else {
+        panic!("the mounted commission opens");
+    };
+    assert!(node.mount);
+    assert_eq!(thing, expected_thing);
+}
+
+#[tokio::test]
+async fn a_node_the_host_recorded_no_thing_for_carries_none() {
+    let host = mounted_commission();
+
+    let (node, _) = read(&host, &["commissions"]).await;
+
+    let DenAccess::Open { thing, .. } = node.access else {
+        panic!("the commissions folder opens");
+    };
+    assert_eq!(thing, None);
+}
+
+#[tokio::test]
+async fn a_mounted_crumb_carries_its_target_s_type() {
+    let host = mounted_commission();
+    let viewer = Viewer::from("did:plc:alice".to_owned());
+    let reader = Reader::new(&host, viewer, &host, Caps::default());
+    let den_path = [
+        segment("commissions"),
+        segment("mine"),
+        segment("attachments"),
+    ];
+    let resolved = reader
+        .walk(&path("/user/alice"), &den_path)
+        .await
+        .expect("the attachments resolve through the mount");
+    let expected_types = vec![DenType::User, DenType::UserCommissions, DenType::Commission];
+    let expected_mount_segments = vec![
+        DenSegment::new(segment("commissions")),
+        DenSegment::new(segment("mine")),
+    ];
+
+    let crumbs = resolved
+        .crumbs()
+        .iter()
+        .map(crumb)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("every crumb has a known type");
+
+    let types: Vec<DenType> = crumbs.iter().map(|crumb| crumb.den_type).collect();
+    assert_eq!(types, expected_types);
+    assert_eq!(crumbs[2].segments, expected_mount_segments);
+}
+
+#[test]
+fn a_crumb_of_an_unknown_type_is_a_store_error() {
+    let entry = Entry {
+        name: NodeName::try_from("Mystery".to_owned()).expect("a valid test name"),
+        typ: Type::from("mystery".to_owned()),
+        mount: false,
+        view: View::Open {
+            den_path: vec![segment("mystery")],
+            real_path: path("/user/alice/mystery"),
+            own_level: Level::Private,
+            kind: Kind::Directory,
+        },
+    };
+
+    let crumb = crumb(&entry);
+
+    assert!(matches!(crumb, Err(DenError::Store(_))));
 }

@@ -21,6 +21,7 @@ pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
+mod thing;
 
 use crate::ports::WithPorts;
 
@@ -32,6 +33,7 @@ pub use output::{DenAccess, DenContent, DenCrumb, DenListing, DenNode};
 pub use page_token::{PageToken, PageTokenError};
 pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
+pub use thing::DenThing;
 
 pub(crate) use atta::Level;
 pub(crate) use atta::NodeName;
