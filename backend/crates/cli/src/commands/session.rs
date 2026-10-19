@@ -76,7 +76,7 @@ pub async fn run(
     match op {
         SessionOp::Login => Err(CliError::infra(
             "not_implemented",
-            "`session login` is blocked on the client-model ruling (ZMVP-204)",
+            "`session login` is blocked on the client-model ruling",
         )),
         SessionOp::Logout => logout(identity_path),
         SessionOp::Whoami => {

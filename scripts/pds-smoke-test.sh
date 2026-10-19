@@ -106,15 +106,15 @@ pass "wipe cleared state: re-provisioned as a fresh did=$second_did (was $first_
 
 echo "=== AC5: every new ZURFUR_PDS_*/ZURFUR_PLC_* key is documented in .env.example ==="
 used_keys="$(grep -rhoE 'ZURFUR_PDS_[A-Z_]+|ZURFUR_PLC_[A-Z_]+' \
-    docker-compose.yml Justfile backend/config/dev.toml scripts/pds-provision.sh scripts/worktree-init.sh \
+    docker-compose.yml Justfile backend/config/dev.toml scripts/pds-provision.sh scripts/workspace-init.sh \
     | sort -u)"
 missing=0
 while IFS= read -r key; do
     [ -z "$key" ] && continue
     # A key is "documented" either as a real top-level assignment, or (for
-    # the worktree-only host ports, same convention as the pre-existing
+    # the workspace-only host ports, same convention as the pre-existing
     # ZURFUR_DB_HOST_PORT/ZURFUR_PROXY_HOST_PORT) as the commented example in
-    # the "Worktree isolation" block.
+    # the "Workspace isolation" block.
     if ! grep -qE "^#?[[:space:]]*${key}=" .env.example; then
         echo "  FAIL: $key is used but not documented in .env.example" >&2
         missing=1

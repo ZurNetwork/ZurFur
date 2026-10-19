@@ -192,14 +192,14 @@ pub fn ensure_custody_hardened(
         anyhow::bail!(
             "refusing to boot in {env:?}: did:plc key custody is config/env-root-backed, \
              which is DEV-ONLY (a config secret is not a hardware boundary). Cloud-KMS-backed \
-             custody must land before any real account is minted — ZMVP-53."
+             custody must land before any real account is minted."
         );
     }
     if submit && is_example_key {
         anyhow::bail!(
             "refusing PLC directory submission: the did:plc custody root key is the shipped \
              example key (its private value is public). Set a real ZURFUR_DID_KEY_ROOT_KEY and \
-             use KMS-backed custody — ZMVP-53."
+             use KMS-backed custody."
         );
     }
     Ok(())
