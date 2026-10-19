@@ -219,10 +219,10 @@ hookjson "$proj/src/foo.rs" "s3" \
 expect_silent "ZURFUR_HOOKS_OFF=all"
 
 hookjson "$proj/src/foo.rs" "s4" \
-    | env -i PATH="$PATH" HOME="$HOME" CLAUDE_PROJECT_DIR="$proj" XDG_STATE_HOME="$state_home" ZURFUR_HOOKS_OFF=uow \
+    | env -i PATH="$PATH" HOME="$HOME" CLAUDE_PROJECT_DIR="$proj" XDG_STATE_HOME="$state_home" ZURFUR_HOOKS_OFF=pins \
           ZURFUR_HOOKS_TEST=1 ZURFUR_NODES_BIN="$stub_nodes" ZURFUR_JQ_BIN=jq NODES_STUB_CHAIN_FILE="$work/chain-normal.json" \
           sh "$under_test" >"$work/out" 2>"$work/err"
-expect_contains "ZURFUR_HOOKS_OFF=uow (unrelated) still fires" "Test node"
+expect_contains "ZURFUR_HOOKS_OFF=pins (unrelated) still fires" "Test node"
 
 touch "$proj/.claude/hooks.off"
 hookjson "$proj/src/foo.rs" "s5" \

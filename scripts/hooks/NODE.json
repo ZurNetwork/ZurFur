@@ -1,6 +1,6 @@
 {
   "path": "scripts/hooks",
-  "charted": "2026-09-18",
+  "charted": "2026-10-19",
   "short": "Claude Code hook scripts: session/tool-call context injection",
   "is": "The Claude Code hook scripts wired in .claude/settings.json (PreToolUse/SessionStart) that inject factual, deterministic context into a session — as distinct from scripts/*.sh, which back `just` dev-loop recipes.",
   "type": "code",
@@ -51,12 +51,22 @@
     },
     {
       "name": "lib.sh",
-      "role": "shared hooks_are_off/neutralize/cap_bytes/safe_state_dir/bounded_append/utf8_safe_head helpers, sourced by every hook script",
+      "role": "shared hooks_are_off/neutralize/has_control_char/safe_state_dir/bounded_append/utf8_safe_head helpers, sourced by every hook script",
       "node": false
     },
     {
       "name": "nodes-stub.sh",
       "role": "test double for the `nodes` binary, driven by design-refs.test.sh via ZURFUR_NODES_BIN",
+      "node": false
+    },
+    {
+      "name": "orchestrate.sh",
+      "role": "SessionStart(startup|resume|clear|compact) hook — states that the main session is the Orchestrator and that CLAUDE.md's first rule has it load the teams:orchestrate skill; SessionStart never fires for a subagent",
+      "node": false
+    },
+    {
+      "name": "orchestrate.test.sh",
+      "role": "fixture-driven tests for orchestrate.sh, plus its wiring in ../../.claude/settings.json and that every wired hook script exists",
       "node": false
     },
     {
@@ -77,11 +87,6 @@
     {
       "name": "stat-foreign-owner-stub.sh",
       "role": "test double for a `stat` that always reports a foreign uid, driven by pins.test.sh via ZURFUR_STAT_BIN",
-      "node": false
-    },
-    {
-      "name": "uow-status.test.sh",
-      "role": "fixture-driven tests for ../uow-status.sh",
       "node": false
     }
   ],
