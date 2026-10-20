@@ -1,6 +1,6 @@
 {
   "path": "backend/crates",
-  "charted": "2026-10-17",
+  "charted": "2026-10-20",
   "short": "The twenty-one workspace crates",
   "is": "Twenty-one workspace crates arranged as a hexagon: an I/O-free core of domain crates (kernel, identity, workflow and the gallery and moderation stubs) behind the domain façade, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, two HTTP crates that api and test-support share (http-cookies, http-stack), three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
@@ -90,7 +90,7 @@
     },
     {
       "name": "identity/",
-      "role": "identity domain crate: who acts — users, accounts, actor identities, handles, keys, profiles, public records — and their ports; depends on kernel",
+      "role": "identity domain crate: who acts — users, accounts, actor identities, handles, keys, profiles, public records, bug reports — and their ports; depends on kernel",
       "node": true
     },
     {

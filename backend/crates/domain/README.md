@@ -7,7 +7,7 @@ The `domain` crate is the one path every other crate uses into Zurfur's domain. 
 | Crate | Holds | Depends on (workspace) |
 |---|---|---|
 | `kernel` | the shared vocabulary: `did`, `text`, `maturity`, `markdown`, `blob`, plus `datetime` and `string_builder` | nothing (`shared` allowed) |
-| `identity` | who acts: users, accounts, actor identities, handles, custody keys, profiles, public records, and their ports | `kernel` |
+| `identity` | who acts: users, accounts, actor identities, handles, custody keys, profiles, public records, bug reports, and their ports | `kernel` |
 | `workflow` | the work: the commission aggregate and an account's boards, and their ports | `kernel`, `identity` |
 | `gallery`, `moderation` | stubs, with no types and no dependencies yet | none |
 | `domain` | this façade, plus the unit of work | `kernel`, `identity`, `workflow` |

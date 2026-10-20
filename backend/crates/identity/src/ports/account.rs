@@ -74,7 +74,7 @@ pub trait AccountStore: Send + Sync {
 }
 
 /// The **write** surface of Zurfur's record of accounts and memberships —
-/// reachable only on an open [`UnitOfWork`] (`uow.accounts()`). Authorization is
+/// reachable only on an open `UnitOfWork` (`uow.accounts()`). Authorization is
 /// always the caller's, settled before any of these is reached.
 #[async_trait]
 pub trait AccountWrites: Send {
@@ -180,7 +180,7 @@ pub trait AccountReads: Send {
 }
 
 /// An account unit of work: [`AccountReads`] + [`AccountWrites`] on one
-/// connection. Vended by [`UnitOfWork::accounts`].
+/// connection. Vended by `UnitOfWork::accounts`.
 pub trait AccountRepo: AccountReads + AccountWrites {}
 
 impl<T: AccountReads + AccountWrites> AccountRepo for T {}

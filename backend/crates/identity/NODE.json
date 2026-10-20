@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/identity",
-  "charted": "2026-10-17",
+  "charted": "2026-10-20",
   "short": "Who acts: the identity domain crate",
-  "is": "The identity domain crate: users, accounts, actor identities, handles, custody keys, profiles and public records, with the ports that store and resolve them; I/O-free, built on kernel only (shared allowed).",
+  "is": "The identity domain crate: users, accounts, actor identities, handles, custody keys, profiles, public records and bug reports, with the ports that store and resolve them; I/O-free, built on kernel only (shared allowed).",
   "type": "code",
   "tags": [
     "category:source"

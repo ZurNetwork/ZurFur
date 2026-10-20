@@ -8,7 +8,7 @@ use kernel::elements::did::Did;
 /// read a record, and upload a blob, in the acting identity's atproto repo.
 /// Auth-agnostic by construction — it speaks [`Did`] and domain records only,
 /// never a credential, so the PDS credential stays inside its adapter. Every call
-/// is its own retryable step, never fused with a private-store [`UnitOfWork`].
+/// is its own retryable step, never fused with a private-store `UnitOfWork`.
 #[async_trait]
 pub trait PublicRecords: Send + Sync {
     /// Create a new record in `repo`'s collection (the NSID follows the record

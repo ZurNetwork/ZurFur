@@ -4,9 +4,9 @@ name = "identity"
 version = "0.1.0"
 edition = "2024"
 
-# Who acts: users, accounts, actor identities, handles, keys, profiles and
-# public records, with their ports. Depends on `kernel` only (`shared` is
-# allowed).
+# Who acts: users, accounts, actor identities, handles, keys, profiles,
+# public records and bug reports, with their ports. Depends on `kernel` only
+# (`shared` is allowed).
 [dependencies]
 kernel = { path = "../kernel" }
 uuid = { workspace = true }
@@ -23,6 +23,6 @@ derive_more = { workspace = true }
 strum = { workspace = true }
 
 [dev-dependencies]
-# Property tests for the Handle and AtHandle parsers.
+# Property tests for the Handle and AtHandle parsers and the bug-report values.
 proptest = { workspace = true }
 chrono = { workspace = true }

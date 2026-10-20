@@ -13,8 +13,7 @@ pub trait BugReportStore: Send + Sync {
     async fn list_since(&self, since: Option<DateTimeUtc>) -> anyhow::Result<Vec<StoredBugReport>>;
 }
 
-/// The write surface of bug reports — reachable only on an open
-/// [`UnitOfWork`](super::UnitOfWork).
+/// The write surface of bug reports — reachable only on an open `UnitOfWork`.
 #[async_trait]
 pub trait BugReportWrites: Send {
     /// Lock `reporter`'s User row until the unit ends, then count their reports
