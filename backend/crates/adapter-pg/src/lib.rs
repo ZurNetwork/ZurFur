@@ -2,7 +2,7 @@
 //! domain port traits (see [`domain::ports`]) against PostgreSQL; writes go
 //! through the compile-enforced Unit of Work ([`PgDatabase`]/[`PgUnitOfWork`]).
 //! SQL lives in per-statement files under `queries/`, generated
-//! into [`queries`] (see the crate `NODE.json`/`CLAUDE.md`).
+//! into [`queries`] (see this crate's node and `CLAUDE.md`).
 
 use std::borrow::Cow;
 use std::time::Duration;

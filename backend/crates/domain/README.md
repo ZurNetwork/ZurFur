@@ -54,7 +54,7 @@ All writes to the private store go through a transactional `UnitOfWork` pattern 
 
 ### Domain-Driven Design
 
-- Every domain element has a glossary page in the design corpus; the pointer to it lives in this crate's `NODE.json` under `refs`, not in the doc comments
+- Every domain element has a glossary page in the design corpus; the pointer to it lives in this crate's node refs (`NODE.refs.json`), not in the doc comments
 - The domain layer is completely independent - no adapters can depend on it
 - The architecture allows for easy swapping of storage mechanisms via adapter pattern
 

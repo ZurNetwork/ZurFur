@@ -16,9 +16,9 @@ import { sessionHeaders } from '$lib/server/session-headers';
  * PROD GUARD: mock mode must be UNREACHABLE in a real server, checked at
  * BOOT — `hooks.server.ts` loads before adapter-node starts accepting
  * requests, so a failed check here fails the process at startup rather than
- * lazily on the first request that touches the seam. See NODE.json for the
- * full rationale (why `throw`, the loopback assumption, `building`-phase
- * carve-out).
+ * lazily on the first request that touches the seam. See this directory's
+ * node for the full rationale (why `throw`, the loopback assumption,
+ * `building`-phase carve-out).
  */
 if (mockModeMisconfigured()) {
 	// eslint-disable-next-line no-restricted-syntax -- boot-time guard only, see the comment above: no request exists yet to carry an error value through.
