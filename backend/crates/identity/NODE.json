@@ -1,0 +1,51 @@
+{
+  "path": "backend/crates/identity",
+  "charted": "2026-10-20",
+  "short": "Who acts: the identity domain crate",
+  "is": "The identity domain crate: users, accounts, actor identities, handles, custody keys, profiles, public records and bug reports, with the ports that store and resolve them; I/O-free, built on kernel only (shared allowed).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "Depends on kernel only (shared allowed), never on workflow, the domain façade, an adapter or a driver; doc links up a layer are plain code text.",
+    "Every element mirrors a design glossary page (`entities/` in the corpus); the page pointer lives in this node's `refs`, never in a doc comment.",
+    "Stub modules are allowed, and documented honestly as stubs.",
+    "Errors surface as `anyhow::Result` with context."
+  ],
+  "entry_points": [
+    "src/lib.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "kernel, uuid, cid, serde, zeroize (custody keys), async-trait, anyhow, thiserror, derive_more, strum; dev-deps proptest, chrono",
+      "node": false
+    },
+    {
+      "name": "proptest-regressions/",
+      "role": "committed proptest regressions, at the path of each property file under src/ (handle/at_handle)",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "elements (who acts) + ports (their seams)",
+      "node": true
+    }
+  ],
+  "refs": [
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
+      "governs": "Actor super-table"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Handle/AtHandle properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
+    }
+  ],
+  "notes": [
+    "See also: the design corpus glossary — `entities/` in ZurNetwork/zurfur-design, indexed by `docs/design-index.md`."
+  ]
+}

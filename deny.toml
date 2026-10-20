@@ -4,7 +4,7 @@
 # [sources] sets both unknown-source lints to deny, so a registry or git
 # repository that Cargo.lock records fails the check until it is listed there.
 #
-# All 7 workspace crates set `publish = false`, which is what keys cargo-deny's
+# Every workspace crate sets `publish = false`, which is what keys cargo-deny's
 # private-crate exemptions ([licenses.private] and [bans] allow-wildcard-paths);
 # the CI `deny` job runs the full four-check set (Engineer rulings 2026-07-18:
 # MPL-2.0 allowed for the jacquard family; anyhow bumped to clear its advisory).
@@ -85,7 +85,7 @@ allow = [
 confidence-threshold = 0.8
 
 [licenses.private]
-# Every workspace crate sets `publish = false`, so all seven are exempted
+# Every workspace crate sets `publish = false`, so all of them are exempted
 # here (they carry no `license` field and never publish).
 ignore = true
 

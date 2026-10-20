@@ -1,0 +1,62 @@
+{
+  "path": "backend/crates/workflow",
+  "charted": "2026-10-17",
+  "short": "The work: the workflow domain crate",
+  "is": "The workflow domain crate: the commission aggregate and an account's boards, with the ports that store them; I/O-free, built on kernel and identity only (shared allowed).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "Depends on kernel and identity only (shared allowed), never on the domain façade, an adapter or a driver; doc links up a layer are plain code text.",
+    "Every element mirrors a design glossary page (`entities/` in the corpus); the page pointer lives in this node's `refs`, never in a doc comment.",
+    "Stub modules are allowed, and documented honestly as stubs.",
+    "Errors surface as `anyhow::Result` with context."
+  ],
+  "entry_points": [
+    "src/lib.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "kernel, identity, uuid, serde, serde_json (changelog payloads), async-trait, anyhow, thiserror, derive_more, strum; tokio io-util only to name AsyncRead for the streaming FileStore port; dev-deps proptest, chrono",
+      "node": false
+    },
+    {
+      "name": "proptest-regressions/",
+      "role": "committed proptest regressions, at the path of each property file under src/ (workflow/position)",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "elements (the commission, the boards) + ports (their seams)",
+      "node": true
+    },
+    {
+      "name": "tests/",
+      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion)",
+      "node": false
+    }
+  ],
+  "refs": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "tests/fact_contract.rs: why no production Fact implementor exists yet"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition — Surfaces as Extension Points, Flat Elements and Tabs",
+      "governs": "flat composition"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Position properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
+    }
+  ],
+  "notes": [
+    "See also: the design corpus glossary — `entities/` in ZurNetwork/zurfur-design, indexed by `docs/design-index.md`.",
+    "See also: ZMVP-67 (tests/fact_contract.rs: the Fact contract's origin ticket)."
+  ]
+}

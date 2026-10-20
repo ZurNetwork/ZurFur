@@ -1596,17 +1596,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
- "cid",
- "derive_more 2.1.1",
- "proptest",
- "serde",
+ "identity",
+ "kernel",
  "serde_json",
- "strum",
- "thiserror 2.0.20",
- "tokio",
- "uuid",
- "zeroize",
+ "workflow",
 ]
 
 [[package]]
@@ -2023,6 +2016,10 @@ dependencies = [
  "pin-project-lite",
  "slab",
 ]
+
+[[package]]
+name = "gallery"
+version = "0.1.0"
 
 [[package]]
 name = "generator"
@@ -2695,6 +2692,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "identity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "cid",
+ "derive_more 2.1.1",
+ "kernel",
+ "proptest",
+ "serde",
+ "strum",
+ "thiserror 2.0.20",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3142,6 +3157,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cid",
+ "derive_more 2.1.1",
+ "proptest",
+ "serde",
+ "strum",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3492,6 +3520,10 @@ dependencies = [
  "wasi",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "moderation"
+version = "0.1.0"
 
 [[package]]
 name = "moka"
@@ -7168,6 +7200,25 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "workflow"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "derive_more 2.1.1",
+ "identity",
+ "kernel",
+ "proptest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

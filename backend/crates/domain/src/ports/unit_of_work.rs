@@ -3,9 +3,9 @@ use std::future::Future;
 use async_trait::async_trait;
 
 use super::AccountRepo;
+use super::BugReportWrites;
 use super::UserWrites;
 use super::actor_identity::ActorIdentityWrites;
-use super::bug_report::BugReportWrites;
 use super::changelog::ChangelogWrites;
 use super::character::CharacterWrites;
 use super::commission::CommissionRepo;
