@@ -68,6 +68,7 @@ expect_plan "a crate change tests the dev profile" "cargo test -p api --locked -
 new_repo
 change docs/notes.md "hello"
 expect_plan "every plan lints the dev profile" "cargo clippy -p api --all-targets --locked --features dev-profile"
+expect_plan "every plan checks the node tree" "just nodes-check"
 
 new_repo
 change frontend/web/app.ts "export {}"

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# The light local gate for base merges and fix rounds: fmt, clippy, typos and the
-# design-index check always; the tests of the crates the change touches; the
-# web checks when the change touches the frontend or the contract. CI re-runs
-# the full suite on every push. Run via `just gate-light`.
+# The light local gate for base merges and fix rounds: fmt, clippy, typos, the
+# design-index check and the node-tree check always; the tests of the crates
+# the change touches; the web checks when the change touches the frontend or
+# the contract. CI re-runs the full suite on every push. Run via `just
+# gate-light`.
 #
 # The change is the diff from trunk() to @ (jj), or from the merge base with
 # origin/main (git). Fails closed: if the diff can't be read, or a path is
@@ -118,6 +119,7 @@ step cargo clippy --workspace --all-targets --locked -- -D warnings
 CARGO_TARGET_DIR=target/dev-profile step cargo clippy -p api --all-targets --locked --features dev-profile -- -D warnings
 step typos
 step just design-index-check
+step just nodes-check
 
 if [ "$whole_workspace" = 1 ]; then
     INSTA_UPDATE=no DEN_GOLDEN=check step cargo test --workspace --locked

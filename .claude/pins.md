@@ -14,7 +14,7 @@ One line each; `[src: …]` names where the fact is recorded. Limit: 40 pins,
 - A command counts as passed on its exit code and its inspected output together; a piped summary is not a gate. [src: retros 2026-07 (h0rnz), 2026-09-17]
 - Tests live in sibling files (`foo.rs` + `foo/tests.rs`), never inline; there is no `mod.rs`. [src: Engineer ruling 2026-09-14]
 - Every derive is path-qualified and never imported; error enums derive `thiserror::Error`; `Deref` is banned on domain newtypes. [src: 37519361 ruling 9 · 64290818]
-- A doc comment says what the item does in 1–4 lines and carries no DD number, page id, Jira key or PR number; code→design pointers live in `NODE.refs.json`, under the nearest node's path. [src: CLAUDE.md › The node tree]
+- A doc comment says what the item does in 1–4 lines and carries no DD number, page id, Jira key or PR number; code→design pointers live in the root `NODE.refs.json`, under the nearest node's path. [src: CLAUDE.md › The node tree]
 - New Rust follows the semantic style rulebook: newtypes for domain primitives, multi-line constructions named into a `let` (tests too), `ok_or_else` / `let-else` / `map_err` over match plumbing. [src: 37519361]
 - Enum variant lists come from `strum::VariantArray` (`Self::VARIANTS`), never a hand-written `const ALL`. [src: Engineer ruling 2026-09-14]
 - Postgres table names are singular (`commission`, not `commissions`). [src: Engineer ruling, ZMVP-65]

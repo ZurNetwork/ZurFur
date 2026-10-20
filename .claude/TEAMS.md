@@ -18,7 +18,7 @@
 | workspaces | `/home/zuri/code/zurfur-workspaces` | one per branch; `/home/zuri/code/zurfur` is the Engineer's checkout; `orchestrator` holds `<docs>` and is never removed |
 | teardown | — | unset on purpose: a `docker compose … down -v` run from a workspace's copied `.env` could reach the Engineer's own dev stack. Zurfur removes workspaces with CLAUDE.md's recipe (CLAUDE.md › Workspaces), not `/teams:cleanup` (R-211, 2026-10-19) |
 | gate | `just gate` | exactly CI. Agents run it as `/home/zuri/.cache/zurfur-locks/build-slot.sh just gate` (two build slots) |
-| light gate | `just gate-light` | for base merges and fix rounds: fmt, clippy, typos, design-index-check, the touched crates' tests, web checks when `frontend/` or `contract/` changed; agents wrap it the same way |
+| light gate | `just gate-light` | for base merges and fix rounds: fmt, clippy, typos, design-index-check, nodes-check, the touched crates' tests, web checks when `frontend/` or `contract/` changed; agents wrap it the same way |
 
 ## Branches
 
