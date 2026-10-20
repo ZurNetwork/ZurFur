@@ -2,9 +2,9 @@
 //! fakes — the module the drivers call, exercised below the HTTP layer.
 //!
 //! Every test here pins a refusal the module shipped without: the delete
-//! role gate, the liveness gate the `account` module's node makes mandatory, the
-//! caller-named-account-vs-board reconciliation, and the order that keeps a
-//! non-member from reading board state off an error.
+//! role gate, the liveness gate the `account` module's node makes
+//! mandatory, the caller-named-account-vs-board reconciliation, and the
+//! order that keeps a non-member from reading board state off an error.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 

@@ -344,6 +344,65 @@ else
     fail "apply on a conflicting entry: expected exit 1 and the role kept, got $got and \"$role\": $out"
 fi
 
+# --- a tool that fails on one step: exit 2 naming the step, never the tool's 1 ---
+# failing <dir> <tool> <needle>: a PATH directory whose <tool> exits 1 when its
+# arguments hold <needle> (all of them, when the needle starts with =) and
+# otherwise runs the real one. Exit 1 is what an unchecked step would pass on.
+failing() {
+    mkdir -p "$1"
+    real="$(command -v "$2")"
+    case "$3" in
+        =*) pattern="'${3#=}'" ;;
+        *) pattern="*'$3'*" ;;
+    esac
+    {
+        echo '#!/bin/sh'
+        printf 'case "$*" in %s) exit 1 ;; esac\n' "$pattern"
+        printf 'exec %s "$@"\n' "$real"
+    } >"$1/$2"
+    chmod +x "$1/$2"
+}
+# bites <tool>: whether this shell runs a PATH stub of <tool> at all (busybox sh
+# runs its own applets ahead of PATH).
+bites() {
+    mkdir -p "$tmp/probe-$1"
+    printf '#!/bin/sh\nexit 3\n' >"$tmp/probe-$1/$1"
+    chmod +x "$tmp/probe-$1/$1"
+    PATH="$tmp/probe-$1" "$sh_bin" -c "$1" </dev/null >/dev/null 2>&1 && return 1
+    [ $? = 3 ]
+}
+# step <name> <tool> <needle> <arg> <message>: <tool> failing on <pattern> makes
+# the script (run with <arg>, if any) exit 2 with <message> and write nothing.
+step() {
+    if ! bites "$2"; then
+        echo "skip (this sh runs its own $2): the failing-$1 case"
+        return 0
+    fi
+    r="$tmp/step-$1"
+    build "$r" old
+    before="$(sums "$r")"
+    failing "$tmp/fail-$1" "$2" "$3"
+    case_path="$tmp/fail-$1:$wrap_path"
+    run "$r" ${4:+"$4"}
+    unset case_path
+    if [ "$got" = 2 ] && holds "$5" && [ ! -s "$tmp/sets" ] && [ "$(sums "$r")" = "$before" ]; then
+        echo "ok   a failing $1 exits 2 naming the step and writes nothing"
+    else
+        fail "a failing $1: expected exit 2, \"$5\" and nothing written, got $got: $out"
+    fi
+}
+step mktemp mktemp '' --check "mktemp failed"
+step pairs-jq jq '@tsv' --check "node and field pairs"
+step picking-jq jq '--arg n ' --check "could not pick the edits of"
+step count-jq jq '=length' --check "could not count the edits"
+step lines-jq jq '--arg want' --check "could not list the edits not applied"
+step missing-jq jq '--arg want' "" "could not list the missing edits"
+step pending-jq jq 'select(.state == "pending")' "" "could not count the pending edits"
+step changed-jq jq 'select(.changed)' "" "could not pick the changed fields"
+step node-jq jq '-r .node' "" "could not read a node from a result"
+step field-jq jq '-r .field' "" "could not read the field of"
+step value-jq jq '-c .value' "" "could not read the value of"
+
 # --- preconditions ---
 r="$tmp/pre"
 build "$r" old

@@ -177,19 +177,19 @@ case "${1-}" in
 esac
 [ "$#" -le 1 ] || fail_closed "one argument at most (usage: $0 [--check | --print-edits])"
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd)" || fail_closed "could not resolve the checkout's root from $0"
 command -v jq >/dev/null 2>&1 || fail_closed "\`jq\` is not on PATH"
 command -v nodes >/dev/null 2>&1 || fail_closed "\`nodes\` is not on PATH (nodes 0.7 or later; just nodes-install)"
 have="$(nodes --version 2>/dev/null | awk 'NR == 1 { print $2 }')" || have=""
 current="$(printf '%s\n' "$have" | awk -F. '
     $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+/ { print ($1 > 0 || $2 + 0 >= 7) ? "yes" : "no"; exit }
-    { print "no" }')"
+    { print "no" }')" || fail_closed "could not compare the version of nodes (awk failed)"
 [ "$current" = yes ] || fail_closed "nodes ${have:-of an unknown version} is older than 0.7 (just nodes-install)"
 [ -f "$root/NODE.inf.json" ] || fail_closed "$root holds no NODE.inf.json: not a tree of nodes 0.7 or later (run nodes migrate first)"
 [ ! -f "$root/NODE.json" ] || fail_closed "$root still holds a NODE.json: the tree is from before nodes 0.7 (run nodes migrate first)"
 
 table="$(edits | jq -c 'to_entries | map(.value + {order: .key})')" || fail_closed "the edit table does not parse"
-work="$(mktemp -d)"
+work="$(mktemp -d)" || fail_closed "could not make a scratch folder (mktemp failed)"
 trap 'rm -rf "$work"' EXIT
 
 # evaluate: writes $work/results, one JSON object per node and field.
@@ -197,10 +197,11 @@ evaluate() {
     : >"$work/results"
     printf '%s' "$table" | jq -r '
         reduce .[] as $e ([]; if any(.[]; .[0] == $e.node and .[1] == $e.field) then . else . + [[$e.node, $e.field]] end)
-        | .[] | @tsv' >"$work/pairs"
+        | .[] | @tsv' >"$work/pairs" || fail_closed "could not list the node and field pairs (jq failed)"
     tab="$(printf '\t')"
     while IFS="$tab" read -r node field; do
-        mine="$(printf '%s' "$table" | jq -c --arg n "$node" --arg f "$field" 'map(select(.node == $n and .field == $f))')"
+        mine="$(printf '%s' "$table" | jq -c --arg n "$node" --arg f "$field" 'map(select(.node == $n and .field == $f))')" ||
+            fail_closed "could not pick the edits of $node › $field (jq failed)"
         if ! value="$(nodes --root "$root" --json get "$node" "$field" 2>"$work/err")"; then
             # A node whose file is gone has its edits missing; one whose file
             # exists but cannot be read is a tool failure, never a guess.
@@ -224,11 +225,11 @@ lines() {
         | $me + ": " + .line' "$work/results"
 }
 
-total="$(printf '%s' "$table" | jq 'length')"
+total="$(printf '%s' "$table" | jq 'length')" || fail_closed "could not count the edits (jq failed)"
 evaluate
 
 if [ "$mode" = check ]; then
-    report="$(lines not-applied)"
+    report="$(lines not-applied)" || fail_closed "could not list the edits not applied (jq failed)"
     if [ -n "$report" ]; then
         printf '%s\n' "$report"
         exit 1
@@ -237,27 +238,32 @@ if [ "$mode" = check ]; then
     exit 0
 fi
 
-missing="$(lines missing)"
+missing="$(lines missing)" || fail_closed "could not list the missing edits (jq failed)"
 if [ -n "$missing" ]; then
     printf '%s\n' "$missing"
     echo "$me: nothing written: a missing edit needs a person (tell the Orchestrator)"
     exit 1
 fi
 
-pending="$(jq -s '[.[] | .states[] | select(.state == "pending")] | length' "$work/results")"
-jq -c 'select(.changed)' "$work/results" >"$work/changed"
+pending="$(jq -s '[.[] | .states[] | select(.state == "pending")] | length' "$work/results")" ||
+    fail_closed "could not count the pending edits (jq failed)"
+jq -c 'select(.changed)' "$work/results" >"$work/changed" ||
+    fail_closed "could not pick the changed fields (jq failed); nothing written"
 sets=0
 while IFS= read -r result; do
-    node="$(printf '%s' "$result" | jq -r '.node')"
-    field="$(printf '%s' "$result" | jq -r '.field')"
-    value="$(printf '%s' "$result" | jq -c '.value')"
+    node="$(printf '%s' "$result" | jq -r '.node')" ||
+        fail_closed "could not read a node from a result (jq failed; $sets field(s) written before it)"
+    field="$(printf '%s' "$result" | jq -r '.field')" ||
+        fail_closed "could not read the field of $node from a result (jq failed; $sets field(s) written before it)"
+    value="$(printf '%s' "$result" | jq -c '.value')" ||
+        fail_closed "could not read the value of $node › $field from a result (jq failed; $sets field(s) written before it)"
     nodes --root "$root" set "$node" "$field" "$value" ||
         fail_closed "nodes set $node $field failed ($sets field(s) written before it; rerun once fixed)"
     sets=$((sets + 1))
 done <"$work/changed"
 
 evaluate
-report="$(lines not-applied)"
+report="$(lines not-applied)" || fail_closed "could not list the edits not applied after writing (jq failed)"
 if [ -n "$report" ]; then
     printf '%s\n' "$report"
     echo "$me: an edit is still not applied after writing; tell the Orchestrator"
