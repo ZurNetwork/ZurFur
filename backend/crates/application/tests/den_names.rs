@@ -429,3 +429,24 @@ async fn an_account_name_unsafe_to_show_is_still_refused() {
         assert_eq!(refused_as, refusal, "{name:?}");
     }
 }
+
+/// The escaper's Unicode tables in `domain` are a copy of Atta's, which depends on no workspace
+/// crate; over every `char`, the two copies answer alike.
+#[test]
+fn the_escaper_s_tables_match_atta_s() {
+    let every_char = (0..=u32::from(char::MAX)).filter_map(char::from_u32);
+    for character in every_char {
+        assert_eq!(
+            domain::string_builder::is_format(character),
+            atta::is_format(character),
+            "is_format disagrees on U+{:04X}",
+            u32::from(character)
+        );
+        assert_eq!(
+            domain::string_builder::is_default_ignorable(character),
+            atta::is_default_ignorable(character),
+            "is_default_ignorable disagrees on U+{:04X}",
+            u32::from(character)
+        );
+    }
+}

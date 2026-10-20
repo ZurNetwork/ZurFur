@@ -149,3 +149,36 @@ export function pageToken(raw: string): PageToken | undefined {
 	if (raw.length === 0 || raw.length > PAGE_TOKEN_MAX_LEN) return undefined;
 	return PAGE_TOKEN_PATTERN.test(raw) ? (raw as PageToken) : undefined;
 }
+
+/** The browser-visible origin of this site (scheme, host and port), parsed once ({@link firstPartyOrigin}). */
+export type FirstPartyOrigin = Brand<string, 'FirstPartyOrigin'>;
+
+/**
+ * Validated mint from configuration: `raw`'s origin when it is a bare `http:`
+ * or `https:` origin (no credentials, path, query or fragment, not even an
+ * empty `?` or `#`), else `undefined`. The value is the ASCII serialisation.
+ */
+export function firstPartyOrigin(raw: string): FirstPartyOrigin | undefined {
+	const url = URL.parse(raw) ?? undefined;
+	if (url === undefined || (url.protocol !== 'http:' && url.protocol !== 'https:'))
+		return undefined;
+	return url.href === `${url.origin}/` ? (url.origin as FirstPartyOrigin) : undefined;
+}
+
+/** The short reference a filed bug report is quoted by, as the backend answered it ({@link bugReference}). */
+export type BugReference = Brand<string, 'BugReference'>;
+
+/** The longest bug reference the web accepts. */
+const BUG_REFERENCE_MAX_LEN = 64;
+
+/** Visible ASCII only: a reference is shown to the reporter and quoted back. */
+const BUG_REFERENCE_PATTERN = /^[\x21-\x7e]+$/;
+
+/**
+ * Validated mint from an answer or a form result: 1 to 64 visible ASCII
+ * characters, else `undefined`. The reference stays opaque.
+ */
+export function bugReference(raw: string): BugReference | undefined {
+	if (raw.length === 0 || raw.length > BUG_REFERENCE_MAX_LEN) return undefined;
+	return BUG_REFERENCE_PATTERN.test(raw) ? (raw as BugReference) : undefined;
+}

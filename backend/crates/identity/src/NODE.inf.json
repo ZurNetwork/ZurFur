@@ -1,0 +1,48 @@
+{
+  "path": "backend/crates/identity/src",
+  "charted": "2026-10-20",
+  "short": "Identity elements and ports",
+  "is": "Two public modules: the identity nouns (elements) and the seams that store and resolve them (ports).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "A new port area adds a file under `ports/` rather than growing `mod.rs`.",
+    "Time is injected, never read from the ambient clock."
+  ],
+  "entry_points": [
+    "ports.rs (the identity ports, re-exported flat)"
+  ],
+  "fs": [
+    {
+      "name": "elements.rs",
+      "role": "module index for elements/, live entities vs stubs",
+      "node": false
+    },
+    {
+      "name": "elements/",
+      "role": "one entity/value-object cluster per file",
+      "node": true
+    },
+    {
+      "name": "lib.rs",
+      "role": "crate root: the module declarations",
+      "node": false
+    },
+    {
+      "name": "ports.rs",
+      "role": "module index for ports/, re-exports the port traits flat",
+      "node": false
+    },
+    {
+      "name": "ports/",
+      "role": "trait seams: account, user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), actor_identity, authenticator, public_records; errors.rs (HandleTaken, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
+      "node": false
+    }
+  ],
+  "notes": [
+    "Adapters: `adapter-pg` implements the private-store ports, `adapter-atproto` the public ones (`PublicRecords`, the real `DidMinter`), `adapter-mem` fakes both.",
+    "`DidOperations` is interface-only — no adapter implements it, and whether `tombstone`/`update_handle` migrate off `DidMinter` is an open Engineer ruling."
+  ]
+}

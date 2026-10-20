@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/shared",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Leaf crate of build-time constants",
   "is": "The bottom leaf crate: build-time configuration constants that every other backend layer, `domain` included, is allowed to consume.",
   "type": "code",
@@ -29,7 +29,7 @@
     },
     {
       "name": "src/settings.rs",
-      "role": "compile-time constants — handle-change limit/window, handle-quarantine window",
+      "role": "compile-time constants — handle-change limit/window, handle-quarantine window, bug-report limit/window (10 an hour, pinned literally by settings/tests.rs)",
       "node": false
     }
   ],

@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/routes/(session)",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The signed-in area behind the session gate",
   "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame (the My Den tree beside the pane), containing My Den (`den/`), the account screens and the logout action; its errors render inside the frame.",
   "type": "code",
@@ -22,17 +22,17 @@
   "fs": [
     {
       "name": "+error.svelte",
-      "role": "errors inside the frame, by status and route alone (ErrorView) — a failed sign-out says so; the error's message is never read",
+      "role": "errors inside the frame, by status and route alone (ErrorView) — a failed sign-out says so; \"Report this problem\" opens the report with the status; the error's message is never read",
       "node": false
     },
     {
       "name": "+layout.server.ts",
-      "role": "hands the frame the session (the hook already refused anyone without one; the redirect here only narrows the type)",
+      "role": "hands the frame the session (the hook already refused anyone without one; the redirect here only narrows the type); and the web's own build id (buildId, \"unknown\" when ZURFUR_BUILD_ID is unset); and the stack it runs on (testStack: mock when mock mode is live, devProfile when ZURFUR_WEB_STACK=dev-profile in a dev build, else none), which the report form names",
       "node": false
     },
     {
       "name": "+layout.svelte",
-      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`; the My Den tree and the View options in the sidebar, fed by the frame's tree memory (never stored; started over on a flag flip, and on a form action's success, which the page that ran it reports, keeping `~` open); after each navigation the drawer closes and any open folder the tree lacks is fetched, at most four at a time through the frame's own queue (tree-loader's FetchQueue)",
+      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`; the My Den tree and the View options in the sidebar, fed by the frame's tree memory (never stored; started over on a flag flip, and on a form action's success, which the page that ran it reports, keeping `~` open); after each navigation the drawer closes and any open folder the tree lacks is fetched, at most four at a time through the frame's own queue (tree-loader's FetchQueue); the frame's bug report (provided as context, started over when the session's DID changes) and its dialog, ReportBugDialog",
       "node": false
     },
     {
@@ -47,22 +47,27 @@
     },
     {
       "name": "error.svelte.spec.ts",
-      "role": "proves the in-frame error page never shows the error's message, that a failed sign-out says so, that a 503 says Zurfur isn't answering, and that its way back is My Den ($app/state mocked)",
+      "role": "proves the in-frame error page never shows the error's message, that a failed sign-out says so, that a 503 says Zurfur isn't answering, that its way back is My Den, and that \"Report this problem\" opens the report with the status ($app/state mocked)",
       "node": false
     },
     {
       "name": "layout.server.spec.ts",
-      "role": "spec for the gate — anonymous redirects, signed-in passes the session through",
+      "role": "spec for the gate — anonymous redirects, signed-in passes the session through; the build id, \"unknown\" when unset or unfit; the stack: devProfile only for ZURFUR_WEB_STACK=dev-profile in a dev build, mock only in a dev build and over the dev profile, else none",
       "node": false
     },
     {
       "name": "layout.svelte.spec.ts",
-      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts and a visible Sign out in the drawer, no sideways scroll at 320 px; the tree memory built for the session's DID and told the current DID on each navigation; missing folders fetched after a navigation to a page with no Den data; sixteen folders above a deep item fetched at most four at a time",
+      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts and a visible Sign out in the drawer, no sideways scroll at 320 px; the tree memory built for the session's DID and told the current DID on each navigation; missing folders fetched after a navigation to a page with no Den data; sixteen folders above a deep item fetched at most four at a time; \"Report a bug\" opens the dialog over the page, reporting it; from the drawer's footer (under Accounts, above Sign out) the drawer shuts first, one modal open, and focus goes back to ☰ on Escape, even when clicks focus nothing; the stack's line handed to the form; the draft kept for the visitor and started over for another",
       "node": false
     },
     {
       "name": "logout/",
       "role": "an action, not a page — a stray GET goes home; the action always clears zurfur.sid, mirrors the backend's clears when it confirms, and otherwise lands on /login?signout=unconfirmed",
+      "node": false
+    },
+    {
+      "name": "report-a-bug/",
+      "role": "the report page: +page.server.ts — the load offers the page from a Referer exactly on the first party (its path, the archived words, its page type) or asks \"Which page?\" (also when the Referer is the report page itself, as after a post without script), and the browser from the User-Agent, cut; the one action reads the post through the bug-report schema and answers fail(400) naming the refused item, fail(429) for the limit, fail(502) for could not send, or { kind: 'sent', reference }, redirecting an ended session to /login; +page.svelte — the shared ReportBugForm over the load's offer (\"Which page?\" when it asks, and after a refusal answered without script), posting BUG_REPORT_FIELDS with plain enhance, working without script (page.svelte.spec.ts); request.spec.ts proves the root hook refuses a cross-origin post before the action runs",
       "node": false
     }
   ],

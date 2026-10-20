@@ -283,18 +283,21 @@ async fn inviting_an_existing_member_is_a_conflict() {
     sign_in(&client, &base, "owner.bsky.social").await;
     let account_id = found_account(&client, &base, "Acme Studio").await;
 
-    // Seat the invitee as a member first (a grant is how one joins, ZMVP-15).
+    // Seat the invitee as a member first (test seed; in production one joins by
+    // accepting an invitation).
     let invitee_did = "did:plc:e2ealreadymember";
-    let res = client
-        .post(format!("{base}/accounts/{account_id}/members"))
-        .json(&serde_json::json!({ "user": invitee_did, "role": "member" }))
-        .send()
+    let invitee = backend
+        .provision(&Did::from(invitee_did.to_string()))
         .await
-        .expect("POST /accounts/{id}/members");
-    assert!(
-        res.status().is_success(),
-        "the grant seats them as a member"
-    );
+        .expect("provision the invitee");
+    let account = AccountId::from(Did::from(account_id.clone()));
+    let invitee_seat = UserAccount {
+        user_id: invitee.id.clone(),
+        account_id: account.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&invitee_seat);
 
     // Inviting that same member is refused as a conflict, minting nothing.
     let res = client
@@ -305,11 +308,6 @@ async fn inviting_an_existing_member_is_a_conflict() {
         .expect("POST /accounts/{id}/invitations");
     common::assert_problem(res, 409, "already_member").await;
 
-    let invitee = backend
-        .provision(&Did::from(invitee_did.to_string()))
-        .await
-        .expect("provision the invitee");
-    let account = AccountId::from(Did::from(account_id));
     assert!(
         backend
             .find_pending_invitation(&account, &invitee.id)
@@ -589,10 +587,7 @@ async fn a_non_member_learns_nothing_about_a_target_through_invitation_revoke() 
         alias: None,
         role: Role::Member,
     };
-    backend
-        .grant_role(&membership)
-        .await
-        .expect("seat the member");
+    backend.seed_member(&membership);
 
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await; // did:plc:e2eprobe holds NO role here

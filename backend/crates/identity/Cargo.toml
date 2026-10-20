@@ -1,0 +1,28 @@
+[package]
+publish = false
+name = "identity"
+version = "0.1.0"
+edition = "2024"
+
+# Who acts: users, accounts, actor identities, handles, keys, profiles,
+# public records and bug reports, with their ports. Depends on `kernel` only
+# (`shared` is allowed).
+[dependencies]
+kernel = { path = "../kernel" }
+uuid = { workspace = true }
+cid = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+# Wipe custody key material (AccountKeys/SecretKey) from memory on drop.
+zeroize = { workspace = true }
+# Error enums derive Display/Error/From; the cause travels via source().
+thiserror = { workspace = true }
+# Newtype and enum derives; see the workspace notes on both.
+derive_more = { workspace = true }
+strum = { workspace = true }
+
+[dev-dependencies]
+# Property tests for the Handle and AtHandle parsers and the bug-report values.
+proptest = { workspace = true }
+chrono = { workspace = true }

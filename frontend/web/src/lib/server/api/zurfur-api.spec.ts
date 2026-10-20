@@ -1,10 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
 import type { FetchFunction } from '$lib/api/client';
 import { NODE_NOT_FOUND_PROBLEM } from '$lib/api/problem';
-import { fetchStub, problemResponse, requestUrl, unreachableFetch } from '$lib/testing/http';
+import {
+	fetchStub,
+	hangingFetch,
+	problemResponse,
+	requestUrl,
+	unreachableFetch
+} from '$lib/testing/http';
 import { pageToken } from '$lib/types/brand';
-import { RequestFetch, ZurfurApi, ZurfurApiLive, parseBrowserBindingCookie } from './zurfur-api';
+import type {
+	BugBrowser,
+	BugDescription,
+	BugPage,
+	BugVersion,
+	ErrorStatus,
+	WindowSide
+} from '$lib/types/bug-report-rules';
+import {
+	RequestFetch,
+	ZurfurApi,
+	ZurfurApiLive,
+	parseBrowserBindingCookie,
+	type BugReportFiling
+} from './zurfur-api';
 import type { DenQuery } from './den-read';
 import { ApiProblem, type ZurfurApiError } from './errors';
 import { segmentPath, type SegmentPath } from '../path-builder';
@@ -450,5 +470,134 @@ describe('parseBrowserBindingCookie', () => {
 		expect(parseBrowserBindingCookie('zurfur.signin=abc; Path=/')).toBeUndefined();
 		expect(parseBrowserBindingCookie('zurfur.signin=abc; Max-Age=0')).toBeUndefined();
 		expect(parseBrowserBindingCookie('zurfur.signin=abc; Max-Age=ten')).toBeUndefined();
+	});
+});
+
+const fileBugReport = (filing: BugReportFiling) =>
+	Effect.flatMap(ZurfurApi, (api) => api.fileBugReport(filing));
+
+/** A filing with every item sent. */
+const FULL_FILING: BugReportFiling = {
+	description: 'The tree forgot my folder.' as BugDescription,
+	page: '/den/x (showing archived)' as BugPage,
+	pageType: 'My Den',
+	webVersion: 'build-7' as BugVersion,
+	browser: 'Mozilla/5.0' as BugBrowser,
+	window: { width: 1280 as WindowSide, height: 720 as WindowSide },
+	display: { reducedMotion: true, moreContrast: true, forcedColors: true },
+	errorStatus: 404 as ErrorStatus
+};
+
+/** A fetch answering `respond`, recording each call's URL, method, content type and JSON body. */
+function recordingFetch(respond: () => Response) {
+	const sent: { url: string; method: string; contentType: string; body: unknown }[] = [];
+	const fetch: FetchFunction = (input, init) => {
+		const headers = new Headers(init?.headers);
+		const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+		sent.push({
+			url: requestUrl(input),
+			method: init?.method ?? 'GET',
+			contentType: headers.get('content-type') ?? '',
+			body
+		});
+		return Promise.resolve(respond());
+	};
+	return { fetch, sent };
+}
+
+const FILED = () =>
+	Response.json({ reference: '3f9a1c2e', receivedAt: '2026-10-17T10:00:00Z' }, { status: 201 });
+
+describe('ZurfurApi.fileBugReport (live)', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('the_live_body_holds_exactly_the_contract_s_keys', async () => {
+		const { fetch, sent } = recordingFetch(FILED);
+
+		await runLive(fetch, fileBugReport(FULL_FILING));
+
+		expect(sent).toStrictEqual([
+			{
+				url: '/api/v1/bug-reports',
+				method: 'POST',
+				contentType: 'application/json',
+				body: {
+					description: 'The tree forgot my folder.',
+					page: '/den/x (showing archived)',
+					pageKind: 'My Den',
+					webVersion: 'build-7',
+					browser: 'Mozilla/5.0',
+					window: { width: 1280, height: 720 },
+					display: { reducedMotion: true, moreContrast: true, forcedColors: true },
+					errorStatus: 404
+				}
+			}
+		]);
+	});
+
+	it('leaves an item that is not sent off the wire', async () => {
+		const { fetch, sent } = recordingFetch(FILED);
+		const descriptionOnly: BugReportFiling = {
+			...FULL_FILING,
+			page: undefined,
+			pageType: undefined,
+			webVersion: undefined,
+			browser: undefined,
+			window: undefined,
+			display: undefined,
+			errorStatus: undefined
+		};
+
+		await runLive(fetch, fileBugReport(descriptionOnly));
+
+		expect(sent.map(({ body }) => body)).toStrictEqual([
+			{ description: 'The tree forgot my folder.' }
+		]);
+	});
+
+	it('decodes the 201 into the reference', async () => {
+		const { fetch } = recordingFetch(FILED);
+		await expect(runLive(fetch, fileBugReport(FULL_FILING))).resolves.toBe('3f9a1c2e');
+	});
+
+	it.each([
+		['an empty reference', { reference: '' }],
+		['a reference with a space', { reference: '3f9a 1c2e' }],
+		['a reference of the wrong type', { reference: 42 }]
+	])('fails ContractViolation for %s', async (_name, body) => {
+		const { fetch } = recordingFetch(() => Response.json(body, { status: 201 }));
+		const failure = await runLive(fetch, failureOf(fileBugReport(FULL_FILING)));
+		expect(failure._tag).toBe('ContractViolation');
+		expect(failure.message).toMatch(/\/bug-reports responded 201 — malformed bug report answer/);
+	});
+
+	it('fails NotAuthenticated on the 401 problem', async () => {
+		const { fetch } = fetchStub(() => problemResponse(401, 'not_authenticated'));
+		const failure = await runLive(fetch, failureOf(fileBugReport(FULL_FILING)));
+		expect(failure._tag).toBe('NotAuthenticated');
+	});
+
+	it('fails ApiProblem carrying the 429', async () => {
+		const { fetch } = fetchStub(() => problemResponse(429, 'rate_limited'));
+		const failure = await runLive(fetch, failureOf(fileBugReport(FULL_FILING)));
+		expect(failure._tag).toBe('ApiProblem');
+		if (failure._tag === 'ApiProblem') expect(failure.problem.status).toBe(429);
+	});
+
+	it('gives the API 10 seconds, then fails NetworkFailure timeout', async () => {
+		vi.useFakeTimers();
+		const { fetch } = hangingFetch();
+		let settled = false;
+		const failure = runLive(fetch, failureOf(fileBugReport(FULL_FILING))).finally(() => {
+			settled = true;
+		});
+
+		await vi.advanceTimersByTimeAsync(9_999);
+		expect(settled).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+
+		await expect(failure).resolves.toMatchObject({ _tag: 'NetworkFailure', reason: 'timeout' });
 	});
 });

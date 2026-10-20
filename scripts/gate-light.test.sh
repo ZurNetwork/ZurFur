@@ -66,6 +66,12 @@ expect_plan "a crate change tests that crate" "cargo test --locked -p thing-pkg"
 expect_plan "a crate change tests the dev profile" "cargo test -p api --locked --features dev-profile --lib --test dev_profile"
 
 new_repo
+mkdir -p "$repo/backend/crates/identity/src"
+printf '[package]\nname = "identity"\n' >"$repo/backend/crates/identity/Cargo.toml"
+change backend/crates/identity/src/lib.rs "fn main() { }"
+expect_plan "a domain crate change also tests domain" "-p identity" "-p domain"
+
+new_repo
 change docs/notes.md "hello"
 expect_plan "every plan lints the dev profile" "cargo clippy -p api --all-targets --locked --features dev-profile"
 expect_plan "every plan checks the node tree" "just nodes-check"

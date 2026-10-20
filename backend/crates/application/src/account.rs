@@ -94,12 +94,12 @@ pub enum AccountError {
     RenamedTooRecently,
     /// The actor holds no pending invitation into the account.
     NoPendingInvitation,
-    /// The actor holds no membership in the account.
+    /// The user named holds no membership in the account.
     NotAMember,
     /// The Owner can't leave while still Owner — transfer or delete first.
     OwnerCannotLeave,
     IncorrectTransferOfAccount,
-    /// The grantee's DID is interned as a non-User actor.
+    /// The invitee's DID is interned as a non-User actor.
     DidBelongsToAnotherActor,
     AlreadyMember,
     CannotTransferToSelf,

@@ -28,7 +28,6 @@ use domain::{
         profile::Profile,
         role::Role,
         user::UserId,
-        user_account::UserAccount,
     },
     ports::{ProfileCache, UnitOfWork},
 };
@@ -88,16 +87,18 @@ async fn seed_closed_studio(runtime: &composition::Runtime) {
         name,
         Utc::now(),
     );
-    let member = UserAccount {
-        user_id: bob(),
-        account_id: closed_studio(),
-        role: Role::Member,
-        alias: None,
-    };
     let target = closed_studio();
     application::transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
         uow.accounts().create(&account, &ownership).await?;
-        uow.accounts().grant_role(&member).await?;
+        test_support::membership::seat_member(
+            uow,
+            &target,
+            &bob(),
+            Role::Member,
+            &alice(),
+            Utc::now(),
+        )
+        .await?;
         uow.accounts().soft_delete(&target).await
     })
     .await

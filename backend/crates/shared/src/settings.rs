@@ -17,3 +17,12 @@ pub const HANDLE_CHANGE_WINDOW: Duration = Duration::minutes(5);
 /// account that left it before it frees for anyone else — the anti-impersonation
 /// knob.
 pub const HANDLE_QUARANTINE_WINDOW: Duration = Duration::days(30);
+
+/// The most bug reports one User may file within [`BUG_REPORT_WINDOW`].
+pub const BUG_REPORT_LIMIT: i64 = 10;
+
+/// The rolling window [`BUG_REPORT_LIMIT`] is counted over.
+pub const BUG_REPORT_WINDOW: Duration = Duration::hours(1);
+
+#[cfg(test)]
+mod tests;

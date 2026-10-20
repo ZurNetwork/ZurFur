@@ -84,6 +84,11 @@
   ],
   "backend/crates/adapter-mem": [
     {
+      "page": 2162692,
+      "title": "Roles",
+      "governs": "src/lib.rs: the fake's Owner backstops: grant_role never grants Owner or changes the Owner's role, and a departure (revoke_role, leave) never removes the Owner, refusing before any write"
+    },
+    {
       "page": 3014657,
       "title": "Deletion of Commissions",
       "governs": "src/commission.rs: `commission_has_facts` stays `false` until a fact-minter registers a map here"
@@ -102,6 +107,11 @@
       "page": 24150017,
       "title": "Transactions as a capability — compile-enforced Unit of Work",
       "governs": "src/lib.rs + src/commission.rs: the stage/commit/rollback contract"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "src/lib.rs: create_invitation refuses an issuer who is not a member of the account, before any write; a departure revokes the member's pending invitations"
     },
     {
       "page": 27852802,
@@ -146,6 +156,11 @@
   ],
   "backend/crates/adapter-pg": [
     {
+      "page": 2162692,
+      "title": "Roles",
+      "governs": "src/account.rs: the store's Owner backstops: grant_role never grants Owner or changes the Owner's role, and a departure (revoke_role, leave) never removes the Owner, refusing before any write; a departure re-homes children to the locked parent, again after its delete"
+    },
+    {
       "page": 3014657,
       "title": "Deletion of Commissions",
       "governs": "`src/commission.rs`, `src/account.rs`, and the non-fact tables created in `migrations/20260705190001_create_commission_slot.sql`, `20260705150000_create_commission_node.sql`, `20260710055222_create_commission_files.sql`, `20260705120000_create_commission_changelog.sql`, `20260705200000_create_commission_placement_and_view_grant.sql`, `20260706100001_create_commission_participant_and_seat.sql`, `20260717012204_create_commission_invitation.sql`, `20260805234354_flat_commission_composition.sql`, `20260910185856_create_workflow_and_columns.sql`, `20260705190000_add_archived_at_commission.sql`; fact/non-fact classification"
@@ -173,7 +188,7 @@
     {
       "page": 24182820,
       "title": "Invitation Validity & Issuer Departure",
-      "governs": "`src/account.rs::settle_member_departure`"
+      "governs": "src/account.rs: settle_member_departure revokes the member's pending invitations before re-homing; create_invitation refuses an issuer who is not a member, key-share locking their row, so no offer outlives its issuer"
     },
     {
       "page": 26804226,
@@ -522,7 +537,7 @@
     {
       "page": 2162692,
       "title": "Roles",
-      "governs": ""
+      "governs": "role/grant.rs: a grant changes an existing member's role and never seats anyone; leave.rs and role/revoke.rs: a departure never removes the Owner, and the stores refuse it; ownership moves only by transfer"
     },
     {
       "page": 9895957,
@@ -537,7 +552,7 @@
     {
       "page": 24182820,
       "title": "Invitation Validity & Issuer Departure",
-      "governs": "invitation validity & issuer departure"
+      "governs": "invitation validity & issuer departure; invitation/issue.rs: the store refuses an issuer who is no longer a member, so an issue racing its issuer's departure fails its unit"
     },
     {
       "page": 27852802,
@@ -689,106 +704,83 @@
       "governs": "Protobuf as the Independent IDL; src/lib.rs, src/main.rs: governs why generation is pure-Rust/protox, the committed-output + drift-test pattern, and why `service` blocks generate nothing"
     }
   ],
-  "backend/crates/domain": [
-    {
-      "page": 3014657,
-      "title": "Deletion of Commissions",
-      "governs": "tests/fact_contract.rs: why no production Fact implementor exists yet"
-    },
-    {
-      "page": 34013187,
-      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
-      "governs": "Actor super-table"
-    },
-    {
-      "page": 45514754,
-      "title": "Commission Composition — Surfaces as Extension Points, Flat Elements and Tabs",
-      "governs": "flat composition"
-    },
-    {
-      "page": 64290818,
-      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
-      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Position/Handle/StringBuilder properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
-    }
-  ],
   "backend/crates/domain/src": [
-    {
-      "page": 3014657,
-      "title": "Deletion of Commissions",
-      "governs": "ports/commission.rs commission_has_facts/delete/set_archived"
-    },
-    {
-      "page": 9895957,
-      "title": "Workflow",
-      "governs": "ports/workflow.rs"
-    },
     {
       "page": 11763713,
       "title": "Domains and Applications",
       "governs": "lib.rs: the dependency rule"
     },
     {
-      "page": 23003138,
-      "title": "Account Deletion, Tombstoning & Handle Reuse",
-      "governs": "ports.rs HandleTaken/soft_delete/hard_delete/tombstone"
-    },
-    {
       "page": 24150017,
       "title": "Transactions as a capability",
-      "governs": "ports.rs Database::begin/ProfileCache, ports/commission.rs; also lib.rs's profile.rs cache-fill exception"
-    },
-    {
-      "page": 24182820,
-      "title": "Invitation Validity & Issuer Departure",
-      "governs": "ports.rs revoke_role"
-    },
-    {
-      "page": 26607618,
-      "title": "Handle Resolution for *.zurfur.app",
-      "governs": "ports.rs find_did_by_handle"
-    },
-    {
-      "page": 27852802,
-      "title": "Account Handle Change Flow",
-      "governs": "ports.rs count_handle_changes_since/handle_reserved_for_other/change_handle/update_handle"
-    },
-    {
-      "page": 29130754,
-      "title": "Commission Ownership Separation",
-      "governs": "ports/commission.rs view_grant/grant_view/revoke_view"
-    },
-    {
-      "page": 29982722,
-      "title": "Maturity Vocabulary",
-      "governs": "ports/commission.rs set_maturity"
+      "governs": "ports/unit_of_work.rs Database::begin"
     },
     {
       "page": 34013187,
       "title": "Identities — the Actor Super-Table",
-      "governs": "ports.rs UnitOfWork::actor_identities + HasDid marker, ports/actor_identity.rs"
+      "governs": "ports/unit_of_work.rs UnitOfWork::actor_identities"
     },
     {
-      "page": 45514754,
-      "title": "Commission Composition",
-      "governs": "ports/commission.rs load_composition/add_element"
+      "page": 59310081,
+      "title": "The Changelog as the Only Record",
+      "governs": "ports/unit_of_work.rs UnitOfWork::changelog"
+    }
+  ],
+  "backend/crates/identity": [
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
+      "governs": "Actor super-table"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Handle/AtHandle properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
+    }
+  ],
+  "backend/crates/identity/src": [
+    {
+      "page": 23003138,
+      "title": "Account Deletion, Tombstoning & Handle Reuse",
+      "governs": "ports/errors.rs HandleTaken, ports/account.rs soft_delete/hard_delete, ports/identity.rs tombstone"
+    },
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability",
+      "governs": "ports/profile.rs ProfileCache — the cache-fill exception"
+    },
+    {
+      "page": 24182820,
+      "title": "Invitation Validity & Issuer Departure",
+      "governs": "ports/account.rs revoke_role"
+    },
+    {
+      "page": 26607618,
+      "title": "Handle Resolution for *.zurfur.app",
+      "governs": "ports/account.rs find_did_by_handle"
+    },
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "ports/account.rs count_handle_changes_since/handle_reserved_for_other/change_handle; ports/identity.rs update_handle"
+    },
+    {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table",
+      "governs": "ports/actor_identity.rs"
     },
     {
       "page": 54427650,
       "title": "Characters on ATProto — Public DIDs, PDS Accounts & ACP Ownership",
-      "governs": "ports.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
+      "governs": "ports/identity.rs DidMinter: the identity-only mint is the first STAGE for every hosted actor (Accounts, public Characters) — the repo attaches afterwards; hosted-repos DD pending"
     },
     {
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
       "governs": "ports/errors.rs ResolveError: terse Display that never echoes the input, the cause via #[source] (D8)"
-    },
-    {
-      "page": 59310081,
-      "title": "The Changelog as the Only Record",
-      "governs": "ports.rs UnitOfWork::changelog, ports/changelog.rs x2"
     }
   ],
-  "backend/crates/domain/src/elements": [
+  "backend/crates/identity/src/elements": [
     {
       "page": 1933322,
       "title": "Achievement",
@@ -805,39 +797,9 @@
       "governs": "role.rs, user_account.rs"
     },
     {
-      "page": 3014657,
-      "title": "Deletion of Commissions",
-      "governs": "commission/fact.rs, commission/file.rs, commission.rs archived_at"
-    },
-    {
-      "page": 3276807,
-      "title": "Commission",
-      "governs": "commission.rs"
-    },
-    {
-      "page": 4358151,
-      "title": "DID:PLC vs DID:Web",
-      "governs": "did.rs"
-    },
-    {
       "page": 5668866,
       "title": "Character",
       "governs": "character.rs"
-    },
-    {
-      "page": 5931025,
-      "title": "Slots",
-      "governs": "commission/slot.rs"
-    },
-    {
-      "page": 9895957,
-      "title": "Workflow",
-      "governs": "workflow.rs"
-    },
-    {
-      "page": 9994275,
-      "title": "Blob",
-      "governs": "blob.rs"
     },
     {
       "page": 21594113,
@@ -870,24 +832,9 @@
       "governs": "account_keys.rs, plc_operation.rs"
     },
     {
-      "page": 28311564,
-      "title": "Referenceable, Slot & Seat",
-      "governs": "commission/seat.rs"
-    },
-    {
-      "page": 29130754,
-      "title": "Commission Ownership Separation",
-      "governs": "amended 2026-09-04; commission/grant_level.rs"
-    },
-    {
       "page": 29949954,
       "title": "Gallery Posts, the Product Snapshot & Index-Side Tagging",
       "governs": "public_record.rs module doc"
-    },
-    {
-      "page": 29982722,
-      "title": "Maturity Vocabulary",
-      "governs": "maturity.rs, commission.rs maturity field"
     },
     {
       "page": 30572573,
@@ -900,14 +847,156 @@
       "governs": "actor_identity.rs"
     },
     {
-      "page": 45514754,
-      "title": "Commission Composition",
-      "governs": "commission/element.rs"
+      "page": 57081857,
+      "title": "Actor Addressing",
+      "governs": "account.rs AccountId, user.rs UserId, character.rs CharacterId"
+    },
+    {
+      "page": 2026101201,
+      "title": "Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers",
+      "governs": "handle/reserved.rs: 'studio' is a reserved label (D10)"
+    }
+  ],
+  "backend/crates/kernel": [
+    {
+      "page": 4358151,
+      "title": "DID:PLC vs DID:Web",
+      "governs": "src/elements/did.rs"
+    },
+    {
+      "page": 9994275,
+      "title": "Blob",
+      "governs": "src/elements/blob.rs"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "src/elements/maturity.rs"
     },
     {
       "page": 57081857,
       "title": "Actor Addressing",
-      "governs": "did.rs, account.rs AccountId, user.rs UserId, character.rs CharacterId"
+      "governs": "src/elements/did.rs"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
+    }
+  ],
+  "backend/crates/shared": [
+    {
+      "page": 27852802,
+      "title": "Account Handle Change Flow",
+      "governs": "src/settings.rs: governs `HANDLE_CHANGE_LIMIT`, `HANDLE_CHANGE_WINDOW`, `HANDLE_QUARANTINE_WINDOW`"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer",
+      "governs": "Cargo.toml: source of the \"shared = the one leaf crate domain may consume\" ruling, dated 2026-08-26"
+    }
+  ],
+  "backend/crates/test-support": [
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair; store_legacy_title and store_legacy_filename store names from before the name rule, which read as Unnamed (D19) and stay the one not-found for a stranger (D21)"
+    }
+  ],
+  "backend/crates/workflow": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "tests/fact_contract.rs: why no production Fact implementor exists yet"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition — Surfaces as Extension Points, Flat Elements and Tabs",
+      "governs": "flat composition"
+    },
+    {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — Position properties beside their leaves (x/proptests.rs), proptest-regressions/ committed"
+    }
+  ],
+  "backend/crates/workflow/src": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "ports/commission.rs commission_has_facts/delete/set_archived"
+    },
+    {
+      "page": 9895957,
+      "title": "Workflow",
+      "governs": "ports/workflow.rs"
+    },
+    {
+      "page": 24150017,
+      "title": "Transactions as a capability",
+      "governs": "ports/commission.rs"
+    },
+    {
+      "page": 29130754,
+      "title": "Commission Ownership Separation",
+      "governs": "ports/commission.rs view_grant/grant_view/revoke_view"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "ports/commission.rs set_maturity"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition",
+      "governs": "ports/commission.rs load_composition/add_element"
+    },
+    {
+      "page": 59310081,
+      "title": "The Changelog as the Only Record",
+      "governs": "ports/changelog.rs x2"
+    }
+  ],
+  "backend/crates/workflow/src/elements": [
+    {
+      "page": 3014657,
+      "title": "Deletion of Commissions",
+      "governs": "commission/fact.rs, commission/file.rs, commission.rs archived_at"
+    },
+    {
+      "page": 3276807,
+      "title": "Commission",
+      "governs": "commission.rs"
+    },
+    {
+      "page": 5931025,
+      "title": "Slots",
+      "governs": "commission/slot.rs"
+    },
+    {
+      "page": 9895957,
+      "title": "Workflow",
+      "governs": "workflow.rs"
+    },
+    {
+      "page": 28311564,
+      "title": "Referenceable, Slot & Seat",
+      "governs": "commission/seat.rs"
+    },
+    {
+      "page": 29130754,
+      "title": "Commission Ownership Separation",
+      "governs": "amended 2026-09-04; commission/grant_level.rs"
+    },
+    {
+      "page": 29982722,
+      "title": "Maturity Vocabulary",
+      "governs": "commission.rs maturity field"
+    },
+    {
+      "page": 45514754,
+      "title": "Commission Composition",
+      "governs": "commission/element.rs"
     },
     {
       "page": 59310081,
@@ -932,31 +1021,12 @@
     {
       "page": 2026101201,
       "title": "Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers",
-      "governs": "commission/markup: the alpha anchor vocabulary widens (D4) — circle, arrow and freehand join point as variants of the closed envelope; MarkupShape is shelved, not deleted. handle/reserved.rs: 'studio' is a reserved label (D10)"
+      "governs": "commission/markup: the alpha anchor vocabulary widens (D4) — circle, arrow and freehand join point as variants of the closed envelope; MarkupShape is shelved, not deleted"
     },
     {
       "page": 2026101202,
       "title": "Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core",
       "governs": "commission/changelog: the Linked Channel pointer stays opaque; Zurfur's page offers 'Open chat' when it holds a Telegram chat reference and hands it to Unofficial Mini Telegram as-is (D6, D9); the Telegram login never touches Zurfur (D4)"
-    }
-  ],
-  "backend/crates/shared": [
-    {
-      "page": 27852802,
-      "title": "Account Handle Change Flow",
-      "governs": "src/settings.rs: governs `HANDLE_CHANGE_LIMIT`, `HANDLE_CHANGE_WINDOW`, `HANDLE_QUARANTINE_WINDOW`"
-    },
-    {
-      "page": 55836674,
-      "title": "The Application Layer",
-      "governs": "Cargo.toml: source of the \"shared = the one leaf crate domain may consume\" ruling, dated 2026-08-26"
-    }
-  ],
-  "backend/crates/test-support": [
-    {
-      "page": 2026100701,
-      "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "src/pg_app/den_world.rs: the den world the PostgreSQL route suite reads, for the one not-found (D21) and archived commissions opening on a typed path (D13); src/pg_app/statements.rs and pairs.rs: D21 re-tested on PostgreSQL as the same SQL statements for both causes of each pair; store_legacy_title and store_legacy_filename store names from before the name rule, which read as Unnamed (D19) and stay the one not-found for a stranger (D21)"
     }
   ],
   "caddy": [
@@ -1060,6 +1130,11 @@
     }
   ],
   "frontend/web/src/lib/server": [
+    {
+      "page": 24543244,
+      "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",
+      "governs": "cross-site-writes.ts"
+    },
     {
       "page": 26050561,
       "title": "Confusable Handles & the Punycode Policy",

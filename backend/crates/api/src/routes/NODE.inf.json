@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Route groups, one policy zone each",
   "is": "Route groups split along the DESIGN subdomain→namespace→router seam, each an independently mounted policy zone.",
   "type": "code",
@@ -19,6 +19,11 @@
     {
       "name": "accounts.rs",
       "role": "account/membership/invitation JSON API; thin driver: CallingUser → application::account::* → wire projection (ZMVP-205)",
+      "node": false
+    },
+    {
+      "name": "bug_reports.rs",
+      "role": "POST /bug-reports on the cookie surface: the reporter from CallingUser alone, the API build from Config::build_id, each item checked by TryFrom with a fixed 422 sentence per field and one for a body that doesn't decode, the rate limit as 429, the receipt (reference, received_at) as 201; logs nothing of its own; no route reads reports",
       "node": false
     },
     {

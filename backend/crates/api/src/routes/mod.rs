@@ -17,6 +17,7 @@ use crate::AppState;
 use crate::problem::Problem;
 
 mod accounts;
+mod bug_reports;
 mod commissions;
 mod den;
 mod health;
@@ -24,6 +25,7 @@ mod session;
 mod wellknown;
 
 pub(crate) use accounts::accounts_router;
+pub(crate) use bug_reports::bug_reports_router;
 pub(crate) use commissions::commissions_router;
 pub(crate) use den::den_router;
 pub(crate) use health::health_router;

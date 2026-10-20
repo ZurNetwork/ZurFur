@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src/lib/server",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Below the seam: runtime, port, programs, forms",
   "is": "Everything below the seam: one ManagedRuntime, one `ZurfurApi` port, outcome-returning programs per domain, one Schema module per form.",
   "type": "code",
@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "node-project specs beside each program module (accounts, session, den, api-proxy, session-headers, session-gate, frame-headers, handle-chain, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
+      "role": "node-project specs beside each program module (accounts, session, den, bug-report, first-party-origin, api-proxy, session-headers, session-gate, frame-headers, handle-chain, cross-site-writes, error-log, time-limits, request-deadline, unanswered, bounded-fetch); time-limits-gc.spec.ts runs the limits and the deadline through kit's real event.fetch, handleFetch and undici to a local backend that never answers (or stalls its body), forcing garbage collection while each call waits: each still fails on time and its connection closes; den/den-path.spec.ts holds the path-handling security cases; den-golden.spec.ts serves every Den golden response (contract/golden/den/, one test per file, index and disk kept equal) through the live port and the den program",
       "node": false
     },
     {
@@ -45,8 +45,18 @@
       "node": false
     },
     {
+      "name": "bug-report.ts",
+      "role": "filing a bug report: fileBugReportOutcome (201 sent with the reference, 429 the limit, 401 signed out, anything else — 422, 403, 5xx, unreachable, out of time — could not send); webBuildId (ZURFUR_BUILD_ID at each call, \"unknown\" when unset or unfit); onDevProfileStack (ZURFUR_WEB_STACK=dev-profile, which only `just dev-profile-web` sets, in a dev build only, at each call); pageOfReferer and judgePostedPage, the one way an address becomes the report's page — exactly on the configured first party (or a path), query and fragment dropped, the archived words kept; a Referer on the report page itself names no page",
+      "node": false
+    },
+    {
       "name": "cookies.ts",
       "role": "every cookie name Zurfur sets (closed SessionCookieName | SignInBindingCookieName) and cookieOptions, the one set/clear options helper; the backend ZurfurCookie's twin",
+      "node": false
+    },
+    {
+      "name": "cross-site-writes.ts",
+      "role": "refuseCrossSiteWrites(firstParty), a plain handle hook: every write (any method but GET, HEAD, OPTIONS; any content type) whose Origin isn't exactly the configured origin — or, with no Origin, isn't Sec-Fetch-Site: same-origin — gets a 403 text/plain in SvelteKit's wording before resolve; with no configured origin, every write does",
       "node": false
     },
     {
@@ -70,8 +80,13 @@
       "node": false
     },
     {
+      "name": "first-party-origin.ts",
+      "role": "firstParty — ZURFUR_PUBLIC_URL's origin, read once at load (a dev build with it unset takes http://127.0.0.1:8080; malformed, or unset outside dev, is none): the yardstick for the cross-site write check and for any address the web takes as one of its own pages",
+      "node": false
+    },
+    {
       "name": "forms/",
-      "role": "one Effect Schema per form (login, create-account, delete-account) over a shared handle field; problem-message.ts bridges a Problem onto the superform message",
+      "role": "one Effect Schema per form (login, create-account, delete-account, bug-report — tick boxes choose the items, the version is the server's own build, then the shared rules parse each item with Schema.filter, never Schema.maxLength) over a shared handle field; problem-message.ts bridges a Problem onto the superform message",
       "node": false
     },
     {

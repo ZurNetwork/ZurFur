@@ -6,10 +6,7 @@ use adapter_mem::{
 };
 use chrono::Utc;
 use domain::{
-    elements::{
-        account::AccountName, did::Did, handle::Handle, role::Role, user::UserId,
-        user_account::UserAccount,
-    },
+    elements::{account::AccountName, did::Did, handle::Handle, role::Role, user::UserId},
     ports::UnitOfWork,
 };
 use test_support::recording::{CallLog, RecordingAccountStore, SubjectLog};
@@ -27,18 +24,14 @@ fn closed_studio() -> AccountId {
 async fn seed_account(app: &App, id: AccountId, name: &str, handle: &str, deactivate: bool) {
     let handle = handle.parse::<Handle>().expect("a valid handle");
     let name = name.parse::<AccountName>().expect("a valid name");
-    let (account, ownership) = Account::open(alice(), id.did().clone(), handle, name, Utc::now());
-    let member = UserAccount {
-        user_id: bob(),
-        account_id: id.clone(),
-        role: Role::Member,
-        alias: None,
-    };
+    let now = Utc::now();
+    let (account, ownership) = Account::open(alice(), id.did().clone(), handle, name, now);
     crate::transaction(
         &*app.ports().database,
         async move |uow: &mut dyn UnitOfWork| {
             uow.accounts().create(&account, &ownership).await?;
-            uow.accounts().grant_role(&member).await?;
+            test_support::membership::seat_member(uow, &id, &bob(), Role::Member, &alice(), now)
+                .await?;
             if deactivate {
                 uow.accounts().soft_delete(&id).await?;
             }

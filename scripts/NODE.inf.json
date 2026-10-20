@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-10-19",
+  "charted": "2026-10-20",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -15,6 +15,11 @@
     "nodes-fmt-hook.sh (run by .claude/settings.json on every Write|Edit)"
   ],
   "fs": [
+    {
+      "name": "build-id.sh",
+      "role": "prints one line for ZURFUR_BUILD_ID: jj's working-copy parent commit (12 chars), else git HEAD, plus \" (local changes)\" when the working copy differs, else \"unknown\"; quiet, never fails, at most 64 bytes; the dev recipes export it when unset (tested by build-id.test.sh)",
+      "node": false
+    },
     {
       "name": "ci-changes.sh",
       "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",

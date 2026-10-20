@@ -1,0 +1,37 @@
+[package]
+publish = false
+name = "workflow"
+version = "0.1.0"
+edition = "2024"
+
+# The work: the commission aggregate and an account's boards, with their ports.
+# Depends on `kernel` and `identity` only (`shared` is allowed).
+[dependencies]
+kernel = { path = "../kernel" }
+identity = { path = "../identity" }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+# The `FileStore` port's neutral stream vocabulary (ZMVP-88/205): the
+# `AsyncRead` trait only — never the buffered `Vec<u8>` an axum type would
+# imply. `io-util` is the minimal feature that names it. Hand-pinned at the
+# same version as `workspace.dependencies.tokio` (never a different one —
+# the resolver unifies to one `tokio` either way): Cargo's `workspace = true`
+# inheritance cannot itself turn `default-features` off unless the root entry
+# already declares it, and the root entry deliberately stays `features =
+# ["full"]` for the crates that need it.
+tokio = { version = "1.49.0", default-features = false, features = ["io-util"] }
+# The changelog entry payload (ZMVP-87) is kind-specific JSON; the Markup
+# annotation shapes (ZMVP-90) derive their strict wire (de)serialization.
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Error enums derive Display/Error/From; the cause travels via source().
+thiserror = { workspace = true }
+# Newtype and enum derives; see the workspace notes on both.
+derive_more = { workspace = true }
+strum = { workspace = true }
+
+[dev-dependencies]
+# Property tests for the Position ordering invariants.
+proptest = { workspace = true }
+chrono = { workspace = true }
