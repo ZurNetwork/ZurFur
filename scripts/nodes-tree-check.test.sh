@@ -42,10 +42,40 @@ toolbox() {
         ln -sf "$found" "$dir/$tool"
     done
 }
-tools="awk cat cut find git jj sort"
+tools="awk cat cut find git jj mktemp rm sort"
 toolbox "$tmp/no-nodes" $tools jq
 toolbox "$tmp/no-jq" $tools
 ln -sf "$tmp/stub/nodes" "$tmp/no-jq/nodes"
+
+# failing <dir> <tool> [needle]: a PATH directory with the stub nodes and every
+# tool, where <tool> exits 2 when its arguments hold [needle] (default: always)
+# and otherwise runs the real one.
+failing() {
+    toolbox "$1" $tools jq
+    ln -sf "$tmp/stub/nodes" "$1/nodes"
+    real="$(command -v "$2")"
+    rm -f "$1/$2"
+    {
+        echo '#!/bin/sh'
+        printf 'case "$*" in *%s*) exit 2 ;; esac\n' "${3-}"
+        printf 'exec %s "$@"\n' "$real"
+    } >"$1/$2"
+    chmod +x "$1/$2"
+}
+# bites <tool>: whether this shell runs a PATH stub of <tool> at all (busybox
+# sh runs its own awk, sort and cut applets ahead of PATH).
+bites() {
+    mkdir -p "$tmp/probe-$1"
+    printf '#!/bin/sh\nexit 3\n' >"$tmp/probe-$1/$1"
+    chmod +x "$tmp/probe-$1/$1"
+    PATH="$tmp/probe-$1" "$sh_bin" -c "$1" </dev/null >/dev/null 2>&1 && return 1
+    [ $? = 3 ]
+}
+failing "$tmp/awk-fails" awk
+failing "$tmp/findings-awk-fails" awk 'countfile='
+failing "$tmp/print-awk-fails" awk 'me='
+failing "$tmp/sort-fails" sort
+failing "$tmp/cut-fails" cut
 
 # tree <dir>: the files of a small committed node tree.
 tree() {
@@ -116,6 +146,34 @@ r="$(git_fixture nested-stray)"
 cp "$r/docs/NODE.inf.json" "$r/docs/NODE.json"
 expect "git: a nested NODE.json fails" "$r" 1 "a stray NODE.json: docs/NODE.json "
 
+r="$(git_fixture dotted-name)"
+mkdir -p "$r/docs.v2"
+cp "$r/docs/NODE.inf.json" "$r/docs.v2/NODE.json"
+expect "git: a NODE.json in a folder with a dot inside its name fails" "$r" 1 "a stray NODE.json: docs.v2/NODE.json "
+
+r="$(git_fixture hidden-ignored)"
+echo '.claude/worktrees/' >"$r/.gitignore"
+git -C "$r" add .gitignore
+mkdir -p "$r/.claude/worktrees/x/docs"
+cp "$r/NODE.inf.json" "$r/.claude/worktrees/x/NODE.inf.json"
+cp "$r/docs/NODE.inf.json" "$r/.claude/worktrees/x/docs/NODE.json"
+expect "git: node files in an ignored hidden folder pass" "$r" 0 "OK, a committed node tree: 2 NODE.inf.json"
+
+r="$(git_fixture hidden-tracked)"
+mkdir -p "$r/.github/sub"
+echo '{}' >"$r/.github/NODE.json"
+echo '{}' >"$r/.github/sub/NODE.inf.json"
+git -C "$r" add -A
+expect "git: tracked node files in a hidden folder pass" "$r" 0 "OK, a committed node tree: 2 NODE.inf.json"
+
+r="$(git_fixture ignored-not-hidden)"
+echo 'build/' >"$r/.gitignore"
+git -C "$r" add .gitignore
+mkdir -p "$r/build/x"
+cp "$r/NODE.inf.json" "$r/build/x/NODE.json"
+expect "git: a NODE.json in an ignored folder that is not hidden still fails (no ignore file is read)" \
+    "$r" 1 "a stray NODE.json: build/x/NODE.json "
+
 r="$(git_fixture build-folders)"
 mkdir -p "$r/target/debug" "$r/web/node_modules/pkg"
 echo '{}' >"$r/target/debug/NODE.json"
@@ -179,6 +237,34 @@ unset check
 stub_exit=1
 expect "a failing nodes check is still read for its tree field" "$r" 0 "OK"
 unset stub_exit
+if bites awk; then
+    case_path="$tmp/awk-fails"
+    expect "a failing awk fails closed" "$r" 2 "listing the node files on disk failed"
+    case_path="$tmp/findings-awk-fails"
+    expect "a failing findings awk fails closed" "$r" 2 "the listing check itself failed"
+    unset case_path
+    r2="$(git_fixture print-fails)"
+    cp "$r2/NODE.inf.json" "$r2/NODE.json"
+    case_path="$tmp/print-awk-fails"
+    expect "a failing awk printing the findings fails closed" "$r2" 2 "printing the findings failed"
+    unset case_path
+else
+    echo "skip (this sh runs its own awk): the failing-awk cases"
+fi
+if bites sort; then
+    case_path="$tmp/sort-fails"
+    expect "a failing sort fails closed" "$r" 2 "sorting the findings failed"
+    unset case_path
+else
+    echo "skip (this sh runs its own sort): the failing-sort case"
+fi
+if bites cut; then
+    case_path="$tmp/cut-fails"
+    expect "a failing cut fails closed" "$r" 2 "cutting the findings failed"
+    unset case_path
+else
+    echo "skip (this sh runs its own cut): the failing-cut case"
+fi
 
 mkdir "$tmp/empty"
 git init -q "$tmp/empty"
@@ -195,6 +281,17 @@ if command -v jj >/dev/null 2>&1; then
     cp "$r/NODE.inf.json" "$r/NODE.json"
     expect "jj: a root NODE.json fails" "$r" 1 "a stray NODE.json: NODE.json "
 
+    r="$(jj_fixture jj-nested-stray)"
+    cp "$r/docs/NODE.inf.json" "$r/docs/NODE.json"
+    expect "jj: a nested NODE.json fails" "$r" 1 "a stray NODE.json: docs/NODE.json "
+
+    r="$(jj_fixture jj-hidden-ignored)"
+    echo '.claude/worktrees/' >"$r/.gitignore"
+    mkdir -p "$r/.claude/worktrees/x/docs"
+    cp "$r/NODE.inf.json" "$r/.claude/worktrees/x/NODE.inf.json"
+    cp "$r/docs/NODE.inf.json" "$r/.claude/worktrees/x/docs/NODE.json"
+    expect "jj: node files in an ignored hidden folder pass" "$r" 0 "OK, a committed node tree: 2 NODE.inf.json"
+
     r="$(jj_fixture jj-inf-untracked)"
     echo '**/*.inf.json' >"$r/.gitignore"
     (cd "$r" && jj file untrack docs/NODE.inf.json >/dev/null 2>&1)
@@ -207,6 +304,24 @@ if command -v jj >/dev/null 2>&1; then
     expect "jj: an untracked NODE.refs.json fails" "$r" 1 "NODE.refs.json is not tracked at the root"
 else
     echo "skip (no jj): the jj fixtures"
+fi
+
+# The wiring: `just nodes-check` runs the guard after `nodes check`. The body
+# of its recipe is its indented lines up to the next recipe, each trimmed.
+nodes_check_body="$(awk '
+    /^nodes-check:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print }
+' "$script_dir/../Justfile")"
+if printf '%s\n' "$nodes_check_body" | awk '
+    $0 == "nodes check --ref-index docs/design-index.md" && !check { check = NR }
+    $0 == "sh scripts/nodes-tree-check.sh" && check { guard = 1 }
+    END { exit !guard }
+'; then
+    echo "ok   just nodes-check runs the guard after nodes check"
+else
+    echo "FAIL just nodes-check is not wired to the guard: no line 'sh scripts/nodes-tree-check.sh' after 'nodes check --ref-index docs/design-index.md' in its recipe: $nodes_check_body"
+    failures=$((failures + 1))
 fi
 
 if [ "$failures" -ne 0 ]; then

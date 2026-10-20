@@ -75,7 +75,7 @@ edits() {
    "old": "for restacks and fix rounds",
    "new": "for base merges and fix rounds"},
   {"id": "6", "node": "scripts", "field": "fs", "op": "add-entry", "entry": "nodes-tree-check.sh",
-   "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json anywhere, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)"},
+   "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json outside hidden and build folders, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)"},
   {"id": "7", "node": "scripts", "field": "fs", "op": "add-entry", "entry": "nodes-0-7-edits.sh",
    "role": "TEMPORARY: the node-text edits of the move to nodes 0.7, as idempotent get → set transforms; `--check` lists any not applied; a branch cut before the migration replays it when it catches up (tested by nodes-0-7-edits.test.sh)"},
   {"id": "8", "node": "backend/crates/application", "field": "notes", "op": "replace",

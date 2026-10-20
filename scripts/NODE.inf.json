@@ -82,7 +82,7 @@
     },
     {
       "name": "nodes-tree-check.sh",
-      "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json anywhere, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)",
+      "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json outside hidden and build folders, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)",
       "node": false
     },
     {
