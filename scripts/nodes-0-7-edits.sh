@@ -19,8 +19,8 @@
 #            matches, or an entry to add already exists with another role.
 #
 # Usage, from the checkout's root (it works on the repo above its own folder):
-#   sh scripts/nodes-0-7-edits.sh           apply every pending edit
-#   sh scripts/nodes-0-7-edits.sh --check   change nothing; report
+#   sh scripts/nodes-0-7-edits.sh                 apply every pending edit
+#   sh scripts/nodes-0-7-edits.sh --check         change nothing; report
 #   sh scripts/nodes-0-7-edits.sh --print-edits   print the edit table (JSON)
 # Exit codes: 0 every edit applied (after the run); 1 `--check` found an edit
 # not applied (one line each), or apply found a missing edit and wrote nothing;
@@ -42,12 +42,15 @@
 #      hand. So keep a scratch nodes 0.6.0, installed once, until the last
 #      branch has caught up:
 #        CARGO_HOME=<scratch> sh scripts/nodes-install.sh v0.6.0
-#      For each node file `jj resolve --list` names, in the merge change:
+#      In the merge change, first, for every node file `jj resolve --list`
+#      names, note b's own change, then take X^'s side:
 #        jj diff --from 'fork_point(b | X-)' --to b <node file>   b's own change
 #        jj restore --from X- <node file>                          X^'s side
-#      then redo b's change to that file with the scratch binary's `set` /
-#      `add-ref` (`<scratch>/bin/nodes --root <b's workspace> ...`), and
-#      `<scratch>/bin/nodes --root <b's workspace> check` passes;
+#      Only once no node file is conflicted, redo b's noted changes with the
+#      scratch binary's `set` / `add-ref` (`<scratch>/bin/nodes --root <b's
+#      workspace> ...`): a conflicted root NODE.json would keep it from
+#      finding the tree. Then `<scratch>/bin/nodes --root <b's workspace>
+#      check` passes;
 #   2. `nodes migrate` on b, then commit it;
 #   3. `jj new b X`, then
 #      `jj restore --from b 'glob:**/NODE.inf.json' 'glob:**/NODE.json' NODE.refs.json`
@@ -198,7 +201,7 @@ evaluate() {
     tab="$(printf '\t')"
     while IFS="$tab" read -r node field; do
         mine="$(printf '%s' "$table" | jq -c --arg n "$node" --arg f "$field" 'map(select(.node == $n and .field == $f))')"
-        if value="$(nodes --root "$root" --json get "$node" "$field" 2>"$work/err")"; then :; else
+        if ! value="$(nodes --root "$root" --json get "$node" "$field" 2>"$work/err")"; then
             # A node whose file is gone has its edits missing; one whose file
             # exists but cannot be read is a tool failure, never a guess.
             file="$root/$node/NODE.inf.json"
@@ -216,9 +219,9 @@ evaluate() {
 
 # lines <state filter>: the report lines of the edits whose state matches.
 lines() {
-    jq -rs --arg want "$1" '[.[] | .states[]] | sort_by(.order) | .[]
+    jq -rs --arg want "$1" --arg me "$me" '[.[] | .states[]] | sort_by(.order) | .[]
         | select(if $want == "not-applied" then .state != "applied" else .state == $want end)
-        | "'"$me"': " + .line' "$work/results"
+        | $me + ": " + .line' "$work/results"
 }
 
 total="$(printf '%s' "$table" | jq 'length')"
