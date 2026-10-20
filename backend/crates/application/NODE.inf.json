@@ -205,11 +205,10 @@
     "`transaction()` commits on `Ok` and rolls back on `Err` — the same bracket the `#[use_case]` wrapper inlines. It takes a bare `&dyn Database`, so `sweep_deadlines`, `composition::Runtime::transaction` and the test seeders share it; its three disallowed-method calls, and `LazyUnit`'s, are the only ones left in `src/`, each under an `#[allow]` with its reason. (DD 24150017)",
     "Its closure bound is `domain::ports::UnitOfWorkFn` plus explicit `F: Send`/`T: Send`, NOT std's `AsyncFnOnce` — higher-ranked `AsyncFnOnce` bounds do not hold the returned future `Send` (rust-lang/rust#110338).",
     "Each module's `From<anyhow::Error>` impl is the single place a typed store error becomes a use-case error; `?` is the only path a store error takes, so no call site can let a 404/409 degrade into a 500.",
-    "Authorization posture across the crate: refusals never distinguish \"absent\" from \"forbidden\" for a caller with no standing. See the per-module NODE.json notes.",
+    "Authorization posture across the crate: refusals never distinguish \"absent\" from \"forbidden\" for a caller with no standing. See the per-module nodes' notes.",
     "See also: ZMVP-205 — the application-layer restructure that moved use cases below the HTTP layer (tests/dep_guard.rs, tests/user.rs, tests/account.rs, tests/commission.rs, tests/commission_files.rs).",
     "See also: memory `project_application_layer_convention`.",
     "See also: memory `project_transaction_unit_of_work`.",
-    "See also: memory `feedback_work_by_module`.",
     "`account/delete` tombstones the DID after its first write, so its unit spans that call. `commission/invitations/issue` re-reads the pending invitation through the pool after creating it, to learn whether a concurrent one won; that read cannot move before the open."
   ]
 }

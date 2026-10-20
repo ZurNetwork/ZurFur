@@ -251,9 +251,13 @@ nodes *ARGS:
 
 # Validate every NODE.inf.json and NODE.refs.json: the schema, path ↔ location,
 # fs ↔ child nodes, and every ref against the design pointer index (a SUPERSEDED
-# entry warns). Part of `just gate`; CI runs it as the `nodes` job.
+# entry warns). Then scripts/nodes-tree-check.sh guards what `nodes check` passes
+# over: a stray NODE.json, no node tree here (a refs-only check), an untracked
+# NODE.inf.json, an untracked NODE.refs.json. Part of `just gate`; CI runs it as
+# the `nodes` job.
 nodes-check:
     nodes check --ref-index docs/design-index.md
+    sh scripts/nodes-tree-check.sh
 
 # Download the pinned `nodes` release binary into ~/.cargo/bin (checksum-verified;
 # falls back to `cargo install --git` when no prebuilt archive fits this machine).
@@ -292,15 +296,17 @@ hooks-test:
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light, the
 # dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
-# hook, den-fill, the dev logs, the private-papers check, the `jj push` gate's
-# argument guard and workspace-init (the design-index check's own tests run
-# under `design-index-check-test`). CI runs it in the `hooks` job, which has no
-# jj: the jj fixtures skip themselves there.
+# hook, den-fill, the dev logs, the private-papers check, the node-tree guard,
+# the nodes 0.7 node-text edits, the `jj push` gate's argument guard and
+# workspace-init (the design-index check's own tests run under
+# `design-index-check-test`). CI runs it in the `hooks` job, which has no jj
+# and no nodes: the jj fixtures and the node-text edits' tests skip themselves
+# there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

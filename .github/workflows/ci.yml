@@ -250,7 +250,9 @@ jobs:
       - run: just design-index-check
       # The pinned release binary (NODES_VERSION in the Justfile), then the
       # same check `just gate` runs: every NODE.inf.json and NODE.refs.json
-      # against the schema, the tree and the design pointer index.
+      # against the schema, the tree and the design pointer index, then the
+      # tree guards of scripts/nodes-tree-check.sh (no stray NODE.json, a node
+      # tree here, every node file tracked; the runner's git and jq suffice).
       - run: just nodes-install
       - run: just nodes-check
 

@@ -11,5 +11,3 @@ src/lib/server/api/generated/
 
 # Node files are formatted by the nodes tool (canonical form); prettier must not fight it.
 **/NODE.inf.json
-# The old name stays until the tree's migration to NODE.inf.json lands.
-**/NODE.json

@@ -45,7 +45,7 @@
     },
     {
       "name": "queries/",
-      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries no node of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
       "node": false
     },
     {
@@ -84,7 +84,7 @@
     "See also: `CLAUDE.md` here.",
     "See also: memory `project_sqlx_offline_cache`.",
     "See also: Superseded design (kept for history, not re-cited): DD 28246028 \"Commission Surfaces\" and DD 28409880 \"Commission Tree Storage\" governed the now-retired `commission_node` tree (`migrations/20260705150000_create_commission_node.sql`); both are superseded-in-part by DD 45514754.",
-    "Migration headers that say `See NODE.md (\"<file>\")` mean this node: the moved rationale sits in these notes, keyed by migration filename. The headers stay byte-for-byte as shipped because sqlx checksums every migration on boot.",
+    "Migration headers that say `See NODE.md (\"<file>\")` or \"this crate's NODE.json notes\" mean this node: the moved rationale sits in these notes, keyed by migration filename. The headers stay byte-for-byte as shipped because sqlx checksums every migration on boot.",
     "`src/character.rs`: `PgCharacterStore::list_kept_by` answers an empty list — a named exemption from \"no stubs\", because no Character can be stored in PostgreSQL yet (`create` is `unimplemented!`). A unit test (`src/character/tests.rs`) pins it; the slice that adds character storage replaces both as one of its acceptance criteria."
   ]
 }

@@ -166,8 +166,8 @@
     }
   ],
   "notes": [
-    "Doc comments exist in a vacuum: a `///`, `//!`, JSDoc or SQL-header comment states its fact plainly and never carries a DD number, design page id, Jira key, PR number or \"per ruling\" pointer — those live in the nearest NODE.json under `refs`; documentation too big for its file (module essays, migration rationale) moves to that NODE.json's `notes` with a one-line summary left in place.",
-    "Reading this tree: to understand a path, load the chain of nodes from this root down to it (`nodes chain <path>`); each node states only what its ancestors haven't. Entries marked `node: false` are fully described by their `fs` line. `/nodes:familiarize` reads the tree (`nodes tree`, `nodes chain`); `/nodes:chart` rewrites it through the `nodes` tool. NODE.json is what/where; CLAUDE.md is how to behave.",
+    "Doc comments exist in a vacuum: a `///`, `//!`, JSDoc or SQL-header comment states its fact plainly and never carries a DD number, design page id, Jira key, PR number or \"per ruling\" pointer — those live in `NODE.refs.json`, under the nearest node's path; documentation too big for its file (module essays, migration rationale) moves to that node's `notes` with a one-line summary left in place.",
+    "Reading this tree: to understand a path, load the chain of nodes from this root down to it (`nodes chain <path>`); each node states only what its ancestors haven't. Entries marked `node: false` are fully described by their `fs` line. `/nodes:familiarize` reads the tree (`nodes tree`, `nodes chain`); `/nodes:chart` rewrites it through the `nodes` tool. The nodes (`NODE.inf.json`, their refs in the root `NODE.refs.json`) are what/where; CLAUDE.md is how to behave.",
     "The dev profile (and the test profile, which inherits it) writes debug info to .dwo files beside the objects (split-debuginfo = \"unpacked\" in Cargo.toml): test-binary links need about half the memory and target/ about 60% less disk, with backtraces and gdb locals intact. Moving target/ or the workspace loses the locals; stale .dwo sets pile up until `cargo clean`.",
     "See also: CLAUDE.md.",
     "See also: docs/design-index.md.",
