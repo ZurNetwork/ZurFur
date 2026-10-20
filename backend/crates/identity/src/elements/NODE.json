@@ -2,7 +2,7 @@
   "path": "backend/crates/identity/src/elements",
   "charted": "2026-10-20",
   "short": "Who acts: the identity nouns",
-  "is": "The identity nouns: user, account, membership, invitation, role, actor identity, handle, custody keys, PLC operations, character, profile and public records.",
+  "is": "The identity nouns: user, account, membership, invitation, role, actor identity, handle, custody keys, PLC operations, character, profile, public records and bug reports.",
   "type": "code",
   "tags": [
     "category:source"

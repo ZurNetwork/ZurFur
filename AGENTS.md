@@ -5,7 +5,7 @@ Architecture is ports & adapters:
 
 - `backend/crates/shared` — build-time constants every layer may read, the domain crates included
 - `backend/crates/kernel` — the base domain crate: the clock, the string builder, `Did`, text, maturity, `BlobId`, `Markdown`
-- `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, and their ports
+- `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, bug reports, and their ports
 - `backend/crates/workflow` — Commission and Workflow boards, and their ports
 - `backend/crates/gallery`, `backend/crates/moderation` — stub crates until their first types
 - `backend/crates/domain` — the façade: re-exports the domain crates that hold types as `domain::…` and owns the cross-domain unit of work, its only code of its own; no IO
